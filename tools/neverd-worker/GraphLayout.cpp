@@ -1,5 +1,8 @@
 #include "GraphLayout.h"
 
+#include "Config.h"
+#include "ResourceLimits.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -9,13 +12,10 @@
 
 namespace neverd::worker {
 namespace {
-constexpr std::size_t MaxDummies = 200000;
 constexpr int OrderingSweeps = 12;
-constexpr int PlacementRounds = 8;
 constexpr double DummySeparation = 14;
 constexpr double DummyNodeSeparation = 24;
 constexpr double StraightLinkWeight = 8;
-constexpr double PortSpacing = 12;
 constexpr double SelfLoopReach = 16;
 constexpr std::size_t None = std::numeric_limits<std::size_t>::max();
 
@@ -175,7 +175,8 @@ LayoutResult layoutGraph(const LayoutInput &input) {
       const auto a = edge.from, b = edge.to;
       const auto span = layer[b] - layer[a];
       chain.push_back(a);
-      if (span > 1 && dummies + span - 1 <= MaxDummies)
+      if (span > 1 && dummies + span - 1 <=
+                          ::neverd::limits::worker::kGraphLayoutMaxDummies)
         for (auto l = layer[a] + 1; l < layer[b]; ++l)
           chain.push_back(addDummy(l));
       chain.push_back(b);
@@ -187,7 +188,7 @@ LayoutResult layoutGraph(const LayoutInput &input) {
       const auto u = edge.from, v = edge.to;
       chain.push_back(u);
       const auto climb = layer[u] - layer[v] + 1;
-      if (dummies + climb <= MaxDummies) {
+      if (dummies + climb <= ::neverd::limits::worker::kGraphLayoutMaxDummies) {
         for (auto l = layer[u] + 1; l-- > layer[v];)
           chain.push_back(addDummy(l));
         for (std::size_t k = 1; k + 1 < chain.size(); ++k)
@@ -284,7 +285,8 @@ LayoutResult layoutGraph(const LayoutInput &input) {
     }
   }
   std::vector<double> desired, left, right;
-  for (int round = 0; round < PlacementRounds; ++round) {
+  for (int round = 0;
+       round < ::neverd::limits::worker::kGraphLayoutPlacementRounds; ++round) {
     const bool downward = round % 2 == 0;
     for (std::size_t step = 0; step < layers; ++step) {
       const std::size_t l = downward ? step : layers - 1 - step;
@@ -353,7 +355,8 @@ LayoutResult layoutGraph(const LayoutInput &input) {
         [](const Port &a, const Port &b) { return a.toward < b.toward; });
     const double width = vertices[node].width;
     const double spacing =
-        std::min(PortSpacing, width / static_cast<double>(ports.size() + 1));
+        std::min(::neverd::limits::worker_config::kGraphLayoutPortSpacing,
+                 width / static_cast<double>(ports.size() + 1));
     const double first = vertices[node].center -
                          spacing * static_cast<double>(ports.size() - 1) / 2;
     for (std::size_t k = 0; k < ports.size(); ++k)

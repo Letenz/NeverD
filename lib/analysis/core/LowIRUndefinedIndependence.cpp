@@ -24,6 +24,7 @@
 #include "NativeUndefinedIndependence.h"
 #include "OrderedQuery.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
@@ -824,7 +825,10 @@ class Checker {
     Bound.MaxNodes = Limits.MaxSymbolicNodes;
     Bound.MaxWork = Limits.MaxSymbolicNodes;
     Bound.MaxWidth =
-        Limits.Solver.Blast.MaxWidth ? Limits.Solver.Blast.MaxWidth : 256;
+        Limits.Solver.Blast.MaxWidth
+            ? Limits.Solver.Blast.MaxWidth
+            : ::neverd::limits::analysis::
+                  kLowIRUndefinedIndependenceConditionalLimitsBoundMaxWidthDefault;
     Bound.MaxQueries = Limits.MaxSolverQueries;
     return Bound;
   }
@@ -2010,7 +2014,9 @@ class Checker {
     // These are real trace blocks: intermediate instruction visits neither
     // allocate a Path nor enter Pending. Per-instruction semantics, scratch
     // lifetimes and instruction/operation budgets remain in runPath.
-    while (B.InstructionBoundaries.size() < 32) {
+    while (B.InstructionBoundaries.size() <
+           ::neverd::limits::analysis::
+               kLowIRUndefinedIndependenceBInstructionBoundariesSizeLimit) {
       const auto &Last =
           NativeInstructions.at(B.InstructionBoundaries.back().Address);
       if (Last.Origin.Control != LowInstructionControl::None ||

@@ -9,6 +9,7 @@
 #include "SwiftMangledStringBundleABI.h"
 #include "SwiftOnceCallbackABI.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -277,7 +278,10 @@ inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
     const std::map<va_t, SourceFunctionTypeHint> *NativeCallees = nullptr) {
   if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
-      Low.Blocks.empty() || Low.Blocks.size() > 256)
+      Low.Blocks.empty() ||
+      Low.Blocks.size() >
+          ::neverd::limits::loader::
+              kSwiftBooleanProjectionQualifySwiftBooleanProjectionsLowBlocksSizeLimit)
     return {};
   const auto Entry = objcMethodSourceTypeHint(Image, Low.Entry);
   if (Entry ? !equalSourceABIs(*Entry, EntrySignature)
@@ -293,7 +297,8 @@ inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
       (EntrySignature.Origin ==
            SourceFunctionTypeHint::OriginKind::SwiftMangled &&
        swiftMangledObjCObjectPairVoidMethodSourceABI(Image, Low.Entry))) {
-    size_t Budget = 1U << 18;
+    size_t Budget = ::neverd::limits::loader::
+        kSwiftBooleanProjectionQualifySwiftBooleanProjectionsBudget;
     if (!immutableNativeFrameMachineMatches(
             Image, Low, Budget, ImmutableNativeFrameTerminators::MatchDecoder))
       return {};
@@ -305,7 +310,8 @@ inline std::vector<SwiftBooleanProjection> qualifySwiftBooleanProjections(
   std::set<va_t> CallInstructions;
   for (const auto &Block : Low.Blocks) {
     if (Block.EndAddr <= Block.StartAddr ||
-        Block.EndAddr - Block.StartAddr > 32768 ||
+        Block.EndAddr - Block.StartAddr >
+            ::neverd::limits::loader::kMaxSwiftBooleanBlockBytes ||
         !readImmutableCodeBytes(Image, Block.StartAddr,
                                 Block.EndAddr - Block.StartAddr))
       return {};

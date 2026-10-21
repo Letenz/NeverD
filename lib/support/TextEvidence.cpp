@@ -6,6 +6,7 @@
 
 #include "TextEvidence.h"
 
+#include "neverd/support/Limits.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/bit.h"
@@ -40,7 +41,10 @@ constexpr unsigned ShortIdeographicText = 10;
 constexpr size_t TablePatternLength = 6;
 /// Characters beyond ASCII that ascend by less than TableAscentStep each are
 /// a table from this many on, or this many ideographs.
-constexpr size_t TableAscentLength = 6, MinTableAscentIdeographs = 3;
+constexpr size_t
+    TableAscentLength = 6,
+    MinTableAscentIdeographs =
+        ::neverd::limits::support::kTextEvidenceMinTableAscentIdeographs;
 constexpr uint32_t TableAscentStep = 256;
 
 /// The writing system of a letter beyond ASCII (StringEncodings.def).
@@ -261,8 +265,12 @@ bool longEnoughText(llvm::ArrayRef<uint32_t> Codes) {
 }
 
 bool readsAsUnchosenText(llvm::ArrayRef<uint32_t> Codes) {
-  constexpr unsigned MinWordLetters = 3, MinLettersBeyond = 2,
-                     MinDistinctASCIILetters = 3;
+  constexpr unsigned
+      MinWordLetters = ::neverd::limits::support::kTextEvidenceMinWordLetters,
+      MinLettersBeyond =
+          ::neverd::limits::support::kTextEvidenceMinLettersBeyond,
+      MinDistinctASCIILetters =
+          ::neverd::limits::support::kTextEvidenceMinDistinctASCIILetters;
   unsigned Beyond = 0, ASCIILetters = 0;
   uint64_t ASCIISeen = 0;
   for (uint32_t C : Codes)

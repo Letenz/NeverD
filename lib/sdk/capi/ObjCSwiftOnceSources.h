@@ -116,7 +116,8 @@ inline std::optional<size_t> parameter(const ExprPtr &Value) {
          E->Type->Size == 8 && E->IntrinsicId == Intrinsic::None &&
          E->IntrinsicOutputs.empty() && !E->IsIndirectCall &&
          !E->IndirectTarget && E->MemoryOrdering == NdMemoryOrdering::None &&
-         E->MemoryAddressSpace == NdMemoryAddressSpace::Default && Depth++ < 16)
+         E->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         Depth++ < ::neverd::sdk::kObjCSwiftOnceSourcesParameterDepthLimit)
     E = E->Operands.front();
   if (!E || E->Kind != ExprKind::Var || E->Var.Kind != MedVar::Param ||
       E->Var.Id < 0 || E->Var.SSAVer != 0 || E->Var.RenameTag != -1 ||
@@ -131,7 +132,10 @@ inline std::optional<size_t> parameter(const ExprPtr &Value) {
 
 inline bool unknownScalarView(const ExprPtr &Value) {
   auto E = Value;
-  for (unsigned Depth = 0; E && Depth < 16; ++Depth) {
+  for (unsigned Depth = 0;
+       E &&
+       Depth < ::neverd::sdk::kObjCSwiftOnceSourcesUnknownScalarViewDepthLimit;
+       ++Depth) {
     if (E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
         E->IsIndirectCall || E->IndirectTarget ||
         E->MemoryOrdering != NdMemoryOrdering::None ||
@@ -193,7 +197,11 @@ discardableNativeContextRead(const ExprPtr &Value,
     return false;
   auto E = Value;
   bool Local = false;
-  for (unsigned Depth = 0; E && Depth < 16; ++Depth) {
+  for (unsigned Depth = 0;
+       E && Depth <
+                ::neverd::sdk::
+                    kObjCSwiftOnceSourcesDiscardableNativeContextReadDepthLimit;
+       ++Depth) {
     if (E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
         E->IsIndirectCall || E->IndirectTarget ||
         E->MemoryOrdering != NdMemoryOrdering::None ||
@@ -333,7 +341,10 @@ inline bool onceCall(const HighExpr &E, const BinaryImage &Image) {
 inline std::optional<HighFunc> sharedOnceTailView(const HighFunc &Function,
                                                   const BinaryImage &Image) {
   if (Function.StructuredExceptionRegions ||
-      Function.UnstructuredExceptionRegions || Function.Body.size() > 32)
+      Function.UnstructuredExceptionRegions ||
+      Function.Body.size() >
+          ::neverd::sdk::
+              kObjCSwiftOnceSourcesSharedOnceTailViewFunctionBodySizeLimit)
     return std::nullopt;
   const auto Flat = [](const HighStmt &S) {
     return S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
@@ -351,7 +362,10 @@ inline std::optional<HighFunc> sharedOnceTailView(const HighFunc &Function,
   };
   const auto Tail = [&](const std::vector<HighStmt> &Body,
                         std::vector<HighStmt> &Out) {
-    if (Body.empty() || Body.size() > 16 ||
+    if (Body.empty() ||
+        Body.size() >
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesSharedOnceTailViewTailTailBodySizeLimit ||
         Body.back().Kind != StmtKind::Return)
       return false;
     for (size_t I = 0; I < Body.size(); ++I) {
@@ -467,8 +481,12 @@ objcClassMetadataAccessorContract(const HighFunc &F, const BinaryImage &Image) {
     return std::nullopt;
   const auto Plain = [](ExprPtr E) {
     unsigned Depth = 0;
-    while (E && (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
-           E->Operands.size() == 1 && Depth++ < 16)
+    while (
+        E && (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+        E->Operands.size() == 1 &&
+        Depth++ <
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesObjcClassMetadataAccessorContractPlainDepthLimit)
       E = E->Operands.front();
     return E;
   };
@@ -661,7 +679,9 @@ getterContract(const HighFunc &Original, const BinaryImage &Image) {
       AliasOrigin;
   AliasOrigin = [&](const ExprPtr &Value, unsigned Depth,
                     std::set<Local> &Visiting) -> std::optional<size_t> {
-    if (!PlainScalar(Value) || Depth > 64)
+    if (!PlainScalar(Value) ||
+        Depth > ::neverd::sdk::
+                    kObjCSwiftOnceSourcesGetterContractAliasOriginDepthLimit)
       return std::nullopt;
     if (Value->Kind == ExprKind::Var && Value->Var.Kind == MedVar::Param)
       return parameter(Value);
@@ -709,7 +729,9 @@ getterContract(const HighFunc &Original, const BinaryImage &Image) {
       LoadOrigin;
   LoadOrigin = [&](const ExprPtr &Value, unsigned Depth,
                    std::set<Local> &Visiting) -> std::optional<size_t> {
-    if (!PlainScalar(Value) || Depth > 64)
+    if (!PlainScalar(Value) ||
+        Depth > ::neverd::sdk::
+                    kObjCSwiftOnceSourcesGetterContractLoadOriginDepthLimit)
       return std::nullopt;
     if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
         Value->Operands.size() == 1)
@@ -756,7 +778,10 @@ getterContract(const HighFunc &Original, const BinaryImage &Image) {
                                                             unsigned Depth) {
     if (!Valid)
       return;
-    if (!E || !Budget-- || Depth > 128 || E->Kind == ExprKind::Undef) {
+    if (!E || !Budget-- ||
+        Depth > ::neverd::sdk::
+                    kObjCSwiftOnceSourcesGetterContractScanScanDepthLimit ||
+        E->Kind == ExprKind::Undef) {
       Valid = false;
       return;
     }
@@ -1033,7 +1058,9 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
     while (
         Value &&
         (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
-        Value->Operands.size() == 1 && Depth++ < 16)
+        Value->Operands.size() == 1 &&
+        Depth++ < ::neverd::sdk::
+                      kObjCSwiftOnceSourcesAddressorContractPlainDepthLimit)
       Value = Value->Operands.front();
     return Value;
   };
@@ -1205,7 +1232,10 @@ objcGetterThunkContract(const HighFunc &Original, const BinaryImage &Image) {
     while (
         Value &&
         (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
-        Value->Operands.size() == 1 && Depth++ < 16)
+        Value->Operands.size() == 1 &&
+        Depth++ <
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesObjcGetterThunkContractPlainDepthLimit)
       Value = Value->Operands.front();
     return Value;
   };
@@ -1528,7 +1558,11 @@ objcEffectfulThunkContract(const HighFunc &F, const BinaryImage &Image) {
                                                              unsigned Depth) {
     if (!Valid)
       return;
-    if (!E || !Budget-- || Depth > 128 || E->Kind == ExprKind::Undef) {
+    if (!E || !Budget-- ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesObjcEffectfulThunkContractVisitDepthLimit ||
+        E->Kind == ExprKind::Undef) {
       Valid = false;
       return;
     }
@@ -1637,7 +1671,11 @@ inline bool discardableCallbackReturn(ExprPtr Value) {
   size_t Budget = kSwiftOnceSliceWork;
   const auto Visit = [&](const auto &Self, const ExprPtr &E,
                          unsigned Depth) -> bool {
-    if (!Budget || Depth > 16 || !callbackScalarView(E))
+    if (!Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesDiscardableCallbackReturnVisitDepthLimit ||
+        !callbackScalarView(E))
       return false;
     --Budget;
     if (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast)
@@ -1686,11 +1724,13 @@ inline bool discardPureCallbackResults(HighFunc &Function) {
 // kept as a separate statement before changing the callback to return void.
 inline ExprPtr retainedCallbackReturn(ExprPtr Value, const BinaryImage &Image) {
   unsigned Depth = 0;
-  while (callbackScalarView(Value) &&
-         (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
-         Value->Operands.size() == 1 &&
-         (!Value->CastTo || equalSourceTypes(Value->CastTo, Value->Type)) &&
-         Depth++ < 16)
+  while (
+      callbackScalarView(Value) &&
+      (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
+      Value->Operands.size() == 1 &&
+      (!Value->CastTo || equalSourceTypes(Value->CastTo, Value->Type)) &&
+      Depth++ <
+          ::neverd::sdk::kObjCSwiftOnceSourcesRetainedCallbackReturnDepthLimit)
     Value = Value->Operands.front();
   if (!callbackScalarView(Value) || Value->Kind != ExprKind::Call ||
       Value->Operands.size() != 1 || !Value->SourceCallHint)
@@ -1738,7 +1778,11 @@ onceContextLivenessView(const HighFunc &Function,
   bool Valid = true;
   std::function<ExprPtr(const ExprPtr &, unsigned)> Copy =
       [&](const ExprPtr &E, unsigned Depth) -> ExprPtr {
-    if (!E || !Budget || Depth > 128 || Active.count(E.get())) {
+    if (!E || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesOnceContextLivenessViewCopyCopyDepthLimit ||
+        Active.count(E.get())) {
       Valid = false;
       return {};
     }
@@ -1818,13 +1862,18 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
                                                              unsigned Depth) {
     if (!Valid)
       return;
-    if (!E || !Budget-- || Depth > 128) {
+    if (!E || !Budget-- ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesNestedCallbackContractVisitDepthLimit) {
       Valid = false;
       return;
     }
     if (onceCall(*E, Image)) {
       if (!nestedOnceContext(E->Operands[2]) ||
-          Contract.Initializers.size() == 32) {
+          Contract.Initializers.size() ==
+              ::neverd::sdk::
+                  kObjCSwiftOnceSourcesNestedCallbackContractVisitContractInitializersSizeLimit) {
         Valid = false;
         return;
       }
@@ -1922,8 +1971,11 @@ independentCallbackChain(va_t Root, const BinaryImage &Image,
   size_t Budget = kSwiftOnceValueWork;
   std::function<bool(va_t, unsigned)> Verify = [&](va_t Address,
                                                    unsigned Depth) {
-    if (!Budget-- || Depth > 16 || DirectTargets.count(Address) ||
-        Active.count(Address))
+    if (!Budget-- ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesIndependentCallbackChainVerifyDepthLimit ||
+        DirectTargets.count(Address) || Active.count(Address))
       return false;
     if (Verified.count(Address))
       return true;
@@ -1996,7 +2048,9 @@ copyContract(const HighFunc &Original, const BinaryImage &Image) {
       return std::nullopt;
   const auto Flow = buildHighSourceFlowGraph(F);
   if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty() ||
-      Flow.Nodes.empty() || Flow.Nodes.size() > 512)
+      Flow.Nodes.empty() ||
+      Flow.Nodes.size() >
+          ::neverd::sdk::kObjCSwiftOnceSourcesCopyContractFlowNodesSizeLimit)
     return std::nullopt;
   using Local = HighSourceLocalIdentity;
   std::map<Local, std::vector<ExprPtr>> Definitions;
@@ -2006,7 +2060,9 @@ copyContract(const HighFunc &Original, const BinaryImage &Image) {
   size_t Budget = kSourceFrameWork;
   std::function<void(const ExprPtr &, unsigned)> FindCalls =
       [&](const ExprPtr &E, unsigned Depth) {
-        if (!E || !Budget-- || Depth > 64) {
+        if (!E || !Budget-- ||
+            Depth > ::neverd::sdk::
+                        kObjCSwiftOnceSourcesCopyContractFindCallsDepthLimit) {
           Valid = false;
           return;
         }
@@ -2060,7 +2116,9 @@ copyContract(const HighFunc &Original, const BinaryImage &Image) {
       Resolve;
   Resolve = [&](const ExprPtr &E, unsigned Depth,
                 std::set<Local> &Visiting) -> std::optional<Origin> {
-    if (!Plain8(E) || Depth > 64)
+    if (!Plain8(E) ||
+        Depth >
+            ::neverd::sdk::kObjCSwiftOnceSourcesCopyContractResolveDepthLimit)
       return std::nullopt;
     if (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast)
       return IdentityCast(E) ? Resolve(E->Operands[0], Depth + 1, Visiting)
@@ -2134,7 +2192,10 @@ copyContract(const HighFunc &Original, const BinaryImage &Image) {
         Events.push_back(1);
         return;
       }
-      if (!E || !Budget-- || Depth > 64 || !E->Type || E->Type->Size > 8 ||
+      if (!E || !Budget-- ||
+          Depth > ::neverd::sdk::
+                      kObjCSwiftOnceSourcesCopyContractScanScanDepthLimit ||
+          !E->Type || E->Type->Size > 8 ||
           (E->Type->Kind != NdTypeKind::Int &&
            E->Type->Kind != NdTypeKind::Ptr &&
            E->Type->Kind != NdTypeKind::Void) ||
@@ -2872,7 +2933,10 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
   std::map<const HighExpr *, ExprPtr> Copies;
   std::function<ExprPtr(const ExprPtr &, unsigned)> Copy =
       [&](const ExprPtr &Original, unsigned Depth) -> ExprPtr {
-    if (!Original || !Budget || Depth > 128)
+    if (!Original || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSwiftOnceSourcesBindSwiftOnceSourceReferencesCopyCopyDepthLimit)
       return Original;
     if (auto Found = Copies.find(Original.get()); Found != Copies.end())
       return Found->second;
@@ -3386,7 +3450,11 @@ projectSwiftOnceNestedCallbacks(const BinaryImage &Image,
   std::map<va_t, ObjCSourceBindingResult> Results;
   // Project leaves before their callers, independent of address order. Each
   // success has revalidated every child against its published source body.
-  for (unsigned Depth = 0; Depth <= 16; ++Depth) {
+  for (unsigned Depth = 0;
+       Depth <=
+       ::neverd::sdk::
+           kObjCSwiftOnceSourcesProjectSwiftOnceNestedCallbacksDepthLimit;
+       ++Depth) {
     const size_t Before = Results.size();
     for (const auto &[Entry, Contract] : Plan.NestedCallbacks) {
       const auto Found = Functions.find(Entry);

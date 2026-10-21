@@ -222,7 +222,11 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
     }
   }
   uint64_t Limit =
-      MaxInsns > 0 ? static_cast<uint64_t>(MaxInsns) : (Span > 0 ? Span : 256);
+      MaxInsns > 0
+          ? static_cast<uint64_t>(MaxInsns)
+          : (Span > 0 ? Span
+                      : ::neverd::sdk::
+                            kNeverDCAPIDisasmNeverdDisasmJsonExLimitDefault);
 
   const TargetRegInfo &Registers = getTargetRegInfo(S->Img.Arch);
   InstructionFlowScratch Scratch;

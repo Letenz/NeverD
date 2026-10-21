@@ -6,6 +6,7 @@
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/safety/ArgSlicer.h"
 #include "neverd/safety/EntryInputPolicy.h"
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/SinkCatalog.h"
 
 #include "llvm/ADT/StringSwitch.h"
@@ -21,8 +22,6 @@ using namespace neverd;
 using namespace neverd::safety;
 
 namespace {
-
-constexpr unsigned kDefaultMaxCallDepth = 64;
 
 bool isApplicationEntry(llvm::StringRef Name) {
   return llvm::StringSwitch<bool>(stripLeadingUnderscores(Name))
@@ -455,7 +454,9 @@ neverd::safety::analyzeInterprocedural(const AnalysisInput &In,
   std::sort(Roots.begin(), Roots.end(), rootLess);
 
   const unsigned MaxDepth =
-      Budgets.MaxCallDepth ? Budgets.MaxCallDepth : kDefaultMaxCallDepth;
+      Budgets.MaxCallDepth
+          ? Budgets.MaxCallDepth
+          : ::neverd::limits::safety::kInterprocReachabilityDefaultMaxCallDepth;
   std::deque<va_t> Queue;
   for (const Root &Entry : Roots) {
     FunctionReachability &Reach = Result.Functions[Entry.Function];

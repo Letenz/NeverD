@@ -19,6 +19,7 @@
 
 #include "HighDCEDetail.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
 #include <optional>
@@ -87,7 +88,7 @@ static ExprPtr joinLocalSlices(const ExprPtr &E) {
 /// Nothing in \p E can be observed except its value: no call, memory access
 /// or atomic.  Only such a subexpression may be dropped as irrelevant.
 static bool isEffectFree(const ExprPtr &E) {
-  size_t Budget = 128;
+  size_t Budget = ::neverd::limits::ir::kHighExprSimplifyIsEffectFreeBudget;
   return discardableIntegerValue(E, Budget);
 }
 
@@ -127,7 +128,7 @@ static bool isTruthOp(NdOp Op) {
 /// extension, a selection or a bitwise combination of such values.
 static bool zeroOrOne(const ExprPtr &E, unsigned Depth = 0) {
   if (!E || !E->Type || E->Type->Kind != NdTypeKind::Int || !E->Type->Size ||
-      Depth > 8)
+      Depth > ::neverd::limits::ir::kHighExprSimplifyZeroOrOneDepthLimit)
     return false;
   switch (E->Kind) {
   case ExprKind::Const:
@@ -188,7 +189,7 @@ static ExprPtr demandMaskedBits(const ExprPtr &E, uint64_t Demand,
   };
   Demand &= Mask(E->Type->Size);
   if (!Demand) {
-    size_t DropBudget = 128;
+    size_t DropBudget = ::neverd::limits::ir::kHighExprSimplifyDropBudget;
     if (!discardableIntegerValue(E, DropBudget))
       return E;
     auto Zero = HighExpr::makeConst(0, E->Type->Size,
@@ -341,7 +342,7 @@ static ExprPtr demandLowBytes(const ExprPtr &X, unsigned Bytes) {
     if (!Integer || !L || !R || !R->Type || R->Type->Size < Bytes)
       return X;
     ExprPtr NR = demandLowBytes(R, Bytes);
-    size_t Budget = 128;
+    size_t Budget = ::neverd::limits::ir::kHighExprSimplifyDemandLowBytesBudget;
     if (discardableIntegerValue(L, Budget)) {
       auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, NR);
       Extended->Type = X->Type;
@@ -488,7 +489,8 @@ static bool discardMaskedConcatHigh(const ExprPtr &E) {
   const unsigned LowBits = Low->Type->Size * 8;
   const uint64_t LowMask =
       LowBits == 64 ? UINT64_MAX : (uint64_t{1} << LowBits) - uint64_t{1};
-  size_t Budget = 128;
+  size_t Budget =
+      ::neverd::limits::ir::kHighExprSimplifyDiscardMaskedConcatHighBudget;
   if ((Mask->ConstVal & ~LowMask) != 0 ||
       !discardableIntegerValue(High, Budget))
     return false;
@@ -504,7 +506,10 @@ static bool discardMaskedConcatHigh(const ExprPtr &E) {
 /// low slice), as flag tests of one compare read it.
 static bool sameIntegerValue(const ExprPtr &A, const ExprPtr &B) {
   auto Peel = [](ExprPtr E) {
-    for (unsigned Depth = 0; E && Depth < 4; ++Depth) {
+    for (unsigned Depth = 0;
+         E && Depth < ::neverd::limits::ir::
+                          kHighExprSimplifySameIntegerValuePeelPeelDepthLimit;
+         ++Depth) {
       const bool View =
           E->Operands.size() >= 1 && E->Operands[0] && E->Type &&
           E->Operands[0]->Type &&
@@ -650,7 +655,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
         Joined->MemoryOrdering == NdMemoryOrdering::None &&
         Joined->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       const auto &High = Joined->Operands[0], &Low = Joined->Operands[1];
-      size_t Budget = 128;
+      size_t Budget = ::neverd::limits::ir::kHighExpressionDiscardedConcatWork;
       if (High && Low && High->Type && Low->Type &&
           High->Type->Kind == NdTypeKind::Int &&
           Low->Type->Kind == NdTypeKind::Int && High->Type->Size &&
@@ -702,7 +707,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       break;
     const uint64_t Offset = E->Operands[1]->ConstVal;
     const uint64_t Bytes = E->Type->Size, LowBytes = Low->Type->Size;
-    size_t Budget = 4096;
+    size_t Budget = ::neverd::limits::ir::kHighExpressionPointerReadWork;
     ExprPtr Part;
     uint64_t PartOffset = 0;
     if (Offset + Bytes <= LowBytes && harmlessIntegerValue(High, Budget)) {
@@ -815,7 +820,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       E->Operands[2] && E->Type && E->Type->Kind == NdTypeKind::Int) {
     const bool Taken = E->Operands[0]->ConstVal != 0;
     const ExprPtr Kept = E->Operands[Taken ? 1 : 2];
-    size_t Budget = 4096;
+    size_t Budget = ::neverd::limits::ir::kHighExpressionMemoryReadWork;
     if (Kept->Type && Kept->Type->Kind == NdTypeKind::Int &&
         Kept->Type->Size == E->Type->Size &&
         harmlessIntegerValue(E->Operands[Taken ? 2 : 1], Budget)) {
@@ -926,7 +931,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
     for (unsigned I = 0; I < 2; ++I)
       if (E->Operands[I]->Kind == ExprKind::Const && E->Operands[1 - I]->Type &&
           E->Operands[1 - I]->Type->Size == E->Type->Size) {
-        size_t Budget = 64;
+        size_t Budget = ::neverd::limits::ir::kHighExpressionDemandedMaskWork;
         auto Projected = demandMaskedBits(E->Operands[1 - I],
                                           E->Operands[I]->ConstVal, Budget);
         if (Projected != E->Operands[1 - I]) {

@@ -13,6 +13,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/debug/Limits.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1110,7 +1111,9 @@ TypeRef PDBDebugContext::Impl::resolveIndex(TypeGraph &Graph,
                                             bool UseIpi, int Depth,
                                             TpiWalk Walk) const {
   joinTypePrefetch();
-  if (Depth > 32 || TI.isNoneType())
+  if (Depth > ::neverd::limits::debug::
+                  kPDBLoaderPDBDebugContextImplResolveIndexDepthLimit ||
+      TI.isNoneType())
     return {};
   if (TI.isSimple())
     return primitiveType(TI, PtrSize);
@@ -1458,7 +1461,10 @@ bool isDisplayFieldName(llvm::StringRef Name) {
 void PDBDebugContext::Impl::attachDisplayFields(
     const TypeRef &Record, llvm::codeview::TypeIndex FieldList, bool UseIpi,
     int Depth) const {
-  if (!Record || Depth > 32 || FieldList.isNoneType() || FieldList.isSimple())
+  if (!Record ||
+      Depth > ::neverd::limits::debug::
+                  kPDBLoaderPDBDebugContextImplAttachDisplayFieldsDepthLimit ||
+      FieldList.isNoneType() || FieldList.isSimple())
     return;
   // Do not bail when names are already present: LF_FIELDLIST
   // continuations append onto the same record. A nonempty first chunk
@@ -1623,7 +1629,10 @@ bool PDBDebugContext::Impl::visitProcedureType(
     const {
   llvm::codeview::TypeIndex Cur = TI;
   bool UseIpi = FromIpi;
-  for (int Depth = 0; Depth < 8; ++Depth) {
+  for (int Depth = 0;
+       Depth < ::neverd::limits::debug::
+                   kPDBLoaderPDBDebugContextImplVisitProcedureTypeDepthLimit;
+       ++Depth) {
     auto CV = loadType(UseIpi ? Ipi : Tpi, UseIpi, Cur);
     if (!CV)
       return false;
@@ -2605,7 +2614,8 @@ PDBDebugContext::Impl::recordParameter(llvm::codeview::TypeIndex TI,
   using namespace llvm::codeview;
   bool Pointer = false;
   std::string ForwardName;
-  for (unsigned Depth = 0; Depth != 32; ++Depth) {
+  for (unsigned Depth = 0; Depth != ::neverd::limits::debug::kMaxPDBUnwrapDepth;
+       ++Depth) {
     auto CV = loadType(Tpi, false, TI);
     if (!CV)
       return std::nullopt;
@@ -2644,7 +2654,10 @@ PDBDebugContext::Impl::recordParameter(llvm::codeview::TypeIndex TI,
       llvm::consumeError(std::move(Error));
       return std::nullopt;
     }
-    if (C.getName().empty() || C.getName().size() > 8192 ||
+    if (C.getName().empty() ||
+        C.getName().size() >
+            ::neverd::limits::debug::
+                kPDBLoaderPDBDebugContextImplRecordParameterCGetNameSizeLimit ||
         (!ForwardName.empty() && C.getName() != ForwardName))
       return std::nullopt;
     if (C.isForwardRef()) {
@@ -2695,7 +2708,8 @@ void PDBDebugContext::Impl::loadRecordParameters(uint32_t ModuleIndex) const {
   va_t Entry = 0;
   uint32_t End = 0, CodeSize = 0, Nesting = 0;
   std::optional<TypeIndex> Parameter;
-  size_t Work = 200000;
+  size_t Work = ::neverd::limits::debug::
+      kPDBLoaderPDBDebugContextImplLoadRecordParametersWork;
   auto Registers =
       getTargetRegInfo(Arch::X64).integerParamRegs(BinaryFormat::COFF);
   for (; It != Records.end(); ++It) {
@@ -2817,7 +2831,9 @@ void PDBDebugContext::Impl::loadRecordParameters(uint32_t ModuleIndex) const {
     if (!Fact)
       continue;
     auto &At = Staged[Entry];
-    if (At.size() >= 64)
+    if (At.size() >=
+        ::neverd::limits::debug::
+            kPDBLoaderPDBDebugContextImplLoadRecordParametersAtSizeLimit)
       return;
     const auto Previous = llvm::find_if(
         At, [&](const auto &P) { return P.Register == Fact->Register; });

@@ -6,6 +6,8 @@
 
 #include "neverd/types/PDBTypeImport.h"
 
+#include "neverd/types/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
@@ -402,7 +404,8 @@ const Importer::RecordLayout &Importer::layoutOf(cv::TypeIndex Definition) {
   }
   // A size past the members' alignment was declared aligned further.
   if (Size > alignUp(End, Aligned))
-    for (uint64_t Candidate = uint64_t(Aligned) * 2; Candidate <= 4096;
+    for (uint64_t Candidate = uint64_t(Aligned) * 2;
+         Candidate <= ::neverd::limits::types::kMaxInferredRecordAlignment;
          Candidate *= 2)
       if (alignUp(End, Candidate) == Size) {
         Layout.Declared = static_cast<uint32_t>(Candidate);
@@ -526,7 +529,9 @@ FieldCollector Importer::fields(cv::TypeIndex List) {
   std::optional<cv::TypeIndex> Next = List;
   // A long field list continues in another, which a well-formed stream never
   // loops back from; the bound guards a malformed one.
-  for (unsigned Lists = 0; Next && !Next->isNoneType() && Lists < 4096;
+  for (unsigned Lists = 0;
+       Next && !Next->isNoneType() &&
+       Lists < ::neverd::limits::types::kPDBTypeImportImporterFieldsListsLimit;
        ++Lists) {
     const cv::CVType Type = Types.getType(*Next);
     Collector.Continuation.reset();

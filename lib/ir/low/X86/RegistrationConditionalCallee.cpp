@@ -12,6 +12,7 @@
 #include "RegistrationSEHPrivateCall.h"
 #include "RegistrationStateSolver.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -79,7 +80,10 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
   ConditionalFrame Inputs;
   Inputs.Work = Work;
   auto AccountWork = llvm::scope_exit([&] { Work = Inputs.Work; });
-  for (int32_t Arg = 8; Arg <= 128; Arg += 4) {
+  for (int32_t Arg = 8;
+       Arg <= ::neverd::limits::ir::
+                  kRegistrationConditionalCalleeProveBoundSEHCalleeArgLimit;
+       Arg += 4) {
     const auto Cell = Parent.Cells.find(*SP + Arg - 8);
     if (Cell == Parent.Cells.end())
       continue;
@@ -252,11 +256,12 @@ namespace {
 // Active analyzeCheckedX86SEHStates calls on this thread. Bound SEH calls are
 // checked only by analyses nested less deeply than the limit.
 thread_local unsigned SEHStateAnalysisDepth = 0;
-constexpr unsigned kMaxBoundCallCheckDepth = 4;
 } // namespace
 
 unsigned x86SEHStateAnalysisLevel() {
-  return std::min(SEHStateAnalysisDepth, kMaxBoundCallCheckDepth);
+  return std::min(SEHStateAnalysisDepth,
+                  ::neverd::limits::ir::
+                      kRegistrationConditionalCalleeMaxBoundCallCheckDepth);
 }
 
 RegistrationStateAnalysis analyzeCheckedX86SEHStates(
@@ -266,7 +271,9 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     const std::vector<RegistrationSEHControlContract> *Controls,
     RegistrationCallCalleeIndex *Index) {
   unsigned &Depth = SEHStateAnalysisDepth;
-  const bool CheckBoundCalls = Depth < kMaxBoundCallCheckDepth;
+  const bool CheckBoundCalls =
+      Depth < ::neverd::limits::ir::
+                  kRegistrationConditionalCalleeMaxBoundCallCheckDepth;
   ++Depth;
   auto RestoreDepth = llvm::scope_exit([&] { --Depth; });
   BoundCalleeProver Prove =

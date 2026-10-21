@@ -9,6 +9,7 @@
 #include "../../../safety/StackSlotFlow.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 
@@ -163,7 +164,8 @@ private:
     // of one query.
     if (++Steps > kMaxProofSteps)
       return std::nullopt;
-    if (Depth > 64 || Value.Size != TRI.PointerSize ||
+    if (Depth > ::neverd::limits::ir::kMedStackAlignmentResolveDepthLimit ||
+        Value.Size != TRI.PointerSize ||
         (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp))
       return std::nullopt;
     const Key K = key(Value);
@@ -238,7 +240,8 @@ private:
   std::set<Key> Active;
   std::map<Key, int64_t> Assumed;
   bool CycleHit = false;
-  static constexpr size_t kMaxProofSteps = 1 << 16;
+  static constexpr size_t kMaxProofSteps =
+      ::neverd::limits::ir::kMedStackAlignmentMaxProofSteps;
   size_t Steps = 0;
 };
 

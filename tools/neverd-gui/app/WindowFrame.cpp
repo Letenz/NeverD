@@ -1,5 +1,6 @@
 #include "WindowFrame.h"
 
+#include "../Config.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
 #include "TitleBar.h"
@@ -24,8 +25,6 @@ namespace {
 constexpr int InnerEdge = 4;
 /// How far along an edge from a corner a press resizes both edges.
 constexpr int CornerReach = 16;
-/// The band outside the visible window that holds its shadow.
-constexpr int ShadowExtent = 10;
 
 Qt::CursorShape shapeFor(Qt::Edges edges) {
   const bool horizontal = edges & (Qt::LeftEdge | Qt::RightEdge);
@@ -267,8 +266,11 @@ void WindowFrame::paint() {
   // Rings fading away from the edge, then the edge's hairline over them.
   const QColor shadow = theme.chrome(QStringLiteral("WindowShadow"));
   const QRectF edge = QRectF(visible).adjusted(-0.5, -0.5, 0.5, 0.5);
-  for (int ring = ShadowExtent; ring >= 1; --ring) {
-    const double fade = 1.0 - double(ring - 1) / ShadowExtent;
+  for (int ring = ::neverd::limits::gui_config::kWindowFrameShadowExtent;
+       ring >= 1; --ring) {
+    const double fade =
+        1.0 - double(ring - 1) /
+                  ::neverd::limits::gui_config::kWindowFrameShadowExtent;
     QColor color = shadow;
     color.setAlphaF(shadow.alphaF() * fade * fade);
     painter.setPen(QPen(color, 1));
@@ -282,7 +284,10 @@ void WindowFrame::updateMargins() {
   const bool framed = !(states_ & (Qt::WindowMaximized | Qt::WindowFullScreen));
   const QMargins margins =
       drawsShadow_ && framed
-          ? QMargins(ShadowExtent, ShadowExtent, ShadowExtent, ShadowExtent)
+          ? QMargins(::neverd::limits::gui_config::kWindowFrameShadowExtent,
+                     ::neverd::limits::gui_config::kWindowFrameShadowExtent,
+                     ::neverd::limits::gui_config::kWindowFrameShadowExtent,
+                     ::neverd::limits::gui_config::kWindowFrameShadowExtent)
           : QMargins();
   if (margins != margins_) {
     margins_ = margins;

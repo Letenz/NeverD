@@ -10,6 +10,8 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxFiles.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/Support/Endian.h"
 
 namespace neverd::emulation::linux_model {
@@ -31,7 +33,9 @@ LinuxFiles::binderIoctl(LinuxDeviceState &Device, uint32_t Request,
     return CPU.canAccess(Address, Size, Permission | UserAccessible);
   };
   if (!Device.BinderLoopers.contains(CurrentTask) &&
-      Device.BinderLoopers.size() == 4096)
+      Device.BinderLoopers.size() ==
+          ::neverd::limits::emulation::
+              kLinuxBinderLinuxFilesBinderIoctlDeviceBinderLoopersSizeLimit)
     return unsupported(Result, "Binder thread identity budget exhausted");
   // A newly allocated kernel binder_thread needs one return to userspace. Every
   // ioctl clears that flag, even a version query or an ordinary error return.
@@ -91,9 +95,10 @@ LinuxFiles::binderIoctl(LinuxDeviceState &Device, uint32_t Request,
                  ReadBuffer = Get(40);
   // Partial copy faults, malformed/resumed read buffers and unbounded command
   // streams require a broader kernel-copy model. Refuse them before effects.
-  if (WriteSize > 4096 || WriteConsumed > WriteSize ||
-      (WriteSize - WriteConsumed) % 4 || ReadConsumed ||
-      (ReadSize && ReadSize < 4))
+  if (WriteSize > ::neverd::limits::emulation::
+                      kLinuxBinderLinuxFilesBinderIoctlWriteSizeLimit ||
+      WriteConsumed > WriteSize || (WriteSize - WriteConsumed) % 4 ||
+      ReadConsumed || (ReadSize && ReadSize < 4))
     return unsupported(Result,
                        "Binder buffer sizes are outside the control subset");
   auto Writable = Accessible(Argument, sizeof(Record), Write);

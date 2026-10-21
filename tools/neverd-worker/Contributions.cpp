@@ -1,5 +1,7 @@
 #include "Contributions.h"
 
+#include "ResourceLimits.h"
+
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -20,14 +22,19 @@ void fields(const Json &object, std::initializer_list<const char *> allowed) {
   }
 }
 bool identifier(const std::string &text) {
-  return !text.empty() && text.size() <= 64 && text[0] >= 'a' &&
-         text[0] <= 'z' &&
+  return !text.empty() &&
+         text.size() <=
+             ::neverd::limits::worker::kContributionsIdentifierTextSizeLimit &&
+         text[0] >= 'a' && text[0] <= 'z' &&
          text.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_.-") ==
              std::string::npos;
 }
 Json validateQuery(Json query) {
   fields(query, {"operation", "payload"});
-  const auto operation = stringField(query, "operation", {}, 32);
+  const auto operation =
+      stringField(query, "operation", {},
+                  ::neverd::limits::worker::
+                      kContributionsValidateQueryOperationStringFieldMax);
   auto payload = query.value("payload", Json::object());
   if (operation == "metadata")
     fields(payload, {});
@@ -45,21 +52,33 @@ Json validateQuery(Json query) {
         "Contributions may only use whitelisted read-only query templates");
   if (operation == "disasm" || operation == "decompile" ||
       operation == "xrefs") {
-    const auto address = stringField(payload, "address", "${address}", 32);
+    const auto address = stringField(
+        payload, "address", "${address}",
+        ::neverd::limits::worker::
+            kContributionsValidateQueryXrefsDecompileDisasmAddressStringFieldMax);
     if (address != "${address}")
       parseAddress(address);
     payload["address"] = address;
   }
   if (payload.contains("limit") &&
-      sizeField(payload, "limit", 128, operation == "decompile" ? 2048 : 512) ==
-          0)
+      sizeField(payload, "limit",
+                ::neverd::limits::worker::
+                    kContributionsValidateQueryDecompileLimitSizeFieldDefault,
+                operation == "decompile" ? 2048 : 512) == 0)
     throw Error("invalid_manifest", "Query limit must be positive");
   if (payload.contains("offset"))
-    (void)sizeField(payload, "offset", 0, 1000000000);
+    (void)sizeField(payload, "offset", 0,
+                    ::neverd::limits::worker::
+                        kContributionsValidateQueryOffsetSizeFieldMax);
   if (payload.contains("filter"))
-    (void)stringField(payload, "filter", {}, 256);
+    (void)stringField(payload, "filter", {},
+                      ::neverd::limits::worker::
+                          kContributionsValidateQueryFilterStringFieldMax);
   if (payload.contains("representation")) {
-    const auto rep = stringField(payload, "representation", "c", 16);
+    const auto rep = stringField(
+        payload, "representation", "c",
+        ::neverd::limits::worker::
+            kContributionsValidateQueryRepRepresentationStringFieldMax);
     if (rep != "c" && rep != "llvmc" && rep != "low" && rep != "med" &&
         rep != "high" && rep != "llvm" && rep != "source" && rep != "rust" &&
         rep != "go")
@@ -67,7 +86,10 @@ Json validateQuery(Json query) {
                   "Unsupported representation in query template");
   }
   if (payload.contains("direction")) {
-    const auto direction = stringField(payload, "direction", "to", 8);
+    const auto direction =
+        stringField(payload, "direction", "to",
+                    ::neverd::limits::worker::
+                        kContributionsValidateQueryDirectionStringFieldMax);
     if (direction != "to" && direction != "from")
       throw Error("invalid_manifest", "Invalid xref direction");
   }
@@ -124,7 +146,8 @@ Json Contributions::registerFile(const std::string &pathText) {
         reinterpret_cast<const char8_t *>(pathText.data()), pathText.size()));
     std::error_code ec;
     const auto bytes = std::filesystem::file_size(path, ec);
-    if (ec || bytes > 65536)
+    if (ec ||
+        bytes > ::neverd::limits::worker::kContributionsRegisterFileBytesLimit)
       throw Error(
           "invalid_manifest",
           "Manifest must be an accessible JSON file no larger than 64 KiB");
@@ -141,33 +164,50 @@ Json Contributions::registerFile(const std::string &pathText) {
     if (manifest.value("schema_version", 0) != 1)
       throw Error("invalid_manifest",
                   "Only contribution schema version 1 is supported");
-    const auto nameSpace = stringField(manifest, "namespace", {}, 64);
+    const auto nameSpace = stringField(
+        manifest, "namespace", {},
+        ::neverd::limits::worker::
+            kContributionsRegisterFileNameSpaceNamespaceStringFieldMax);
     if (!identifier(nameSpace) || nameSpace == "neverd")
       throw Error("invalid_manifest",
                   "Namespace must be a non-reserved lowercase identifier");
-    if (stringField(manifest, "version", {}, 32).empty())
+    if (stringField(manifest, "version", {},
+                    ::neverd::limits::worker::
+                        kContributionsRegisterFileVersionStringFieldMax)
+            .empty())
       throw Error("invalid_manifest", "Manifest version is required");
     if (!manifest.contains("contributions") ||
         !manifest["contributions"].is_array() ||
         manifest["contributions"].empty() ||
-        manifest["contributions"].size() > 32)
+        manifest["contributions"].size() >
+            ::neverd::limits::worker::
+                kContributionsRegisterFileManifestContributionsSizeLimit)
       throw Error("invalid_manifest",
                   "A manifest must contain 1 to 32 contributions");
     std::set<std::string> ids;
     for (auto &item : manifest["contributions"]) {
       fields(item, {"id", "kind", "title", "query", "columns"});
-      const auto id = stringField(item, "id", {}, 129);
+      const auto id =
+          stringField(item, "id", {},
+                      ::neverd::limits::worker::
+                          kContributionsRegisterFileIdIdStringFieldMax);
       if (!id.starts_with(nameSpace + ":") ||
           !identifier(id.substr(nameSpace.size() + 1)) ||
           !ids.insert(id).second)
         throw Error(
             "invalid_manifest",
             "Contribution IDs must be unique and prefixed by their namespace");
-      const auto kind = stringField(item, "kind", {}, 16);
+      const auto kind =
+          stringField(item, "kind", {},
+                      ::neverd::limits::worker::
+                          kContributionsRegisterFileKindKindStringFieldMax);
       if (kind != "command" && kind != "panel" && kind != "table")
         throw Error("invalid_manifest",
                     "Contribution kind must be command, panel or table");
-      if (stringField(item, "title", {}, 256).empty())
+      if (stringField(item, "title", {},
+                      ::neverd::limits::worker::
+                          kContributionsRegisterFileTitleStringFieldMax)
+              .empty())
         throw Error("invalid_manifest", "Contribution title is required");
       if (!item.contains("query"))
         throw Error("invalid_manifest",
@@ -175,13 +215,21 @@ Json Contributions::registerFile(const std::string &pathText) {
       item["query"] = validateQuery(item["query"]);
       if (item.contains("columns")) {
         if (kind != "table" || !item["columns"].is_array() ||
-            item["columns"].size() > 16)
+            item["columns"].size() >
+                ::neverd::limits::worker::kMaxContributionColumns)
           throw Error("invalid_manifest",
                       "Only tables may declare up to 16 columns");
         for (const auto &column : item["columns"]) {
           fields(column, {"key", "title"});
-          if (!identifier(stringField(column, "key", {}, 64)) ||
-              stringField(column, "title", {}, 128).empty())
+          if (!identifier(stringField(
+                  column, "key", {},
+                  ::neverd::limits::worker::
+                      kContributionsRegisterFileTitleKeyKeyStringFieldMax)) ||
+              stringField(
+                  column, "title", {},
+                  ::neverd::limits::worker::
+                      kContributionsRegisterFileTitleKeyTitleStringFieldMax)
+                  .empty())
             throw Error("invalid_manifest", "Invalid table column");
         }
       }
@@ -190,8 +238,11 @@ Json Contributions::registerFile(const std::string &pathText) {
     for (const auto &[otherNamespace, other] : manifests_)
       if (otherNamespace != nameSpace)
         count += other.at("contributions").size();
-    if (count > 128 ||
-        (!manifests_.contains(nameSpace) && manifests_.size() >= 16))
+    if (count >
+            ::neverd::limits::worker::kContributionsRegisterFileCountLimit ||
+        (!manifests_.contains(nameSpace) &&
+         manifests_.size() >=
+             ::neverd::limits::worker::kMaxContributionManifests))
       throw Error(
           "budget_exceeded",
           "Contribution registry is limited to 16 namespaces / 128 items");

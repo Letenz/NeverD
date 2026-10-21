@@ -8,6 +8,7 @@
 
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/ARMTrap.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -101,11 +102,6 @@ std::optional<va_t> sehGSCookieAddress(const ExceptionFunction &F,
 }
 
 namespace {
-
-constexpr size_t MaxWrapperBytes = 512;
-constexpr size_t MaxWrapperInstructions = 64;
-constexpr size_t MaxWrapperBlocks = 32;
-constexpr size_t MaxWrapperEdges = 128;
 
 class CapstoneSession {
 public:
@@ -408,7 +404,8 @@ bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
                               const uint8_t *Code, size_t CodeSize,
                               std::vector<std::string> &Names) {
   Names.clear();
-  if (!Code || CodeSize == 0 || CodeSize > MaxWrapperBytes ||
+  if (!Code || CodeSize == 0 ||
+      CodeSize > ::neverd::limits::loader::kCOFFExceptionGSMaxWrapperBytes ||
       BodyVA > InvalidVA - CodeSize || !Img.isCodeRange(BodyVA, CodeSize))
     return false;
   if ((A == Arch::AArch64 && ((BodyVA % 4) != 0 || (CodeSize % 4) != 0)) ||
@@ -451,7 +448,7 @@ bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
   size_t EdgeCount = 0;
 
   auto consumeEdge = [&]() {
-    if (EdgeCount == MaxWrapperEdges)
+    if (EdgeCount == ::neverd::limits::loader::kCOFFExceptionGSMaxWrapperEdges)
       return false;
     ++EdgeCount;
     return true;
@@ -470,7 +467,8 @@ bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
       return false;
     auto [It, Inserted] = BlockStarts.insert(Offset);
     (void)It;
-    if (BlockStarts.size() > MaxWrapperBlocks)
+    if (BlockStarts.size() >
+        ::neverd::limits::loader::kCOFFExceptionGSMaxWrapperBlocks)
       return false;
     if (Inserted && Instructions.find(Offset) == Instructions.end())
       Worklist.push_back(Offset);
@@ -551,8 +549,11 @@ bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
       if (Boundary != BlockStarts.end() && *Boundary < End)
         return false;
 
-      if (++InstructionCount > MaxWrapperInstructions ||
-          Insn->size > MaxWrapperBytes - DecodedBytes)
+      if (++InstructionCount > ::neverd::limits::loader::
+                                   kCOFFExceptionGSMaxWrapperInstructions ||
+          Insn->size >
+              ::neverd::limits::loader::kCOFFExceptionGSMaxWrapperBytes -
+                  DecodedBytes)
         return false;
       DecodedBytes += Insn->size;
       Instructions.emplace(Offset, End);

@@ -8,6 +8,7 @@
 #include "COFFRegistrationSEHException.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 
 #include <functional>
 #include <tuple>
@@ -42,22 +43,27 @@ bindSEHNullReads(const MedFunc &Source,
         Found->second = nullptr;
     }
   }
-  std::function<bool(const MedVar &, unsigned)> SourceZero =
-      [&](const MedVar &Value, unsigned Depth) {
-        if (++Work > limits::kMaxRegistrationEHStateWork || Depth > 32 ||
-            !Value.Size || Value.Size > 8)
-          return false;
-        if (Value.isConst())
-          return Value.ConstVal == 0;
-        const auto Found = Definitions.find(Variable(Value));
-        if (Found == Definitions.end() || !Found->second)
-          return false;
-        const auto &Op = *Found->second;
-        return Op.Output.Size == Value.Size && Op.NumInputs == 1 &&
-               (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
-                Op.Opcode == NdOp::INT_SEXT) &&
-               SourceZero(Op.Inputs[0], Depth + 1);
-      };
+  std::function<bool(const MedVar &, unsigned)> SourceZero = [&](const MedVar
+                                                                     &Value,
+                                                                 unsigned
+                                                                     Depth) {
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationSEHNullAccessBindSEHNullReadsSourceZeroDepthLimit ||
+        !Value.Size || Value.Size > 8)
+      return false;
+    if (Value.isConst())
+      return Value.ConstVal == 0;
+    const auto Found = Definitions.find(Variable(Value));
+    if (Found == Definitions.end() || !Found->second)
+      return false;
+    const auto &Op = *Found->second;
+    return Op.Output.Size == Value.Size && Op.NumInputs == 1 &&
+           (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
+            Op.Opcode == NdOp::INT_SEXT) &&
+           SourceZero(Op.Inputs[0], Depth + 1);
+  };
   for (const auto &Block : Source.Blocks)
     for (const auto &Op : Block.Ops) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
@@ -79,39 +85,45 @@ bindSEHNullReads(const MedFunc &Source,
   RegistrationFrameStores Stores;
   if (!Stores.build(Functions, Work))
     return rejectIR("SEH null-read spill ownership exceeds its work budget");
-  std::function<bool(const llvm::Value *, unsigned)> IsZero =
-      [&](const llvm::Value *Value, unsigned Depth) {
-        if (++Work > limits::kMaxRegistrationEHStateWork || Depth > 32)
-          return false;
-        if (llvm::isa<llvm::ConstantPointerNull>(Value))
-          return true;
-        if (const auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Value))
-          return Constant->isZero();
-        if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Value))
-          return !Cast->hasPoisonGeneratingFlags() &&
-                 (Cast->getOpcode() == llvm::Instruction::IntToPtr ||
-                  Cast->getOpcode() == llvm::Instruction::ZExt ||
-                  Cast->getOpcode() == llvm::Instruction::SExt ||
-                  Cast->getOpcode() == llvm::Instruction::Trunc ||
-                  Cast->getOpcode() == llvm::Instruction::BitCast) &&
-                 IsZero(Cast->getOperand(0), Depth + 1);
-        const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Value);
-        if (!Load || Load->isAtomic() || !Load->getType()->isIntegerTy())
-          return false;
-        if (!Stores.directDefinitions(Load->getPointerOperand(), Work))
-          return false;
-        const auto Prefix =
-            Stores.candidates(Load->getPointerOperand(), Load->getParent(),
-                              Load->getPrevNode(), Work);
-        if (!Prefix || Prefix->empty())
-          return false;
-        const auto *Store = Prefix->back();
-        return !Store->isAtomic() &&
-               Store->getValueOperand()->getType() == Load->getType() &&
-               Store->getParent() == Load->getParent() &&
-               Store->comesBefore(Load) &&
-               IsZero(Store->getValueOperand(), Depth + 1);
-      };
+  std::function<bool(const llvm::Value *, unsigned)> IsZero = [&](const llvm::
+                                                                      Value *
+                                                                          Value,
+                                                                  unsigned
+                                                                      Depth) {
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationSEHNullAccessBindSEHNullReadsIsZeroDepthLimit)
+      return false;
+    if (llvm::isa<llvm::ConstantPointerNull>(Value))
+      return true;
+    if (const auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Value))
+      return Constant->isZero();
+    if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Value))
+      return !Cast->hasPoisonGeneratingFlags() &&
+             (Cast->getOpcode() == llvm::Instruction::IntToPtr ||
+              Cast->getOpcode() == llvm::Instruction::ZExt ||
+              Cast->getOpcode() == llvm::Instruction::SExt ||
+              Cast->getOpcode() == llvm::Instruction::Trunc ||
+              Cast->getOpcode() == llvm::Instruction::BitCast) &&
+             IsZero(Cast->getOperand(0), Depth + 1);
+    const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Value);
+    if (!Load || Load->isAtomic() || !Load->getType()->isIntegerTy())
+      return false;
+    if (!Stores.directDefinitions(Load->getPointerOperand(), Work))
+      return false;
+    const auto Prefix =
+        Stores.candidates(Load->getPointerOperand(), Load->getParent(),
+                          Load->getPrevNode(), Work);
+    if (!Prefix || Prefix->empty())
+      return false;
+    const auto *Store = Prefix->back();
+    return !Store->isAtomic() &&
+           Store->getValueOperand()->getType() == Load->getType() &&
+           Store->getParent() == Load->getParent() &&
+           Store->comesBefore(Load) &&
+           IsZero(Store->getValueOperand(), Depth + 1);
+  };
   for (const auto *Function : Functions)
     for (const auto &Block : *Function)
       for (const auto &I : Block) {

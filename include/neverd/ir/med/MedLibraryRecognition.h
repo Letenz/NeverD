@@ -7,6 +7,7 @@
 #ifndef NEVERD_IR_MED_MEDLIBRARYRECOGNITION_H
 #define NEVERD_IR_MED_MEDLIBRARYRECOGNITION_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/sigs/LibraryRecognition.h"
 
@@ -47,7 +48,9 @@ struct MedLibraryRecognitionResult {
 MedLibraryRecognitionResult recognizeMedLibraryOperations(
     const MedFunc &Function, const BinaryImage &Image,
     const std::map<std::string, sigs::LibraryFeaturePack> &Packs,
-    llvm::ArrayRef<MedLibraryReceiver> Receivers = {}, size_t MaxWork = 250000,
+    llvm::ArrayRef<MedLibraryReceiver> Receivers = {},
+    size_t MaxWork = ::neverd::limits::ir::
+        kMedLibraryRecognitionRecognizeMedLibraryOperationsMaxWork,
     const MedLibraryIdentityIndex *Identities = nullptr);
 
 } // namespace neverd

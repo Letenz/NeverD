@@ -1,6 +1,7 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Support/Endian.h"
@@ -170,7 +171,8 @@ bool supportsImmutableImageReads(const BinaryImage &Image) {
 
 std::optional<std::vector<uint8_t>>
 readImmutableImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
-  if (!supportsImmutableImageReads(Image) || Size > 1024 * 1024)
+  if (!supportsImmutableImageReads(Image) ||
+      Size > ::neverd::limits::loader::kMaxImageReadBytes)
     return std::nullopt;
   // A zero-length borrow still requires a valid nonnull object address.
   const uint64_t Extent = Size ? Size : 1;
@@ -182,7 +184,8 @@ readImmutableImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
 
 std::optional<std::vector<uint8_t>>
 readInitialImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
-  if (!supportedImage(Image) || !Size || Size > 1024 * 1024)
+  if (!supportedImage(Image) || !Size ||
+      Size > ::neverd::limits::loader::kMaxImageReadBytes)
     return std::nullopt;
   const auto *Bytes = mappedBytes(Image, Address, Size, false);
   if (!Bytes || hasConflictingFixups(Image, Address, Size, false))
@@ -192,7 +195,8 @@ readInitialImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
 
 std::optional<std::vector<uint8_t>>
 readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
-  if (!supportedImmutableCodeImage(Image) || !Size || Size > 1024 * 1024)
+  if (!supportedImmutableCodeImage(Image) || !Size ||
+      Size > ::neverd::limits::loader::kMaxImageReadBytes)
     return std::nullopt;
   const auto *Bytes = mappedBytes(Image, Address, Size, true, true);
   if (!Bytes || hasConflictingFixups(Image, Address, Size, false))
@@ -202,7 +206,8 @@ readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
 
 bool isFileBackedCodeImageRange(const BinaryImage &Image, va_t Address,
                                 uint32_t Size) {
-  return supportsImmutableImageReads(Image) && Size && Size <= 1024 * 1024 &&
+  return supportsImmutableImageReads(Image) && Size &&
+         Size <= ::neverd::limits::loader::kMaxImageReadBytes &&
          mappedBytes(Image, Address, Size, false, true);
 }
 
@@ -212,8 +217,8 @@ readImmutablePE32CodeBytes(const BinaryImage &Image, va_t Address,
                            const std::vector<va_t> &AbsoluteOperands) {
   if (Image.Format != BinaryFormat::COFF || Image.IsRelocatable ||
       Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 || !Size ||
-      Size > 1024 * 1024 || Address > UINT32_MAX ||
-      Size > uint64_t(UINT32_MAX) + 1 - Address)
+      Size > ::neverd::limits::loader::kMaxImageReadBytes ||
+      Address > UINT32_MAX || Size > uint64_t(UINT32_MAX) + 1 - Address)
     return std::nullopt;
   const auto *Bytes = mappedBytes(Image, Address, Size, true, true);
   if (!Bytes)
@@ -287,7 +292,8 @@ bool isImagePointerBitPattern(const BinaryImage &Image, uint64_t Bits,
 bool isFileBackedWritableImageRange(const BinaryImage &Image, va_t Address,
                                     uint32_t Size) {
   if ((!supportedImage(Image) && !supportedPEImage(Image)) || !Size ||
-      Size > 1024 * 1024 || !mappedBytes(Image, Address, Size, false))
+      Size > ::neverd::limits::loader::kMaxImageReadBytes ||
+      !mappedBytes(Image, Address, Size, false))
     return false;
   const auto *Section = Image.getSectionFor(Address);
   const auto *Segment = Image.getSegmentFor(Address);

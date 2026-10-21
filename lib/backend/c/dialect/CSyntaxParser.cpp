@@ -15,6 +15,8 @@
 
 #include "CSyntaxTree.h"
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -23,10 +25,6 @@ using namespace neverd;
 using namespace neverd::csyntax;
 
 namespace {
-
-/// Nesting deeper than this is refused rather than read on a stack it could
-/// exhaust; emitted lane assembly reaches about 200.
-constexpr unsigned MaxNesting = 1024;
 
 /// The typedef names the headers emitted C includes declare.
 const llvm::StringSet<> &headerTypeNames() {
@@ -674,7 +672,7 @@ private:
   }
 
   bool parseDeclarator(Declarator &D, bool Abstract) {
-    if (++Nesting > MaxNesting)
+    if (++Nesting > ::neverd::limits::backend::kCSyntaxParserMaxNesting)
       return fail("declarator nested too deeply");
     struct PointerLevel {
       bool Const = false, Volatile = false;
@@ -1177,7 +1175,7 @@ private:
   }
 
   Stmt *parseStatement() {
-    if (++Nesting > MaxNesting)
+    if (++Nesting > ::neverd::limits::backend::kCSyntaxParserMaxNesting)
       return fail("statements nested too deeply"), nullptr;
     Stmt *S = parseStatementInner();
     --Nesting;
@@ -1485,7 +1483,7 @@ private:
   }
 
   Expr *parseUnary() {
-    if (++Nesting > MaxNesting)
+    if (++Nesting > ::neverd::limits::backend::kCSyntaxParserMaxNesting)
       return fail("expression nested too deeply"), nullptr;
     Expr *E = parseUnaryInner();
     --Nesting;

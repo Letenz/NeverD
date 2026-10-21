@@ -18,6 +18,7 @@
 
 #include "HighDCEDetail.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -249,7 +250,7 @@ static bool isSelfAssign(const HighStmt &S) {
 
 /// Whether \p E reads the local \p Key.
 static bool readsLocal(const HighExpr &E, const VarKey &Key, unsigned Depth) {
-  if (Depth > 64)
+  if (Depth > ::neverd::limits::ir::kMaxHighDCEReadDepth)
     return true;
   if (isLocalExpr(E) && VK(E.Var) == Key)
     return true;
@@ -457,7 +458,8 @@ static void preDCE(std::vector<HighStmt> &Stmts,
                    const MedVar *SourceCapture = nullptr) {
   size_t Before = Stmts.size();
   const AssignmentEffects Effects(Stmts);
-  for (int PreIter = 0; PreIter < 8; ++PreIter) {
+  for (int PreIter = 0;
+       PreIter < ::neverd::limits::ir::kHighDCEPreDCEPreIterLimit; ++PreIter) {
     VarKeySet Refs;
     collectLiveRefs(Stmts, Refs, Effects, SourceCapture);
     if (!eliminateDeadAssigns(Stmts, Refs, Entries, Effects))
@@ -550,7 +552,11 @@ static bool exprHasCall(const HighExpr *E) {
 static bool followingHasObservableWork(const std::vector<HighStmt> &Stmts,
                                        size_t After) {
   const size_t Begin = After + 1;
-  for (size_t K = Begin; K < Stmts.size() && K - Begin <= 32; ++K) {
+  for (size_t K = Begin;
+       K < Stmts.size() &&
+       K - Begin <=
+           ::neverd::limits::ir::kHighDCEFollowingHasObservableWorkKBeginLimit;
+       ++K) {
     const HighStmt &S = Stmts[K];
     if (S.Kind == StmtKind::Store || S.Kind == StmtKind::If ||
         S.Kind == StmtKind::IfElse || S.Kind == StmtKind::CxxTry ||
@@ -675,13 +681,15 @@ static void eliminateDeadConditions(std::vector<HighStmt> &Stmts,
 
 static void iterativeDCE(HighFunc &Func,
                          const std::unordered_set<va_t> &Entries) {
-  for (int Outer = 0; Outer < 6; ++Outer) {
+  for (int Outer = 0;
+       Outer < ::neverd::limits::ir::kHighDCEIterativeDCEOuterLimit; ++Outer) {
     LLVM_DEBUG(llvm::dbgs() << "      dce iter " << Outer << "/6 (" << Func.Name
                             << ", " << Func.Body.size() << " stmts)\n");
     bool DCEChanged = false;
     {
       const AssignmentEffects Effects(Func.Body);
-      for (int Iter = 0; Iter < 10; ++Iter) {
+      for (int Iter = 0;
+           Iter < ::neverd::limits::ir::kHighDCEIterativeDCEIterLimit; ++Iter) {
         VarKeySet Refs;
         collectLiveRefs(Func.Body, Refs, Effects,
                         Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input
@@ -870,7 +878,10 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   // copy propagation, which could create a cycle in the expression DAG.
   {
     const AssignmentEffects Effects(Func.Body);
-    for (int Iter = 0; Iter < 10; ++Iter) {
+    for (int Iter = 0;
+         Iter < ::neverd::limits::ir::
+                    kHighDCEMedToHighConverterEliminateDeadStmtsIterLimit;
+         ++Iter) {
       VarKeySet Refs;
       collectLiveRefs(Func.Body, Refs, Effects,
                       Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input

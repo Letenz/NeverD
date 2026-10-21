@@ -1041,7 +1041,9 @@ const char *neverd_resolve_addr(neverd_session_t Sess, neverd_va_t Addr) {
       const uint8_t *P = Seg.Data.data() + Off;
       size_t Remain = Seg.Data.size() - Off;
       size_t Len = 0;
-      while (Len < Remain && Len < 256 && P[Len] >= 0x20 && P[Len] < 0x7f)
+      while (Len < Remain &&
+             Len < ::neverd::sdk::kNeverDCAPIInfoNeverdResolveAddrLenLimit &&
+             P[Len] >= 0x20 && P[Len] < 0x7f)
         ++Len;
       if (Len >= 4 && (Len >= Remain || P[Len] == 0)) {
         Obj["type"] = "string";

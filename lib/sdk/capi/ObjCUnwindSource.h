@@ -8,6 +8,7 @@
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/sdk/Limits.h"
 
 #include <algorithm>
 #include <utility>
@@ -48,8 +49,10 @@ inline std::optional<ObjCUnwindScalarSlice>
 objcUnwindScalarSlice(const ExprPtr &Expression,
                       const ObjCUnwindScalarCopies &Copies, bool Exception,
                       size_t &Budget, unsigned Depth = 0) {
-  if (!Expression || !Budget || Depth > 32 || !Expression->Type ||
-      !Expression->Type->Size || Expression->Type->Size > 8 ||
+  if (!Expression || !Budget ||
+      Depth > ::neverd::sdk::kObjCUnwindSourceObjcUnwindScalarSliceDepthLimit ||
+      !Expression->Type || !Expression->Type->Size ||
+      Expression->Type->Size > 8 ||
       (Expression->Type->Kind != NdTypeKind::Int &&
        Expression->Type->Kind != NdTypeKind::Ptr) ||
       Expression->IntrinsicId != Intrinsic::None ||

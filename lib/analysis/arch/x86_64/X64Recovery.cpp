@@ -9,6 +9,7 @@
 #include "NativeStackControl.h"
 #include "X64MachineFlags.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/symbolic/SymState.h"
 
@@ -168,7 +169,10 @@ validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
   if (auto Error = validateX64TerminalImportDomain(Options))
     return std::move(Error);
   const auto Text = [](llvm::StringRef S, bool AllowSpace = false) {
-    return !S.empty() && S.size() <= 4096 &&
+    return !S.empty() &&
+           S.size() <=
+               ::neverd::limits::analysis::
+                   kX64RecoveryValidateRawEnvironmentDeclarationsTextTextSSizeLimit &&
            llvm::all_of(S, [&](unsigned char C) {
              return C >= (AllowSpace ? 32 : 33) && C <= 126;
            });

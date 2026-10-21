@@ -18,6 +18,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
@@ -2422,30 +2423,32 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
           const std::vector<HighStmt> &Arm =
               std::get<2>(*Guard) ? S.Body : S.ElseBody;
           const uint16_t PtrSize = pointerBytes(Opts.TheArch);
-          std::function<void(const HighExpr &, unsigned)> Note =
-              [&](const HighExpr &E, unsigned Depth) {
-                if (Depth > 8)
-                  return;
-                if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
-                  const std::string Name = varName(E.Var);
-                  const bool SizeOk = E.Var.Size == 0 || E.Var.Size == PtrSize;
-                  if (!Name.empty() && E.Var.Kind != MedVar::Param &&
-                      !isReservedParamDisplayName(Name) &&
-                      !Assigned.count(Name) && !FieldForward.count(Name) &&
-                      SizeOk) {
-                    FieldForward[Name] = Member;
-                    if (MemberType)
-                      FieldForwardTypes[Name] = MemberType;
-                  }
-                  if (auto It = ValueForward.find(Name);
-                      It != ValueForward.end() && It->second &&
-                      It->second != &E)
-                    Note(*It->second, Depth + 1);
-                }
-                for (const ExprPtr &Op : E.Operands)
-                  if (Op)
-                    Note(*Op, Depth);
-              };
+          std::function<void(const HighExpr &, unsigned)> Note = [&](const HighExpr
+                                                                         &E,
+                                                                     unsigned
+                                                                         Depth) {
+            if (Depth >
+                ::neverd::limits::backend::
+                    kHighCFuncWriterHighCWriterCollectFieldLoadForwardGuardAliasNoteDepthLimit)
+              return;
+            if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+              const std::string Name = varName(E.Var);
+              const bool SizeOk = E.Var.Size == 0 || E.Var.Size == PtrSize;
+              if (!Name.empty() && E.Var.Kind != MedVar::Param &&
+                  !isReservedParamDisplayName(Name) && !Assigned.count(Name) &&
+                  !FieldForward.count(Name) && SizeOk) {
+                FieldForward[Name] = Member;
+                if (MemberType)
+                  FieldForwardTypes[Name] = MemberType;
+              }
+              if (auto It = ValueForward.find(Name);
+                  It != ValueForward.end() && It->second && It->second != &E)
+                Note(*It->second, Depth + 1);
+            }
+            for (const ExprPtr &Op : E.Operands)
+              if (Op)
+                Note(*Op, Depth);
+          };
           for (const HighStmt &ArmS : Arm) {
             if (Analysis.DeadStmts.count(&ArmS) || stmtHiddenFromC(ArmS)) {
               if (ArmS.Kind == StmtKind::Assign && ArmS.Val && ArmS.Dst &&
@@ -3090,7 +3093,8 @@ const HighExpr *stmtCallExpr(const HighStmt &S) {
 
 const HighExpr *peelCxxThrowDisplay(const HighExpr *E) {
   unsigned Depth = 0;
-  while (E && Depth++ < 8) {
+  while (E && Depth++ < ::neverd::limits::backend::
+                            kHighCFuncWriterPeelCxxThrowDisplayDepthLimit) {
     if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
         !E->Operands.empty()) {
       E = E->Operands[0].get();
@@ -3117,7 +3121,11 @@ void HighCWriter::foldSignedJleConds(std::vector<HighStmt> &Stmts) {
   auto SameScalar = [&](const HighExpr *A, const HighExpr *B) {
     auto Peel = [&](const HighExpr *E) {
       unsigned Depth = 0;
-      while (E && Depth++ < 6) {
+      while (
+          E &&
+          Depth++ <
+              ::neverd::limits::backend::
+                  kHighCFuncWriterHighCWriterFoldSignedJleCondsSameScalarPeelDepthLimit) {
         E = forwardedExpr(E);
         E = unwrapIntegerView(E);
         if (!E || E->Kind != ExprKind::BinOp || E->Operands.size() != 2)
@@ -3404,7 +3412,11 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
 
   auto regionDominatedBy = [&](uint64_t Child, uint64_t Ancestor) {
     unsigned Depth = 0;
-    while (Child && Depth++ < 64) {
+    while (
+        Child &&
+        Depth++ <
+            ::neverd::limits::backend::
+                kHighCFuncWriterHighCWriterCollectValueForwardRegionDominatedByDepthLimit) {
       if (Child == Ancestor)
         return true;
       auto It = RegionParent.find(Child);
@@ -3838,34 +3850,38 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
             [&](const ExprPtr &Child) { Hit = Hit || Self(*Child, Self); });
         return Hit;
       };
-      std::function<void(const HighExpr &, unsigned)> Collect =
-          [&](const HighExpr &E, unsigned Depth) {
-            if (Depth > 64) {
-              ReadsMemory = true;
-              EffectfulLoadAddress = true;
-              return;
-            }
-            if (E.Kind == ExprKind::Load)
-              E.forEachChildExpr([&](const ExprPtr &Address) {
-                EffectfulLoadAddress |= ExprWrites(*Address, ExprWrites);
-              });
-            if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
-              const std::string Read = varName(E.Var);
-              if (!Reads.insert(Read).second)
-                return;
-              if (auto It = ValueForward.find(Read);
-                  It != ValueForward.end() && It->second)
-                Collect(*It->second, Depth + 1);
-              if (auto It = CandidateDefs.find(Read);
-                  It != CandidateDefs.end() && It->second->Val)
-                Collect(*It->second->Val, Depth + 1);
-            }
-            if (E.Kind == ExprKind::Load || E.Kind == ExprKind::Call ||
-                E.Kind == ExprKind::Store)
-              ReadsMemory = true;
-            E.forEachChildExpr(
-                [&](const ExprPtr &Child) { Collect(*Child, Depth + 1); });
-          };
+      std::function<void(const HighExpr &, unsigned)> Collect = [&](const HighExpr
+                                                                        &E,
+                                                                    unsigned
+                                                                        Depth) {
+        if (Depth >
+            ::neverd::limits::backend::
+                kHighCFuncWriterHighCWriterCollectValueForwardCollectDepthLimit) {
+          ReadsMemory = true;
+          EffectfulLoadAddress = true;
+          return;
+        }
+        if (E.Kind == ExprKind::Load)
+          E.forEachChildExpr([&](const ExprPtr &Address) {
+            EffectfulLoadAddress |= ExprWrites(*Address, ExprWrites);
+          });
+        if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+          const std::string Read = varName(E.Var);
+          if (!Reads.insert(Read).second)
+            return;
+          if (auto It = ValueForward.find(Read);
+              It != ValueForward.end() && It->second)
+            Collect(*It->second, Depth + 1);
+          if (auto It = CandidateDefs.find(Read);
+              It != CandidateDefs.end() && It->second->Val)
+            Collect(*It->second->Val, Depth + 1);
+        }
+        if (E.Kind == ExprKind::Load || E.Kind == ExprKind::Call ||
+            E.Kind == ExprKind::Store)
+          ReadsMemory = true;
+        E.forEachChildExpr(
+            [&](const ExprPtr &Child) { Collect(*Child, Depth + 1); });
+      };
       Collect(*C.Stmt->Val, 0);
       // A snapshot cannot replay calls, stores or ordered loads embedded in
       // its address, even when no statement between the definition and use
@@ -3879,8 +3895,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       std::set<std::string> WriteSeen{C.Name};
       std::function<bool(const HighExpr &, unsigned)> FoldWrites =
           [&](const HighExpr &E, unsigned Depth) -> bool {
-        if (Depth > 64 || E.Kind == ExprKind::Call ||
-            E.Kind == ExprKind::Store ||
+        if (Depth >
+                ::neverd::limits::backend::
+                    kHighCFuncWriterHighCWriterCollectValueForwardFoldWritesDepthLimit ||
+            E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
             E.MemoryOrdering != NdMemoryOrdering::None)
           return true;
         if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
@@ -3905,8 +3923,11 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       std::set<std::string> AccessSeen{C.Name};
       std::function<bool(const HighExpr &, unsigned)> AccessesMemory =
           [&](const HighExpr &E, unsigned Depth) -> bool {
-        if (Depth > 64 || E.Kind == ExprKind::Load ||
-            E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+        if (Depth >
+                ::neverd::limits::backend::
+                    kHighCFuncWriterHighCWriterCollectValueForwardAccessesMemoryDepthLimit ||
+            E.Kind == ExprKind::Load || E.Kind == ExprKind::Call ||
+            E.Kind == ExprKind::Store ||
             E.MemoryOrdering != NdMemoryOrdering::None)
           return true;
         if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
@@ -4082,8 +4103,11 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
         for (unsigned Depth = 0; !Changed && Region != C.Region; ++Depth) {
           const auto Parent = RegionParent.find(Region);
           const auto Split = RegionSplit.find(Region);
-          if (Depth >= 64 || Parent == RegionParent.end() ||
-              Split == RegionSplit.end() || !Split->second) {
+          if (Depth >=
+                  ::neverd::limits::backend::
+                      kHighCFuncWriterHighCWriterCollectValueForwardDepthLimit ||
+              Parent == RegionParent.end() || Split == RegionSplit.end() ||
+              !Split->second) {
             Changed = true;
             break;
           }
@@ -4144,7 +4168,12 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           continue;
         }
         uint64_t Child = UIt->second.Region;
-        for (unsigned Depth = 0; Child && Depth < 64; ++Depth) {
+        for (unsigned Depth = 0;
+             Child &&
+             Depth <
+                 ::neverd::limits::backend::
+                     kHighCFuncWriterHighCWriterCollectValueForwardDepthLimit;
+             ++Depth) {
           auto Pit = RegionParent.find(Child);
           if (Pit == RegionParent.end())
             break;
@@ -4256,25 +4285,29 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
         UseStmt->Kind == StmtKind::DoWhile || UseStmt->Kind == StmtKind::For) {
       std::set<std::string> Reads;
       bool ReadsState = false;
-      std::function<void(const HighExpr &, unsigned)> Collect =
-          [&](const HighExpr &E, unsigned Depth) {
-            if (Depth > 64) {
-              ReadsState = true;
-              return;
-            }
-            if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
-              const std::string Read = varName(E.Var);
-              Reads.insert(Read);
-              if (auto It = ValueForward.find(Read);
-                  It != ValueForward.end() && It->second)
-                Collect(*It->second, Depth + 1);
-            }
-            if (E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
-                E.Kind == ExprKind::Call)
-              ReadsState = true;
-            E.forEachChildExpr(
-                [&](const ExprPtr &Child) { Collect(*Child, Depth + 1); });
-          };
+      std::function<void(const HighExpr &, unsigned)> Collect = [&](const HighExpr
+                                                                        &E,
+                                                                    unsigned
+                                                                        Depth) {
+        if (Depth >
+            ::neverd::limits::backend::
+                kHighCFuncWriterHighCWriterCollectValueForwardCollectDepthLimit) {
+          ReadsState = true;
+          return;
+        }
+        if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+          const std::string Read = varName(E.Var);
+          Reads.insert(Read);
+          if (auto It = ValueForward.find(Read);
+              It != ValueForward.end() && It->second)
+            Collect(*It->second, Depth + 1);
+        }
+        if (E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
+            E.Kind == ExprKind::Call)
+          ReadsState = true;
+        E.forEachChildExpr(
+            [&](const ExprPtr &Child) { Collect(*Child, Depth + 1); });
+      };
       Collect(*C.Stmt->Val, 0);
       std::function<bool(const std::vector<HighStmt> &)> Assigns =
           [&](const std::vector<HighStmt> &Stmts) {

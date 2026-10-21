@@ -18,6 +18,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -484,7 +485,7 @@ bool incomingBytesReachUse(const MedFunc &Func, uint64_t RegOff) {
           return true;
       }
     }
-    if (Round > 64)
+    if (Round > ::neverd::limits::ir::kMaxCallingConventionUseRounds)
       return true; // did not settle: keep the parameter
   }
   return Used;
@@ -829,7 +830,8 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
   llvm::DenseSet<ValueKey> ActiveTrace;
   std::function<std::optional<int64_t>(const MedVar &, int)> traceOff =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
-    if (Depth > 64)
+    if (Depth > ::neverd::limits::ir::
+                    kMedCallingConvDetectStackParamsTraceOffDepthLimit)
       return std::nullopt;
     const ValueKey Key = med_calling_conv_detail::valueKey(V);
     if (!ActiveTrace.insert(Key).second)
@@ -1249,7 +1251,9 @@ void detectIndirectResultParam(MedFunc &Func, const MedBlock &Entry,
   };
   std::function<bool(const MedVar &, int)> derivesFromIRR =
       [&](const MedVar &V, int Depth) -> bool {
-    if (Depth > 32)
+    if (Depth >
+        ::neverd::limits::ir::
+            kMedCallingConvDetectIndirectResultParamDerivesFromIRRDepthLimit)
       return false;
     if (V.Kind == MedVar::Reg && V.RegOff == IRR)
       return true;

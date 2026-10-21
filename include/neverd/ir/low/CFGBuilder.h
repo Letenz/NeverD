@@ -15,6 +15,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CircleRange.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/ir/low/LowIR.h"
@@ -630,7 +631,7 @@ using SuppressionOwnerReachabilityQuery =
 /// fail-closed graph rather than stale suppression.
 std::set<va_t> refineRelocationRootSuppressionOwners(
     std::set<va_t> Owners, const SuppressionOwnerReachabilityQuery &Query,
-    size_t MaxRounds = 8);
+    size_t MaxRounds = ::neverd::limits::ir::kCFGBuilderMaxRounds);
 
 /// Merge every cached source slot for the requested roots.  The cache is
 /// sorted by (root, slot); equal roots deliberately retain all slots so one
@@ -1257,7 +1258,8 @@ private:
   // Optional evidence across *all* raw-build normalization stages, including
   // speculative CFGs and own-interior-call retries. It never escapes a build.
   struct CallRegisterBodyWitness {
-    static constexpr size_t MaxDependencies = 4096;
+    static constexpr size_t MaxDependencies =
+        ::neverd::limits::ir::kCFGBuilderMaxDependencies;
     bool Complete = true;
     std::set<va_t> Calls;
     std::vector<std::pair<va_t, bool>> NoReturnAnswers;

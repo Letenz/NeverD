@@ -1,5 +1,6 @@
 #include "ProjectDatabase.h"
 
+#include "../ResourceLimits.h"
 #include "Address.h"
 
 #include "neverd/support/ProjectFiles.h"
@@ -26,7 +27,6 @@
 namespace neverd::gui {
 namespace {
 constexpr int FormatVersion = 1;
-constexpr qint64 ChunkBytes = 8 * 1024 * 1024;
 constexpr int CompressionLevel = 6;
 constexpr char InputBlob[] = "input";
 constexpr char DatabasesDirectory[] = "databases";
@@ -211,7 +211,7 @@ std::optional<std::vector<Chunk>> compressInput(const QString &path,
   std::vector<Chunk> chunks;
   do {
     Chunk chunk;
-    chunk.data = file.read(ChunkBytes);
+    chunk.data = file.read(::neverd::limits::gui::kProjectDatabaseChunkBytes);
     chunk.size = chunk.data.size();
     chunks.push_back(std::move(chunk));
   } while (!file.atEnd());

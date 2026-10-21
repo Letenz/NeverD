@@ -570,9 +570,15 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
   // out of work. Keep the same term order and charge the work already passed
   // when a factor is invalid, matching the expansion below.
   const bool CheckExtremes =
-      SingleProduct && Corners <= 64 && !Terms.empty() && Terms.size() <= 128 &&
+      SingleProduct && Corners <= 64 && !Terms.empty() &&
+      Terms.size() <=
+          ::neverd::symbolic::detail::limits::
+              kSymMBAPolyExpandOverMintermsCheckExtremesTermsSizeLimit &&
       llvm::all_of(Terms, [&](const PolyTerm &Term) {
-        return Term.Factors.size() >= 2 && Term.Factors.size() <= 64 &&
+        return Term.Factors.size() >= 2 &&
+               Term.Factors.size() <=
+                   ::neverd::symbolic::detail::limits::
+                       kSymMBAPolyExpandOverMintermsCheckExtremesTermFactorsSizeLimit &&
                Term.Factors.size() == Terms.front().Factors.size();
       });
   llvm::SmallVector<MintermIndex, 8> First, Last;

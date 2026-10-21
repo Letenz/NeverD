@@ -28,6 +28,7 @@
 
 #include "neverd/solver/CnfEncoder.h"
 
+#include "neverd/solver/Limits.h"
 #include "neverd/solver/SatSolver.h"
 #include "neverd/solver/SatTypes.h"
 
@@ -66,12 +67,6 @@ GatePolarity flip(GatePolarity P) {
   }
   return GatePolarity::Both;
 }
-
-/// Beyond this many operands an exclusive-or is built as a chain of two-input
-/// gates.  A single node would need one clause per assignment of its inputs,
-/// which is fine at the two and three inputs an adder wants and is a mistake
-/// at any width a caller might hand over.
-constexpr size_t kMaxXorFanIn = 3;
 
 // Retain the low placement bits in a compact fingerprint. Equal
 // fingerprints still require the complete gate identity comparison.
@@ -245,7 +240,7 @@ SatLit CnfEncoder::mkXor(llvm::ArrayRef<SatLit> Ins) {
   if (Terms.size() == 1)
     return Terms[0].withPolarity(!Complement);
 
-  if (Terms.size() > kMaxXorFanIn) {
+  if (Terms.size() > ::neverd::limits::solver::kCnfEncoderMaxXorFanIn) {
     SatLit Acc = Terms[0];
     for (size_t I = 1, E = Terms.size(); I < E; ++I)
       Acc = mkXor(Acc, Terms[I]);

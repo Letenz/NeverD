@@ -1,5 +1,6 @@
 #include "TitleBar.h"
 
+#include "../Config.h"
 #include "Theme.h"
 #include "WindowFramePlatform.h"
 
@@ -17,33 +18,10 @@
 
 namespace neverd::gui {
 namespace {
-// Visual Studio Code's custom title bar, in logical pixels; its height
-// is the platform's (WindowFramePlatform.h).
-constexpr int IconSlot = 35;
-constexpr int IconSize = 16;
-constexpr int ButtonWidth = 46;
-/// The window controls draw their glyphs in a square of this side.
-constexpr int GlyphSize = 10;
-constexpr int CenterHeight = 22;
-constexpr int CenterMaxWidth = 600;
-/// The command center takes this share of the bar's width.
-constexpr int CenterWidthPercent = 38;
-/// Narrower than this, the command center gives way to the menus.
-constexpr int CenterMinWidth = 120;
-constexpr int CenterRadius = 6;
-constexpr int CenterPadding = 8;
-/// The magnifier's square and the space after it.
-constexpr int LensSize = 12;
-constexpr int LensGap = 6;
-/// The room kept clear between the menus, the command center and the
-/// buttons.
-constexpr int Gap = 8;
 /// An inactive window's icon fades as its text dims.
 constexpr double InactiveOpacity = 0.6;
 /// The style sheet dims the menus of an inactive window by this property.
 constexpr char ActiveProperty[] = "active";
-/// A dialog's title keeps this far from the bar's edge and the buttons.
-constexpr int TitlePadding = 12;
 
 /// The window controls a window of \p flags offers.  Without
 /// CustomizeWindowHint a dialog offers Close and other windows all three, as
@@ -70,7 +48,9 @@ Controls controlsFor(Qt::WindowFlags flags) {
 int leftReserve(const QWidget &window, bool withIcon) {
   if (window.isFullScreen())
     return 0;
-  return (withIcon && platform::showsWindowIcon() ? IconSlot : 0) +
+  return (withIcon && platform::showsWindowIcon()
+              ? ::neverd::limits::gui_config::kTitleBarIconSlot
+              : 0) +
          platform::systemControlsWidth();
 }
 
@@ -111,7 +91,8 @@ public:
   WindowButton(Kind kind, QWidget &window, QWidget *parent)
       : HoverButton(window, parent), kind_(kind) {}
   QSize sizeHint() const override {
-    return {ButtonWidth, platform::titleBarHeight()};
+    return {::neverd::limits::gui_config::kTitleBarButtonWidth,
+            platform::titleBarHeight()};
   }
 
 protected:
@@ -128,12 +109,16 @@ protected:
         close && lit() ? chrome("WindowCloseText") : titleText(window_);
     painter.setPen(QPen(glyph, 1));
     // Whole pixels, so the glyph's one-pixel strokes stay sharp.
-    const double left = std::round((width() - GlyphSize) / 2.0);
-    const double top = std::round((height() - GlyphSize) / 2.0);
+    const double left = std::round(
+        (width() - ::neverd::limits::gui_config::kTitleBarGlyphSize) / 2.0);
+    const double top = std::round(
+        (height() - ::neverd::limits::gui_config::kTitleBarGlyphSize) / 2.0);
     switch (kind_) {
     case Kind::Minimize:
-      painter.drawLine(QPointF(left, top + 5.5),
-                       QPointF(left + GlyphSize, top + 5.5));
+      painter.drawLine(
+          QPointF(left, top + 5.5),
+          QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize,
+                  top + 5.5));
       break;
     case Kind::Maximize:
       if (window_.isMaximized()) {
@@ -151,10 +136,14 @@ protected:
       break;
     case Kind::Close:
       painter.setRenderHint(QPainter::Antialiasing);
-      painter.drawLine(QPointF(left, top),
-                       QPointF(left + GlyphSize, top + GlyphSize));
-      painter.drawLine(QPointF(left + GlyphSize, top),
-                       QPointF(left, top + GlyphSize));
+      painter.drawLine(
+          QPointF(left, top),
+          QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize,
+                  top + ::neverd::limits::gui_config::kTitleBarGlyphSize));
+      painter.drawLine(
+          QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize, top),
+          QPointF(left,
+                  top + ::neverd::limits::gui_config::kTitleBarGlyphSize));
       break;
     }
   }
@@ -176,15 +165,21 @@ protected:
     painter.setPen(QPen(
         chrome(lit() ? "CommandCenterHoverBorder" : "CommandCenterBorder"), 1));
     painter.setBrush(chrome(lit() ? "CommandCenterHover" : "CommandCenter"));
-    painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
-                            CenterRadius, CenterRadius);
+    painter.drawRoundedRect(
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+        ::neverd::limits::gui_config::kTitleBarCenterRadius,
+        ::neverd::limits::gui_config::kTitleBarCenterRadius);
     // The magnifier and the name, centered together; a long name keeps both
     // of its ends.
     const QFontMetrics metrics(font());
-    const QString name =
-        metrics.elidedText(text(), Qt::ElideMiddle,
-                           width() - 2 * CenterPadding - LensSize - LensGap);
-    const int content = LensSize + LensGap + metrics.horizontalAdvance(name);
+    const QString name = metrics.elidedText(
+        text(), Qt::ElideMiddle,
+        width() - 2 * ::neverd::limits::gui_config::kTitleBarCenterPadding -
+            ::neverd::limits::gui_config::kTitleBarLensSize -
+            ::neverd::limits::gui_config::kTitleBarLensGap);
+    const int content = ::neverd::limits::gui_config::kTitleBarLensSize +
+                        ::neverd::limits::gui_config::kTitleBarLensGap +
+                        metrics.horizontalAdvance(name);
     const double left = std::round((width() - content) / 2.0);
     const double middle = height() / 2.0;
     const QColor ink = titleText(window_);
@@ -192,11 +187,16 @@ protected:
     painter.setPen(QPen(ink, 1.2));
     const QRectF lens(left + 0.5, middle - 5.5, 8, 8);
     painter.drawEllipse(lens);
-    painter.drawLine(QPointF(lens.right() - 1.2, lens.bottom() - 1.2),
-                     QPointF(left + LensSize - 0.5, middle + 5.5));
+    painter.drawLine(
+        QPointF(lens.right() - 1.2, lens.bottom() - 1.2),
+        QPointF(left + ::neverd::limits::gui_config::kTitleBarLensSize - 0.5,
+                middle + 5.5));
     painter.setPen(ink);
-    painter.drawText(QRectF(left + LensSize + LensGap, 0, width(), height()),
-                     Qt::AlignLeft | Qt::AlignVCenter, name);
+    painter.drawText(
+        QRectF(left + ::neverd::limits::gui_config::kTitleBarLensSize +
+                   ::neverd::limits::gui_config::kTitleBarLensGap,
+               0, width(), height()),
+        Qt::AlignLeft | Qt::AlignVCenter, name);
   }
 };
 } // namespace
@@ -245,20 +245,29 @@ void TitleBar::setCommandCenterAction(QAction *action) { command_ = action; }
 
 QSize TitleBar::sizeHint() const {
   const int height = platform::titleBarHeight();
-  const int buttons = platform::drawsWindowControls() ? 3 * ButtonWidth : 0;
+  const int buttons =
+      platform::drawsWindowControls()
+          ? 3 * ::neverd::limits::gui_config::kTitleBarButtonWidth
+          : 0;
   if (!menuBar_)
-    return {leftReserve(window_, false) + 2 * TitlePadding +
+    return {leftReserve(window_, false) +
+                2 * ::neverd::limits::gui_config::kTitleBarTitlePadding +
                 fontMetrics().horizontalAdvance(window_.windowTitle()) +
                 buttons,
             height};
-  return {leftReserve(window_, true) + menuBar_->sizeHint().width() + 2 * Gap +
-              CenterMaxWidth + buttons,
+  return {leftReserve(window_, true) + menuBar_->sizeHint().width() +
+              2 * ::neverd::limits::gui_config::kTitleBarGap +
+              ::neverd::limits::gui_config::kTitleBarCenterMaxWidth + buttons,
           height};
 }
 
 QSize TitleBar::minimumSizeHint() const {
-  const int buttons = platform::drawsWindowControls() ? 3 * ButtonWidth : 0;
-  return {leftReserve(window_, menuBar_ != nullptr) + TitlePadding + buttons,
+  const int buttons =
+      platform::drawsWindowControls()
+          ? 3 * ::neverd::limits::gui_config::kTitleBarButtonWidth
+          : 0;
+  return {leftReserve(window_, menuBar_ != nullptr) +
+              ::neverd::limits::gui_config::kTitleBarTitlePadding + buttons,
           platform::titleBarHeight()};
 }
 
@@ -332,14 +341,20 @@ void TitleBar::paintEvent(QPaintEvent *) {
   if (!menuBar_) {
     // A dialog's title, centered in the bar while it fits beside the
     // buttons.
-    const int start = leftReserve(window_, false) + TitlePadding;
-    const int room = buttonsLeft_ - TitlePadding - start;
+    const int start = leftReserve(window_, false) +
+                      ::neverd::limits::gui_config::kTitleBarTitlePadding;
+    const int room = buttonsLeft_ -
+                     ::neverd::limits::gui_config::kTitleBarTitlePadding -
+                     start;
     const QString title =
         fontMetrics().elidedText(window_.windowTitle(), Qt::ElideRight, room);
     const int titleWidth = fontMetrics().horizontalAdvance(title);
-    const int x =
-        std::clamp((width() - titleWidth) / 2, start,
-                   std::max(start, buttonsLeft_ - TitlePadding - titleWidth));
+    const int x = std::clamp(
+        (width() - titleWidth) / 2, start,
+        std::max(start,
+                 buttonsLeft_ -
+                     ::neverd::limits::gui_config::kTitleBarTitlePadding -
+                     titleWidth));
     painter.setPen(titleText(window_));
     painter.drawText(QRect(x, 0, titleWidth, height()),
                      Qt::AlignLeft | Qt::AlignVCenter, title);
@@ -351,8 +366,13 @@ void TitleBar::paintEvent(QPaintEvent *) {
     painter.setOpacity(InactiveOpacity);
   const int iconLeft = platform::systemControlsWidth();
   window_.windowIcon().paint(
-      &painter, QRect(iconLeft + (IconSlot - IconSize) / 2,
-                      (height() - IconSize) / 2, IconSize, IconSize));
+      &painter,
+      QRect(iconLeft + (::neverd::limits::gui_config::kTitleBarIconSlot -
+                        ::neverd::limits::gui_config::kTitleBarIconSize) /
+                           2,
+            (height() - ::neverd::limits::gui_config::kTitleBarIconSize) / 2,
+            ::neverd::limits::gui_config::kTitleBarIconSize,
+            ::neverd::limits::gui_config::kTitleBarIconSize));
 }
 
 void TitleBar::resizeEvent(QResizeEvent *event) {
@@ -365,30 +385,37 @@ void TitleBar::arrange() {
   for (QAbstractButton *button : {close_, maximize_, minimize_}) {
     if (button->isHidden())
       continue;
-    right -= ButtonWidth;
-    button->setGeometry(right, 0, ButtonWidth, height());
+    right -= ::neverd::limits::gui_config::kTitleBarButtonWidth;
+    button->setGeometry(
+        right, 0, ::neverd::limits::gui_config::kTitleBarButtonWidth, height());
   }
   buttonsLeft_ = right;
   if (!menuBar_)
     return;
   const int left = leftReserve(window_, true);
   const QSize menus = menuBar_->sizeHint();
-  const int menuWidth =
-      std::clamp(menus.width(), 0, std::max(0, right - left - Gap));
+  const int menuWidth = std::clamp(
+      menus.width(), 0,
+      std::max(0, right - left - ::neverd::limits::gui_config::kTitleBarGap));
   menuBar_->setGeometry(left, (height() - menus.height()) / 2, menuWidth,
                         menus.height());
-  const int start = left + menuWidth + Gap;
-  const int end = right - Gap;
+  const int start =
+      left + menuWidth + ::neverd::limits::gui_config::kTitleBarGap;
+  const int end = right - ::neverd::limits::gui_config::kTitleBarGap;
   const int centerWidth = std::min(
-      {CenterMaxWidth, width() * CenterWidthPercent / 100, end - start});
-  if (centerWidth < CenterMinWidth) {
+      {::neverd::limits::gui_config::kTitleBarCenterMaxWidth,
+       width() * ::neverd::limits::gui_config::kTitleBarCenterWidthPercent /
+           100,
+       end - start});
+  if (centerWidth < ::neverd::limits::gui_config::kTitleBarCenterMinWidth) {
     commandCenter_->hide();
     return;
   }
   const int x =
       std::clamp((width() - centerWidth) / 2, start, end - centerWidth);
-  commandCenter_->setGeometry(x, (height() - CenterHeight) / 2, centerWidth,
-                              CenterHeight);
+  commandCenter_->setGeometry(
+      x, (height() - ::neverd::limits::gui_config::kTitleBarCenterHeight) / 2,
+      centerWidth, ::neverd::limits::gui_config::kTitleBarCenterHeight);
   commandCenter_->show();
 }
 

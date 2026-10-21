@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 #include <span>
 
@@ -29,12 +30,6 @@ struct PackageDiff;
 struct PackageBehaviorDiff;
 inline constexpr std::string_view PackageAssessmentProfile =
     "offline-package-assessment-v1";
-inline constexpr uint64_t MaxPackageAssessmentFindings = 8192;
-inline constexpr uint64_t MaxCachedPackageAssessments = 2;
-inline constexpr uint64_t MaxPackageAssessmentSteps = 8000000;
-inline constexpr uint64_t MaxPackageAssessmentBytes = 16 * 1024 * 1024;
-inline constexpr uint64_t MaxPackageReviewDecisions = 256;
-inline constexpr uint64_t MaxPackageReviewBytes = 256 * 1024;
 inline constexpr std::string_view PackageReviewJournalProfile =
     "offline-package-review-journal-v1";
 

@@ -25,6 +25,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -351,8 +352,10 @@ class X87CallGraphCache {
     std::shared_ptr<const X87CallGraph> Value;
     std::shared_ptr<PendingGraph> Leader;
   };
-  static constexpr size_t MaxPendingGraphs = 32;
-  static constexpr size_t MaxPendingBytes = 1024 * 1024;
+  static constexpr size_t MaxPendingGraphs =
+      ::neverd::limits::ir::kCFGBuilderX86FpuMaxPendingGraphs;
+  static constexpr size_t MaxPendingBytes =
+      ::neverd::limits::ir::kCFGBuilderX86FpuMaxPendingBytes;
   // Entries in each of Graphs and Summaries, and the retained bytes of each.
   const size_t MaxGraphs;
   const size_t MaxBytes;
@@ -404,8 +407,10 @@ class X87CallGraphCache {
     std::vector<X87NoReturnAnswer> Dependencies;
   };
   // A few dozen bytes per target: room for every function of a kernel.
-  static constexpr size_t MaxRefusals = size_t(1) << 18;
-  static constexpr size_t MaxRefusalDependencies = 256;
+  static constexpr size_t MaxRefusals =
+      ::neverd::limits::ir::kCFGBuilderX86FpuMaxRefusals;
+  static constexpr size_t MaxRefusalDependencies =
+      ::neverd::limits::ir::kCFGBuilderX86FpuMaxRefusalDependencies;
   std::optional<Context> RefusalInputs;
   std::unordered_map<va_t, CallRefusal> Refusals;
 
@@ -1001,7 +1006,10 @@ bool CFGBuilder::waitForX87CallGraphWaitersForTesting(size_t Count) const {
     return false;
   std::unique_lock<std::mutex> Lock(SharedX87CallGraphs->Mutex);
   return SharedX87CallGraphs->PendingChanged.wait_for(
-      Lock, std::chrono::seconds(5),
+      Lock,
+      std::chrono::seconds(
+          ::neverd::limits::ir::
+              kCFGBuilderX86FpuCFGBuilderWaitForX87CallGraphWaitersForTestingSeconds),
       [&] { return SharedX87CallGraphs->Waits >= Count; });
 }
 
@@ -1538,7 +1546,8 @@ public:
           Weights.push_back(Weight);
         }
       }
-    if (Targets.size() < 2 || Bytes < 4096)
+    if (Targets.size() < 2 ||
+        Bytes < ::neverd::limits::ir::kCFGBuilderX86FpuPrepareCallsBytesLimit)
       return;
     std::vector<std::optional<int>> Values(Targets.size());
     std::vector<std::exception_ptr> Failures(Targets.size());

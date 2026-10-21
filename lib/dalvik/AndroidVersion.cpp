@@ -6,6 +6,7 @@
 /// \file
 /// API 28 scalar Build.VERSION values over a supplied property snapshot.
 //===----------------------------------------------------------------------===//
+#include "neverd/dalvik/Limits.h"
 #include "neverd/dalvik/Runtime.h"
 
 #include <charconv>
@@ -44,7 +45,10 @@ void Program::addAndroidVersion(
   auto add = [&](const char *name, const char *key, const char *fallback) {
     auto found = properties.find(key);
     const std::string text = found == properties.end() ? "" : found->second;
-    if (text.size() >= 92 || text.find('\0') != std::string::npos)
+    if (text.size() >=
+            ::neverd::limits::dalvik::
+                kAndroidVersionProgramAddAndroidVersionAddAddTextSizeLimit ||
+        text.find('\0') != std::string::npos)
       throw Error("invalid Android version property value");
     Field field;
     field.reference = {version.name, name,

@@ -1,5 +1,6 @@
 #include "Theme.h"
 
+#include "../Config.h"
 #include "WorkbenchStyle.h"
 
 #include <QApplication>
@@ -65,9 +66,6 @@ constexpr char StyleSheetResource[] = ":/neverd/theme.qss";
 // the code font at its default size, in which text fields type.
 constexpr char ModePlaceholder[] = "Mode";
 constexpr char CodeFontPlaceholder[] = "CodeFont";
-constexpr int DefaultCodePointSize = 10;
-constexpr int MinimumCodePointSize = 6;
-constexpr int MaximumCodePointSize = 48;
 
 struct PaletteRole {
   const char *name;
@@ -138,7 +136,7 @@ QFont Theme::defaultCodeFont() {
   QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
   if (QFontDatabase::hasFamily(QStringLiteral("Consolas")))
     font.setFamily(QStringLiteral("Consolas"));
-  font.setPointSize(DefaultCodePointSize);
+  font.setPointSize(::neverd::limits::gui_config::kThemeDefaultCodePointSize);
   font.setStyleHint(QFont::Monospace, QFont::PreferAntialias);
   font.setFixedPitch(true);
   return font;
@@ -158,14 +156,16 @@ void Theme::setCodeFont(const QFont &font) {
 
 void Theme::zoomCodeFont(int steps) {
   QFont font = codeFont_;
-  font.setPointSize(std::clamp(font.pointSize() + steps, MinimumCodePointSize,
-                               MaximumCodePointSize));
+  font.setPointSize(
+      std::clamp(font.pointSize() + steps,
+                 ::neverd::limits::gui_config::kThemeMinimumCodePointSize,
+                 ::neverd::limits::gui_config::kThemeMaximumCodePointSize));
   setCodeFont(font);
 }
 
 void Theme::resetCodeFontSize() {
   QFont font = codeFont_;
-  font.setPointSize(DefaultCodePointSize);
+  font.setPointSize(::neverd::limits::gui_config::kThemeDefaultCodePointSize);
   setCodeFont(font);
 }
 
@@ -218,9 +218,10 @@ void Theme::apply() {
         resolved += modeName(mode_);
       else if (name == QLatin1String(CodeFontPlaceholder))
         // Zooming the code views leaves text fields alone.
-        resolved += QStringLiteral("%1pt \"%2\"")
-                        .arg(DefaultCodePointSize)
-                        .arg(codeFont_.family());
+        resolved +=
+            QStringLiteral("%1pt \"%2\"")
+                .arg(::neverd::limits::gui_config::kThemeDefaultCodePointSize)
+                .arg(codeFont_.family());
       else if (const auto color = chrome_.constFind(name);
                color != chrome_.cend())
         // A translucent color keeps its alpha.

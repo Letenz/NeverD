@@ -4,6 +4,7 @@
 #include "ObjCConstantStringSources.h"
 
 #include "neverd/loader/ObjC/ObjCConstantObjects.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 inline std::optional<SourceCallTypeHint>
@@ -43,7 +44,10 @@ inline std::string renderObjCConstantObjectHelpers(
         continue;
       const size_t Edges = Object.Elements.size() + Object.Keys.size();
       const size_t Bytes = 40 + Object.String.Units.size() * 2 + Edges * 8;
-      if (Objects.size() >= 4096 || Bytes > BytesLeft || Edges > EdgesLeft)
+      if (Objects.size() >=
+              ::neverd::sdk::
+                  kObjCConstantObjectSourcesRenderObjCConstantObjectHelpersObjectsSizeLimit ||
+          Bytes > BytesLeft || Edges > EdgesLeft)
         throw std::runtime_error(
             "constant-object source graph exceeds its budget");
       BytesLeft -= Bytes;

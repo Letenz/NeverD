@@ -23,6 +23,7 @@
 
 #include "MedFlagsDetail.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 
@@ -424,7 +425,8 @@ bool flagDefTracesToFP(const std::vector<MedOp> &Ops, int DefIdx) {
         Work.push_back(Op.Inputs[K]);
   };
   pushTemps(Ops[DefIdx]);
-  for (int Budget = 256; !Work.empty() && Budget > 0; --Budget) {
+  for (int Budget = ::neverd::limits::ir::kMedFlagsFlagDefTracesToFPBudget;
+       !Work.empty() && Budget > 0; --Budget) {
     MedVar V = Work.back();
     Work.pop_back();
     for (int J = DefIdx - 1; J >= 0; --J) {

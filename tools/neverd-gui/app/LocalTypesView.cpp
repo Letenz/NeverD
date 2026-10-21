@@ -1,5 +1,6 @@
 #include "LocalTypesView.h"
 
+#include "../Config.h"
 #include "DeclareTypesDialog.h"
 #include "FlowLayout.h"
 #include "Icons.h"
@@ -251,8 +252,6 @@ constexpr OriginChoice Origins[] = {
     {"header",
      QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "From system headers")},
     {"user", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Declared")}};
-/// The narrowest each pane may get, as the extensions window keeps.
-constexpr int MinimumPaneWidth = 48;
 
 QString hex(qint64 value) {
   return QStringLiteral("0x%1")
@@ -273,7 +272,8 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   // The list: the filter as wide as it, and below it what narrows the list
   // and changes it.
   auto *left = new QWidget(splitter);
-  left->setMinimumWidth(MinimumPaneWidth);
+  left->setMinimumWidth(
+      ::neverd::limits::gui_config::kLocalTypesViewMinimumPaneWidth);
   auto *leftLayout = new QVBoxLayout(left);
   leftLayout->setContentsMargins(4, 4, 4, 4);
   filter_ = new QLineEdit(left);
@@ -370,7 +370,8 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
 
   // The type.
   auto *right = new QWidget(splitter);
-  right->setMinimumWidth(MinimumPaneWidth);
+  right->setMinimumWidth(
+      ::neverd::limits::gui_config::kLocalTypesViewMinimumPaneWidth);
   auto *rightLayout = new QVBoxLayout(right);
   rightLayout->setContentsMargins(4, 4, 4, 4);
   auto *headingRow = new QWidget(right);

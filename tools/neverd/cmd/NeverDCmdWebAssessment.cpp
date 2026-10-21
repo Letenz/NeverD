@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/sdk/NeverDCAPIWeb.h"
 
@@ -97,13 +98,16 @@ std::optional<Arguments> arguments() {
           return {};
         A.Registry = F;
       } else {
-        if (A.Advisories.size() == 16)
+        if (A.Advisories.size() ==
+            ::neverd::limits::cli::kMaxCLIWebAssessmentSelections)
           return {};
         A.Advisories.push_back(F);
       }
       I += Count;
     } else if (Flag == "--source") {
-      if (I == WebArguments.size() || A.Sources.size() == 16)
+      if (I == WebArguments.size() ||
+          A.Sources.size() ==
+              ::neverd::limits::cli::kMaxCLIWebAssessmentSelections)
         return {};
       const auto [Number, Type] = llvm::StringRef(WebArguments[I++]).split(':');
       SourceSelection S;
@@ -291,7 +295,8 @@ int runWebAssessment() {
     Output.push_back(A->Markdown ? field(*Page, "report_markdown")
                                  : llvm::formatv("{0}\n", *Page).str());
     Bytes += Output.back().size();
-    if (Bytes > 32 * 1024 * 1024)
+    if (Bytes > ::neverd::limits::cli::
+                    kNeverDCmdWebAssessmentRunWebAssessmentBytesLimit)
       return 1;
     const auto Next = Page->getAsObject()->getInteger("next_offset");
     if (!Next) {
@@ -299,7 +304,8 @@ int runWebAssessment() {
         return 1;
       break;
     }
-    if (*Next < 0 || uint64_t(*Next) <= Offset || *Next > 8192)
+    if (*Next < 0 || uint64_t(*Next) <= Offset ||
+        *Next > ::neverd::limits::cli::kMaxWebAssessmentOffset)
       return 1;
     Offset = *Next;
   }

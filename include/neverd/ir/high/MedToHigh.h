@@ -15,6 +15,7 @@
 #define NEVERD_IR_HIGH_MEDTOHIGH_H
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
@@ -646,7 +647,8 @@ private:
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
-  unsigned SemanticThreadLimit = 1;
+  unsigned SemanticThreadLimit =
+      ::neverd::limits::ir::kMedToHighSemanticThreadLimit;
   bool SymbolicSimplification = false;
 };
 

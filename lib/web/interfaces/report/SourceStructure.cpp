@@ -12,6 +12,7 @@
 #include "SourceStructure.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <set>
 
@@ -79,7 +80,7 @@ std::string RequestStructure::value(uint32_t Node, std::string Domain,
   auto R = record(Node, Domain, std::move(Edge), std::move(Parent), Ordinal);
   R.Structure->NameClass = std::move(NameClass);
   const auto &N = Source.Nodes[Node];
-  if (Depth == 16) {
+  if (Depth == ::neverd::limits::web::kMaxRequestStructureDepth) {
     R.ShapeStatus = "syntax_depth_limit";
     return publish(std::move(R));
   }
@@ -130,7 +131,9 @@ std::string RequestStructure::value(uint32_t Node, std::string Domain,
       if (Domain == "request_headers" && Depth == 0) {
         // Only the common fixed header vocabulary may escape the private AST.
         std::string ASCII;
-        if (Name->size() <= 64)
+        if (Name->size() <=
+            ::neverd::limits::web::
+                kSourceStructureRequestStructureValueArrayExpressionObjectExpressionNameSizeLimit)
           for (char16_t Unit : *Name)
             ASCII.push_back(Unit <= 127 ? char(Unit) : '?');
         Classification = interfaceHeaderKind(ASCII);

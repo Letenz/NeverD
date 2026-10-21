@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -96,7 +98,11 @@ std::string Session::interfaceRelationRecords(std::string_view Revision,
   const auto &S = State->Sources.at(A.SourceID);
   const auto &B = State->Bindings.at(A.SourceID);
   const auto &I = State->InterfaceSources.at(A.InterfaceID);
-  if (!Limit || Limit > 128 || Offset > A.Records.size())
+  if (!Limit ||
+      Limit >
+          ::neverd::limits::web::
+              kSessionInterfaceRelationsSessionInterfaceRelationRecordsLimit ||
+      Offset > A.Records.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(A.Records.size(), Offset + Limit);
   auto Node = [&](uint32_t Index) {

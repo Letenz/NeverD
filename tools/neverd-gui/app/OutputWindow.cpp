@@ -1,5 +1,6 @@
 #include "OutputWindow.h"
 
+#include "../ResourceLimits.h"
 #include "Icons.h"
 #include "Resolve.h"
 #include "Session.h"
@@ -20,8 +21,6 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int MaximumLogLines = 20000;
-constexpr int MaximumHistory = 200;
 constexpr char HistoryKey[] = "output/history";
 
 // Command words of the workbench command line.
@@ -50,7 +49,8 @@ OutputWindow::OutputWindow(Session &session, QWidget *parent)
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
   log_->setReadOnly(true);
-  log_->setMaximumBlockCount(MaximumLogLines);
+  log_->setMaximumBlockCount(
+      ::neverd::limits::gui::kOutputWindowMaximumLogLines);
   log_->setLineWrapMode(QPlainTextEdit::NoWrap);
   log_->setFrameShape(QFrame::NoFrame);
   log_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -86,7 +86,7 @@ OutputWindow::OutputWindow(Session &session, QWidget *parent)
       return;
     history_.removeAll(line);
     history_.append(line);
-    while (history_.size() > MaximumHistory)
+    while (history_.size() > ::neverd::limits::gui::kOutputWindowMaximumHistory)
       history_.removeFirst();
     historyIndex_ = int(history_.size());
     QSettings().setValue(HistoryKey, history_);

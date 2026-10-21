@@ -7,6 +7,7 @@
 #include "WindowsRegistrationFramePrivate.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/IR/CFG.h"
@@ -57,7 +58,9 @@ namespace {
 bool hasBlockAddress(const llvm::Constant *Value,
                      std::set<const llvm::Constant *> &Seen, size_t &WorkUsed,
                      unsigned Depth = 0) {
-  if (++WorkUsed > limits::kMaxRegistrationEHStateWork || Depth > 256)
+  if (++WorkUsed > limits::kMaxRegistrationEHStateWork ||
+      Depth > ::neverd::limits::backend::
+                  kWindowsRegistrationCallbackPlanHasBlockAddressDepthLimit)
     return true;
   if (llvm::isa<llvm::BlockAddress>(Value))
     return true;
@@ -276,7 +279,10 @@ prepareCallback(llvm::Function &Parent,
   bool InvalidDependency = false;
   std::function<void(llvm::Value *, unsigned)> Inspect = [&](llvm::Value *Value,
                                                              unsigned Depth) {
-    if (++WorkUsed > limits::kMaxRegistrationEHStateWork || Depth > 256) {
+    if (++WorkUsed > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kWindowsRegistrationCallbackPlanPrepareCallbackInspectDepthLimit) {
       InvalidDependency = true;
       return;
     }

@@ -1,6 +1,6 @@
 **언어**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 284ec1bcba3c77596f6b244b241b3088a37a9ba9238092e0b96b76d0661f84a5 -->
+<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
 
 # NeverD 기여 가이드
 
@@ -245,6 +245,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### 제한, 기본값 및 구성 소유권
 
+헤더 검색 경로에 직접 추가하는 도구 디렉터리에서는 `ResourceLimits.h`를 사용합니다. 대소문자를 구분하지 않는 파일 시스템에서는 로컬 `Limits.h`가 시스템 `<limits.h>`를 가릴 수 있습니다.
+
 호출자가 하나라도 정책은 해당 하위 시스템의 limits/configuration 헤더에 단일 권위 정의를 둡니다.
 입출력 상한, 재귀/그래프, 작업/반복 예산, 휴리스틱 임계값, 캐시, 페이지/배치, 재시도, 시간 제한을 포함합니다.
 `constexpr`, 매크로, 리터럴 비교, `min`/`clamp`, 생성자/필드 초기화, 기본 인수에도 적용합니다.
@@ -257,7 +259,7 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 | SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) 또는 기존 전용 정의 |
 | 다른 라이브러리 | 기존 헤더/정의 표, 없으면 소유 계층의 전용 `Limits.h` |
-| CLI, worker, GUI 전용 | 도구 내부 `Limits.h`/`Config.h`; 코어가 역으로 의존하지 않음 |
+| CLI, worker, GUI 전용 | 도구 내부 `ResourceLimits.h`/`Config.h`; 코어가 역으로 의존하지 않음 |
 | 호출자 선택 설정 | 소유 `Config.h`, `*Options.h`, `*Configuration.h` 모델 |
 
 헤더를 가볍게 유지하고 목적별로 묶습니다. 기존 `*Limits.def`/구성 표를 재사용해 독립적인 C++ 헤더로

@@ -10,6 +10,8 @@
 
 #include "AndroidFramework.h"
 
+#include "neverd/dalvik/Limits.h"
+
 #include <algorithm>
 #include <bit>
 namespace neverd::mobile::dalvik {
@@ -235,7 +237,8 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
       auto name = object(Values[0]);
       if (!name)
         return Throw("java/lang/NullPointerException");
-      if (name->Bytes.size() > 2048)
+      if (name->Bytes.size() >
+          ::neverd::limits::dalvik::kLibraryExecuteLibraryNameBytesSizeLimit)
         return {ExecutionStop::Unsupported,
                 0,
                 {},
@@ -457,7 +460,8 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
     // Both strings are bounded by the object budget; also bound quadratic
     // search.
     if (Right.size() &&
-        uint64_t(ObjectValue->Length - Offset) > 1048576 / Right.size())
+        uint64_t(ObjectValue->Length - Offset) >
+            ::neverd::limits::dalvik::kMaxJNIStringSearchWork / Right.size())
       return failure("JNI string search work budget exhausted");
     for (uint64_t I = Offset; I <= ObjectValue->Length; ++I)
       if (Match(I))

@@ -16,6 +16,7 @@
 #include "neverd/ir/med/MedDispatchSlots.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImageModel.h"
 
@@ -114,7 +115,9 @@ std::optional<MedVar> findTableSwitchIndex(const MedDispatchContext &C,
   std::vector<MedVar> Work{Target};
   std::set<std::pair<int, int>> Seen;
   int Steps = 0;
-  while (!Work.empty() && Steps < 256) {
+  while (!Work.empty() &&
+         Steps < ::neverd::limits::ir::
+                     kMedDispatchSlotsFindTableSwitchIndexStepsLimit) {
     ++Steps;
     MedVar V = Work.back();
     Work.pop_back();
@@ -298,7 +301,9 @@ std::optional<MedVar> constTableLoadIndex(const MedDispatchContext &C,
   bool TooDeep = false;
   MedVar OpaqueBase;
   auto skipPassThrough = [&](MedVar V) -> MedVar {
-    for (int Hop = 0; Hop < 256; ++Hop) {
+    for (int Hop = 0;
+         Hop < ::neverd::limits::ir::kMedDispatchSlotsSkipPassThroughHopLimit;
+         ++Hop) {
       if (V.isConst())
         return V;
       const MedOp *D = defOf(V);

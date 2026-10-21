@@ -16,6 +16,7 @@
 #include "../X86/RegistrationRoots.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/RuntimeRoutineIntrinsics.h"
@@ -149,7 +150,9 @@ void LowToMedConverter::neutralizeStackProbeCalls(MedFunc &Func) {
       std::function<bool(const MedVar &, uint64_t &, int, size_t)> constAddr =
           [&](const MedVar &V, uint64_t &Out, int Depth,
               size_t Before) -> bool {
-        if (Depth > 8)
+        if (Depth >
+            ::neverd::limits::ir::
+                kLowToMedConverterNeutralizeStackProbeCallsConstAddrDepthLimit)
           return false;
         if (V.isConst()) {
           Out = V.ConstVal;
@@ -187,7 +190,13 @@ void LowToMedConverter::neutralizeStackProbeCalls(MedFunc &Func) {
       uint64_t SlotAddr = 0;
       bool HaveSlot = false;
       auto [D, DIdx] = findDefBefore(Op.Inputs[0], CI);
-      for (int Guard = 0; D && Guard <= 8; ++Guard) {
+      for (
+          int Guard = 0;
+          D &&
+          Guard <=
+              ::neverd::limits::ir::
+                  kLowToMedLowToMedConverterNeutralizeStackProbeCallsGuardLimit;
+          ++Guard) {
         if (D->Opcode == NdOp::COPY && D->NumInputs >= 1) {
           auto Next = findDefBefore(D->Inputs[0], DIdx);
           D = Next.first;

@@ -11,6 +11,7 @@
 #include "MachOExportLayout.h"
 #include "MachOStrictLayout.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
 #include "neverd/loader/MachO/CompactUnwind.h"
 
@@ -138,7 +139,7 @@ llvm::Error compact(Bytes &B, uint64_t Off, uint64_t Size, uint64_t Shift) {
 } // namespace
 llvm::Expected<bool> reserveMachOHeaderStorage(Bytes &Binary, Arch A,
                                                uint64_t Extra) {
-  if (Extra > 1024 * 1024)
+  if (Extra > ::neverd::limits::backend::kMaxMachOHeaderGrowthBytes)
     return fail("command request exceeds checked bounds");
   MachOHeaderInfo H;
   std::vector<macho_patch_detail::MachOFileRange> Segments, Sections;

@@ -13,6 +13,7 @@
 #include "SEHFrameRuntimeMemory.h"
 #include "X86/FrameEffects.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/low/LowScalarConstant.h"
@@ -31,9 +32,6 @@
 
 namespace neverd {
 namespace {
-
-// The shared work budget bounds total analysis; this also bounds C++ recursion.
-constexpr size_t MaxCalleeDepth = 16;
 
 using seh_frame::Key;
 using seh_frame::key;
@@ -460,7 +458,8 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
   const auto CallerSP = Caller.get(SP);
   int64_t Slot = 0;
   if (!CallerSP || llvm::SubOverflow(*CallerSP, int64_t{8}, Slot) ||
-      Calls.ActiveFunctions.size() >= MaxCalleeDepth ||
+      Calls.ActiveFunctions.size() >=
+          ::neverd::limits::ir::kSEHFrameProofMaxCalleeDepth ||
       Calls.ActiveFunctions.count(F.Entry) ||
       !consume(Remaining, Calls.ReturnSlots.size() + 1) ||
       Calls.overlapsReturnPC(Slot, *CallerSP) || !F.hasCompleteLiftCoverage() ||

@@ -28,6 +28,8 @@
 
 #include "neverd/pass/ir/obf/InstSubstitutionPass.h"
 
+#include "neverd/pass/Limits.h"
+
 #define DEBUG_TYPE "neverd-inst-subst"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -111,7 +113,7 @@ unsigned substituteRound(llvm::Module &M) {
 
 unsigned substituteModule(llvm::Module &M, unsigned Rounds) {
   if (Rounds == 0)
-    Rounds = 1;
+    Rounds = ::neverd::limits::pass::kDefaultInstructionSubstitutionRounds;
   unsigned Total = 0;
   for (unsigned R = 0; R < Rounds; ++R)
     Total += substituteRound(M);

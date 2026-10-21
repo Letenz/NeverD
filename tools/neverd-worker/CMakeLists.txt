@@ -26,7 +26,9 @@ endif()
 add_library(neverd_worker_protocol STATIC Protocol.cpp)
 target_compile_features(neverd_worker_protocol PUBLIC cxx_std_20)
 target_link_libraries(neverd_worker_protocol PUBLIC neverd_tool_json)
-target_include_directories(neverd_worker_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(neverd_worker_protocol PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 add_library(neverd_worker_graph STATIC GraphSnapshot.cpp GraphLayout.cpp)
 add_library(neverd_worker_format STATIC OperandFormat.cpp CodeEdits.cpp)
 target_link_libraries(neverd_worker_format PUBLIC neverd_worker_protocol)

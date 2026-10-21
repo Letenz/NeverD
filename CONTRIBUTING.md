@@ -296,6 +296,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### Limits, defaults and configuration ownership
 
+Use `ResourceLimits.h` in tool directories added directly to the include search path. On a case-insensitive filesystem, a local `Limits.h` can shadow the system `<limits.h>`.
+
 Give each policy one authoritative definition in its owning subsystem's
 limits/configuration header, even if it currently has only one caller. This
 covers input/output caps, recursion and graph bounds, work/iteration budgets,
@@ -311,7 +313,7 @@ Choose the existing authority before adding a file:
 | SDK | [`include/neverd/sdk/Limits.h`](include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](include/neverd/web/Limits.h) or its existing focused limits/configuration definition |
 | Other library component | Its existing limits/configuration header or definition table; otherwise a focused `Limits.h` in the owning layer |
-| CLI, worker or GUI only | A tool-local `Limits.h` or `Config.h`; core code must not depend on tool headers |
+| CLI, worker or GUI only | A tool-local `ResourceLimits.h` or `Config.h`; core code must not depend on tool headers |
 | Caller-selectable settings | The owning `Config.h`, `*Options.h` or `*Configuration.h` model |
 
 Keep policy headers lightweight and group values by purpose. Reuse an existing

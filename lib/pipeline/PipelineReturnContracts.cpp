@@ -49,6 +49,7 @@
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -318,10 +319,9 @@ public:
   }
 
   void settle() {
-    // Each function's answer reads its callees' and its callers': repeat
-    // until no answer changes, within a bound for call-graph cycles.
-    constexpr unsigned MaxRounds = 8;
-    for (unsigned Round = 0; Round < MaxRounds; ++Round) {
+    for (unsigned Round = 0;
+         Round < ::neverd::limits::pipeline::kPipelineReturnContractsMaxRounds;
+         ++Round) {
       bool Changed = false;
       for (const MedFunc &Func : Result.MedFuncs) {
         const auto Declaration = Declared.find(Func.Entry);
@@ -490,7 +490,6 @@ private:
   void classify(const FunctionFacts &F, const MedVar &Value,
                 std::vector<ReturnedValue> &Paths, std::set<ValueKey> &Seen,
                 unsigned Depth) const {
-    constexpr unsigned MaxDepth = 32;
     if (Value.isConst()) {
       Paths.push_back(ReturnedValue::Deliberate);
       return;
@@ -510,7 +509,9 @@ private:
     case GOTAddressKind::None:
       break;
     }
-    if (Value.Kind == MedVar::Param || Depth > MaxDepth ||
+    if (Value.Kind == MedVar::Param ||
+        Depth > ::neverd::limits::pipeline::
+                    kPipelineReturnContractsClassifyMaxDepth ||
         !Seen.insert(keyOf(Value)).second) {
       Paths.push_back(ReturnedValue::Other);
       return;

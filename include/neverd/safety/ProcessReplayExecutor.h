@@ -20,6 +20,7 @@
 #ifndef NEVERD_SAFETY_PROCESSREPLAYEXECUTOR_H
 #define NEVERD_SAFETY_PROCESSREPLAYEXECUTOR_H
 
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/ProcessReplay.h"
 
 #include "llvm/Support/Error.h"
@@ -40,28 +41,6 @@ inline constexpr std::string_view kProcessReplayExecutorAdapter =
     "process-replay-exec-v1";
 inline constexpr uint32_t kProcessReplayExecutorSchemaVersion = 1;
 
-inline constexpr uint64_t kProcessReplayExecutionMaxWallTimeMs = 10 * 60 * 1000;
-inline constexpr uint64_t kProcessReplayExecutionMaxCpuTimeUs =
-    10 * 60 * 1000 * 1000;
-inline constexpr uint64_t kProcessReplayExecutionMaxAddressSpaceBytes =
-    uint64_t{64} << 30;
-inline constexpr uint64_t kProcessReplayExecutionMaxResidentMemoryBytes =
-    uint64_t{64} << 30;
-inline constexpr uint32_t kProcessReplayExecutionMaxProcesses = 1;
-inline constexpr uint64_t kProcessReplayExecutionMaxTargetSiteVisits =
-    uint64_t{1} << 20;
-inline constexpr uint64_t kProcessReplayExecutionMaxControlEvents = uint64_t{1}
-                                                                    << 20;
-inline constexpr uint64_t kProcessReplayExecutionMaxProtocolBytes = uint64_t{1}
-                                                                    << 28;
-inline constexpr uint64_t kProcessReplayExecutionMaxStreamBytes = uint64_t{1}
-                                                                  << 28;
-inline constexpr uint64_t kProcessReplayExecutionMaxAggregateOutputBytes =
-    uint64_t{1} << 29;
-inline constexpr uint64_t kProcessReplayExecutionMaxPreviewBytes = uint64_t{1}
-                                                                   << 16;
-inline constexpr uint64_t kProcessReplayExecutionMaxBackendChunkBytes =
-    uint64_t{1} << 20;
 inline constexpr uint64_t kProcessReplayBackendEventProtocolBytes = 1;
 inline constexpr uint64_t kProcessReplayStdinRequestProtocolBytes = 24;
 inline constexpr uint64_t kProcessReplayTargetHitProtocolBytes = 8;

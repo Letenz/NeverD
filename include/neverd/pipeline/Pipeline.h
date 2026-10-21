@@ -25,6 +25,7 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
+#include "neverd/pass/Limits.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 #include "neverd/pipeline/SourceViewOptions.h"
 #include "neverd/sbf/SBFIR.h"
@@ -440,8 +441,10 @@ public:
   /// integer add/sub/and/or/xor with equivalent instruction sequences for
   /// \p Rounds rounds.  Returns the number of operators substituted.  Like
   /// runHelloWorldPass, this keeps PassManager instantiation inside libneverd.
-  static unsigned runInstSubstitutionPass(llvm::Module &Mod,
-                                          unsigned Rounds = 1);
+  static unsigned runInstSubstitutionPass(
+      llvm::Module &Mod,
+      unsigned Rounds =
+          ::neverd::limits::pass::kDefaultInstructionSubstitutionRounds);
 
   /// Run the constant-encryption pass on a module, replacing integer constant
   /// operands of binary operators / comparisons with run-time-decrypted values.

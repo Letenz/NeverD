@@ -14,6 +14,7 @@
 #include "MedLLVMFailureSnapshot.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/support/Diagnostic.h"
@@ -91,7 +92,8 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   {
     std::vector<MedVar> Work{AddrVar};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 256;
+    int Budget = ::neverd::limits::backend::
+        kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -212,7 +214,12 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   const PhiNode *DirectAddressPhi = nullptr;
   {
     MedVar Cur = AddrVar;
-    for (int Depth = 0; Depth < 8; ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <
+        ::neverd::limits::backend::
+            kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrDepthLimit;
+        ++Depth) {
       if (const PhiNode *Phi = findPhi(Cur)) {
         DirectAddressPhi = Phi;
         break;
@@ -269,7 +276,9 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
               !Img->RuntimeCallablePointerSlots.empty())) {
     auto loadsFromDataPtrTable = [&](const MedVar &Start) {
       MedVar Cur = Start;
-      for (int D = 0; D < 8; ++D) {
+      for (int D = 0; D < ::neverd::limits::backend::
+                              kMedLLVMIndexedGlobalLoadsFromDataPtrTableDLimit;
+           ++D) {
         const MedOp *Def = findDef(Cur);
         if (!Def)
           return false;
@@ -370,7 +379,8 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
     std::set<std::tuple<int, int, int, bool>> Seen;
     bool SawRaw = false;
     bool SawSymbolized = false;
-    int Budget = 256;
+    int Budget = ::neverd::limits::backend::
+        kMedLLVMIndexedGlobalClassifyIndexedBaseModelBudget;
     while (!Work.empty() && Budget-- > 0) {
       auto [Cur, BypassesGetVar] = Work.back();
       Work.pop_back();
@@ -536,7 +546,12 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
       return false;
     MedVar Current = Arg;
     std::set<std::tuple<int, int, int, uint16_t>> Seen;
-    for (int Depth = 0; Depth <= 16; ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <=
+        ::neverd::limits::backend::
+            kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrLosesMappedAddressBitsDepthLimit;
+        ++Depth) {
       if (Current.isConst()) {
         if (Current.Size == 0 || Current.Size >= PointerSize ||
             Current.Size >= 8)
@@ -566,7 +581,13 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   auto forwardedPhi = [&](const MedVar &Value) {
     MedVar Current = Value;
     std::set<std::tuple<int, int, int>> Seen;
-    for (int Depth = 0; Depth <= 64 && !Current.isConst(); ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <=
+            ::neverd::limits::backend::
+                kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrForwardedPhiDepthLimit &&
+        !Current.isConst();
+        ++Depth) {
       if (const PhiNode *Phi = findPhi(Current))
         return Phi;
       auto Key = std::make_tuple(static_cast<int>(Current.Kind), Current.Id,
@@ -866,7 +887,10 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
         recoverSelectionArm =
             [&](const MedVar &Arg, int Depth,
                 SelectionSeen Seen) -> std::optional<SelectionEvidence> {
-      if (Depth > 16 || varIsFrameDerived(Arg))
+      if (Depth >
+              ::neverd::limits::backend::
+                  kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrRecoverSelectionArmDepthLimit ||
+          varIsFrameDerived(Arg))
         return std::nullopt;
       if (!Arg.isConst()) {
         auto Key =
@@ -1084,7 +1108,9 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
   std::set<std::tuple<int, int, int>> BoundedPhiSeen;
   std::function<bool(const MedVar &, int)> isBoundedScalarLookup =
       [&](const MedVar &Value, int Depth) -> bool {
-    if (Depth > 16)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveIndexedGlobalPtrIsBoundedScalarLookupDepthLimit)
       return false;
     if (Value.isConst())
       return Value.ConstVal < limits::kMaxJumpTableEntries;
@@ -1403,7 +1429,13 @@ llvm::Value *MedLLVMEmitter::tryResolveRuntimeIndexedReadOnlyTable(
   // Find the INT_ADD/INT_SUB through any pointer-preserving wrapper (an i386
   // LOAD address is zero-extended to pointer width).
   const MedOp *Def = lookupDef(AddrVar);
-  for (int Peel = 0; Peel < 8 && Def; ++Peel) {
+  for (
+      int Peel = 0;
+      Peel <
+          ::neverd::limits::backend::
+              kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveRuntimeIndexedReadOnlyTablePeelLimit &&
+      Def;
+      ++Peel) {
     if (Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB)
       break;
     auto Forwarded = pointerPreservingInput(*Def);

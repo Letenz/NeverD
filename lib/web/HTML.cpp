@@ -12,6 +12,7 @@
 #include "neverd/web/HTML.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/Source.h"
 
 #include <algorithm>
@@ -107,15 +108,15 @@ struct Reader {
     }
     while (At < Bytes.size() && !space(Bytes[At]) && Bytes[At] != '/' &&
            Bytes[At] != '>') {
-      if (T.Name.size() >= 128 || Bytes[At] == '<' || Bytes[At] == '\'' ||
-          Bytes[At] == '"')
+      if (T.Name.size() >= ::neverd::limits::web::kHTMLTagTNameSizeLimit ||
+          Bytes[At] == '<' || Bytes[At] == '\'' || Bytes[At] == '"')
         throw Error("html_unsupported_tag_name");
       T.Name += lower(take());
     }
     uint32_t AttributeCount = 0;
     while (At < Bytes.size()) {
       whitespace();
-      if (At - T.Start > 65536)
+      if (At - T.Start > ::neverd::limits::web::kMaxHTMLTokenBytes)
         throw Error("html_tag_budget_exceeded");
       if (At == Bytes.size())
         break;
@@ -132,13 +133,13 @@ struct Reader {
         T.End = At;
         return T;
       }
-      if (++AttributeCount > 256)
+      if (++AttributeCount > ::neverd::limits::web::kHTMLTagAttributeCountLimit)
         throw Error("html_attribute_count_exceeded");
       std::string Name;
       while (At < Bytes.size() && !space(Bytes[At]) && Bytes[At] != '/' &&
              Bytes[At] != '>' && Bytes[At] != '=') {
-        if (Name.size() >= 128 || Bytes[At] == '<' || Bytes[At] == '\'' ||
-            Bytes[At] == '"')
+        if (Name.size() >= ::neverd::limits::web::kHTMLTagNameSizeLimit ||
+            Bytes[At] == '<' || Bytes[At] == '\'' || Bytes[At] == '"')
           throw Error("html_unsupported_attribute_name");
         Name += lower(take());
       }
@@ -439,7 +440,7 @@ struct Reader {
         take();
         continue;
       }
-      if (++A.TokenCount > 100000)
+      if (++A.TokenCount > ::neverd::limits::web::kHTMLRunATokenCountLimit)
         throw Error("html_token_budget_exceeded");
       if (starts("<!--")) {
         comment();
@@ -476,12 +477,13 @@ struct Reader {
       if (T.Name == "svg" || T.Name == "math") {
         if (!T.SelfClosing)
           ForeignRoots.push_back(T.Name);
-        if (ForeignRoots.size() > 64)
+        if (ForeignRoots.size() >
+            ::neverd::limits::web::kHTMLRunMathSvgForeignRootsSizeLimit)
           throw Error("html_context_depth_exceeded");
         continue;
       }
       if (T.Name == "template" && ForeignRoots.empty()) {
-        if (++TemplateDepth > 64)
+        if (++TemplateDepth > ::neverd::limits::web::kHTMLRunTemplateDepthLimit)
           throw Error("html_context_depth_exceeded");
       }
       if (T.Name == "script")

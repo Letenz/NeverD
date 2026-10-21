@@ -3,6 +3,7 @@
 #ifndef NEVERD_PRIVATE_MEDLLVMFAILURESNAPSHOT_H
 #define NEVERD_PRIVATE_MEDLLVMFAILURESNAPSHOT_H
 
+#include "neverd/backend/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -56,7 +57,8 @@ public:
   bool json(std::string_view S) noexcept {
     // Byte-preserving escaped text, including non-ASCII bytes. Never walk an
     // unbounded symbol/string even when its destination has room remaining.
-    if (S.size() > 4096) {
+    if (S.size() >
+        ::neverd::limits::backend::kMedLLVMFailureSnapshotJsonSSizeLimit) {
       stop();
       return false;
     }
@@ -123,7 +125,9 @@ inline void writeVar(Buffer &B, const MedVar &V) noexcept {
 
 struct Budget {
   std::chrono::steady_clock::time_point Deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      std::chrono::steady_clock::now() +
+      std::chrono::seconds(
+          ::neverd::limits::backend::kMedLLVMFailureSnapshotSeconds);
   size_t Records = 0;
   bool Exhausted = false;
   bool allows() noexcept {
@@ -132,7 +136,9 @@ struct Budget {
     return !Exhausted;
   }
   bool takeRecord(Buffer &B) noexcept {
-    if (!B.complete() || !allows() || Records >= 20000) {
+    if (!B.complete() || !allows() ||
+        Records >= ::neverd::limits::backend::
+                       kMedLLVMFailureSnapshotTakeRecordsLimit) {
       Exhausted = true;
       B.stop();
       return false;
@@ -178,7 +184,9 @@ struct SnapshotWriter {
       B.append("null");
       return;
     }
-    if (Depth >= 8 || !O.takeRecord(B)) {
+    if (Depth >=
+            ::neverd::limits::backend::kMedLLVMFailureSnapshotTypeDepthLimit ||
+        !O.takeRecord(B)) {
       B.stop();
       return;
     }
@@ -689,7 +697,8 @@ inline void scalarOffsetRejection(const MedFunc *Func, const MedVar &Query,
   const char *Root = std::getenv("NEVERD_CI_FAILURE_SNAPSHOT_DIR");
   const char *Selected = std::getenv("NEVERD_CI_FAILURE_SNAPSHOT_FUNCTION");
   if (!Root || !*Root || !Selected || !Func || Func->Name != Selected ||
-      std::strlen(Root) > 4096)
+      std::strlen(Root) >
+          ::neverd::limits::backend::kMaxFailureSnapshotRootBytes)
     return;
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   try {
@@ -701,7 +710,10 @@ inline void scalarOffsetRejection(const MedFunc *Func, const MedVar &Query,
     // At most 64 fixed slots per case, shared safely across capture threads
     // and processes through exclusive directory creation. Never overwrite.
     fs::path Dir;
-    for (unsigned Slot = 0; Slot < 64; ++Slot) {
+    for (unsigned Slot = 0;
+         Slot < ::neverd::limits::backend::
+                    kMedLLVMFailureSnapshotScalarOffsetRejectionSlotLimit;
+         ++Slot) {
       fs::path Candidate =
           Parent / ("offset-rejection-" + std::to_string(Slot));
       EC.clear();
@@ -758,7 +770,9 @@ inline void capture(const BinaryImage *Img, const MedFunc *Func,
   const char *Root = std::getenv("NEVERD_CI_FAILURE_SNAPSHOT_DIR");
   const char *Selected = std::getenv("NEVERD_CI_FAILURE_SNAPSHOT_FUNCTION");
   if (HasEarlierCodeFatal || !Root || !*Root || !Selected || !Img || !Func ||
-      Func->Name != Selected || std::strlen(Root) > 4096)
+      Func->Name != Selected ||
+      std::strlen(Root) >
+          ::neverd::limits::backend::kMaxFailureSnapshotRootBytes)
     return;
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   try {
@@ -772,7 +786,10 @@ inline void capture(const BinaryImage *Img, const MedFunc *Func,
         std::chrono::steady_clock::now().time_since_epoch().count();
     // Directory creation arbitrates concurrent shard/process captures. No
     // shared counter, process-global observer, or thread-local state is used.
-    for (unsigned Attempt = 0; Attempt < 64; ++Attempt) {
+    for (unsigned Attempt = 0;
+         Attempt <
+         ::neverd::limits::backend::kMedLLVMFailureSnapshotCaptureAttemptLimit;
+         ++Attempt) {
       fs::path Candidate = Parent / ("snapshot-" + std::to_string(Stamp) + "-" +
                                      std::to_string(Attempt));
       EC.clear();
@@ -810,9 +827,10 @@ inline void capture(const BinaryImage *Img, const MedFunc *Func,
     const bool GraphComplete = O.allows() && Data.complete();
     const bool GraphWritten =
         writeFile(Dir / "post-abi-graph.jsonl", Data.str());
-    constexpr size_t RawLimit = 16 * 1024 * 1024;
     bool RawWritten = false;
-    if (!Img->Raw.empty() && Img->Raw.size() <= RawLimit)
+    if (!Img->Raw.empty() &&
+        Img->Raw.size() <=
+            ::neverd::limits::backend::kMedLLVMFailureSnapshotRawLimit)
       RawWritten = writeFile(
           Dir / "loaded-image.raw",
           {reinterpret_cast<const char *>(Img->Raw.data()), Img->Raw.size()});
@@ -838,7 +856,7 @@ inline void capture(const BinaryImage *Img, const MedFunc *Func,
     Manifest.append(",\"raw_written\":");
     Manifest.append(RawWritten ? "true" : "false");
     Manifest.append(",\"raw_limit_bytes\":");
-    Manifest.number(RawLimit);
+    Manifest.number(::neverd::limits::backend::kMedLLVMFailureSnapshotRawLimit);
     Manifest.append(",\"complete_ir_model\":false,\"proof_history\":false");
     Manifest.append(",\"low_ir\":false,\"operation_locator\":false,\"original_"
                     "object_equality\":\"unchecked\"}\n");

@@ -21,6 +21,7 @@
 #include "HighCFSimplifyDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
@@ -526,7 +527,7 @@ static void mergeConsecutiveCondBlocks(std::vector<HighStmt> &Stmts) {
 //===----------------------------------------------------------------------===//
 
 static bool isPureValue(const HighExpr &E, unsigned Depth = 0) {
-  if (Depth > 16)
+  if (Depth > ::neverd::limits::ir::kHighCFSimplifyIsPureValueDepthLimit)
     return false;
   switch (E.Kind) {
   case ExprKind::Var:
@@ -553,7 +554,7 @@ static bool isPureValue(const HighExpr &E, unsigned Depth = 0) {
 /// store or atomic.  Each path executes exactly one copy, so duplicating a
 /// load is as exact as duplicating arithmetic.
 static bool isTailValue(const HighExpr &E, unsigned Depth = 0) {
-  if (Depth > 32)
+  if (Depth > ::neverd::limits::ir::kHighCFSimplifyIsTailValueDepthLimit)
     return false;
   switch (E.Kind) {
   case ExprKind::Var:
@@ -1144,7 +1145,10 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize,
       };
   // A composed tail needs its epilogue's tail first; the epilogue usually
   // follows the jumps to it, so repeat until no new tail appears.
-  for (size_t Round = 0; Round < 4; ++Round) {
+  for (size_t Round = 0;
+       Round <
+       ::neverd::limits::ir::kHighCFSimplifyDuplicateSmallReturnTailsRoundLimit;
+       ++Round) {
     const size_t Before = Tails.size();
     Collect(Body, nullptr, 0, TryContext());
     if (Tails.size() == Before)
@@ -2686,9 +2690,9 @@ bool moveSwitchTailsToTheirExit(std::vector<HighStmt> &Body) {
 static std::optional<llvm::APInt> evaluateWith(const HighExpr &E, VarKey Key,
                                                const llvm::APInt &Value,
                                                unsigned Depth = 0) {
-  if (Depth > 32 || !E.Type || E.Type->Kind != NdTypeKind::Int ||
-      E.Type->Size == 0 || E.Type->Size > 8 ||
-      E.MemoryOrdering != NdMemoryOrdering::None ||
+  if (Depth > ::neverd::limits::ir::kHighCFSimplifyEvaluateWithDepthLimit ||
+      !E.Type || E.Type->Kind != NdTypeKind::Int || E.Type->Size == 0 ||
+      E.Type->Size > 8 || E.MemoryOrdering != NdMemoryOrdering::None ||
       E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
       E.IntrinsicId != Intrinsic::None || !E.IntrinsicOutputs.empty())
     return std::nullopt;
@@ -2924,7 +2928,6 @@ bool absorbSwitchRangeGuards(std::vector<HighStmt> &Body) {
 }
 
 bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body) {
-  constexpr unsigned kMaxRounds = 64;
   auto IsTry = [](const HighStmt &S) {
     return S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
            S.Kind == StmtKind::ItaniumTry;
@@ -2964,7 +2967,8 @@ bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body) {
   };
   std::set<va_t> Refused;
   bool Changed = false;
-  for (unsigned Round = 0; Round < kMaxRounds; ++Round) {
+  for (unsigned Round = 0;
+       Round < ::neverd::limits::ir::kHighCFSimplifyMaxRounds; ++Round) {
     const LabelStarts Labels(Body);
     std::map<va_t, unsigned> AllJumps, AllHandlers;
     CountEntries(Body, AllJumps, AllHandlers);
@@ -3969,17 +3973,12 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
       };
   CountStarts(Body);
 
-  // Small expression trees need no visited table. A shared or deep expression
-  // switches the complete count to a DAG walk; only zero, one and many reads
-  // are distinguished by the single-use rule below.
-  constexpr size_t MaxTreeVisits = 4096;
-  constexpr unsigned MaxTreeDepth = 128;
   VarKeyMap<int> Reads;
   auto CountFast = [&](auto &&Self, const ExprPtr &E, size_t &Remaining,
                        unsigned Depth) -> bool {
     if (!E)
       return true;
-    if (!Remaining || Depth > MaxTreeDepth)
+    if (!Remaining || Depth > ::neverd::limits::ir::kHighCFSimplifyMaxTreeDepth)
       return false;
     --Remaining;
     if (E->Kind == ExprKind::Var) {
@@ -4006,7 +4005,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
   bool Complex = false;
   VisitReadRoots([&](const ExprPtr &E) {
     if (!Complex) {
-      size_t Remaining = MaxTreeVisits;
+      size_t Remaining = ::neverd::limits::ir::kHighCFSimplifyMaxTreeVisits;
       Complex = !CountFast(CountFast, E, Remaining, 0);
     }
   });
@@ -4044,10 +4043,13 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
   // Preserve the original depth and effect checks. Large shared expressions
   // use exact node/depth memoization instead of expanding every path.
   auto Foldable = [&](const HighExpr &Root, unsigned RootDepth) {
-    size_t Remaining = MaxTreeVisits;
+    size_t Remaining = ::neverd::limits::ir::kHighCFSimplifyMaxTreeVisits;
     bool Exhausted = false;
     auto Fast = [&](auto &&Self, const HighExpr &E, unsigned Depth) -> bool {
-      if (Depth > 32 || E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+      if (Depth >
+              ::neverd::limits::ir::
+                  kHighCFSimplifyReduceSingleUseGotosFoldableFastDepthLimit ||
+          E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
           E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
         return false;
       if (!Remaining) {
@@ -4065,7 +4067,10 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
       return Result;
     std::map<std::pair<const HighExpr *, unsigned>, bool> Memo;
     auto Shared = [&](auto &&Self, const HighExpr &E, unsigned Depth) -> bool {
-      if (Depth > 32 || E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+      if (Depth >
+              ::neverd::limits::ir::
+                  kHighCFSimplifyReduceSingleUseGotosFoldableSharedDepthLimit ||
+          E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
           E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
         return false;
       const auto Key = std::pair{&E, Depth};
@@ -4340,12 +4345,13 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
         if (ReadIt != Reads.end() && ReadIt->second == 1 &&
             Foldable(*L[I].Val, 0)) {
           unsigned CondReads = 0;
-          size_t Remaining = MaxTreeVisits;
+          size_t Remaining = ::neverd::limits::ir::kHighCFSimplifyMaxTreeVisits;
           auto CountKey = [&](auto &&Self, const ExprPtr &E,
                               unsigned Depth) -> bool {
             if (!E)
               return true;
-            if (!Remaining || Depth > MaxTreeDepth)
+            if (!Remaining ||
+                Depth > ::neverd::limits::ir::kHighCFSimplifyMaxTreeDepth)
               return false;
             --Remaining;
             if (E->Kind == ExprKind::Var && varKey(E->Var) == Key)
@@ -4802,10 +4808,12 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
   // after K up to it is entered only by gotos inside the region.
   auto regionEnd = [&](const std::vector<HighStmt> &LL,
                        size_t K) -> std::optional<size_t> {
-    constexpr size_t kMaxRegionStmts = 256;
     std::map<va_t, unsigned> Internal;
     std::set<va_t> Inner;
-    for (size_t M = K; M < LL.size() && M - K < kMaxRegionStmts; ++M) {
+    for (size_t M = K;
+         M < LL.size() &&
+         M - K < ::neverd::limits::ir::kHighCFSimplifyMaxRegionStmts;
+         ++M) {
       if (M > K && labelStart(LL, M)) {
         if (usesOf(LL[M].Addr) == ~0u)
           return std::nullopt;
@@ -4838,7 +4846,10 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
     }
     return std::nullopt;
   };
-  for (unsigned Applied = 0; Applied < 512; ++Applied) {
+  for (unsigned Applied = 0;
+       Applied <
+       ::neverd::limits::ir::kHighCFSimplifyReduceSingleUseGotosAppliedLimit;
+       ++Applied) {
     std::unordered_map<va_t, Site> Labels;
     std::vector<std::pair<Site, va_t>> Gotos;
     std::vector<std::pair<const std::vector<HighStmt> *, size_t>> Chain;
@@ -5146,11 +5157,14 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
   const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
   size_t NestedStatements = 0;
-  if (Func.Body.size() > 512)
+  if (Func.Body.size() >
+      ::neverd::limits::ir::
+          kHighCFSimplifyMedToHighConverterSimplifyControlFlowFuncBodySizeLimit)
     walkStmts(Func.Body, [&](const HighStmt &) { ++NestedStatements; });
   // Every if/else pass revisits nested arms; cap optional folding before a
   // shallow outer list multiplies work across thousands of descendants.
-  const bool TooNestedForIfElse = NestedStatements > 1536;
+  const bool TooNestedForIfElse =
+      NestedStatements > ::neverd::limits::ir::kMaxIfElseNestedStatements;
   auto Now = [] { return std::chrono::steady_clock::now(); };
   auto ElapsedMs = [](auto Start, auto End) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(End - Start)

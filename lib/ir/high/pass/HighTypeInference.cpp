@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
 #include <functional>
@@ -83,9 +84,13 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
   std::set<int> AddrParams;
   auto Unwrap = [](const HighExpr *E) -> const HighExpr * {
     unsigned Depth = 0;
-    while (E && !E->Operands.empty() && Depth++ < 8 &&
-           (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
-            E->Kind == ExprKind::UnaryOp))
+    while (
+        E && !E->Operands.empty() &&
+        Depth++ <
+            ::neverd::limits::ir::
+                kHighTypeInferenceMedToHighConverterInferTypesUnwrapDepthLimit &&
+        (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+         E->Kind == ExprKind::UnaryOp))
       E = E->Operands[0].get();
     return E;
   };

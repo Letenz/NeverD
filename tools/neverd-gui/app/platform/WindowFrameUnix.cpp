@@ -1,6 +1,7 @@
 // Linux and other X11 or Wayland desktops: the window drops the window
 // manager's frame and draws its own, with a shadow under Wayland.
 
+#include "../../Config.h"
 #include "WindowFramePlatform.h"
 
 #include <QGuiApplication>
@@ -11,8 +12,6 @@ namespace neverd::gui::platform {
 namespace {
 constexpr char WaylandPlatform[] = "wayland";
 constexpr char X11Platform[] = "xcb";
-/// Visual Studio Code's custom title bar with its command center.
-constexpr int TitleBarHeight = 35;
 
 bool onWayland() {
   return QGuiApplication::platformName().startsWith(
@@ -50,7 +49,9 @@ Qt::Edges ownResizeEdges() {
   return Qt::LeftEdge | Qt::TopEdge | Qt::RightEdge | Qt::BottomEdge;
 }
 
-int titleBarHeight() { return TitleBarHeight; }
+int titleBarHeight() {
+  return ::neverd::limits::gui_config::kWindowFrameUnixTitleBarHeight;
+}
 
 int systemControlsWidth() { return 0; }
 

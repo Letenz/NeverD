@@ -13,6 +13,7 @@
 #include "TauriInitializer.h"
 
 #include "neverd/pipeline/ConstantStores.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/web/Error.h"
 
@@ -68,7 +69,8 @@ web::TauriInitializer tauriInitializer(const web::NativeInput &Input,
     Out.Fields[I] = {S.Instruction, S.Value,
                      isExactAddressProvenance(S.Provenance)};
   }
-  if (Image->Segments.size() > 128)
+  if (Image->Segments.size() >
+      ::neverd::sdk::kTauriInitializerImageSegmentsSizeLimit)
     throw web::Error("tauri_mapping_budget_exceeded");
   for (const auto &S : Image->Segments)
     if (S.FileSz)

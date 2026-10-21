@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/Source.h"
 
 namespace neverd::web {
@@ -32,10 +33,7 @@ inline constexpr std::string_view sourceRewriteProfile(std::string_view Pass) {
     return SourceBranchProfile;
   return {};
 }
-inline constexpr uint64_t MaxSourceRewriteRecords = 4096;
 inline constexpr uint64_t MaxSourceRewriteBytes = MaxJavaScriptBytes;
-inline constexpr uint64_t MaxSourceRewriteSteps = 8000000;
-inline constexpr uint64_t MaxCachedSourceRewrites = 2;
 
 struct SourceRewriteRecord {
   std::string ID, NodeID, Status, Reason, ValueKind;

@@ -2,6 +2,7 @@
 #define NEVERD_SDK_CAPI_OBJCPROFILESTORAGE_H
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
@@ -61,7 +62,9 @@ public:
     for (const auto &Section : Image.Sections) {
       if (Section.Name != "__llvm_prf_cnts" ||
           Section.SegmentName != "__DATA" || !Section.VA || !Section.Size ||
-          Section.Size > 16 * 1024 * 1024 ||
+          Section.Size >
+              ::neverd::sdk::
+                  kObjCProfileStorageDATALlvmPrfCntsSectionSizeLimit ||
           Section.Size > UINT64_MAX - Section.VA ||
           Section.FileSz != Section.Size || !Section.isReadable() ||
           !Section.isWritable() || Section.isExecutable() ||

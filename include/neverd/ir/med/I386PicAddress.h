@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_IR_MED_I386PICADDRESS_H
 #define NEVERD_IR_MED_I386PICADDRESS_H
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include <functional>
@@ -39,7 +40,9 @@ std::optional<uint64_t> foldI386PicAddress(const MedFunc &Function,
   };
   std::function<std::optional<Folded>(const MedVar &, unsigned)> Visit =
       [&](const MedVar &Value, unsigned Depth) -> std::optional<Folded> {
-    if (Depth > 16 || Value.Size == 0)
+    if (Depth > ::neverd::limits::ir::
+                    kI386PicAddressFoldI386PicAddressVisitDepthLimit ||
+        Value.Size == 0)
       return std::nullopt;
     if (Value.isConst()) {
       if (isAddressProvenance(Value.Provenance))

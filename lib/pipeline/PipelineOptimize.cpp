@@ -33,6 +33,7 @@
 #include "neverd/pass/ir/simplify/ByteMemoryForwardingPass.h"
 #include "neverd/pass/ir/simplify/ControlFlowRecoveryPass.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -161,7 +162,10 @@ privateFrameDisplacement(llvm::Value *Value, llvm::Value *EntrySP,
   int64_t Offset = 0;
   // One path is followed at each step. Bound the walk in malformed or very
   // large lifted graphs without making a guess about an unproved address.
-  for (unsigned Work = 0; Work < 1024; ++Work) {
+  for (unsigned Work = 0;
+       Work < ::neverd::limits::pipeline::
+                  kPipelineOptimizePrivateFrameDisplacementWorkLimit;
+       ++Work) {
     if (Value == EntrySP)
       return Offset;
     if (auto *Trunc = llvm::dyn_cast<llvm::TruncInst>(Value)) {
@@ -209,7 +213,10 @@ static bool returnDependsOnProvenLoad(
     const llvm::SmallPtrSetImpl<const llvm::LoadInst *> &ProvenLoads) {
   llvm::SmallVector<const llvm::Value *, 32> Work{Return.getReturnValue()};
   llvm::SmallPtrSet<const llvm::Value *, 32> Seen;
-  while (!Work.empty() && Seen.size() < 512) {
+  while (!Work.empty() &&
+         Seen.size() <
+             ::neverd::limits::pipeline::
+                 kPipelineOptimizeReturnDependsOnProvenLoadSeenSizeLimit) {
     const llvm::Value *Value = Work.pop_back_val();
     if (!Value || !Seen.insert(Value).second)
       continue;
@@ -223,7 +230,9 @@ static bool returnDependsOnProvenLoad(
       continue;
     for (const llvm::Use &Operand : Inst->operands())
       Work.push_back(Operand.get());
-    if (Work.size() > 512)
+    if (Work.size() >
+        ::neverd::limits::pipeline::
+            kPipelineOptimizeReturnDependsOnProvenLoadWorkSizeLimit)
       return false;
   }
   return false;

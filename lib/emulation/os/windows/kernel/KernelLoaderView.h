@@ -11,11 +11,11 @@
 #define NEVERD_EMULATION_KERNELLOADERVIEW_H
 
 #include "neverd/emulation/DriverSession.h"
+#include "neverd/emulation/Limits.h"
 
 namespace neverd::emulation::kernel_loader_view {
 
 constexpr uint32_t Version = 1;
-constexpr size_t MaxEvidenceSize = 256;
 constexpr uint64_t RecordSize = 160;
 struct Field {
   uint64_t Offset;
@@ -37,5 +37,11 @@ constexpr bool readable(uint64_t Byte) {
 llvm::Error validate(const DriverLoaderView &View);
 
 } // namespace neverd::emulation::kernel_loader_view
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::emulation::kernel_loader_view {
+inline constexpr size_t MaxEvidenceSize =
+    ::neverd::limits::emulation::kKernelLoaderViewMaxEvidenceSize;
+}
 
 #endif

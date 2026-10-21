@@ -1,5 +1,7 @@
 #include "ListingView.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
 #include "Session.h"
 #include "Theme.h"
@@ -21,16 +23,10 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int PageLines = 240;
-constexpr int PrefetchMargin = 80;
-constexpr int MaxLoadedLines = 6000;
 constexpr int JumpContextBefore = 48;
 constexpr int ScrollResolution = 1 << 20;
-constexpr int ScrollDebounceMs = 15;
 constexpr int WheelLines = 3;
-constexpr int MaxArrowLevels = 10;
 constexpr int HintLines = 12;
-constexpr int TextMargin = 6;
 // A line's body runs to about this many characters after its prefix.
 constexpr int BodyChars = 120;
 constexpr const char *ContentKinds[] = {"insn", "data"};
@@ -53,9 +49,11 @@ ListingView::ListingView(Session &session, const AddressSpace &space,
   viewport()->setMouseTracking(true);
   setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   scrollJump_.setSingleShot(true);
-  scrollJump_.setInterval(ScrollDebounceMs);
+  scrollJump_.setInterval(::neverd::limits::gui::kListingViewScrollDebounceMs);
   connect(&scrollJump_, &QTimer::timeout, this, [this] {
-    request(Fetch::Jump, pendingScrollAddress_, 0, PageLines / 2, PageLines);
+    request(Fetch::Jump, pendingScrollAddress_, 0,
+            ::neverd::limits::gui::kListingViewPageLines / 2,
+            ::neverd::limits::gui::kListingViewPageLines);
   });
   connect(verticalScrollBar(), &QScrollBar::actionTriggered, this,
           [this](int action) {
@@ -145,7 +143,8 @@ void ListingView::clear() {
 void ListingView::jumpTo(Address address) {
   scrollJump_.stop();
   pendingJump_ = address;
-  request(Fetch::Jump, address, 0, JumpContextBefore, PageLines);
+  request(Fetch::Jump, address, 0, JumpContextBefore,
+          ::neverd::limits::gui::kListingViewPageLines);
 }
 
 std::optional<Address> ListingView::topItem() const {
@@ -159,7 +158,8 @@ void ListingView::refresh() {
     return;
   // A refresh must not supersede a jump that has not arrived yet.
   if (pendingJump_) {
-    request(Fetch::Jump, *pendingJump_, 0, JumpContextBefore, PageLines);
+    request(Fetch::Jump, *pendingJump_, 0, JumpContextBefore,
+            ::neverd::limits::gui::kListingViewPageLines);
     return;
   }
   if (lines_.empty())
@@ -176,8 +176,8 @@ void ListingView::refresh() {
         cursor->content += contentKind(lines_[i].kind);
     }
   }
-  request(Fetch::Refresh, top.item, top.sub, JumpContextBefore, PageLines,
-          cursor);
+  request(Fetch::Refresh, top.item, top.sub, JumpContextBefore,
+          ::neverd::limits::gui::kListingViewPageLines, cursor);
 }
 
 void ListingView::request(Fetch kind, Address address, int sub, int before,
@@ -353,20 +353,25 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
 void ListingView::ensureLoaded() {
   if (lines_.empty() || !session_.loaded())
     return;
-  if (!fetchingBefore_ && !atStart_ && top_ < PrefetchMargin) {
+  if (!fetchingBefore_ && !atStart_ &&
+      top_ < ::neverd::limits::gui_config::kListingViewPrefetchMargin) {
     const auto &first = lines_.front();
-    request(Fetch::Before, first.item, first.sub, PageLines, 0);
+    request(Fetch::Before, first.item, first.sub,
+            ::neverd::limits::gui::kListingViewPageLines, 0);
   }
   const int bottom = top_ + visibleLines();
   if (!fetchingAfter_ && !atEnd_ &&
-      bottom + PrefetchMargin > int(lines_.size())) {
+      bottom + ::neverd::limits::gui_config::kListingViewPrefetchMargin >
+          int(lines_.size())) {
     const auto &last = lines_.back();
-    request(Fetch::After, last.item, last.sub + 1, 0, PageLines);
+    request(Fetch::After, last.item, last.sub + 1, 0,
+            ::neverd::limits::gui::kListingViewPageLines);
   }
 }
 
 void ListingView::trim() {
-  while (int(lines_.size()) > MaxLoadedLines) {
+  while (int(lines_.size()) >
+         ::neverd::limits::gui::kListingViewMaxLoadedLines) {
     const int above = top_;
     const int below = int(lines_.size()) - (top_ + visibleLines());
     if (above > below) {
@@ -413,7 +418,7 @@ int ListingView::textLeft() const {
     // Before the first page arrives, reserve a typical 64-bit prefix.
     prefixChars = 22;
   }
-  return arrowsWidth_ + TextMargin +
+  return arrowsWidth_ + ::neverd::limits::gui_config::kListingViewTextMargin +
          int(std::ceil((prefixChars ? prefixChars + 1 : 0) * charWidth_)) -
          horizontalScrollBar()->value();
 }
@@ -429,7 +434,9 @@ int ListingView::columnAt(const Line &line, int x) const {
     prefix.beginLayout();
     const auto row = prefix.createLine();
     prefix.endLayout();
-    const int left = arrowsWidth_ + TextMargin - horizontalScrollBar()->value();
+    const int left = arrowsWidth_ +
+                     ::neverd::limits::gui_config::kListingViewTextMargin -
+                     horizontalScrollBar()->value();
     return row.xToCursor(x - left) + firstColumn(line);
   }
   auto &layout = line.styled.layout(
@@ -446,7 +453,8 @@ int ListingView::firstColumn(const Line &line) const {
 
 qreal ListingView::columnX(const Line &line, int column) const {
   if (column < 0)
-    return arrowsWidth_ + TextMargin - horizontalScrollBar()->value() +
+    return arrowsWidth_ + ::neverd::limits::gui_config::kListingViewTextMargin -
+           horizontalScrollBar()->value() +
            QFontMetricsF(Theme::instance().codeFont())
                .horizontalAdvance((line.prefix + QLatin1Char(' '))
                                       .left(column - firstColumn(line)));
@@ -726,8 +734,9 @@ void ListingView::paintEvent(QPaintEvent *) {
     prefixChars_ = prefixChars;
   }
   const int left = textLeft();
-  const int prefixLeft =
-      arrowsWidth_ + TextMargin - horizontalScrollBar()->value();
+  const int prefixLeft = arrowsWidth_ +
+                         ::neverd::limits::gui_config::kListingViewTextMargin -
+                         horizontalScrollBar()->value();
   const auto colorOf = [&theme](int role) { return theme.listingRole(role); };
   const int first = top_;
   const int last = std::min<int>(lines_.size() - 1, top_ + visibleLines());
@@ -831,12 +840,14 @@ void ListingView::paintArrows(QPainter &painter, int first, int last) {
   std::sort(arrows.begin(), arrows.end(), [](const Arrow &a, const Arrow &b) {
     return std::abs(a.to - a.from) < std::abs(b.to - b.from);
   });
-  QVector<QVector<std::pair<int, int>>> occupied(MaxArrowLevels);
+  QVector<QVector<std::pair<int, int>>> occupied(
+      ::neverd::limits::gui::kListingViewMaxArrowLevels);
   for (auto &arrow : arrows) {
     const int low = std::min(arrow.from, arrow.to);
     const int high = std::max(arrow.from, arrow.to);
-    arrow.level = MaxArrowLevels - 1;
-    for (int level = 0; level < MaxArrowLevels; ++level) {
+    arrow.level = ::neverd::limits::gui::kListingViewMaxArrowLevels - 1;
+    for (int level = 0;
+         level < ::neverd::limits::gui::kListingViewMaxArrowLevels; ++level) {
       bool free = true;
       for (const auto &[a, b] : occupied[level])
         if (!(high < a || low > b)) {
@@ -851,8 +862,9 @@ void ListingView::paintArrows(QPainter &painter, int first, int last) {
     occupied[arrow.level].append({low, high});
   }
   painter.setRenderHint(QPainter::Antialiasing, false);
-  const qreal spacing =
-      std::max<qreal>(3, (arrowsWidth_ - 8) / qreal(MaxArrowLevels));
+  const qreal spacing = std::max<qreal>(
+      3, (arrowsWidth_ - 8) /
+             qreal(::neverd::limits::gui::kListingViewMaxArrowLevels));
   const auto yOf = [&](int index) -> qreal {
     if (index < 0)
       return 0;

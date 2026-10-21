@@ -11,6 +11,7 @@
 
 #include "MachO/MachODependencyState.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/COFF/COFFSourceImage.h"
 #include "neverd/backend/codegen/ELF/ELFARMEHABIPatch.h"
@@ -41,7 +42,8 @@ llvm::Error fail(const llvm::Twine &Message) {
 llvm::Error verifyBodyEdges(const BinaryImage &Image,
                             const SourceCallbackPrefix &Prefix, uint64_t End) {
   if (End <= Prefix.OriginalVA + Prefix.CopiedSize ||
-      End - Prefix.OriginalVA > 1024 * 1024)
+      End - Prefix.OriginalVA >
+          ::neverd::limits::backend::kMaxSourcePatchPrefixBytes)
     return fail("callback needs a bounded complete original function body");
   const auto *Bytes = Image.readVA(Prefix.OriginalVA, End - Prefix.OriginalVA);
   if (!Bytes)
@@ -230,7 +232,10 @@ prepareSourcePatchCallbacks(const BinaryImage &Original,
     const auto Mode = Original.instructionModeAt(VA);
     if (!Mode)
       return fail("original entry has no instruction mode");
-    const size_t Available = std::min<uint64_t>(64, End - VA);
+    const size_t Available = std::min<uint64_t>(
+        ::neverd::limits::backend::
+            kSourcePatchPreparationPrepareSourcePatchCallbacksAvailableMinArgument1,
+        End - VA);
     const uint8_t *Bytes = Original.readVA(VA, Available);
     if (!Bytes)
       return fail("original prefix is not file-backed");

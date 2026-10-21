@@ -10,6 +10,7 @@
 ///
 
 #include "neverd/emulation/ExecutionLimits.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/ModuleBinding.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -36,12 +37,16 @@ llvm::Error validateExports(const ModuleBinding &B, uint64_t Base,
                             uint64_t Size, llvm::ArrayRef<ModuleExport> Exports,
                             llvm::ArrayRef<ModuleMappingCandidate> Candidates,
                             bool AllowForwarding, bool ObserveOnly = false) {
-  if (Exports.size() > 1000000)
+  if (Exports.size() > ::neverd::limits::emulation::
+                           kModuleMappingTransactionValidateExportsSizeLimit)
     return failure("module export limit exhausted");
   std::map<std::string, const ModuleExport *> Names;
   std::map<uint32_t, const ModuleExport *> Ordinals;
   for (const auto &E : Exports) {
-    if ((E.Name.empty() && !E.Ordinal) || E.Name.size() > 4096 ||
+    if ((E.Name.empty() && !E.Ordinal) ||
+        E.Name.size() >
+            ::neverd::limits::emulation::
+                kModuleMappingTransactionValidateExportsENameSizeLimit ||
         E.Name.find('\0') != std::string::npos ||
         (E.Kind != modules::SymbolKind::Function &&
          E.Kind != modules::SymbolKind::Data) ||

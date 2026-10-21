@@ -9,6 +9,7 @@
 
 #include "X86RegistrationFilter.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
@@ -41,7 +42,8 @@ ExprPtr registrationFilterValue(const std::vector<HighStmt> &Body,
       return nullptr;
     Value = Def.Val;
   }
-  size_t Budget = 256;
+  size_t Budget =
+      ::neverd::limits::ir::kX86RegistrationFilterRegistrationFilterValueBudget;
   std::map<const HighExpr *, ExprPtr> Rebuilt;
   std::function<ExprPtr(const ExprPtr &)> Rebuild =
       [&](const ExprPtr &E) -> ExprPtr {

@@ -16,15 +16,14 @@
 #ifndef NEVERD_SUPPORT_CASELIST_H
 #define NEVERD_SUPPORT_CASELIST_H
 
+#include "neverd/support/Limits.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace neverd {
-
-/// The shortest consecutive run written as a range.
-inline constexpr std::size_t CaseRangeMinimum = 3;
 
 /// \p Values ascending and without repeats, runs of CaseRangeMinimum or more
 /// consecutive values as ranges.

@@ -1,3 +1,4 @@
+#include "../ResourceLimits.h"
 #include "MobileIOSInternal.h"
 
 #include "neverd/backend/swift/SwiftSourceAssembly.h"
@@ -157,12 +158,19 @@ Object swiftCoverage(const Object &inventory, const Object *batch,
                       str(r, "compiler_projection_kind") != kind->second)) ||
               str(r, "source_representation") !=
                   "compiler-generated-from-type" ||
-              !e || e->empty() || e->size() > 128)
+              !e || e->empty() ||
+              e->size() >
+                  ::neverd::limits::cli::
+                      kMobileIOSSwiftCoverageCompilerGeneratedFromTypeSourceRepresentationCompilerProjectionKindRuntimeContextNameSourceInitializerDeclarationKindRequiresRuntimeSourceProofESizeLimit)
             throw Error("Swift compiler projection lacks exact role or native "
                         "evidence");
           for (const auto &v : *e) {
             auto text = v.getAsString();
-            if (!text || text->size() > 8192 || !sourceText(text->str()))
+            if (!text ||
+                text->size() >
+                    ::neverd::limits::cli::
+                        kMobileIOSSwiftCoverageRequiresRuntimeSourceProofTextSizeLimit ||
+                !sourceText(text->str()))
               throw Error("invalid Swift compiler projection evidence");
           }
           compiler_rows[id] = &r;
@@ -360,7 +368,9 @@ SwiftResult swiftSources(const Options &options, const fs::path &staging,
   auto signature_path = staging / "metadata/swift-signatures.json";
   auto signature_text = jsonText(Value(Object(inventory)));
   if (signature_text.size() >
-      std::min<uint64_t>(budget.limits.max_bytes, 32 * 1024 * 1024))
+      std::min<uint64_t>(
+          budget.limits.max_bytes,
+          ::neverd::limits::cli::kMobileIOSSwiftSourcesMinArgument2))
     throw Error("Swift signature inventory exceeds byte limit");
   budget.output(signature_text.size());
   writeFile(signature_path, signature_text);

@@ -119,7 +119,7 @@ class PackageReader {
   const Artifact *Selected = nullptr;
 
   void step(uint64_t Count = 1) {
-    if (Count > 2000000 - A.Steps)
+    if (Count > ::neverd::limits::web::kMaxPackageAnalysisSteps - A.Steps)
       throw Error("package_analysis_budget_exceeded");
     A.Steps += Count;
   }
@@ -231,7 +231,7 @@ class PackageReader {
     return Index;
   }
   void legacy(const Object &O, std::string_view Base, uint64_t Depth) {
-    if (Depth > 64)
+    if (Depth > ::neverd::limits::web::kPackageReaderLegacyDepthLimit)
       throw Error("package_analysis_budget_exceeded");
     std::map<std::string, const Object *> Ordered;
     for (const auto &[Name, V] : O) {
@@ -249,7 +249,7 @@ class PackageReader {
     }
   }
   void compareLegacy(const Object &O, std::string_view Base, uint64_t Depth) {
-    if (Depth > 64)
+    if (Depth > ::neverd::limits::web::kPackageReaderCompareLegacyDepthLimit)
       throw Error("package_analysis_budget_exceeded");
     for (const auto &[Name, V] : O) {
       step();

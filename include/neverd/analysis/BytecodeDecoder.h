@@ -7,6 +7,7 @@
 #ifndef NEVERD_ANALYSIS_BYTECODEDECODER_H
 #define NEVERD_ANALYSIS_BYTECODEDECODER_H
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -17,8 +18,6 @@
 #include <memory>
 
 namespace neverd::analysis {
-
-inline constexpr size_t BytecodeInstructionByteLimit = 4096;
 
 /// An unsigned instruction field followed by an optional exact lookup. The
 /// value is (lookup((read >> Shift) & Mask) * Scale + Addend + optional PC),

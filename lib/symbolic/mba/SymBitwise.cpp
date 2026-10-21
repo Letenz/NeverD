@@ -40,6 +40,8 @@
 
 #include "neverd/symbolic/SymBitwise.h"
 
+#include "Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -90,14 +92,6 @@ struct Recipe {
 
 constexpr unsigned kUnreachable = ~0u;
 
-/// The most inputs the exhaustive search will ever tabulate.
-///
-/// Four inputs is 65536 functions and a relaxation over every pair of them;
-/// five would be four billion recipes, which is not a longer wait but a failed
-/// allocation.  Clamping a larger request rather than refusing it keeps a
-/// caller that asked for more from losing the optimality it could have had.
-constexpr unsigned kMaxTabulatedAtoms = 4;
-
 /// A lower bound on the work needed to settle the optimal table.
 ///
 /// Every function is compared with every other function at least once before
@@ -106,7 +100,8 @@ constexpr unsigned kMaxTabulatedAtoms = 4;
 /// lazily-built table, especially the four-input table that is intentionally
 /// expensive.
 size_t optimalTableWork(unsigned NumVars) {
-  assert(NumVars <= kMaxTabulatedAtoms);
+  assert(NumVars <=
+         ::neverd::symbolic::detail::limits::kSymBitwiseMaxTabulatedAtoms);
   const size_t NumFunctions = size_t(1) << (size_t(1) << NumVars);
   return saturatingMul(NumFunctions, NumFunctions);
 }
@@ -175,12 +170,15 @@ SynthTable::SynthTable(unsigned NumVars) {
 }
 
 const SynthTable &synthTable(unsigned NumVars) {
-  assert(NumVars <= kMaxTabulatedAtoms);
-  if (NumVars == kMaxTabulatedAtoms) {
+  assert(NumVars <=
+         ::neverd::symbolic::detail::limits::kSymBitwiseMaxTabulatedAtoms);
+  if (NumVars ==
+      ::neverd::symbolic::detail::limits::kSymBitwiseMaxTabulatedAtoms) {
     // Built only when a caller has asked for four-input optimality, because
     // building it is minutes where the smaller arities are microseconds.  A
     // caller that never raises the dial must not pay for the possibility.
-    static const SynthTable Widest(kMaxTabulatedAtoms);
+    static const SynthTable Widest(
+        ::neverd::symbolic::detail::limits::kSymBitwiseMaxTabulatedAtoms);
     return Widest;
   }
   // Built once on first use and shared thereafter: the search is cheap but not
@@ -764,8 +762,9 @@ std::optional<SymRef> synthesizeBitwise(SymContext &Ctx,
 
   const TruthTable Projected = projectTruthTable(Table, Kept);
   const auto NumVars = static_cast<unsigned>(Kept.size());
-  const unsigned OptimalCeiling =
-      std::min(Limits.MaxOptimalAtoms, kMaxTabulatedAtoms);
+  const unsigned OptimalCeiling = std::min(
+      Limits.MaxOptimalAtoms,
+      ::neverd::symbolic::detail::limits::kSymBitwiseMaxTabulatedAtoms);
   // A small function can fit the ordinary cover or ANF construction even
   // when the complete optimal recipe table would exceed this call's budget.
   // In particular, do not discard a recovered product's simple XOR relation

@@ -12,6 +12,8 @@
 
 #include "ExecutionJSONParsing.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -38,7 +40,8 @@ llvm::Error unambiguous(llvm::StringRef Text) {
   for (size_t I = 0; I < Text.size(); ++I) {
     const auto C = Text[I];
     if (C == '{' || C == '[') {
-      if (Stack.size() == 64)
+      if (Stack.size() == ::neverd::limits::emulation::
+                              kExecutionRunJSONUnambiguousStackSizeLimit)
         return invalid("nesting exceeds 64 containers");
       Stack.push_back({C == '{', C == '{', {}});
     } else if (C == '}' || C == ']') {

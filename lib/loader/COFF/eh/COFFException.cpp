@@ -11,6 +11,7 @@
 #include "neverd/loader/COFF/COFFDelphiEH.h"
 #include "neverd/loader/DWARF/LSDA.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -92,12 +93,6 @@ bool parseMinGWLSDA(ExceptionFunction &F, const BinaryImage &Img) {
 std::set<va_t> findUnnamedMinGWPersonalities(
     BinaryImage &Img,
     std::unordered_map<va_t, std::pair<va_t, std::string>> &PersonalityCache) {
-  // Most frames installing the routine cannot prove anything about it: a scope
-  // with destructors and no handler is cleanup-only, and at `-O0` those come
-  // first.  So an address is retried on later frames rather than written off by
-  // the first one that could not settle it, and the cap is what keeps an
-  // address no frame can prove from costing one decode per frame.
-  constexpr unsigned MaxProofAttempts = 32;
   std::set<va_t> Proven;
   std::map<va_t, unsigned> Attempts;
   auto Resolve = [&](va_t VA) -> const std::pair<va_t, std::string> & {
@@ -112,7 +107,7 @@ std::set<va_t> findUnnamedMinGWPersonalities(
     if (Proven.count(F.PersonalityVA))
       continue;
     unsigned &Tries = Attempts[F.PersonalityVA];
-    if (Tries >= MaxProofAttempts)
+    if (Tries >= ::neverd::limits::loader::kCOFFExceptionMaxProofAttempts)
       continue;
     ++Tries;
     if (detail::classifyPersonality(Resolve(F.PersonalityVA).second) !=

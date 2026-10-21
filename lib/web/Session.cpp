@@ -14,14 +14,13 @@
 #include "SessionInternal.h"
 #include "compression/Gzip.h"
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/Source.h"
 #include "neverd/web/SourceRecovery.h"
 
 namespace neverd::web {
 
 namespace {
-constexpr uint64_t MaxCachedSources = 16;
-constexpr uint64_t MaxCachedNodes = 200000;
 
 std::string sourceSummary(const SourceAnalysis &Source, uint64_t Revision,
                           const SourceBindingAnalysis *Bindings = nullptr) {
@@ -64,14 +63,15 @@ std::string Session::capabilities() {
       "source_map_segments", "bun_extract",        "bun_records",
       "bun_export",          "native_open",        "native_metadata",
       "native_analyze"};
-  llvm::json::Array Analyses{
-      llvm::json::Object{{"kind", "source_map_metadata"},
-                         {"profile", std::string(SourceMapProfile)},
-                         {"max_map_bytes", std::to_string(MaxSourceMapBytes)},
-                         {"max_map_segments", MaxSourceMapSegments},
-                         {"max_cached_maps", 4},
-                         {"max_cached_map_segments", 200000},
-                         {"resolves_external_references", false}}};
+  llvm::json::Array Analyses{llvm::json::Object{
+      {"kind", "source_map_metadata"},
+      {"profile", std::string(SourceMapProfile)},
+      {"max_map_bytes", std::to_string(MaxSourceMapBytes)},
+      {"max_map_segments", MaxSourceMapSegments},
+      {"max_cached_maps", ::neverd::limits::web::kMaxCachedSourceMaps},
+      {"max_cached_map_segments",
+       ::neverd::limits::web::kMaxCachedSourceMapSegments},
+      {"resolves_external_references", false}}};
   Operations.emplace_back("electron_manifest_analyze");
   Operations.emplace_back("desktop_manifest_analyze");
   Operations.emplace_back("desktop_resources_export");
@@ -790,10 +790,10 @@ std::string Session::capabilities() {
       {"max_source_bytes", std::to_string(MaxJavaScriptBytes)},
       {"max_source_nodes", MaxJavaScriptNodes},
       {"max_source_lexemes", MaxJavaScriptLexemes},
-      {"max_cached_lexemes", 400000},
+      {"max_cached_lexemes", ::neverd::limits::web::kMaxCachedSourceLexemes},
       {"max_decoded_string_units", MaxJavaScriptStringUnits},
-      {"max_cached_sources", MaxCachedSources},
-      {"max_cached_nodes", MaxCachedNodes},
+      {"max_cached_sources", ::neverd::limits::web::kSessionMaxCachedSources},
+      {"max_cached_nodes", ::neverd::limits::web::kSessionMaxCachedNodes},
       {"executes_input", false},
       {"semantic_validation_complete", false}});
   Operations.emplace_back("source_analyze_large");
@@ -1077,7 +1077,8 @@ std::string Session::artifacts(std::string_view ExpectedRevision,
                                uint64_t Offset, uint64_t Limit) const {
   std::lock_guard Lock(State->Mutex);
   State->requireRevision(ExpectedRevision);
-  if (!Limit || Limit > 512 || Offset > State->Published.Artifacts.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > State->Published.Artifacts.size())
     throw Error("invalid_page");
   const auto End =
       std::min<uint64_t>(State->Published.Artifacts.size(), Offset + Limit);
@@ -1147,10 +1148,13 @@ std::string Session::analyzeSource(std::string_view ExpectedRevision,
   const bool Large = Mode == SourceAnalysisMode::Large;
   if (Large && !State->LargeSourceID.empty())
     throw Error("large_source_cache_budget_exceeded");
-  if (!Large && (State->Sources.size() - !State->LargeSourceID.empty() >=
-                     MaxCachedSources ||
-                 State->CachedNodes > MaxCachedNodes - MaxJavaScriptNodes ||
-                 State->CachedLexemes > 400000 - MaxJavaScriptLexemes))
+  if (!Large &&
+      (State->Sources.size() - !State->LargeSourceID.empty() >=
+           ::neverd::limits::web::kSessionMaxCachedSources ||
+       State->CachedNodes >
+           ::neverd::limits::web::kSessionMaxCachedNodes - MaxJavaScriptNodes ||
+       State->CachedLexemes > ::neverd::limits::web::kMaxCachedSourceLexemes -
+                                  MaxJavaScriptLexemes))
     throw Error("source_cache_budget_exceeded");
   auto Source = Large ? inspectLargeJavaScript(ArtifactID, Bytes, SourceType)
                       : inspectJavaScript(ArtifactID, Bytes, SourceType);
@@ -1181,7 +1185,8 @@ std::string Session::sourceNodes(std::string_view ExpectedRevision,
   if (Found == State->Sources.end())
     throw Error("unknown_source");
   const auto &Source = Found->second;
-  if (!Limit || Limit > 512 || Offset > Source.Nodes.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Source.Nodes.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Source.Nodes.size(), Offset + Limit);
   llvm::json::Array Items;

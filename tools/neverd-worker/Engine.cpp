@@ -7,8 +7,10 @@
 #include "Listing.h"
 #include "OperandFormat.h"
 #include "ProjectHistory.h"
+#include "ResourceLimits.h"
 #include "TextFold.h"
 
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
@@ -248,11 +250,6 @@ using PdbReferenceFunction = const char *(*)(const char *, const char *);
 using LocalTypesFunction = const char *(*)(neverd_session_t, const char *);
 // neverd_local_types_forget: the session and a JSON list of names.
 using LocalTypeNamesFunction = const char *(*)(neverd_session_t, const char *);
-// The most source one declaration reads.
-constexpr std::size_t MaxDeclarationBytes = 4u << 20;
-// The most other instructions one structure offset goes to, which with the
-// instruction's own row fill a history command.
-constexpr std::size_t MaxOperandFormatRows = 63;
 // The user's type declarations beside the input, as the engine reads them.
 using LocalTypeFunction = const char *(*)(neverd_session_t, const char *,
                                           const char *);
@@ -434,33 +431,22 @@ std::string ownedString(const char *value) {
 }
 /// \p text folded for comparisons that ignore case, in any script.
 std::string folded(const std::string &text) { return foldText(text); }
-constexpr std::size_t MaxFunctionRows = 1000000;
-// Strings need this many display columns unless string_options says
-// otherwise; a minimum is at most MaxStringMinLength
-// (neverd::strings::MaxMinLength).
-constexpr int DefaultStringMinLength = 4;
-constexpr std::int64_t MaxStringMinLength = 1024;
-/// Lines of one engine code page.
-constexpr std::size_t EnginePageLines = 2048;
-/// Text a renamed whole-function view may hold: the engine's source budget.
-constexpr std::size_t MaxNamedViewBytes = 32 * 1024 * 1024;
-/// The text of one code page, as the engine bounds its own pages: a page
-/// ends before the line that would pass it.
-constexpr std::size_t MaxCodePageBytes = 2 * 1024 * 1024;
-constexpr std::size_t MaxNamedViewCacheBytes = 32 * 1024 * 1024;
-constexpr std::size_t MaxNamedViews = 8;
 
 /// Conservative retained-size accounting: include container capacity, string
 /// capacity and tree-node overhead, not just the serialized text's size. A
 /// value beyond the cache budget remains readable but is not retained.
 std::size_t namedViewJsonBytes(const Json &value, unsigned depth = 0) {
-  constexpr auto OverBudget = MaxNamedViewCacheBytes + 1;
-  if (depth > 64)
+  constexpr auto OverBudget =
+      ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes + 1;
+  if (depth > ::neverd::limits::worker::kEngineNamedViewJsonBytesDepthLimit)
     return OverBudget;
   std::size_t bytes = sizeof(Json);
   const auto add = [&](std::size_t count) {
-    bytes = count > MaxNamedViewCacheBytes - bytes ? OverBudget : bytes + count;
-    return bytes <= MaxNamedViewCacheBytes;
+    bytes =
+        count > ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes - bytes
+            ? OverBudget
+            : bytes + count;
+    return bytes <= ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes;
   };
   if (value.is_string()) {
     if (!add(sizeof(Json::string_t)) ||
@@ -469,7 +455,9 @@ std::size_t namedViewJsonBytes(const Json &value, unsigned depth = 0) {
   } else if (value.is_array()) {
     const auto &array = value.get_ref<const Json::array_t &>();
     if (!add(sizeof(Json::array_t)) ||
-        array.capacity() > MaxNamedViewCacheBytes / sizeof(Json) ||
+        array.capacity() >
+            ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes /
+                sizeof(Json) ||
         !add(array.capacity() * sizeof(Json)))
       return OverBudget;
     for (const auto &item : array)
@@ -492,7 +480,10 @@ Json page(const Json &items, const Json &payload,
           std::initializer_list<const char *> searchFields = {}) {
   const auto offset =
       sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
-  const auto limit = sizeField(payload, "limit", 128, 512);
+  const auto limit =
+      sizeField(payload, "limit",
+                ::neverd::limits::worker::kEnginePageLimitSizeFieldDefault,
+                ::neverd::limits::worker::kEnginePageLimitSizeFieldMax);
   if (!limit)
     throw Error("invalid_request", "limit must be at least 1");
   const auto filter = folded(stringField(payload, "filter"));
@@ -523,7 +514,9 @@ Json page(const Json &items, const Json &payload,
 /// Sort table rows by {"sort": field, "descending": bool}.  Hex address
 /// strings compare numerically; other strings case-insensitively.
 void sortItems(Json &items, const Json &payload) {
-  const auto field = stringField(payload, "sort", {}, 64);
+  const auto field = stringField(
+      payload, "sort", {},
+      ::neverd::limits::worker::kEngineSortItemsFieldSortStringFieldMax);
   if (field.empty() || !items.is_array())
     return;
   const bool descending = payload.value("descending", false);
@@ -602,7 +595,9 @@ void atomicWrite(const fs::path &path, const std::string &body) {
   // old file. Retain the flushed temporary and retry only sharing-related
   // failures, with a bound; never fall back to deleting the committed file.
   const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(1);
+      std::chrono::steady_clock::now() +
+      std::chrono::seconds(
+          ::neverd::limits::worker::kEngineAtomicWriteDeadlineSeconds);
   while (!MoveFileExW(temporary.c_str(), path.c_str(),
                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
     const auto code = GetLastError();
@@ -610,7 +605,8 @@ void atomicWrite(const fs::path &path, const std::string &body) {
          code != ERROR_ACCESS_DENIED) ||
         std::chrono::steady_clock::now() >= deadline)
       fail("Cannot atomically replace sidecar", code);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        ::neverd::limits::worker::kEngineAtomicWriteMilliseconds));
   }
 #else
   int descriptor =
@@ -904,7 +900,9 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                   const Json *callTypes, const Json *stackFrame) {
   const auto view = irViewFunction();
   const auto extended = irViewExFunction();
-  if (!options.is_object() || options.dump().size() > 4096)
+  if (!options.is_object() ||
+      options.dump().size() >
+          ::neverd::limits::worker::kEngineNamedViewOptionsDumpSizeLimit)
     throw Error("invalid_request", "source_options must be a bounded object");
   if (!options.empty() && !extended)
     throw Error("unsupported", "This engine does not support source options");
@@ -1045,9 +1043,10 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       auto page = backendJson(
           sourceView && extended && !engineOptions.empty()
               ? extended(session_, address, backendRepresentation.c_str(), next,
-                         EnginePageLines, optionText.c_str())
+                         ::neverd::limits::worker::kEngineEnginePageLines,
+                         optionText.c_str())
               : view(session_, address, backendRepresentation.c_str(), next,
-                     EnginePageLines),
+                     ::neverd::limits::worker::kEngineEnginePageLines),
           true);
       // Older page APIs offer HighC but not the automatic source dialect.
       // Keep the Pseudocode action useful, with the actual dialect reported.
@@ -1056,8 +1055,10 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
           page.value("mapping_status", std::string()) ==
               "unsupported_representation") {
         backendRepresentation = "c";
-        page = backendJson(view(session_, address, "c", next, EnginePageLines),
-                           true);
+        page =
+            backendJson(view(session_, address, "c", next,
+                             ::neverd::limits::worker::kEngineEnginePageLines),
+                        true);
       }
       if (!page.is_object() || !page.contains("text") ||
           !page["text"].is_string() || !page.contains("rows") ||
@@ -1087,7 +1088,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       if (!following.is_number_unsigned() ||
           following.get<std::size_t>() <= next ||
           full["text"].get_ref<const std::string &>().size() >
-              MaxNamedViewBytes)
+              ::neverd::limits::worker::kEngineMaxNamedViewBytes)
         return nullptr;
       next = following.get<std::size_t>();
     }
@@ -1126,7 +1127,9 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
           [this](const std::string &name) -> std::optional<std::uint64_t> {
             // The address the resolve operation answers, without describing
             // the function there; a query it refuses names nothing.
-            if (name.empty() || name.size() > 4096 ||
+            if (name.empty() ||
+                name.size() >
+                    ::neverd::limits::worker::kEngineNamedViewNameSizeLimit ||
                 name.find('\0') != std::string::npos)
               return std::nullopt;
             try {
@@ -1223,22 +1226,29 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     for (const auto *bounds :
          {&document->rowBounds, &document->referenceBounds,
           &document->sourceNameBounds, &document->codeNameBounds}) {
-      if (overhead > MaxNamedViewCacheBytes ||
-          bounds->capacity() > (MaxNamedViewCacheBytes - overhead) /
-                                   sizeof(ViewBounds::value_type))
+      if (overhead > ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes ||
+          bounds->capacity() >
+              (::neverd::limits::worker::kEngineMaxNamedViewCacheBytes -
+               overhead) /
+                  sizeof(ViewBounds::value_type))
         return document;
       overhead += bounds->capacity() * sizeof(ViewBounds::value_type);
     }
-    if (jsonBytes <= MaxNamedViewCacheBytes &&
-        overhead <= MaxNamedViewCacheBytes - jsonBytes &&
+    if (jsonBytes <= ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes &&
+        overhead <= ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes -
+                        jsonBytes &&
         document->lines.capacity() <=
-            (MaxNamedViewCacheBytes - jsonBytes - overhead) /
+            (::neverd::limits::worker::kEngineMaxNamedViewCacheBytes -
+             jsonBytes - overhead) /
                 sizeof(std::size_t)) {
       document->bytes = jsonBytes + overhead +
                         document->lines.capacity() * sizeof(std::size_t);
       while (!namedViews_.empty() &&
-             (namedViews_.size() >= MaxNamedViews ||
-              document->bytes > MaxNamedViewCacheBytes - namedViewBytes_)) {
+             (namedViews_.size() >=
+                  ::neverd::limits::worker::kEngineMaxNamedViews ||
+              document->bytes >
+                  ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes -
+                      namedViewBytes_)) {
         namedViewBytes_ -= namedViews_.back()->bytes;
         encodedPageBytes_ -= namedViews_.back()->pageBytes;
         namedViews_.pop_back();
@@ -1246,7 +1256,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       // Keep completed documents ahead of optional encoded pages. Loading a
       // document may retire pages, but cannot exceed the shared byte limit.
       if (encodedPageBytes_ >
-          MaxNamedViewCacheBytes - namedViewBytes_ - document->bytes)
+          ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes -
+              namedViewBytes_ - document->bytes)
         forgetEncodedPages();
       namedViews_.push_front(document);
       namedViewBytes_ += document->bytes;
@@ -1322,17 +1333,20 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
     // A page owns only already-serialized payload data. The response envelope
     // still supplies the current request id, project and cancellation state.
     *encoded = std::make_shared<EncodedJson>(page);
-    constexpr std::size_t MaxEncodedPages = 64;
-    constexpr std::size_t MaxEncodedBytes = 8 * 1024 * 1024;
     const auto bytes = (*encoded)->storageBytes() +
                        sizeof(NamedView::EncodedPage) + 6 * sizeof(void *);
     if (!namedViews_.empty() && namedViews_.front() == document &&
-        bytes <= MaxEncodedBytes &&
-        bytes <= MaxNamedViewCacheBytes - namedViewBytes_) {
-      if (encodedPageBytes_ > MaxEncodedBytes - bytes ||
-          encodedPageBytes_ > MaxNamedViewCacheBytes - namedViewBytes_ - bytes)
+        bytes <= ::neverd::limits::worker::kEngineMaxEncodedBytes &&
+        bytes <= ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes -
+                     namedViewBytes_) {
+      if (encodedPageBytes_ >
+              ::neverd::limits::worker::kEngineMaxEncodedBytes - bytes ||
+          encodedPageBytes_ >
+              ::neverd::limits::worker::kEngineMaxNamedViewCacheBytes -
+                  namedViewBytes_ - bytes)
         forgetEncodedPages();
-      if (document->pages.size() >= MaxEncodedPages) {
+      if (document->pages.size() >=
+          ::neverd::limits::worker::kEngineMaxEncodedPages) {
         const auto removed = document->pages.back().bytes;
         document->pages.pop_back();
         document->pageBytes -= removed;
@@ -1677,14 +1691,16 @@ bool Engine::localTypesChanged() {
       project_files::File::Types);
   Json onDisk = Json::array();
   if (fs::exists(path)) {
-    if (fs::file_size(path) > MaxDeclarationBytes)
+    if (fs::file_size(path) >
+        ::neverd::limits::worker::kEngineMaxDeclarationBytes)
       throw Error("resource_limit", "Local types sidecar exceeds 4 MiB");
     std::ifstream input(path, std::ios::binary);
     if (!input)
       throw Error("load_failed", "Cannot read the local types sidecar");
     const std::string text((std::istreambuf_iterator<char>(input)), {});
     try {
-      onDisk = parseJson(text, MaxDeclarationBytes);
+      onDisk =
+          parseJson(text, ::neverd::limits::worker::kEngineMaxDeclarationBytes);
     } catch (const Error &) {
       // A file that does not parse differs; loading it reports why.
       return true;
@@ -1704,14 +1720,16 @@ std::optional<Json> Engine::typeLibrariesOnDisk() {
   Json onDisk = {{"added", Json::array()}, {"removed", Json::array()}};
   if (!fs::exists(path))
     return onDisk;
-  if (fs::file_size(path) > MaxDeclarationBytes)
+  if (fs::file_size(path) >
+      ::neverd::limits::worker::kEngineMaxDeclarationBytes)
     throw Error("resource_limit", "The type libraries file exceeds 4 MiB");
   std::ifstream input(path, std::ios::binary);
   if (!input)
     throw Error("load_failed", "Cannot read the type libraries file");
   const std::string text((std::istreambuf_iterator<char>(input)), {});
   try {
-    const Json read = parseJson(text, MaxDeclarationBytes);
+    const Json read =
+        parseJson(text, ::neverd::limits::worker::kEngineMaxDeclarationBytes);
     if (!read.is_object())
       return std::nullopt;
     for (const char *key : {"added", "removed"})
@@ -1736,14 +1754,16 @@ Json Engine::readCodeEdits(const std::string &binary) {
       project_files::path(utf8Path(binary), project_files::File::Code);
   if (!fs::exists(path))
     return Json::array();
-  if (fs::file_size(path) > 16 * 1024 * 1024)
+  if (fs::file_size(path) >
+      ::neverd::limits::worker::kEngineReadCodeEditsFsFileSizePathLimit)
     throw Error("resource_limit", "Code edit sidecar exceeds 16 MiB");
   std::ifstream input(path, std::ios::binary);
   if (!input)
     throw Error("load_failed", "Cannot read code edit sidecar");
   const std::string text((std::istreambuf_iterator<char>(input)), {});
   auto rows = parseJson(text, 16 * 1024 * 1024);
-  if (!rows.is_array() || rows.size() > 16384)
+  if (!rows.is_array() ||
+      rows.size() > ::neverd::limits::worker::kEngineReadCodeEditsRowsSizeLimit)
     throw Error("invalid_request", "Invalid code edit table");
   for (const auto &row : rows)
     CodeEdits::validateRow(row);
@@ -1935,7 +1955,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto identify = identifyFunction();
     if (!identify)
       throw Error("unsupported", "This engine cannot identify files");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplIdentifyPathPathStringFieldMax);
     auto result = backendJson(identify(path.c_str()));
     if (result.contains("error"))
       throw Error("invalid_request", result.value("error", std::string()));
@@ -1948,7 +1971,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json");
     if (!reference)
       throw Error("unsupported", "This engine cannot find PDB files");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplPdbReferencePathPathStringFieldMax);
     auto result = backendJson(reference(path.c_str(), nullptr));
     if (result.contains("error"))
       throw Error("invalid_request", result.value("error", std::string()));
@@ -1961,7 +1987,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         engineSymbol<DwarfReferenceFunction>("neverd_dwarf_reference_json");
     if (!reference)
       throw Error("unsupported", "This engine cannot find DWARF");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplDwarfReferencePathPathStringFieldMax);
     auto result = backendJson(reference(path.c_str()));
     if (result.contains("error"))
       throw Error("invalid_request", result.value("error", std::string()));
@@ -1974,7 +2003,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         engineSymbol<MapReferenceFunction>("neverd_map_reference_json");
     if (!reference)
       throw Error("unsupported", "This engine cannot find MAP files");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplMapReferencePathPathStringFieldMax);
     auto result = backendJson(reference(path.c_str()));
     if (result.contains("error"))
       throw Error("invalid_request", result.value("error", std::string()));
@@ -1987,7 +2019,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         "neverd_symbol_table_reference_json");
     if (!reference)
       throw Error("unsupported", "This engine cannot find symbol tables");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path = stringField(
+        p, "path", {},
+        ::neverd::limits::worker::
+            kEngineExecuteImplSymbolTableReferencePathPathStringFieldMax);
     auto result = backendJson(reference(path.c_str()));
     if (result.contains("error"))
       throw Error("invalid_request", result.value("error", std::string()));
@@ -2021,7 +2056,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       };
       if (p.contains("encodings")) {
         const auto &names = p["encodings"];
-        if (!names.is_array() || names.empty() || names.size() > 64)
+        if (!names.is_array() || names.empty() ||
+            names.size() > ::neverd::limits::worker::
+                               kEngineExecuteImplStringOptionsNamesSizeLimit)
           throw Error("invalid_request",
                       "encodings must be a non-empty array of names");
         for (const auto &name : names)
@@ -2039,10 +2076,13 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (p.contains("min_length")) {
         const auto &length = p["min_length"];
         if (!length.is_number_integer() || length.get<std::int64_t>() < 1 ||
-            length.get<std::int64_t>() > MaxStringMinLength)
-          throw Error("invalid_request",
-                      "min_length must be an integer from 1 to " +
-                          std::to_string(MaxStringMinLength));
+            length.get<std::int64_t>() >
+                ::neverd::limits::worker::kEngineMaxStringMinLength)
+          throw Error(
+              "invalid_request",
+              "min_length must be an integer from 1 to " +
+                  std::to_string(
+                      ::neverd::limits::worker::kEngineMaxStringMinLength));
         options["min_length"] = length;
       }
       stringOptions_ = options.dump();
@@ -2059,7 +2099,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           current["encodings"].push_back(encoding.value("name", std::string()));
     }
     if (!current.contains("min_length"))
-      current["min_length"] = DefaultStringMinLength;
+      current["min_length"] =
+          ::neverd::limits::worker::kEngineDefaultStringMinLength;
     if (!current.contains("preferred"))
       current["preferred"] = nullptr;
     return current;
@@ -2067,18 +2108,29 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   if (operation == "contributions")
     return contributions_->listing();
   if (operation == "contribution_register")
-    return contributions_->registerFile(stringField(p, "path", {}, 32768));
+    return contributions_->registerFile(stringField(
+        p, "path", {},
+        ::neverd::limits::worker::
+            kEngineExecuteImplContributionRegisterPathStringFieldMax));
   if (operation == "contribution_unregister")
-    return contributions_->remove(stringField(p, "namespace", {}, 64));
+    return contributions_->remove(stringField(
+        p, "namespace", {},
+        ::neverd::limits::worker::
+            kEngineExecuteImplContributionUnregisterNamespaceStringFieldMax));
   if (operation == "contribution_execute") {
     requireLoaded();
     for (auto it = p.begin(); it != p.end(); ++it)
       if (it.key() != "id" && it.key() != "address")
         throw Error("invalid_request",
                     "Contribution execution accepts only id and address");
-    const auto id = stringField(p, "id", {}, 129);
+    const auto id = stringField(
+        p, "id", {},
+        ::neverd::limits::worker::
+            kEngineExecuteImplContributionExecuteIdIdStringFieldMax);
     const auto address = stringField(
-        p, "address", hexAddress(neverd_session_entry_addr(session_)), 18);
+        p, "address", hexAddress(neverd_session_entry_addr(session_)),
+        ::neverd::limits::worker::
+            kEngineExecuteImplContributionExecuteAddressStringFieldMax);
     (void)parseAddress(address);
     const auto query = contributions_->query(id, address);
     return {{"contribution_id", id},
@@ -2087,7 +2139,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                                query.at("payload"))}};
   }
   if (operation == "open") {
-    const auto pathText = stringField(p, "path", {}, 32768);
+    const auto pathText =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplOpenPathTextPathStringFieldMax);
     if (pathText.empty())
       throw Error("invalid_request", "path is required");
     std::error_code ec;
@@ -2146,7 +2201,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // engine's load options spell them.
     std::string chosenLoader;
     if (p.contains("loader")) {
-      const std::string loader = stringField(p, "loader", {}, 16);
+      const std::string loader = stringField(
+          p, "loader", {},
+          ::neverd::limits::worker::kEngineExecuteImplOpenLoaderStringFieldMax);
       if (loader != "binary" && loader != "evm")
         throw Error("invalid_request",
                     "loader is \"binary\", \"evm\" or absent");
@@ -2154,15 +2211,23 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         throw Error("unsupported", "This engine cannot choose a file's loader");
       Json options{{"loader", loader}};
       if (loader == "binary") {
-        options["processor"] = stringField(p, "processor", {}, 32);
+        options["processor"] = stringField(
+            p, "processor", {},
+            ::neverd::limits::worker::
+                kEngineExecuteImplOpenOptionsProcessorStringFieldMax);
         // The platform whose conventions the code follows; the engine reads
         // it from the code when absent or "auto".
         if (p.contains("platform"))
-          options["platform"] = stringField(p, "platform", {}, 16);
+          options["platform"] = stringField(
+              p, "platform", {},
+              ::neverd::limits::worker::
+                  kEngineExecuteImplOpenOptionsPlatformStringFieldMax);
         for (const char *field : {"base", "offset", "size", "entry"})
           if (p.contains(field))
-            options[field] =
-                hexAddress(parseAddress(stringField(p, field, {}, 32)));
+            options[field] = hexAddress(parseAddress(stringField(
+                p, field, {},
+                ::neverd::limits::worker::
+                    kEngineExecuteImplOpenOptionsFieldStringFieldMax)));
       }
       chosenLoader = options.dump();
     }
@@ -2387,7 +2452,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto loadEx = engineSymbol<LoadEx>("neverd_session_load_pdb_ex");
     if (!inspect || !load)
       throw Error("unsupported", "This engine cannot load a selected PDB");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path = stringField(
+        p, "path", {},
+        ::neverd::limits::worker::
+            kEngineExecuteImplPdbLoadPdbInspectPathPathStringFieldMax);
     if (path.empty())
       throw Error("invalid_request", "Select a PDB file first");
     if (!fs::is_regular_file(utf8Path(path)))
@@ -2412,7 +2480,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                 {"stamp", stamp}};
     if (operation == "pdb_inspect")
       return result;
-    const auto mode = stringField(p, "mode", "verified", 16);
+    const auto mode = stringField(
+        p, "mode", "verified",
+        ::neverd::limits::worker::
+            kEngineExecuteImplPdbLoadPdbInspectModeModeStringFieldMax);
     if (mode != "verified" && mode != "analysis" && mode != "display")
       throw Error("invalid_request",
                   "PDB mode is verified, analysis or display");
@@ -2457,7 +2528,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto load = engineSymbol<MapLoadFunction>("neverd_session_load_map");
     if (!inspect || !load)
       throw Error("unsupported", "This engine cannot load a selected MAP file");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path = stringField(
+        p, "path", {},
+        ::neverd::limits::worker::
+            kEngineExecuteImplMapLoadMapInspectPathPathStringFieldMax);
     if (path.empty())
       throw Error("invalid_request", "Select a MAP file first");
     if (!fs::is_regular_file(utf8Path(path)))
@@ -2476,7 +2550,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     result["stamp"] = stamp;
     if (operation == "map_inspect")
       return result;
-    const auto mode = stringField(p, "mode", "checked", 16);
+    const auto mode = stringField(
+        p, "mode", "checked",
+        ::neverd::limits::worker::
+            kEngineExecuteImplMapLoadMapInspectModeModeStringFieldMax);
     if (mode != "checked" && mode != "unchecked")
       throw Error("invalid_request", "MAP mode is checked or unchecked");
     if (mode == "checked" && result.value("match", "") == "mismatch")
@@ -2505,7 +2582,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!load)
       throw Error("unsupported",
                   "This engine cannot load a selected DWARF file");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplDwarfLoadPathPathStringFieldMax);
     if (path.empty())
       throw Error("invalid_request", "Select a DWARF file first");
     // A .dSYM bundle is a directory; its DWARF file proves itself by UUID.
@@ -2533,8 +2613,14 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
             {"debug_info", metadata().at("debug_info")}};
   }
   if (operation == "signatures_load") {
-    const auto path = stringField(p, "path", {}, 32768);
-    const auto mode = stringField(p, "mode", "file", 16);
+    const auto path =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplSignaturesLoadPathPathStringFieldMax);
+    const auto mode =
+        stringField(p, "mode", "file",
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplSignaturesLoadModeModeStringFieldMax);
     if (path.empty() || (mode != "file" && mode != "auto"))
       throw Error("invalid_request",
                   "A signature path and file/auto mode are required");
@@ -2556,7 +2642,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   if (operation == "metadata")
     return metadata();
   if (operation == "history") {
-    const auto limit = sizeField(p, "limit", 128, 512);
+    const auto limit = sizeField(
+        p, "limit",
+        ::neverd::limits::worker::
+            kEngineExecuteImplHistoryLimitSizeFieldDefault,
+        ::neverd::limits::worker::kEngineExecuteImplHistoryLimitSizeFieldMax);
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
     return history().listing(
@@ -2734,19 +2824,25 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   if (operation == "functions") {
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
-    const auto limit = sizeField(p, "limit", 128, 512);
+    const auto limit = sizeField(
+        p, "limit",
+        ::neverd::limits::worker::
+            kEngineExecuteImplFunctionsLimitSizeFieldDefault,
+        ::neverd::limits::worker::kEngineExecuteImplFunctionsLimitSizeFieldMax);
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
     const auto filter = folded(stringField(p, "filter"));
     const auto sort =
-        stringField(p, "sort", p.contains("from") ? "address" : "", 64);
+        stringField(p, "sort", p.contains("from") ? "address" : "",
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplFunctionsSortSortStringFieldMax);
     const bool descending = p.value("descending", false);
     if (p.contains("from") && sort != "address")
       throw Error("invalid_request",
                   "Function navigation requires address order");
     auto &listingView = listing();
     const auto &rows = listingView.functionRows();
-    if (rows.size() > MaxFunctionRows)
+    if (rows.size() > ::neverd::limits::worker::kEngineMaxFunctionRows)
       throw Error("budget_exceeded",
                   "The function index exceeds one million entries");
     std::string key = filter;
@@ -2899,13 +2995,23 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
     std::string reply;
     if (operation == "local_types_declare") {
-      const auto source = stringField(p, "source", {}, MaxDeclarationBytes);
-      const Json options{{"language", stringField(p, "language", "c", 16)}};
+      const auto source =
+          stringField(p, "source", {},
+                      ::neverd::limits::worker::kEngineMaxDeclarationBytes);
+      const Json options{
+          {"language",
+           stringField(
+               p, "language", "c",
+               ::neverd::limits::worker::
+                   kEngineExecuteImplLocalTypesForgetLocalTypesDeclareOptionsLanguageStringFieldMax)}};
       reply = ownedString(
           declare(session_, source.c_str(), options.dump().c_str()));
     } else {
       const auto names = p.value("names", Json());
-      if (!names.is_array() || names.empty() || names.size() > 4096)
+      if (!names.is_array() || names.empty() ||
+          names.size() >
+              ::neverd::limits::worker::
+                  kEngineExecuteImplLocalTypesForgetLocalTypesDeclareNamesSizeLimit)
         throw Error("invalid_request", "Name the types to remove in a list");
       reply = ownedString(forget(session_, names.dump().c_str()));
     }
@@ -2967,7 +3073,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     Json request = Json::object();
     for (const char *key : {"text", "spelling"})
       if (p.contains(key))
-        request[key] = stringField(p, key, {}, 256);
+        request[key] = stringField(
+            p, key, {},
+            ::neverd::limits::worker::
+                kEngineExecuteImplLocalTypesFitRequestKeyKeyStringFieldMax);
     for (const char *key : {"records", "shifts"})
       if (p.contains(key)) {
         if (!p.at(key).is_boolean())
@@ -2976,10 +3085,18 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         request[key] = p.at(key);
       }
     if (p.contains("limit"))
-      request["limit"] = sizeField(p, "limit", 50, 500);
+      request["limit"] = sizeField(
+          p, "limit",
+          ::neverd::limits::worker::
+              kEngineExecuteImplLocalTypesFitRequestLimitSizeFieldDefault,
+          ::neverd::limits::worker::
+              kEngineExecuteImplLocalTypesFitRequestLimitSizeFieldMax);
     if (p.contains("accesses")) {
       const auto &accesses = p.at("accesses");
-      if (!accesses.is_array() || accesses.size() > 4096)
+      if (!accesses.is_array() ||
+          accesses.size() >
+              ::neverd::limits::worker::
+                  kEngineExecuteImplLocalTypesFitAccessesSizeLimit)
         throw Error("invalid_request",
                     "accesses must be a list of at most 4096 accesses");
       request["accesses"] = accesses;
@@ -2993,8 +3110,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                   "A fit follows an instruction's pointer or a parameter, "
                   "not both");
     if (p.contains("parameter")) {
-      request["function"] =
-          hexAddress(parseAddress(stringField(p, "function", {}, 32)));
+      request["function"] = hexAddress(parseAddress(stringField(
+          p, "function", {},
+          ::neverd::limits::worker::
+              kEngineExecuteImplLocalTypesFitRequestFunctionStringFieldMax)));
       request["target"] = {{"parameter", sizeField(p, "parameter", 0, 255)}};
     }
     if (p.contains("address")) {
@@ -3003,7 +3122,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       operand = listing().structOperand(
           address,
           p.contains("operand")
-              ? std::optional<std::size_t>(sizeField(p, "operand", 0, 7))
+              ? std::optional<std::size_t>(sizeField(
+                    p, "operand", 0,
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplLocalTypesFitOperandSizeFieldMax))
               : std::nullopt,
           &number);
       if (!operand)
@@ -3017,8 +3139,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         request["accesses"].push_back(
             {{"offset", *number}, {"size", 0}, {"use", "address"}});
       } else {
-        request["function"] =
-            hexAddress(parseAddress(stringField(p, "function", {}, 32)));
+        request["function"] = hexAddress(parseAddress(stringField(
+            p, "function", {},
+            ::neverd::limits::worker::
+                kEngineExecuteImplLocalTypesFitRequestFunctionStringFieldMax)));
         request["target"] = {{"address", hexAddress(address)}};
       }
     }
@@ -3060,12 +3184,17 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     Json choice = {{"added", Json::array()}, {"removed", Json::array()}};
     for (const char *key : {"added", "removed"})
       if (p.contains(key)) {
-        if (!p.at(key).is_array() || p.at(key).size() > 64)
+        if (!p.at(key).is_array() ||
+            p.at(key).size() >
+                ::neverd::limits::worker::
+                    kEngineExecuteImplTypeLibrariesSetTypeLibrariesPAtKeySizeLimit)
           throw Error("invalid_request",
                       std::string(key) + " must be an array of names");
         for (const auto &name : p.at(key))
-          choice[key].push_back(
-              stringField(Json{{"name", name}}, "name", {}, 256));
+          choice[key].push_back(stringField(
+              Json{{"name", name}}, "name", {},
+              ::neverd::limits::worker::
+                  kEngineExecuteImplTypeLibrariesSetTypeLibrariesNameStringFieldMax));
       }
     static const auto set =
         engineSymbol<LocalTypesFunction>("neverd_type_libraries_set");
@@ -3109,7 +3238,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     Json options = Json::object();
     for (const char *key : {"filter", "language", "spelling", "origin"})
       if (p.contains(key))
-        options[key] = stringField(p, key, {}, 4096);
+        options[key] = stringField(
+            p, key, {},
+            ::neverd::limits::worker::
+                kEngineExecuteImplLocalTypesSourceLocalTypesOptionsKeyKeyStringFieldMax);
     for (const char *key :
          {"offsets", "hexOffsets", "asserts", "dependencies", "prototypes"})
       if (p.contains(key)) {
@@ -3135,7 +3267,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (operation == "local_type") {
       const auto one =
           engineSymbol<LocalTypeFunction>("neverd_local_type_json");
-      const auto name = stringField(p, "name", {}, 4096);
+      const auto name = stringField(
+          p, "name", {},
+          ::neverd::limits::worker::
+              kEngineExecuteImplLocalTypesSourceLocalTypesLocalTypeNameNameStringFieldMax);
       return localTypesJson(
           ownedString(one(session_, name.c_str(), text.c_str())));
     }
@@ -3201,9 +3336,18 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return page(items, p, {"name"});
   }
   if (operation == "search") {
-    const auto kind = stringField(p, "kind", "text", 16);
-    const auto pattern = stringField(p, "pattern", {}, 4096);
-    const auto limit = sizeField(p, "limit", 256, 4096);
+    const auto kind =
+        stringField(p, "kind", "text",
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplSearchKindKindStringFieldMax);
+    const auto pattern =
+        stringField(p, "pattern", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplSearchPatternStringFieldMax);
+    const auto limit = sizeField(
+        p, "limit",
+        ::neverd::limits::worker::kEngineExecuteImplSearchLimitSizeFieldDefault,
+        ::neverd::limits::worker::kEngineExecuteImplSearchLimitSizeFieldMax);
     if (pattern.empty() || !limit)
       throw Error("invalid_request", "A search pattern and limit are required");
     if (kind != "text" && kind != "bytes" && kind != "immediate")
@@ -3244,8 +3388,17 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       throw Error("unsupported", "This engine cannot query register flow");
     const auto entry = parseAddress(stringField(p, "address"));
     const auto pc = parseAddress(stringField(p, "instruction"));
-    Json options{{"kind", stringField(p, "kind", "registers", 32)},
-                 {"register", stringField(p, "register", {}, 32)}};
+    Json options{
+        {"kind",
+         stringField(
+             p, "kind", "registers",
+             ::neverd::limits::worker::
+                 kEngineExecuteImplRegisterFlowOptionsKindKindStringFieldMax)},
+        {"register",
+         stringField(
+             p, "register", {},
+             ::neverd::limits::worker::
+                 kEngineExecuteImplRegisterFlowOptionsRegisterStringFieldMax)}};
     const auto *raw = query(session_, entry, pc, options.dump().c_str());
     if (!raw)
       throw Error("register_flow_failed", error());
@@ -3333,7 +3486,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     Json request = p;
     request["kind"] = "type";
     CodeEdits::validateChange(document->value, request);
-    const auto id = stringField(p, "variable_id", {}, 256);
+    const auto id =
+        stringField(p, "variable_id", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplSourceTypeIdVariableIdStringFieldMax);
     Json variable;
     for (const auto &item : document->value.at("source_variables"))
       if (item.at("id") == id)
@@ -3366,9 +3522,14 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (!check)
         throw Error("unsupported",
                     "The engine cannot check source variable types");
-      const Json proposal{{"type", stringField(p, "type", {}, 4096)},
-                          {"bytes", variable.at("bytes")},
-                          {"floating", variable.at("floating")}};
+      const Json proposal{
+          {"type",
+           stringField(
+               p, "type", {},
+               ::neverd::limits::worker::
+                   kEngineExecuteImplSourceTypeTypeProposalTypeStringFieldMax)},
+          {"bytes", variable.at("bytes")},
+          {"floating", variable.at("floating")}};
       const auto *reply = check(session_, proposal.dump().c_str());
       if (!reply)
         throw Error("invalid_type", error());
@@ -3426,7 +3587,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (p.value("kind", std::string()) == "call_type") {
       const bool clear = p.value("action", std::string()) == "clear";
       const auto id =
-          clear ? std::string() : stringField(p, "call_id", {}, 256);
+          clear
+              ? std::string()
+              : stringField(
+                    p, "call_id", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplCodeEditCallTypeKindIdCallIdStringFieldMax);
       Json calls = before.is_object()
                        ? before.value("call_types", Json::object())
                        : Json::object();
@@ -3436,19 +3602,31 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         calls.erase(id);
       else {
         Json actuals = p.value("variadic_types", Json::array());
-        if (!actuals.is_array() || actuals.size() > 32)
+        if (!actuals.is_array() ||
+            actuals.size() >
+                ::neverd::limits::worker::
+                    kEngineExecuteImplCodeEditCallTypeKindActualsSizeLimit)
           throw Error("invalid_request", "Invalid actual variadic types");
         for (const auto &type : actuals)
           if (!type.is_string() ||
               type.get_ref<const std::string &>().empty() ||
-              type.get_ref<const std::string &>().size() > 4096)
+              type.get_ref<const std::string &>().size() >
+                  ::neverd::limits::worker::
+                      kEngineExecuteImplCodeEditCallTypeKindTypeGetRefConstStdStringSizeLimit)
             throw Error("invalid_request",
                         "Each actual variadic argument needs a bounded type");
-        calls[id] = {{"input_sha256", inputHash()},
-                     {"snapshot", p.at("snapshot")},
-                     {"declaration", stringField(p, "declaration", {}, 4096)},
-                     {"variadic_types", actuals}};
-        if (calls.size() > 32)
+        calls[id] = {
+            {"input_sha256", inputHash()},
+            {"snapshot", p.at("snapshot")},
+            {"declaration",
+             stringField(
+                 p, "declaration", {},
+                 ::neverd::limits::worker::
+                     kEngineExecuteImplCodeEditCallTypeKindCallsIdDeclarationStringFieldMax)},
+            {"variadic_types", actuals}};
+        if (calls.size() >
+            ::neverd::limits::worker::
+                kEngineExecuteImplCodeEditCallTypeKindCallsSizeLimit)
           throw Error(
               "edit_budget",
               "At most 32 call-site declarations are supported per function");
@@ -3478,7 +3656,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           representation != "llvmc")
         throw Error("unsupported",
                     "Variable associations require Pseudocode or LLVM C");
-      if (stringField(p, "snapshot", {}, 128) !=
+      if (stringField(p, "snapshot", {},
+                      ::neverd::limits::worker::
+                          kEngineExecuteImplCodeEditSnapshotStringFieldMax) !=
           document->value.value("variable_snapshot", std::string()))
         throw Error("stale_target",
                     "The source analysis changed; select the variable again");
@@ -3488,23 +3668,39 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                              .value(route, Json::object())
                              .value("variable_edits", Json::array())
                        : Json::array();
-      const auto action = stringField(p, "action", {}, 16);
+      const auto action =
+          stringField(p, "action", {},
+                      ::neverd::limits::worker::
+                          kEngineExecuteImplCodeEditActionStringFieldMax);
       if (action == "clear")
         edits = Json::array();
       else if (action == "unmap" || action == "unsplit") {
-        const auto index = sizeField(p, "association", edits.size(), 63);
+        const auto index = sizeField(
+            p, "association", edits.size(),
+            ::neverd::limits::worker::
+                kEngineExecuteImplCodeEditClearUnsplitUnmapIndexAssociationSizeFieldMax);
         if (index >= edits.size() ||
             edits[index].at("kind") != (action == "unmap" ? "map" : "split"))
           throw Error("stale_target",
                       "This variable association no longer exists");
         edits.erase(index);
       } else if (action == "map" || action == "split") {
-        if (edits.size() >= 64)
+        if (edits.size() >=
+            ::neverd::limits::worker::
+                kEngineExecuteImplCodeEditClearUnsplitUnmapSplitMapEditsSizeLimit)
           throw Error("edit_budget",
                       "Reset an association before adding more than 64 edits");
-        const auto from = stringField(p, "variable_id", {}, 256);
+        const auto from = stringField(
+            p, "variable_id", {},
+            ::neverd::limits::worker::
+                kEngineExecuteImplCodeEditClearUnsplitUnmapSplitMapFromVariableIdStringFieldMax);
         const auto to =
-            action == "map" ? stringField(p, "to", {}, 256) : std::string();
+            action == "map"
+                ? stringField(
+                      p, "to", {},
+                      ::neverd::limits::worker::
+                          kEngineExecuteImplCodeEditClearUnsplitUnmapSplitMapToToStringFieldMax)
+                : std::string();
         auto available = [&](const std::string &id) {
           for (const auto &v :
                document->value.value("source_variables", Json::array()))
@@ -3672,7 +3868,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     throw Error("unsupported", "Unknown worker operation: " + operation);
   const auto address = parseAddress(stringField(p, "address"));
   if (operation == "disasm") {
-    const auto limit = sizeField(p, "limit", 128, 512);
+    const auto limit = sizeField(
+        p, "limit",
+        ::neverd::limits::worker::kEngineExecuteImplDisasmLimitSizeFieldDefault,
+        ::neverd::limits::worker::kEngineExecuteImplDisasmLimitSizeFieldMax);
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
     auto items = backendJson(
@@ -3700,7 +3899,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
             {"complete", next.is_null()}};
   }
   if (operation == "bytes") {
-    auto size = sizeField(p, "size", 256, 65536);
+    auto size = sizeField(
+        p, "size",
+        ::neverd::limits::worker::
+            kEngineExecuteImplBytesSizeSizeSizeFieldDefault,
+        ::neverd::limits::worker::kEngineExecuteImplBytesSizeSizeSizeFieldMax);
     if (!size)
       throw Error("invalid_request", "size must be at least 1");
     if (size - 1 > std::numeric_limits<std::uint64_t>::max() - address)
@@ -3717,7 +3920,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // The bytes as text in an encoding, one cell per byte, for a hex view.
     Json cells;
     if (p.contains("text_encoding")) {
-      const auto encoding = stringField(p, "text_encoding", {}, 64);
+      const auto encoding = stringField(
+          p, "text_encoding", {},
+          ::neverd::limits::worker::
+              kEngineExecuteImplBytesEncodingTextEncodingStringFieldMax);
       static const auto decode =
           engineSymbol<DecodeTextFunction>("neverd_decode_text_json");
       if (!decode)
@@ -3752,7 +3958,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   }
   if (operation == "annotation_set") {
     requireWriter();
-    auto text = stringField(p, "text", {}, 65536);
+    auto text =
+        stringField(p, "text", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplAnnotationSetTextTextStringFieldMax);
     auto &store = history();
     store.stage(
         {{"kind", "annotation"},
@@ -3773,7 +3982,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (dirty_)
       throw Error("unsaved_changes",
                   "Save or reload staged annotations before renaming");
-    const auto name = stringField(p, "name", {}, 4096);
+    const auto name =
+        stringField(p, "name", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplRenameNameNameStringFieldMax);
     if (name.empty() || std::any_of(name.begin(), name.end(), [](char c) {
           return static_cast<unsigned char>(c) <= ' ' || c == 0x7f;
         }))
@@ -3851,10 +4063,16 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // the one a parameter's new type makes.
     Json options = Json::object();
     if (p.contains("declaration"))
-      options["declaration"] = stringField(p, "declaration", {}, 4096);
+      options["declaration"] = stringField(
+          p, "declaration", {},
+          ::neverd::limits::worker::
+              kEngineExecuteImplFunctionTypeOptionsDeclarationStringFieldMax);
     if (p.contains("parameter")) {
       options["parameter"] = sizeField(p, "parameter", 0, 255);
-      options["type"] = stringField(p, "type", {}, 4096);
+      options["type"] = stringField(
+          p, "type", {},
+          ::neverd::limits::worker::
+              kEngineExecuteImplFunctionTypeOptionsTypeTypeStringFieldMax);
     }
     using Declaration =
         const char *(*)(neverd_session_t, neverd_va_t, const char *);
@@ -3886,7 +4104,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     std::string stated;
     if (edit) {
       if (!p.contains("attributes") || !p.at("attributes").is_object() ||
-          p.at("attributes").empty() || p.at("attributes").size() > 16)
+          p.at("attributes").empty() ||
+          p.at("attributes").size() >
+              ::neverd::limits::worker::kMaxItemAttributes)
         throw Error("invalid_request",
                     "A function edit states one attribute or more");
       stated = p.at("attributes").dump();
@@ -3938,7 +4158,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (dirty_)
       throw Error("unsaved_changes", "Save or reload staged annotations "
                                      "before defining data");
-    const auto action = stringField(p, "action", {}, 16);
+    const auto action =
+        stringField(p, "action", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplItemDefineActionStringFieldMax);
     const Json at = listing().item(address);
     if (at.is_null())
       throw Error("invalid_request", "No image byte at " + hexAddress(address));
@@ -3969,10 +4192,6 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       const auto decode = engineSymbol<DisasmEx>("neverd_disasm_json_ex");
       if (!decode)
         throw Error("unsupported", "This engine cannot define native code");
-      // Decode one basic block without following its successors or inventing
-      // a function. Known instructions are a boundary, and unmodelled control
-      // flow never invites guessing what bytes follow it.
-      constexpr std::size_t MaxInstructions = 256;
       auto cursor = start;
       for (;;) {
         if (!code.empty()) {
@@ -3980,7 +4199,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           if (next.is_null() || next.at("kind") == "instruction")
             break;
         }
-        if (code.size() == MaxInstructions)
+        if (code.size() == ::neverd::limits::worker::kEngineMaxInstructions)
           throw Error("resource_limit",
                       "Code definition exceeds 256 instructions");
         const auto decoded =
@@ -4003,18 +4222,37 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           break;
       }
     } else if (action == "array") {
-      const auto width = sizeField(p, "element_size", 1, 65536);
-      const auto count = sizeField(p, "count", 0, 1048576);
-      if (!width || !count || width * count > 64 * 1024 * 1024)
+      const auto width = sizeField(
+          p, "element_size",
+          ::neverd::limits::worker::
+              kEngineExecuteImplItemDefineCodeArrayWidthElementSizeSizeFieldDefault,
+          ::neverd::limits::worker::
+              kEngineExecuteImplItemDefineCodeArrayWidthElementSizeSizeFieldMax);
+      const auto count =
+          sizeField(p, "count", 0,
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplItemDefineCodeArrayCountSizeFieldMax);
+      if (!width || !count ||
+          width * count > ::neverd::sdk::kMaxDataItemArrayBytes)
         throw Error("invalid_request", "Array extent exceeds 64 MiB");
       size = width * count;
-      row = {{"kind", "array"},
-             {"element_size", width},
-             {"count", count},
-             {"size", size},
-             {"type", stringField(p, "type", {}, 512)}};
+      row = {
+          {"kind", "array"},
+          {"element_size", width},
+          {"count", count},
+          {"size", size},
+          {"type",
+           stringField(
+               p, "type", {},
+               ::neverd::limits::worker::
+                   kEngineExecuteImplItemDefineCodeArrayRowTypeStringFieldMax)}};
     } else if (action == "alignment") {
-      const auto alignment = sizeField(p, "alignment", 16, 1048576);
+      const auto alignment = sizeField(
+          p, "alignment",
+          ::neverd::limits::worker::
+              kEngineExecuteImplItemDefineCodeArrayAlignmentSizeFieldDefault,
+          ::neverd::limits::worker::
+              kEngineExecuteImplItemDefineCodeArrayAlignmentSizeFieldMax);
       if (alignment < 2 || (alignment & (alignment - 1)))
         throw Error("invalid_request", "Alignment must be a power of two");
       size = alignment - start % alignment;
@@ -4022,7 +4260,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     } else if (action == "data") {
       // The data carousel: byte, word, dword, qword, then byte again.
       static constexpr std::array<std::uint64_t, 4> Carousel = {1, 2, 4, 8};
-      size = sizeField(p, "size", 0, 8);
+      size = sizeField(
+          p, "size", 0,
+          ::neverd::limits::worker::
+              kEngineExecuteImplItemDefineCodeArrayAlignmentDataSizeSizeSizeFieldMax);
       if (size &&
           std::find(Carousel.begin(), Carousel.end(), size) == Carousel.end())
         throw Error("invalid_request", "A value is 1, 2, 4 or 8 bytes");
@@ -4131,7 +4372,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // change its operands that are numbers: the one asked for if it is one,
     // else the last.  A structure offset also changes a displacement from a
     // register, which it takes first.
-    const auto action = stringField(p, "action", {}, 16);
+    const auto action =
+        stringField(p, "action", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplOperandFormatActionStringFieldMax);
     const bool structure = action == numberBaseName(NumberBase::Struct);
     if (structure && !fitsLocalTypes())
       throw Error("unsupported",
@@ -4146,7 +4390,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto &candidates = structure || reset ? *structs : *numbers;
     const std::optional<std::size_t> asked =
         p.contains("operand")
-            ? std::optional<std::size_t>(sizeField(p, "operand", 0, 7))
+            ? std::optional<std::size_t>(sizeField(
+                  p, "operand", 0,
+                  ::neverd::limits::worker::
+                      kEngineExecuteImplOperandFormatAskedOperandSizeFieldMax))
             : std::nullopt;
     std::optional<std::size_t> chosen;
     if (structure)
@@ -4183,18 +4430,28 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                   {"negate", entry.value("negate", false)},
                   {"invert", entry.value("invert", false)}};
     if (action == "enum") {
-      next = {{"base", "enum"},
-              {"negate", false},
-              {"invert", false},
-              {"type", stringField(p, "type", {}, 512)},
-              {"flags", p.value("flags", false)}};
+      next = {
+          {"base", "enum"},
+          {"negate", false},
+          {"invert", false},
+          {"type",
+           stringField(
+               p, "type", {},
+               ::neverd::limits::worker::
+                   kEngineExecuteImplOperandFormatEnumNextTypeStringFieldMax)},
+          {"flags", p.value("flags", false)}};
     } else if (structure) {
       // The member a structure offset names has no sign of its own.
-      next = {{"base", action},
-              {"negate", false},
-              {"invert", false},
-              {"type", stringField(p, "type", {}, 512)},
-              {"delta", p.value("delta", Json(0))}};
+      next = {
+          {"base", action},
+          {"negate", false},
+          {"invert", false},
+          {"type",
+           stringField(
+               p, "type", {},
+               ::neverd::limits::worker::
+                   kEngineExecuteImplOperandFormatEnumNextTypeStringFieldMax)},
+          {"delta", p.value("delta", Json(0))}};
       if (!next.at("delta").is_number_integer())
         throw Error("invalid_request", "delta must be an integer");
     } else if ((action == "negate" || action == "invert") &&
@@ -4224,10 +4481,14 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (!structure)
         throw Error("invalid_request",
                     "Only a structure offset goes to other instructions");
-      if (!also.is_array() || also.size() > MaxOperandFormatRows)
-        throw Error("invalid_request",
-                    "also lists at most " +
-                        std::to_string(MaxOperandFormatRows) + " instructions");
+      if (!also.is_array() ||
+          also.size() > ::neverd::limits::worker::kEngineMaxOperandFormatRows)
+        throw Error(
+            "invalid_request",
+            "also lists at most " +
+                std::to_string(
+                    ::neverd::limits::worker::kEngineMaxOperandFormatRows) +
+                " instructions");
       for (const auto &value : also) {
         if (!value.is_string())
           throw Error("invalid_request", "also lists instruction addresses");
@@ -4297,7 +4558,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
             {"saved", true}};
   }
   if (operation == "decompile") {
-    const auto representation = stringField(p, "representation", "c", 16);
+    const auto representation = stringField(
+        p, "representation", "c",
+        ::neverd::limits::worker::
+            kEngineExecuteImplDecompileRepresentationStringFieldMax);
     // `source` reads in the function's own language; the named dialects spell
     // the HighC source in one, through the engine's view alone.
     const bool spelled = representation == "source" ||
@@ -4308,14 +4572,21 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         representation != "high" && representation != "llvm" && !spelled)
       throw Error("unsupported", "Unknown code representation");
     const auto options = p.value("source_options", Json::object());
-    if (!options.is_object() || options.dump().size() > 4096 ||
+    if (!options.is_object() ||
+        options.dump().size() >
+            ::neverd::limits::worker::
+                kEngineExecuteImplDecompileOptionsDumpSizeLimit ||
         (!options.empty() && representation != "c" &&
          representation != "llvmc" && !spelled))
       throw Error("invalid_request",
                   "Invalid source_options for this representation");
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
-    const auto limit = sizeField(p, "limit", 512, 2048);
+    const auto limit = sizeField(
+        p, "limit",
+        ::neverd::limits::worker::
+            kEngineExecuteImplDecompileLimitSizeFieldDefault,
+        ::neverd::limits::worker::kEngineExecuteImplDecompileLimitSizeFieldMax);
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
     std::string mappingStatus = "unsupported_representation";
@@ -4344,7 +4615,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         if (result.contains("text")) {
           if (!result["text"].is_string() ||
               result["text"].get_ref<const std::string &>().size() >
-                  MaxCodePageBytes ||
+                  ::neverd::limits::worker::kEngineMaxCodePageBytes ||
               !result.contains("rows") || !result["rows"].is_array() ||
               result["rows"].size() > limit)
             throw Error("invalid_engine_result",
@@ -4397,7 +4668,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // The page ends before the line that would pass its budget; the next
     // page starts there.
     std::size_t fits = start;
-    while (fits < end && byteAt(fits + 1) - startByte <= MaxCodePageBytes)
+    while (fits < end && byteAt(fits + 1) - startByte <=
+                             ::neverd::limits::worker::kEngineMaxCodePageBytes)
       ++fits;
     if (fits == start && end > start)
       throw Error("budget_exceeded",
@@ -4428,7 +4700,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         if (value == it->end())
           return 0.0;
         if (!value->is_number() || !std::isfinite(value->get<double>()) ||
-            value->get<double>() < 0 || value->get<double>() > 1000)
+            value->get<double>() < 0 ||
+            value->get<double>() > ::neverd::limits::worker::kMaxGraphMetric)
           throw Error("invalid_request",
                       std::string("metrics.") + field + " is out of range");
         return value->get<double>();
@@ -4464,7 +4737,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   if (operation == "cfg_viewport") {
     // The layout the client names, else the function's newest.
     const auto key = hexAddress(address);
-    const auto layout = stringField(p, "layout_revision", {}, 256);
+    const auto layout = stringField(
+        p, "layout_revision", {},
+        ::neverd::limits::worker::
+            kEngineExecuteImplCfgViewportLayoutRevisionStringFieldMax);
     for (const auto &graph : graphs_)
       if (graph.address == key && (layout.empty() || graph.revision == layout))
         return graph.snapshot->viewport(p);
@@ -4473,8 +4749,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   }
   if (operation == "cfg") {
     auto result = functionGraph(address);
-    if (result.value("nodes", Json::array()).size() > 500 ||
-        result.value("edges", Json::array()).size() > 2000)
+    if (result.value("nodes", Json::array()).size() >
+            ::neverd::limits::worker::
+                kEngineExecuteImplCfgResultValueNodesJsonArraySizeLimit ||
+        result.value("edges", Json::array()).size() >
+            ::neverd::limits::worker::
+                kEngineExecuteImplCfgResultValueEdgesJsonArraySizeLimit)
       throw Error("budget_exceeded",
                   "Graph exceeds the preview budget of 500 nodes / 2000 edges; "
                   "no partial graph was published");
@@ -4495,10 +4775,15 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return result;
   }
   if (operation == "xrefs") {
-    const auto direction = stringField(p, "direction", "to", 8);
+    const auto direction =
+        stringField(p, "direction", "to",
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplXrefsDirectionStringFieldMax);
     if (direction != "to" && direction != "from")
       throw Error("invalid_request", "direction must be to or from");
-    if (stringField(p, "source", "direct", 16) != "ir")
+    if (stringField(p, "source", "direct",
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplXrefsSourceStringFieldMax) != "ir")
       return listing().references(address, p);
     analyze();
     const auto arch = folded(ownedString(neverd_session_arch_name(session_)));

@@ -14,6 +14,7 @@
 #include "ZipInternal.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 #include <bit>
@@ -180,7 +181,8 @@ class ZipReader {
       } else {
         if (M.Size > MaxPackageArchiveFileBytes || M.Size > Budget - Declared)
           throw Error("package_archive_expansion_budget_exceeded");
-        if (M.Size > 1000 * std::max<uint64_t>(1, M.StoredSize))
+        if (M.Size > ::neverd::limits::web::kMaxZipExpansionRatio *
+                         std::max<uint64_t>(1, M.StoredSize))
           throw Error("zip_expansion_ratio_exceeded");
         Declared += M.Size;
         if (R.Flags & 1)

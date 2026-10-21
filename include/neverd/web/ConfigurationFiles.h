@@ -12,14 +12,12 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceNavigation.h"
 
 namespace neverd::web {
 inline constexpr std::string_view ConfigurationFilesProfile =
     "javascript-configuration-file-navigation-v1";
-inline constexpr uint64_t MaxConfigurationFileRecords = 1024;
-inline constexpr uint64_t MaxConfigurationFileTerms = 4096;
-inline constexpr uint64_t MaxConfigurationFileSteps = 2000000;
 
 struct ConfigurationFileSite {
   std::string ID, Kind, Role;

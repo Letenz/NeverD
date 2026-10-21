@@ -15,6 +15,7 @@
 #pragma once
 
 #include "Backend.h"
+#include "ResourceLimits.h"
 #include "Tools.h"
 
 #include <cstdint>
@@ -26,11 +27,6 @@
 
 namespace neverd::binmcp {
 inline constexpr std::string_view ProtocolVersion = "2025-11-25";
-/// The largest text a tool returns inline.
-inline constexpr std::size_t MaxResult = 512 * 1024;
-/// The snapshot text kept at once, and the largest result.
-inline constexpr std::size_t MaxCachedResults = 8 * 1024 * 1024;
-inline constexpr std::size_t MaxSnapshots = 4;
 
 class Server {
 public:
@@ -89,4 +85,14 @@ private:
                     std::string_view Query);
 };
 
+} // namespace neverd::binmcp
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::binmcp {
+inline constexpr std::size_t MaxResult =
+    ::neverd::limits::mcp::kServerMaxResult;
+inline constexpr std::size_t MaxCachedResults =
+    ::neverd::limits::mcp::kServerMaxCachedResults;
+inline constexpr std::size_t MaxSnapshots =
+    ::neverd::limits::mcp::kServerMaxSnapshots;
 } // namespace neverd::binmcp

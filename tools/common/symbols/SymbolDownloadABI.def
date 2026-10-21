@@ -5,10 +5,10 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The constants the command line's symbol downloads use: the libraries that
-/// carry libcurl, the libcurl options and values it sets (fixed numbers of
-/// libcurl's stable ABI), and the limits of a transfer, which match the
-/// workbench's.  Define the macros before including this file.
+/// Constants shared by command-line and workbench symbol downloads: the
+/// libraries that carry libcurl, the libcurl options and values it sets (fixed
+/// numbers of libcurl's stable ABI), and the limits of a transfer, shared by
+/// both surfaces.  Define the macros before including this file.
 ///
 ///   NEVERD_CURL_LIBRARY(Name)       a library to load libcurl from, in order
 ///   NEVERD_CURL_VALUE(Name, Value)  a libcurl option, info or value number

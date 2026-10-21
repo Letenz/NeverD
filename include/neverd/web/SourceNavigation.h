@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 
 namespace neverd::web {
@@ -18,7 +19,6 @@ inline constexpr std::string_view JavaScriptNavigationProfile =
     "javascript-source-navigation-v1";
 inline constexpr std::string_view SourceAnchorProfile =
     "source-storage-anchor-v1";
-inline constexpr uint64_t MaxJavaScriptNavigationSteps = 2000000;
 
 struct SourceFunction {
   std::string ID;

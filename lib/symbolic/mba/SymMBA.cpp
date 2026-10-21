@@ -64,8 +64,9 @@ SymRef projectBitWindow(SymContext &Ctx, SymRef Source, unsigned Low,
   auto Original = [&] { return Ctx.mkExtract(Source, Low, Width); };
   const size_t Words = (size_t(Ctx.width(Source)) - 1) / 64 + 1;
   constexpr size_t NodeBytes = 128;
-  if (Depth >= 32 || Storage < NodeBytes ||
-      Words > (Storage - NodeBytes) / sizeof(uint64_t) ||
+  if (Depth >= ::neverd::symbolic::detail::limits::
+                   kSymMBAProjectBitWindowDepthLimit ||
+      Storage < NodeBytes || Words > (Storage - NodeBytes) / sizeof(uint64_t) ||
       !Budget.consume(1 + Words))
     return Original();
   Storage -= NodeBytes + Words * sizeof(uint64_t);
@@ -123,7 +124,9 @@ SymRef projectBitWindow(SymContext &Ctx, SymRef Source, unsigned Low,
     const auto Yes = Ctx.operand(Source, 1), No = Ctx.operand(Source, 2);
     return Ctx.mkIte(Condition, Part(Yes, Low, Width), Part(No, Low, Width));
   }
-  if (Op == SymOp::Add && Ctx.numOperands(Source) <= 32) {
+  if (Op == SymOp::Add &&
+      Ctx.numOperands(Source) <=
+          ::neverd::symbolic::detail::limits::kMaxProjectedBitWindowOperands) {
     const size_t Children = Ctx.numOperands(Source);
     if (Children > Storage / (2 * sizeof(SymRef)) || !Budget.consume(Children))
       return Original();
@@ -135,7 +138,9 @@ SymRef projectBitWindow(SymContext &Ctx, SymRef Source, unsigned Low,
       Values.push_back(Part(Child, 0, Low + Width));
     return Ctx.mkExtract(Ctx.mkAdd(Values), Low, Width);
   }
-  if (isBitwise(Op) && Ctx.numOperands(Source) <= 32) {
+  if (isBitwise(Op) &&
+      Ctx.numOperands(Source) <=
+          ::neverd::symbolic::detail::limits::kMaxProjectedBitWindowOperands) {
     const size_t Children = Ctx.numOperands(Source);
     if (Children > Storage / (2 * sizeof(SymRef)) || !Budget.consume(Children))
       return Original();
@@ -278,11 +283,14 @@ SymRef foldConditionalControls(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     Work.pop_back();
     if (!Seen.insert(Value.index()).second)
       continue;
-    if (!Budget.consume() || Seen.size() > 64)
+    if (!Budget.consume() ||
+        Seen.size() > ::neverd::symbolic::detail::limits::
+                          kSymMBAFoldConditionalControlsSeenSizeLimit)
       return Root;
     Dependent |= Value == Condition;
     auto Children = Ctx.operands(Value);
-    if (Children.size() > 128 - Edges)
+    if (Children.size() >
+        ::neverd::symbolic::detail::limits::kMaxConditionalControlEdges - Edges)
       return Root;
     Edges += Children.size();
     Work.insert(Work.end(), Children.begin(), Children.end());
@@ -781,7 +789,10 @@ SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
 SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
                                const MBAOptions &Opts, WorkBudget &Budget,
                                SolveReport &Rep) {
-  if (Ctx.op(E) != SymOp::Add || Opts.MaxTableBytes < 4096 ||
+  if (Ctx.op(E) != SymOp::Add ||
+      Opts.MaxTableBytes <
+          ::neverd::symbolic::detail::limits::
+              kSymMBATryFastComplementarySumOptsMaxTableBytesLimit ||
       !Budget.canConsume(16))
     return E;
   llvm::ArrayRef<SymRef> Terms = Ctx.operands(E);
@@ -806,7 +817,10 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
                             (AOp == SymOp::Or && BOp == SymOp::And) ||
                             (AOp == SymOp::And && BOp == SymOp::Or);
   const bool BitwisePair =
-      BitwiseTypes && Ctx.numOperands(A) > 8 &&
+      BitwiseTypes &&
+      Ctx.numOperands(A) >
+          ::neverd::symbolic::detail::limits::
+              kSymMBATryFastComplementarySumCtxNumOperandsALimit &&
       Ctx.numOperands(A) == Ctx.numOperands(B) &&
       (llvm::any_of(Ctx.operands(A),
                     [&](SymRef R) { return Ctx.op(R) == SymOp::Not; }) ||
@@ -858,26 +872,35 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
 SymRef detail::completeComplementarySums(SymContext &Ctx, SymRef Root,
                                          const MBAOptions &Opts,
                                          WorkBudget &Budget) {
-  // This runs only on a completed answer. A local builder rule would change
-  // earlier search choices, while a second region search would repeat them.
-  constexpr size_t MaxNodes = 64;
-  constexpr size_t MaxEdges = 128;
   const size_t Cost = readingCost(Ctx, Root);
-  if (Cost > MaxNodes || Opts.MaxTableBytes < 4096 ||
-      !Budget.canConsume(2 * MaxNodes + MaxEdges))
+  if (Cost > ::neverd::symbolic::detail::limits::
+                 kSymMBADetailCompleteComplementarySumsMaxNodes ||
+      Opts.MaxTableBytes <
+          ::neverd::symbolic::detail::limits::
+              kSymMBADetailCompleteComplementarySumsOptsMaxTableBytesLimit ||
+      !Budget.canConsume(
+          2 * ::neverd::symbolic::detail::limits::
+                  kSymMBADetailCompleteComplementarySumsMaxNodes +
+          ::neverd::symbolic::detail::limits::kSymMBAMaxEdges))
     return Root;
-  llvm::SmallVector<uint32_t, MaxNodes> Order;
-  llvm::SmallVector<SymRef, MaxEdges> Work{Root};
+  llvm::SmallVector<uint32_t,
+                    ::neverd::symbolic::detail::limits::
+                        kSymMBADetailCompleteComplementarySumsMaxNodes>
+      Order;
+  llvm::SmallVector<SymRef, ::neverd::symbolic::detail::limits::kSymMBAMaxEdges>
+      Work{Root};
   size_t Edges = 0;
   while (!Work.empty()) {
     SymRef R = Work.pop_back_val();
     if (llvm::is_contained(Order, R.index()))
       continue;
-    if (Order.size() == MaxNodes)
+    if (Order.size() == ::neverd::symbolic::detail::limits::
+                            kSymMBADetailCompleteComplementarySumsMaxNodes)
       return Root;
     Order.push_back(R.index());
     llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
-    if (Ops.size() > MaxEdges - Edges)
+    if (Ops.size() >
+        ::neverd::symbolic::detail::limits::kSymMBAMaxEdges - Edges)
       return Root;
     Edges += Ops.size();
     Work.append(Ops.begin(), Ops.end());

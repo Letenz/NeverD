@@ -21,6 +21,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
@@ -485,10 +486,14 @@ void LLVMCWriter::planExpressionMaterialization(llvm::Function &Fn) {
     for (const auto &I : BB) {
       if (!Expandable(&I))
         continue;
-      unsigned Work = 64;
+      unsigned Work = ::neverd::limits::backend::
+          kLLVMCFuncWriterLLVMCWriterPlanExpressionMaterializationWork;
       auto Fits = [&](auto &&Self, const llvm::Value *V,
                       unsigned Depth) -> bool {
-        if (Depth > 16 || Work == 0)
+        if (Depth >
+                ::neverd::limits::backend::
+                    kLLVMCFuncWriterLLVMCWriterPlanExpressionMaterializationFitsFitsDepthLimit ||
+            Work == 0)
           return false;
         --Work;
         if (!Expandable(V) || MaterializedExpressions.count(V))
@@ -595,7 +600,10 @@ void collectSlotMentions(const LLVMCWriter &Writer, const llvm::Value *V,
                          llvm::SmallVectorImpl<SlotMention> &Out,
                          llvm::SmallPtrSetImpl<const llvm::Value *> &Seen,
                          int Depth) {
-  if (!V || Depth > 6 || !Seen.insert(V).second)
+  if (!V ||
+      Depth > ::neverd::limits::backend::
+                  kLLVMCFuncWriterCollectSlotMentionsDepthLimit ||
+      !Seen.insert(V).second)
     return;
   if (const auto *AI =
           llvm::dyn_cast<llvm::AllocaInst>(V->stripPointerCasts())) {
@@ -674,7 +682,8 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
     llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Blocks;
     Blocks.insert(Call.getParent());
     const llvm::Instruction *Cur = Call.getNextNode();
-    unsigned Budget = 4096;
+    unsigned Budget =
+        ::neverd::limits::backend::kLLVMCFuncWriterCanSinkCallBudget;
     while (Cur && Budget--) {
       if (Cur == &Sink)
         return true;
@@ -1393,10 +1402,6 @@ bool LLVMCWriter::functionNeedsAnalysisOnlyEHWrap(
 
 namespace {
 
-constexpr size_t MaxEHAnnotationRows = 4096;
-constexpr size_t MaxEHAnnotationChars = 256 * 1024;
-constexpr size_t MaxEHAnnotationStringChars = 4096;
-
 std::optional<uint64_t> ehAnnotationUInt(const llvm::MDNode &Node,
                                          unsigned Index, unsigned Width) {
   if (Index >= Node.getNumOperands())
@@ -1447,7 +1452,8 @@ bool ehAnnotationUIntFields(
 }
 
 bool ehAnnotationCountRows(const llvm::MDNode &Node, size_t &Rows) {
-  if (Node.getNumOperands() > MaxEHAnnotationRows - Rows)
+  if (Node.getNumOperands() >
+      ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows - Rows)
     return false;
   Rows += Node.getNumOperands();
   return true;
@@ -1691,7 +1697,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   if (!Status || !ehAnnotationStatus(*Status) || !Encoding ||
       !ehAnnotationEncoding(*Encoding) || !PersonalityKind ||
       !ehAnnotationPersonality(*PersonalityKind) || !Personality ||
-      Personality->size() > MaxEHAnnotationStringChars ||
+      Personality->size() > ::neverd::limits::backend::
+                                kLLVMCFuncWriterMaxEHAnnotationStringChars ||
       !ehAnnotationString(*Payload, windows_eh_md::NativeUnwindBytes)) {
     Invalid("function string field");
     return;
@@ -1740,11 +1747,16 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
     Invalid(Reason);
     return;
   }
-  if (SEH->getNumOperands() > MaxEHAnnotationRows ||
-      CxxUnwind->getNumOperands() > MaxEHAnnotationRows ||
-      CxxTry->getNumOperands() > MaxEHAnnotationRows ||
-      CxxIP->getNumOperands() > MaxEHAnnotationRows ||
-      Diagnostics->getNumOperands() > MaxEHAnnotationRows) {
+  if (SEH->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      CxxUnwind->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      CxxTry->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      CxxIP->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      Diagnostics->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows) {
     Invalid("annotation row limit");
     return;
   }
@@ -1754,8 +1766,10 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   size_t Rows = 0;
   auto WithinBudget = [&]() {
     DetailOS.flush();
-    return ++Rows <= MaxEHAnnotationRows &&
-           Details.size() <= MaxEHAnnotationChars;
+    return ++Rows <=
+               ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows &&
+           Details.size() <=
+               ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationChars;
   };
   if (Registration->getNumOperands()) {
     const auto *Frame = ehAnnotationNode(
@@ -1956,7 +1970,9 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
       }
       const llvm::MDNode *Handlers =
           ehAnnotationNode(*Row, windows_eh_md::CxxTryHandlers);
-      if (!Handlers || Handlers->getNumOperands() > MaxEHAnnotationRows) {
+      if (!Handlers ||
+          Handlers->getNumOperands() >
+              ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows) {
         Invalid("cxx.try handlers");
         return;
       }
@@ -1996,8 +2012,9 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
         }
         const llvm::MDNode *Continuations =
             ehAnnotationNode(*Catch, windows_eh_md::CxxCatchContinuations);
-        if (!Continuations ||
-            Continuations->getNumOperands() > MaxEHAnnotationRows) {
+        if (!Continuations || Continuations->getNumOperands() >
+                                  ::neverd::limits::backend::
+                                      kLLVMCFuncWriterMaxEHAnnotationRows) {
           Invalid("cxx.catch continuations");
           return;
         }
@@ -2098,7 +2115,9 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   }
   for (unsigned I = 0; I < Diagnostics->getNumOperands(); ++I) {
     const auto Diagnostic = ehAnnotationString(*Diagnostics, I);
-    if (!Diagnostic || Diagnostic->size() > MaxEHAnnotationStringChars) {
+    if (!Diagnostic || Diagnostic->size() >
+                           ::neverd::limits::backend::
+                               kLLVMCFuncWriterMaxEHAnnotationStringChars) {
       Invalid("diagnostic string field");
       return;
     }
@@ -2192,7 +2211,8 @@ bool LLVMCWriter::usersAreDeadCopies(const llvm::Value *V) const {
     return true;
   std::set<const llvm::Value *> Seen;
   llvm::SmallVector<const llvm::Value *, 16> Pending{V};
-  unsigned Work = 64;
+  unsigned Work = ::neverd::limits::backend::
+      kLLVMCFuncWriterLLVMCWriterUsersAreDeadCopiesWork;
   // Materialized casts can still have long chains of cast users. Bound both
   // stack use and repeated liveness queries; exhaustion keeps extra source
   // temporaries rather than justifying the omission of an unvisited use.
@@ -2312,7 +2332,11 @@ void LLVMCWriter::collectOmittedInlinedImmediates(llvm::Function &Fn) {
   }
   bool Grew = true;
   unsigned Guard = 0;
-  while (Grew && Guard++ < 32) {
+  while (
+      Grew &&
+      Guard++ <
+          ::neverd::limits::backend::
+              kLLVMCFuncWriterLLVMCWriterCollectOmittedInlinedImmediatesGuardLimit) {
     Grew = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -2337,7 +2361,10 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
         OmittedUnknowns.insert(&Inst);
   bool Grew = true;
   unsigned Guard = 0;
-  while (Grew && Guard++ < 32) {
+  while (Grew &&
+         Guard++ <
+             ::neverd::limits::backend::
+                 kLLVMCFuncWriterLLVMCWriterCollectOmittedUnknownsGuardLimit) {
     Grew = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -3095,7 +3122,11 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       std::set<const llvm::Value *> Seen;
       auto addressShaped = [&](auto &&self, const llvm::Value *V,
                                int Depth) -> bool {
-        if (!V || Depth > 4 || !Seen.insert(V).second)
+        if (!V ||
+            Depth >
+                ::neverd::limits::backend::
+                    kLLVMCFuncWriterLLVMCWriterPrintedCallArgLimitKeepExtraAddressShapedDepthLimit ||
+            !Seen.insert(V).second)
           return false;
         if (llvm::isa<llvm::CallBase>(V))
           return true;
@@ -3491,7 +3522,11 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
            !Ty->Pointee->SourceName.empty() && !Ty->Pointee->IsEnum;
   };
   bool Changed = true;
-  for (int Guard = 0; Changed && Guard < 6; ++Guard) {
+  for (int Guard = 0;
+       Changed &&
+       Guard < ::neverd::limits::backend::
+                   kLLVMCFuncWriterLLVMCWriterCollectTypedHomesGuardLimit;
+       ++Guard) {
     Changed = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -4172,7 +4207,10 @@ void LLVMCWriter::omitSingleCopyCursorTemp(llvm::Function &Fn) {
 void LLVMCWriter::markRedundantPhiCopies(llvm::Function &Fn) {
   bool Changed = true;
   unsigned Guard = 0;
-  while (Changed && Guard++ < 32) {
+  while (Changed &&
+         Guard++ <
+             ::neverd::limits::backend::
+                 kLLVMCFuncWriterLLVMCWriterMarkRedundantPhiCopiesGuardLimit) {
     Changed = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -5061,7 +5099,11 @@ bool LLVMCWriter::singleEntryUncondTail(
   const llvm::BasicBlock *Pred = Arm;
   const llvm::BasicBlock *Cur = Edge;
   llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
-  for (int Step = 0; Step < 4 && Cur; ++Step) {
+  for (int Step = 0;
+       Step < ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterSingleEntryUncondTailStepLimit &&
+       Cur;
+       ++Step) {
     llvm::SmallPtrSet<const llvm::BasicBlock *, 4> Hops;
     while (Cur && isPrintPassthrough(Cur)) {
       if (Cur->isLandingPad() || FoldedJoinArms.count(Cur) ||
@@ -5717,7 +5759,11 @@ bool LLVMCWriter::assignSelectElseIf(
   Conds.push_back(From);
   Arms.push_back(FirstArm);
   const llvm::BasicBlock *Prev = From;
-  for (int Step = 0; Step < 3 && Cont; ++Step) {
+  for (int Step = 0;
+       Step < ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterAssignSelectElseIfStepLimit &&
+       Cont;
+       ++Step) {
     if (Cont->getSinglePredecessor() != Prev || Cont->isLandingPad() ||
         isCatchPadBlock(*Cont) || hasCleanupPad(*Cont))
       return false;
@@ -5793,7 +5839,10 @@ bool LLVMCWriter::conditionChainElse(
     const llvm::BasicBlock *Prev = nullptr;
     const llvm::BasicBlock *Default = nullptr;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
-    while (Cur && Seen.insert(Cur).second && Conds.size() < 4) {
+    while (
+        Cur && Seen.insert(Cur).second &&
+        Conds.size() <
+            ::neverd::limits::backend::kLLVMCFuncWriterAttemptCondsSizeLimit) {
       if (Prev && Cur->getSinglePredecessor() != Prev)
         return false;
       if (Cur->isLandingPad() || isCatchPadBlock(*Cur) || hasCleanupPad(*Cur))
@@ -6468,7 +6517,10 @@ bool LLVMCWriter::exclusiveSkipElseIf(
       return false;
     Arm.Start = Start;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 32> In;
-    if (In.size() >= 160 || BadBlock(Start))
+    if (In.size() >=
+            ::neverd::limits::backend::
+                kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCollectArmInSizeLimit ||
+        BadBlock(Start))
       return false;
     In.insert(Start);
     bool Grew = true;
@@ -6533,7 +6585,10 @@ bool LLVMCWriter::exclusiveSkipElseIf(
           break;
         }
         if (Any && Ok) {
-          if (In.size() >= 160 || BadBlock(Cand))
+          if (In.size() >=
+                  ::neverd::limits::backend::
+                      kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCollectArmInSizeLimit ||
+              BadBlock(Cand))
             return false;
           if (InlinedFallthroughBlocks.count(Cand))
             continue;
@@ -6575,7 +6630,10 @@ bool LLVMCWriter::exclusiveSkipElseIf(
         }
       }
       for (const llvm::BasicBlock *BB : Extra) {
-        if (In.count(BB) || In.size() >= 160)
+        if (In.count(BB) ||
+            In.size() >=
+                ::neverd::limits::backend::
+                    kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCollectArmInSizeLimit)
           continue;
         In.insert(BB);
         Pulled = true;
@@ -6754,7 +6812,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
   std::function<bool(const llvm::BasicBlock *, int, Chain, Chain &)> Walk;
   Walk = [&](const llvm::BasicBlock *Cur, int Depth, Chain St,
              Chain &Out) -> bool {
-    if (!Cur || Depth >= 5 || BadBlock(Cur))
+    if (!Cur ||
+        Depth >=
+            ::neverd::limits::backend::
+                kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfWalkDepthLimit ||
+        BadBlock(Cur))
       return false;
     const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
     if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1))
@@ -6893,7 +6955,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
         ChainOut.clear();
         const llvm::BasicBlock *Cur = Start;
         llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
-        while (Cur && ChainOut.size() < 4 && Seen.insert(Cur).second) {
+        while (Cur &&
+               ChainOut.size() <
+                   ::neverd::limits::backend::
+                       kLLVMCFuncWriterStraightReturnChainOutSizeLimit &&
+               Seen.insert(Cur).second) {
           if (BadBlock(Cur) && Cur != Start)
             return false;
           ChainOut.push_back(Cur);
@@ -6937,8 +7003,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
   {
     const llvm::BasicBlock *Cursor = From;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 8> SeenClause;
-    while (Done.Headers.size() < 4 && Cursor &&
-           SeenClause.insert(Cursor).second) {
+    while (
+        Done.Headers.size() <
+            ::neverd::limits::backend::
+                kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfDoneHeadersSizeLimit &&
+        Cursor && SeenClause.insert(Cursor).second) {
       llvm::SmallVector<const llvm::BasicBlock *, 4> Conds;
       llvm::SmallVector<char, 4> Taken;
       llvm::SmallVector<const llvm::BasicBlock *, 4> Hops;
@@ -6946,7 +7015,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
       const llvm::BasicBlock *ArmEdge = nullptr;
       const llvm::BasicBlock *Cur = Cursor;
       bool ClauseOk = true;
-      while (Conds.size() < 4 && Cur) {
+      while (
+          Conds.size() <
+              ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCondsSizeLimit &&
+          Cur) {
         const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
         if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1) ||
             BadBlock(Cur) || edgePrintsPhiCopy(Cur, Br->getSuccessor(0)) ||
@@ -7334,7 +7407,11 @@ bool LLVMCWriter::privateJoinElseIf(
     return true;
   };
 
-  for (int Step = 0; Step < 4 && Cur; ++Step) {
+  for (int Step = 0;
+       Step < ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterPrivateJoinElseIfStepLimit &&
+       Cur;
+       ++Step) {
     if (!SeenHead.insert(Cur).second)
       return false;
     const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
@@ -7460,8 +7537,12 @@ bool LLVMCWriter::regionBeforeSkipTarget(
   }
   const bool ThroughHop =
       isPrintPassthrough(FromBr->getSuccessor(0)) && !SkipAssigns;
-  while (ThroughHop && RegionStart &&
-         InlinedFallthroughBlocks.count(RegionStart) && SkipChain.size() < 4) {
+  while (
+      ThroughHop && RegionStart &&
+      InlinedFallthroughBlocks.count(RegionStart) &&
+      SkipChain.size() <
+          ::neverd::limits::backend::
+              kLLVMCFuncWriterLLVMCWriterRegionBeforeSkipTargetSkipChainSizeLimit) {
     const auto *ChainBr =
         llvm::dyn_cast<llvm::CondBrInst>(RegionStart->getTerminator());
     if (!ChainBr || printBranchTarget(ChainBr->getSuccessor(0)) != SkipTarget ||
@@ -7521,7 +7602,9 @@ bool LLVMCWriter::regionBeforeSkipTarget(
     const bool LateUnreachable =
         LateFromRegion && Cur->getTerminator() &&
         llvm::isa<llvm::UnreachableInst>(Cur->getTerminator());
-    if (In.size() >= 48)
+    if (In.size() >=
+        ::neverd::limits::backend::
+            kLLVMCFuncWriterLLVMCWriterRegionBeforeSkipTargetInSizeLimit)
       return false;
     if (!Before(Cur, SkipTarget) && !LateFallthrough && !LateBody &&
         !LateCond && !LateUnreachable)

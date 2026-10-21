@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "ResourceLimits.h"
 #include "common/transport/Json.h"
 
 #include <string>
@@ -53,13 +54,13 @@ const std::vector<Tool> &workbenchTools();
 
 /// Strings a listing shows before it cuts them, unless the caller asks
 /// otherwise.
-inline constexpr unsigned DefaultStringTextLimit = 200;
 /// Matches a search returns unless the caller asks otherwise.
-inline constexpr unsigned DefaultSearchLimit = 64;
 /// The lines a decompilation page holds at most, as the worker bounds it,
 /// and the pages read for one function's whole text.
-inline constexpr unsigned MaxDecompilationLines = 2048;
-inline constexpr unsigned MaxDecompilationPages = 512;
+inline constexpr unsigned MaxDecompilationLines =
+    ::neverd::limits::mcp::kMaxDecompilationLines;
+inline constexpr unsigned MaxDecompilationPages =
+    ::neverd::limits::mcp::kMaxDecompilationPages;
 
 /// Throws RpcError -32602 unless \p Arguments is an object that fits the
 /// tool's input schema.
@@ -80,4 +81,12 @@ std::pair<std::string, bool> compactResult(const std::string &Operation,
                                            const Json &Arguments,
                                            const Json &Response);
 
+} // namespace neverd::binmcp
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::binmcp {
+inline constexpr unsigned DefaultStringTextLimit =
+    ::neverd::limits::mcp::kToolsDefaultStringTextLimit;
+inline constexpr unsigned DefaultSearchLimit =
+    ::neverd::limits::mcp::kToolsDefaultSearchLimit;
 } // namespace neverd::binmcp

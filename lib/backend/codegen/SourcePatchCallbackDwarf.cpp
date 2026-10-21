@@ -7,6 +7,7 @@
 /// Re-encode authenticated DWARF rules for the copied callback instructions.
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/SourcePatchCallback.h"
 #include "neverd/loader/LanguageEHDwarf.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -114,7 +115,9 @@ llvm::Error encodeRules(std::vector<uint8_t> &Out,
       uleb(Out, I.Register);
       break;
     case CFIOpKind::RememberState:
-      if (++RememberDepth > 64)
+      if (++RememberDepth >
+          ::neverd::limits::backend::
+              kSourcePatchCallbackDwarfEncodeRulesRememberDepthLimit)
         return fail("frame-state nesting exceeds the callback bound");
       Out.push_back(llvm::dwarf::DW_CFA_remember_state);
       break;

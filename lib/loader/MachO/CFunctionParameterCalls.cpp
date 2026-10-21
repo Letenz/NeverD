@@ -8,6 +8,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/RuntimeFunctionAddress.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -141,7 +142,9 @@ cFunctionParameterSignature(const SourceFunctionTypeHint &Entry,
       !Type || Type->Kind != NdTypeKind::Ptr || Type->Size != 8 ||
       !Type->Pointee || Type->Pointee->Kind != NdTypeKind::Func ||
       !scalar(Type->Pointee->RetType, true) ||
-      Type->Pointee->ParamTypes.size() > 64)
+      Type->Pointee->ParamTypes.size() >
+          ::neverd::limits::loader::
+              kCFunctionParameterCallsCFunctionParameterSignatureTypePointeeParamTypesSizeLimit)
     return std::nullopt;
   SourceFunctionTypeHint Result;
   Result.Origin = Entry.Origin;
@@ -244,7 +247,9 @@ std::map<va_t, SourceCallTypeHint> buildCFunctionParameterCallHints(
     const SourceFunctionTypeHint &Entry,
     const std::map<va_t, SourceFunctionTypeHint> *NativeCallees) {
   using Facts = std::map<uint64_t, unsigned>;
-  if (Entry.Parameters.size() > 64)
+  if (Entry.Parameters.size() >
+      ::neverd::limits::loader::
+          kCFunctionParameterCallsBuildCFunctionParameterCallHintsEntryParametersSizeLimit)
     return {};
   Facts Seed;
   std::map<unsigned, SourceFunctionTypeHint> Signatures;
@@ -261,7 +266,10 @@ std::map<va_t, SourceCallTypeHint> buildCFunctionParameterCallHints(
       Image.IsRelocatable || !Function.Entry || Function.Entry % 4 ||
       !Function.DecodedInstructionCount ||
       !Function.hasCompleteLiftCoverage() || Function.Blocks.empty() ||
-      Function.Blocks.size() > 4096 || !Function.JumpTables.empty() ||
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kCFunctionParameterCallsBuildCFunctionParameterCallHintsFunctionBlocksSizeLimit ||
+      !Function.JumpTables.empty() ||
       (Function.ExceptionMetadata &&
        !isPlainSourceUnwind(*Function.ExceptionMetadata)) ||
       (!Function.ModuleAnalysisRoots.empty() &&
@@ -277,7 +285,8 @@ std::map<va_t, SourceCallTypeHint> buildCFunctionParameterCallHints(
   std::map<int, const LowBlock *> Blocks;
   std::map<int, size_t> Pending;
   const LowBlock *Root = nullptr;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::loader::
+      kCFunctionParameterCallsBuildCFunctionParameterCallHintsBudget;
   std::set<va_t> Instructions;
   for (const auto &Block : Function.Blocks) {
     if (Block.Id < 0 || !Blocks.emplace(Block.Id, &Block).second ||

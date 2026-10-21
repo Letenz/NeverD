@@ -1,5 +1,7 @@
 #include "SecondaryTextDelegate.h"
 
+#include "../Config.h"
+
 #include <QApplication>
 #include <QPainter>
 #include <algorithm>
@@ -7,9 +9,6 @@
 
 namespace neverd::gui {
 namespace {
-// Room between an item's text and its secondary text, and after the latter.
-constexpr int SecondaryGap = 16;
-constexpr int SecondaryMargin = 8;
 // The secondary text reads as a description of its item.
 constexpr qreal SecondaryOpacity = 0.6;
 } // namespace
@@ -32,11 +31,16 @@ void SecondaryTextDelegate::paint(QPainter *painter,
   const QStyle *style = widget ? widget->style() : QApplication::style();
   const QFont font = font_.value_or(item.font);
   const int width = QFontMetrics(font).horizontalAdvance(secondary);
-  const int right = item.rect.right() - SecondaryMargin;
+  const int right =
+      item.rect.right() -
+      ::neverd::limits::gui_config::kSecondaryTextDelegateSecondaryMargin;
   // The item's own text elides before it reaches the secondary text.
   const QRect text =
       style->subElementRect(QStyle::SE_ItemViewItemText, &item, widget);
-  const int room = std::max(0, right - width - SecondaryGap - text.left());
+  const int room = std::max(
+      0, right - width -
+             ::neverd::limits::gui_config::kSecondaryTextDelegateSecondaryGap -
+             text.left());
   item.text =
       QFontMetrics(item.font).elidedText(item.text, item.textElideMode, room);
   style->drawControl(QStyle::CE_ItemViewItem, &item, painter, widget);

@@ -12,6 +12,7 @@
 #include "../os/linux/kernel/LinuxNetwork.h"
 #include "ProcessJSONInteger.h"
 
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -49,7 +50,10 @@ llvm::Error text(const llvm::json::Value &V, llvm::StringRef Name,
     return llvm::Error::success();
   }
   auto S = V.getAsString();
-  if (!S || S->size() > 1024 || S->contains('\0'))
+  if (!S ||
+      S->size() >
+          ::neverd::limits::emulation::kProcessNetworkJSONTextSSizeLimit ||
+      S->contains('\0'))
     return invalid(Name);
   Out = S->str();
   return llvm::Error::success();
@@ -66,7 +70,8 @@ llvm::Error receiveEvents(const llvm::json::Value &Value,
                           std::vector<LinuxNetworkReceive> &Out,
                           uint64_t &Remaining) {
   const auto *Events = Value.getAsArray();
-  if (!Events || Events->size() > 4096)
+  if (!Events || Events->size() > ::neverd::limits::emulation::
+                                      kProcessNetworkJSONReceiveEventsSizeLimit)
     return invalid(field::ReceiveEvents);
   for (const auto &Item : *Events) {
     const auto *Event = Item.getAsObject();
@@ -107,13 +112,17 @@ linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
     return invalid(field::LinuxNetwork);
   for (const auto &[Key, V] : *Object)
     if ((Key != field::Connections && Key != field::DatagramConnections) ||
-        !V.getAsArray() || V.getAsArray()->size() > 256)
+        !V.getAsArray() ||
+        V.getAsArray()->size() >
+            ::neverd::limits::emulation::
+                kProcessNetworkJSONLinuxNetworkOptionsFromJSONVGetAsArraySizeLimit)
       return invalid(field::LinuxNetwork);
   const llvm::json::Array Empty;
   const auto *Connections = Object->getArray(field::Connections);
   const auto *Datagrams = Object->getArray(field::DatagramConnections);
   LinuxNetworkOptions Out;
-  uint64_t Remaining = 1024 * 1024 + 256 * 28;
+  uint64_t Remaining = ::neverd::limits::emulation::
+      kProcessNetworkJSONLinuxNetworkOptionsFromJSONRemaining;
   for (const auto &Item : Connections ? *Connections : Empty) {
     const auto *C = Item.getAsObject();
     if (!C || !C->get(field::NetworkPeer) ||
@@ -176,7 +185,10 @@ linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
           return std::move(E);
       } else if (Name == field::ExpectedDatagrams) {
         const auto *Packets = V.getAsArray();
-        if (!Packets || Packets->size() > 4096)
+        if (!Packets ||
+            Packets->size() >
+                ::neverd::limits::emulation::
+                    kProcessNetworkJSONLinuxNetworkOptionsFromJSONPacketsSizeLimit)
           return invalid(Name);
         for (const auto &Packet : *Packets) {
           std::vector<uint8_t> Payload;
@@ -200,10 +212,14 @@ linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
 llvm::Expected<std::vector<AndroidResolverQuery>>
 androidResolverQueriesFromJSON(const llvm::json::Value &Value) {
   const auto *Queries = Value.getAsArray();
-  if (!Queries || Queries->size() > 128)
+  if (!Queries ||
+      Queries->size() >
+          ::neverd::limits::emulation::
+              kProcessNetworkJSONAndroidResolverQueriesFromJSONQueriesSizeLimit)
     return invalid(field::ResolverQueries);
   std::vector<AndroidResolverQuery> Out;
-  uint64_t Remaining = 1024 * 1024;
+  uint64_t Remaining = ::neverd::limits::emulation::
+      kProcessNetworkJSONAndroidResolverQueriesFromJSONRemaining;
   for (const auto &Item : *Queries) {
     const auto *Q = Item.getAsObject();
     if (!Q || !Q->get(field::ResolverNode) || !Q->get(field::ResolverService))
@@ -218,7 +234,10 @@ androidResolverQueriesFromJSON(const llvm::json::Value &Value) {
           return std::move(E);
       } else if (Name == field::ResolverAddresses) {
         const auto *Addresses = V.getAsArray();
-        if (!Addresses || Addresses->size() > 64)
+        if (!Addresses ||
+            Addresses->size() >
+                ::neverd::limits::emulation::
+                    kProcessNetworkJSONAndroidResolverQueriesFromJSONAddressesSizeLimit)
           return invalid(Name);
         for (const auto &Entry : *Addresses) {
           const auto *A = Entry.getAsObject();

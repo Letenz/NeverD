@@ -4,6 +4,7 @@
 #include "../MachO/DarwinSourceDeclarations.h"
 #include "ObjCRuntimeData.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Support/ConvertUTF.h"
@@ -123,7 +124,11 @@ class Reader {
   }
 
   bool importedBoolean(va_t Slot, unsigned Depth) {
-    if (Depth > 64 || Objects.size() + Active.size() >= 4096 ||
+    if (Depth > ::neverd::limits::loader::
+                    kObjCConstantObjectsImportedBooleanDepthLimit ||
+        Objects.size() + Active.size() >=
+            ::neverd::limits::loader::
+                kObjCConstantObjectsImportedBooleanObjectsSizeActiveSizeLimit ||
         !isImmutableImageImportSlot(Image, Slot))
       return false;
     const auto &Bind = Image.DyldBindSlots.at(Slot);
@@ -190,8 +195,15 @@ class Reader {
     if (auto It = Heights.find(Address); It != Heights.end())
       return Objects.at(Address).TheKind !=
                  ObjCConstantObject::Kind::ImportedBoolean &&
-             Depth <= 64 && It->second <= 64 - Depth;
-    if (!Address || Depth > 64 || Objects.size() + Active.size() >= 4096 ||
+             Depth <= ::neverd::limits::loader::
+                          kObjCConstantObjectsObjectDepthLimit &&
+             It->second <= 64 - Depth;
+    if (!Address ||
+        Depth >
+            ::neverd::limits::loader::kObjCConstantObjectsObjectDepthLimit ||
+        Objects.size() + Active.size() >=
+            ::neverd::limits::loader::
+                kObjCConstantObjectsObjectsSizeActiveSizeLimit ||
         !Active.insert(Address).second)
       return false;
     ObjCConstantObject Object;

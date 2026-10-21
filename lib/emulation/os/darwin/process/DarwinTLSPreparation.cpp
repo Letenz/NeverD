@@ -6,6 +6,8 @@
 /// \file Validate TLS layout without repacking the original contiguous span.
 #include "DarwinTLS.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/Endian.h"
@@ -85,7 +87,9 @@ llvm::Error prepareTLSImage(ProcessImage &Out,
     return invalid();
   if (!Descriptors)
     return Start == UINT64_MAX ? llvm::Error::success() : invalid();
-  if (Start == UINT64_MAX || End <= Start || Descriptors > 65536 - Records)
+  if (Start == UINT64_MAX || End <= Start ||
+      Descriptors >
+          ::neverd::limits::emulation::kMaxDarwinStartupRecords - Records)
     return invalid();
   Records += Descriptors;
   for (const auto &S : Sections) {

@@ -15,6 +15,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceRewrite.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -110,7 +111,9 @@ Export::Export(std::string_view Path) : State(std::make_unique<Impl>()) {
 #ifdef _WIN32
   State->Destination = win::newDirectory(Path, win::DirectoryAccess::Remove);
 #else
-  if (Path.empty() || Path.size() > 32768 || Path.find('\0') != Path.npos)
+  if (Path.empty() ||
+      Path.size() > ::neverd::limits::web::kExportExportPathSizeLimit ||
+      Path.find('\0') != Path.npos)
     throw Error("invalid_path");
   const std::filesystem::path P{Path};
   State->Name = P.filename().string();
@@ -174,7 +177,9 @@ void Export::write(ExportFile File, std::string_view Bytes) {
     throw Error("export_io_error");
   State->Created[Index] = true;
   for (size_t At = 0; At < Bytes.size();) {
-    const auto Count = std::min<size_t>(65536, Bytes.size() - At);
+    const auto Count =
+        std::min<size_t>(::neverd::limits::web::kExportWriteCountMinArgument1,
+                         Bytes.size() - At);
     const auto N = ::write(F.Value, Bytes.data() + At, Count);
     if (N < 0 && errno == EINTR)
       continue;

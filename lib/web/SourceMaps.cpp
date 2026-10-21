@@ -13,6 +13,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceMap.h"
 
 #include <algorithm>
@@ -152,7 +153,8 @@ class Decoder {
     const auto Mappings = Map.getString("mappings");
     if (!Sources || !Mappings)
       throw Error("invalid_source_map_field");
-    if (Sources->size() > 10000 - Result.Sources.size())
+    if (Sources->size() >
+        ::neverd::limits::web::kMaxSourceMapSources - Result.Sources.size())
       throw Error("source_map_source_budget_exceeded");
     auto RootText = optionalString(Map, "sourceRoot");
     std::shared_ptr<const std::string> Root;
@@ -195,7 +197,8 @@ class Decoder {
       const auto *Items = Names->getAsArray();
       if (!Items)
         throw Error("invalid_source_map_field");
-      if (Items->size() > 100000 - Result.Names.size())
+      if (Items->size() >
+          ::neverd::limits::web::kMaxSourceMapNames - Result.Names.size())
         throw Error("source_map_name_budget_exceeded");
       for (const auto &Item : *Items) {
         const auto Name = Item.getAsString();
@@ -212,7 +215,7 @@ public:
   explicit Decoder(SourceMap &Result) : Result(Result) {}
   void decode(const Object &Map, TextPosition Base, std::string_view Path,
               uint64_t Depth = 0) {
-    if (Depth > 4)
+    if (Depth > ::neverd::limits::web::kSourceMapsDecodeDepthLimit)
       throw Error("source_map_section_depth_exceeded");
     if (Map.getInteger("version") != 3)
       throw Error("unsupported_source_map_version");
@@ -227,7 +230,8 @@ public:
     const auto *Sections = SectionsValue->getAsArray();
     if (!Sections)
       throw Error("invalid_source_map_field");
-    if (Sections->size() > 1024)
+    if (Sections->size() >
+        ::neverd::limits::web::kSourceMapsDecodeSectionsSizeLimit)
       throw Error("source_map_section_budget_exceeded");
     std::optional<TextPosition> PreviousOffset, PreviousLast;
     uint64_t Index = 0;

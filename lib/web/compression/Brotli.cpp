@@ -12,6 +12,7 @@
 #include "Brotli.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 #include <array>
@@ -70,8 +71,10 @@ std::string decodeBrotli(std::string_view Input, uint64_t MaxOutput,
                          std::chrono::steady_clock::time_point Deadline) {
   if (!brotliAvailable())
     throw Error("brotli_decoder_unavailable");
-  if (Input.size() > 8ULL * 1024 * 1024 || MaxOutput > 32ULL * 1024 * 1024 ||
-      Memory > 64ULL * 1024 * 1024 || MaxCalls > 65536)
+  if (Input.size() > ::neverd::limits::web::kBrotliDecodeBrotliInputSizeLimit ||
+      MaxOutput > ::neverd::limits::web::kBrotliDecodeBrotliMaxOutputLimit ||
+      Memory > 64ULL * 1024 * 1024 ||
+      MaxCalls > ::neverd::limits::web::kBrotliDecodeBrotliMaxCallsLimit)
     throw Error("brotli_invalid_limits");
 #ifdef NEVERD_WEB_BROTLI
   Allocation A{0, Memory};
@@ -92,7 +95,9 @@ std::string decodeBrotli(std::string_view Input, uint64_t MaxOutput,
     if (std::chrono::steady_clock::now() >= Deadline)
       throw Error("brotli_time_budget_exceeded");
     ++Calls;
-    size_t In = std::min<size_t>(4096, Input.size() - At);
+    size_t In = std::min<size_t>(
+        ::neverd::limits::web::kBrotliDecodeBrotliInMinArgument1,
+        Input.size() - At);
     const auto *NextIn = InputBytes + At;
     const auto Before = In;
     std::array<uint8_t, 4096> Buffer{};

@@ -386,6 +386,7 @@ if(NEVERD_PYTHON_PLUGIN_HOST_ENABLED)
   set(NEVERD_PYTHON_SDK_PACKAGE_FILES
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/__init__.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/_version.py"
+    "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/_limits.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/abi.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/api.py"
     "${CMAKE_SOURCE_DIR}/pluginsdk/python/neverd_plugin/bytecode.py"

@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
@@ -82,7 +83,9 @@ int runTypesFit(neverd_session_t Sess, raw_ostream &Out) {
     return 1;
   }
   json::Object Request{{"limit", static_cast<int64_t>(TypesLimit)}};
-  if (TypesLimit < 1 || TypesLimit > 500) {
+  if (TypesLimit < 1 ||
+      TypesLimit >
+          ::neverd::limits::cli::kNeverDCmdTypeFitRunTypesFitTypesLimit) {
     WithColor::error() << "--limit must be 1 to 500\n";
     return 1;
   }

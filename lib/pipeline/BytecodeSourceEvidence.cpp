@@ -9,6 +9,7 @@
 #include "BytecodeSourceEvidence.h"
 
 #include "neverd/ir/SourceCallTypeHint.h"
+#include "neverd/pipeline/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
@@ -83,7 +84,8 @@ llvm::Expected<std::vector<CSourceEvidence>> bindBytecodeSourceEvidence(
           Calls[{F.Entry, Op.Addr}].push_back(&Op);
   std::vector<CSourceEvidence> Result;
   std::set<std::tuple<va_t, va_t, int, std::string>> Seen;
-  size_t Work = 100000;
+  size_t Work = ::neverd::limits::pipeline::
+      kBytecodeSourceEvidenceBindBytecodeSourceEvidenceWork;
   for (const auto &Function : *Root->getArray("functions")) {
     const auto *F = Function.getAsObject();
     if (!F)
@@ -109,39 +111,53 @@ llvm::Expected<std::vector<CSourceEvidence>> bindBytecodeSourceEvidence(
         return invalid("call target differs from current IR");
       auto Name = E->getString("service_name")
                       .value_or(E->getString("name").value_or("external"));
-      if (Name.empty() || Name.size() > 512)
+      if (Name.empty() ||
+          Name.size() >
+              ::neverd::limits::pipeline::
+                  kBytecodeSourceEvidenceBindBytecodeSourceEvidenceNameSizeLimit)
         return invalid("invalid observation name");
       std::string Text = llvm::formatv("@0x{0:x-} ", *PC).str();
       std::string ResultName = Name.str();
       std::string Module;
       if (const auto *Identity = E->getObject("resolved_target")) {
         auto Symbol = Identity->getString("name");
-        if (Symbol && Symbol->size() <= 512) {
+        if (Symbol &&
+            Symbol->size() <=
+                ::neverd::limits::pipeline::
+                    kBytecodeSourceEvidenceBindBytecodeSourceEvidenceSymbolSizeLimit) {
           Text += "indirect ";
           Name = *Symbol;
           ResultName = Symbol->str();
           Module = Identity->getString("module").value_or("").str();
-          if (Module.size() > 512)
+          if (Module.size() >
+              ::neverd::limits::pipeline::
+                  kBytecodeSourceEvidenceBindBytecodeSourceEvidenceModuleSizeLimit)
             return invalid("module name exceeds observation limit");
         }
       }
       Text += Name.str() + "(";
       bool First = true;
       if (auto S = E->getString("string")) {
-        if (S->size() > 512)
+        if (S->size() >
+            ::neverd::limits::pipeline::
+                kBytecodeSourceEvidenceBindBytecodeSourceEvidenceSSizeLimit)
           return invalid("string exceeds observation limit");
         Text += quoteText(*S);
         ResultName += "_" + S->str();
         First = false;
       }
       if (const auto *Args = E->getArray("arguments")) {
-        if (Args->size() > 64)
+        if (Args->size() >
+            ::neverd::limits::pipeline::
+                kBytecodeSourceEvidenceBindBytecodeSourceEvidenceArgsSizeLimit)
           return invalid("argument budget exceeded");
         for (const auto &Arg : *Args) {
           if (!First)
             Text += ", ";
           auto A = argument(Arg);
-          if (A.size() > 1024)
+          if (A.size() >
+              ::neverd::limits::pipeline::
+                  kBytecodeSourceEvidenceBindBytecodeSourceEvidenceASizeLimit)
             return invalid("argument text exceeds observation limit");
           Text += A;
           First = false;
@@ -182,7 +198,10 @@ llvm::Expected<std::vector<CSourceEvidence>> bindBytecodeSourceEvidence(
         if (At == StoreSequences.end())
           return invalid("symbol store differs from current IR");
         auto Name = Identity->getString("name");
-        if (!Name || Name->empty() || Name->size() > 512)
+        if (!Name || Name->empty() ||
+            Name->size() >
+                ::neverd::limits::pipeline::
+                    kBytecodeSourceEvidenceBindBytecodeSourceEvidenceNameSizeLimit)
           return invalid("invalid stored identity");
         std::string Text =
             llvm::formatv("@0x{0:x-} store resolver result ", *PC).str();
@@ -199,7 +218,9 @@ llvm::Expected<std::vector<CSourceEvidence>> bindBytecodeSourceEvidence(
         Text += "; may be null; conditional on observation inputs/contracts";
         if (auto N = E->getInteger("prior_opaque_calls"); N && *N)
           Text += "; after abstracted calls";
-        if (Text.size() > 4096)
+        if (Text.size() >
+            ::neverd::limits::pipeline::
+                kBytecodeSourceEvidenceBindBytecodeSourceEvidenceTextSizeLimit)
           return invalid("symbol flow text exceeds limit");
         if (Seen.emplace(*Entry, *PC, At->second, Text).second)
           Result.push_back({*Entry,

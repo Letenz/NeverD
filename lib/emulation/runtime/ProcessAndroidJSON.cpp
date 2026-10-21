@@ -11,6 +11,8 @@
 #include "ProcessNetworkJSON.h"
 
 #include "neverd/dalvik/Budget.h"
+#include "neverd/dalvik/Limits.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -276,7 +278,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           continue;
         } else if (Key == field::ApplicationClassLookupFailures) {
           const auto *Failures = Value.getAsArray();
-          if (!Failures || Failures->size() > 256)
+          if (!Failures ||
+              Failures->size() >
+                  static_cast<int>(
+                      ::neverd::limits::dalvik::
+                          kMaxAndroidApplicationClassLookupFailures))
             return invalid(Key);
           for (const auto &Entry : *Failures) {
             const auto *Failure = Entry.getAsObject();
@@ -321,11 +327,18 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
             return invalid(Key);
           HasPhase = true;
         } else if (Key == field::ApplicationPackage) {
-          if (Text->empty() || Text->size() > 1024 || Text->contains('\0'))
+          if (Text->empty() ||
+              Text->size() >
+                  static_cast<int>(
+                      ::neverd::limits::dalvik::kMaxAndroidClassNameBytes) ||
+              Text->contains('\0'))
             return invalid(Key);
           Snapshot.package_name = Text->str();
         } else if (Key == field::ApplicationFilesDirectory) {
-          if (Text->empty() || !Text->starts_with('/') || Text->size() > 4095 ||
+          if (Text->empty() || !Text->starts_with('/') ||
+              Text->size() >
+                  static_cast<int>(::neverd::limits::dalvik::
+                                       kMaxAndroidSharedLibraryPathBytes) ||
               Text->contains('\0'))
             return invalid(Key);
           Snapshot.files_directory = Text->str();
@@ -362,7 +375,9 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       Out.Application = std::move(Snapshot);
     } else if (Name == field::JNIClassLookupFailures) {
       const auto *Failures = V.getAsObject();
-      if (!Failures || Failures->size() > 4096)
+      if (!Failures ||
+          Failures->size() >
+              ::neverd::limits::emulation::kMaxJNIClassLookupFailures)
         return invalid(Name);
       for (const auto &[Class, Exception] : *Failures) {
         auto Type = string(Exception, Name);
@@ -374,7 +389,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       const auto *Images = V.getAsArray();
       if (!Images || Images->size() > 16)
         return invalid(Name);
-      uint64_t Remaining = 1024 * 1024;
+      uint64_t Remaining = ::neverd::limits::emulation::
+          kProcessAndroidJSONAndroidOptionsFromJSONRemaining;
       for (const auto &Image : *Images) {
         auto Hex = Image.getAsString();
         if (!Hex || Hex->empty() || Hex->size() % 2 ||

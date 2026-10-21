@@ -11,6 +11,8 @@
 
 #include "Server.h"
 
+#include "ResourceLimits.h"
+
 #include <algorithm>
 #include <initializer_list>
 
@@ -25,7 +27,11 @@ bool boundedString(const Json &Value, std::size_t Maximum, bool Empty = false) {
 }
 
 bool validID(const Json &Value) {
-  return Value.is_number_integer() || boundedString(Value, 128, true);
+  return Value.is_number_integer() ||
+         boundedString(
+             Value,
+             ::neverd::limits::web_mcp::kServerValidIDBoundedStringArgument2,
+             true);
 }
 
 void fields(const Json &Parameters,
@@ -64,13 +70,27 @@ Json Server::request(const std::string &Method, const Json &Parameters) {
     if (Current != State::Uninitialized)
       throw RpcError{-32600, "Already initialized"};
     fields(Parameters, {"protocolVersion", "capabilities", "clientInfo"});
-    if (!boundedString(required(Parameters, "protocolVersion"), 32) ||
+    if (!boundedString(
+            required(Parameters, "protocolVersion"),
+            ::neverd::limits::web_mcp::
+                kServerRequestInitializeProtocolVersionBoundedStringArgument2) ||
         !required(Parameters, "capabilities").is_object())
       throw RpcError{-32602, "Invalid params"};
     const auto &Client = required(Parameters, "clientInfo");
-    if (!Client.is_object() || !boundedString(required(Client, "name"), 128) ||
-        !boundedString(required(Client, "version"), 128) ||
-        (Client.contains("title") && !boundedString(Client["title"], 256)))
+    if (!Client.is_object() ||
+        !boundedString(
+            required(Client, "name"),
+            ::neverd::limits::web_mcp::
+                kServerRequestInitializeTitleVersionNameBoundedStringArgument2) ||
+        !boundedString(
+            required(Client, "version"),
+            ::neverd::limits::web_mcp::
+                kServerRequestInitializeTitleNameVersionBoundedStringArgument2) ||
+        (Client.contains("title") &&
+         !boundedString(
+             Client["title"],
+             ::neverd::limits::web_mcp::
+                 kServerRequestInitializeVersionNameTitleBoundedStringArgument2)))
       throw RpcError{-32602, "Invalid params"};
     Json Result{{"protocolVersion", ProtocolVersion},
                 {"capabilities", {{"tools", {{"listChanged", false}}}}},
@@ -84,7 +104,9 @@ Json Server::request(const std::string &Method, const Json &Parameters) {
     fields(Parameters, {"cursor"});
     Json Selected = Json::object();
     if (Parameters.contains("cursor")) {
-      if (!boundedString(Parameters["cursor"], 128))
+      if (!boundedString(Parameters["cursor"],
+                         ::neverd::limits::web_mcp::
+                             kServerRequestCursorBoundedStringArgument2))
         throw RpcError{-32602, "Invalid params"};
       Selected["cursor"] = Parameters["cursor"];
     }
@@ -93,8 +115,11 @@ Json Server::request(const std::string &Method, const Json &Parameters) {
   if (Method == "tools/call") {
     fields(Parameters, {"name", "arguments"});
     const auto &Name = required(Parameters, "name");
-    if (!boundedString(Name, 128) || (Parameters.contains("arguments") &&
-                                      !Parameters["arguments"].is_object()))
+    if (!boundedString(Name,
+                       ::neverd::limits::web_mcp::
+                           kServerRequestArgumentsBoundedStringArgument2) ||
+        (Parameters.contains("arguments") &&
+         !Parameters["arguments"].is_object()))
       throw RpcError{-32602, "Invalid params"};
     return Tools.call(Name.get<std::string>(),
                       Parameters.value("arguments", Json::object()));
@@ -123,7 +148,9 @@ std::optional<Json> Server::handle(std::string_view Message) {
   const Json ID = HasID ? Envelope["id"] : Json(nullptr);
   if (!Envelope.contains("method") || !Envelope["method"].is_string())
     return errorReply(ID, -32600, "Invalid Request");
-  if (!boundedString(Envelope["method"], 128))
+  if (!boundedString(
+          Envelope["method"],
+          ::neverd::limits::web_mcp::kServerHandleMethodBoundedStringArgument2))
     return HasID ? std::optional(errorReply(ID, -32600, "Invalid Request"))
                  : std::nullopt;
   for (const auto &[Key, Value] : Envelope.items())

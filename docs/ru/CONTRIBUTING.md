@@ -1,6 +1,6 @@
 **Языки**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 284ec1bcba3c77596f6b244b241b3088a37a9ba9238092e0b96b76d0661f84a5 -->
+<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
 
 # Участие в разработке NeverD
 
@@ -270,6 +270,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### Принадлежность лимитов, значений по умолчанию и конфигурации
 
+В каталогах инструментов, непосредственно включённых в путь поиска заголовков, используйте `ResourceLimits.h`. В файловой системе без учёта регистра локальный `Limits.h` может скрыть системный `<limits.h>`.
+
 Каждая политика имеет единственный авторитетный источник в заголовке лимитов/конфигурации
 своей подсистемы даже с одним вызывающим: вход/выход, рекурсия/графы, бюджеты работы/итераций,
 эвристические пороги, кеш, страницы/пакеты, повторы и тайм-ауты. Это относится к `constexpr`,
@@ -283,7 +285,7 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 | SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) или существующее специальное определение |
 | Другой компонент | Существующий заголовок/таблица, иначе специализированный `Limits.h` в своём слое |
-| Только CLI, worker или GUI | Локальный `Limits.h`/`Config.h`; ядро не зависит от заголовков инструментов |
+| Только CLI, worker или GUI | Локальный `ResourceLimits.h`/`Config.h`; ядро не зависит от заголовков инструментов |
 | Настройки вызывающего | Модель владельца `Config.h`, `*Options.h` или `*Configuration.h` |
 
 Заголовки лёгкие, сгруппированные по назначению. Переиспользуйте `*Limits.def`/таблицы

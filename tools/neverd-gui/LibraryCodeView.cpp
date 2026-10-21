@@ -1,5 +1,7 @@
 #include "LibraryCodeView.h"
 
+#include "ResourceLimits.h"
+
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QJsonObject>
@@ -36,8 +38,8 @@ void LibraryCodeView::reset(const QString &original,
     // a byte in the middle of a multibyte character onto a Qt position.
     const auto number = value.toDouble(-1);
     if (!value.isDouble() || !std::isfinite(number) || byteOffset < 0 ||
-        byteOffset > 32 * 1024 * 1024 || number < byteOffset ||
-        number - byteOffset > bytes.size() ||
+        byteOffset > ::neverd::limits::gui::kMaxLibraryViewByteOffset ||
+        number < byteOffset || number - byteOffset > bytes.size() ||
         number != static_cast<double>(static_cast<qint64>(number)))
       return -1;
     const auto local = static_cast<qsizetype>(number - byteOffset);
@@ -48,7 +50,8 @@ void LibraryCodeView::reset(const QString &original,
   };
   QSet<QString> ids;
   qsizetype spanCount = 0;
-  if (regions.size() <= 256)
+  if (regions.size() <=
+      ::neverd::limits::gui::kLibraryCodeViewResetRegionsSizeLimit)
     for (const auto &value : regions) {
       const auto object = value.toObject();
       Region region;
@@ -62,7 +65,12 @@ void LibraryCodeView::reset(const QString &original,
       const auto spans = object["spans"].toArray();
       spanCount += spans.size();
       region.available &=
-          !spans.isEmpty() && spans.size() <= 1024 && spanCount <= 4096;
+          !spans.isEmpty() &&
+          spans.size() <=
+              ::neverd::limits::gui::
+                  kLibraryCodeViewResetRegionAvailableSpansSizeLimit &&
+          spanCount <= ::neverd::limits::gui::
+                           kLibraryCodeViewResetRegionAvailableSpanCountLimit;
       if (region.available)
         for (const auto &entry : spans) {
           const auto span = entry.toObject();
@@ -209,7 +217,7 @@ void LibraryCodeView::addSourceBlocks() {
         return;
     }
     if (c == '{') {
-      if (++ordinal > 8192)
+      if (++ordinal > ::neverd::limits::gui::kMaxLibraryViewOrdinal)
         return;
       stack.append({i, ordinal});
       structure += '{';

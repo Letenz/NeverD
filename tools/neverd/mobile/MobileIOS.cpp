@@ -1,3 +1,4 @@
+#include "../ResourceLimits.h"
 #include "MobileIOSInternal.h"
 #include "capi/NativeMobileSession.h"
 
@@ -209,10 +210,10 @@ void publishJSON(const fs::path &path, const ios::Object &value,
 }
 std::string imageDigest(llvm::ArrayRef<uint8_t> bytes, Budget &budget) {
   llvm::SHA256 digest;
-  constexpr size_t chunk = 64 * 1024;
   while (!bytes.empty()) {
     budget.check();
-    const auto count = std::min(chunk, bytes.size());
+    const auto count =
+        std::min(::neverd::limits::cli::kMobileIOSChunk, bytes.size());
     digest.update(bytes.take_front(count));
     bytes = bytes.drop_front(count);
   }
@@ -516,7 +517,10 @@ void validateWorkerReport(const ios::Object &report, const fs::path &staging,
     throw Error("iOS worker Swift source presence is inconsistent");
   const auto signatures = parseJSON(
       readFile(staging / "metadata/swift-signatures.json",
-               std::min<uint64_t>(budget.limits.max_bytes, 32 * 1024 * 1024)),
+               std::min<uint64_t>(
+                   budget.limits.max_bytes,
+                   ::neverd::limits::cli::
+                       kMobileIOSValidateWorkerReportSignaturesMinArgument2)),
       "iOS worker Swift signatures");
   const auto &inventory = object(signatures, "iOS worker Swift signatures");
   if (inventory.getInteger("schema_version") != 1 ||

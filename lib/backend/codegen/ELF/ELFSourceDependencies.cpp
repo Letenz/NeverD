@@ -9,6 +9,7 @@
 
 #include "ELFSourceDependencies.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/ELF/ELFPatch.h"
 #include "neverd/object/ELFLayout.h"
 
@@ -49,7 +50,9 @@ llvm::Expected<Layout<ELF>> readLayout(const BinaryImage &Image) {
                      ++Count;
                    }
                  });
-  if (Count != 1 || !L.Dynamic.FileSz || L.Dynamic.FileSz > 1024 * 1024 ||
+  if (Count != 1 || !L.Dynamic.FileSz ||
+      L.Dynamic.FileSz >
+          ::neverd::limits::backend::kMaxELFDependencyDynamicBytes ||
       L.Dynamic.FileSz % sizeof(typename ELF::Dyn) ||
       !rangeInBounds(L.Dynamic.Offset, L.Dynamic.FileSz, Image.Raw.size()))
     return fail("one existing dynamic loader table is required");
@@ -116,12 +119,15 @@ llvm::Expected<Layout<ELF>> readLayout(const BinaryImage &Image) {
   L.Strings = Symbols.sh_link;
   if (Symbols.sh_entsize != sizeof(typename ELF::Sym) || !Symbols.sh_size ||
       Symbols.sh_size % sizeof(typename ELF::Sym) ||
-      Symbols.sh_size / sizeof(typename ELF::Sym) > 1024 * 1024 ||
+      Symbols.sh_size / sizeof(typename ELF::Sym) >
+          ::neverd::limits::backend::kMaxELFDependencySymbols ||
       L.Strings >= L.Sections.size())
     return fail("invalid dynamic symbol extent");
   const auto &Strings = L.Sections[L.Strings];
   if (Strings.sh_type != SHT_STRTAB || Strings.sh_addr != L.Tags[DT_STRTAB] ||
-      Strings.sh_size != L.Tags[DT_STRSZ] || Strings.sh_size > 64 * 1024 * 1024)
+      Strings.sh_size != L.Tags[DT_STRSZ] ||
+      Strings.sh_size > ::neverd::limits::backend::
+                            kELFSourceDependenciesReadLayoutStringsShSizeLimit)
     return fail("dynamic string section disagrees with loader metadata");
   for (const auto *S : {&Symbols, &Strings}) {
     const auto *B = Image.readVA(S->sh_addr, S->sh_size);
@@ -244,7 +250,9 @@ append(const BinaryImage &Original, std::vector<SourcePatchImport> &Imports) {
   std::vector<uint8_t> Relocations;
   if (L.Tags[RelTag] || L.Tags[SizeTag]) {
     if (!L.Tags[RelTag] || !L.Tags[SizeTag] || L.Tags[EntTag] != sizeof(Rel) ||
-        L.Tags[SizeTag] % sizeof(Rel) || L.Tags[SizeTag] > 64 * 1024 * 1024)
+        L.Tags[SizeTag] % sizeof(Rel) ||
+        L.Tags[SizeTag] >
+            ::neverd::limits::backend::kMaxELFDependencyRelocationBytes)
       return fail("invalid original dynamic relocation table");
     const auto *B = Original.readVA(L.Tags[RelTag], L.Tags[SizeTag]);
     if (!B)
@@ -392,7 +400,8 @@ append(const BinaryImage &Original, std::vector<SourcePatchImport> &Imports) {
   const uint64_t DynVA =
       Add(Dynamic.data(), Dynamic.size() * sizeof(typename ELF::Dyn),
           sizeof(typename ELF::Addr));
-  if (Storage.size() > 256 * 1024 * 1024 ||
+  if (Storage.size() > ::neverd::limits::backend::
+                           kELFSourceDependenciesAppendStorageSizeLimit ||
       (!L.Header.Is64 && Base + Storage.size() > UINT32_MAX))
     return fail("new loader metadata exceeds ELF address limits");
   auto Bytes = Original.Raw;
@@ -507,7 +516,9 @@ llvm::Error verify(const BinaryImage &Image,
   const uint64_t RelSize = L->Tags[Rela ? DT_RELASZ : DT_RELSZ];
   const uint64_t RelEntry = L->Tags[Rela ? DT_RELAENT : DT_RELENT];
   const auto *RelBytes = Image.readVA(RelVA, RelSize);
-  if (!Symbols || !RelVA || !RelSize || RelSize > 64 * 1024 * 1024 ||
+  if (!Symbols || !RelVA || !RelSize ||
+      RelSize >
+          ::neverd::limits::backend::kELFSourceDependenciesVerifyRelSizeLimit ||
       RelSize % sizeof(Rel) || RelEntry != sizeof(Rel) || !RelBytes)
     return fail("incomplete authoritative dynamic relocation table");
   // The OS follows PT_DYNAMIC, even when section headers describe some other

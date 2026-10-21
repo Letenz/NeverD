@@ -19,6 +19,8 @@
 
 #include "SymSimplifyDetail.h"
 
+#include "neverd/pass/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -150,7 +152,8 @@ bool safeMaskedAdd(const llvm::Instruction &I) {
       I.getType()->getIntegerBitWidth() > 512 ||
       (!I.hasNoUnsignedWrap() && !I.hasNoSignedWrap()))
     return false;
-  unsigned Remaining = 64;
+  unsigned Remaining =
+      ::neverd::limits::pass::kSymSimplifyTranslatorSafeMaskedAddRemaining;
   auto Left = maskedAddBounds(I.getOperand(0), 8, Remaining);
   auto Right = maskedAddBounds(I.getOperand(1), 8, Remaining);
   bool Overflow;
@@ -208,7 +211,8 @@ bool safeMaskedOr(const llvm::Instruction &I) {
   if (I.getOpcode() != llvm::Instruction::Or || !I.getType()->isIntegerTy() ||
       I.getType()->getIntegerBitWidth() > 512)
     return false;
-  unsigned Remaining = 64;
+  unsigned Remaining =
+      ::neverd::limits::pass::kSymSimplifyTranslatorSafeMaskedOrRemaining;
   auto Left = maskedOrBits(I.getOperand(0), 8, Remaining);
   auto Right = maskedOrBits(I.getOperand(1), 8, Remaining);
   return (Left.Zero | Right.Zero).isAllOnes();

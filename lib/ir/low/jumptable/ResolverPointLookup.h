@@ -7,6 +7,7 @@
 #ifndef NEVERD_IR_LOW_JUMPTABLE_RESOLVERPOINTLOOKUP_H
 #define NEVERD_IR_LOW_JUMPTABLE_RESOLVERPOINTLOOKUP_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 
 #include <array>
@@ -52,7 +53,8 @@ public:
                                 : std::optional<Location>(It->second);
     };
     // Small graphs have cheap ordered searches and need no retained table.
-    if (Points.size() < 64)
+    if (Points.size() <
+        ::neverd::limits::ir::kResolverPointLookupFindPointsSizeLimit)
       return lookup();
     if (Owner != &Points) {
       Entries.reset();

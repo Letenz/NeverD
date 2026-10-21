@@ -9,6 +9,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/ISAEncoding.h"
 
@@ -60,7 +61,8 @@ std::optional<va_t> getDirectCookieCheck(const BinaryImage &Img,
 // proved here; no exception-code translation is synthesized by NeverD.
 bool isCommonHandlerThunk(const BinaryImage &Image, va_t Address) {
   std::set<va_t> Seen;
-  for (unsigned Hop = 0; Hop != 4; ++Hop) {
+  for (unsigned Hop = 0;
+       Hop != ::neverd::limits::loader::kMaxRegistrationEH4WrapperHops; ++Hop) {
     if (!Address || Address > UINT32_MAX - 6 || !Seen.insert(Address).second)
       return false;
     auto Code = readImmutableCodeBytes(Image, Address, 5);

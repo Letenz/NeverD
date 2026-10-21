@@ -1,5 +1,6 @@
 #include "neverd/ir/low/SourceFrameAnalysis.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedNoReturn.h"
@@ -36,8 +37,6 @@ bool hasNativeScalarIntrinsicEvidence(const LowOp &Operation,
 }
 
 namespace {
-constexpr int64_t MaxFrame = 1 << 20;
-constexpr size_t MaxFacts = 4096;
 
 bool stackCheckTermination(const NativeSourceCallContract &Contract,
                            Arch Architecture) {
@@ -161,7 +160,7 @@ bool meet(std::map<Key, ByteFact> &Left, const std::map<Key, ByteFact> &Right,
     return Item.second.TheKind == ByteFact::Unknown && !Item.second.MayBeFrame;
   });
   Left = std::move(Result);
-  return Left.size() <= MaxFacts;
+  return Left.size() <= ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts;
 }
 
 std::optional<int64_t> signedConstant(const NdVar &Value) {
@@ -290,7 +289,7 @@ public:
   }
 
   State Initial;
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::ir::kSourceFrameAnalysisRemaining;
   bool DidTerminate = false;
   int64_t RequiredFrameSize = 0;
   bool TrackDefinitions = false;
@@ -387,8 +386,12 @@ public:
       return First.Value;
     };
     auto WriteOutput = [&](int64_t Address, size_t Bytes) {
-      if (Address < 0 || !Bytes || Bytes > 256 ||
-          Address > 256 - int64_t(Bytes) || Remaining < Bytes)
+      if (Address < 0 || !Bytes ||
+          Bytes > ::neverd::limits::ir::
+                      kSourceFrameAnalysisTransferWriteOutputBytesLimit ||
+          Address >
+              ::neverd::limits::ir::kMaxBorrowedOutputBytes - int64_t(Bytes) ||
+          Remaining < Bytes)
         return false;
       Remaining -= Bytes;
       OutputExtent = std::max(OutputExtent, size_t(Address) + Bytes);
@@ -554,8 +557,9 @@ public:
             return false;
           const auto Base = FrameOffset(NdVar::reg(Location.RegisterOffset, 8));
           const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
-          if (!Base || !SP || *SP > 0 || *SP < -MaxFrame || *Base < *SP ||
-              *Base > -int64_t(Query.Bytes) ||
+          if (!Base || !SP || *SP > 0 ||
+              *SP < -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame ||
+              *Base < *SP || *Base > -int64_t(Query.Bytes) ||
               !NoValueOverlap(*Base, Query.Bytes) || Remaining < Query.Bytes)
             return false;
           Remaining -= Query.Bytes;
@@ -607,7 +611,8 @@ public:
                           Block.Ops[Index + 1].Opcode == NdOp::RETURN &&
                           Block.Ops[Index + 1].Addr == Op.Addr;
         const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
-        if (!SP || *SP > 0 || *SP < -MaxFrame)
+        if (!SP || *SP > 0 ||
+            *SP < -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame)
           return false;
         if (Tail) {
           if (CheckExits && !IsRestored())
@@ -672,7 +677,8 @@ public:
             if ((!TerminalArgument && !ReturningArgument) ||
                 !Location.ValueBytes || Location.ValueBytes > 64 ||
                 Location.EntryStackOffset < 0 ||
-                Location.EntryStackOffset > MaxFrame)
+                Location.EntryStackOffset >
+                    ::neverd::limits::ir::kSourceFrameAnalysisMaxFrame)
               return false;
             const int64_t Start = *SP + Location.EntryStackOffset;
             if (Start < *SP || Start > -int64_t(Location.ValueBytes))
@@ -732,7 +738,9 @@ public:
                 ReadOnly != Found->second.ReadOnlyFrameParameters.end()
                     ? ReadOnly->second
                     : Writable->second;
-            if (!BorrowedBytes || BorrowedBytes > MaxFrame)
+            if (!BorrowedBytes ||
+                BorrowedBytes >
+                    ::neverd::limits::ir::kSourceFrameAnalysisMaxFrame)
               return false;
             const auto Address = BorrowedFrame(
                 NdVar::reg(Location.RegisterOffset, Location.ValueBytes),
@@ -986,7 +994,8 @@ public:
         // May-written padding retains possible frame taint. In particular,
         // constructing an opaque value does not initialize raw byte facts.
         Current.Values.merge(InitializedValues);
-        if (Current.Values.size() > MaxFacts)
+        if (Current.Values.size() >
+            ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts)
           return false;
         if (ScratchAddress) {
           const auto &Scratch = *Found->second.Scratch;
@@ -1011,7 +1020,8 @@ public:
             Current.Scratch.erase(*ScratchAddress);
           }
         }
-        if (Current.Scratch.size() > MaxFacts)
+        if (Current.Scratch.size() >
+            ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts)
           return false;
         if ((Tail || Found->second.terminates()) &&
             (Current.hasRetainedScratch() || !Current.Values.empty()))
@@ -1137,22 +1147,28 @@ public:
         const auto Delta = signedConstant(Op.Inputs[Constant]);
         if (const auto Output = OutputOffset(Op.Inputs[Base]);
             Output && Delta) {
-          if (*Delta < -256 || *Delta > 256)
+          if (*Delta < -::neverd::limits::ir::kMaxBorrowedOutputBytes ||
+              *Delta > ::neverd::limits::ir::kMaxBorrowedOutputBytes)
             return false;
           const auto Next =
               *Output + (Op.Opcode == NdOp::INT_SUB ? -*Delta : *Delta);
-          if (Next < 0 || Next > 256)
+          if (Next < 0 || Next > ::neverd::limits::ir::kMaxBorrowedOutputBytes)
             return false;
           for (unsigned I = 0; I != 8; ++I)
             Value[I] = {ByteFact::BorrowedOutput, Next, I, true};
         }
 
-        if (Address && Delta && *Delta >= -MaxFrame && *Delta <= MaxFrame) {
+        if (Address && Delta &&
+            *Delta >= -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame &&
+            *Delta <= ::neverd::limits::ir::kSourceFrameAnalysisMaxFrame) {
           const int64_t Next =
               *Address + (Op.Opcode == NdOp::INT_SUB ? -*Delta : *Delta);
-          if (RequirePrivateFrame && (Next < -MaxFrame || Next > 0))
+          if (RequirePrivateFrame &&
+              (Next < -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame ||
+               Next > 0))
             return false;
-          if (Next >= -MaxFrame && Next <= MaxFrame) {
+          if (Next >= -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame &&
+              Next <= ::neverd::limits::ir::kSourceFrameAnalysisMaxFrame) {
             if (RequirePrivateFrame)
               RequiredFrameSize = std::max(RequiredFrameSize, -Next);
             for (unsigned I = 0; I < 8; ++I)
@@ -1230,7 +1246,8 @@ public:
             }
             const auto AllocatedSP = FrameOffset(Source);
             if (!AllocatedSP || *AllocatedSP >= StackFloor ||
-                *AllocatedSP < -MaxFrame)
+                *AllocatedSP <
+                    -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame)
               return false;
             StackFloor = *AllocatedSP;
           }
@@ -1249,7 +1266,7 @@ public:
             if (Read(*Memory.StoredValue, I).MayBeFrame)
               return false;
           if (Address) {
-            if (*Address < -MaxFrame)
+            if (*Address < -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame)
               return false;
             if (!InvalidateScratch(*Address, Memory.AccessSize))
               return false;
@@ -1354,7 +1371,9 @@ public:
         const auto Key = std::make_pair(Block.Id, Index);
         auto Found = DefinitionIds.find(Key);
         if (Found == DefinitionIds.end()) {
-          if (!Remaining || Definitions.size() >= MaxFacts)
+          if (!Remaining ||
+              Definitions.size() >=
+                  ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts)
             return false;
           --Remaining;
           Found = DefinitionIds.emplace(Key, Definitions.size()).first;
@@ -1416,11 +1435,19 @@ public:
       } else if (Op.Output.Size) {
         return false;
       }
-      if (Current.Registers.size() > MaxFacts ||
-          Current.Stack.size() > MaxFacts || Temps.size() > MaxFacts ||
-          WrittenStack.size() > MaxFacts ||
-          Current.InitializedStack.size() > MaxFacts ||
-          Current.Scratch.size() > MaxFacts || Current.Values.size() > MaxFacts)
+      if (Current.Registers.size() >
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts ||
+          Current.Stack.size() >
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts ||
+          Temps.size() > ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts ||
+          WrittenStack.size() >
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts ||
+          Current.InitializedStack.size() >
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts ||
+          Current.Scratch.size() >
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts ||
+          Current.Values.size() >
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts)
         return false;
     }
     return true;
@@ -1446,7 +1473,7 @@ private:
 static bool validateFrameCalls(const LowFunc &Function, Arch Architecture,
                                const NativeSourceCalls &Calls,
                                bool &HasStackStore) {
-  if (Calls.size() > MaxFacts)
+  if (Calls.size() > ::neverd::limits::ir::kSourceFrameAnalysisMaxFacts)
     return false;
   HasStackStore = false;
   for (const auto &[Site, Contract] : Calls) {
@@ -1520,7 +1547,9 @@ static std::optional<SourceFrameGraph>
 frameGraph(const LowFunc &Function, Arch Architecture,
            const NativeSourceCalls &Calls, size_t &Remaining) {
   const size_t Count = Function.Blocks.size();
-  if (!Count || Count > 16384 || Remaining < Count)
+  if (!Count ||
+      Count > ::neverd::limits::ir::kSourceFrameAnalysisFrameGraphCountLimit ||
+      Remaining < Count)
     return std::nullopt;
   Remaining -= Count;
   std::map<int, size_t> Blocks;
@@ -1643,7 +1672,9 @@ static bool restoresNativeSourceStateImpl(
     const NativeSourceCallKey *CopyQuery = nullptr,
     std::optional<std::vector<SourceFrameByValueCopy>> *Copies = nullptr) {
   const size_t Count = Function.Blocks.size();
-  if (!Count || Count > 16384 ||
+  if (!Count ||
+      Count > ::neverd::limits::ir::
+                  kSourceFrameAnalysisRestoresNativeSourceStateImplCountLimit ||
       (Architecture != Arch::AArch64 && Architecture != Arch::X64))
     return false;
   bool HasStackStore = false;
@@ -1670,7 +1701,8 @@ static bool restoresNativeSourceStateImpl(
           (Parameter.Type->Kind != NdTypeKind::Int &&
            Parameter.Type->Kind != NdTypeKind::Ptr) ||
           Location.ValueBytes != 8 || Location.EntryStackOffset < 0 ||
-          Location.EntryStackOffset > MaxFrame - 8 ||
+          Location.EntryStackOffset >
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFrame - 8 ||
           Location.EntryStackOffset % 8 != 0 ||
           !IncomingStackSlots.insert(Location.EntryStackOffset).second)
         return false;
@@ -1749,7 +1781,8 @@ sourceFrameByValueCopies(const LowFunc &Function, Arch Architecture,
       !validateSourceABI(EntrySignature, Error) || Contract == Calls.end() ||
       Contract->second.ByValueFrameParameters.empty())
     return std::nullopt;
-  size_t Count = 0, Budget = 262144;
+  size_t Count = 0, Budget = ::neverd::limits::ir::
+                        kSourceFrameAnalysisSourceFrameByValueCopiesBudget;
   for (const auto &Block : Function.Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Budget--)
@@ -1944,7 +1977,9 @@ sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
 std::optional<SourceFrameArgumentStorage> sourceFrameCallArgumentStorage(
     const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
     const NativeSourceCallKey &Site, size_t Parameter, size_t Bytes) {
-  if (Architecture != Arch::AArch64 || !Bytes || Bytes > 4096)
+  if (Architecture != Arch::AArch64 || !Bytes ||
+      Bytes > ::neverd::limits::ir::
+                  kSourceFrameAnalysisSourceFrameCallArgumentStorageBytesLimit)
     return std::nullopt;
   bool HasStackStore = false;
   if (!validateFrameCalls(Function, Architecture, Calls, HasStackStore))
@@ -2011,7 +2046,10 @@ bool observesTerminalNativeSourceState(const LowFunc &Function,
        (Block.StartAddr || Block.Id != 0)) ||
       !Block.Preds.empty() || !Block.Succs.empty() ||
       !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
-      Block.Ops.empty() || Block.Ops.size() > 262144)
+      Block.Ops.empty() ||
+      Block.Ops.size() >
+          ::neverd::limits::ir::
+              kSourceFrameAnalysisObservesTerminalNativeSourceStateBlockOpsSizeLimit)
     return false;
   unsigned TerminatingCalls = 0;
   for (const auto &[Site, Contract] : Calls) {
@@ -2069,7 +2107,11 @@ bool observesTerminalNativeSourceState(const LowFunc &Function,
 bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
                                     const NativeSourceCalls &Calls) {
   const size_t Count = Function.Blocks.size();
-  if (!Count || Count > 16384 || Calls.empty() ||
+  if (!Count ||
+      Count >
+          ::neverd::limits::ir::
+              kSourceFrameAnalysisPreservesNativeSourceLeafStateCountLimit ||
+      Calls.empty() ||
       (Architecture != Arch::AArch64 && Architecture != Arch::X64))
     return false;
   const auto &TRI = getTargetRegInfo(Architecture);
@@ -2090,7 +2132,8 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
       return false;
   }
 
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::ir::
+      kSourceFrameAnalysisPreservesNativeSourceLeafStateRemaining;
   std::set<uint64_t> Protected;
   for (const auto &Range : TRI.callPreservedRanges(BinaryFormat::MachO))
     for (unsigned I = 0; I < Range.Bytes; ++I)
@@ -2339,7 +2382,10 @@ std::optional<size_t> sourceFrameCompleteOutputBytes(
   Proof.outputParameter(
       Signature.Parameters[Parameter].Location.RegisterOffset);
   const auto Graph = frameGraph(Function, Architecture, Calls, Proof.Remaining);
-  if (!Graph || !Graph->HasReturn || Function.Blocks.size() > 128 ||
+  if (!Graph || !Graph->HasReturn ||
+      Function.Blocks.size() >
+          ::neverd::limits::ir::
+              kSourceFrameAnalysisSourceFrameCompleteOutputBytesFunctionBlocksSizeLimit ||
       !Graph->Preds[Graph->Entry].empty())
     return std::nullopt;
   const size_t Count = Function.Blocks.size();

@@ -19,6 +19,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/support/Diagnostic.h"
@@ -297,7 +298,8 @@ MedLLVMEmitter::summarizeConstantProvenance(const MedVar &V) const {
   using Key = std::tuple<int, int, int, uint16_t>;
   std::map<Key, Result> Memo;
   std::set<Key> Active;
-  int Budget = 512;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMVarAccessMedLLVMEmitterSummarizeConstantProvenanceBudget;
 
   auto mergeValues = [&](Result A, const MedVar &AV, Result B,
                          const MedVar &BV) {
@@ -662,7 +664,8 @@ llvm::Value *MedLLVMEmitter::getRawSegmentOffset(const MedVar &V,
                                                  llvm::IRBuilder<> &Builder) {
   using Key = std::tuple<int, int, int, uint16_t>;
   std::set<Key> Active;
-  int Budget = 256;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMVarAccessMedLLVMEmitterGetRawSegmentOffsetBudget;
 
   auto rawConstant = [&](const MedVar &C) -> llvm::Value * {
     return rawIntegerConstant(*Ctx, sizeToType(C.Size), C.ConstVal);
@@ -1176,7 +1179,9 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
   if (V.Kind == MedVar::Param && V.RegOff == kNoParamReg && CurMedFunc) {
     unsigned Slot = getTargetRegInfo(TargetArch).PointerSize;
     if (Slot > 0 && V.Size > Slot && (V.Size % Slot) == 0 &&
-        V.Size / Slot <= 64) {
+        V.Size / Slot <=
+            ::neverd::limits::backend::
+                kMedLLVMVarAccessMedLLVMEmitterGetVarVSizeSlotLimit) {
       unsigned N = V.Size / Slot;
       bool AllPresent = true;
       for (unsigned K = 0; K < N && AllPresent; ++K) {

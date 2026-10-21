@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LLVMScalarLoopRecoveryInternal.h"
 
+#include "neverd/analysis/Limits.h"
+
 #include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -12,16 +14,13 @@
 namespace neverd::analysis::scalar_recovery {
 using namespace llvm;
 namespace {
-constexpr unsigned MaxSlots = 4;
-constexpr unsigned MaxValues = 12;
-constexpr unsigned MaxDepth = 6;
-constexpr unsigned MaxVisits = 128;
-constexpr unsigned MaxCuts = 8;
 
 struct Slot {
   PHINode *Phi;
   BasicBlock *Edge;
-  SmallVector<Value *, MaxValues> Choices;
+  SmallVector<Value *,
+              ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxValues>
+      Choices;
 };
 
 bool addSlot(Search &S, Slot &Slot, DominatorTree &DT) {
@@ -29,7 +28,10 @@ bool addSlot(Search &S, Slot &Slot, DominatorTree &DT) {
   SmallVector<std::pair<Value *, unsigned>, 32> Work{{Root, 0}};
   SmallPtrSet<Value *, 32> Seen;
   for (size_t N = 0;
-       N < Work.size() && N < MaxVisits && Slot.Choices.size() < MaxValues;
+       N < Work.size() &&
+       N < ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxVisits &&
+       Slot.Choices.size() <
+           ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxValues;
        ++N) {
     if (!S.charge())
       return false;
@@ -40,7 +42,8 @@ bool addSlot(Search &S, Slot &Slot, DominatorTree &DT) {
     if (V->getType() == Slot.Phi->getType() &&
         (!I || DT.dominates(I, Slot.Edge->getTerminator())))
       Slot.Choices.push_back(V);
-    if (!I || isa<PHINode>(I) || Depth >= MaxDepth)
+    if (!I || isa<PHINode>(I) ||
+        Depth >= ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxDepth)
       continue;
     for (auto *O : I->operand_values())
       Work.push_back({O, Depth + 1});
@@ -99,20 +102,27 @@ bool unpeel(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
                                 Initial->getValue() - Step->getValue())});
     }
     if (!Valid || Rewind.empty() || Unknown.empty() ||
-        Unknown.size() > MaxSlots)
+        Unknown.size() >
+            ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxSlots)
       continue;
-    SmallVector<BasicBlock *, MaxCuts> Cuts;
+    SmallVector<BasicBlock *,
+                ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxCuts>
+        Cuts;
     if (Direct) {
       Cuts.push_back(nullptr);
     } else {
       unsigned N = 0;
-      for (auto *D = DT.getNode(Pre)->getIDom(); D && N++ < MaxCuts;
+      for (auto *D = DT.getNode(Pre)->getIDom();
+           D &&
+           N++ < ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxCuts;
            D = D->getIDom())
         if (!pred_empty(D->getBlock()))
           Cuts.push_back(D->getBlock());
     }
     for (auto *Cut : Cuts) {
-      SmallVector<Slot, MaxSlots> Slots;
+      SmallVector<Slot,
+                  ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxSlots>
+          Slots;
       for (auto *P : Unknown) {
         auto *Seed = P->getIncomingValueForBlock(Pre);
         auto *Carrier = dyn_cast<PHINode>(Seed);
@@ -123,7 +133,8 @@ bool unpeel(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
           Slots.push_back({P, Pre, {}});
         }
       }
-      if (Slots.size() > MaxSlots)
+      if (Slots.size() >
+          ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxSlots)
         continue;
       for (auto &Slot : Slots) {
         if (Direct) {
@@ -138,9 +149,11 @@ bool unpeel(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
           // original signature and the proof over every input stay unchanged.
           for (auto &A : F.args())
             if (!A.use_empty() && A.getType() == Slot.Phi->getType() &&
-                Slot.Choices.size() < MaxValues)
+                Slot.Choices.size() < ::neverd::limits::analysis::
+                                          kLLVMScalarLoopUnpeelingMaxValues)
               Slot.Choices.push_back(&A);
-          if (Slot.Choices.size() < MaxValues)
+          if (Slot.Choices.size() <
+              ::neverd::limits::analysis::kLLVMScalarLoopUnpeelingMaxValues)
             Slot.Choices.push_back(ConstantInt::get(Slot.Phi->getType(), 0));
           for (auto &B : F) {
             if (!S.charge())
@@ -151,7 +164,8 @@ bool unpeel(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
               return false;
             for (auto &I : B)
               if (I.getType() == Slot.Phi->getType() &&
-                  Slot.Choices.size() < MaxValues)
+                  Slot.Choices.size() < ::neverd::limits::analysis::
+                                            kLLVMScalarLoopUnpeelingMaxValues)
                 Slot.Choices.push_back(&I);
           }
         }

@@ -13,6 +13,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/decode/InstructionRelocations.h"
+#include "neverd/pipeline/Limits.h"
 
 #include "llvm/Support/Errc.h"
 
@@ -39,7 +40,8 @@ struct Context {
   std::map<std::pair<VnodeSpace, uint64_t>, Value> Values;
 
   void step(uint64_t Count = 1) {
-    if (Count > 1000000 - Result.Steps)
+    if (Count >
+        ::neverd::limits::pipeline::kMaxNativeConstantStoreSteps - Result.Steps)
       throw Refusal("native_store_work_budget_exceeded");
     Result.Steps += Count;
   }
@@ -98,11 +100,15 @@ struct Context {
         isAddressProvenance(Number.Provenance))
       throw Refusal("native_store_address_unavailable");
     const auto Delta = int64_t(Number.Bits);
-    if (Delta < -4096 || Delta > 4096)
+    if (Delta < -::neverd::limits::pipeline::kMaxConstantStoreDisplacement ||
+        Delta > ::neverd::limits::pipeline::kMaxConstantStoreDisplacement)
       throw Refusal("native_store_offset_unavailable");
     auto Result = Base;
     Result.Offset += Add ? Delta : -Delta;
-    if (Result.Offset < -4096 || Result.Offset > 4096)
+    if (Result.Offset <
+            -::neverd::limits::pipeline::kMaxConstantStoreDisplacement ||
+        Result.Offset >
+            ::neverd::limits::pipeline::kMaxConstantStoreDisplacement)
       throw Refusal("native_store_offset_unavailable");
     return Result;
   }
@@ -154,7 +160,9 @@ projectNativeConstantStores(const BinaryImage &Image, va_t Start,
     C.Decode.setStrict(true);
     std::optional<va_t> Entry;
     std::optional<va_t> NextEntry;
-    if (Image.Symbols.size() > 65536)
+    if (Image.Symbols.size() >
+        ::neverd::limits::pipeline::
+            kConstantStoresProjectNativeConstantStoresImageSymbolsSizeLimit)
       throw Refusal("native_store_function_budget_exceeded");
     for (const auto &Symbol : Image.Symbols) {
       C.step();
@@ -165,7 +173,9 @@ projectNativeConstantStores(const BinaryImage &Image, va_t Start,
           (!NextEntry || Symbol.Addr < *NextEntry))
         NextEntry = Symbol.Addr;
     }
-    if (!Entry || Start - *Entry > 65536)
+    if (!Entry ||
+        Start - *Entry >
+            ::neverd::limits::pipeline::kMaxNativeConstantStoreEntryDistance)
       throw Refusal("native_store_function_entry_unavailable");
     va_t PC = *Entry;
     while (PC < Start) {
@@ -176,18 +186,31 @@ projectNativeConstantStores(const BinaryImage &Image, va_t Start,
     }
     C.Result.Start = Start;
     C.Result.FunctionEntry = *Entry;
-    while (C.Result.Instructions < 32 && PC - Start < 256) {
+    while (
+        C.Result.Instructions <
+            ::neverd::limits::pipeline::
+                kConstantStoresProjectNativeConstantStoresCResultInstructionsLimit &&
+        PC - Start <
+            ::neverd::limits::pipeline::
+                kConstantStoresProjectNativeConstantStoresPCStartLimit) {
       if (NextEntry && PC >= *NextEntry)
         throw Refusal("native_store_function_boundary_crossed");
       const auto I = C.instruction(PC);
-      if (I.Size > 256 - (PC - Start) || !I.Size)
+      if (I.Size >
+              ::neverd::limits::pipeline::
+                      kConstantStoresProjectNativeConstantStoresPCStartLimit -
+                  (PC - Start) ||
+          !I.Size)
         throw Refusal("native_store_instruction_budget_exceeded");
       if (NextEntry && I.Size > *NextEntry - PC)
         throw Refusal("native_store_function_boundary_crossed");
       std::vector<LowOp> Ops;
       const auto Relocations = instructionRelocations(Image, I);
       C.Decode.liftToLow(I, Ops, Relocations.Addresses, Relocations.Scalars);
-      if (Ops.empty() || Ops.size() > 32)
+      if (Ops.empty() ||
+          Ops.size() >
+              ::neverd::limits::pipeline::
+                  kConstantStoresProjectNativeConstantStoresOpsSizeLimit)
         throw Refusal("native_store_lift_unavailable");
       // LowIR temporaries are instruction-local. Registers alone transport
       // values across the selected straight-line initializer.

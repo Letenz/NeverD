@@ -12,6 +12,8 @@
 #include "PathPolicy.h"
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object summary(const AsarExtraction &E, uint64_t Revision) {
@@ -75,7 +77,8 @@ std::string Session::asarRecords(std::string_view Revision,
   if (Found == State->AsarExtractions.end())
     throw Error("unknown_asar_extraction");
   const auto &E = Found->second;
-  if (!Limit || Limit > 512 || Offset > E.Members.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > E.Members.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(E.Members.size(), Offset + Limit);
   llvm::json::Array Items;

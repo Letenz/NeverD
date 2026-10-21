@@ -13,6 +13,7 @@
 
 #include "neverd/ir/med/MedTypePass.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -61,7 +62,8 @@ static bool isFloatCompare(NdOp Opc) {
 static uint16_t
 fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                  const MedVar &V, int Depth) {
-  if (Depth > 16 || V.Kind == MedVar::Const)
+  if (Depth > ::neverd::limits::ir::kMedTypePassFpReturnElemSizeDepthLimit ||
+      V.Kind == MedVar::Const)
     return 0;
   auto It = Defs.find({V.Id, V.SSAVer});
   if (It == Defs.end())
@@ -74,7 +76,10 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
     uint64_t Offset = 0;
     const unsigned Bytes = V.Size;
     bool CompleteSpan = true;
-    for (unsigned Step = 0; Step < 16 && !Carrier->isConst(); ++Step) {
+    for (unsigned Step = 0;
+         Step < ::neverd::limits::ir::kMedTypePassFpReturnElemSizeStepLimit &&
+         !Carrier->isConst();
+         ++Step) {
       const auto Producer = Defs.find({Carrier->Id, Carrier->SSAVer});
       if (Producer == Defs.end())
         break;
@@ -186,7 +191,9 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
 static uint16_t
 scalarFPLoadElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                      const MedVar &V, int Depth) {
-  if (Depth > 16 || V.Kind == MedVar::Const)
+  if (Depth >
+          ::neverd::limits::ir::kMedTypePassScalarFPLoadElemSizeDepthLimit ||
+      V.Kind == MedVar::Const)
     return 0;
   auto It = Defs.find({V.Id, V.SSAVer});
   if (It == Defs.end())
@@ -212,7 +219,8 @@ scalarFPLoadElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
 static uint16_t
 x87ReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                   const MedVar &V, int Depth) {
-  if (Depth > 16 || V.isConst())
+  if (Depth > ::neverd::limits::ir::kMedTypePassX87ReturnElemSizeDepthLimit ||
+      V.isConst())
     return 0;
   auto It = Defs.find({V.Id, V.SSAVer});
   if (It == Defs.end())
@@ -276,7 +284,8 @@ isReturnRegRestore(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                    const MedBlock &Block, const MedOp &Op,
                    const TargetRegInfo &TRI) {
   auto isStackPtr = [&](MedVar A) {
-    for (int D = 0; D < 8; ++D) {
+    for (int D = 0; D < ::neverd::limits::ir::kMedTypePassIsStackPtrDLimit;
+         ++D) {
       if (A.Kind == MedVar::Reg && A.RegOff == TRI.StackPointer)
         return true;
       auto It = Defs.find({A.Id, A.SSAVer});
@@ -293,7 +302,10 @@ isReturnRegRestore(const std::map<std::pair<int, int>, const MedOp *> &Defs,
     return false;
   };
   const MedOp *Cur = &Op;
-  for (int Depth = 0; Depth < 8 && Cur; ++Depth) {
+  for (int Depth = 0;
+       Depth < ::neverd::limits::ir::kMedTypePassIsReturnRegRestoreDepthLimit &&
+       Cur;
+       ++Depth) {
     if (Cur->Opcode == NdOp::LOAD) {
       if (Cur->NumInputs < 1)
         return false;
@@ -308,7 +320,8 @@ isReturnRegRestore(const std::map<std::pair<int, int>, const MedOp *> &Defs,
       // integer-register write as a restore; an ordinary frame-slot load has no
       // such proof and remains a genuine integer result.
       auto isPopAdvance = [&](MedVar V) {
-        for (int D = 0; D < 8; ++D) {
+        for (int D = 0;
+             D < ::neverd::limits::ir::kMedTypePassIsPopAdvanceDLimit; ++D) {
           auto It = Defs.find({V.Id, V.SSAVer});
           if (It == Defs.end())
             return false;
@@ -385,7 +398,8 @@ intRetEffWidthRec(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                   const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
                   const MedVar &V, int Depth,
                   std::map<std::tuple<int, int, int>, uint16_t> &Memo) {
-  if (Depth > 8 || V.isConst())
+  if (Depth > ::neverd::limits::ir::kMedTypePassIntRetEffWidthRecDepthLimit ||
+      V.isConst())
     return V.Size;
   auto OpIt = Defs.find({V.Id, V.SSAVer});
   if (OpIt != Defs.end()) {
@@ -503,7 +517,8 @@ static uint16_t definedLowBytesRec(
     const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
     const MedFunc &Func, const MedVar &V, int Depth,
     std::map<std::pair<int, int>, uint16_t> &Memo) {
-  if (V.Size == 0 || V.isConst() || Depth > 16)
+  if (V.Size == 0 || V.isConst() ||
+      Depth > ::neverd::limits::ir::kMedTypePassDefinedLowBytesRecDepthLimit)
     return V.Size;
   const std::pair<int, int> Key{V.Id, V.SSAVer};
   // The value a register enters with: version 0 with no definition of its
@@ -643,7 +658,9 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   // The value \p V is a view of: through copies, extensions and the low
   // slice of a wider register.
   auto ViewRoot = [&](MedVar V) {
-    for (int D = 0; D < 16 && !V.isConst(); ++D) {
+    for (int D = 0;
+         D < ::neverd::limits::ir::kMedTypePassViewRootDLimit && !V.isConst();
+         ++D) {
       const auto It = Defs.find({V.Id, V.SSAVer});
       if (It == Defs.end())
         break;
@@ -670,7 +687,10 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       if (Op.Opcode != NdOp::COND_BR || Op.NumInputs < 2)
         continue;
       std::vector<MedVar> Pending{Op.Inputs[1]};
-      for (int Steps = 0; !Pending.empty() && Steps < 16; ++Steps) {
+      for (int Steps = 0;
+           !Pending.empty() &&
+           Steps < ::neverd::limits::ir::kMedTypePassInferReturnTypeStepsLimit;
+           ++Steps) {
         const MedVar V = Pending.back();
         Pending.pop_back();
         if (V.isConst())
@@ -757,8 +777,10 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       for (int Hops = 0;; ++Hops) {
         if (ScanFrom == ScanBlk->Ops.rend()) {
           const bool Found = IntDist >= 0 || FPRegWriteOp || FirstFloat;
-          if (Found || Hops >= 4 || !ScanBlk->Phis.empty() ||
-              ScanBlk->Preds.size() != 1 || !ScanBlk->ExceptionalPreds.empty())
+          if (Found ||
+              Hops >= ::neverd::limits::ir::kMaxTypeInferencePredecessorHops ||
+              !ScanBlk->Phis.empty() || ScanBlk->Preds.size() != 1 ||
+              !ScanBlk->ExceptionalPreds.empty())
             break;
           const int Pred = ScanBlk->Preds.front();
           if (Pred < 0 || Pred >= static_cast<int>(Func.Blocks.size()) ||

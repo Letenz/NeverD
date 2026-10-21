@@ -15,6 +15,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/libc/LibCStartup.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <map>
@@ -27,7 +28,6 @@ namespace {
 
 /// The entry's instructions read before giving up: a start routine's caller
 /// sets its arguments in a few.
-constexpr unsigned kEntryInstructions = 64;
 
 /// What a register, a temporary or a stack word holds: a number, a place on
 /// the stack, or the word stored at a constant address.  A place on the stack
@@ -248,7 +248,7 @@ std::optional<va_t> startRoutineMain(const BinaryImage &Img) {
   std::vector<LowOp> Ops;
   std::optional<va_t> Main;
   (void)decodeNativeRange(
-      Img, Dec, Img.Entry, 0, kEntryInstructions,
+      Img, Dec, Img.Entry, 0, ::neverd::sdk::kProgramMainEntryInstructions,
       [&](const DecodedInsn &DI, const uint8_t *, int) {
         Ops.clear();
         Dec.resetX86FpuState();

@@ -6,6 +6,7 @@
 #include "neverd/loader/ELF/ELFProgramLinking.h"
 
 #include "neverd/loader/BinaryImageModel.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/Endian.h"
@@ -19,7 +20,6 @@ namespace neverd {
 namespace {
 using ELFT = llvm::object::ELF64LE;
 using namespace llvm::ELF;
-constexpr uint64_t MaxRecords = 1 << 20;
 llvm::Error failure(llvm::Twine Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "ELF dynamic linking: " + Message);
@@ -80,7 +80,8 @@ readELFProgramLinking(const BinaryImage &Image) {
   }
   ELFProgramLinking Out;
   Out.Dynamic = std::move(*Dynamic);
-  if (Out.Dynamic.size() > MaxRecords)
+  if (Out.Dynamic.size() >
+      ::neverd::limits::loader::kELFProgramLinkingMaxRecords)
     return failure("too many dynamic records");
   std::map<int64_t, uint64_t> Tags;
   for (const auto &D : Out.Dynamic) {
@@ -101,7 +102,8 @@ readELFProgramLinking(const BinaryImage &Image) {
     // NONE may legitimately have a zero offset and repeats without effects.
     if (Type && !Slots.insert(Address).second)
       return failure("duplicate relocation destination");
-    if (Out.Relocations.size() >= MaxRecords)
+    if (Out.Relocations.size() >=
+        ::neverd::limits::loader::kELFProgramLinkingMaxRecords)
       return failure("too many relocations");
     Out.Relocations.push_back({Address, Addend, Type, Symbol, Explicit});
     return llvm::Error::success();
@@ -111,7 +113,8 @@ readELFProgramLinking(const BinaryImage &Image) {
     if (!Size)
       return llvm::Error::success();
     if (!Address || Size % sizeof(ELFT::Rela) ||
-        Size / sizeof(ELFT::Rela) > MaxRecords)
+        Size / sizeof(ELFT::Rela) >
+            ::neverd::limits::loader::kELFProgramLinkingMaxRecords)
       return failure("invalid RELA table extent");
     auto B = R.bytes(Address, Size);
     if (!B)
@@ -141,7 +144,9 @@ readELFProgramLinking(const BinaryImage &Image) {
     const char *Error = nullptr;
     int64_t Count =
         llvm::decodeSLEB128(B->data() + 4, nullptr, B->end(), &Error);
-    if (Error || Count < 0 || uint64_t(Count) > MaxRecords)
+    if (Error || Count < 0 ||
+        uint64_t(Count) >
+            ::neverd::limits::loader::kELFProgramLinkingMaxRecords)
       return failure("invalid Android packed relocation count");
     auto ELF = llvm::object::ELFFile<ELFT>::create(llvm::StringRef(
         reinterpret_cast<const char *>(Image.Raw.data()), Image.Raw.size()));
@@ -165,7 +170,8 @@ readELFProgramLinking(const BinaryImage &Image) {
   int64_t RelrSize = Relr == DT_RELR ? DT_RELRSZ : DT_ANDROID_RELRSZ;
   int64_t RelrEnt = Relr == DT_RELR ? DT_RELRENT : DT_ANDROID_RELRENT;
   if (uint64_t Size = Get(RelrSize)) {
-    if (Get(RelrEnt) != 8 || Size % 8 || Size / 8 > MaxRecords / 63)
+    if (Get(RelrEnt) != 8 || Size % 8 ||
+        Size / 8 > ::neverd::limits::loader::kELFProgramLinkingMaxRecords / 63)
       return failure("invalid RELR extent");
     auto B = R.bytes(Get(Relr), Size);
     if (!B)
@@ -206,7 +212,9 @@ readELFProgramLinking(const BinaryImage &Image) {
       return Header.takeError();
     uint64_t Buckets = llvm::support::endian::read32le(Header->data());
     Count = llvm::support::endian::read32le(Header->data() + 4);
-    if (!Buckets || Count > MaxRecords || Buckets > MaxRecords)
+    if (!Buckets ||
+        Count > ::neverd::limits::loader::kELFProgramLinkingMaxRecords ||
+        Buckets > ::neverd::limits::loader::kELFProgramLinkingMaxRecords)
       return failure("invalid symbol hash dimensions");
     auto Table = R.bytes(Address, 8 + 4 * (Buckets + Count));
     if (!Table)
@@ -218,8 +226,10 @@ readELFProgramLinking(const BinaryImage &Image) {
     uint64_t Buckets = llvm::support::endian::read32le(Header->data());
     uint64_t Start = llvm::support::endian::read32le(Header->data() + 4);
     uint64_t Bloom = llvm::support::endian::read32le(Header->data() + 8);
-    if (!Buckets || !Bloom || Buckets > MaxRecords || Bloom > MaxRecords ||
-        Start > MaxRecords)
+    if (!Buckets || !Bloom ||
+        Buckets > ::neverd::limits::loader::kELFProgramLinkingMaxRecords ||
+        Bloom > ::neverd::limits::loader::kELFProgramLinkingMaxRecords ||
+        Start > ::neverd::limits::loader::kELFProgramLinkingMaxRecords)
       return failure("invalid GNU symbol hash dimensions");
     uint64_t Prefix = 16 + Bloom * 8 + Buckets * 4;
     auto Table = R.bytes(Address, Prefix);
@@ -229,13 +239,17 @@ readELFProgramLinking(const BinaryImage &Image) {
     for (uint64_t I = 0; I < Buckets; ++I) {
       uint64_t Index = llvm::support::endian::read32le(Table->data() + 16 +
                                                        Bloom * 8 + I * 4);
-      if (Index && (Index < Start || Index >= MaxRecords))
+      if (Index &&
+          (Index < Start ||
+           Index >= ::neverd::limits::loader::kELFProgramLinkingMaxRecords))
         return failure("invalid GNU hash bucket");
       Last = std::max(Last, Index);
     }
     Count = Start;
     if (Last) {
-      for (Count = Last; Count < MaxRecords; ++Count) {
+      for (Count = Last;
+           Count < ::neverd::limits::loader::kELFProgramLinkingMaxRecords;
+           ++Count) {
         if (Address > UINT64_MAX - Prefix - (Count - Start) * 4)
           return failure("GNU hash chain overflows");
         auto Chain = R.bytes(Address + Prefix + (Count - Start) * 4, 4);
@@ -246,7 +260,7 @@ readELFProgramLinking(const BinaryImage &Image) {
           break;
         }
       }
-      if (Count >= MaxRecords)
+      if (Count >= ::neverd::limits::loader::kELFProgramLinkingMaxRecords)
         return failure("unterminated GNU hash chain");
     }
   } else if (Get(DT_SYMTAB)) {
@@ -259,7 +273,8 @@ readELFProgramLinking(const BinaryImage &Image) {
       return B.takeError();
     Strings = *B;
   }
-  uint64_t StringBudget = 16 * 1024 * 1024;
+  uint64_t StringBudget =
+      ::neverd::limits::loader::kELFProgramLinkingStringBudget;
   auto String = [&](uint64_t Offset) -> llvm::Expected<std::string> {
     if (Offset >= Strings.size())
       return failure("invalid dynamic string offset");

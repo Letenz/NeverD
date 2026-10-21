@@ -12,16 +12,13 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 #include <map>
 #include <optional>
 
 namespace neverd::web {
 inline constexpr std::string_view PackageProfile = "node-package-evidence-v1";
-inline constexpr uint64_t MaxPackageMetadataBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxPackageInstances = 4096;
-inline constexpr uint64_t MaxPackageEdges = 32768;
-inline constexpr uint64_t MaxPackageRecords = 32768;
 inline constexpr uint32_t NoPackageIndex = UINT32_MAX;
 
 // Text fields are private evidence. Ordinary SDK/CLI/worker pages publish only

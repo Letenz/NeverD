@@ -12,6 +12,8 @@
 #include "SessionInternal.h"
 #include "packages/behavior/Publication.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -54,7 +56,8 @@ std::string Session::nodeBehaviorRecords(std::string_view Revision,
   if (!Found)
     throw Error("unknown_node_behavior");
   const auto &A = *Found;
-  if (!Limit || Limit > 512 || Offset > A.Records.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > A.Records.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(A.Records.size(), Offset + Limit);
   llvm::json::Array Items;

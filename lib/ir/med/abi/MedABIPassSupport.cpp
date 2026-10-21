@@ -17,6 +17,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
@@ -227,7 +228,9 @@ static std::optional<ReducedAddress> reduceAddr(const MedBlock &Blk,
   if (V.Size == 0 || V.Size > 8)
     return std::nullopt;
   ReducedAddress Result{V, llvm::APInt(V.Size * 8u, 0)};
-  for (unsigned Depth = 0; Depth <= 128; ++Depth) {
+  for (unsigned Depth = 0;
+       Depth <= ::neverd::limits::ir::kMedABIPassSupportReduceAddrDepthLimit;
+       ++Depth) {
     const MedVar &Cur = Result.Base;
     if (Cur.isConst())
       break;
@@ -406,7 +409,9 @@ reachingStore(const MedBlock &Blk, int LoadIndex,
 va_t resolveIndirectTargetAddr(const MedBlock &Blk, int FromIdx,
                                const MedVar &V, int Depth,
                                const AbiSpillContext *Context) {
-  if (Depth > 16 || (Context && V.Size != Context->TRI.PointerSize))
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportResolveIndirectTargetAddrDepthLimit ||
+      (Context && V.Size != Context->TRI.PointerSize))
     return 0;
   if (V.isConst())
     return V.ConstVal;
@@ -463,7 +468,11 @@ static int defIndexInBlock(const MedBlock &Blk, int FromIdx, const MedVar &V) {
 
 static int peelCopyDefIndex(const MedBlock &Blk, int FromIdx, MedVar &V) {
   int Idx = defIndexInBlock(Blk, FromIdx, V);
-  for (int Depth = 0; Idx >= 0 && Depth < 16; ++Depth) {
+  for (int Depth = 0;
+       Idx >= 0 &&
+       Depth <
+           ::neverd::limits::ir::kMedABIPassSupportPeelCopyDefIndexDepthLimit;
+       ++Depth) {
     const MedOp &Def = Blk.Ops[Idx];
     if ((Def.Opcode != NdOp::COPY && Def.Opcode != NdOp::INT_ZEXT &&
          Def.Opcode != NdOp::INT_SEXT && Def.Opcode != NdOp::SUBBYTES) ||
@@ -523,7 +532,9 @@ std::optional<int>
 resolveIndirectTargetArgIdx(const MedBlock &Blk, int FromIdx,
                             const TargetRegInfo &TRI, const MedVar &V,
                             const IntegerArgumentLayout &Layout, int Depth) {
-  if (Depth > 16 || V.isConst())
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportResolveIndirectTargetArgIdxDepthLimit ||
+      V.isConst())
     return std::nullopt;
 
   int DefIdx = -1;
@@ -659,7 +670,9 @@ static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
                                                        const MedVar &V,
                                                        unsigned Depth,
                                                        MedDefSiteIndex *Defs) {
-  if (Depth > 128 || V.Size != TRI.PointerSize || V.isConst())
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportAuthenticatedStackOffsetDepthLimit ||
+      V.Size != TRI.PointerSize || V.isConst())
     return std::nullopt;
   const auto Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous || !Site.Op || Site.Op->Output.Size != V.Size ||
@@ -758,8 +771,9 @@ static bool preservesSpillAcrossCall(const MedBlock &Blk, int CallIndex,
                                      const MedVar &Address, uint16_t Size,
                                      const AbiSpillContext &Context,
                                      int Depth) {
-  if (Depth >= 16 || !Context.FrameLocalLeafCallees ||
-      Context.TRI.TheArch != Arch::AArch64)
+  if (Depth >= ::neverd::limits::ir::
+                   kMedABIPassSupportPreservesSpillAcrossCallDepthLimit ||
+      !Context.FrameLocalLeafCallees || Context.TRI.TheArch != Arch::AArch64)
     return false;
   auto Offset = authenticatedStackOffset(Context.Func, Context.TRI, Address);
   if (!Offset || Size == 0 || *Offset > -static_cast<int64_t>(Size))
@@ -905,7 +919,9 @@ static std::optional<int64_t> stackPtrDeltaUncached(const MedFunc &Func,
 static std::optional<int64_t>
 stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
                 int Depth, MedDefSiteIndex *Defs, StackDeltaMemo &Memo) {
-  if (Depth > 128 || V.isConst())
+  if (Depth >
+          ::neverd::limits::ir::kMedABIPassSupportStackPtrDeltaAtDepthLimit ||
+      V.isConst())
     return std::nullopt;
   // The answer reads V only through its definition identity.
   const auto Key = std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer,
@@ -927,7 +943,9 @@ stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
 // indirect-sret call sites.
 bool derivesFromFrameReg(const MedBlock &Blk, const TargetRegInfo &TRI,
                          const MedVar &V, int Depth) {
-  if (Depth > 64 || V.isConst())
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportDerivesFromFrameRegDepthLimit ||
+      V.isConst())
     return false;
   if (V.Kind == MedVar::Reg && TRI.isFrameReg(V.RegOff))
     return true;
@@ -961,7 +979,9 @@ void buildCallSpOffsets(const MedFunc &Func, const TargetRegInfo &TRI,
                         const MedVar &V, int64_t Off,
                         std::map<SpOffsetKey, int64_t> &Map, int Depth,
                         MedDefSiteIndex *Defs) {
-  if (Depth > 128 || V.isConst())
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportBuildCallSpOffsetsDepthLimit ||
+      V.isConst())
     return;
   if (!Map.emplace(spOffsetKey(V), Off).second)
     return; // already visited (e.g. the entry SP self-copy)
@@ -997,7 +1017,8 @@ std::optional<int64_t> relStackOff(const MedFunc &Func,
                                    const TargetRegInfo &TRI, const MedVar &V,
                                    const std::map<SpOffsetKey, int64_t> &Map,
                                    int Depth, MedDefSiteIndex *Defs) {
-  if (Depth > 128 || V.isConst())
+  if (Depth > ::neverd::limits::ir::kMedABIPassSupportRelStackOffDepthLimit ||
+      V.isConst())
     return std::nullopt;
   if (auto It = Map.find(spOffsetKey(V)); It != Map.end())
     return It->second;
@@ -1518,7 +1539,10 @@ std::optional<MedVar> uniquePredNonNullGuard(const MedFunc &Func,
       return Def;
     };
     std::set<std::tuple<int, int, int, uint64_t>> Seen;
-    for (unsigned Depth = 0; Depth < 8; ++Depth) {
+    for (unsigned Depth = 0;
+         Depth < ::neverd::limits::ir::
+                     kMedABIPassSupportUniquePredNonNullGuardDepthLimit;
+         ++Depth) {
       if (!Seen.insert({static_cast<int>(Cond.Kind), Cond.Id, Cond.SSAVer,
                         Cond.RegOff})
                .second)

@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -41,7 +42,8 @@ bool MedLLVMEmitter::valIsPointerDiffBase(uint64_t Val) const {
   auto reachesConst = [&](const MedVar &Start) {
     std::vector<MedVar> Work{Start};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 512;
+    int Budget =
+        ::neverd::limits::backend::kMedLLVMConstWalkedBaseReachesConstBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -127,7 +129,7 @@ bool MedLLVMEmitter::valIsAdvancingInductionBase(uint64_t Val) const {
   auto walk = [&](const MedVar &Start, bool WantConst, const MedVar &Target) {
     std::vector<MedVar> Work{Start};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 512;
+    int Budget = ::neverd::limits::backend::kMedLLVMConstWalkedBaseWalkBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -306,7 +308,8 @@ bool MedLLVMEmitter::isInductionRodataStringBase(uint64_t Val) const {
         std::set<std::tuple<int, int, int>> Seen;
         std::set<uint64_t> Cand;
         bool SawPhi = false, SawSymbolized = false;
-        int Budget = 256;
+        int Budget = ::neverd::limits::backend::
+            kMedLLVMConstWalkedBaseMedLLVMEmitterIsInductionRodataStringBaseBudget;
         auto note = [&](uint64_t B) {
           if (!isCleanRodataStringAddress(B))
             return;

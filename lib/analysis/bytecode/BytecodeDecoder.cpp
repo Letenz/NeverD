@@ -8,6 +8,8 @@
 
 #include "BytecodeInternal.h"
 
+#include "neverd/analysis/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 
 #include <deque>
@@ -45,7 +47,9 @@ llvm::Error validateOperand(const BytecodeOperand &Operand,
       Value.Offset > Encoding.Size ||
       Value.Bytes > Encoding.Size - Value.Offset || Value.Shift >= 64 ||
       (Value.Bytes && Value.Shift >= Value.Bytes * 8) || Value.ValueBits == 0 ||
-      Value.ValueBits > 64 || Value.Lookup.size() > 65536)
+      Value.ValueBits > 64 ||
+      Value.Lookup.size() >
+          ::neverd::limits::analysis::kMaxBytecodeLookupValues)
     return invalid("invalid operand field");
   if (Value.PCRelative && Operand.Space != VnodeSpace::CONST)
     return invalid("a register location cannot be PC relative");
@@ -259,8 +263,13 @@ BytecodeDecoder::BytecodeDecoder(BytecodeProfile P) : Profile(std::move(P)) {
 
 namespace {
 llvm::Error validateLayout(const BytecodeProfile &P) {
-  if (!P.RegisterBytes || P.RegisterBytes > 65536 || !P.TemporaryBytes ||
-      P.TemporaryBytes > 65536 ||
+  if (!P.RegisterBytes ||
+      P.RegisterBytes >
+          ::neverd::limits::analysis::kMaxBytecodeRegisterBankBytes ||
+      !P.TemporaryBytes ||
+      P.TemporaryBytes >
+          ::neverd::limits::analysis::
+              kBytecodeDecoderValidateLayoutPTemporaryBytesLimit ||
       (P.ByteOrder != llvm::endianness::little &&
        P.ByteOrder != llvm::endianness::big))
     return invalid("invalid profile dimensions");
@@ -271,7 +280,8 @@ llvm::Error validateEncoding(const BytecodeEncoding &E, bool Selected) {
   if (!E.Size || E.Size > BytecodeInstructionByteLimit ||
       (Selected ? !E.Match.empty() : E.Match.empty()) ||
       E.Match.size() > E.Size || E.Operations.empty() ||
-      E.Operations.size() > 4096)
+      E.Operations.size() >
+          ::neverd::limits::analysis::kMaxBytecodeEncodingOperations)
     return invalid("invalid encoding dimensions");
   std::set<uint16_t> Offsets;
   for (auto M : E.Match)
@@ -301,12 +311,14 @@ llvm::Expected<std::unique_ptr<BytecodeDecoder>>
 BytecodeDecoder::create(BytecodeProfile P) {
   if (auto Error = validateLayout(P))
     return std::move(Error);
-  if (P.Encodings.empty() || P.Encodings.size() > 65536)
+  if (P.Encodings.empty() ||
+      P.Encodings.size() > ::neverd::limits::analysis::kMaxBytecodeEncodings)
     return invalid("invalid profile dimensions");
   uint64_t OperationCount = 0;
   for (const auto &E : P.Encodings) {
     OperationCount += E.Operations.size();
-    if (OperationCount > 1000000)
+    if (OperationCount >
+        ::neverd::limits::analysis::kBytecodeDecoderCreateOperationCountLimit)
       return invalid("invalid encoding dimensions");
     if (auto Error = validateEncoding(E, false))
       return std::move(Error);

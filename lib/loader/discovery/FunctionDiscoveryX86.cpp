@@ -18,6 +18,7 @@
 
 #include "FunctionDiscoveryDetail.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include <capstone/capstone.h>
@@ -136,10 +137,6 @@ bool isRejectedIn64BitMode(const uint8_t *Data, size_t Size, size_t Opcode) {
   return false;
 }
 
-/// The most bytes of literals and padding the check reads, and the most
-/// instructions it follows through them.
-constexpr size_t kMaxLiteralRegion = 64 * 1024;
-constexpr size_t kMaxLiteralInstructions = 4096;
 } // namespace
 
 struct X86StringLiteralRuns::Decoder {
@@ -170,7 +167,9 @@ bool X86StringLiteralRuns::at(const Segment &Seg, size_t Offset) {
   // What execution entered there could run through: literals, the zeros
   // after them, and the int3 padding between them.
   size_t RegionEnd = TextEnd;
-  while (RegionEnd < Size && RegionEnd - Offset < kMaxLiteralRegion &&
+  while (RegionEnd < Size &&
+         RegionEnd - Offset <
+             ::neverd::limits::loader::kFunctionDiscoveryX86MaxLiteralRegion &&
          (isLiteralTextByte(Data[RegionEnd]) || Data[RegionEnd] == 0 ||
           Data[RegionEnd] == x86::kInt3))
     ++RegionEnd;
@@ -199,7 +198,8 @@ bool X86StringLiteralRuns::at(const Segment &Seg, size_t Offset) {
     Seen[At - Offset] = true;
     if (Data[At] == x86::kInt3)
       continue;
-    if (++Followed > kMaxLiteralInstructions)
+    if (++Followed >
+        ::neverd::limits::loader::kFunctionDiscoveryX86MaxLiteralInstructions)
       return false;
     const uint8_t *Bytes = Data + At;
     size_t Remaining = Size - At;

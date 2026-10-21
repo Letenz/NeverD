@@ -33,6 +33,7 @@
 #ifndef NEVERD_SYMBOLIC_SYMBITWISE_H
 #define NEVERD_SYMBOLIC_SYMBITWISE_H
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/APInt.h"
@@ -47,15 +48,6 @@
 #include <utility>
 
 namespace neverd::symbolic {
-
-/// The largest arity a truth table is ever built at.
-///
-/// A table of t inputs is 2^t bits, so this is a statement about addressable
-/// memory rather than about the algebra: past it the table itself stops
-/// fitting, never mind anything computed from it.  It is deliberately far
-/// above where any caller's own budget stops, so that it is a backstop against
-/// an overflowed shift count rather than the limit anybody actually meets.
-constexpr unsigned kMaxTruthTableAtoms = 30;
 
 /// The 2^\p NumVars input patterns a function of that arity has, or nothing
 /// when a table of that arity is not built.

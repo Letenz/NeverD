@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/Source.h"
 
 namespace neverd::web {
@@ -18,7 +19,6 @@ namespace neverd::web {
 inline constexpr uint32_t NoSourceIndex = UINT32_MAX;
 inline constexpr std::string_view JavaScriptBindingProfile =
     "javascript-lexical-bindings-v1";
-inline constexpr uint64_t MaxJavaScriptBindingSteps = 2000000;
 
 /// A scope is a static family of environments, not a runtime activation.
 struct SourceScope {

@@ -2,7 +2,9 @@
 
 #include "ObjCRuntimeData.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include "llvm/Support/Endian.h"
@@ -17,7 +19,6 @@ constexpr uint32_t HasStret = 1U << 29;
 constexpr uint32_t HasSignature = 1U << 30;
 constexpr uint32_t HasExtendedLayout = 1U << 31;
 constexpr uint64_t HeaderSize = 32;
-constexpr uint64_t MaxLiteralSize = 1U << 20;
 
 bool supportedImage(const BinaryImage &Image) {
   return Image.Format == BinaryFormat::MachO && Image.Bits == Bitness::Bits64 &&
@@ -98,7 +99,9 @@ void captureLayout(const BinaryImage &Image, const objc::RuntimeData &Data,
     return;
   }
   Result.LayoutValue = *Layout;
-  for (uint64_t Index = 0; Index < 4096 && *Layout <= InvalidVA - Index;
+  for (uint64_t Index = 0;
+       Index < ::neverd::limits::loader::kObjCBlocksCaptureLayoutIndexLimit &&
+       *Layout <= InvalidVA - Index;
        ++Index) {
     const auto *Byte = Data.bytes(*Layout + Index, 1);
     if (!Byte) {
@@ -139,7 +142,9 @@ parseObjCBlockSignature(llvm::StringRef Signature, Arch Architecture,
     Diagnostic = "block invoke signature is absent or not a fixed scalar ABI";
     return std::nullopt;
   };
-  if (Signature.empty() || Signature.size() > 4096)
+  if (Signature.empty() ||
+      Signature.size() >
+          ::neverd::limits::loader::kObjCBlocksParseObjCBlockSignatureSizeLimit)
     return Reject();
   size_t Offset = 0;
   SourceFunctionTypeHint Hint;
@@ -156,7 +161,10 @@ parseObjCBlockSignature(llvm::StringRef Signature, Arch Architecture,
       {"block_object", NdType::makePtr(NdType::makeVoid())});
   if (!skipOffset(Signature, Offset))
     return Reject();
-  while (Offset < Signature.size() && Hint.Parameters.size() < 64) {
+  while (Offset < Signature.size() &&
+         Hint.Parameters.size() <
+             ::neverd::limits::loader::
+                 kObjCBlocksParseObjCBlockSignatureHintParametersSizeLimit) {
     auto Type = parseObjCScalarType(Signature, Offset);
     if (!Type || Type->Kind == NdTypeKind::Void ||
         !skipOffset(Signature, Offset))
@@ -175,7 +183,9 @@ parseObjCBlockSignature(llvm::StringRef Signature, Arch Architecture,
 std::optional<std::string>
 objcBlockObjectParameterClass(llvm::StringRef Signature, unsigned Parameter) {
   if (!Parameter || Parameter >= 64 || Signature.empty() ||
-      Signature.size() > 4096)
+      Signature.size() >
+          ::neverd::limits::loader::
+              kObjCBlocksObjcBlockObjectParameterClassSignatureSizeLimit)
     return std::nullopt;
   size_t Offset = 0;
   if (!parseObjCScalarType(Signature, Offset) ||
@@ -186,7 +196,10 @@ objcBlockObjectParameterClass(llvm::StringRef Signature, unsigned Parameter) {
   if (!skipOffset(Signature, Offset))
     return std::nullopt;
   std::optional<std::string> Result;
-  for (unsigned Index = 1; Offset < Signature.size() && Index < 64; ++Index) {
+  for (unsigned Index = 1;
+       Offset < Signature.size() &&
+       Index < ::neverd::limits::ir::kMaxSourceABIParameters;
+       ++Index) {
     const size_t Start = Offset;
     const auto Type = parseObjCScalarType(Signature, Offset);
     if (!Type || Type->Kind == NdTypeKind::Void)
@@ -215,7 +228,7 @@ readObjCBlockDescriptor(const BinaryImage &Image, va_t Address, uint32_t Flags,
   const auto Reserved = integer64(Data, Address);
   const auto Size = integer64(Data, Address + 8);
   if (!Reserved || *Reserved || !Size || *Size < HeaderSize ||
-      *Size > MaxLiteralSize)
+      *Size > ::neverd::limits::loader::kObjCBlocksMaxLiteralSize)
     return Reject("block descriptor size or reserved field is invalid");
   ObjCBlockDescriptor Result;
   Result.Address = Address;
@@ -351,7 +364,8 @@ findObjCGlobalBlocks(const BinaryImage &Image,
   for (const auto &[Address, Import] : Imports.Slots) {
     if (!globalIsa(Import.Name))
       continue;
-    if (++Candidates > 65536) {
+    if (++Candidates > ::neverd::limits::loader::
+                           kObjCBlocksFindObjCGlobalBlocksCandidatesLimit) {
       if (RejectedCandidates)
         (*RejectedCandidates)[Address] =
             "block discovery candidate budget exceeded";

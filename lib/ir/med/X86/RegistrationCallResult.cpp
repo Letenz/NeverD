@@ -10,6 +10,7 @@
 #include "RegistrationSEHRuntimeReturn.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/X86RegistrationCallResult.h"
 
@@ -67,7 +68,9 @@ bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
       return false;
     if (!Seen.emplace(Value.Kind, Value.Id, Value.SSAVer).second)
       continue;
-    if (Seen.size() > 256)
+    if (Seen.size() >
+        ::neverd::limits::ir::
+            kRegistrationCallResultHasUnusedX86RegistrationCallResultSeenSizeLimit)
       return false;
     unsigned Definitions = 0;
     for (const auto &Block : Function.Blocks) {

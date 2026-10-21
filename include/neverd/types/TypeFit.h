@@ -17,6 +17,7 @@
 #ifndef NEVERD_TYPES_TYPEFIT_H
 #define NEVERD_TYPES_TYPEFIT_H
 
+#include "neverd/types/Limits.h"
 #include "neverd/types/LocalTypes.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -139,7 +140,7 @@ struct FitQuery {
   /// Whether the pointer may point into a record, as a pointer to a list
   /// entry does, when accesses reach before where it points.
   bool Shifts = true;
-  size_t Limit = 50;
+  size_t Limit = ::neverd::limits::types::kTypeFitLimit;
 };
 
 /// A type a search found.

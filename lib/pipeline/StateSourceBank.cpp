@@ -8,6 +8,7 @@
 
 #include "StateSourceBank.h"
 
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/StateSourceRecovery.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -101,14 +102,16 @@ std::optional<Offsets> bankOffsets(llvm::Value *V, llvm::Value *Base,
     for (auto O : Values->Bank)
       if (!llvm::is_contained(Result.Bank, O))
         Result.Bank.push_back(O);
-    if (Result.Bank.size() > 32)
+    if (Result.Bank.size() > ::neverd::limits::pipeline::
+                                 kStateSourceBankBankOffsetsResultBankSizeLimit)
       return {};
   }
   return Result;
 }
 std::optional<Offsets> bankOffsets(llvm::Value *V, llvm::Value *Base,
                                    const llvm::DataLayout &DL) {
-  unsigned Budget = 128;
+  unsigned Budget =
+      ::neverd::limits::pipeline::kStateSourceBankBankOffsetsBudget;
   return bankOffsets(V, Base, DL, Budget);
 }
 std::optional<int64_t> displacement(llvm::Value *V, llvm::Value *Base,
@@ -197,7 +200,11 @@ llvm::Type *memoryType(llvm::Instruction &I) {
 bool eligible(llvm::Function &F, unsigned Bytes) {
   if (!F.hasExactDefinition() || F.arg_empty() ||
       !F.getArg(0)->getType()->isPointerTy() || F.hasPersonalityFn() ||
-      F.size() > 1024 || F.getInstructionCount() > 16384)
+      F.size() >
+          ::neverd::limits::pipeline::kStateSourceBankEligibleFSizeLimit ||
+      F.getInstructionCount() >
+          ::neverd::limits::pipeline::
+              kStateSourceBankEligibleFGetInstructionCountLimit)
     return false;
   if (auto E = validateBank(F, Bytes)) {
     llvm::consumeError(std::move(E));
@@ -286,7 +293,10 @@ void forward(llvm::Function &F, unsigned Bytes, const CallWrites &Effects,
   };
   auto Transfer = [&](llvm::BasicBlock &BB, Facts &Values, unsigned Collect) {
     for (auto &I : BB) {
-      if (++Work > 1048576 || Values.size() > 512)
+      if (++Work > ::neverd::limits::pipeline::
+                       kStateSourceBankForwardTransferWorkLimit ||
+          Values.size() > ::neverd::limits::pipeline::
+                              kStateSourceBankForwardTransferValuesSizeLimit)
         return false;
       if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&I)) {
         kill(Values, Effects.at(Call));
@@ -376,7 +386,11 @@ void forward(llvm::Function &F, unsigned Bytes, const CallWrites &Effects,
 void refineBankAccesses(llvm::Module &M, StateSourceRecovery &R,
                         const CallWrites &GatewayWrites) {
   const unsigned Bytes = R.Contract.StateBytes;
-  if (!R.Contract.LocalizeBank || Bytes > 4096 || M.size() > 4096)
+  if (!R.Contract.LocalizeBank ||
+      Bytes > ::neverd::limits::pipeline::
+                  kStateSourceBankRefineBankAccessesBytesLimit ||
+      M.size() > ::neverd::limits::pipeline::
+                     kStateSourceBankRefineBankAccessesMSizeLimit)
     return;
   std::map<llvm::Function *, llvm::BitVector> Writes;
   std::map<llvm::Function *, std::vector<llvm::Function *>> Dependencies;
@@ -418,7 +432,8 @@ void refineBankAccesses(llvm::Module &M, StateSourceRecovery &R,
     Changed = false;
     for (auto &[F, Callees] : Dependencies)
       for (auto *C : Callees) {
-        if (++Work > 65536)
+        if (++Work > ::neverd::limits::pipeline::
+                         kStateSourceBankRefineBankAccessesWorkLimit)
           return;
         auto Before = Writes.at(F);
         Writes.at(F) |= Writes.at(C);

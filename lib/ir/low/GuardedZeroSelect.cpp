@@ -6,6 +6,8 @@
 
 #include "neverd/ir/low/GuardedZeroSelect.h"
 
+#include "neverd/ir/Limits.h"
+
 #include <limits>
 #include <map>
 #include <optional>
@@ -62,7 +64,9 @@ std::optional<ZeroTest> zeroTestOf(const LowBlock &Block, size_t End,
                                    NdVar Cond) {
   bool TrueWhenZero = true;
   va_t Instruction = Block.Ops[End].Addr;
-  for (int Depth = 0; Depth < 8; ++Depth) {
+  for (int Depth = 0;
+       Depth < ::neverd::limits::ir::kGuardedZeroSelectZeroTestOfDepthLimit;
+       ++Depth) {
     const std::optional<size_t> At = lastWrite(Block, End, Cond, Instruction);
     if (!At)
       return std::nullopt;

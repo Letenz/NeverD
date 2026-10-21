@@ -9,6 +9,8 @@
 
 #include "MachOExportLayout.h"
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/LEB128.h"
 
@@ -52,7 +54,9 @@ readMachOExportLayout(llvm::ArrayRef<uint8_t> B) {
   while (!Work.empty()) {
     auto [Off, Name] = std::move(Work.back());
     Work.pop_back();
-    if (Off >= B.size() || !Seen.insert(Off).second || Name.size() > 65536)
+    if (Off >= B.size() || !Seen.insert(Off).second ||
+        Name.size() > ::neverd::limits::backend::
+                          kMachOExportLayoutReadMachOExportLayoutNameSizeLimit)
       return fail();
     uint64_t At = Off;
     bool Bad = false;
@@ -145,7 +149,9 @@ writeMachOExportLayout(const MachOExportMap &Exports) {
   for (const auto &[Name, E] : Exports) {
     size_t I = 0;
     for (uint8_t C : Name) {
-      if (!C || Nodes.size() > 1000000)
+      if (!C || Nodes.size() >
+                    ::neverd::limits::backend::
+                        kMachOExportLayoutWriteMachOExportLayoutNodesSizeLimit)
         return fail();
       auto It = Nodes[I].Edges.find(C);
       if (It != Nodes[I].Edges.end())
@@ -159,7 +165,10 @@ writeMachOExportLayout(const MachOExportMap &Exports) {
     }
     Nodes[I].Terminal = terminal(E);
   }
-  for (unsigned Pass = 0; Pass < 64; ++Pass) {
+  for (unsigned Pass = 0;
+       Pass < ::neverd::limits::backend::
+                  kMachOExportLayoutWriteMachOExportLayoutPassLimit;
+       ++Pass) {
     std::vector<uint8_t> B;
     bool Changed = false;
     for (auto &N : Nodes) {

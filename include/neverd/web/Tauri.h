@@ -14,15 +14,13 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 #include <array>
 
 namespace neverd::web {
 inline constexpr std::string_view TauriProfile =
     "tauri-phf-0.10-macho-x64-five-store-brotli-v1";
-inline constexpr uint64_t MaxTauriInputBytes = 128ULL * 1024 * 1024;
-inline constexpr uint32_t MaxCachedTauriExtractions = 2;
-inline constexpr uint64_t MaxCachedTauriDecodedBytes = 64ULL * 1024 * 1024;
 
 /// SDK projection of one immutable, hash-bound native image. Never accept
 /// this descriptor from transport JSON. It states local instruction effects,

@@ -12,6 +12,7 @@
 
 #include "MedLLVMFailureSnapshot.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
@@ -205,7 +206,9 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectBaseLitTable(
   std::vector<MedVar> IdxTerms;
   std::function<bool(const MedVar &, int)> peel = [&](const MedVar &V,
                                                       int Depth) -> bool {
-    if (Depth > 8)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectBaseLitTablePeelPeelDepthLimit)
       return false;
     if (SelArms S = matchSel(V); S.Ok) {
       Sel = S;
@@ -275,7 +278,9 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectBaseLitTable(
   // resolved recursively into a select of the two indexed pointers.
   std::function<llvm::Value *(const MedVar &, int)> armPtr =
       [&](const MedVar &Arm, int Depth) -> llvm::Value * {
-    if (Depth > 8)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectBaseLitTableArmPtrDepthLimit)
       return nullptr;
     if (SelArms S = matchSel(Arm); S.Ok) {
       llvm::Value *AT = armPtr(S.ArmT, Depth + 1);
@@ -400,7 +405,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   const uint64_t StackPointer = getTargetRegInfo(TargetArch).StackPointer;
   std::function<bool(const MedVar &, int, FrameSeen)> isPureFrameAddress =
       [&](const MedVar &V, int Depth, FrameSeen Seen) -> bool {
-    if (V.isConst() || Depth > 16)
+    if (V.isConst() ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableIsPureFrameAddressDepthLimit)
       return false;
     if (V.Kind == MedVar::Reg && StackPointer != 0 && V.RegOff == StackPointer)
       return true;
@@ -473,7 +481,8 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   // Large flag-expanded scalar DAGs in real computed-goto loops use just under
   // 5K nodes. Keep the audit bounded while leaving headroom above that proven
   // valid shape; a partial walk still fails closed below.
-  size_t RemainingAuditNodes = 8192;
+  size_t RemainingAuditNodes =
+      ::neverd::limits::backend::kMedLLVMLiteralTableRemainingAuditNodes;
   // A speculative integer call argument may merely resemble an address.
   // Its caller passes FailClosed=false so an ambiguous proof returns nullptr
   // and preserves the ordinary integer ABI path. Concrete memory accesses and
@@ -653,7 +662,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<AffineRoot>(const MedVar &, int, CondSeen)>
       affineRoot = [&](const MedVar &Value, int Depth,
                        CondSeen Seen) -> std::optional<AffineRoot> {
-    if (Value.isConst() || Depth > 16)
+    if (Value.isConst() ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableAffineRootDepthLimit)
       return std::nullopt;
     auto Key = std::make_tuple(static_cast<int>(Value.Kind), Value.Id,
                                Value.SSAVer, Value.Size);
@@ -693,7 +705,9 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<ConditionSet>(const MedVar &, int, CondSeen)>
       conditionSet = [&](const MedVar &Value, int Depth,
                          CondSeen Seen) -> std::optional<ConditionSet> {
-    if (Depth > 24)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableConditionSetDepthLimit)
       return std::nullopt;
     if (Value.isConst())
       return constantCondition(Value.ConstVal != 0);
@@ -874,7 +888,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<uint64_t>(const MedVar &, int, PredSeen)>
       predicatedValue = [&](const MedVar &Value, int Depth,
                             PredSeen Seen) -> std::optional<uint64_t> {
-    if (!PredicatedAccessGuard || Depth > 24)
+    if (!PredicatedAccessGuard ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTablePredicatedValueDepthLimit)
       return std::nullopt;
     if (Value.isConst())
       return Value.ConstVal;
@@ -928,7 +945,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<uint64_t>(const MedVar &, int, PredSeen)>
       predicatedTableBase = [&](const MedVar &Value, int Depth,
                                 PredSeen Seen) -> std::optional<uint64_t> {
-    if (!PredicatedAccessGuard || Depth > 16)
+    if (!PredicatedAccessGuard ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTablePredicatedTableBaseDepthLimit)
       return std::nullopt;
     if (auto Folded = predicatedValue(Value, 0, {});
         Folded && isReadOnlyTableBase(*Folded))
@@ -1430,7 +1450,8 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
         auto scanNarrowSources = [&]() {
           std::vector<MedVar> Work = Sources;
           SeenSet ScanSeen;
-          size_t Budget = 8192;
+          size_t Budget = ::neverd::limits::backend::
+              kMedLLVMLiteralTableScanNarrowSourcesBudget;
           while (!Work.empty()) {
             if (Budget-- == 0)
               return NarrowLeafScan::Incomplete;
@@ -1612,11 +1633,15 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       size_t True = 0, False = 0;
     };
     std::vector<SelectionNode> Plan;
-    size_t Budget = 128;
+    size_t Budget = ::neverd::limits::backend::
+        kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableBudget;
     std::function<std::optional<size_t>(const MedVar &, unsigned)> plan =
         [&](const MedVar &V, unsigned Depth) -> std::optional<size_t> {
       const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
-      if (Depth > 32 || Budget == 0 || V.Size < PointerSize)
+      if (Depth >
+              ::neverd::limits::backend::
+                  kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTablePlanPlanDepthLimit ||
+          Budget == 0 || V.Size < PointerSize)
         return std::nullopt;
       --Budget;
       const MedOp *Def = V.isConst() ? nullptr : findDef(V);

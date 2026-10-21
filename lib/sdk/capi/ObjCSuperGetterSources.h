@@ -12,6 +12,7 @@
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
@@ -107,7 +108,9 @@ inline const LowFunc *completeLow(const PipelineResult &Result, va_t Entry,
   const auto &Block = Low->Blocks.front();
   if (Block.StartAddr != Entry || !Block.Preds.empty() ||
       !Block.Succs.empty() || !Block.ExceptionalPreds.empty() ||
-      !Block.ExceptionalSuccs.empty() || Block.Ops.size() > 256)
+      !Block.ExceptionalSuccs.empty() ||
+      Block.Ops.size() >
+          ::neverd::sdk::kObjCSuperGetterSourcesCompleteLowBlockOpsSizeLimit)
     return nullptr;
   std::set<va_t> Addresses;
   for (const auto &Operation : Block.Ops) {

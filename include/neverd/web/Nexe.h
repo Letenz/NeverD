@@ -12,19 +12,11 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 inline constexpr std::string_view NexeProfile =
     "nexe-4.0.0-rc.7-eof-resources-v1";
-inline constexpr uint64_t MaxNexeInputBytes = 256ULL * 1024 * 1024;
-inline constexpr uint64_t MaxNexeBootstrapBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxNexeIndexBytes = 1024 * 1024;
-inline constexpr uint64_t MaxNexePrivateBytes = 4 * 1024 * 1024;
-inline constexpr uint64_t MaxCachedNexePrivateBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxNexeSteps = 2000000;
-inline constexpr uint32_t MaxNexeMembers = 4096;
-inline constexpr uint32_t MaxCachedNexeExtractions = 4;
-inline constexpr uint32_t MaxNexePageRecords = 512;
 
 struct NexeRegion {
   std::string ID, Kind, BlobHash;

@@ -19,6 +19,7 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
+#include "neverd/pipeline/Limits.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
@@ -138,11 +139,13 @@ struct OmittedCalleeMemo {
   };
   /// The probes kept of each conversion's body.  The selections around a
   /// forwarder hold different summaries of its callees.
-  static constexpr size_t MaxProbes = 4;
+  static constexpr size_t MaxProbes =
+      ::neverd::limits::pipeline::kPipelineCallAbiDetailMaxProbes;
   /// The conversions kept of each callee.  The selections around a callee
   /// call different sets of the imports it calls, whose summaries its
   /// conversion reads.
-  static constexpr size_t MaxConversions = 4;
+  static constexpr size_t MaxConversions =
+      ::neverd::limits::pipeline::kPipelineCallAbiDetailMaxConversions;
   struct Callee {
     /// Whether the callee was lifted: BlockOps is then known.
     bool Lifted = false;
@@ -162,7 +165,8 @@ struct OmittedCalleeMemo {
   /// operations (keep): bodies of a large image's every callee would hold
   /// most of its MedIR.  A mid-sized image's signature bodies, an Android
   /// server's 6000, fit in three quarters of it.
-  static constexpr size_t MaxBytes = size_t{512} << 20;
+  static constexpr size_t MaxBytes =
+      ::neverd::limits::pipeline::kPipelineCallAbiDetailMaxBytes;
   /// Read of \p Img with \p Result's function-pointer variables; starts
   /// again when this was read of another image or with other variables.
   void adopt(const BinaryImage &Img, const PipelineResult &Result);

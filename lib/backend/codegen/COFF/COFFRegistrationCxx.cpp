@@ -8,6 +8,7 @@
 #include "COFFRegistrationTableProof.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
@@ -138,11 +139,14 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
   const va_t Unwind = Layout.Tables[1].BeginVA;
   const va_t TryMap = Layout.Tables[2].BeginVA;
   const uint32_t MaxState = (Layout.Tables[1].EndVA - Unwind) / 8;
-  if (!MaxState || MaxState > 128 || Word(Info) != 0x19930522 ||
-      Word(Info + 4) != MaxState || Word(Info + 8) != Unwind ||
-      Word(Info + 12) != Cxx.TryBlocks.size() || Word(Info + 16) != TryMap ||
-      Word(Info + 20) || Word(Info + 24) || Word(Info + 28) ||
-      Word(Info + 32) != 1 ||
+  if (!MaxState ||
+      MaxState >
+          ::neverd::limits::backend::
+              kCOFFRegistrationCxxGetCheckedCOFFRegistrationCxxTableReceiptMaxStateLimit ||
+      Word(Info) != 0x19930522 || Word(Info + 4) != MaxState ||
+      Word(Info + 8) != Unwind || Word(Info + 12) != Cxx.TryBlocks.size() ||
+      Word(Info + 16) != TryMap || Word(Info + 20) || Word(Info + 24) ||
+      Word(Info + 28) || Word(Info + 32) != 1 ||
       Layout.Tables[2].EndVA - TryMap != 20 * uint64_t(Cxx.TryBlocks.size()))
     return rejectCxx("raw FuncInfo or try-map closure changed");
   COFFRegistrationCxxTableReceipt Receipt;

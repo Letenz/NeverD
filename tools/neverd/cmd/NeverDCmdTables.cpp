@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/support/CaseList.h"
 
@@ -251,11 +252,10 @@ int runSwitches(neverd_session_t Sess) {
     WithColor::error() << "analysis failed: " << takeLastError(Sess) << "\n";
     return 1;
   }
-  // Every page, in function entry order.
-  constexpr int FunctionsPerPage = 4096;
   json::Array Switches;
   for (std::optional<neverd_va_t> Cursor = 0; Cursor;) {
-    const char *Raw = neverd_switches_json(Sess, *Cursor, FunctionsPerPage);
+    const char *Raw = neverd_switches_json(
+        Sess, *Cursor, ::neverd::limits::cli::kNeverDCmdTablesFunctionsPerPage);
     if (!Raw) {
       WithColor::error() << "switches: " << takeLastError(Sess) << "\n";
       return 1;

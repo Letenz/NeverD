@@ -24,6 +24,7 @@
 #include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/ELF/ELFImageMetadata.h"
 #include "neverd/loader/ExceptionTable.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/sbf/SBFMetadata.h"
@@ -303,10 +304,11 @@ struct BinaryImage {
   std::vector<LoadDiagnostic> LoadDiagnostics;
 
   void addLoadDiagnostic(std::string Code, std::string Message) {
-    constexpr size_t MaxDiagnostics = 64;
-    if (LoadDiagnostics.size() < MaxDiagnostics)
+    if (LoadDiagnostics.size() <
+        ::neverd::limits::loader::kBinaryImageModelMaxDiagnostics)
       LoadDiagnostics.push_back({std::move(Code), std::move(Message)});
-    else if (LoadDiagnostics.size() == MaxDiagnostics)
+    else if (LoadDiagnostics.size() ==
+             ::neverd::limits::loader::kBinaryImageModelMaxDiagnostics)
       LoadDiagnostics.push_back({"loader.diagnostics_truncated",
                                  "Further loader diagnostics omitted."});
   }

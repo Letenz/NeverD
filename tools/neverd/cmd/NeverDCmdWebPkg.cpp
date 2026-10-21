@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/sdk/NeverDCAPIWeb.h"
 
@@ -144,7 +145,8 @@ int runWebPkg() {
       const auto Next = Page->getAsObject()->getInteger("next_offset");
       if (!Next)
         break;
-      if (*Next < 0 || uint64_t(*Next) <= Offset || *Next > 16384)
+      if (*Next < 0 || uint64_t(*Next) <= Offset ||
+          *Next > ::neverd::limits::cli::kMaxWebPkgOffset)
         return 1;
       Offset = *Next;
     }

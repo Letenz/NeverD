@@ -177,7 +177,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
   while (!Statements.empty()) {
     const auto [Statement, Depth] = Statements.back();
     Statements.pop_back();
-    if (Depth > 200)
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth)
       return "recovered source exceeds the statement-depth limit";
     if (Statement->Kind == StmtKind::Return && NeedsReturn &&
         !Statement->RetVal)
@@ -210,7 +210,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
     Expressions.pop_back();
     if (!Expression)
       return "recovered source has a missing expression operand";
-    if (Depth > 200)
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth)
       return "recovered source exceeds the expression-depth limit";
     const auto [It, Fresh] = SeenExpressions.emplace(Expression, Depth);
     if (!Fresh && It->second >= Depth)
@@ -457,7 +457,9 @@ static const char *devirtualizeSource(
         if (!Found)
           return Fail("control register must be a full x64 general register");
       }
-      if (Options->control_frame_slot_count > 64 ||
+      if (Options->control_frame_slot_count >
+              ::neverd::sdk::
+                  kNeverDCAPIDevirtualizeSourceOptionsControlFrameSlotCountLimit ||
           (Options->control_frame_slot_count && !Options->control_frame_slots))
         return Fail("invalid frame control slot list");
       for (size_t I = 0; I < Options->control_frame_slot_count; ++I) {

@@ -11,6 +11,8 @@
 
 #include "Backend.h"
 
+#include "ResourceLimits.h"
+
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -36,8 +38,6 @@
 namespace neverd::binmcp {
 namespace {
 constexpr std::size_t MaxFrame = transport::MaxJsonBytes;
-/// Messages the workbench may have sent ahead of the one awaited.
-constexpr std::size_t MaxQueued = 32;
 
 /// A string member, or empty when the member is absent or not a string.
 std::string text(const Json &Object, const char *Key) {
@@ -84,7 +84,8 @@ struct AttachBackend::Channel {
 #else
   int Socket = -1;
 #endif
-  std::chrono::seconds Timeout{120};
+  std::chrono::seconds Timeout{
+      ::neverd::limits::mcp::kDefaultAttachTimeoutSeconds};
   std::mutex Lock;
   std::condition_variable Arrived;
   std::deque<std::variant<Json, std::string>> Messages;
@@ -184,7 +185,7 @@ struct AttachBackend::Channel {
         if (Type == "heartbeat" || Type == "progress" || Type == "revision")
           continue;
         std::lock_guard Guard(Lock);
-        if (Messages.size() >= MaxQueued)
+        if (Messages.size() >= ::neverd::limits::mcp::kBackendMaxQueued)
           throw std::runtime_error("NeverD session sent more than was asked");
         Messages.emplace_back(std::move(Message));
         Arrived.notify_all();

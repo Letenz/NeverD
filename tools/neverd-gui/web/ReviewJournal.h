@@ -12,6 +12,8 @@
 
 #pragma once
 
+#include "../ResourceLimits.h"
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
@@ -19,8 +21,6 @@
 
 namespace neverd::gui::web {
 
-inline constexpr qsizetype MaxJournalBytes = 256 * 1024;
-inline constexpr qsizetype MaxJournalDecisions = 256;
 inline constexpr auto JournalProfile = "offline-package-review-journal-v1";
 
 class ReviewJournal {
@@ -35,4 +35,12 @@ public:
                    QString &Error);
 };
 
+} // namespace neverd::gui::web
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::gui::web {
+inline constexpr qsizetype MaxJournalBytes =
+    ::neverd::limits::gui::kReviewJournalMaxJournalBytes;
+inline constexpr qsizetype MaxJournalDecisions =
+    ::neverd::limits::gui::kReviewJournalMaxJournalDecisions;
 } // namespace neverd::gui::web

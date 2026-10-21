@@ -20,6 +20,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -241,7 +242,9 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
           return;
         }
     }
-    for (int Peel = 0; Peel < 4; ++Peel) {
+    for (int Peel = 0;
+         Peel < ::neverd::limits::ir::kCallArgCollectionConsiderStorePeelLimit;
+         ++Peel) {
       ExprPtr E = Scan.ToExpr(Stored);
       if (E && E->Kind != ExprKind::Undef) {
         Found[ArgPos] = std::move(E);
@@ -608,7 +611,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       return Reg.Kind == MedVar::Reg && call_args_detail::isCallPreservedReg(
                                             TRI, Format, Reg.RegOff, Reg.Size);
     };
-    for (int Peel = 0; Peel < 8; ++Peel) {
+    for (int Peel = 0;
+         Peel <
+         ::neverd::limits::ir::kCallArgCollectionExprFromWindowValuePeelLimit;
+         ++Peel) {
       ExprPtr E = medvarToExpr(V);
       if (E && E->Kind != ExprKind::Undef)
         return E;
@@ -935,7 +941,11 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       return E;
     const HighExpr *Cur = E.get();
     bool PeeledView = false;
-    for (int Peel = 0; Peel < 8 && Cur; ++Peel) {
+    for (int Peel = 0;
+         Peel < ::neverd::limits::ir::
+                    kCallArgCollectionAttachProducingLoadPeelLimit &&
+         Cur;
+         ++Peel) {
       if (Cur->Kind == ExprKind::Load)
         return E;
       const bool View =
@@ -984,7 +994,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   };
   std::function<ExprPtr(ExprPtr, int)> inlineUniqueLoadVars =
       [&](ExprPtr E, int Depth) -> ExprPtr {
-    if (!E || Depth > 8)
+    if (!E ||
+        Depth >
+            ::neverd::limits::ir::
+                kCallArgCollectionMedToHighConverterCollectCallArgsInlineUniqueLoadVarsDepthLimit)
       return E;
     if (E->Kind == ExprKind::Var) {
       if (const MedOp *Load = uniqueLoadDef(E->Var))
@@ -1016,7 +1029,11 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       return E;
     const HighExpr *Cur = E.get();
     bool PeeledView = false;
-    for (int Peel = 0; Peel < 8 && Cur; ++Peel) {
+    for (int Peel = 0;
+         Peel < ::neverd::limits::ir::
+                    kCallArgCollectionAttachProducingLoadFromWindowsPeelLimit &&
+         Cur;
+         ++Peel) {
       if (Cur->Kind == ExprKind::Load)
         return E;
       const bool View =

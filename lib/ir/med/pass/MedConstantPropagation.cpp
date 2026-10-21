@@ -1,5 +1,6 @@
 #include "neverd/ir/med/MedConstantPropagation.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -80,17 +81,19 @@ bool hasCompleteOrdinaryPhiInputs(const MedBlock &Block, const PhiNode &Phi,
 }
 
 bool propagateInvariantConstants(MedFunc &Func) {
-  constexpr size_t MaxDefinitions = 65536;
-  if (Func.Blocks.size() > MaxDefinitions)
+  if (Func.Blocks.size() >
+      ::neverd::limits::ir::kMedConstantPropagationMaxDefinitions)
     return false;
-  size_t Budget = 1000000;
+  size_t Budget = ::neverd::limits::ir::
+      kMedConstantPropagationPropagateInvariantConstantsBudget;
   size_t Definitions = 0;
   std::map<int, const MedBlock *> Blocks;
   std::map<int, std::set<int>> Incoming;
   for (const auto &Block : Func.Blocks) {
     Definitions += Block.Ops.size() + Block.Phis.size();
-    if (Definitions > MaxDefinitions || Block.Id < 0 ||
-        !Blocks.emplace(Block.Id, &Block).second ||
+    if (Definitions >
+            ::neverd::limits::ir::kMedConstantPropagationMaxDefinitions ||
+        Block.Id < 0 || !Blocks.emplace(Block.Id, &Block).second ||
         !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
       return false;
     for (int Successor : Block.Succs) {

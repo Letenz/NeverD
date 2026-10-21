@@ -8,6 +8,7 @@
 
 #include "RegistrationABIPrivate.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -63,7 +64,11 @@ bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
   if (!SP || *SP > INT32_MAX - 128 || Op.Opcode != NdOp::CALL)
     return false;
   std::map<int32_t, FrameValue> Arguments;
-  for (int32_t Offset = 8; Offset <= 128; Offset += 4) {
+  for (int32_t Offset = 8;
+       Offset <=
+       ::neverd::limits::ir::
+           kRegistrationConditionalCallHasConditionalCallFrameOffsetLimit;
+       Offset += 4) {
     const auto It = State.Cells.find(*SP + Offset - 8);
     if (It != State.Cells.end() && !It->second.MayBeFrame)
       Arguments.emplace(Offset, It->second);

@@ -16,6 +16,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -143,7 +144,9 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   size_t ParityStorage = Opts.MaxTableBytes;
   SymRef Projected =
       Projectable(E) ? foldProductParity(Ctx, E, Budget, ParityStorage) : E;
-  if (Ctx.op(E) == SymOp::Add && Ctx.numOperands(E) <= 128 &&
+  if (Ctx.op(E) == SymOp::Add &&
+      Ctx.numOperands(E) <= ::neverd::symbolic::detail::limits::
+                                kSymMBARegionSolveRegionCtxNumOperandsELimit &&
       llvm::any_of(Ctx.operands(E), Projectable)) {
     const size_t N = Ctx.numOperands(E);
     if (N <= ParityStorage / (2 * sizeof(SymRef)) && Budget.consume(N)) {
@@ -657,7 +660,10 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                        size_t &Storage) {
   if (Ctx.op(Root) != SymOp::Mul || Ctx.numOperands(Root) < 8 ||
-      Ctx.numOperands(Root) > 65 || Budget.exhausted())
+      Ctx.numOperands(Root) >
+          ::neverd::symbolic::detail::limits::
+              kSymMBARegionFoldZeroProductCtxNumOperandsRootLimit ||
+      Budget.exhausted())
     return Root;
   auto Factors = Ctx.operands(Root);
   unsigned Needed = Ctx.width(Root);
@@ -698,7 +704,9 @@ SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       return Root;
     if (Nodes.contains(R.index()))
       continue;
-    if (Nodes.size() == 128 || !Charge(1, 128))
+    if (Nodes.size() == ::neverd::symbolic::detail::limits::
+                            kSymMBARegionFoldZeroProductNodesSizeLimit ||
+        !Charge(1, 128))
       return Root;
     Nodes.insert(R.index());
     if (!Transparent(R))
@@ -788,16 +796,23 @@ SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                : R;
   };
   SymRef Sum = Unscale(E);
-  if (Ctx.op(Sum) != SymOp::Add || Ctx.numOperands(Sum) > 64 ||
+  if (Ctx.op(Sum) != SymOp::Add ||
+      Ctx.numOperands(Sum) >
+          ::neverd::symbolic::detail::limits::kMaxExpandedProductSumOperands ||
       Budget.exhausted())
     return E;
-  unsigned Products = 0, Remaining = 128;
+  unsigned Products = 0, Remaining = ::neverd::symbolic::detail::limits::
+                             kSymMBARegionSolveExpandedProductsRemaining;
   auto Inspect = [&](auto &&Self, SymRef R, unsigned Depth) -> void {
-    if (!Remaining || Products >= 2 || Depth > 2)
+    if (!Remaining || Products >= 2 ||
+        Depth > ::neverd::symbolic::detail::limits::
+                    kSymMBARegionSolveExpandedProductsInspectDepthLimit)
       return;
     --Remaining;
     R = Unscale(R);
-    if (Ctx.op(R) == SymOp::Add && Ctx.numOperands(R) <= 64) {
+    if (Ctx.op(R) == SymOp::Add && Ctx.numOperands(R) <=
+                                       ::neverd::symbolic::detail::limits::
+                                           kMaxExpandedProductSumOperands) {
       for (SymRef Term : Ctx.operands(R))
         Self(Self, Term, Depth + 1);
       return;
@@ -851,7 +866,8 @@ SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   if (Ctx.op(Root) != SymOp::Add)
     return foldZeroProduct(Ctx, Root, Budget, Storage);
   const size_t N = Ctx.numOperands(Root);
-  if (N > 128 || N > Storage / (2 * sizeof(SymRef)))
+  if (N > ::neverd::symbolic::detail::limits::kMaxProductParityInputs ||
+      N > Storage / (2 * sizeof(SymRef)))
     return Root;
   bool HasLongProduct = false;
   for (auto Term : Ctx.operands(Root)) {
@@ -891,7 +907,10 @@ SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   if (auto Zero = foldZeroProduct(Ctx, Root, Budget, Storage); Zero != Root)
     return Zero;
   if (Ctx.op(Root) == SymOp::Mul && Ctx.numOperands(Root) >= 3 &&
-      Ctx.numOperands(Root) <= 32 && Ctx.isConst(Ctx.operand(Root, 0))) {
+      Ctx.numOperands(Root) <=
+          ::neverd::symbolic::detail::limits::
+              kSymMBARegionFoldProductParityCtxNumOperandsRootLimit &&
+      Ctx.isConst(Ctx.operand(Root, 0))) {
     const SymRef Scale = Ctx.operand(Root, 0);
     const unsigned Width = Ctx.width(Root);
     const size_t Words = (size_t(Width) - 1) / 64 + 1;
@@ -908,7 +927,8 @@ SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       for (SymRef Factor : Factors) {
         const size_t Count =
             Ctx.op(Factor) == SymOp::And ? Ctx.numOperands(Factor) : 1;
-        if (Count > 128 - Edges)
+        if (Count >
+            ::neverd::symbolic::detail::limits::kMaxProductParityEdges - Edges)
           return Root;
         Edges += Count;
       }

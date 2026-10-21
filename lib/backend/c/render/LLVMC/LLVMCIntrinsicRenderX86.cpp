@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/c/render/X86SegmentAsm.h"
@@ -377,7 +378,10 @@ std::string renderX86SegmentedLoad(
     return {};
 
   const llvm::Value *Offset = LI.getPointerOperand();
-  for (unsigned Depth = 0; Offset && Depth < 4; ++Depth) {
+  for (unsigned Depth = 0;
+       Offset && Depth < ::neverd::limits::backend::
+                             kLLVMCIntrinsicRenderX86SegmentedLoadDepthLimit;
+       ++Depth) {
     Offset = Offset->stripPointerCasts();
     if (const auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(Offset)) {
       if (CE->getOpcode() == llvm::Instruction::IntToPtr) {

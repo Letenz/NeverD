@@ -31,6 +31,7 @@
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftValueBufferEffects.h"
 #include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -119,7 +120,8 @@ nativeOutputFrameEffects(const BinaryImage &Image,
       return std::nullopt;
     }
   }
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsNativeOutputFrameEffectsBudget;
   if (!Output || !immutableNativeFrameMachineMatches(Image, *C.Low, Budget))
     return std::nullopt;
   const auto Current = buildObjCSourceCallHints(Image, *C.Low);
@@ -238,7 +240,8 @@ bool validateSwiftValueConstructorBindings(
   if (Hints.size() != Required.size())
     return false;
   std::set<va_t> Seen;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsValidateSwiftValueConstructorBindingsBudget;
   for (const auto &B : Med.Blocks)
     for (const auto &O : B.Ops) {
       if (!Budget--)
@@ -284,7 +287,8 @@ bool validateSwiftOpaqueValueBindings(
           ? buildSwiftOpaqueValueCallHints(Image, *Low, ABIs, Bodies)
           : std::map<va_t, SourceCallTypeHint>{};
   std::set<va_t> Seen;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsValidateSwiftOpaqueValueBindingsBudget;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Budget--)
@@ -328,7 +332,8 @@ bool validateSwiftConsumedInputBindings(const BinaryImage &Image,
                                         const LowFunc *Low,
                                         const MedFunc &Med) {
   bool Marked = false, Relevant = false;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsValidateSwiftConsumedInputBindingsBudget;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Budget--)
@@ -384,7 +389,8 @@ bool validateNativeSwiftReceiverBindings(const BinaryImage &Image,
                                          const LowFunc *Low,
                                          const MedFunc &Med) {
   bool Marked = false;
-  size_t Budget = 100000;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsValidateNativeSwiftReceiverBindingsBudget;
   for (const auto &B : Med.Blocks)
     for (const auto &Op : B.Ops) {
       if (!Budget--)
@@ -460,7 +466,8 @@ bool validateObjCByValueCopyBindings(const BinaryImage &Image,
     return B.ByValueCopy && !B.NativeSwiftReceiver;
   };
   bool Marked = false;
-  size_t Budget = 100000;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsValidateObjCByValueCopyBindingsBudget;
   for (const auto &B : Med.Blocks)
     for (const auto &Op : B.Ops) {
       if (!Budget--)
@@ -523,7 +530,8 @@ bool validateObjCByValueCopyBindings(const BinaryImage &Image,
 bool validateSwiftWitnessFrameBindings(const BinaryImage &Image,
                                        const LowFunc *Low, const MedFunc &Med) {
   bool Relevant = false;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsValidateSwiftWitnessFrameBindingsBudget;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Budget--)
@@ -741,7 +749,9 @@ nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
                      const MedFunc &Med, const SourceFunctionTypeHint &Hint,
                      const NativeSourceCalleeContracts *Callees) {
   if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
-      Low->Blocks.size() > 16384)
+      Low->Blocks.size() >
+          ::neverd::limits::pipeline::
+              kNativeSourceHintsNativeEntryRegistersLowBlocksSizeLimit)
     return {};
   if (!validateSourceRegisterCopies(Image, *Low, Med.RegisterCopyProjections))
     return {};
@@ -774,7 +784,8 @@ nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
                 : TRI.isGeneralReg(Register));
   };
   const auto Preserved = TRI.callPreservedRanges(BinaryFormat::MachO);
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::pipeline::
+      kNativeSourceHintsNativeEntryRegistersRemaining;
   std::set<uint64_t> Reads;
   std::set<uint64_t> WrittenPreserved;
   for (const auto &Block : Low->Blocks)
@@ -948,7 +959,8 @@ bool currentNativeSwiftErrorCallee(const BinaryImage &Image, const MedOp &Call,
       !isSwiftErrorEntryProjected(*C.High, Image.Arch) ||
       Call.NumInputs != sourceABIParameters(Signature).size() + 1)
     return false;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsCurrentNativeSwiftErrorCalleeBudget;
   return immutableNativeInstructionOperationsMatch(Image, *C.Low, Budget);
 }
 
@@ -956,7 +968,8 @@ bool validateNativeSwiftErrorBindings(
     const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
     const NativeSourceCalleeContracts *Callees) {
   std::set<SourceCallOccurrenceKey> Required, Seen;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsValidateNativeSwiftErrorBindingsBudget;
   if (Low && Callees && Callees->SourceImage == &Image)
     for (const auto &Block : Low->Blocks)
       for (const auto &Op : Block.Ops) {
@@ -1035,7 +1048,9 @@ bool hasNativeSourceStateContract(
       (!Med.DoesNotReturn || !hasProvenNoReturnExit(Med, Image.Arch)))
     return false;
   if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
-      Low->Blocks.size() > 16384)
+      Low->Blocks.size() >
+          ::neverd::limits::pipeline::
+              kNativeSourceHintsHasNativeSourceStateContractLowBlocksSizeLimit)
     return false;
   NativeSourceCalls Calls;
   if (!validateSwiftValueConstructorBindings(Image, Low, Med, Callees) ||
@@ -1071,7 +1086,8 @@ bool hasNativeSourceStateContract(
           Image, *Low, *EntrySignature, &NativeCallees);
     }
   }
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::pipeline::
+      kNativeSourceHintsHasNativeSourceStateContractRemaining;
   bool OutputCallerReplayed = false;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
@@ -1441,9 +1457,11 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
   const auto ReturnRegister = Location.RegisterOffset;
   const auto Width = Location.ValueBytes;
   const size_t Count = Function.Blocks.size();
-  if (!Count || Count > 16384)
+  if (!Count || Count > ::neverd::limits::pipeline::
+                            kNativeSourceHintsDefinedReturnPathsCountLimit)
     return false;
-  size_t Remaining = 262144;
+  size_t Remaining =
+      ::neverd::limits::pipeline::kNativeSourceHintsDefinedReturnPathsRemaining;
   std::map<int, size_t> Index;
   std::optional<size_t> Entry;
   bool HasAddresses = false;
@@ -1628,7 +1646,8 @@ nativeRecordReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
       Scalar.ReturnLocation.ValueBytes != 8 || !Med.MultiReturn.empty() ||
       Med.FPReturnViaX87)
     return std::nullopt;
-  size_t Remaining = 262144;
+  size_t Remaining =
+      ::neverd::limits::pipeline::kNativeSourceHintsNativeRecordReturnRemaining;
   for (const auto &Block : Med.Blocks) {
     if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
       return std::nullopt;
@@ -1716,7 +1735,8 @@ bool completeIntegerLeafReturn(const MedFunc &Med, const HighFunc &High,
     forEachExpr(S, [&](const ExprPtr &E) { Pending.push_back(E.get()); });
   }
   std::set<const HighExpr *> Seen;
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::pipeline::
+      kNativeSourceHintsCompleteIntegerLeafReturnRemaining;
   while (!Pending.empty()) {
     const auto *E = Pending.back();
     Pending.pop_back();
@@ -1770,7 +1790,8 @@ compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
     return Reject("compiler-rt platform helper has no supported Darwin ABI");
 
   size_t AvailabilityCalls = 0;
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::pipeline::
+      kNativeSourceHintsCompilerRTPlatformVersionContractRemaining;
   for (const auto &Block : Med.Blocks)
     for (const auto &Operation : Block.Ops) {
       if (!Remaining--)
@@ -1829,7 +1850,9 @@ compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
 std::set<va_t> observedNativePairReturns(const LowFunc &Function,
                                          Arch Architecture, bool Floating) {
   if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
-      Function.Blocks.size() > 16384)
+      Function.Blocks.size() >
+          ::neverd::limits::pipeline::
+              kNativeSourceHintsObservedNativePairReturnsFunctionBlocksSizeLimit)
     return {};
   const auto &TRI = getTargetRegInfo(Architecture);
   const auto &Registers = Floating ? TRI.FPParamRegs : TRI.IntReturnRegs;
@@ -1837,7 +1860,8 @@ std::set<va_t> observedNativePairReturns(const LowFunc &Function,
     return {};
   const auto Register = Registers[1];
   std::set<va_t> Targets;
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::pipeline::
+      kNativeSourceHintsObservedNativePairReturnsRemaining;
   for (const auto &Block : Function.Blocks) {
     std::optional<va_t> Pending;
     for (const auto &Op : Block.Ops) {
@@ -1893,7 +1917,9 @@ observedNativeFourDoubleReturns(const LowFunc &Function,
                                 const SourceFunctionTypeHint &CallerSignature) {
   std::string Error;
   if (CallerSignature.Architecture != Arch::AArch64 ||
-      Function.Blocks.size() > 16384 ||
+      Function.Blocks.size() >
+          ::neverd::limits::pipeline::
+              kNativeSourceHintsObservedNativeFourDoubleReturnsFunctionBlocksSizeLimit ||
       !validateSourceABI(CallerSignature, Error) ||
       CallerSignature.ReturnComponents.size() != 4)
     return {};
@@ -1910,7 +1936,8 @@ observedNativeFourDoubleReturns(const LowFunc &Function,
       return {};
   }
   std::set<va_t> Targets;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsObservedNativeFourDoubleReturnsBudget;
   for (const auto &Block : Function.Blocks) {
     if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
       return {};
@@ -1951,11 +1978,15 @@ observedNativeFourDoubleReturns(const LowFunc &Function,
 
 std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
                                              Arch Architecture) {
-  if (Architecture != Arch::AArch64 || Function.Blocks.size() > 16384)
+  if (Architecture != Arch::AArch64 ||
+      Function.Blocks.size() >
+          ::neverd::limits::pipeline::
+              kNativeSourceHintsObservedNativeFourWordReturnsFunctionBlocksSizeLimit)
     return {};
   const auto &Registers = getTargetRegInfo(Architecture).IntParamRegs;
   std::set<va_t> Targets;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsObservedNativeFourWordReturnsBudget;
   for (const auto &Block : Function.Blocks) {
     std::optional<va_t> Target;
     unsigned Available = 0, Observed = 0;
@@ -2074,7 +2105,10 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
       ((Med.DoesNotReturn || High.DoesNotReturn) && !NoReturn))
     return Reject("native function has a non-scalar or non-returning ABI");
   if (Med.Blocks.empty() || High.Body.empty() ||
-      Med.Params.size() != Med.TypedParams.size() || Med.Params.size() > 64 ||
+      Med.Params.size() != Med.TypedParams.size() ||
+      Med.Params.size() >
+          ::neverd::limits::pipeline::
+              kNativeSourceHintsInferNativeSourceTypeHintMedParamsSizeLimit ||
       Med.Params.size() != High.Params.size() ||
       !sameScalar(Med.ReturnType, High.ReturnType))
     return Reject("native scalar parameter or return types are incomplete");
@@ -2460,7 +2494,8 @@ refineNativeFourWordReturnHint(const BinaryImage &Image, const LowFunc &Low,
   for (const auto &Block : Med.Blocks)
     if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
       return std::nullopt;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceHintsRefineNativeFourWordReturnHintBudget;
   for (const auto &Block : Low.Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Budget-- || Op.NumInputs > 6 || Op.Opcode == NdOp::CALL ||
@@ -2513,7 +2548,10 @@ refineNativeSourceTypeHint(const HighFunc &Function,
        !scalarCarrier(Original.ReturnType)) ||
       !equalSourceTypes(Original.ReturnType, Function.ReturnType) ||
       Original.Parameters.size() != Function.Params.size() ||
-      Original.Parameters.size() > 64 || !validateSourceABI(Original, Error))
+      Original.Parameters.size() >
+          ::neverd::limits::pipeline::
+              kNativeSourceHintsRefineNativeSourceTypeHintOriginalParametersSizeLimit ||
+      !validateSourceABI(Original, Error))
     return std::nullopt;
   const auto &TRI = getTargetRegInfo(Original.Architecture);
   // A previous source-bound iteration can prove that a generic 64-bit integer
@@ -2528,7 +2566,7 @@ refineNativeSourceTypeHint(const HighFunc &Function,
   std::vector<uint16_t> ParameterBytes(Original.Parameters.size());
   std::vector<bool> ParameterObserved(Original.Parameters.size(), false);
   bool ByteProof = true;
-  size_t ByteBudget = 100000;
+  size_t ByteBudget = ::neverd::limits::pipeline::kNativeSourceHintsByteBudget;
   struct ByteUse {
     const HighExpr *Expression = nullptr;
     const HighExpr *Parent = nullptr;
@@ -2563,7 +2601,9 @@ refineNativeSourceTypeHint(const HighFunc &Function,
     });
   for (size_t I = 0; ByteProof && I < ByteUses.size(); ++I) {
     const auto [Expression, Parent, Operand, Depth] = ByteUses[I];
-    if (!Expression || !ByteBudget-- || Depth > 128) {
+    if (!Expression || !ByteBudget-- ||
+        Depth > ::neverd::limits::pipeline::
+                    kNativeSourceHintsRefineNativeSourceTypeHintDepthLimit) {
       ByteProof = false;
       break;
     }
@@ -2654,7 +2694,8 @@ refineNativeSourceTypeHint(const HighFunc &Function,
   if (Unused.empty())
     return Narrowed;
   bool Valid = true, HasReturn = false;
-  size_t Remaining = 65536;
+  size_t Remaining = ::neverd::limits::pipeline::
+      kNativeSourceHintsRefineNativeSourceTypeHintRemaining;
   std::vector<MedVar> RegisterUses;
   std::map<HighSourceLocalIdentity, std::pair<uint64_t, uint16_t>> RegisterDefs;
   auto Observe = [&](const MedVar &Value) {
@@ -2671,7 +2712,10 @@ refineNativeSourceTypeHint(const HighFunc &Function,
                         unsigned Depth) -> void {
     if (!Valid)
       return;
-    if (!Expression || !Remaining || Depth > 128 ||
+    if (!Expression || !Remaining ||
+        Depth >
+            ::neverd::limits::pipeline::
+                kNativeSourceHintsRefineNativeSourceTypeHintScanScanDepthLimit ||
         Expression->Kind == ExprKind::Undef) {
       Valid = false;
       return;

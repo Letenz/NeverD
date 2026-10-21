@@ -1,6 +1,6 @@
 **語言**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 284ec1bcba3c77596f6b244b241b3088a37a9ba9238092e0b96b76d0661f84a5 -->
+<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
 
 # 為 NeverD 做出貢獻
 
@@ -241,6 +241,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### Limits、預設值與設定歸屬
 
+直接加入標頭檔搜尋路徑的工具目錄使用 `ResourceLimits.h`。在不區分大小寫的檔案系統上，本地 `Limits.h` 會遮蔽系統 `<limits.h>`。
+
 每個策略在所屬模組的 limits/configuration 標頭檔中只有一個權威定義，即使只有一個呼叫方。
 包括輸入/輸出上限、遞迴/圖邊界、工作/迭代預算、啟發閾值、快取、分頁/批次、重試及超時；
 同樣適用於 `constexpr`、巨集、裸比較、`min`/`clamp` 引數、構造/欄位初始化和預設引數。
@@ -253,7 +255,7 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 | SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) 或已有專門定義 |
 | 其他程式庫模組 | 已有策略標頭檔/定義表，否則在所屬層建立專門 `Limits.h` |
-| 僅 CLI、worker、GUI | 工具內 `Limits.h` 或 `Config.h`；core 不依賴工具標頭檔 |
+| 僅 CLI、worker、GUI | 工具內 `ResourceLimits.h` 或 `Config.h`；core 不依賴工具標頭檔 |
 | 呼叫方可選設定 | 所屬 `Config.h`、`*Options.h` 或 `*Configuration.h` 模型 |
 
 策略標頭檔保持輕量、按用途分組。已有 `*Limits.def` 或設定表負責時複用，透過可獨立使用的標頭檔暴露 C++

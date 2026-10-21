@@ -6,6 +6,7 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include <set>
@@ -74,7 +75,12 @@ getCheckedX86CxxPersonalityABI(const BinaryImage &Img,
   if (!Thunk)
     return std::nullopt;
   size_t Padding = 0;
-  while (Padding < Prefix && Padding < 8 && (*Thunk)[Padding] == 0x90)
+  while (
+      Padding < Prefix &&
+      Padding <
+          ::neverd::limits::loader::
+              kCOFFRegistrationEHPersonalityGetCheckedX86CxxPersonalityABIPaddingLimit &&
+      (*Thunk)[Padding] == 0x90)
     ++Padding;
   if (Padding != Prefix) {
     // Clang -O0 reads the four handler arguments into EAX before loading
@@ -93,7 +99,9 @@ getCheckedX86CxxPersonalityABI(const BinaryImage &Img,
                                                : Identity.CxxDispatchVA;
   va_t Cursor = Result.RuntimeVA;
   std::set<va_t> Seen;
-  for (unsigned Hop = 0; Hop != 4; ++Hop) {
+  for (unsigned Hop = 0;
+       Hop != ::neverd::limits::loader::kMaxRegistrationPersonalityHops;
+       ++Hop) {
     if (!Seen.insert(Cursor).second)
       return std::nullopt;
     auto Code = ReadCode(Cursor, 1);

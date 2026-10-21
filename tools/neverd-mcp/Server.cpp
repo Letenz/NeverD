@@ -11,6 +11,8 @@
 
 #include "Server.h"
 
+#include "ResourceLimits.h"
+
 #include <algorithm>
 #include <charconv>
 
@@ -401,7 +403,8 @@ Json Server::search(const Json &Arguments) {
   const auto Page = [&](const Json &Request) {
     auto Reply = Session.query("search", Request, std::nullopt);
     for (unsigned Step = 0;
-         Step < 64 && succeeded(Reply) &&
+         Step < ::neverd::limits::mcp::kServerPageStepLimit &&
+         succeeded(Reply) &&
          truthy(member(member(Reply, "payload"), "building"));
          ++Step)
       Reply = Session.query("search", Request, std::nullopt);
@@ -409,7 +412,10 @@ Json Server::search(const Json &Arguments) {
   };
   auto Response = Page(Arguments);
   const auto Limit = Arguments.at("limit").get<std::size_t>();
-  for (unsigned Step = 0; Step < 256 && succeeded(Response); ++Step) {
+  for (unsigned Step = 0;
+       Step < ::neverd::limits::mcp::kServerServerSearchStepLimit &&
+       succeeded(Response);
+       ++Step) {
     auto &Found = Response["payload"];
     const auto &Next = member(Found, "next_address");
     if (truthy(member(Found, "complete")) || !Next.is_string() ||
@@ -608,7 +614,8 @@ Json Server::readSnapshot(const std::string &URI, std::string_view Path,
   if (!Start || !Count)
     throw RpcError{-32602, "Invalid result page range"};
   if (*Start < 0 || static_cast<std::uint64_t>(*Start) > Kept->Characters ||
-      *Count < 1 || *Count > 65536)
+      *Count < 1 ||
+      *Count > ::neverd::limits::mcp::kServerReadSnapshotCountLimit)
     throw RpcError{-32602, "Result page is outside its bounds"};
   if (Expected && Kept->Revision != *Expected)
     throw RpcError{-32602, "Result snapshot revision does not match"};

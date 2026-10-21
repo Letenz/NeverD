@@ -11,6 +11,8 @@
 #include "../kernel/LinuxNetwork.h"
 #include "AndroidInternal.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
@@ -84,7 +86,8 @@ bool parseIPv6(llvm::StringRef Text, std::vector<uint8_t> &Bytes) {
 } // namespace
 llvm::Error
 validateResolverQueries(const std::vector<AndroidResolverQuery> &Queries) {
-  if (Queries.size() > 128)
+  if (Queries.size() > ::neverd::limits::emulation::
+                           kAndroidResolverValidateResolverQueriesSizeLimit)
     return failure("too many resolver observations");
   std::set<decltype(key(AndroidResolverQuery{}))> Keys;
   uint64_t Bytes = 0;
@@ -92,7 +95,10 @@ validateResolverQueries(const std::vector<AndroidResolverQuery> &Queries) {
     if (!S)
       return true;
     Bytes += S->size() + 1;
-    return S->size() <= 1024 && S->find('\0') == std::string::npos;
+    return S->size() <=
+               ::neverd::limits::emulation::
+                   kAndroidResolverValidateResolverQueriesTextTextSSizeLimit &&
+           S->find('\0') == std::string::npos;
   };
   for (const auto &Q : Queries) {
     if (!Text(Q.Node) || !Text(Q.Service) || (!Q.Node && !Q.Service) ||
@@ -103,7 +109,9 @@ validateResolverQueries(const std::vector<AndroidResolverQuery> &Queries) {
         Q.Error > 14 || Q.SystemErrno > 4095 ||
         (Q.Error == 11 ? !Q.SystemErrno : Q.SystemErrno != 0) ||
         (Q.Error ? !Q.Addresses.empty() : Q.Addresses.empty()) ||
-        Q.Addresses.size() > 64)
+        Q.Addresses.size() >
+            ::neverd::limits::emulation::
+                kAndroidResolverValidateResolverQueriesQAddressesSizeLimit)
       return failure("invalid resolver query contract");
     for (size_t I = 0; I < Q.Addresses.size(); ++I) {
       const auto &A = Q.Addresses[I];
@@ -118,7 +126,8 @@ validateResolverQueries(const std::vector<AndroidResolverQuery> &Queries) {
         return failure("resolver result contradicts query or sockaddr ABI");
       Bytes += AddressInfoSize + A.Address.size();
     }
-    if (Bytes > 1024 * 1024)
+    if (Bytes > ::neverd::limits::emulation::
+                    kAndroidResolverValidateResolverQueriesBytesLimit)
       return failure("resolver observation byte limit exceeded");
   }
   return llvm::Error::success();

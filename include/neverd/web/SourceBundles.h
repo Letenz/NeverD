@@ -11,17 +11,13 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 
 namespace neverd::web {
 
 inline constexpr std::string_view JavaScriptBundleProfile =
     "webpack5-basic-loader-v1";
-inline constexpr uint64_t MaxJavaScriptBundleSteps = 4000000;
-inline constexpr uint64_t MaxJavaScriptBundles = 64;
-inline constexpr uint64_t MaxJavaScriptBundleModules = 4096;
-inline constexpr uint64_t MaxJavaScriptBundleDependencies = 50000;
-inline constexpr uint64_t MaxJavaScriptBundleNameUnits = 1048576;
 
 struct SourceBundle {
   std::string ID;

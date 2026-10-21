@@ -12,6 +12,7 @@
 
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/modules/Limits.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/FilePath.h"
 
@@ -234,7 +235,10 @@ ModuleImage::withDebug(const ModuleImage &Original, const DebugInput &Input,
 
 llvm::Expected<std::optional<ModuleSymbol>>
 ModuleImage::lookupSymbol(llvm::StringRef Name) const {
-  if (Name.empty() || Name.size() > 4096 || Name.contains('\0'))
+  if (Name.empty() ||
+      Name.size() >
+          ::neverd::limits::modules::kModuleImageLookupSymbolNameSizeLimit ||
+      Name.contains('\0'))
     return invalid("symbol name is empty or exceeds its limit");
   std::optional<ModuleSymbol> Result;
   uint64_t Visited = 0;

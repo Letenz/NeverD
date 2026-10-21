@@ -6,6 +6,8 @@
 #include "LinuxFiles.h"
 #include "LinuxTime.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 
 #include <set>
@@ -23,14 +25,24 @@ llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
     return failure("Linux working directory requires a declared directory");
   if (Options.IoctlTrace) {
     const auto &T = *Options.IoctlTrace;
-    if (!T.EventLimit || T.EventLimit > 4096 || !T.ByteLimit ||
-        T.ByteLimit > 1048576 || T.Requests.size() > 64)
+    if (!T.EventLimit ||
+        T.EventLimit > ::neverd::limits::emulation::
+                           kLinuxFileOptionsValidateFileOptionsTEventLimit ||
+        !T.ByteLimit ||
+        T.ByteLimit > ::neverd::limits::emulation::
+                          kLinuxFileOptionsValidateFileOptionsTByteLimit ||
+        T.Requests.size() >
+            ::neverd::limits::emulation::
+                kLinuxFileOptionsValidateFileOptionsTRequestsSizeLimit)
       return failure("invalid ioctl trace bounds");
     for (const auto &[Request, Ranges] : T.Requests) {
       if (Ranges.size() > 16)
         return failure("too many ioctl trace ranges");
       for (const auto &R : Ranges)
-        if (!R.Size || R.Size > 4096 || R.Offset > UINT64_MAX - R.Size ||
+        if (!R.Size ||
+            R.Size > ::neverd::limits::emulation::
+                         kLinuxFileOptionsValidateFileOptionsRSizeLimit ||
+            R.Offset > UINT64_MAX - R.Size ||
             (R.PointerOffset && *R.PointerOffset > UINT64_MAX - 8))
           return failure("invalid ioctl trace range");
     }

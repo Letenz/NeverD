@@ -5,6 +5,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/low/DirectTailCall.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/RuntimeFunctionAddress.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -82,7 +83,9 @@ bool immutableNativeInstructionOperationsMatch(const BinaryImage &Image,
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
       !Image.isCodeAddress(Function.Entry) ||
       !Function.DecodedInstructionCount ||
-      Function.DecodedInstructionCount > 4096 ||
+      Function.DecodedInstructionCount >
+          ::neverd::limits::loader::
+              kImmutableNativeFrameImmutableNativeInstructionOperationsMatchFunctionDecodedInstructionCountLimit ||
       !Function.hasCompleteLiftCoverage() ||
       (!Function.ModuleAnalysisRoots.empty() &&
        Function.ModuleAnalysisRoots != std::set<va_t>{Function.Entry}) ||
@@ -152,7 +155,9 @@ bool immutableNativeFrameMachineMatches(
       Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 ||
       !Function.Entry || Function.Entry % 4 ||
       !Function.DecodedInstructionCount ||
-      Function.DecodedInstructionCount > 4096 ||
+      Function.DecodedInstructionCount >
+          ::neverd::limits::loader::
+              kImmutableNativeFrameMachineMatchesFunctionDecodedInstructionCountLimit ||
       !Function.hasCompleteLiftCoverage() || !Function.JumpTables.empty() ||
       (!Function.ModuleAnalysisRoots.empty() &&
        Function.ModuleAnalysisRoots != std::set<va_t>{Function.Entry}) ||

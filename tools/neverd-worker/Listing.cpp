@@ -1,7 +1,9 @@
 #include "Listing.h"
 
+#include "Config.h"
 #include "EngineSymbols.h"
 #include "References.h"
+#include "ResourceLimits.h"
 #include "StringReferences.h"
 #include "TextFold.h"
 
@@ -54,41 +56,9 @@ using TypeMemberFunction = const char *(*)(neverd_session_t, const char *,
                                            long long, unsigned long long,
                                            const char *);
 
-// Listing layout, in characters after the prefix: name, mnemonic and comment
-// columns of a conventional interactive disassembler listing.
-constexpr std::size_t NameColumnWidth = 16;
-constexpr std::size_t MnemonicWidth = 8;
-constexpr std::size_t CommentColumn = 40;
-constexpr std::size_t MaxXrefLines = 2;
-/// The strings one neverd_strings_page_json call reads.
-constexpr int StringPageRows = 65536;
-constexpr std::size_t MaxPageLines = 2000;
-constexpr std::size_t MaxOpcodeBytes = 12;
-constexpr std::size_t MaxDecodeChunk = 2048;
-constexpr std::size_t FirstUnsizedChunk = 64;
-constexpr std::size_t DecodeCacheFunctions = 512;
 constexpr int IndexStepFunctions = 2048;
-constexpr std::size_t MaxStringDisplay = 400;
-constexpr std::size_t MaxUnsizedInstructions = 65536;
-constexpr std::uint64_t MaxAlignment = 0x1000;
-// Classic listings name padding by the alignment of its end, up to this or the
-// smallest power of two longer than the padding.
-constexpr std::uint64_t ClassicAlignmentLimit = 0x20;
-// Automatic string names keep this many characters, the `a` included.
-constexpr std::size_t StringNameLength = 15;
-// A string a comment quotes shows this many escaped characters.
-constexpr std::size_t CommentStringLength = 39;
 // Strings in these encodings are shown as plain bytes (`db`).
 constexpr std::string_view PlainStringEncodings[] = {"ascii", "utf-8"};
-constexpr std::size_t MaxOverviewBuckets = 16384;
-constexpr int OverviewSamples = 4;
-constexpr int StringScanMinimum = 4;
-/// Functions one neverd_string_refs_json call decodes.
-constexpr int StringReferencePageFunctions = 1024;
-constexpr std::size_t MaxReferencePage = 512;
-constexpr int PointerPage = 65536;
-/// Functions one neverd_switches_json call covers.
-constexpr int SwitchPageFunctions = 4096;
 constexpr char SeparatorRule[] = "; -------------------------------------------"
                                  "--------------------------------";
 constexpr char SubroutineRule[] =
@@ -504,7 +474,8 @@ std::string quoteString(const std::string &value) {
     // Every escape counts as its spelled characters, a character as one.
     const std::size_t width =
         piece.size() > 1 && piece[0] == '\\' ? piece.size() : 1;
-    if (characters + width > CommentStringLength) {
+    if (characters + width >
+        ::neverd::limits::worker_config::kListingCommentStringLength) {
       cut = true;
       break;
     }
@@ -1245,8 +1216,9 @@ struct Listing::Impl {
       // Page by page, so no result outgrows the adapter however many
       // strings a large image holds.
       for (std::optional<std::uint64_t> cursor = 0; cursor;) {
-        const auto page =
-            takeJson(stringsPage(session, options, *cursor, StringPageRows));
+        const auto page = takeJson(
+            stringsPage(session, options, *cursor,
+                        ::neverd::limits::worker::kListingStringPageRows));
         cursor.reset();
         if (!page.is_object())
           break;
@@ -1257,7 +1229,9 @@ struct Listing::Impl {
       }
     } else if (const auto rows = takeJson(
                    stringsEx ? stringsEx(session, options)
-                             : neverd_strings_json(session, StringScanMinimum));
+                             : neverd_strings_json(
+                                   session, ::neverd::limits::worker::
+                                                kListingStringScanMinimum));
                rows.is_array()) {
       strings.reserve(rows.size());
       for (const auto &row : rows)
@@ -1508,8 +1482,8 @@ struct Listing::Impl {
 
   std::string decodedText(std::uint64_t address, std::uint64_t length,
                           const std::string &encoding) {
-    constexpr std::uint64_t MaxDecoded = 65536;
-    std::vector<unsigned char> bytes(std::min(length, MaxDecoded));
+    std::vector<unsigned char> bytes(
+        std::min(length, ::neverd::limits::worker::kListingMaxDecoded));
     const int read = neverd_read_bytes(session, address, bytes.data(),
                                        static_cast<int>(bytes.size()));
     bytes.resize(read > 0 ? static_cast<std::size_t>(read) : 0);
@@ -1573,7 +1547,8 @@ struct Listing::Impl {
     std::string name = "a";
     bool wordStart = true;
     for (unsigned char c : item.value) {
-      if (name.size() >= StringNameLength)
+      if (name.size() >=
+          ::neverd::limits::worker_config::kListingStringNameLength)
         break;
       if (c < 0x80 && std::isalnum(c)) {
         name += wordStart ? static_cast<char>(std::toupper(c))
@@ -1909,12 +1884,16 @@ struct Listing::Impl {
     bool stop = false;
     // An unsized body usually ends within a few dozen instructions; growing
     // chunks keep the engine from lifting far past its terminator.
-    std::size_t chunkSize = function.size ? MaxDecodeChunk : FirstUnsizedChunk;
+    std::size_t chunkSize =
+        function.size ? ::neverd::limits::worker::kListingMaxDecodeChunk
+                      : ::neverd::limits::worker::kListingFirstUnsizedChunk;
     while (!stop && cursor < function.end &&
-           body.instructions.size() < MaxUnsizedInstructions) {
+           body.instructions.size() <
+               ::neverd::limits::worker::kListingMaxUnsizedInstructions) {
       const std::size_t requested = chunkSize;
       auto chunk = disassemble(cursor, requested);
-      chunkSize = std::min(MaxDecodeChunk, chunkSize * 2);
+      chunkSize = std::min(::neverd::limits::worker::kListingMaxDecodeChunk,
+                           chunkSize * 2);
       if (chunk.empty())
         break;
       for (auto &instruction : chunk) {
@@ -2009,7 +1988,8 @@ struct Listing::Impl {
                : body.labels.erase(it);
     }
     decodedOrder.push_front(function.entry);
-    if (decodedOrder.size() > DecodeCacheFunctions) {
+    if (decodedOrder.size() >
+        ::neverd::limits::worker::kListingDecodeCacheFunctions) {
       decoded.erase(decodedOrder.back());
       decodedOrder.pop_back();
     }
@@ -2065,8 +2045,10 @@ struct Listing::Impl {
     if (end <= start)
       return 0;
     const std::uint64_t length = end - start;
-    std::uint64_t limit = ClassicAlignmentLimit;
-    while (limit <= length && limit < MaxAlignment)
+    std::uint64_t limit =
+        ::neverd::limits::worker::kListingClassicAlignmentLimit;
+    while (limit <= length &&
+           limit < ::neverd::limits::worker::kListingMaxAlignment)
       limit *= 2;
     for (std::uint64_t candidate = limit; candidate >= 2; candidate /= 2)
       if (end % candidate == 0 && length < candidate)
@@ -2528,7 +2510,7 @@ struct Listing::Impl {
                      ListingRole role, std::size_t base) {
     if (comment.empty())
       return;
-    text.padTo(base + CommentColumn);
+    text.padTo(base + ::neverd::limits::worker_config::kListingCommentColumn);
     text.append("; ", role);
     text.append(comment, role);
   }
@@ -2543,7 +2525,10 @@ struct Listing::Impl {
     const auto total = static_cast<std::size_t>(end - begin);
     for (const bool code : {true, false}) {
       bool heading = true;
-      for (auto it = begin; it != end && result.size() < MaxXrefLines; ++it) {
+      for (auto it = begin;
+           it != end &&
+           result.size() < ::neverd::limits::worker::kListingMaxXrefLines;
+           ++it) {
         if (isCodeRef(it->kind) != code)
           continue;
         StyledText line;
@@ -2581,14 +2566,14 @@ struct Listing::Impl {
                     StyledText head, std::uint64_t address, const char *kind) {
     auto xrefs = xrefComments(address);
     if (!xrefs.empty()) {
-      head.padTo(base + CommentColumn);
+      head.padTo(base + ::neverd::limits::worker_config::kListingCommentColumn);
       head.append("; ", ListingRole::Xref);
       head.append(xrefs.front());
     }
     addLine(out, item, item.start, kind, std::move(head));
     for (std::size_t i = 1; i < xrefs.size(); ++i) {
       StyledText more = lead(base);
-      more.padTo(base + CommentColumn);
+      more.padTo(base + ::neverd::limits::worker_config::kListingCommentColumn);
       more.append("; ", ListingRole::Xref);
       more.append(xrefs[i]);
       addLine(out, item, item.start, "xref", std::move(more));
@@ -2607,7 +2592,9 @@ struct Listing::Impl {
                      std::size_t base) {
     const Region &region = regions[item.region];
     addLine(out, item, item.start, "separator", [&] {
-      auto t = lead(base ? base - NameColumnWidth : 0);
+      auto t = lead(
+          base ? base - ::neverd::limits::worker_config::kListingNameColumnWidth
+               : 0);
       t.append(SegmentRule, ListingRole::Separator);
       return t;
     }());
@@ -2634,7 +2621,7 @@ struct Listing::Impl {
     addLine(out, item, item.start, "comment", std::move(access));
     StyledText directive;
     directive.append(segmentDirectiveName(region), ListingRole::SegmentName);
-    directive.padTo(NameColumnWidth);
+    directive.padTo(::neverd::limits::worker_config::kListingNameColumnWidth);
     directive.append("segment ", ListingRole::Directive);
     std::string_view alignment;
 #define NEVERD_SEGMENT_ALIGNMENT(Bytes, Spelling)                              \
@@ -2765,7 +2752,9 @@ struct Listing::Impl {
       const auto text = reply.is_object()
                             ? std::optional(reply.value("text", std::string()))
                             : std::nullopt;
-      if (enumValues.size() >= 4096)
+      if (enumValues.size() >=
+          ::neverd::limits::worker::
+              kListingInstructionTextEnumsEnumValuesSizeLimit)
         enumValues.clear();
       enumValues.emplace(key, text);
       return text;
@@ -2788,7 +2777,7 @@ struct Listing::Impl {
     for (const auto &[to, kind] : instruction.refs)
       facts.references.push_back(to);
     if (!classic.operands.empty()) {
-      text.padTo(base + MnemonicWidth);
+      text.padTo(base + ::neverd::limits::worker_config::kListingMnemonicWidth);
       text.append(formatOperands(
           classic.operands, facts,
           [this](std::uint64_t address, NameUse use, std::string_view size) {
@@ -2840,22 +2829,27 @@ struct Listing::Impl {
       // A chunk opens with its function's name, then its label; the code
       // before it brings the rule a jump or return ends with.
       const auto &owner = ownerOf(item.function);
-      StyledText open = lead(base - NameColumnWidth);
+      StyledText open =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       open.append(ChunkStartLead, ListingRole::AutoComment);
       open.append(owner.name, ListingRole::CodeName, owner.entry);
       addLine(out, item, item.start, "comment", std::move(open));
       addLine(out, item, item.start, "blank", {});
-      StyledText label = lead(base - NameColumnWidth);
+      StyledText label =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       label.append(nameOf(item.start, NameUse::Transfer, {}).text,
                    ListingRole::Label, item.start);
       label.append(":", ListingRole::Punctuation);
-      addNamedLine(out, item, base - NameColumnWidth, std::move(label),
-                   item.start, "label");
+      addNamedLine(out, item,
+                   base -
+                       ::neverd::limits::worker_config::kListingNameColumnWidth,
+                   std::move(label), item.start, "label");
     } else if (item.function >= 0 && item.start == function.entry) {
       // Function header: a rule, the attribute block (each ends with a blank
       // line), exports and the proc line with references.
       addLine(out, item, item.start, "blank", {});
-      StyledText rule = lead(base - NameColumnWidth);
+      StyledText rule =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       rule.append(SubroutineRule, ListingRole::Separator);
       addLine(out, item, item.start, "separator", std::move(rule));
       addLine(out, item, item.start, "blank", {});
@@ -2867,7 +2861,8 @@ struct Listing::Impl {
         if (present)
           attributes += (attributes.empty() ? "" : " ") + std::string(spelling);
       if (!attributes.empty()) {
-        StyledText line = lead(base - NameColumnWidth);
+        StyledText line = lead(
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
         line.append(AttributesLead + attributes, ListingRole::AutoComment);
         addLine(out, item, item.start, "comment", std::move(line));
       }
@@ -2876,7 +2871,8 @@ struct Listing::Impl {
       // the prototype.
       if (const auto &readable = demangledName(function.name);
           !readable.empty()) {
-        StyledText line = lead(base - NameColumnWidth);
+        StyledText line = lead(
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
         line.append("; " + readable, ListingRole::AutoComment);
         addLine(out, item, item.start, "comment", std::move(line));
       }
@@ -2888,19 +2884,23 @@ struct Listing::Impl {
         publicLine.append(function.name, ListingRole::CodeName, function.entry);
         addLine(out, item, item.start, "directive", std::move(publicLine));
       }
-      StyledText head = lead(base - NameColumnWidth);
+      StyledText head =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       head.append(function.name,
                   function.library ? ListingRole::LibraryName
                                    : ListingRole::CodeName,
                   function.entry);
       head.padTo(base);
       head.append("proc near", ListingRole::Directive);
-      addNamedLine(out, item, base - NameColumnWidth, std::move(head),
-                   item.start, "header");
+      addNamedLine(out, item,
+                   base -
+                       ::neverd::limits::worker_config::kListingNameColumnWidth,
+                   std::move(head), item.start, "header");
       if (!body.frame.empty()) {
         addLine(out, item, item.start, "blank", {});
         for (const auto &[offset, size] : body.frame) {
-          StyledText line = lead(base - NameColumnWidth);
+          StyledText line = lead(
+              base - ::neverd::limits::worker_config::kListingNameColumnWidth);
           line.append(frameName(body, offset), ListingRole::Plain);
           line.padTo(base);
           line.append("= ", ListingRole::Punctuation);
@@ -2918,15 +2918,19 @@ struct Listing::Impl {
     } else if (body.labels.contains(item.start) ||
                (item.userCode && dataNames.contains(item.start))) {
       addLine(out, item, item.start, "blank", {});
-      StyledText label = lead(base - NameColumnWidth);
+      StyledText label =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       label.append(nameOf(item.start, NameUse::Transfer, {}).text,
                    ListingRole::Label, item.start);
       label.append(":", ListingRole::Punctuation);
-      addNamedLine(out, item, base - NameColumnWidth, std::move(label),
-                   item.start, "label");
+      addNamedLine(out, item,
+                   base -
+                       ::neverd::limits::worker_config::kListingNameColumnWidth,
+                   std::move(label), item.start, "label");
     }
     if (body.unwind && body.unwind->begin == item.start) {
-      StyledText open = lead(base - NameColumnWidth);
+      StyledText open =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       open.append(body.unwind->personality.empty()
                       ? std::string(UnwindOpen)
                       : std::string(UnwindOpen) + " // " +
@@ -2935,11 +2939,16 @@ struct Listing::Impl {
       addLine(out, item, item.start, "comment", std::move(open));
     }
     StyledText text = instructionText(
-        instruction, base, opcodeColumn(instruction, base - NameColumnWidth),
+        instruction, base,
+        opcodeColumn(
+            instruction,
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth),
         &body);
     const auto comment =
         takeString(neverd_annotation_get(session, instruction.address));
-    appendComment(text, comment, ListingRole::Comment, base - NameColumnWidth);
+    appendComment(text, comment, ListingRole::Comment,
+                  base -
+                      ::neverd::limits::worker_config::kListingNameColumnWidth);
     // Without a comment of its own, an instruction marks a switch's table
     // load or dispatch, or quotes the string it refers to.
     const auto switchComment = [&]() -> std::string {
@@ -2970,17 +2979,21 @@ struct Listing::Impl {
     };
     if (comment.empty()) {
       if (const auto marked = switchComment(); !marked.empty()) {
-        appendComment(text, marked, ListingRole::AutoComment,
-                      base - NameColumnWidth);
+        appendComment(
+            text, marked, ListingRole::AutoComment,
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       } else if (const auto readable = demangledOperand(); !readable.empty()) {
-        appendComment(text, readable, ListingRole::AutoComment,
-                      base - NameColumnWidth);
+        appendComment(
+            text, readable, ListingRole::AutoComment,
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       } else {
         for (const auto &[to, kind] : instruction.refs)
           if (const auto *string = stringAt(to);
               string && string->address == to) {
-            appendComment(text, quoteString(string->value),
-                          ListingRole::AutoComment, base - NameColumnWidth);
+            appendComment(
+                text, quoteString(string->value), ListingRole::AutoComment,
+                base -
+                    ::neverd::limits::worker_config::kListingNameColumnWidth);
             break;
           }
       }
@@ -2993,7 +3006,8 @@ struct Listing::Impl {
     const std::uint64_t next = item.start + item.size;
     if (body.unwind && body.unwind->end > item.start &&
         body.unwind->end <= next) {
-      StyledText close = lead(base - NameColumnWidth);
+      StyledText close =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       close.append(UnwindClose + upperHex(body.unwind->begin),
                    ListingRole::AutoComment);
       addLine(out, item, item.start, "comment", std::move(close));
@@ -3001,7 +3015,8 @@ struct Listing::Impl {
     if (item.function >= 0 && next >= body.end) {
       // The footer belongs to the last instruction.  Code that no function
       // owns, padding or data follows a rule; a function brings its own.
-      StyledText end = lead(base - NameColumnWidth);
+      StyledText end =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       if (function.chunkOf) {
         const auto &owner = ownerOf(item.function);
         end.append(ChunkEndLead, ListingRole::AutoComment);
@@ -3015,19 +3030,22 @@ struct Listing::Impl {
         addLine(out, item, item.start, "blank", {});
       }
       if (next < regions[item.region].end && !functionAtEntry(next)) {
-        StyledText rule = lead(base - NameColumnWidth);
+        StyledText rule = lead(
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
         rule.append(SeparatorRule, ListingRole::Separator);
         addLine(out, item, item.start, "separator", std::move(rule));
       }
     } else if (!fallsThrough(instruction.flow)) {
-      StyledText rule = lead(base - NameColumnWidth);
+      StyledText rule =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       rule.append(SeparatorRule, ListingRole::Separator);
       addLine(out, item, item.start + item.size, "separator", std::move(rule));
     }
   }
 
   void dataLines(std::vector<Line> &out, const Item &item, std::size_t base) {
-    const std::size_t nameBase = base - NameColumnWidth;
+    const std::size_t nameBase =
+        base - ::neverd::limits::worker_config::kListingNameColumnWidth;
     StyledText head = lead(nameBase);
     std::optional<std::uint64_t> target;
     std::string comment;
@@ -3076,16 +3094,20 @@ struct Listing::Impl {
         head.padTo(base);
         head.append("text ", ListingRole::Directive);
         head.append("\"" + std::string(spelling) + "\", ", ListingRole::String);
-        head.append(escapeString(string.value, MaxStringDisplay),
-                    ListingRole::String);
+        head.append(
+            escapeString(string.value,
+                         ::neverd::limits::worker::kListingMaxStringDisplay),
+            ListingRole::String);
         appendComment(head,
                       takeString(neverd_annotation_get(session, item.start)),
                       ListingRole::Comment, nameBase);
         addLine(out, item, item.start, "data", std::move(head));
         return;
       }
-      head.append(escapeString(string.value, MaxStringDisplay),
-                  ListingRole::String);
+      head.append(
+          escapeString(string.value,
+                       ::neverd::limits::worker::kListingMaxStringDisplay),
+          ListingRole::String);
       break;
     }
     case ItemKind::Slot: {
@@ -3273,15 +3295,19 @@ struct Listing::Impl {
     // The first comment shares the item's line when the item ends before
     // the comment column; past it, every comment takes a line of its own.
     std::size_t next = 0;
-    if (!comments.empty() && head.columns() < nameBase + CommentColumn) {
-      head.padTo(nameBase + CommentColumn);
+    if (!comments.empty() &&
+        head.columns() <
+            nameBase + ::neverd::limits::worker_config::kListingCommentColumn) {
+      head.padTo(nameBase +
+                 ::neverd::limits::worker_config::kListingCommentColumn);
       head.append(comments.front().text);
       next = 1;
     }
     addLine(out, item, item.start, "data", std::move(head), target);
     for (; next < comments.size(); ++next) {
       StyledText line = lead(nameBase);
-      line.padTo(nameBase + CommentColumn);
+      line.padTo(nameBase +
+                 ::neverd::limits::worker_config::kListingCommentColumn);
       line.append(comments[next].text);
       addLine(out, item, item.start, comments[next].kind, std::move(line));
     }
@@ -3291,7 +3317,8 @@ struct Listing::Impl {
     std::vector<Line> lines;
     const std::size_t opcodeWidth =
         opcodeBytes > 0 ? static_cast<std::size_t>(opcodeBytes) * 3 : 0;
-    const std::size_t base = opcodeWidth + NameColumnWidth;
+    const std::size_t base =
+        opcodeWidth + ::neverd::limits::worker_config::kListingNameColumnWidth;
     if (item.start == regions[item.region].start)
       segmentHeader(lines, item, base);
     if (item.kind == ItemKind::Instruction)
@@ -3299,7 +3326,8 @@ struct Listing::Impl {
     else
       dataLines(lines, item, base);
     if (item.start + item.size >= regions[item.region].end) {
-      StyledText ends = lead(base - NameColumnWidth);
+      StyledText ends =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       ends.append(segmentDirectiveName(regions[item.region]),
                   ListingRole::SegmentName);
       ends.padTo(base);
@@ -3401,7 +3429,8 @@ struct Listing::Impl {
     // Each relocated data slot refers to its pointer.
     if (pointerRefs)
       for (std::optional<std::uint64_t> cursor = 0; cursor;) {
-        const auto page = takeJson(pointerRefs(session, *cursor, PointerPage));
+        const auto page = takeJson(pointerRefs(
+            session, *cursor, ::neverd::limits::worker::kListingPointerPage));
         cursor.reset();
         if (const auto rows = page.value("refs", Json()); rows.is_array())
           for (const auto &row : rows)
@@ -3456,7 +3485,9 @@ struct Listing::Impl {
     switchReferences.clear();
     switchError.clear();
     for (std::optional<std::uint64_t> cursor = 0; switchesQuery && cursor;) {
-      const char *raw = switchesQuery(session, *cursor, SwitchPageFunctions);
+      const char *raw =
+          switchesQuery(session, *cursor,
+                        ::neverd::limits::worker::kListingSwitchPageFunctions);
       cursor.reset();
       if (!raw) {
         switchError = takeString(neverd_last_error(session));
@@ -3604,7 +3635,8 @@ struct Listing::Impl {
     for (std::optional<std::uint64_t> cursor = 0; cursor;) {
       const char *raw = stringRefs(
           session, stringOptions.empty() ? nullptr : stringOptions.c_str(),
-          *cursor, StringReferencePageFunctions);
+          *cursor,
+          ::neverd::limits::worker::kListingStringReferencePageFunctions);
       if (!raw)
         throw Error("engine_error", takeString(neverd_last_error(session)));
       const auto page = takeJson(raw);
@@ -3795,7 +3827,9 @@ void Listing::setPdbDisplayNames(const Json &names) {
   std::unordered_set<std::uint64_t> functions;
   for (const auto &row : names) {
     const auto name = row.value("name", std::string());
-    if (name.empty() || name.size() > 4096 ||
+    if (name.empty() ||
+        name.size() >
+            ::neverd::limits::worker::kListingSetPdbDisplayNamesNameSizeLimit ||
         std::any_of(name.begin(), name.end(),
                     [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
       continue;
@@ -3890,15 +3924,24 @@ Json Listing::page(const Json &payload) {
             {"at_start", true},
             {"at_end", true},
             {"generation", std::to_string(d.generation)}};
-  d.opcodeBytes =
-      static_cast<int>(sizeField(payload, "opcode_bytes", 0, MaxOpcodeBytes));
-  const auto before = sizeField(payload, "before", 0, MaxPageLines);
-  const auto after = sizeField(payload, "after", 100, MaxPageLines);
+  d.opcodeBytes = static_cast<int>(
+      sizeField(payload, "opcode_bytes", 0,
+                ::neverd::limits::worker::kListingMaxOpcodeBytes));
+  const auto before = sizeField(payload, "before", 0,
+                                ::neverd::limits::worker::kListingMaxPageLines);
+  const auto after =
+      sizeField(payload, "after",
+                ::neverd::limits::worker::kListingPageAfterSizeFieldDefault,
+                ::neverd::limits::worker::kListingMaxPageLines);
   std::uint64_t address =
       payload.contains("address")
-          ? parseAddress(stringField(payload, "address", {}, 18))
+          ? parseAddress(stringField(
+                payload, "address", {},
+                ::neverd::limits::worker::kListingPageAddressStringFieldMax))
           : d.regions.front().start;
-  std::size_t sub = sizeField(payload, "sub", 0, 1 << 20);
+  std::size_t sub =
+      sizeField(payload, "sub", 0,
+                ::neverd::limits::worker::kListingPageSubSubSizeFieldMax);
   // An unmapped address snaps to the following region (or the last one).
   if (d.regionIndex(address) < 0) {
     auto it = std::upper_bound(
@@ -3975,7 +4018,10 @@ Json Listing::overview(const Json &payload) {
   auto &d = *impl_;
   d.build();
   const auto buckets = std::max<std::size_t>(
-      1, sizeField(payload, "buckets", 1024, MaxOverviewBuckets));
+      1, sizeField(
+             payload, "buckets",
+             ::neverd::limits::worker::kListingOverviewBucketsSizeFieldDefault,
+             ::neverd::limits::worker::kListingMaxOverviewBuckets));
   std::uint64_t total = 0;
   Json regions = Json::array();
   for (const auto &region : d.regions) {
@@ -4042,9 +4088,11 @@ Json Listing::overview(const Json &payload) {
     };
     for (std::size_t b = 0; b < buckets; ++b) {
       AddressClass best = AddressClass::Unmapped;
-      for (int s = 0; s < OverviewSamples; ++s) {
+      for (int s = 0; s < ::neverd::limits::worker::kListingOverviewSamples;
+           ++s) {
         const long double position =
-            (static_cast<long double>(b) + (s + 0.5L) / OverviewSamples) /
+            (static_cast<long double>(b) +
+             (s + 0.5L) / ::neverd::limits::worker::kListingOverviewSamples) /
             static_cast<long double>(buckets);
         const auto linear = std::min<std::uint64_t>(
             total - 1, static_cast<std::uint64_t>(position * total));
@@ -4065,11 +4113,16 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
   auto &d = *impl_;
   d.discover();
   d.build();
-  const auto direction = stringField(payload, "direction", "to", 8);
+  const auto direction = stringField(
+      payload, "direction", "to",
+      ::neverd::limits::worker::kListingReferencesDirectionStringFieldMax);
   const auto offset =
       sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
   const auto limit = std::max<std::size_t>(
-      1, sizeField(payload, "limit", 128, MaxReferencePage));
+      1, sizeField(
+             payload, "limit",
+             ::neverd::limits::worker::kListingReferencesLimitSizeFieldDefault,
+             ::neverd::limits::worker::kListingMaxReferencePage));
   Json items = Json::array();
   std::size_t total = 0;
   const auto row = [&](std::uint64_t from, std::uint64_t to, RefKind kind) {
@@ -4136,17 +4189,27 @@ Json Listing::strings(const Json &payload) {
   d.build();
   const auto offset =
       sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
-  const auto limit = sizeField(payload, "limit", 128, 512);
+  const auto limit =
+      sizeField(payload, "limit",
+                ::neverd::limits::worker::kListingStringsLimitSizeFieldDefault,
+                ::neverd::limits::worker::kListingStringsLimitSizeFieldMax);
   if (!limit)
     throw Error("invalid_request", "limit must be at least 1");
   const auto filter = foldText(stringField(payload, "filter"));
-  const auto textLimit = payload.contains("text_limit")
-                             ? sizeField(payload, "text_limit", 400, 1024)
-                             : std::numeric_limits<std::size_t>::max();
+  const auto textLimit =
+      payload.contains("text_limit")
+          ? sizeField(
+                payload, "text_limit",
+                ::neverd::limits::worker::
+                    kListingStringsTextLimitSizeFieldDefault,
+                ::neverd::limits::worker::kListingStringsTextLimitSizeFieldMax)
+          : std::numeric_limits<std::size_t>::max();
   if (!textLimit)
     throw Error("invalid_request",
                 "String previews require a positive text_limit");
-  const auto sort = stringField(payload, "sort", {}, 64);
+  const auto sort = stringField(
+      payload, "sort", {},
+      ::neverd::limits::worker::kListingStringsSortSortStringFieldMax);
   const bool descending = payload.value("descending", false);
   if (!sort.empty() && sort != "address" && sort != "length" &&
       sort != "type" && sort != "text")

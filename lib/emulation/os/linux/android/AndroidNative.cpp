@@ -11,6 +11,7 @@
 #include "AndroidThreads.h"
 
 #include "neverd/emulation/ExecutionSession.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/loader/ELF/ELFLoader.h"
 
 #include <set>
@@ -78,16 +79,23 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   if (Native.LogRecords)
     for (const auto &Record : *Native.LogRecords)
       CatalogBytes += 28 + Record.Payload.size();
-  if (Native.Libraries.size() > 256)
+  if (Native.Libraries.size() >
+      ::neverd::limits::emulation::kAndroidNativeRunNativeLibrariesSizeLimit)
     return failure(diagnostic::LibraryCount);
   for (const auto &[Library, Symbols] : Native.Libraries) {
-    if (Library.empty() || Library.size() > 1024 ||
+    if (Library.empty() ||
+        Library.size() > ::neverd::limits::emulation::
+                             kAndroidNativeRunNativeLibrarySizeLimit ||
         Library.find('\0') != std::string::npos)
       return failure(diagnostic::LibraryName);
     CatalogBytes += Library.size();
     std::set<std::string> Unique;
     for (const auto &Symbol : Symbols) {
-      if (++SymbolCount > 4096 || Symbol.empty() || Symbol.size() > 1024 ||
+      if (++SymbolCount > ::neverd::limits::emulation::
+                              kAndroidNativeRunNativeSymbolCountLimit ||
+          Symbol.empty() ||
+          Symbol.size() > ::neverd::limits::emulation::
+                              kAndroidNativeRunNativeSymbolSizeLimit ||
           Symbol.find('\0') != std::string::npos ||
           !Unique.insert(Symbol).second)
         return failure(diagnostic::SymbolCatalogue);

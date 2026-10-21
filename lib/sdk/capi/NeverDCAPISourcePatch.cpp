@@ -12,6 +12,7 @@
 #include "neverd/backend/codegen/SourcePatch.h"
 #include "neverd/backend/codegen/SourcePatchBindings.h"
 #include "neverd/backend/codegen/SourcePatchPreparation.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IRReader/IRReader.h"
@@ -54,8 +55,11 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
     return Fail(S.LastError);
   if (!S.Loaded)
     return Fail("no binary loaded");
-  if (!Input || InputSize == 0 || InputSize > 64 * 1024 * 1024)
-    return Fail("source input must contain between 1 byte and 64 MiB");
+  if (!Input || InputSize == 0 ||
+      InputSize > ::neverd::sdk::kMaxSourcePatchInputBytes)
+    return Fail("source input must contain between 1 byte and " +
+                std::to_string(kMaxSourcePatchInputBytes / (1024 * 1024)) +
+                " MiB");
   // Freeze the original ABI boundary before adding optional tail fields. An
   // older caller's allocation must never be read using the current sizeof.
   constexpr size_t V1Minimum =
@@ -83,15 +87,16 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
     return Fail("unknown source patch option value");
   if (Options->strategy != 0)
     return Fail("source replacement currently requires section installation");
-  if (Options->mapping_count > 65536 ||
+  if (Options->mapping_count > ::neverd::sdk::kMaxSourcePatchMappings ||
       (Options->mapping_count && !Options->mappings) ||
-      Options->compiler_arg_count > 256 ||
+      Options->compiler_arg_count >
+          ::neverd::sdk::kMaxSourcePatchCompilerArguments ||
       (Options->compiler_arg_count && !Options->compiler_args) ||
-      Options->binding_count > 65536 ||
+      Options->binding_count > ::neverd::sdk::kMaxSourcePatchBindings ||
       (Options->binding_count && !Options->bindings) ||
-      Options->dependency_count > 4096 ||
+      Options->dependency_count > ::neverd::sdk::kMaxSourcePatchDependencies ||
       (Options->dependency_count && !Options->dependencies) ||
-      Options->timeout_seconds > 3600)
+      Options->timeout_seconds > ::neverd::sdk::kMaxSourcePatchTimeoutSeconds)
     return Fail("invalid or excessive source patch options");
   for (size_t I = 0; I < Options->compiler_arg_count; ++I)
     if (!Options->compiler_args[I])

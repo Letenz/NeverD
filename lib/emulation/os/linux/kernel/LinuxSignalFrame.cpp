@@ -6,6 +6,8 @@
 #include "LinuxMemory.h"
 #include "LinuxSignals.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Endian.h"
 
@@ -36,7 +38,10 @@ LinuxSignals::enter(ExecutionBackend &CPU, const MemoryLayout &Layout,
                     const LinuxSignalAction &Action, ProcessResult &Result) {
   auto &Thread = Threads.at(TID);
   if (CPU.architecture() != GuestArchitecture::AArch64 ||
-      !State.AlternateStackDisabled || Thread.Frames.size() >= 32 ||
+      !State.AlternateStackDisabled ||
+      Thread.Frames.size() >=
+          ::neverd::limits::emulation::
+              kLinuxSignalFrameLinuxSignalsEnterThreadFramesSizeLimit ||
       (uint32_t(Action.Flags) & ~uint32_t(0xdc000007)) ||
       (Action.Flags > UINT32_MAX &&
        Action.Flags != uint64_t(int64_t(int32_t(uint32_t(Action.Flags))))))

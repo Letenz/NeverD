@@ -9,6 +9,8 @@
 
 #include "DarwinProcess.h"
 
+#include "neverd/emulation/Limits.h"
+
 namespace neverd::emulation::darwin_model {
 class DarwinCallbacks {
   enum class Phase { Startup, Main, TLS, Global, Complete };
@@ -51,8 +53,10 @@ class DarwinCallbacks {
   llvm::Expected<bool> terminate(ExecutionBackend &CPU, ProcessResult &Result);
 
 public:
-  static constexpr size_t TLSCallbackLimit = 1024;
-  static constexpr size_t GlobalCallbackLimit = 1024;
+  static constexpr size_t TLSCallbackLimit =
+      ::neverd::limits::emulation::kDarwinCallbacksTLSCallbackLimit;
+  static constexpr size_t GlobalCallbackLimit =
+      ::neverd::limits::emulation::kDarwinCallbacksGlobalCallbackLimit;
   static constexpr uint64_t ReturnGate = value::ReturnGate + 16;
   static uint64_t metadataBytes(bool TLS, bool Global = false) {
     return sizeof(DarwinCallbacks) +

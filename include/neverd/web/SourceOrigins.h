@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceModules.h"
 
 #include <memory>
@@ -18,8 +19,6 @@
 namespace neverd::web {
 inline constexpr std::string_view JavaScriptOriginProfile =
     "javascript-module-origin-candidates-v2";
-inline constexpr uint64_t MaxSourceOriginSteps = 2000000;
-inline constexpr uint64_t MaxSourceOriginUnits = 1048576;
 
 /// A syntactic chain back to a module request, never a runtime object/value.
 /// Names stay private; consumers publish their own fixed operation categories.

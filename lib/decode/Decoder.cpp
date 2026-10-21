@@ -12,6 +12,7 @@
 #include "neverd/decode/Decoder.h"
 
 #include "neverd/decode/AArch64NativeDecode.h"
+#include "neverd/decode/Limits.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/AArch64Lifter.h"
@@ -74,7 +75,7 @@ public:
 
 private:
   /// More than the decoders a decompile has open at once.
-  static constexpr size_t MaxSpare = 16;
+  static constexpr size_t MaxSpare = ::neverd::limits::decode::kDecoderMaxSpare;
   std::mutex Mutex;
   std::vector<std::pair<cs_mode, csh>> Handles;
 };

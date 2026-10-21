@@ -9,6 +9,7 @@
 #include "DarwinProcess.h"
 #include "DarwinTLS.h"
 
+#include "neverd/emulation/Limits.h"
 #include "neverd/loader/BinaryImageFlags.h"
 #include "neverd/loader/MachO/MachOExecutionImage.h"
 #include "neverd/support/FilePath.h"
@@ -128,7 +129,8 @@ class ImageGraph {
                                            [&] { return check(); });
       if (!Facts)
         return Facts.takeError();
-      if (Facts->Records > 65536 - Records)
+      if (Facts->Records >
+          ::neverd::limits::emulation::kMaxDarwinStartupRecords - Records)
         return failure("Darwin startup graph exceeds its record limit");
       Records += Facts->Records;
       if (auto E = charge(Facts->MetadataBytes + 256))
@@ -233,7 +235,8 @@ class ImageGraph {
                                     (Segment.Size + Page - 1) & ~(Page - 1),
                                     Info.MaximumProtection});
       if (RetainCallbacks && Segment.isExecutable()) {
-        if (++Records > 65536)
+        if (++Records >
+            ::neverd::limits::emulation::kDarwinImageMapRecordsLimit)
           return failure("Darwin startup graph exceeds its record limit");
         if (auto E = charge(sizeof(ExecutableSpan)))
           return E;
@@ -355,7 +358,8 @@ class ImageGraph {
     return llvm::Error::success();
   }
   llvm::Error initializer(const Node &N, uint64_t Address, unsigned Width) {
-    if (++Records > 65536)
+    if (++Records >
+        ::neverd::limits::emulation::kDarwinImageInitializerRecordsLimit)
       return failure("Darwin startup graph exceeds its record limit");
     if (auto E = charge(sizeof(StartupCallback)))
       return E;
@@ -404,7 +408,8 @@ class ImageGraph {
     return llvm::Error::success();
   }
   llvm::Error initializers(const Node &N) {
-    if (N.Loaded.InitializerSections.size() > 65536 - Records)
+    if (N.Loaded.InitializerSections.size() >
+        ::neverd::limits::emulation::kMaxDarwinStartupRecords - Records)
       return failure("Darwin startup graph exceeds its record limit");
     Records += N.Loaded.InitializerSections.size();
     if (auto E = charge(2 * N.Loaded.InitializerSections.size() *

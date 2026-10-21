@@ -36,7 +36,9 @@ inline bool plainHint(const SourceCallTypeHint &H) {
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
                            const BinaryImage &Image, size_t &Budget,
                            unsigned Depth = 0) {
-  if (!Expected || !Actual || !Budget || Depth >= 64)
+  if (!Expected || !Actual || !Budget ||
+      Depth >= ::neverd::sdk::
+                   kSourceSwiftOpaqueValueProjectionSameExpressionDepthLimit)
     return false;
   --Budget;
   HighExpr E = *Expected, A = *Actual;
@@ -143,7 +145,13 @@ public:
       return !Marked && Published->empty();
     const auto Current =
         native_source_detail::currentFunction(Result, Function.Entry);
-    if (!Current || Low->DecodedInstructionCount > 256 || Hints.size() > 16 ||
+    if (!Current ||
+        Low->DecodedInstructionCount >
+            ::neverd::sdk::
+                kSourceSwiftOpaqueValueProjectionValidLowDecodedInstructionCountLimit ||
+        Hints.size() >
+            ::neverd::sdk::
+                kSourceSwiftOpaqueValueProjectionValidHintsSizeLimit ||
         !validateSwiftOpaqueValueBindings(Image, Low, *Med, &Contracts))
       return false;
     std::set<SourceCallOccurrenceKey> Required;
@@ -155,7 +163,10 @@ public:
       if (H.CallKind == SourceCallTypeHint::Kind::Native)
         Options.OnlyFunctionEntries.insert(H.TargetAddress);
     }
-    if (*Published != Required || Options.OnlyFunctionEntries.size() > 5)
+    if (*Published != Required ||
+        Options.OnlyFunctionEntries.size() >
+            ::neverd::sdk::
+                kSourceSwiftOpaqueValueProjectionValidOptionsOnlyFunctionEntriesSizeLimit)
       return false;
     Options.MaxFunctions = Options.OnlyFunctionEntries.size();
     llvm::LLVMContext Context;

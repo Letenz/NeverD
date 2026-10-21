@@ -2,6 +2,7 @@
 #define NEVERD_LOADER_OBJC_OBJCRUNTIMEDATA_H
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/Endian.h"
@@ -123,7 +124,10 @@ public:
 
   std::optional<std::string> string(va_t VA, bool AllowEmpty = false) const {
     std::string Value;
-    for (size_t Index = 0; Index < 4096 && VA <= InvalidVA - Index; ++Index) {
+    for (size_t Index = 0;
+         Index < ::neverd::limits::loader::kObjCRuntimeDataStringIndexLimit &&
+         VA <= InvalidVA - Index;
+         ++Index) {
       const auto *Data = bytes(VA + Index, 1);
       if (!Data)
         return std::nullopt;

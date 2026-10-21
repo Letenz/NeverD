@@ -4,6 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ResourceLimits.h"
+
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/support/AtomicOutput.h"
 
@@ -60,7 +62,9 @@ llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> read(llvm::StringRef Path) {
   auto Buffer = llvm::MemoryBuffer::getFile(Path);
   if (!Buffer)
     return llvm::errorCodeToError(Buffer.getError());
-  if ((*Buffer)->getBufferSize() > 64 * 1024 * 1024)
+  if ((*Buffer)->getBufferSize() >
+      ::neverd::limits::bytecode_tool::
+          kNeverdBytecodeReadBufferGetBufferSizeLimit)
     return invalid("input exceeds the 64 MiB limit");
   return std::move(*Buffer);
 }

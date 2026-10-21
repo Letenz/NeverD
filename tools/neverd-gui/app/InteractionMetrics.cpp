@@ -1,5 +1,6 @@
 #include "InteractionMetrics.h"
 
+#include "../ResourceLimits.h"
 #include "CodeView.h"
 #include "DisassemblyView.h"
 #include "GraphView.h"
@@ -23,13 +24,9 @@
 namespace neverd::gui {
 namespace {
 constexpr int ReportSchema = 1;
-/// Functions sampled for jumps, graphs and pseudocode, spread over the list.
-constexpr int MaxSamples = 24;
 /// Scroll ticks in one pass, one per 60 Hz frame.
 constexpr int ScrollTicks = 300;
 constexpr int FrameMs = 16;
-/// How long one sample may take before it counts as missed.
-constexpr int SampleTimeoutMs = 60000;
 
 /// Nearest-rank percentiles of \p ms.
 QJsonObject summary(QVector<double> ms, int missed) {
@@ -73,7 +70,8 @@ void InteractionMetrics::begin() {
   }
   // One page per sample, spread over the address-ordered list; its first
   // function that is not a thunk is the sample.
-  const int wanted = std::min(count, MaxSamples);
+  const int wanted =
+      std::min(count, ::neverd::limits::gui::kInteractionMetricsMaxSamples);
   auto found = std::make_shared<QVector<Address>>();
   auto pending = std::make_shared<int>(wanted);
   for (int i = 0; i < wanted; ++i) {
@@ -220,7 +218,7 @@ InteractionMetrics::Step InteractionMetrics::jumpStep(const char *name) {
       });
       connect(limit, &QTimer::timeout, this,
               [complete] { complete(QStringLiteral("timeout")); });
-      limit->start(SampleTimeoutMs);
+      limit->start(::neverd::limits::gui::kInteractionMetricsSampleTimeoutMs);
       // What a jump does: navigate the disassembly, which the other views
       // follow.
       window_.disassembly()->navigate(samples_[index]);
@@ -283,7 +281,7 @@ InteractionMetrics::Step InteractionMetrics::graphStep(const char *name) {
                         });
       connect(limit, &QTimer::timeout, this,
               [complete] { complete(QStringLiteral("timeout")); });
-      limit->start(SampleTimeoutMs);
+      limit->start(::neverd::limits::gui::kInteractionMetricsSampleTimeoutMs);
       graph->showFunction(samples_[index]);
     };
     (*next)(0);
@@ -356,7 +354,7 @@ void InteractionMetrics::measurePseudocode(const char *name, Done done) {
       });
       connect(limit, &QTimer::timeout, this,
               [complete] { complete(QStringLiteral("timeout")); });
-      limit->start(SampleTimeoutMs);
+      limit->start(::neverd::limits::gui::kInteractionMetricsSampleTimeoutMs);
       code->showFunction(samples_[index]);
     };
     (*next)(0);

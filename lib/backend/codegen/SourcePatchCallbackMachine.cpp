@@ -7,6 +7,7 @@
 /// Derive frame rules from relocated entries.
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/SourcePatchCallback.h"
 #include "neverd/loader/LanguageEHDwarf.h"
 
@@ -161,14 +162,25 @@ llvm::Expected<EntryFrame> derive(const SourceCallbackPrefix &P, Arch A) {
     const uint64_t At = PC - P.CallbackVA;
     bool Handled = false;
     auto Allocate = [&](int64_t N) -> llvm::Error {
-      if (N <= 0 || N > 1024 * 1024 || N % Width)
+      if (N <= 0 ||
+          N > ::neverd::limits::backend::kMaxSourceCallbackCopyBytes ||
+          N % Width)
         return fail("unmodeled stack adjustment");
       Depth += N;
       Rule(R.FDE.Instructions, CFIOpKind::DefCFAOffset, At, SP, Depth);
       if (A == Arch::ARM) {
         std::vector<uint8_t> Undo;
-        for (; N > 0; N -= std::min<int64_t>(N, 256))
-          Undo.push_back(std::min<int64_t>(N, 256) / 4 - 1);
+        for (; N > 0;
+             N -= std::min<int64_t>(
+                 N, ::neverd::limits::backend::
+                        kSourcePatchCallbackMachineDeriveAllocateNMinArgument2))
+          Undo.push_back(
+              std::min<int64_t>(
+                  N,
+                  ::neverd::limits::backend::
+                      kSourcePatchCallbackMachineDeriveAllocateMinArgument2) /
+                  4 -
+              1);
         R.ARMUndo.push_back(std::move(Undo));
       }
       return llvm::Error::success();

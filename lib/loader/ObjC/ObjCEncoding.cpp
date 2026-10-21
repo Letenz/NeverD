@@ -1,5 +1,7 @@
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
+#include "neverd/loader/Limits.h"
+
 #include <algorithm>
 
 namespace neverd {
@@ -27,7 +29,7 @@ bool quoted(llvm::StringRef Encoding, size_t &I) {
 // Validate the syntax inside an opaque aggregate pointer. No field widths,
 // offsets or ownership are inferred from this traversal.
 bool skipPointeeType(llvm::StringRef Encoding, size_t &I, unsigned Depth) {
-  if (Depth > 16)
+  if (Depth > ::neverd::limits::loader::kObjCEncodingSkipPointeeTypeDepthLimit)
     return false;
   while (I < Encoding.size() &&
          llvm::StringRef("rnNoORV").contains(Encoding[I]))
@@ -81,7 +83,7 @@ bool skipPointeeType(llvm::StringRef Encoding, size_t &I, unsigned Depth) {
 } // namespace
 
 std::optional<std::string> objcEncodedObjectClass(llvm::StringRef Encoding) {
-  if (Encoding.size() > 4096)
+  if (Encoding.size() > ::neverd::limits::loader::kMaxObjCTypeEncodingBytes)
     return std::nullopt;
   while (!Encoding.empty() &&
          llvm::StringRef("rnNoORV").contains(Encoding.front()))
@@ -100,7 +102,7 @@ std::optional<std::string> objcEncodedObjectClass(llvm::StringRef Encoding) {
 }
 
 std::optional<std::string> objcEncodedObjectProtocol(llvm::StringRef Encoding) {
-  if (Encoding.size() > 4096)
+  if (Encoding.size() > ::neverd::limits::loader::kMaxObjCTypeEncodingBytes)
     return std::nullopt;
   while (!Encoding.empty() &&
          llvm::StringRef("rnNoORV").contains(Encoding.front()))
@@ -123,7 +125,9 @@ namespace {
 // calling conventions. SourceABI must separately accept each value carrier.
 TypeRef parseSourceType(llvm::StringRef Encoding, size_t &I, unsigned Depth,
                         bool AllowOpaqueFunctionPointers) {
-  if (Depth > 16 || Encoding.size() > 4096)
+  if (Depth >
+          ::neverd::limits::loader::kObjCEncodingParseSourceTypeDepthLimit ||
+      Encoding.size() > ::neverd::limits::loader::kMaxObjCTypeEncodingBytes)
     return nullptr;
   while (I < Encoding.size() &&
          llvm::StringRef("rnNoORV").contains(Encoding[I]))
@@ -188,7 +192,9 @@ TypeRef parseSourceType(llvm::StringRef Encoding, size_t &I, unsigned Depth,
     ++I;
     std::vector<TypeRef> Fields;
     while (I < Encoding.size() && Encoding[I] != '}') {
-      if (Fields.size() >= 64 || (Encoding[I] == '"' && !quoted(Encoding, I)))
+      if (Fields.size() >= ::neverd::limits::loader::
+                               kObjCEncodingParseSourceTypeFieldsSizeLimit ||
+          (Encoding[I] == '"' && !quoted(Encoding, I)))
         return nullptr;
       auto Field =
           parseSourceType(Encoding, I, Depth + 1, AllowOpaqueFunctionPointers);
@@ -241,7 +247,11 @@ TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &Offset,
 
 std::optional<SourceFunctionTypeHint>
 parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding) {
-  if (Selector.empty() || Selector.size() > 4096 || Encoding.size() > 4096)
+  if (Selector.empty() ||
+      Selector.size() >
+          ::neverd::limits::loader::
+              kObjCEncodingParseObjCMethodEncodingSelectorSizeLimit ||
+      Encoding.size() > ::neverd::limits::loader::kMaxObjCTypeEncodingBytes)
     return std::nullopt;
   size_t I = 0;
   SourceFunctionTypeHint Hint;
@@ -249,7 +259,10 @@ parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding) {
   if (!Hint.ReturnType || !digits(Encoding, I, false))
     return std::nullopt;
   std::vector<char> Codes;
-  while (I < Encoding.size() && Hint.Parameters.size() < 64) {
+  while (I < Encoding.size() &&
+         Hint.Parameters.size() <
+             ::neverd::limits::loader::
+                 kObjCEncodingParseObjCMethodEncodingHintParametersSizeLimit) {
     auto Start = I;
     while (Start < Encoding.size() &&
            llvm::StringRef("rnNoORV").contains(Encoding[Start]))
@@ -276,7 +289,8 @@ parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding) {
 
 std::optional<SourceFunctionTypeHint>
 parseObjCFunctionEncoding(llvm::StringRef Encoding) {
-  if (Encoding.empty() || Encoding.size() > 4096)
+  if (Encoding.empty() ||
+      Encoding.size() > ::neverd::limits::loader::kMaxObjCTypeEncodingBytes)
     return std::nullopt;
   size_t I = 0;
   SourceFunctionTypeHint Hint;
@@ -287,7 +301,11 @@ parseObjCFunctionEncoding(llvm::StringRef Encoding) {
                                     /*AllowOpaqueFunctionPointers=*/false);
   if (!Hint.ReturnType || !digits(Encoding, I, true))
     return std::nullopt;
-  while (I < Encoding.size() && Hint.Parameters.size() < 64) {
+  while (
+      I < Encoding.size() &&
+      Hint.Parameters.size() <
+          ::neverd::limits::loader::
+              kObjCEncodingParseObjCFunctionEncodingHintParametersSizeLimit) {
     auto Type = parseSourceType(Encoding, I, 0,
                                 /*AllowOpaqueFunctionPointers=*/false);
     if (!Type || Type->Kind == NdTypeKind::Void || !digits(Encoding, I, true))

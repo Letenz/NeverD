@@ -22,6 +22,7 @@
 #include "HighEntryStackOffsets.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighFlowOracle.h"
@@ -83,8 +84,9 @@ class HighConversionTrace {
   Arch Architecture;
   unsigned Invocation = 0;
   bool Enabled = false;
-  static constexpr size_t MaxBytes = 98304;
-  static constexpr unsigned MaxRecords = 4096;
+  static constexpr size_t MaxBytes = ::neverd::limits::ir::kMedToHighMaxBytes;
+  static constexpr unsigned MaxRecords =
+      ::neverd::limits::ir::kMedToHighMaxRecords;
 
   static void variable(llvm::raw_ostream &OS, const MedVar &V) {
     OS << static_cast<unsigned>(V.Kind) << ':' << V.Id << ':' << V.SSAVer << ':'
@@ -170,7 +172,9 @@ public:
       : Med(Med), Architecture(Architecture) {
     const int SavedErrno = errno;
     const char *Selected = std::getenv("NEVERD_HIGH_TRACE_FUNCTION");
-    if (Selected && !Med.Name.empty() && Med.Name.size() <= 256 &&
+    if (Selected && !Med.Name.empty() &&
+        Med.Name.size() <= ::neverd::limits::ir::
+                               kMedToHighHighConversionTraceMedNameSizeLimit &&
         std::string_view(Selected) == std::string_view(Med.Name)) {
       static std::atomic<unsigned> Count{0};
       Invocation = Count.fetch_add(1, std::memory_order_relaxed);
@@ -255,7 +259,7 @@ public:
                       unsigned Depth) -> void {
         if (Body.empty() || Truncated)
           return;
-        if (Depth > 32) {
+        if (Depth > ::neverd::limits::ir::kMedToHighHighWalkWalkDepthLimit) {
           Truncated = true;
           return;
         }
@@ -679,7 +683,8 @@ ExprPtr MedToHighConverter::memoryAddressExpr(const MedVar &V,
 ExprPtr MedToHighConverter::sourceBitSlice(const ExprPtr &Value,
                                            uint64_t ByteOffset, uint16_t Bytes,
                                            unsigned Depth) {
-  if (!Value || !Bytes || Depth > 40)
+  if (!Value || !Bytes ||
+      Depth > ::neverd::limits::ir::kMedToHighConverterSourceBitSliceDepthLimit)
     return HighExpr::makeUndef(Bytes);
   if (Value->Kind == ExprKind::Var && Value->Var.Kind != MedVar::Param)
     if (auto Definition = inlineableDefinition(varKey(Value->Var)))
@@ -763,7 +768,10 @@ ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {
   static constexpr int kMaxNodes = limits::kMaxSSANodes;
 
   DepthGuard Guard(Depth, NodeCount);
-  if (!E || Depth > 30 || NodeCount > kMaxNodes)
+  if (!E ||
+      Depth >
+          ::neverd::limits::ir::kMedToHighConverterForceInlineExprDepthLimit ||
+      NodeCount > kMaxNodes)
     return E;
   ++NodeCount;
 
@@ -863,7 +871,8 @@ ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
   };
   static thread_local int Depth = 0;
   DepthGuard Guard(Depth);
-  if (!E || Depth > 16)
+  if (!E || Depth > ::neverd::limits::ir::
+                        kMedToHighConverterForceInlineCallTargetDepthLimit)
     return E;
   if (E->Kind == ExprKind::Var && E->Var.Id >= 0 && !E->Var.isConst()) {
     auto Key = varKey(E->Var);
@@ -1210,7 +1219,10 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
         continue;
       Dirty |= Rewritten;
     }
-    for (int Round = 0; Round < 8; ++Round) {
+    for (int Round = 0;
+         Round < ::neverd::limits::ir::
+                     kMedToHighMedToHighConverterReduceLateGotosRoundLimit;
+         ++Round) {
       const bool Grouped =
           groupSwitchCases(Func.Body) | dropJumpsToTheNextStatement(Func.Body) |
           hoistTryExitJumps(Func.Body) |
@@ -1616,7 +1628,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
             .count();
     const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
     const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
-    if (TotalMs > 1000 || WantDetail) {
+    if (TotalMs > ::neverd::limits::ir::kSlowMedToHighReportMilliseconds ||
+        WantDetail) {
       auto ElapsedMs = [](auto Start, auto End) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(End -
                                                                      Start)

@@ -21,6 +21,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/InstructionRelocations.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/ImportedMemoryCopy.h"
 #include "neverd/ir/low/RegistrationABI.h"
@@ -140,7 +141,10 @@ va_t CFGBuilder::nextKnownFunctionEntry(va_t After) const {
   }
   if (CurrentImg) {
     va_t Probe = After;
-    for (unsigned I = 0; I < 16; ++I) {
+    for (unsigned I = 0;
+         I < ::neverd::limits::ir::
+                 kCFGBuilderCFGBuilderNextKnownFunctionEntryILimit;
+         ++I) {
       const va_t Next = CurrentImg->nextKnownFunctionEntryAfter(Probe);
       if (Next == InvalidVA)
         break;
@@ -1413,305 +1417,300 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
     return Output.Size != 0 &&
            (Output == Value || proofRegistersOverlap(Output, Value));
   };
-  auto relocationFreeProofStillMatches =
-      [&](const RelocatedInstructionAddressOccurrence &Occurrence) {
-        if (Occurrence.Authority ==
-            RelocatedInstructionAddressProofKind::X86PCRelativeCodeAddress) {
-          const uint16_t PointerSize = Img.getPointerSize();
-          const auto Rec = Insns.find(Occurrence.InstructionAddr);
-          const LowOp *Output =
-              exactProofOp(Occurrence.InstructionAddr, Occurrence.OpSeq);
-          const auto Sources =
-              DiscoveredCodeRefSources.find(Occurrence.TargetVA);
-          if ((Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
-              PointerSize == 0 || Occurrence.FieldVA != InvalidVA ||
-              Occurrence.Width != PointerSize || !Occurrence.DefinesOutput ||
-              Occurrence.OutputMayDepend ||
-              Occurrence.Provenance != ConstantAddressProvenance::CodeAddress ||
-              !Occurrence.PCRelativeFromInstructionEnd ||
-              Occurrence.TargetVA == InvalidVA ||
-              Occurrence.TargetOwnerVA == InvalidVA ||
-              !Img.hasExecutableCodeOwnerAt(Occurrence.TargetVA,
-                                            ExecutableCodeOwners) ||
-              !Img.relocatedTargetBelongsToOwner(Occurrence.TargetVA,
-                                                 Occurrence.TargetOwnerVA,
-                                                 ExecutableCodeOwners) ||
-              Rec == Insns.end() || Rec->second.IsInstructionGuard ||
-              Rec->second.IsBranch || Rec->second.IsCall || Rec->second.IsRet ||
-              Rec->second.IsOpaqueTerminator ||
-              Rec->second.IsResumableTerminator || !Output ||
-              Output->Opcode != NdOp::COPY ||
-              Output->Opcode != Occurrence.OutputOpcode ||
-              Output->Output != Occurrence.OutputWitness ||
-              !Output->Output.isReg() || Output->Output.Size != PointerSize ||
-              Output->NumInputs != 1 || !Output->Inputs[0].isTemp() ||
-              Output->Inputs[0].Size != PointerSize ||
-              Occurrence.SeedInstructionAddr != Occurrence.InstructionAddr ||
-              Occurrence.SeedOpSeq != Occurrence.OpSeq ||
-              Occurrence.SeedOpcode != Occurrence.OutputOpcode ||
-              Occurrence.SeedInputWitness != Output->Inputs[0] ||
-              Occurrence.SeedOutputWitness != Occurrence.OutputWitness ||
-              Sources == DiscoveredCodeRefSources.end() ||
-              Sources->second.count(Occurrence.InstructionAddr) == 0)
-            return false;
+  auto relocationFreeProofStillMatches = [&](const RelocatedInstructionAddressOccurrence
+                                                 &Occurrence) {
+    if (Occurrence.Authority ==
+        RelocatedInstructionAddressProofKind::X86PCRelativeCodeAddress) {
+      const uint16_t PointerSize = Img.getPointerSize();
+      const auto Rec = Insns.find(Occurrence.InstructionAddr);
+      const LowOp *Output =
+          exactProofOp(Occurrence.InstructionAddr, Occurrence.OpSeq);
+      const auto Sources = DiscoveredCodeRefSources.find(Occurrence.TargetVA);
+      if ((Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
+          PointerSize == 0 || Occurrence.FieldVA != InvalidVA ||
+          Occurrence.Width != PointerSize || !Occurrence.DefinesOutput ||
+          Occurrence.OutputMayDepend ||
+          Occurrence.Provenance != ConstantAddressProvenance::CodeAddress ||
+          !Occurrence.PCRelativeFromInstructionEnd ||
+          Occurrence.TargetVA == InvalidVA ||
+          Occurrence.TargetOwnerVA == InvalidVA ||
+          !Img.hasExecutableCodeOwnerAt(Occurrence.TargetVA,
+                                        ExecutableCodeOwners) ||
+          !Img.relocatedTargetBelongsToOwner(Occurrence.TargetVA,
+                                             Occurrence.TargetOwnerVA,
+                                             ExecutableCodeOwners) ||
+          Rec == Insns.end() || Rec->second.IsInstructionGuard ||
+          Rec->second.IsBranch || Rec->second.IsCall || Rec->second.IsRet ||
+          Rec->second.IsOpaqueTerminator || Rec->second.IsResumableTerminator ||
+          !Output || Output->Opcode != NdOp::COPY ||
+          Output->Opcode != Occurrence.OutputOpcode ||
+          Output->Output != Occurrence.OutputWitness ||
+          !Output->Output.isReg() || Output->Output.Size != PointerSize ||
+          Output->NumInputs != 1 || !Output->Inputs[0].isTemp() ||
+          Output->Inputs[0].Size != PointerSize ||
+          Occurrence.SeedInstructionAddr != Occurrence.InstructionAddr ||
+          Occurrence.SeedOpSeq != Occurrence.OpSeq ||
+          Occurrence.SeedOpcode != Occurrence.OutputOpcode ||
+          Occurrence.SeedInputWitness != Output->Inputs[0] ||
+          Occurrence.SeedOutputWitness != Occurrence.OutputWitness ||
+          Sources == DiscoveredCodeRefSources.end() ||
+          Sources->second.count(Occurrence.InstructionAddr) == 0)
+        return false;
 
-          unsigned MatchingOutputs = 0;
-          for (const LowOp &Op : Rec->second.Ops)
-            MatchingOutputs += Op.Addr == Occurrence.InstructionAddr &&
-                               Op.Opcode == NdOp::COPY && Op.Output.isReg() &&
-                               Op.Output.Size == PointerSize &&
-                               Op.NumInputs == 1 && Op.Inputs[0].isTemp() &&
-                               Op.Inputs[0].Size == PointerSize;
-          return MatchingOutputs == 1;
+      unsigned MatchingOutputs = 0;
+      for (const LowOp &Op : Rec->second.Ops)
+        MatchingOutputs += Op.Addr == Occurrence.InstructionAddr &&
+                           Op.Opcode == NdOp::COPY && Op.Output.isReg() &&
+                           Op.Output.Size == PointerSize && Op.NumInputs == 1 &&
+                           Op.Inputs[0].isTemp() &&
+                           Op.Inputs[0].Size == PointerSize;
+      return MatchingOutputs == 1;
+    }
+    if (Occurrence.Authority != RelocatedInstructionAddressProofKind::
+                                    AArch64RelocationFreeDataDereference)
+      return true;
+    const uint16_t PointerSize = Img.getPointerSize();
+    if (Img.Arch != Arch::AArch64 || Img.IsRelocatable || PointerSize == 0 ||
+        PointerSize > sizeof(va_t) || Occurrence.FieldVA != InvalidVA ||
+        Occurrence.Width != PointerSize || !Occurrence.DefinesOutput ||
+        Occurrence.OutputMayDepend ||
+        Occurrence.Provenance != ConstantAddressProvenance::DataAddress ||
+        Occurrence.TargetVA == InvalidVA ||
+        Occurrence.TargetOwnerVA == InvalidVA ||
+        Occurrence.ArithmeticProof.empty() ||
+        Occurrence.ArithmeticProof.size() >
+            ::neverd::limits::ir::
+                kCFGBuilderBuildOnceRelocationFreeProofStillMatchesOccurrenceArithmeticProofSizeLimit)
+      return false;
+    const auto RootIt = Insns.find(Occurrence.SeedInstructionAddr);
+    const LowOp *Root =
+        exactProofOp(Occurrence.SeedInstructionAddr, Occurrence.SeedOpSeq);
+    if (RootIt == Insns.end() || !Root || RootIt->second.Ops.size() != 1 ||
+        RootIt->second.Size == 0 ||
+        RootIt->second.Size > InvalidVA - RootIt->second.Addr ||
+        RootIt->second.IsBranch || RootIt->second.IsCall ||
+        RootIt->second.IsRet || RootIt->second.IsOpaqueTerminator ||
+        RootIt->second.IsResumableTerminator ||
+        Root->Opcode != Occurrence.SeedOpcode || Root->Opcode != NdOp::COPY ||
+        Root->NumInputs != 1 ||
+        Root->Inputs[0] != Occurrence.SeedInputWitness ||
+        Root->Output != Occurrence.SeedOutputWitness || !Root->Output.isReg() ||
+        Root->Output.Size != PointerSize || !Root->Inputs[0].isConst() ||
+        Root->Inputs[0].Size != PointerSize ||
+        Root->Inputs[0].Provenance !=
+            ConstantAddressProvenance::AddressFragment)
+      return false;
+
+    const unsigned PointerBits = static_cast<unsigned>(PointerSize) * 8;
+    const uint64_t PointerMask = PointerBits == 64
+                                     ? std::numeric_limits<uint64_t>::max()
+                                     : (uint64_t{1} << PointerBits) - 1;
+    auto canonicalScalar =
+        [&](const LowOp &Op,
+            const RelocatedInstructionAddressArithmeticStep &Step)
+        -> std::optional<uint64_t> {
+      if (!Step.ScalarInputWitness.isConst() ||
+          Step.ScalarInputWitness.Provenance !=
+              ConstantAddressProvenance::Scalar)
+        return std::nullopt;
+      if (Step.ScalarInputWitness.Size == PointerSize)
+        return Step.ScalarInputWitness.Offset & PointerMask;
+      if (PointerSize != 8 || Step.ScalarInputWitness.Size != 4 ||
+          Step.BaseInputIndex != 0)
+        return std::nullopt;
+      const uint8_t *Bytes = Img.readVA(Op.Addr, sizeof(uint32_t));
+      if (!Bytes)
+        return std::nullopt;
+      const uint32_t Word = readLE<uint32_t>(Bytes);
+      if ((Word & 0x1f000000u) != 0x11000000u || (Word & 0x80000000u) == 0 ||
+          (Word & 0x20000000u) != 0 ||
+          (((Word & 0x40000000u) != 0) != (Op.Opcode == NdOp::INT_SUB)))
+        return std::nullopt;
+      const uint64_t Encoded = uint64_t((Word >> 10) & 0xfffu)
+                               << (((Word >> 22) & 1u) ? 12 : 0);
+      return Encoded == Step.ScalarInputWitness.Offset
+                 ? std::optional<uint64_t>(Encoded)
+                 : std::nullopt;
+    };
+    NdVar Current = Root->Output;
+    va_t Address = Root->Inputs[0].Offset;
+    va_t ExpectedAddress = RootIt->second.Addr + RootIt->second.Size;
+    for (const RelocatedInstructionAddressArithmeticStep &Step :
+         Occurrence.ArithmeticProof) {
+      const auto Rec = Insns.find(Step.InstructionAddr);
+      const LowOp *Op = exactProofOp(Step.InstructionAddr, Step.OpSeq);
+      if (Rec == Insns.end() || Rec->second.Addr != ExpectedAddress || !Op ||
+          Rec->second.Size == 0 ||
+          Rec->second.Size > InvalidVA - Rec->second.Addr ||
+          Rec->second.IsBranch || Rec->second.IsCall || Rec->second.IsRet ||
+          Rec->second.IsOpaqueTerminator || Rec->second.IsResumableTerminator ||
+          (Step.Opcode != NdOp::INT_ADD && Step.Opcode != NdOp::INT_SUB) ||
+          Op->Opcode != Step.Opcode || Op->NumInputs != 2 ||
+          Step.BaseInputIndex > 1 ||
+          (Op->Opcode == NdOp::INT_SUB && Step.BaseInputIndex != 0) ||
+          Op->Inputs[Step.BaseInputIndex] != Step.BaseInputWitness ||
+          Op->Inputs[1 - Step.BaseInputIndex] != Step.ScalarInputWitness ||
+          Op->Output != Step.OutputWitness ||
+          (!Op->Output.isReg() && !Op->Output.isTemp()) ||
+          Op->Output.Size != PointerSize ||
+          Step.BaseInputWitness.Size != PointerSize ||
+          Img.InstructionAddressMaterializations.count(Op->Addr))
+        return false;
+
+      // Some AArch64 memory encodings lower their unsigned offset into the
+      // same instruction record as an instruction-local COPY/ADD/LOAD
+      // chain. Reconstruct only exact, full-width COPY aliases from the
+      // previous address value to this arithmetic input. P-code may retain
+      // both the architectural register and a bookkeeping temporary in one
+      // record; a COPY to the temporary does not invalidate the still-live
+      // register.
+      std::vector<NdVar> BaseAliases{Current};
+      bool SawArithmetic = false;
+      for (const LowOp &Other : Rec->second.Ops) {
+        if (&Other == Op) {
+          if (std::find(BaseAliases.begin(), BaseAliases.end(),
+                        Step.BaseInputWitness) == BaseAliases.end())
+            return false;
+          SawArithmetic = true;
+          continue;
         }
-        if (Occurrence.Authority != RelocatedInstructionAddressProofKind::
-                                        AArch64RelocationFreeDataDereference)
-          return true;
-        const uint16_t PointerSize = Img.getPointerSize();
-        if (Img.Arch != Arch::AArch64 || Img.IsRelocatable ||
-            PointerSize == 0 || PointerSize > sizeof(va_t) ||
-            Occurrence.FieldVA != InvalidVA ||
-            Occurrence.Width != PointerSize || !Occurrence.DefinesOutput ||
-            Occurrence.OutputMayDepend ||
-            Occurrence.Provenance != ConstantAddressProvenance::DataAddress ||
-            Occurrence.TargetVA == InvalidVA ||
-            Occurrence.TargetOwnerVA == InvalidVA ||
-            Occurrence.ArithmeticProof.empty() ||
-            Occurrence.ArithmeticProof.size() > 32)
-          return false;
-        const auto RootIt = Insns.find(Occurrence.SeedInstructionAddr);
-        const LowOp *Root =
-            exactProofOp(Occurrence.SeedInstructionAddr, Occurrence.SeedOpSeq);
-        if (RootIt == Insns.end() || !Root || RootIt->second.Ops.size() != 1 ||
-            RootIt->second.Size == 0 ||
-            RootIt->second.Size > InvalidVA - RootIt->second.Addr ||
-            RootIt->second.IsBranch || RootIt->second.IsCall ||
-            RootIt->second.IsRet || RootIt->second.IsOpaqueTerminator ||
-            RootIt->second.IsResumableTerminator ||
-            Root->Opcode != Occurrence.SeedOpcode ||
-            Root->Opcode != NdOp::COPY || Root->NumInputs != 1 ||
-            Root->Inputs[0] != Occurrence.SeedInputWitness ||
-            Root->Output != Occurrence.SeedOutputWitness ||
-            !Root->Output.isReg() || Root->Output.Size != PointerSize ||
-            !Root->Inputs[0].isConst() || Root->Inputs[0].Size != PointerSize ||
-            Root->Inputs[0].Provenance !=
-                ConstantAddressProvenance::AddressFragment)
-          return false;
-
-        const unsigned PointerBits = static_cast<unsigned>(PointerSize) * 8;
-        const uint64_t PointerMask = PointerBits == 64
-                                         ? std::numeric_limits<uint64_t>::max()
-                                         : (uint64_t{1} << PointerBits) - 1;
-        auto canonicalScalar =
-            [&](const LowOp &Op,
-                const RelocatedInstructionAddressArithmeticStep &Step)
-            -> std::optional<uint64_t> {
-          if (!Step.ScalarInputWitness.isConst() ||
-              Step.ScalarInputWitness.Provenance !=
-                  ConstantAddressProvenance::Scalar)
-            return std::nullopt;
-          if (Step.ScalarInputWitness.Size == PointerSize)
-            return Step.ScalarInputWitness.Offset & PointerMask;
-          if (PointerSize != 8 || Step.ScalarInputWitness.Size != 4 ||
-              Step.BaseInputIndex != 0)
-            return std::nullopt;
-          const uint8_t *Bytes = Img.readVA(Op.Addr, sizeof(uint32_t));
-          if (!Bytes)
-            return std::nullopt;
-          const uint32_t Word = readLE<uint32_t>(Bytes);
-          if ((Word & 0x1f000000u) != 0x11000000u ||
-              (Word & 0x80000000u) == 0 || (Word & 0x20000000u) != 0 ||
-              (((Word & 0x40000000u) != 0) != (Op.Opcode == NdOp::INT_SUB)))
-            return std::nullopt;
-          const uint64_t Encoded = uint64_t((Word >> 10) & 0xfffu)
-                                   << (((Word >> 22) & 1u) ? 12 : 0);
-          return Encoded == Step.ScalarInputWitness.Offset
-                     ? std::optional<uint64_t>(Encoded)
-                     : std::nullopt;
-        };
-        NdVar Current = Root->Output;
-        va_t Address = Root->Inputs[0].Offset;
-        va_t ExpectedAddress = RootIt->second.Addr + RootIt->second.Size;
-        for (const RelocatedInstructionAddressArithmeticStep &Step :
-             Occurrence.ArithmeticProof) {
-          const auto Rec = Insns.find(Step.InstructionAddr);
-          const LowOp *Op = exactProofOp(Step.InstructionAddr, Step.OpSeq);
-          if (Rec == Insns.end() || Rec->second.Addr != ExpectedAddress ||
-              !Op || Rec->second.Size == 0 ||
-              Rec->second.Size > InvalidVA - Rec->second.Addr ||
-              Rec->second.IsBranch || Rec->second.IsCall || Rec->second.IsRet ||
-              Rec->second.IsOpaqueTerminator ||
-              Rec->second.IsResumableTerminator ||
-              (Step.Opcode != NdOp::INT_ADD && Step.Opcode != NdOp::INT_SUB) ||
-              Op->Opcode != Step.Opcode || Op->NumInputs != 2 ||
-              Step.BaseInputIndex > 1 ||
-              (Op->Opcode == NdOp::INT_SUB && Step.BaseInputIndex != 0) ||
-              Op->Inputs[Step.BaseInputIndex] != Step.BaseInputWitness ||
-              Op->Inputs[1 - Step.BaseInputIndex] != Step.ScalarInputWitness ||
-              Op->Output != Step.OutputWitness ||
-              (!Op->Output.isReg() && !Op->Output.isTemp()) ||
-              Op->Output.Size != PointerSize ||
-              Step.BaseInputWitness.Size != PointerSize ||
-              Img.InstructionAddressMaterializations.count(Op->Addr))
+        const LowMemoryOperandView Memory = lowMemoryOperands(Other);
+        if (!SawArithmetic) {
+          if (Memory.Complete)
             return false;
-
-          // Some AArch64 memory encodings lower their unsigned offset into the
-          // same instruction record as an instruction-local COPY/ADD/LOAD
-          // chain. Reconstruct only exact, full-width COPY aliases from the
-          // previous address value to this arithmetic input. P-code may retain
-          // both the architectural register and a bookkeeping temporary in one
-          // record; a COPY to the temporary does not invalidate the still-live
-          // register.
-          std::vector<NdVar> BaseAliases{Current};
-          bool SawArithmetic = false;
-          for (const LowOp &Other : Rec->second.Ops) {
-            if (&Other == Op) {
-              if (std::find(BaseAliases.begin(), BaseAliases.end(),
-                            Step.BaseInputWitness) == BaseAliases.end())
-                return false;
-              SawArithmetic = true;
-              continue;
-            }
-            const LowMemoryOperandView Memory = lowMemoryOperands(Other);
-            if (!SawArithmetic) {
-              if (Memory.Complete)
-                return false;
-              const bool CopiesAlias =
-                  Other.Opcode == NdOp::COPY && Other.NumInputs == 1 &&
-                  (Other.Output.isReg() || Other.Output.isTemp()) &&
-                  Other.Output.Size == PointerSize &&
-                  std::find(BaseAliases.begin(), BaseAliases.end(),
-                            Other.Inputs[0]) != BaseAliases.end();
-              if (CopiesAlias) {
-                if (std::find(BaseAliases.begin(), BaseAliases.end(),
-                              Other.Output) == BaseAliases.end())
-                  BaseAliases.push_back(Other.Output);
-                continue;
-              }
-              if (std::any_of(BaseAliases.begin(), BaseAliases.end(),
-                              [&](const NdVar &Alias) {
-                                return proofValueClobbers(Other.Output, Alias);
-                              }) ||
-                  proofValueClobbers(Other.Output, Op->Output))
-                return false;
-              continue;
-            }
-
-            const bool SameRecordFinalDereference =
-                &Step == &Occurrence.ArithmeticProof.back() &&
-                Occurrence.DereferenceInstructionAddr == Step.InstructionAddr;
-            if (!SameRecordFinalDereference &&
-                (Memory.Complete || proofValueClobbers(Other.Output, Current) ||
-                 proofValueClobbers(Other.Output, Op->Output)))
-              return false;
-          }
-          if (!SawArithmetic)
-            return false;
-          const std::optional<uint64_t> Delta = canonicalScalar(*Op, Step);
-          if (!Delta || Address > PointerMask ||
-              (Op->Opcode == NdOp::INT_ADD && *Delta > PointerMask - Address) ||
-              (Op->Opcode == NdOp::INT_SUB && *Delta > Address))
-            return false;
-          Address =
-              Op->Opcode == NdOp::INT_ADD ? Address + *Delta : Address - *Delta;
-          Current = Op->Output;
-          ExpectedAddress =
-              (&Step == &Occurrence.ArithmeticProof.back() &&
-               Occurrence.DereferenceInstructionAddr == Step.InstructionAddr)
-                  ? Rec->second.Addr
-                  : Rec->second.Addr + Rec->second.Size;
-        }
-        const RelocatedInstructionAddressArithmeticStep &Final =
-            Occurrence.ArithmeticProof.back();
-        if (Occurrence.InstructionAddr != Final.InstructionAddr ||
-            Occurrence.OpSeq != Final.OpSeq ||
-            Occurrence.OutputOpcode != Final.Opcode ||
-            Occurrence.OutputWitness != Final.OutputWitness ||
-            Occurrence.TargetVA != Address)
-          return false;
-
-        const auto DereferenceRec =
-            Insns.find(Occurrence.DereferenceInstructionAddr);
-        const LowOp *Dereference = exactProofOp(
-            Occurrence.DereferenceInstructionAddr, Occurrence.DereferenceOpSeq);
-        if (Dereference && Dereference->Opcode == NdOp::CALL)
-          return importedMemoryCopyDereferenceMatches(Img, Insns, *Dereference,
-                                                      Occurrence, Current,
-                                                      Address, ExpectedAddress);
-        if (DereferenceRec == Insns.end() || !Dereference ||
-            DereferenceRec->second.Addr != ExpectedAddress ||
-            DereferenceRec->second.IsBranch || DereferenceRec->second.IsCall ||
-            DereferenceRec->second.IsRet ||
-            DereferenceRec->second.IsOpaqueTerminator ||
-            DereferenceRec->second.IsResumableTerminator ||
-            Dereference->Opcode != Occurrence.DereferenceOpcode ||
-            (Dereference->Opcode != NdOp::LOAD &&
-             Dereference->Opcode != NdOp::STORE))
-          return false;
-        NdVar DereferenceAddress = Current;
-        bool SawDereference = false;
-        bool SawFinalArithmetic =
-            DereferenceRec->second.Addr != Final.InstructionAddr;
-        for (const LowOp &Op : DereferenceRec->second.Ops) {
-          if (!SawFinalArithmetic) {
-            if (Op.Addr == Final.InstructionAddr && Op.Seq == Final.OpSeq) {
-              SawFinalArithmetic = true;
-              continue;
-            }
+          const bool CopiesAlias =
+              Other.Opcode == NdOp::COPY && Other.NumInputs == 1 &&
+              (Other.Output.isReg() || Other.Output.isTemp()) &&
+              Other.Output.Size == PointerSize &&
+              std::find(BaseAliases.begin(), BaseAliases.end(),
+                        Other.Inputs[0]) != BaseAliases.end();
+          if (CopiesAlias) {
+            if (std::find(BaseAliases.begin(), BaseAliases.end(),
+                          Other.Output) == BaseAliases.end())
+              BaseAliases.push_back(Other.Output);
             continue;
           }
-          const LowMemoryOperandView CandidateMemory = lowMemoryOperands(Op);
-          if (&Op == Dereference) {
-            if (!CandidateMemory.Complete || !CandidateMemory.Address ||
-                *CandidateMemory.Address != DereferenceAddress ||
-                SawDereference || proofValueClobbers(Op.Output, Current))
-              return false;
-            SawDereference = true;
-            continue;
-          }
-          if (CandidateMemory.Complete ||
-              proofValueClobbers(Op.Output, Current))
+          if (std::any_of(BaseAliases.begin(), BaseAliases.end(),
+                          [&](const NdVar &Alias) {
+                            return proofValueClobbers(Other.Output, Alias);
+                          }) ||
+              proofValueClobbers(Other.Output, Op->Output))
             return false;
-          if (!SawDereference) {
-            if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
-                Op.Inputs[0] != DereferenceAddress ||
-                (!Op.Output.isReg() && !Op.Output.isTemp()) ||
-                Op.Output.Size != PointerSize ||
-                (Op.Output.isReg() &&
-                 proofRegistersOverlap(Op.Output, Current)))
-              return false;
-            DereferenceAddress = Op.Output;
-          }
+          continue;
         }
-        const LowMemoryOperandView Memory = lowMemoryOperands(*Dereference);
-        if (!SawFinalArithmetic || !SawDereference || !Memory.Complete ||
-            !Memory.Address ||
-            DereferenceAddress != Occurrence.DereferenceAddressWitness ||
-            *Memory.Address != DereferenceAddress ||
-            Memory.AccessSize != Occurrence.DereferenceAccessSize ||
-            Memory.AccessSize == 0 ||
-            Memory.AccessSize - 1 > InvalidVA - Address)
+
+        const bool SameRecordFinalDereference =
+            &Step == &Occurrence.ArithmeticProof.back() &&
+            Occurrence.DereferenceInstructionAddr == Step.InstructionAddr;
+        if (!SameRecordFinalDereference &&
+            (Memory.Complete || proofValueClobbers(Other.Output, Current) ||
+             proofValueClobbers(Other.Output, Op->Output)))
           return false;
-        const va_t Last = Address + Memory.AccessSize - 1;
-        if (!Img.hasObjectDataProvenance(Address) ||
-            !Img.hasObjectDataProvenance(Last) ||
-            Img.hasExecutableCodeOwnerAt(Address, ExecutableCodeOwners) ||
-            Img.hasExecutableCodeOwnerAt(Last, ExecutableCodeOwners) ||
-            isRuntimeWritableAddress(Img, Address) ||
-            isRuntimeWritableAddress(Img, Last) ||
-            !Img.relocatedTargetBelongsToOwner(
-                Address, Occurrence.TargetOwnerVA, ExecutableCodeOwners))
+      }
+      if (!SawArithmetic)
+        return false;
+      const std::optional<uint64_t> Delta = canonicalScalar(*Op, Step);
+      if (!Delta || Address > PointerMask ||
+          (Op->Opcode == NdOp::INT_ADD && *Delta > PointerMask - Address) ||
+          (Op->Opcode == NdOp::INT_SUB && *Delta > Address))
+        return false;
+      Address =
+          Op->Opcode == NdOp::INT_ADD ? Address + *Delta : Address - *Delta;
+      Current = Op->Output;
+      ExpectedAddress =
+          (&Step == &Occurrence.ArithmeticProof.back() &&
+           Occurrence.DereferenceInstructionAddr == Step.InstructionAddr)
+              ? Rec->second.Addr
+              : Rec->second.Addr + Rec->second.Size;
+    }
+    const RelocatedInstructionAddressArithmeticStep &Final =
+        Occurrence.ArithmeticProof.back();
+    if (Occurrence.InstructionAddr != Final.InstructionAddr ||
+        Occurrence.OpSeq != Final.OpSeq ||
+        Occurrence.OutputOpcode != Final.Opcode ||
+        Occurrence.OutputWitness != Final.OutputWitness ||
+        Occurrence.TargetVA != Address)
+      return false;
+
+    const auto DereferenceRec =
+        Insns.find(Occurrence.DereferenceInstructionAddr);
+    const LowOp *Dereference = exactProofOp(
+        Occurrence.DereferenceInstructionAddr, Occurrence.DereferenceOpSeq);
+    if (Dereference && Dereference->Opcode == NdOp::CALL)
+      return importedMemoryCopyDereferenceMatches(Img, Insns, *Dereference,
+                                                  Occurrence, Current, Address,
+                                                  ExpectedAddress);
+    if (DereferenceRec == Insns.end() || !Dereference ||
+        DereferenceRec->second.Addr != ExpectedAddress ||
+        DereferenceRec->second.IsBranch || DereferenceRec->second.IsCall ||
+        DereferenceRec->second.IsRet ||
+        DereferenceRec->second.IsOpaqueTerminator ||
+        DereferenceRec->second.IsResumableTerminator ||
+        Dereference->Opcode != Occurrence.DereferenceOpcode ||
+        (Dereference->Opcode != NdOp::LOAD &&
+         Dereference->Opcode != NdOp::STORE))
+      return false;
+    NdVar DereferenceAddress = Current;
+    bool SawDereference = false;
+    bool SawFinalArithmetic =
+        DereferenceRec->second.Addr != Final.InstructionAddr;
+    for (const LowOp &Op : DereferenceRec->second.Ops) {
+      if (!SawFinalArithmetic) {
+        if (Op.Addr == Final.InstructionAddr && Op.Seq == Final.OpSeq) {
+          SawFinalArithmetic = true;
+          continue;
+        }
+        continue;
+      }
+      const LowMemoryOperandView CandidateMemory = lowMemoryOperands(Op);
+      if (&Op == Dereference) {
+        if (!CandidateMemory.Complete || !CandidateMemory.Address ||
+            *CandidateMemory.Address != DereferenceAddress || SawDereference ||
+            proofValueClobbers(Op.Output, Current))
           return false;
-        const Section *StartSection = Img.getSectionFor(Address);
-        const Section *LastSection = Img.getSectionFor(Last);
-        if (StartSection || LastSection)
-          return StartSection && StartSection == LastSection &&
-                 StartSection->VA == Occurrence.TargetOwnerVA;
-        const Segment *StartSegment = Img.getSegmentFor(Address);
-        const Segment *LastSegment = Img.getSegmentFor(Last);
-        return StartSegment && StartSegment == LastSegment &&
-               StartSegment->VA == Occurrence.TargetOwnerVA;
-      };
+        SawDereference = true;
+        continue;
+      }
+      if (CandidateMemory.Complete || proofValueClobbers(Op.Output, Current))
+        return false;
+      if (!SawDereference) {
+        if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
+            Op.Inputs[0] != DereferenceAddress ||
+            (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+            Op.Output.Size != PointerSize ||
+            (Op.Output.isReg() && proofRegistersOverlap(Op.Output, Current)))
+          return false;
+        DereferenceAddress = Op.Output;
+      }
+    }
+    const LowMemoryOperandView Memory = lowMemoryOperands(*Dereference);
+    if (!SawFinalArithmetic || !SawDereference || !Memory.Complete ||
+        !Memory.Address ||
+        DereferenceAddress != Occurrence.DereferenceAddressWitness ||
+        *Memory.Address != DereferenceAddress ||
+        Memory.AccessSize != Occurrence.DereferenceAccessSize ||
+        Memory.AccessSize == 0 || Memory.AccessSize - 1 > InvalidVA - Address)
+      return false;
+    const va_t Last = Address + Memory.AccessSize - 1;
+    if (!Img.hasObjectDataProvenance(Address) ||
+        !Img.hasObjectDataProvenance(Last) ||
+        Img.hasExecutableCodeOwnerAt(Address, ExecutableCodeOwners) ||
+        Img.hasExecutableCodeOwnerAt(Last, ExecutableCodeOwners) ||
+        isRuntimeWritableAddress(Img, Address) ||
+        isRuntimeWritableAddress(Img, Last) ||
+        !Img.relocatedTargetBelongsToOwner(Address, Occurrence.TargetOwnerVA,
+                                           ExecutableCodeOwners))
+      return false;
+    const Section *StartSection = Img.getSectionFor(Address);
+    const Section *LastSection = Img.getSectionFor(Last);
+    if (StartSection || LastSection)
+      return StartSection && StartSection == LastSection &&
+             StartSection->VA == Occurrence.TargetOwnerVA;
+    const Segment *StartSegment = Img.getSegmentFor(Address);
+    const Segment *LastSegment = Img.getSegmentFor(Last);
+    return StartSegment && StartSegment == LastSegment &&
+           StartSegment->VA == Occurrence.TargetOwnerVA;
+  };
 
   Func.RelocatedInstructionAddressOccurrences.clear();
   for (const RelocatedInstructionAddressOccurrence &Occurrence :
@@ -2029,17 +2028,14 @@ candidateFiniteProofOwnerLookupWork(const BinaryImage &Img,
 bool CFGBuilder::chargeCandidateDecodeAttempt(const BinaryImage &Img) {
   if (!CandidateFiniteProofDecodeOnly)
     return true;
-  // A disposable proof pays for direct-path decodes and trap lookahead alike.
-  // The base charge includes instruction/LowIR storage and its destruction;
-  // repeated owner and relocation queries also pay for the image inventories.
-  constexpr size_t MaxScratchDecodeAttempts = 1024;
   const std::optional<size_t> OwnerWork =
       candidateFiniteProofOwnerLookupWork(Img, knownFunctionEntryCount());
   size_t ScratchDecodeWork = 8192;
   if (!OwnerWork ||
       !detail::addLinearComparisonWork(ScratchDecodeWork, *OwnerWork, 64) ||
       !CandidateFiniteProofDecodeBudget ||
-      CandidateFiniteProofDecodeAttempts >= MaxScratchDecodeAttempts ||
+      CandidateFiniteProofDecodeAttempts >=
+          ::neverd::limits::ir::kCFGBuilderMaxScratchDecodeAttempts ||
       *CandidateFiniteProofDecodeBudget < ScratchDecodeWork) {
     CandidateFiniteProofDecodeIncomplete = true;
     if (CandidateFiniteProofDecodeBudget)
@@ -3185,7 +3181,6 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
   // ADRP always clears the architectural low 12 bits, independent of the
   // operating system's VM page size.
   constexpr uint64_t AArch64PageMask = 0xfff;
-  constexpr unsigned MaxLookaheadInstructions = 32;
 
   for (auto RootIt = Insns.begin(); RootIt != Insns.end(); ++RootIt) {
     InsnRecord &RootRec = RootIt->second;
@@ -3231,7 +3226,9 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
     va_t ExpectedAddress = RootRec.Addr + RootRec.Size;
     unsigned Lookahead = 0;
     for (auto UseIt = std::next(RootIt);
-         UseIt != Insns.end() && Lookahead++ < MaxLookaheadInstructions;
+         UseIt != Insns.end() &&
+         Lookahead++ <
+             ::neverd::limits::ir::kCFGBuilderMaxLookaheadInstructions;
          ++UseIt) {
       InsnRecord &UseRec = UseIt->second;
       if (UseRec.Addr != ExpectedAddress)
@@ -3643,7 +3640,9 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
     };
 
     for (auto UseIt = std::next(RootIt);
-         UseIt != Insns.end() && Steps.size() < MaxLookaheadInstructions;
+         UseIt != Insns.end() &&
+         Steps.size() <
+             ::neverd::limits::ir::kCFGBuilderMaxLookaheadInstructions;
          ++UseIt) {
       const InsnRecord &UseRec = UseIt->second;
       if (UseRec.Addr != ExpectedAddress || UseRec.Size == 0 ||

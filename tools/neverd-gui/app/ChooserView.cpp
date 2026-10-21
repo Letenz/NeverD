@@ -1,5 +1,6 @@
 #include "ChooserView.h"
 
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
@@ -20,10 +21,6 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int PageSize = 256;
-constexpr int MaxCachedPages = 64;
-constexpr int MaxPendingPages = 4;
-constexpr int FilterDebounceMs = 150;
 
 struct ChooserSpec {
   const char *operation;
@@ -180,18 +177,20 @@ void ChooserModel::requestPage(int page) const {
     return;
   // Fast scrolling replaces older viewport requests instead of filling the
   // shared dispatcher. The latest pages leave room for other views and edits.
-  while (int(requestOrder_.size()) >= MaxPendingPages) {
+  while (int(requestOrder_.size()) >=
+         ::neverd::limits::gui::kChooserViewMaxPendingPages) {
     const int oldPage = requestOrder_.back();
     requestOrder_.pop_back();
     session_.queries().unsubscribe(pageRequests_.take(oldPage));
   }
   QJsonObject payload = request_;
-  payload["offset"] = page * PageSize;
-  payload["limit"] = PageSize;
+  payload["offset"] = page * ::neverd::limits::gui::kChooserViewPageSize;
+  payload["limit"] = ::neverd::limits::gui::kChooserViewPageSize;
   // Length order can start with multi-megabyte literals. The table needs a
   // preview; filtering and sorting still use the complete text in the worker.
   if (kind_ == ChooserKind::Strings)
-    payload["text_limit"] = 400;
+    payload["text_limit"] =
+        ::neverd::limits::gui::kChooserViewChooserModelRequestPageTextLimit;
   if (!filter_.isEmpty())
     payload["filter"] = filter_;
   if (!sortField_.isEmpty()) {
@@ -225,13 +224,16 @@ void ChooserModel::accept(int page, quint64 serial,
   pageRequests_.remove(page);
   requestOrder_.remove(page);
   const auto items = payload.value("items").toArray();
-  const int total = payload.contains("total")
-                        ? payload.value("total").toInt()
-                        : int(items.size()) + page * PageSize;
+  const int total =
+      payload.contains("total")
+          ? payload.value("total").toInt()
+          : int(items.size()) +
+                page * ::neverd::limits::gui::kChooserViewPageSize;
   pages_.insert(page, items);
   pageOrder_.remove(page);
   pageOrder_.push_front(page);
-  while (int(pageOrder_.size()) > MaxCachedPages) {
+  while (int(pageOrder_.size()) >
+         ::neverd::limits::gui::kChooserViewMaxCachedPages) {
     pages_.remove(pageOrder_.back());
     pageOrder_.pop_back();
   }
@@ -247,8 +249,9 @@ void ChooserModel::accept(int page, quint64 serial,
     }
     emit totalChanged(total_);
   }
-  const int first = page * PageSize;
-  const int last = std::min(total_, first + PageSize) - 1;
+  const int first = page * ::neverd::limits::gui::kChooserViewPageSize;
+  const int last =
+      std::min(total_, first + ::neverd::limits::gui::kChooserViewPageSize) - 1;
   if (last >= first)
     emit dataChanged(index(first, 0), index(last, columnCount() - 1));
 }
@@ -257,11 +260,11 @@ QJsonObject ChooserModel::rowObject(int row) const {
   if (localRows_)
     return row >= 0 && row < local_.size() ? local_.at(row).toObject()
                                            : QJsonObject();
-  const int page = row / PageSize;
+  const int page = row / ::neverd::limits::gui::kChooserViewPageSize;
   auto it = pages_.constFind(page);
   if (it == pages_.cend())
     return {};
-  const int offset = row % PageSize;
+  const int offset = row % ::neverd::limits::gui::kChooserViewPageSize;
   return offset < it->size() ? it->at(offset).toObject() : QJsonObject();
 }
 
@@ -362,10 +365,11 @@ QVariant ChooserModel::data(const QModelIndex &index, int role) const {
   if (!index.isValid() || index.column() >= columns_.size())
     return {};
   const int row = index.row();
-  if (!localRows_ && !pages_.contains(row / PageSize)) {
+  if (!localRows_ &&
+      !pages_.contains(row / ::neverd::limits::gui::kChooserViewPageSize)) {
     if (role == Qt::DisplayRole) {
       // Fetch on demand; the visible rows decide which pages load.
-      requestPage(row / PageSize);
+      requestPage(row / ::neverd::limits::gui::kChooserViewPageSize);
       return index.column() == 0 ? QStringLiteral("…") : QString();
     }
     return {};
@@ -470,7 +474,7 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   makeStatusLine(*status_);
   layout->addWidget(status_);
   filterTimer_.setSingleShot(true);
-  filterTimer_.setInterval(FilterDebounceMs);
+  filterTimer_.setInterval(::neverd::limits::gui::kChooserViewFilterDebounceMs);
   connect(&filterTimer_, &QTimer::timeout, this,
           [this] { model_->setFilter(filter_->text().trimmed()); });
   connect(filter_, &QLineEdit::textChanged, this,

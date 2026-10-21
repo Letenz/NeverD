@@ -14,6 +14,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/BinaryImage.h"
@@ -296,9 +297,14 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
   // the callee wherever the read happened.
   if (TargetExpr && TargetExpr->Kind == ExprKind::Var) {
     ExprPtr Def = TargetExpr;
-    for (int Hop = 0; Hop < 4 && Def && Def->Kind == ExprKind::Var &&
-                      Def->Var.Id >= 0 && !Def->Var.isConst();
-         ++Hop) {
+    for (
+        int Hop = 0;
+        Hop <
+            ::neverd::limits::ir::
+                kNdOpCallIndLoweringMedToHighConverterResolveCallIndTargetHopLimit &&
+        Def && Def->Kind == ExprKind::Var && Def->Var.Id >= 0 &&
+        !Def->Var.isConst();
+        ++Hop) {
       auto It = DefExpr.find(varKey(Def->Var));
       Def = It == DefExpr.end() ? nullptr : It->second;
     }

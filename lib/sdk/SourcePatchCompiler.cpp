@@ -170,7 +170,9 @@ compileSourcePatch(llvm::StringRef Source,
   const auto Stdout = TempDir / "stdout";
   const auto Stderr = TempDir / "stderr";
   const unsigned Timeout =
-      Options.timeout_seconds ? Options.timeout_seconds : 30;
+      Options.timeout_seconds
+          ? Options.timeout_seconds
+          : ::neverd::sdk::kDefaultSourcePatchTimeoutSeconds;
   SourcePatchCompilation Result;
   Result.CompilerPath = *Program;
   if (auto Error = execute({*Program, "--version"}, Stdout, Stderr, Timeout))

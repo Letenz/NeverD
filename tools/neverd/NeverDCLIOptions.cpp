@@ -14,7 +14,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "NeverDCLI.h"
+#include "ResourceLimits.h"
 
+#include "neverd/dalvik/Budget.h"
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionCLIStrings.h"
@@ -22,6 +24,9 @@
 #include "neverd/emulation/ProcessCLIStrings.h"
 #include "neverd/emulation/ProcessReportFields.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/pass/Limits.h"
+#include "neverd/sdk/Limits.h"
+#include "neverd/support/Limits.h"
 #include "neverd/unpack/UnpackCLIStrings.h"
 #include "neverd/unpack/UnpackStrings.h"
 
@@ -126,14 +131,16 @@ cl::opt<bool> MobileInternalIOSWorker("internal-ios-worker", cl::Hidden,
                                       cl::init(false), cl::sub(MobileCmd));
 cl::opt<unsigned> MobileTimeout(
     "timeout", cl::desc("Seconds for builtin analysis or each backend process"),
-    cl::init(300), cl::sub(MobileCmd));
-cl::opt<unsigned>
-    MobileMaxFiles("max-files",
-                   cl::desc("Maximum mobile input/output file count"),
-                   cl::init(20000), cl::sub(MobileCmd));
+    cl::init(static_cast<int>(neverd::mobile::Limits{}.timeout)),
+    cl::sub(MobileCmd));
+cl::opt<unsigned> MobileMaxFiles(
+    "max-files", cl::desc("Maximum mobile input/output file count"),
+    cl::init(static_cast<int>(neverd::mobile::Limits{}.max_files)),
+    cl::sub(MobileCmd));
 cl::opt<uint64_t> MobileMaxBytes("max-bytes",
                                  cl::desc("Maximum mobile input/output bytes"),
-                                 cl::init(2ULL * 1024 * 1024 * 1024),
+                                 cl::init(static_cast<unsigned long long>(
+                                     neverd::mobile::Limits{}.max_bytes)),
                                  cl::sub(MobileCmd));
 cl::SubCommand DecompileCmd("decompile",
                             "Decompile binary to C, Rust, or Solidity");
@@ -313,9 +320,11 @@ cl::opt<bool>
                        "sequences (instruction substitution pass)"),
               cl::sub(PatchCmd));
 
-cl::opt<unsigned> InstSubstRounds("subst-rounds",
-                                  cl::desc("Instruction substitution rounds"),
-                                  cl::init(1), cl::sub(PatchCmd));
+cl::opt<unsigned> InstSubstRounds(
+    "subst-rounds", cl::desc("Instruction substitution rounds"),
+    cl::init(static_cast<int>(
+        ::neverd::limits::pass::kDefaultInstructionSubstitutionRounds)),
+    cl::sub(PatchCmd));
 
 cl::opt<bool>
     ConstEnc("const-enc",
@@ -742,7 +751,8 @@ cl::opt<bool> NoOpt("no-opt", cl::desc("Skip LLVM optimization passes"),
                     cl::sub(CfgCmd));
 
 cl::opt<size_t> MaxFunc("max-func", cl::desc("Limit to first N functions"),
-                        cl::init(0), cl::sub(LiftCmd), cl::sub(DecompileCmd),
+                        cl::init(::neverd::limits::cli::kDefaultMaxFunc),
+                        cl::sub(LiftCmd), cl::sub(DecompileCmd),
                         cl::sub(PatchCmd), cl::sub(MobileCmd),
                         cl::sub(ExportCmd));
 
@@ -808,11 +818,14 @@ cl::list<std::string> VMControlFrameSlots(
     "vm-control-stack",
     cl::desc("Entry-RSP-relative context slot offset:bytes (repeatable)"),
     cl::ZeroOrMore, cl::sub(DecompileCmd));
-cl::opt<unsigned> VMMaxNodes("vm-max-nodes", cl::desc("Recovery node budget"),
-                             cl::init(4096), cl::sub(DecompileCmd));
-cl::opt<unsigned> VMMaxContexts("vm-max-contexts",
-                                cl::desc("Contexts per native address"),
-                                cl::init(64), cl::sub(DecompileCmd));
+cl::opt<unsigned>
+    VMMaxNodes("vm-max-nodes", cl::desc("Recovery node budget"),
+               cl::init(::neverd::limits::cli::kDefaultVMMaxNodes),
+               cl::sub(DecompileCmd));
+cl::opt<unsigned>
+    VMMaxContexts("vm-max-contexts", cl::desc("Contexts per native address"),
+                  cl::init(::neverd::limits::cli::kDefaultVMMaxContexts),
+                  cl::sub(DecompileCmd));
 cl::opt<std::string> VMMaxRefinements(
     "vm-max-refinements",
     cl::desc("Control-state refinement rounds (positive; default: 16)"),
@@ -869,9 +882,10 @@ cl::opt<bool> VMNoControlDiscovery(
     "vm-no-control-discovery",
     cl::desc("Disable automatic recovery control-state discovery"),
     cl::init(false), cl::sub(DecompileCmd));
-cl::opt<uint64_t> VMMaxOperations("vm-max-operations",
-                                  cl::desc("Recovery operation budget"),
-                                  cl::init(262144), cl::sub(DecompileCmd));
+cl::opt<uint64_t>
+    VMMaxOperations("vm-max-operations", cl::desc("Recovery operation budget"),
+                    cl::init(::neverd::limits::cli::kDefaultVMMaxOperations),
+                    cl::sub(DecompileCmd));
 cl::opt<std::string>
     VMRecoveryReport("recovery-report",
                      cl::desc("Write local recovery evidence JSON"),
@@ -975,11 +989,14 @@ cl::opt<sbf::RuntimePurpose>
 // Strings-specific options
 //===----------------------------------------------------------------------===//
 
-cl::opt<unsigned> MinStrLen("min-len",
-                            cl::desc("Minimum string length in display "
-                                     "columns; a wide East Asian character "
-                                     "counts two"),
-                            cl::init(4), cl::sub(StringsCmd));
+cl::opt<unsigned>
+    MinStrLen("min-len",
+              cl::desc("Minimum string length in display "
+                       "columns; a wide East Asian character "
+                       "counts two"),
+              cl::init(static_cast<int>(
+                  ::neverd::limits::support::kDefaultStringMinLength)),
+              cl::sub(StringsCmd));
 cl::list<std::string> StringEncodings(
     "encodings",
     cl::desc("Encodings to search, comma separated: ascii, utf-8, utf-16le, "
@@ -1155,7 +1172,8 @@ cl::opt<int> TypesParam(
     "param",
     cl::desc("With --fit, the parameter of --func, from 0 as its declaration "
              "lists it, whose accesses the types are ranked by"),
-    cl::init(-1), cl::value_desc("index"), cl::sub(TypesCmd));
+    cl::init(::neverd::limits::cli::kDefaultTypesParam),
+    cl::value_desc("index"), cl::sub(TypesCmd));
 cl::opt<std::string>
     TypesAt("at",
             cl::desc("With --fit, the instruction (hex) whose memory "
@@ -1173,10 +1191,12 @@ cl::opt<std::string> TypesMatch(
              "matches this as an editor's quick open matches; Type.member "
              "and .member match member paths too"),
     cl::init(""), cl::value_desc("text"), cl::sub(TypesCmd));
-cl::opt<unsigned> TypesLimit("limit",
-                             cl::desc("With --fit, show at most this many "
-                                      "types (default 10)"),
-                             cl::init(10), cl::sub(TypesCmd));
+cl::opt<unsigned>
+    TypesLimit("limit",
+               cl::desc("With --fit, show at most this many "
+                        "types (default 10)"),
+               cl::init(::neverd::limits::cli::kDefaultTypesLimit),
+               cl::sub(TypesCmd));
 cl::opt<std::string> TypesMember(
     "member",
     cl::desc("With one --type, where an access of offset[:size] bytes lands "
@@ -1215,7 +1235,8 @@ cl::opt<bool>
 cl::opt<std::string> HexAddr("addr", cl::desc("Start address (hex)"),
                              cl::init(""), cl::sub(HexCmd));
 
-cl::opt<unsigned> HexSize("size", cl::desc("Number of bytes"), cl::init(256),
+cl::opt<unsigned> HexSize("size", cl::desc("Number of bytes"),
+                          cl::init(::neverd::limits::cli::kDefaultHexSize),
                           cl::sub(HexCmd));
 cl::opt<std::string> HexTextEncoding(
     "text-encoding",
@@ -1230,17 +1251,19 @@ cl::opt<std::string> CfgSvg("svg", cl::desc("Output CFG as SVG file"),
 
 cl::opt<unsigned>
     SymbolicMaxPaths("max-paths", cl::desc("Maximum reachable paths to report"),
-                     cl::init(64), cl::sub(SymbolicCmd));
+                     cl::init(::neverd::limits::cli::kDefaultSymbolicMaxPaths),
+                     cl::sub(SymbolicCmd));
 
 cl::opt<unsigned>
     SymbolicMaxSteps("max-steps",
                      cl::desc("Maximum operations along each path"),
-                     cl::init(1u << 16), cl::sub(SymbolicCmd));
+                     cl::init(::neverd::limits::cli::kDefaultSymbolicMaxSteps),
+                     cl::sub(SymbolicCmd));
 
-cl::opt<unsigned>
-    SymbolicMaxBlockVisits("max-block-visits",
-                           cl::desc("Maximum visits to one block per path"),
-                           cl::init(3), cl::sub(SymbolicCmd));
+cl::opt<unsigned> SymbolicMaxBlockVisits(
+    "max-block-visits", cl::desc("Maximum visits to one block per path"),
+    cl::init(::neverd::limits::cli::kDefaultSymbolicMaxBlockVisits),
+    cl::sub(SymbolicCmd));
 
 cl::opt<bool> SymbolicExpressions(
     "expressions", cl::desc("Include path predicates and unresolved targets"),
@@ -1258,34 +1281,37 @@ cl::opt<std::string> SafetySources(
     "sources", cl::desc("Extend the input-source catalog from a file"),
     cl::init(""), cl::value_desc("file"), cl::sub(AuditCmd), cl::sub(HuntCmd));
 
-cl::opt<unsigned> SafetyMaxPaths("max-paths",
-                                 cl::desc("Maximum reachable paths to explore"),
-                                 cl::init(0), cl::sub(HuntCmd),
-                                 cl::sub(AuditCmd));
+cl::opt<unsigned>
+    SafetyMaxPaths("max-paths", cl::desc("Maximum reachable paths to explore"),
+                   cl::init(::neverd::limits::cli::kDefaultSafetyMaxPaths),
+                   cl::sub(HuntCmd), cl::sub(AuditCmd));
 
-cl::opt<unsigned> SafetyMaxSteps("max-steps",
-                                 cl::desc("Maximum operations along each path"),
-                                 cl::init(0), cl::sub(HuntCmd),
-                                 cl::sub(AuditCmd));
+cl::opt<unsigned>
+    SafetyMaxSteps("max-steps", cl::desc("Maximum operations along each path"),
+                   cl::init(::neverd::limits::cli::kDefaultSafetyMaxSteps),
+                   cl::sub(HuntCmd), cl::sub(AuditCmd));
 
 cl::opt<unsigned>
     SafetyMaxLoop("max-loop", cl::desc("Maximum iterations of one loop header"),
-                  cl::init(0), cl::sub(HuntCmd), cl::sub(AuditCmd));
+                  cl::init(::neverd::limits::cli::kDefaultSafetyMaxLoop),
+                  cl::sub(HuntCmd), cl::sub(AuditCmd));
 
 cl::opt<unsigned> SafetyMaxCallDepth(
     "max-call-depth",
     cl::desc("Maximum internal call edges from a known entry (0 = default)"),
-    cl::init(0), cl::sub(HuntCmd), cl::sub(AuditCmd));
+    cl::init(::neverd::limits::cli::kDefaultSafetyMaxCallDepth),
+    cl::sub(HuntCmd), cl::sub(AuditCmd));
 
 cl::opt<unsigned> SafetyMaxSummaryIterations(
     "max-summary-iterations",
     cl::desc("Maximum interprocedural attacker-summary rounds (0 = default)"),
-    cl::init(0), cl::sub(HuntCmd), cl::sub(AuditCmd));
+    cl::init(::neverd::limits::cli::kDefaultSafetyMaxSummaryIterations),
+    cl::sub(HuntCmd), cl::sub(AuditCmd));
 
-cl::opt<unsigned long long>
-    SafetySolverConflicts("solver-conflicts",
-                          cl::desc("Solver conflict budget (0 = default)"),
-                          cl::init(0), cl::sub(HuntCmd), cl::sub(AuditCmd));
+cl::opt<unsigned long long> SafetySolverConflicts(
+    "solver-conflicts", cl::desc("Solver conflict budget (0 = default)"),
+    cl::init(::neverd::limits::cli::kDefaultSafetySolverConflicts),
+    cl::sub(HuntCmd), cl::sub(AuditCmd));
 
 //===----------------------------------------------------------------------===//
 // LowIR concolic options
@@ -1500,10 +1526,12 @@ cl::list<std::string> PathsVia("via",
 cl::opt<bool> PathsShortest("shortest",
                             cl::desc("List only the shortest paths"),
                             cl::sub(PathsCmd));
-cl::opt<unsigned> PathsMaxPaths("max-paths",
-                                cl::desc("Paths to list per segment, 0 to "
-                                         "1000 (default 32)"),
-                                cl::init(32), cl::sub(PathsCmd));
+cl::opt<unsigned>
+    PathsMaxPaths("max-paths",
+                  cl::desc("Paths to list per segment, 0 to "
+                           "1000 (default 32)"),
+                  cl::init(::neverd::limits::cli::kDefaultPathsMaxPaths),
+                  cl::sub(PathsCmd));
 cl::list<std::string> GraphExclude("exclude",
                                    cl::desc("A function or import no path or "
                                             "tree passes (repeatable)"),
@@ -1657,18 +1685,22 @@ UnsignedNumericOption
     ItemSize("size",
              cl::desc("Bytes of a value, an array element, or "
                       "undefined bytes"),
-             cl::init(1), cl::sub(ItemsCmd));
+             cl::init(::neverd::limits::cli::kDefaultItemSize),
+             cl::sub(ItemsCmd));
 UnsignedNumericOption
     ItemElementSize("element-size",
                     cl::desc("Array element width in bytes (same as --size)"),
-                    cl::init(1), cl::sub(ItemsCmd));
+                    cl::init(::neverd::limits::cli::kDefaultItemElementSize),
+                    cl::sub(ItemsCmd));
 cl::opt<std::string>
     ItemArray("array",
               cl::desc("Define an array at this address (hex), with --size "
                        "bytes per element and --count elements"),
               cl::value_desc("address"), cl::sub(ItemsCmd));
-UnsignedNumericOption ItemCount("count", cl::desc("Number of array elements"),
-                                cl::init(0), cl::sub(ItemsCmd));
+UnsignedNumericOption
+    ItemCount("count", cl::desc("Number of array elements"),
+              cl::init(::neverd::limits::cli::kDefaultItemCount),
+              cl::sub(ItemsCmd));
 cl::opt<std::string>
     ItemType("type",
              cl::desc("Local type of each array element; its layout must "
@@ -1679,17 +1711,17 @@ cl::opt<std::string>
                   cl::desc("Mark padding at this address (hex) through the "
                            "next --boundary"),
                   cl::value_desc("address"), cl::sub(ItemsCmd));
-UnsignedNumericOption
-    ItemBoundary("boundary",
-                 cl::desc("Power-of-two alignment boundary, from 2 to 1048576"),
-                 cl::init(16), cl::sub(ItemsCmd));
+UnsignedNumericOption ItemBoundary(
+    "boundary", cl::desc("Power-of-two alignment boundary, from 2 to 1048576"),
+    cl::init(::neverd::limits::cli::kDefaultItemBoundary), cl::sub(ItemsCmd));
 cl::opt<std::string> OperandAddr("addr",
                                  cl::desc("Address (hex) of the instruction"),
                                  cl::init(""), cl::value_desc("address"),
                                  cl::sub(OperandsCmd));
 UnsignedNumericOption
     OperandIndex("operand", cl::desc("Operand of the instruction, from 0"),
-                 cl::init(0), cl::sub(OperandsCmd));
+                 cl::init(::neverd::limits::cli::kDefaultOperandIndex),
+                 cl::sub(OperandsCmd));
 cl::opt<std::string>
     OperandBase("base",
                 cl::desc("number, hex, decimal, binary, char or offset"),
@@ -1716,7 +1748,8 @@ SignedNumericOption OperandDelta(
     "delta",
     cl::desc("With --struct, how many bytes into the type the register "
              "points: the number lands that much further in"),
-    cl::init(0), cl::sub(OperandsCmd));
+    cl::init(::neverd::limits::cli::kDefaultOperandDelta),
+    cl::sub(OperandsCmd));
 cl::opt<std::string>
     ItemEncoding("encoding",
                  cl::desc("The encoding --string reads, as `neverd strings` "
@@ -1738,8 +1771,10 @@ cl::opt<bool> SearchCaseSensitive("case-sensitive",
                                   cl::desc("Case-sensitive text search"),
                                   cl::sub(SearchCmd));
 
-cl::opt<unsigned> SearchMaxResults("max-results", cl::desc("Maximum results"),
-                                   cl::init(256), cl::sub(SearchCmd));
+cl::opt<unsigned> SearchMaxResults(
+    "max-results", cl::desc("Maximum results"),
+    cl::init(static_cast<int>(::neverd::sdk::kDefaultSearchResults)),
+    cl::sub(SearchCmd));
 
 //===----------------------------------------------------------------------===//
 // CallGraph-specific options
@@ -1804,10 +1839,10 @@ cl::list<std::string>
     PatchCompilerArgs("compiler-arg",
                       cl::desc("Source compiler argument (repeatable)"),
                       cl::ZeroOrMore, cl::sub(PatchCmd));
-cl::opt<unsigned>
-    PatchCompilerTimeout("compiler-timeout",
-                         cl::desc("Compiler timeout in seconds (1-3600)"),
-                         cl::init(30), cl::sub(PatchCmd));
+cl::opt<unsigned> PatchCompilerTimeout(
+    "compiler-timeout", cl::desc("Compiler timeout in seconds (1-3600)"),
+    cl::init(::neverd::sdk::kDefaultSourcePatchTimeoutSeconds),
+    cl::sub(PatchCmd));
 cl::opt<bool> PatchReport("patch-report",
                           cl::desc("Print the source patch result as JSON"),
                           cl::init(false), cl::sub(PatchCmd));
@@ -1897,7 +1932,8 @@ cl::opt<unsigned> SimplifyWidth(
     "width",
     cl::desc("Bit width of every leaf without an explicit '#bits' suffix "
              "(default 32)"),
-    cl::init(32), cl::sub(SimplifyCmd));
+    cl::init(::neverd::limits::cli::kDefaultSimplifyWidth),
+    cl::sub(SimplifyCmd));
 
 cl::opt<bool> SimplifyShallow(
     "shallow",
@@ -1910,13 +1946,15 @@ cl::opt<unsigned> SimplifyMaxAtoms(
     cl::desc(
         "Most distinct inputs one measurement may span; the cost is 2^n, "
         "so this is the dial between reach and time (0 keeps the default)"),
-    cl::init(0), cl::sub(SimplifyCmd));
+    cl::init(::neverd::limits::cli::kDefaultSimplifyMaxAtoms),
+    cl::sub(SimplifyCmd));
 
 cl::opt<unsigned long long> SimplifyMaxWork(
     "max-work",
     cl::desc("Work budget for the layered walk and combinatorial polynomial "
              "search (0 keeps the default)"),
-    cl::init(0), cl::sub(SimplifyCmd));
+    cl::init(::neverd::limits::cli::kDefaultSimplifyMaxWork),
+    cl::sub(SimplifyCmd));
 
 cl::opt<bool> SimplifyExhaustive(
     "exhaustive",
@@ -1928,7 +1966,8 @@ cl::opt<unsigned> SimplifyVerifySamples(
     "verify-samples",
     cl::desc("Random assignments each rewrite is checked against before it is "
              "returned (0 keeps the default)"),
-    cl::init(0), cl::sub(SimplifyCmd));
+    cl::init(::neverd::limits::cli::kDefaultSimplifyVerifySamples),
+    cl::sub(SimplifyCmd));
 
 cl::opt<bool> SimplifyAllowGrowth(
     "allow-growth",
@@ -1953,58 +1992,62 @@ cl::opt<bool> SimplifySynthesize(
 cl::opt<unsigned long long>
     SimplifyMaxCost("max-cost",
                     cl::desc("Largest synthesis candidate in grammar nodes"),
-                    cl::init(0), cl::sub(SimplifyCmd));
+                    cl::init(::neverd::limits::cli::kDefaultSimplifyMaxCost),
+                    cl::sub(SimplifyCmd));
 
 cl::opt<unsigned long long> SimplifyMaxSamples(
     "max-samples", cl::desc("Discovery samples used to distinguish candidates"),
-    cl::init(0), cl::sub(SimplifyCmd));
+    cl::init(::neverd::limits::cli::kDefaultSimplifyMaxSamples),
+    cl::sub(SimplifyCmd));
 
-cl::opt<unsigned>
-    SimplifyMaxLeaves("max-leaves",
-                      cl::desc("Maximum independent synthesis leaves"),
-                      cl::init(0), cl::sub(SimplifyCmd));
+cl::opt<unsigned> SimplifyMaxLeaves(
+    "max-leaves", cl::desc("Maximum independent synthesis leaves"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifyMaxLeaves),
+    cl::sub(SimplifyCmd));
 
-cl::opt<unsigned> SimplifyMaxConstants("max-constants",
-                                       cl::desc("Maximum synthesis literals"),
-                                       cl::init(0), cl::sub(SimplifyCmd));
+cl::opt<unsigned> SimplifyMaxConstants(
+    "max-constants", cl::desc("Maximum synthesis literals"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifyMaxConstants),
+    cl::sub(SimplifyCmd));
 
-cl::opt<unsigned>
-    SimplifyStochasticSlots("stochastic-slots",
-                            cl::desc("Straight-line stochastic search slots"),
-                            cl::init(0), cl::sub(SimplifyCmd));
+cl::opt<unsigned> SimplifyStochasticSlots(
+    "stochastic-slots", cl::desc("Straight-line stochastic search slots"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifyStochasticSlots),
+    cl::sub(SimplifyCmd));
 
 cl::opt<unsigned> SimplifyStochasticRestarts(
     "stochastic-restarts", cl::desc("Independent stochastic search attempts"),
-    cl::init(0), cl::sub(SimplifyCmd));
+    cl::init(::neverd::limits::cli::kDefaultSimplifyStochasticRestarts),
+    cl::sub(SimplifyCmd));
 
-cl::opt<unsigned long long>
-    SimplifyStochasticIterations("stochastic-iterations",
-                                 cl::desc("Mutations per stochastic restart"),
-                                 cl::init(0), cl::sub(SimplifyCmd));
+cl::opt<unsigned long long> SimplifyStochasticIterations(
+    "stochastic-iterations", cl::desc("Mutations per stochastic restart"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifyStochasticIterations),
+    cl::sub(SimplifyCmd));
 
-cl::opt<unsigned long long>
-    SimplifySolverMaxConflicts("solver-max-conflicts",
-                               cl::desc("SAT conflict budget"), cl::init(0),
-                               cl::sub(SimplifyCmd));
+cl::opt<unsigned long long> SimplifySolverMaxConflicts(
+    "solver-max-conflicts", cl::desc("SAT conflict budget"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifySolverMaxConflicts),
+    cl::sub(SimplifyCmd));
 
-cl::opt<unsigned long long>
-    SimplifySolverMaxPropagations("solver-max-propagations",
-                                  cl::desc("SAT propagation budget"),
-                                  cl::init(0), cl::sub(SimplifyCmd));
+cl::opt<unsigned long long> SimplifySolverMaxPropagations(
+    "solver-max-propagations", cl::desc("SAT propagation budget"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifySolverMaxPropagations),
+    cl::sub(SimplifyCmd));
 
-cl::opt<unsigned long long>
-    SimplifySolverMaxWatchVisits("solver-max-watch-visits",
-                                 cl::desc("SAT watched-clause visit budget"),
-                                 cl::init(0), cl::sub(SimplifyCmd));
+cl::opt<unsigned long long> SimplifySolverMaxWatchVisits(
+    "solver-max-watch-visits", cl::desc("SAT watched-clause visit budget"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifySolverMaxWatchVisits),
+    cl::sub(SimplifyCmd));
 
 cl::opt<std::string> SimplifySolver(
     "solver", cl::desc("Proof backend: builtin or z3 (optional build feature)"),
     cl::init("builtin"), cl::sub(SimplifyCmd));
 
-cl::opt<unsigned>
-    SimplifySolverTimeoutMs("solver-timeout-ms",
-                            cl::desc("Z3 per-check timeout (default 1000 ms)"),
-                            cl::init(0), cl::sub(SimplifyCmd));
+cl::opt<unsigned> SimplifySolverTimeoutMs(
+    "solver-timeout-ms", cl::desc("Z3 per-check timeout (default 1000 ms)"),
+    cl::init(::neverd::limits::cli::kDefaultSimplifySolverTimeoutMs),
+    cl::sub(SimplifyCmd));
 
 //===----------------------------------------------------------------------===//
 // Optimize-IR-specific options
@@ -2036,10 +2079,10 @@ cl::opt<neverd_llvm_optimization_level_t> OptimizeIRLevel(
                clEnumValN(NEVERD_LLVM_OPTIMIZATION_O3, "O3", "LLVM O3")),
     cl::init(NEVERD_LLVM_OPTIMIZATION_O2), cl::sub(OptimizeIRCmd));
 
-cl::opt<unsigned>
-    OptimizeIRMaxRounds("max-rounds",
-                        cl::desc("Semantic rounds per pass invocation"),
-                        cl::init(0), cl::sub(OptimizeIRCmd));
+cl::opt<unsigned> OptimizeIRMaxRounds(
+    "max-rounds", cl::desc("Semantic rounds per pass invocation"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRMaxRounds),
+    cl::sub(OptimizeIRCmd));
 
 cl::opt<bool>
     OptimizeIRSynthesize("synthesize",
@@ -2048,48 +2091,55 @@ cl::opt<bool>
 
 cl::opt<unsigned long long> OptimizeIRSynthesisMaxCost(
     "synthesis-max-cost",
-    cl::desc("Largest synthesis candidate in grammar nodes"), cl::init(0),
+    cl::desc("Largest synthesis candidate in grammar nodes"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSynthesisMaxCost),
     cl::sub(OptimizeIRCmd));
-cl::opt<unsigned long long>
-    OptimizeIRSynthesisMaxSamples("synthesis-max-samples",
-                                  cl::desc("Synthesis discovery sample count"),
-                                  cl::init(0), cl::sub(OptimizeIRCmd));
+cl::opt<unsigned long long> OptimizeIRSynthesisMaxSamples(
+    "synthesis-max-samples", cl::desc("Synthesis discovery sample count"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSynthesisMaxSamples),
+    cl::sub(OptimizeIRCmd));
 cl::opt<unsigned> OptimizeIRSynthesisVerifySamples(
     "synthesis-verify-samples", cl::desc("Synthesis pre-proof sample count"),
-    cl::init(0), cl::sub(OptimizeIRCmd));
-cl::opt<unsigned long long>
-    OptimizeIRSynthesisMaxWork("synthesis-max-work",
-                               cl::desc("Synthesis search-work budget"),
-                               cl::init(0), cl::sub(OptimizeIRCmd));
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSynthesisVerifySamples),
+    cl::sub(OptimizeIRCmd));
+cl::opt<unsigned long long> OptimizeIRSynthesisMaxWork(
+    "synthesis-max-work", cl::desc("Synthesis search-work budget"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSynthesisMaxWork),
+    cl::sub(OptimizeIRCmd));
 cl::opt<unsigned> OptimizeIRSynthesisMaxLeaves(
     "synthesis-max-leaves", cl::desc("Maximum independent synthesis leaves"),
-    cl::init(0), cl::sub(OptimizeIRCmd));
-cl::opt<unsigned>
-    OptimizeIRSynthesisMaxConstants("synthesis-max-constants",
-                                    cl::desc("Maximum synthesis literals"),
-                                    cl::init(0), cl::sub(OptimizeIRCmd));
-cl::opt<unsigned>
-    OptimizeIRSynthesisStochasticSlots("synthesis-stochastic-slots",
-                                       cl::desc("Stochastic search slots"),
-                                       cl::init(0), cl::sub(OptimizeIRCmd));
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSynthesisMaxLeaves),
+    cl::sub(OptimizeIRCmd));
+cl::opt<unsigned> OptimizeIRSynthesisMaxConstants(
+    "synthesis-max-constants", cl::desc("Maximum synthesis literals"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSynthesisMaxConstants),
+    cl::sub(OptimizeIRCmd));
+cl::opt<unsigned> OptimizeIRSynthesisStochasticSlots(
+    "synthesis-stochastic-slots", cl::desc("Stochastic search slots"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSynthesisStochasticSlots),
+    cl::sub(OptimizeIRCmd));
 cl::opt<unsigned> OptimizeIRSynthesisStochasticRestarts(
     "synthesis-stochastic-restarts", cl::desc("Stochastic search restarts"),
-    cl::init(0), cl::sub(OptimizeIRCmd));
+    cl::init(
+        ::neverd::limits::cli::kDefaultOptimizeIRSynthesisStochasticRestarts),
+    cl::sub(OptimizeIRCmd));
 cl::opt<unsigned long long> OptimizeIRSynthesisStochasticIterations(
     "synthesis-stochastic-iterations", cl::desc("Mutations per restart"),
-    cl::init(0), cl::sub(OptimizeIRCmd));
-cl::opt<unsigned long long>
-    OptimizeIRSolverMaxConflicts("solver-max-conflicts",
-                                 cl::desc("SAT conflict budget"), cl::init(0),
-                                 cl::sub(OptimizeIRCmd));
-cl::opt<unsigned long long>
-    OptimizeIRSolverMaxPropagations("solver-max-propagations",
-                                    cl::desc("SAT propagation budget"),
-                                    cl::init(0), cl::sub(OptimizeIRCmd));
-cl::opt<unsigned long long>
-    OptimizeIRSolverMaxWatchVisits("solver-max-watch-visits",
-                                   cl::desc("SAT watched-clause visit budget"),
-                                   cl::init(0), cl::sub(OptimizeIRCmd));
+    cl::init(
+        ::neverd::limits::cli::kDefaultOptimizeIRSynthesisStochasticIterations),
+    cl::sub(OptimizeIRCmd));
+cl::opt<unsigned long long> OptimizeIRSolverMaxConflicts(
+    "solver-max-conflicts", cl::desc("SAT conflict budget"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSolverMaxConflicts),
+    cl::sub(OptimizeIRCmd));
+cl::opt<unsigned long long> OptimizeIRSolverMaxPropagations(
+    "solver-max-propagations", cl::desc("SAT propagation budget"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSolverMaxPropagations),
+    cl::sub(OptimizeIRCmd));
+cl::opt<unsigned long long> OptimizeIRSolverMaxWatchVisits(
+    "solver-max-watch-visits", cl::desc("SAT watched-clause visit budget"),
+    cl::init(::neverd::limits::cli::kDefaultOptimizeIRSolverMaxWatchVisits),
+    cl::sub(OptimizeIRCmd));
 cl::opt<bool> OptimizeIRExhaustive(
     "exhaustive", cl::desc("Remove convergence, search, and solver budgets"),
     cl::sub(OptimizeIRCmd));
@@ -2180,6 +2230,8 @@ cl::opt<std::string> TranslateObjectEntry(
 cl::opt<unsigned long long> TranslateObjectGeneration(
     "generation",
     cl::desc("Executable-memory generation in the cache identity"),
-    cl::value_desc("number"), cl::init(0), cl::sub(TranslateObjectCmd));
+    cl::value_desc("number"),
+    cl::init(::neverd::limits::cli::kDefaultTranslateObjectGeneration),
+    cl::sub(TranslateObjectCmd));
 
 } // namespace neverd::cli

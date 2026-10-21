@@ -2,6 +2,8 @@
 
 #include "ObjCRuntimeData.h"
 
+#include "neverd/loader/Limits.h"
+
 namespace neverd::objc {
 std::optional<std::vector<MethodRecord>>
 readMethodList(const BinaryImage &Image, va_t Address, size_t &Remaining,
@@ -19,7 +21,9 @@ readMethodList(const BinaryImage &Image, va_t Address, size_t &Remaining,
   const bool DirectSelectors = (*Flags & 0x40000000U) != 0;
   const uint32_t EntrySize = *Flags & 0xfffcU;
   if ((*Flags & 0x3fff0000U) || (DirectSelectors && !Small) ||
-      EntrySize < (Small ? 12U : 24U) || EntrySize > 4096 ||
+      EntrySize < (Small ? 12U : 24U) ||
+      EntrySize > ::neverd::limits::loader::
+                      kObjCMethodListsReadMethodListEntrySizeLimit ||
       *Count > Remaining ||
       !Data.bytes(Address, 8ULL + uint64_t(*Count) * EntrySize)) {
     Diagnostic = "Invalid or excessive Objective-C method list";

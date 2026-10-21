@@ -6,6 +6,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolSpelling.h"
+#include "neverd/sigs/Limits.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureDB.h"
 #include "neverd/sigs/SignatureMatcher.h"
@@ -83,9 +84,10 @@ std::vector<LibraryRecognition> neverd::sigs::recognizeLibraryFeatureBytes(
   // manufacture the type/symbol fact needed to admit its own rule.
   std::map<std::vector<size_t>, std::vector<uint64_t>> Groups;
   std::map<std::pair<va_t, size_t>, std::string> Evidence;
-  constexpr size_t MaxEligibilityChecks = 2000000;
   if (!Candidates.empty() &&
-      Entries.size() > MaxEligibilityChecks / Candidates.size())
+      Entries.size() >
+          ::neverd::limits::sigs::kLibraryByteRecognitionMaxEligibilityChecks /
+              Candidates.size())
     return {};
   for (va_t Entry : Entries) {
     std::vector<size_t> Admitted;

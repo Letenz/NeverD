@@ -295,8 +295,8 @@ public:
     return V;
   }
   Value eval(const ExprPtr &E, unsigned Depth = 0) {
-    if (!E || Depth > 128 || !EvaluationBudget-- ||
-        (!E->Type && E->Kind != ExprKind::Call))
+    if (!E || Depth > ::neverd::sdk::kObjCBlockSourcesEvalDepthLimit ||
+        !EvaluationBudget-- || (!E->Type && E->Kind != ExprKind::Call))
       throw Invalid("block source has an incomplete or excessive expression");
     // Effect-only calls have no value type; their operands and call boundary
     // still participate in the ownership/escape proof.
@@ -742,7 +742,9 @@ noEscape(const ObjCBlockSourceContext &Source,
          const ObjCBlockSourcePlan *ValidatedNestedBlocks = nullptr,
          bool AllowIndependentOutParameterStores = false) {
   try {
-    if (Active.size() >= 16 || !Active.insert({Entry, Parameter}).second)
+    if (Active.size() >=
+            ::neverd::sdk::kObjCBlockSourcesNoEscapeActiveSizeLimit ||
+        !Active.insert({Entry, Parameter}).second)
       throw Invalid("block consumer recursion is not established");
     struct Pop {
       decltype(Active) A;
@@ -1407,7 +1409,10 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
           return false;
         const auto &Copy = *Binding->ByValueCopy;
         if (Copy.Parameter != Parameter || Copy.FrameOffset != Offset ||
-            !Copy.Bytes || Copy.Bytes > 4096 ||
+            !Copy.Bytes ||
+            Copy.Bytes >
+                ::neverd::sdk::
+                    kObjCBlockSourcesStackBlocksBorrowsDisjointValueCopyStateCallBorrowsDisjointValueCopyCopyBytesLimit ||
             !frameRange(Function, Offset, Copy.Bytes) ||
             State.frameRangeContainsPointerIdentity(Offset, Copy.Bytes))
           return false;
@@ -2047,7 +2052,11 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
                        Current.CaptureReceivers.end(),
                        [](const auto &Entry) { return !Entry.second.empty(); });
   };
-  for (unsigned Depth = 0; Depth < 16 && HasRoots(Plan); ++Depth) {
+  for (unsigned Depth = 0;
+       Depth <
+           ::neverd::sdk::kObjCBlockSourcesDiscoverObjCBlockSourcesDepthLimit &&
+       HasRoots(Plan);
+       ++Depth) {
     auto Next = discoverObjCBlockSourcesPass(Source, Result, &Plan);
     if (Next.CaptureReceivers == Plan.CaptureReceivers)
       return Next;
@@ -2213,7 +2222,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
     Copy = [&](const ExprPtr &Original, unsigned Depth) -> ExprPtr {
       if (!Original)
         return nullptr;
-      if (Depth > 200 || !Budget--)
+      if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth || !Budget--)
         throw Invalid("block source projection exceeds its expression budget");
       if (auto Existing = Copies.find(Original.get()); Existing != Copies.end())
         return Existing->second;
@@ -2270,7 +2279,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
     };
     std::function<void(std::vector<HighStmt> &, unsigned)> Walk;
     Walk = [&](std::vector<HighStmt> &Body, unsigned Depth) {
-      if (Depth > 200)
+      if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth)
         throw Invalid(
             "block source projection exceeds its control-flow budget");
       for (auto &Statement : Body) {

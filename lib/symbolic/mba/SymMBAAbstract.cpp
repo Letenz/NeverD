@@ -16,6 +16,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -1192,7 +1193,9 @@ std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
   llvm::DenseMap<uint64_t, SymRef> Widened;
   auto WidenBitwise = [&](auto &&Self, SymRef R, unsigned Width,
                           unsigned Depth) -> std::optional<SymRef> {
-    if (Depth >= 32 || !WidenResources.charge(1))
+    if (Depth >= ::neverd::symbolic::detail::limits::
+                     kSymMBAAbstractToMBAWidenBitwiseDepthLimit ||
+        !WidenResources.charge(1))
       return std::nullopt;
     const uint64_t Key = (uint64_t{Width} << 32) | R.index();
     if (auto It = Widened.find(Key); It != Widened.end())

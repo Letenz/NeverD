@@ -9,6 +9,7 @@
 
 #include "neverd/ir/RegisterFlow.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 
 #include <deque>
@@ -196,7 +197,9 @@ queryRegisterFlow(const LowFunc &F, Arch A, va_t PC, NdVar R,
   RegisterFlowResult Out;
   if (!R.isReg() || !R.Size || R.Size > 64 ||
       (Kind != "definitions" && Kind != "uses" && Kind != "value") ||
-      F.Blocks.size() > 4096 ||
+      F.Blocks.size() >
+          ::neverd::limits::ir::
+              kRegisterFlowQueryRegisterFlowValueUsesDefinitionsFBlocksSizeLimit ||
       (F.DecodedInstructionCount && !F.hasCompleteInstructionLift())) {
     Out.Error = "Register flow needs a bounded complete native function and "
                 "physical register";
@@ -211,7 +214,8 @@ queryRegisterFlow(const LowFunc &F, Arch A, va_t PC, NdVar R,
   for (const auto &B : F.Blocks) {
     Blocks[B.Id] = &B;
     for (auto &O : B.Ops) {
-      if (++Count > 200000) {
+      if (++Count >
+          ::neverd::limits::ir::kRegisterFlowQueryRegisterFlowCountLimit) {
         Out.Error = "Register-flow operation budget exceeded";
         return Out;
       }
@@ -230,7 +234,9 @@ queryRegisterFlow(const LowFunc &F, Arch A, va_t PC, NdVar R,
                     O.Opcode == NdOp::INTRINSIC;
     }
   }
-  if (Nodes.size() > 20000 || !ByAddress.count(PC)) {
+  if (Nodes.size() >
+          ::neverd::limits::ir::kRegisterFlowQueryRegisterFlowNodesSizeLimit ||
+      !ByAddress.count(PC)) {
     Out.Error = "Select a retained instruction within the register-flow budget";
     return Out;
   }
@@ -306,7 +312,11 @@ queryRegisterFlow(const LowFunc &F, Arch A, va_t PC, NdVar R,
         Work.emplace_back(N, All);
     std::set<std::pair<size_t, uint64_t>> Seen;
     while (!Work.empty()) {
-      if (Seen.size() > 50000 || Out.Sites.size() > 512) {
+      if (Seen.size() > ::neverd::limits::ir::
+                            kRegisterFlowQueryRegisterFlowValueSeenSizeLimit ||
+          Out.Sites.size() >
+              ::neverd::limits::ir::
+                  kRegisterFlowQueryRegisterFlowValueOutSitesSizeLimit) {
         Out.Error = "Register-flow traversal budget exceeded";
         Out.Sites.clear();
         return Out;
@@ -360,7 +370,8 @@ queryRegisterFlow(const LowFunc &F, Arch A, va_t PC, NdVar R,
       Inputs[N] = {};
       Enqueue(N);
     }
-  size_t Budget = 1000000, Retained = 0;
+  size_t Budget = ::neverd::limits::ir::kRegisterFlowQueryRegisterFlowBudget,
+         Retained = 0;
   while (!Work.empty()) {
     const size_t I = Work.front();
     Work.pop_front();
@@ -398,7 +409,8 @@ queryRegisterFlow(const LowFunc &F, Arch A, va_t PC, NdVar R,
       return V.first.first == VnodeSpace::TEMP &&
              !F.isFunctionTemporaryByte(V.first.second);
     });
-    if (S.size() > 4096) {
+    if (S.size() >
+        ::neverd::limits::ir::kRegisterFlowQueryRegisterFlowSSizeLimit) {
       Out.Error = "Register value fact budget exceeded";
       return Out;
     }
@@ -416,7 +428,8 @@ queryRegisterFlow(const LowFunc &F, Arch A, va_t PC, NdVar R,
         if (Before != It->second.size())
           Enqueue(Next);
       }
-      if (Retained > 1000000) {
+      if (Retained >
+          ::neverd::limits::ir::kRegisterFlowQueryRegisterFlowRetainedLimit) {
         Out.Error = "Register value state budget exceeded";
         return Out;
       }

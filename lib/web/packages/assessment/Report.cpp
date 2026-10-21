@@ -12,6 +12,7 @@
 #include "Publication.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 
@@ -19,7 +20,8 @@ namespace neverd::web::package_assessment {
 std::string markdown(const PackageAssessment &A,
                      const PackageReviewState &Review, uint64_t Offset,
                      uint64_t Limit) {
-  if (!Limit || Limit > 512 || Offset > A.Findings.size())
+  if (!Limit || Limit > ::neverd::limits::web::kReportMarkdownLimit ||
+      Offset > A.Findings.size())
     throw Error("invalid_page");
   const auto Effective = dispositions(A, Review);
   const auto End = std::min<uint64_t>(A.Findings.size(), Offset + Limit);
@@ -95,7 +97,7 @@ std::string markdown(const PackageAssessment &A,
               std::to_string(F.End) + ".\n\n";
     for (const auto &ID : F.RelatedIDs)
       Anchor("Related evidence", ID);
-    if (Text.size() > 1024 * 1024)
+    if (Text.size() > ::neverd::limits::web::kReportMarkdownTextSizeLimit)
       throw Error("package_assessment_report_budget_exceeded");
   }
   return Text;

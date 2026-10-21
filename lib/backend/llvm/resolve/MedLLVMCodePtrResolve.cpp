@@ -15,6 +15,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/DataSymbolMetadata.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/low/FuncDetector.h"
@@ -846,7 +847,8 @@ MedLLVMEmitter::ptrTableUniqueSegment(const MedVar &V,
   auto emittedConstLeafRelocates = [&](const MedVar &Root) {
     std::vector<MedVar> Pending{Root};
     std::set<std::tuple<int, int, int, uint16_t>> LeafSeen;
-    int LeafBudget = 128;
+    int LeafBudget =
+        ::neverd::limits::backend::kMedLLVMCodePtrResolveLeafBudget;
     while (!Pending.empty() && LeafBudget-- > 0) {
       MedVar Cur = Pending.back();
       Pending.pop_back();
@@ -891,7 +893,7 @@ MedLLVMEmitter::ptrTableUniqueSegment(const MedVar &V,
     // pathological DAG (and is large enough that an index subtree — e.g. a deep
     // PRNG chain feeding the index — never starves the base operands of a `base
     // + index` address).
-    int Budget = 4096;
+    int Budget = ::neverd::limits::backend::kMedLLVMCodePtrResolveComputeBudget;
     while (!Work.empty() && Budget-- > 0) {
       auto [Cur, ThroughFrameReload] = Work.back();
       Work.pop_back();
@@ -1172,7 +1174,13 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
       if (!Decomposed && JT.HasBaseAddr && Img->DataInCode.count(JT.BaseAddr)) {
         IndexTerms.clear();
         MedVar Address = Load.Inputs[0];
-        for (int Step = 0; Step < 8 && !Address.isConst(); ++Step) {
+        for (
+            int Step = 0;
+            Step <
+                ::neverd::limits::backend::
+                    kMedLLVMCodePtrResolveMedLLVMEmitterJumpTableForLoadStepLimit &&
+            !Address.isConst();
+            ++Step) {
           const MedOp *Def = lookupDef(Address);
           if (!Def)
             break;
@@ -1886,7 +1894,9 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
     std::function<AddressProof(const MedVar &, int, AuditSeen, bool)>
         proveAddressRole = [&](const MedVar &Value, int Depth, AuditSeen Seen,
                                bool DirectPhiConstant) -> AddressProof {
-      if (Depth > 128)
+      if (Depth >
+          ::neverd::limits::backend::
+              kMedLLVMCodePtrResolveMedLLVMEmitterTryResolveCodePtrTablePtrProveAddressRoleDepthLimit)
         return invalidProof();
       if (Value.isConst()) {
         // An exact relocation occurrence may name a real pointer-table slot at
@@ -2093,7 +2103,11 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
         // spilled across the calls in its body) is the recurrence of a PHI
         // arm: the initializers give it their role and alone prove it.
         auto reloadRecurs = [&](MedVar Source) {
-          for (int Step = 0; Step < 16 && !Source.isConst(); ++Step) {
+          for (int Step = 0;
+               Step < ::neverd::limits::backend::
+                          kMedLLVMCodePtrResolveReloadRecursStepLimit &&
+               !Source.isConst();
+               ++Step) {
             if (addressProvenanceVarKey(Source) ==
                 addressProvenanceVarKey(Value))
               return true;
@@ -2182,7 +2196,8 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
       // address the emitter would not rebuild.
       bool SawMirroredStatic = false;
       bool SawRuntime = false;
-      unsigned MergeBudget = 256;
+      unsigned MergeBudget =
+          ::neverd::limits::backend::kMedLLVMCodePtrResolveMergeBudget;
       std::set<std::tuple<int, int, int>> MergeSeen;
       std::function<bool(const MedVar &, bool)> isRuntimeOrMirrored =
           [&](const MedVar &V, bool DirectPhiConstant) -> bool {
@@ -2792,7 +2807,9 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     std::function<bool(const MedVar &, int, std::set<EvidenceKey>)>
         hasOccurrenceEvidence = [&](const MedVar &Value, int Depth,
                                     std::set<EvidenceKey> Seen) {
-          if (Depth > 32)
+          if (Depth >
+              ::neverd::limits::backend::
+                  kMedLLVMCodePtrResolveMedLLVMEmitterTryResolveCodeAddressValueExactFunctionMaterializationHasOccurrenceEvidenceDepthLimit)
             return false;
           if (Value.isConst())
             return codeIdentityOccurrenceMayRelocate(

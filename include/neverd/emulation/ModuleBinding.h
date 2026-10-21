@@ -13,6 +13,7 @@
 #define NEVERD_EMULATION_MODULEBINDING_H
 
 #include "neverd/emulation/ImageMapping.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/ModuleRequest.h"
 #include "neverd/modules/ModuleSet.h"
 
@@ -128,11 +129,12 @@ using ModulePublicationPreparer =
 /// model callbacks. Source registration never mutates this table implicitly.
 class ModuleBindings final {
 public:
-  static llvm::Expected<std::unique_ptr<ModuleBindings>>
-  create(std::shared_ptr<modules::ModuleSet> Sources, uint64_t Limit = 256,
-         ModulePublicationPreparer Publication = {},
-         ModuleMappingFinalizer Finalizer = {},
-         ModuleDependencyMatcher DependencyMatcher = {});
+  static llvm::Expected<std::unique_ptr<ModuleBindings>> create(
+      std::shared_ptr<modules::ModuleSet> Sources,
+      uint64_t Limit = ::neverd::limits::emulation::kModuleBindingCreateLimit,
+      ModulePublicationPreparer Publication = {},
+      ModuleMappingFinalizer Finalizer = {},
+      ModuleDependencyMatcher DependencyMatcher = {});
   ModuleBindings(const ModuleBindings &) = delete;
   ModuleBindings &operator=(const ModuleBindings &) = delete;
   llvm::Error declare(ModuleBinding Binding);

@@ -15,6 +15,7 @@
 #include "HighDCEDetail.h"
 #include "HighFrameAddress.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 
@@ -37,7 +38,8 @@ bool integerType(const TypeRef &T) {
 // Equal-width integer views preserve its bits; the destination view is restored
 // explicitly at each replacement, including C's narrow integer promotions.
 ExprPtr copyLeaf(ExprPtr E) {
-  for (unsigned Depth = 0; E && Depth != 16; ++Depth) {
+  for (unsigned Depth = 0;
+       E && Depth != ::neverd::limits::ir::kMaxPrivateFrameLeafDepth; ++Depth) {
     if (!integerType(E->Type) || E->Op != NdOp::NOP || E->IndirectTarget ||
         E->SourceCallHint || E->IntrinsicId != Intrinsic::None ||
         !E->IntrinsicOutputs.empty() ||
@@ -84,7 +86,7 @@ bool dependsOn(const ExprPtr &E, const Local &K) {
 class PrivateFrameCopies {
   const HighFunc &Function;
   Arch Architecture;
-  size_t Budget = 1000000;
+  size_t Budget = ::neverd::limits::ir::kHighPrivateFrameCopiesBudget;
   bool Safe = true;
   std::vector<const HighStmt *> Statements;
   std::map<Local, std::vector<ExprPtr>> Definitions;
@@ -126,7 +128,8 @@ class PrivateFrameCopies {
   bool frameDerived(const ExprPtr &E, unsigned Depth = 0) {
     if (!E)
       return false;
-    if (!spend() || Depth > 64) {
+    if (!spend() || Depth > ::neverd::limits::ir::
+                                kHighPrivateFrameCopiesFrameDerivedDepthLimit) {
       Safe = false;
       return true;
     }
@@ -196,7 +199,9 @@ class PrivateFrameCopies {
     while (!Work.empty()) {
       const auto [S, Depth] = Work.back();
       Work.pop_back();
-      if (!spend() || Depth > 200)
+      if (!spend() ||
+          Depth >
+              ::neverd::limits::ir::kHighPrivateFrameCopiesCollectDepthLimit)
         return false;
       Statements.push_back(S);
       forEachExpr(*S, [&](const ExprPtr &Root) {
@@ -279,7 +284,9 @@ class PrivateFrameCopies {
     // A source local can have several definitions, but every definition must
     // produce the identical frame address. Definite assignment below also
     // proves that each frame-derived use has a reaching definition.
-    for (unsigned Pass = 0; Pass != 64 && Safe; ++Pass) {
+    for (unsigned Pass = 0;
+         Pass != ::neverd::limits::ir::kMaxPrivateFrameCopyPasses && Safe;
+         ++Pass) {
       bool Changed = false;
       for (const auto &[K, Defs] : Definitions) {
         if (!spend())
@@ -324,7 +331,9 @@ class PrivateFrameCopies {
     std::set<const HighExpr *> Seen, Active;
     const auto Visit = [&](auto &&Self, const ExprPtr &E,
                            unsigned Depth) -> void {
-      if (!E || !spend() || Depth > 200) {
+      if (!E || !spend() ||
+          Depth > ::neverd::limits::ir::
+                      kHighPrivateFrameCopiesInspectVisitDepthLimit) {
         Safe = false;
         return;
       }
@@ -445,7 +454,9 @@ class PrivateFrameCopies {
                            unsigned Depth) -> ExprPtr {
       if (!E)
         return E;
-      if (!spend() || Depth > 200) {
+      if (!spend() || Depth >
+                          ::neverd::limits::ir::
+                              kHighPrivateFrameCopiesReplaceVisitDepthLimit) {
         Safe = false;
         return E;
       }

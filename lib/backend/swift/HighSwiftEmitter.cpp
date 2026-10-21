@@ -2,6 +2,8 @@
 //------------===//
 #include "neverd/backend/swift/HighSwiftEmitter.h"
 
+#include "neverd/backend/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/X86FPStateShape.h"
@@ -96,7 +98,7 @@ std::string signedValue(const std::string &Value, unsigned Bits) {
 }
 
 std::string swiftType(const SwiftSourceType &Type, unsigned Depth = 0) {
-  if (Depth > 8)
+  if (Depth > ::neverd::limits::backend::kHighSwiftEmitterSwiftTypeDepthLimit)
     throw Unsupported("Swift pointer type is too deep");
   switch (Type.TheKind) {
   case SwiftSourceType::Kind::Void:
@@ -268,7 +270,9 @@ class Writer {
   }
 
   bool isSelf(const ExprPtr &E, unsigned Depth = 0) const {
-    if (!E || Depth > 200 || S.IsStatic ||
+    if (!E ||
+        Depth > ::neverd::limits::backend::kHighSwiftEmitterIsSelfDepthLimit ||
+        S.IsStatic ||
         (S.ContextKind != "class" &&
          !(S.ContextKind == "struct" &&
            S.SelfConvention == "indirect-mutating")))
@@ -284,7 +288,9 @@ class Writer {
   }
 
   bool containsSelf(const ExprPtr &E, unsigned Depth = 0) const {
-    if (!E || Depth > 200)
+    if (!E ||
+        Depth >
+            ::neverd::limits::backend::kHighSwiftEmitterContainsSelfDepthLimit)
       return true;
     if (isSelf(E))
       return true;
@@ -614,9 +620,8 @@ class Writer {
         const unsigned Control = Shape.Control & ~8u;
         FPStateConversions.insert({E->IntrinsicId, Control});
         UsesWide |= Shape.OutputSize == 12;
-        return FPStateType + "." +
-               fpConversionName(E->IntrinsicId, Control) + "(" +
-               expression(E->Operands[0], Depth + 1) + ", " +
+        return FPStateType + "." + fpConversionName(E->IntrinsicId, Control) +
+               "(" + expression(E->Operands[0], Depth + 1) + ", " +
                expression(E->Operands[2], Depth + 1) + ")";
       }
       FPStateOperations.insert({E->IntrinsicId, Shape.LeftSize});
@@ -734,7 +739,9 @@ class Writer {
   }
 
   std::string expression(const ExprPtr &E, unsigned Depth = 0) {
-    if (!E || Depth > 200)
+    if (!E ||
+        Depth >
+            ::neverd::limits::backend::kHighSwiftEmitterExpressionDepthLimit)
       throw Unsupported("missing or excessively deep Swift source expression");
     if (E->Kind == ExprKind::Call)
       return call(E, Depth);
@@ -996,7 +1003,7 @@ class Writer {
   }
 
   void block(const std::vector<HighStmt> &Body, unsigned Depth = 0) {
-    if (Depth > 200)
+    if (Depth > ::neverd::limits::backend::kHighSwiftEmitterBlockDepthLimit)
       throw Unsupported("Swift statement nesting exceeds the projection limit");
     for (const HighStmt &ST : Body) {
       if (!FallsThrough)
@@ -1325,7 +1332,8 @@ public:
           : Field.Type.TheKind == SwiftSourceType::Kind::Boolean
               ? 1
               : Field.Type.Bits / 8;
-      if (!Bytes || Bytes > 8 || Field.Offset > 1024 * 1024 ||
+      if (!Bytes || Bytes > 8 ||
+          Field.Offset > ::neverd::limits::ir::kMaxSourceObjectBytes ||
           !FieldNames.insert(Field.Name).second ||
           !StorageNames
                .insert(Field.BackingName.empty() ? Field.Name

@@ -11,6 +11,7 @@
 #include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/LanguageRuntime.h"
 #include "neverd/loader/LinkerThunk.h"
+#include "neverd/sigs/Limits.h"
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -690,7 +691,8 @@ SignatureDB::loadFeatureDirectory(const std::filesystem::path &Dir) {
   for (; !EC && I != End; I.increment(EC)) {
     if (I->path().extension() == ".json")
       Files.push_back(I->path());
-    if (Files.size() > 64)
+    if (Files.size() >
+        ::neverd::limits::sigs::kSignatureDBLoadFeatureDirectoryFilesSizeLimit)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                      "library feature pack budget exceeded");
   }

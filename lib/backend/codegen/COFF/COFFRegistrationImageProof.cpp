@@ -7,6 +7,7 @@
 #include "COFFRegistrationIRProof.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -67,7 +68,9 @@ llvm::Error validateSymbolicImagePointers(const llvm::Module &Module,
   std::function<Constants(const llvm::Value *, unsigned)> Evaluate;
   Evaluate = [&](const llvm::Value *Value, unsigned Depth) -> Constants {
     if (NumericBudgetExceeded || ++Work > limits::kMaxRegistrationEHStateWork ||
-        Depth > 128) {
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationImageProofValidateSymbolicImagePointersEvaluateDepthLimit) {
       NumericBudgetExceeded = true;
       return {};
     }
@@ -78,7 +81,9 @@ llvm::Error validateSymbolicImagePointers(const llvm::Module &Module,
     Constants Values;
     auto Add = [&](const Constants &Other) {
       Values.insert(Other.begin(), Other.end());
-      if (Values.size() > 32)
+      if (Values.size() >
+          ::neverd::limits::backend::
+              kCOFFRegistrationImageProofValidateSymbolicImagePointersAddEvaluateAddValuesSizeLimit)
         NumericBudgetExceeded = true;
     };
     if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(Value)) {
@@ -166,7 +171,10 @@ llvm::Error validateSymbolicImagePointers(const llvm::Module &Module,
     const size_t PreviousSize = Known.size();
     Known.insert(Values.begin(), Values.end());
     NumericChanged |= Known.size() != PreviousSize;
-    NumericBudgetExceeded |= Known.size() > 32;
+    NumericBudgetExceeded |=
+        Known.size() >
+        ::neverd::limits::backend::
+            kCOFFRegistrationImageProofValidateSymbolicImagePointersEvaluateNumericBudgetExceededKnownSizeLimit;
     return Known;
   };
   Seen.clear();

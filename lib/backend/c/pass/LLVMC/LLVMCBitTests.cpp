@@ -9,6 +9,8 @@
 
 #include "LLVMCBitTests.h"
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/IRBuilder.h"
@@ -31,7 +33,7 @@ struct BitValue {
 
 class BitProjection {
   unsigned &Work;
-  unsigned QueryWork = 512;
+  unsigned QueryWork = ::neverd::limits::backend::kLLVMCBitTestsQueryWork;
   DenseMap<std::pair<Value *, unsigned>, BitValue> Cache;
 
 public:
@@ -44,7 +46,8 @@ public:
     auto Key = std::make_pair(V, Bit);
     if (auto It = Cache.find(Key); It != Cache.end())
       return It->second;
-    if (!Work || !QueryWork || Depth > 64)
+    if (!Work || !QueryWork ||
+        Depth > ::neverd::limits::backend::kLLVMCBitTestsGetDepthLimit)
       return std::nullopt;
     --Work;
     --QueryWork;

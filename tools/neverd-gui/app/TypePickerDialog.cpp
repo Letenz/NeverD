@@ -1,5 +1,6 @@
 #include "TypePickerDialog.h"
 
+#include "../ResourceLimits.h"
 #include "Address.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
@@ -30,9 +31,6 @@ namespace neverd::gui {
 namespace {
 
 constexpr int CandidateRole = Qt::UserRole + 1;
-/// How many types a search lists, and how long typing pauses before one.
-constexpr int SearchLimit = 100;
-constexpr int SearchDebounceMs = 70;
 constexpr char EverySetting[] = "convert/everyAccess";
 constexpr char GeometrySetting[] = "convert/geometry";
 constexpr char SplitterSetting[] = "convert/splitter";
@@ -382,7 +380,8 @@ TypePickerDialog::TypePickerDialog(Session &session, QJsonObject query,
   connect(list_, &QListWidget::currentRowChanged, this,
           &TypePickerDialog::preview);
   debounce_.setSingleShot(true);
-  debounce_.setInterval(SearchDebounceMs);
+  debounce_.setInterval(
+      ::neverd::limits::gui::kTypePickerDialogSearchDebounceMs);
   connect(&debounce_, &QTimer::timeout, this, &TypePickerDialog::search);
   connect(search_, &QLineEdit::textChanged, this,
           [this] { debounce_.start(); });
@@ -420,7 +419,8 @@ QStringList TypePickerDialog::others() const {
 
 void TypePickerDialog::search() {
   const quint64 serial = ++serial_;
-  QJsonObject payload{{"limit", SearchLimit}};
+  QJsonObject payload{
+      {"limit", ::neverd::limits::gui::kTypePickerDialogSearchLimit}};
   const QString text = search_->text().trimmed();
   if (!text.isEmpty())
     payload.insert(QStringLiteral("text"), text);

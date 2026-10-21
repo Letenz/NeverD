@@ -19,6 +19,7 @@
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -121,7 +122,10 @@ void checkConstantFoldBudget(const llvm::Constant *Root) {
   // LLVM's layout-aware constant folder recursively visits expressions and
   // vectors. Bound that input before entering it, independently of the scalar
   // instruction planner and display-time immediate-fold budget.
-  constexpr unsigned MaxWork = 256, MaxDepth = 32;
+  constexpr unsigned MaxWork = ::neverd::limits::backend::
+                         kLLVMCExprWriterCheckConstantFoldBudgetMaxWork,
+                     MaxDepth = ::neverd::limits::backend::
+                         kLLVMCExprWriterCheckConstantFoldBudgetMaxDepth;
   llvm::SmallVector<std::pair<const llvm::Constant *, unsigned>, 16> Pending;
   Pending.emplace_back(Root, 0);
   unsigned Work = 0;
@@ -249,7 +253,8 @@ bool LLVMCWriter::isNormalizedBoolean(const llvm::Value *V) const {
   // This is a proof about the emitted C expression, not its LLVM i1 type:
   // an inlined i1 add can promote to int and produce two before truncation.
   llvm::SmallVector<const llvm::Value *, 8> Pending{V};
-  unsigned Budget = 64;
+  unsigned Budget = ::neverd::limits::backend::
+      kLLVMCExprWriterLLVMCWriterIsNormalizedBooleanBudget;
   while (!Pending.empty()) {
     const auto *Current = Pending.pop_back_val();
     if (!Current || !Current->getType()->isIntegerTy() || Budget == 0)
@@ -473,7 +478,10 @@ std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
   static thread_local llvm::SmallPtrSet<const llvm::Value *, 32> Active;
   // Cycle detection does not bound a long acyclic cast/home chain. This is
   // optional image provenance: exhaustion keeps the ordinary SSA projection.
-  if (Active.size() >= 64 || !Active.insert(V).second)
+  if (Active.size() >=
+          ::neverd::limits::backend::
+              kLLVMCExprWriterLLVMCWriterImageDataVAActiveSizeLimit ||
+      !Active.insert(V).second)
     return std::nullopt;
   struct ActiveGuard {
     llvm::SmallPtrSet<const llvm::Value *, 32> &Values;
@@ -995,7 +1003,8 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
   // store classification. A mutable loop may then revisit this same root
   // with a fresh local Seen set. No immediate is established by that cycle.
   if (ActiveImmediateFolds.empty())
-    ImmediateFoldWork = 64;
+    ImmediateFoldWork = ::neverd::limits::backend::
+        kLLVMCExprWriterLLVMCWriterFoldImmediateImmediateFoldWork;
   if (ImmediateFoldWork == 0 || !ActiveImmediateFolds.insert(V).second)
     return std::nullopt;
   --ImmediateFoldWork;
@@ -1355,7 +1364,11 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
   std::set<const llvm::Value *> Seen;
   auto frameOff = [&](auto &&self, const llvm::Value *V,
                       int Depth) -> std::optional<uint64_t> {
-    if (!V || Depth > 8 || !Seen.insert(V).second)
+    if (!V ||
+        Depth >
+            ::neverd::limits::backend::
+                kLLVMCExprWriterLLVMCWriterDiscoverSyntheticFrameOffFrameOffDepthLimit ||
+        !Seen.insert(V).second)
       return std::nullopt;
     if (const auto Peeled = peelPointerOffset(V)) {
       if (Peeled->first == SyntheticFrame)
@@ -1416,7 +1429,10 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
   // Only a small alignment residue is unknown here. Enumerate exact PDB SP
   // locations once, then reject a second S_FRAMEPROC-relative spelling of
   // the same name when it is outside every possible SP-relative slot.
-  const int64_t ScanEnd = std::min<int64_t>(Aligned, 4096);
+  const int64_t ScanEnd = std::min<int64_t>(
+      Aligned,
+      ::neverd::limits::backend::
+          kLLVMCExprWriterLLVMCWriterDiscoverSyntheticFrameScanEndMinArgument2);
   std::map<std::string, int64_t> FirstSPNameOffset;
   for (int64_t Stack = -15; Stack <= ScanEnd; ++Stack) {
     const auto Var = Dbg->resolveStackPointerVariable(*FunctionEntry, Stack);
@@ -1792,8 +1808,9 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     }
   }
   if (!Owner && !Container) {
-    constexpr uint64_t kMaxInterior = 256;
-    for (uint64_t Candidate = 1; Candidate <= kMaxInterior; ++Candidate) {
+    for (uint64_t Candidate = 1;
+         Candidate <= ::neverd::limits::backend::kLLVMCExprWriterMaxInterior;
+         ++Candidate) {
       auto Var = debugFrameVariable(Disp - static_cast<int64_t>(Candidate));
       if (!Var)
         continue;
@@ -2068,7 +2085,11 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
     ~DepthGuard() { --D; }
   } Guard(PeelDepth);
   const bool Nested = PeelDepth > 1;
-  while (V && Seen.size() < 64 && Seen.insert(V).second) {
+  while (V &&
+         Seen.size() <
+             ::neverd::limits::backend::
+                 kLLVMCExprWriterLLVMCWriterPeelPointerOffsetSeenSizeLimit &&
+         Seen.insert(V).second) {
     if (statedVariableType(V))
       break;
     if (const auto *I2P = llvm::dyn_cast<llvm::IntToPtrInst>(V)) {
@@ -2351,7 +2372,10 @@ const llvm::Value *peelMulScale(
   if (!V || !Scale)
     return nullptr;
   std::set<const llvm::Value *> Seen;
-  while (V && Seen.size() < 64 && Seen.insert(V).second) {
+  while (V &&
+         Seen.size() < ::neverd::limits::backend::
+                           kLLVMCExprWriterPeelMulScaleSeenSizeLimit &&
+         Seen.insert(V).second) {
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(V)) {
       if (const llvm::Value *Inner = losslessIntegerView(
               Cast, NormalizedBoolean(Cast->getOperand(0)))) {
@@ -2394,7 +2418,11 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
     return std::nullopt;
   const llvm::Value *Addr = Ptr;
   std::set<const llvm::Value *> Seen;
-  while (Addr && Seen.size() < 64 && Seen.insert(Addr).second) {
+  while (Addr &&
+         Seen.size() <
+             ::neverd::limits::backend::
+                 kLLVMCExprWriterLLVMCWriterTypedIndexAccessSeenSizeLimit &&
+         Seen.insert(Addr).second) {
     if (const auto *I2P = llvm::dyn_cast<llvm::IntToPtrInst>(Addr)) {
       Addr = I2P->getOperand(0);
       continue;

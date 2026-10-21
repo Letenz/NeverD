@@ -7,6 +7,7 @@
 #include "COFFRegistrationScalarLeaf.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include <algorithm>
@@ -18,9 +19,6 @@
 
 namespace neverd::coff_loader {
 namespace {
-
-constexpr unsigned MaxHelperBytes = 256;
-constexpr unsigned MaxProofStates = 512;
 
 unsigned fullRegisterBit(x86_reg Reg) {
   switch (Reg) {
@@ -74,8 +72,13 @@ class ScalarLeafProof {
   std::vector<ScalarState> Work;
 
   bool recordInstruction(va_t Address, unsigned Size) {
-    if (!Size || Size > MaxHelperBytes || Address < Entry ||
-        Address - Entry > MaxHelperBytes - Size)
+    if (!Size ||
+        Size > ::neverd::limits::loader::
+                   kCOFFRegistrationScalarLeafMaxHelperBytes ||
+        Address < Entry ||
+        Address - Entry > ::neverd::limits::loader::
+                                  kCOFFRegistrationScalarLeafMaxHelperBytes -
+                              Size)
       return false;
     auto Next = Instructions.lower_bound(Address);
     if (Next != Instructions.end() && Next->first == Address)
@@ -112,7 +115,9 @@ class ScalarLeafProof {
   }
 
   bool forward(ScalarState State, va_t Target) {
-    if (Target <= State.Address || Target - Entry >= MaxHelperBytes)
+    if (Target <= State.Address ||
+        Target - Entry >=
+            ::neverd::limits::loader::kCOFFRegistrationScalarLeafMaxHelperBytes)
       return false;
     State.Address = Target;
     Work.push_back(State);
@@ -131,7 +136,8 @@ public:
         !Dec.init(Image) || !recordInstruction(Entry, 4))
       return false;
     Work.push_back({Entry + 4});
-    unsigned Budget = MaxProofStates;
+    unsigned Budget =
+        ::neverd::limits::loader::kCOFFRegistrationScalarLeafMaxProofStates;
     unsigned Returns = 0;
     while (!Work.empty()) {
       auto State = Work.back();
@@ -150,7 +156,10 @@ public:
         continue;
       }
       unsigned Available =
-          std::min<va_t>(15, Entry + MaxHelperBytes - State.Address);
+          std::min<va_t>(15, Entry +
+                                 ::neverd::limits::loader::
+                                     kCOFFRegistrationScalarLeafMaxHelperBytes -
+                                 State.Address);
       const uint8_t *Bytes = nullptr;
       while (Available && !(Bytes = Image.readVA(State.Address, Available)))
         --Available;
@@ -243,7 +252,8 @@ public:
 bool isCheckedX86RegistrationScalarLeaf(const BinaryImage &Image, va_t Entry) {
   return Image.Arch == Arch::X86 && Image.Bits == Bitness::Bits32 &&
          Image.Format == BinaryFormat::COFF && Entry &&
-         Entry <= UINT32_MAX - MaxHelperBytes &&
+         Entry <= UINT32_MAX - ::neverd::limits::loader::
+                                   kCOFFRegistrationScalarLeafMaxHelperBytes &&
          ScalarLeafProof(Image, Entry).run();
 }
 

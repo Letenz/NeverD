@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/CompactUnwind.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/object/SectionNames.h"
@@ -26,11 +27,6 @@
 namespace neverd::macho_unwind {
 namespace {
 
-/// The best-effort loader parser is used while opening arbitrary binaries and
-/// deliberately keeps a fixed work budget.  The strict rewrite parser below
-/// instead exposes caller-selected ceilings through its public options.
-constexpr uint32_t kMaxEntries = 1u << 22;
-constexpr uint32_t kMaxPages = 1u << 16;
 /// A compressed entry has an eight-bit encoding index.  Darwin reserves
 /// indices 0..126 for the common table and the remaining indices for the
 /// current page's local table.
@@ -469,8 +465,11 @@ ParseResult parseCompactUnwind(const BinaryImage &Img) {
   // The index always holds at least one real entry and one sentinel.
   if (IndexCount < 2)
     return malformed("__unwind_info index has no sentinel");
-  if (CommonEncCount > kMaxEntries || PersonalityCount > kMaxEntries ||
-      IndexCount > kMaxPages)
+  if (CommonEncCount >
+          ::neverd::limits::loader::kMachOCompactUnwindMaxEntries ||
+      PersonalityCount >
+          ::neverd::limits::loader::kMachOCompactUnwindMaxEntries ||
+      IndexCount > ::neverd::limits::loader::kMachOCompactUnwindMaxPages)
     return malformed("__unwind_info declares an implausible table size");
 
   const unsigned PtrSize = Img.getPointerSize();
@@ -570,7 +569,8 @@ ParseResult parseCompactUnwind(const BinaryImage &Img) {
       partial("__unwind_info second-level page header is truncated");
       continue;
     }
-    if (Raw.size() + EntryCount > kMaxEntries) {
+    if (Raw.size() + EntryCount >
+        ::neverd::limits::loader::kMachOCompactUnwindMaxEntries) {
       partial("__unwind_info exceeds the entry decode budget");
       break;
     }

@@ -56,8 +56,31 @@ from .abi import (
     TranslationSemanticStop,
 )
 from .ffi import HostAPI
-
-_LOWIR_CONCOLIC_MAX_REGISTER_SEEDS_V1 = 4096
+from ._limits import (
+    DEFAULT_SYMBOLIC_WIDTH,
+    DEFAULT_INSTRUCTION_SUBSTITUTION_ROUNDS,
+    DEFAULT_EXPLORE_MAX_PATHS,
+    DEFAULT_EXPLORE_MAX_STEPS,
+    DEFAULT_EXPLORE_MAX_BLOCK_VISITS,
+    DEFAULT_CONCOLIC_MAX_STEPS,
+    DEFAULT_CONCOLIC_MAX_BLOCK_VISITS,
+    DEFAULT_CONCOLIC_MAX_LOOP_ITERATIONS,
+    DEFAULT_CONCOLIC_MAX_FLIP_ATTEMPTS,
+    DEFAULT_CONCOLIC_MAX_CANDIDATES,
+    DEFAULT_CONCOLIC_MAX_CONFLICTS,
+    DEFAULT_CONCOLIC_MAX_PROPAGATIONS,
+    DEFAULT_CONCOLIC_MAX_WATCH_VISITS,
+    DEFAULT_CONCOLIC_SOLVER_MAX_WIDTH,
+    DEFAULT_CONCOLIC_SOLVER_MAX_GATES,
+    DEFAULT_SOURCE_PATCH_TIMEOUT_SECONDS,
+    LOWIR_CONCOLIC_MAX_REGISTER_SEEDS_V1 as _LOWIR_CONCOLIC_MAX_REGISTER_SEEDS_V1,
+    MAX_SOURCE_PATCH_BINDINGS,
+    MAX_SOURCE_PATCH_COMPILER_ARGUMENTS,
+    MAX_SOURCE_PATCH_DEPENDENCIES,
+    MAX_SOURCE_PATCH_INPUT_BYTES,
+    MAX_SOURCE_PATCH_MAPPINGS,
+    MAX_SOURCE_PATCH_TIMEOUT_SECONDS,
+)
 
 
 _SEMVER = re.compile(
@@ -1093,9 +1116,9 @@ class Session:
         self,
         address: int,
         *,
-        max_paths: int = 64,
-        max_steps: int = 1 << 16,
-        max_block_visits: int = 3,
+        max_paths: int = DEFAULT_EXPLORE_MAX_PATHS,
+        max_steps: int = DEFAULT_EXPLORE_MAX_STEPS,
+        max_block_visits: int = DEFAULT_EXPLORE_MAX_BLOCK_VISITS,
         include_expressions: bool = False,
     ) -> SymbolicExploration:
         """Explore every bounded LowIR path through a native function.
@@ -1244,16 +1267,16 @@ class Session:
         options.solver_max_gates = _unsigned("solver_max_gates", solver_max_gates, 64)
 
         expected_limits = ConcolicLimits(
-            max_steps=max_steps or 1 << 16,
-            max_block_visits=max_block_visits or 3,
-            max_loop_iterations=max_loop_iterations or 3,
-            max_flip_attempts=max_flip_attempts or 64,
-            max_candidates=max_candidates or 64,
-            solver_max_conflicts=solver_max_conflicts or 1 << 18,
-            solver_max_propagations=solver_max_propagations or 1 << 24,
-            solver_max_watch_visits=solver_max_watch_visits or 1 << 26,
-            solver_max_width=256,
-            solver_max_gates=solver_max_gates or 1 << 22,
+            max_steps=max_steps or DEFAULT_CONCOLIC_MAX_STEPS,
+            max_block_visits=max_block_visits or DEFAULT_CONCOLIC_MAX_BLOCK_VISITS,
+            max_loop_iterations=max_loop_iterations or DEFAULT_CONCOLIC_MAX_LOOP_ITERATIONS,
+            max_flip_attempts=max_flip_attempts or DEFAULT_CONCOLIC_MAX_FLIP_ATTEMPTS,
+            max_candidates=max_candidates or DEFAULT_CONCOLIC_MAX_CANDIDATES,
+            solver_max_conflicts=solver_max_conflicts or DEFAULT_CONCOLIC_MAX_CONFLICTS,
+            solver_max_propagations=solver_max_propagations or DEFAULT_CONCOLIC_MAX_PROPAGATIONS,
+            solver_max_watch_visits=solver_max_watch_visits or DEFAULT_CONCOLIC_MAX_WATCH_VISITS,
+            solver_max_width=DEFAULT_CONCOLIC_SOLVER_MAX_WIDTH,
+            solver_max_gates=solver_max_gates or DEFAULT_CONCOLIC_SOLVER_MAX_GATES,
         )
         expected_seed = tuple(
             sorted(
@@ -1508,7 +1531,7 @@ class Session:
         self,
         *,
         instruction_substitution: bool = False,
-        substitution_rounds: int = 1,
+        substitution_rounds: int = DEFAULT_INSTRUCTION_SUBSTITUTION_ROUNDS,
         constant_encryption: bool = False,
         opaque_predicate: bool = False,
         control_flow_flattening: bool = False,
@@ -1778,7 +1801,7 @@ class Session:
         strategy: str = "section",
         source_name: os.PathLike[str] | str | None = None,
         compiler_args: Iterable[str] = (),
-        timeout_seconds: int = 30,
+        timeout_seconds: int = DEFAULT_SOURCE_PATCH_TIMEOUT_SECONDS,
     ) -> object:
         """Compile and install replacements, returning the verified report.
 
@@ -1814,8 +1837,8 @@ class Session:
             payload = source
         else:
             raise ValueError("source must be nonempty str or bytes")
-        if len(payload) > 64 * 1024 * 1024:
-            raise ValueError("patch input exceeds 64 MiB")
+        if len(payload) > MAX_SOURCE_PATCH_INPUT_BYTES:
+            raise ValueError(f"patch input exceeds {MAX_SOURCE_PATCH_INPUT_BYTES // (1024 * 1024)} MiB")
         if input_kind != "object" and b"\0" in payload:
             raise ValueError("text input contains a NUL byte")
         buffer = ctypes.create_string_buffer(payload)
@@ -1824,9 +1847,9 @@ class Session:
             if path is not None:
                 setattr(options, name, _utf8_argument(name, os.fspath(path),
                                                      allow_empty=False))
-        arguments = list(islice(compiler_args, 257))
-        if len(arguments) > 256:
-            raise ValueError("at most 256 compiler arguments are supported")
+        arguments = list(islice(compiler_args, MAX_SOURCE_PATCH_COMPILER_ARGUMENTS + 1))
+        if len(arguments) > MAX_SOURCE_PATCH_COMPILER_ARGUMENTS:
+            raise ValueError(f"at most {MAX_SOURCE_PATCH_COMPILER_ARGUMENTS} compiler arguments are supported")
         native_args = (ctypes.c_char_p * len(arguments))(
             *(_utf8_argument("compiler argument", arg, allow_empty=False)
               for arg in arguments)
@@ -1834,7 +1857,7 @@ class Session:
         options.compiler_args = native_args
         options.compiler_arg_count = len(arguments)
         entries = list((mappings or {}).items())
-        if len(entries) > 65536:
+        if len(entries) > MAX_SOURCE_PATCH_MAPPINGS:
             raise ValueError("too many replacement mappings")
         native_mappings = (NeverDSourcePatchMappingV1 * len(entries))(
             *(NeverDSourcePatchMappingV1(
@@ -1845,7 +1868,7 @@ class Session:
         options.mappings = native_mappings
         options.mapping_count = len(entries)
         references = list((bindings or {}).items())
-        if len(references) > 65536:
+        if len(references) > MAX_SOURCE_PATCH_BINDINGS:
             raise ValueError("too many original reference bindings")
         native_bindings = (NeverDSourcePatchBindingV1 * len(references))()
         for index, (symbol, reference) in enumerate(references):
@@ -1863,7 +1886,7 @@ class Session:
         options.bindings = native_bindings
         options.binding_count = len(references)
         imports = list((dependencies or {}).items())
-        if len(imports) > 4096:
+        if len(imports) > MAX_SOURCE_PATCH_DEPENDENCIES:
             raise ValueError("too many new dependencies")
         native_dependencies = (NeverDSourcePatchDependencyV1 * len(imports))()
         for index, (symbol, request) in enumerate(imports):
@@ -1877,8 +1900,8 @@ class Session:
         options.dependencies = native_dependencies
         options.dependency_count = len(imports)
         options.timeout_seconds = _unsigned("compiler timeout", timeout_seconds, 32)
-        if options.timeout_seconds > 3600:
-            raise ValueError("compiler timeout must not exceed 3600 seconds")
+        if options.timeout_seconds > MAX_SOURCE_PATCH_TIMEOUT_SECONDS:
+            raise ValueError(f"compiler timeout must not exceed {MAX_SOURCE_PATCH_TIMEOUT_SECONDS} seconds")
         self._require_success(self._call(
             "neverd_patch_source", buffer, len(payload), ctypes.byref(options),
             _utf8_argument("output path", os.fspath(output_path), allow_empty=False),
@@ -3219,7 +3242,7 @@ def _simplify_host() -> HostAPI:
 def simplify_expression(
     expression: str,
     *,
-    width: int = 32,
+    width: int = DEFAULT_SYMBOLIC_WIDTH,
     deep: bool = True,
     max_atoms: int = 0,
     max_work: int = 0,
@@ -3303,7 +3326,7 @@ def simplify_expression(
 def synthesize_expression(
     expression: str,
     *,
-    width: int = 32,
+    width: int = DEFAULT_SYMBOLIC_WIDTH,
     max_cost: int = 0,
     max_samples: int = 0,
     verify_samples: int = 0,

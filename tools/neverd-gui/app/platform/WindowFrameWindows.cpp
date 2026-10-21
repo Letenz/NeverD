@@ -2,6 +2,7 @@
 // shadow and snaps, animates and resizes it, and loses only the caption, as
 // Visual Studio Code's custom title bar does there.
 
+#include "../../Config.h"
 #include "WindowFramePlatform.h"
 
 #include <QAbstractNativeEventFilter>
@@ -21,8 +22,6 @@ namespace {
 constexpr char WindowsPlatform[] = "windows";
 /// The type of the messages Qt's Windows platform plugin filters.
 constexpr char WindowsMessage[] = "windows_generic_MSG";
-/// Visual Studio Code's custom title bar with its command center.
-constexpr int TitleBarHeight = 35;
 
 /// Qt applies a window's custom margins to every WM_NCCALCSIZE.  The margins
 /// that take a captionless window's client area over its caption push it
@@ -137,7 +136,9 @@ Qt::Edges ownResizeEdges() {
              : Qt::LeftEdge | Qt::TopEdge | Qt::RightEdge | Qt::BottomEdge;
 }
 
-int titleBarHeight() { return TitleBarHeight; }
+int titleBarHeight() {
+  return ::neverd::limits::gui_config::kWindowFrameWindowsTitleBarHeight;
+}
 
 int systemControlsWidth() { return 0; }
 

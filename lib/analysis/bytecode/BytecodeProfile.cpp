@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/analysis/BytecodeDecoder.h"
+#include "neverd/analysis/Limits.h"
 
 #include "llvm/Support/JSON.h"
 
@@ -80,7 +81,8 @@ llvm::Expected<BytecodeValue> value(const llvm::json::Object &O) {
   }
   if (O.get("lookup")) {
     auto *A = O.getArray("lookup");
-    if (!A || A->empty() || A->size() > 65536)
+    if (!A || A->empty() ||
+        A->size() > ::neverd::limits::analysis::kMaxBytecodeLookupValues)
       return invalid("invalid lookup table");
     for (const auto &Item : *A) {
       auto N = number(Item);
@@ -174,8 +176,13 @@ llvm::Expected<BytecodeEncoding> encoding(const llvm::json::Value &Item,
     return std::move(E);
   const auto *Matches = EO->getArray("match");
   const auto *Operations = EO->getArray("operations");
-  if ((!Selected && (!Matches || Matches->size() > 4096)) || !Operations ||
-      Operations->size() > 4096)
+  if ((!Selected &&
+       (!Matches || Matches->size() >
+                        ::neverd::limits::analysis::
+                            kBytecodeProfileEncodingMatchesSizeLimit)) ||
+      !Operations ||
+      Operations->size() >
+          ::neverd::limits::analysis::kMaxBytecodeEncodingOperations)
     return invalid("invalid match or operation array");
   if (Matches)
     for (const auto &M : *Matches) {
@@ -204,7 +211,7 @@ llvm::Expected<BytecodeEncoding> encoding(const llvm::json::Value &Item,
 
 llvm::Expected<BytecodeProfile> readProfile(llvm::StringRef Text,
                                             bool LayoutOnly) {
-  if (Text.size() > 64 * 1024 * 1024)
+  if (Text.size() > ::neverd::limits::analysis::kMaxBytecodeProfileJSONBytes)
     return invalid("JSON size limit exceeded");
   auto Parsed = llvm::json::parse(Text);
   if (!Parsed)
@@ -236,14 +243,16 @@ llvm::Expected<BytecodeProfile> readProfile(llvm::StringRef Text,
   if (LayoutOnly)
     return P;
   const auto *Encodings = O->getArray("encodings");
-  if (!Encodings || Encodings->empty() || Encodings->size() > 65536)
+  if (!Encodings || Encodings->empty() ||
+      Encodings->size() > ::neverd::limits::analysis::kMaxBytecodeEncodings)
     return invalid("missing or oversized encodings");
   uint64_t Ops = 0;
   for (const auto &Item : *Encodings) {
     auto Encoding = encoding(Item, false);
     if (!Encoding)
       return Encoding.takeError();
-    if ((Ops += Encoding->Operations.size()) > 1000000)
+    if ((Ops += Encoding->Operations.size()) >
+        ::neverd::limits::analysis::kBytecodeDecoderCreateOperationCountLimit)
       return invalid("invalid match or operation array");
     P.Encodings.push_back(std::move(*Encoding));
   }
@@ -264,7 +273,7 @@ neverd::analysis::readBytecodeLayout(llvm::StringRef Text) {
 
 llvm::Expected<BytecodeEncoding>
 neverd::analysis::readBytecodeEncoding(llvm::StringRef Text) {
-  if (Text.size() > 64 * 1024 * 1024)
+  if (Text.size() > ::neverd::limits::analysis::kMaxBytecodeProfileJSONBytes)
     return invalid("JSON size limit exceeded");
   auto Parsed = llvm::json::parse(Text);
   if (!Parsed)

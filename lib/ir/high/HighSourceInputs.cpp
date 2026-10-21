@@ -1,5 +1,7 @@
 #include "neverd/ir/high/HighSourceInputs.h"
 
+#include "neverd/ir/Limits.h"
+
 namespace neverd {
 namespace {
 bool plain(const HighExpr &Expression) {
@@ -32,8 +34,9 @@ bool entryConversion(const HighExpr &Expression) {
 
 bool pureEntryValue(const ExprPtr &Expression, size_t &Budget,
                     unsigned Depth = 0) {
-  if (!Expression || !Budget || Depth > 16 || !plain(*Expression) ||
-      !scalarEntryType(Expression->Type))
+  if (!Expression || !Budget ||
+      Depth > ::neverd::limits::ir::kHighSourceInputsPureEntryValueDepthLimit ||
+      !plain(*Expression) || !scalarEntryType(Expression->Type))
     return false;
   --Budget;
   if (Expression->Kind == ExprKind::Var || Expression->Kind == ExprKind::Const)
@@ -72,7 +75,9 @@ const HighExpr *directEntryLoad(const ExprPtr &Value, unsigned Parameter) {
 /// every sibling must be free of memory accesses and other effects.
 const HighExpr *entryLoad(const ExprPtr &Expression, unsigned Parameter,
                           size_t &Budget, unsigned Depth = 0) {
-  if (!Expression || !Budget || Depth > 16 || !plain(*Expression))
+  if (!Expression || !Budget ||
+      Depth > ::neverd::limits::ir::kHighSourceInputsEntryLoadDepthLimit ||
+      !plain(*Expression))
     return nullptr;
   --Budget;
   if (Expression->Kind == ExprKind::Load) {
@@ -111,16 +116,22 @@ TypeRef entryScalarLoadInput(const HighFunc &Function, unsigned Parameter) {
   if (Parameter >= Function.Params.size() || !Function.Params[Parameter].Type ||
       Function.Params[Parameter].Type->Kind != NdTypeKind::Ptr ||
       Function.Params[Parameter].Type->Size != 8 ||
-      Function.Body.size() > 256 || Function.StructuredExceptionRegions ||
+      Function.Body.size() >
+          ::neverd::limits::ir::
+              kHighSourceInputsEntryScalarLoadInputFunctionBodySizeLimit ||
+      Function.StructuredExceptionRegions ||
       Function.UnstructuredExceptionRegions)
     return {};
   const HighExpr *Load = nullptr;
   bool AtEntry = true;
-  size_t Budget = 4096;
+  size_t Budget =
+      ::neverd::limits::ir::kHighSourceInputsEntryScalarLoadInputBudget;
   unsigned Uses = 0;
   const auto Scan = [&](auto &&Self, const ExprPtr &Expression,
                         unsigned Depth) -> bool {
-    if (!Expression || !Budget || Depth > 32)
+    if (!Expression || !Budget ||
+        Depth > ::neverd::limits::ir::
+                    kHighSourceInputsEntryScalarLoadInputScanScanDepthLimit)
       return false;
     --Budget;
     if (Expression->Kind == ExprKind::Var || Expression->Kind == ExprKind::Phi)

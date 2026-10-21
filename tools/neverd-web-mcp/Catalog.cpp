@@ -11,6 +11,8 @@
 
 #include "Catalog.h"
 
+#include "ResourceLimits.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -18,8 +20,10 @@
 
 namespace neverd::mcp {
 namespace {
-Field text(const char *Name, std::size_t Maximum = 64, bool Required = true,
-           bool Empty = false) {
+Field text(
+    const char *Name,
+    std::size_t Maximum = ::neverd::limits::web_mcp::kCatalogTextMaximumBytes,
+    bool Required = true, bool Empty = false) {
   return {Name, Field::Kind::String, Required, Maximum, Empty ? 0U : 1U};
 }
 Field decimal(const char *Name) {
@@ -73,7 +77,9 @@ void validate(const Field &F, const Json &Value) {
             Value.size() <= F.Maximum;
     if (Valid)
       for (const auto &Item : Value)
-        Valid &= boundedString(Item, 1, 64);
+        Valid &= boundedString(Item, 1,
+                               ::neverd::limits::web_mcp::
+                                   kCatalogValidateValidBoundedStringArgument3);
     break;
   }
   if (!Valid ||
@@ -95,7 +101,11 @@ Json Tool::definition() const {
           {"type", "array"},
           {"minItems", F.Minimum},
           {"maxItems", F.Maximum},
-          {"items", {{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}}};
+          {"items",
+           {{"type", "string"},
+            {"minLength", 1},
+            {"maxLength", ::neverd::limits::web_mcp::
+                              kCatalogToolDefinitionSchemaItemsMaxLength}}}};
     } else {
       Schema = {{"type", "string"},
                 {"minLength", F.Minimum},
@@ -172,7 +182,9 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
     Add(Operation, Description, {decimal("revision"), text(ID)});
   };
   auto Page = [&](const char *Operation, const char *ID, bool Kind = false,
-                  std::size_t Limit = 512, std::size_t KindBytes = 16) {
+                  std::size_t Limit =
+                      ::neverd::limits::web_mcp::kCatalogPageLimit,
+                  std::size_t KindBytes = 16) {
     std::vector<Field> Fields{decimal("revision")};
     if (ID)
       Fields.push_back(text(ID));
@@ -504,17 +516,19 @@ const Tool &Catalog::find(std::string_view Name) const {
 
 Json Catalog::list(const Json &Parameters) const {
   uint64_t Offset = 0;
-  constexpr std::size_t PageSize = 16;
   if (Parameters.contains("cursor")) {
     const auto Cursor = Parameters["cursor"].get<std::string>();
     constexpr std::string_view Prefix = "web-tools-v1:";
     if (!Cursor.starts_with(Prefix) ||
         !decimalValue(std::string_view(Cursor).substr(Prefix.size()), Offset) ||
-        Offset == 0 || Offset % PageSize != 0 || Offset >= Tools.size())
+        Offset == 0 ||
+        Offset % ::neverd::limits::web_mcp::kCatalogPageSize != 0 ||
+        Offset >= Tools.size())
       throw RpcError{-32602, "Invalid tool cursor"};
   }
   Json Items = Json::array();
-  const auto End = std::min<std::size_t>(Tools.size(), Offset + PageSize);
+  const auto End = std::min<std::size_t>(
+      Tools.size(), Offset + ::neverd::limits::web_mcp::kCatalogPageSize);
   for (auto I = Offset; I < End; ++I)
     Items.push_back(Tools[I].definition());
   Json Result{{"tools", std::move(Items)}};

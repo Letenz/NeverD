@@ -16,6 +16,7 @@
 #define NEVERD_LIB_LOADER_ELF_ARMEHABIDETAIL_H
 
 #include "neverd/loader/ELF/ARMEHABI.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Compiler.h"
@@ -57,10 +58,6 @@ inline constexpr uint32_t kExtraWordMask = 0xFF;
 /// so 255 extra words is what the encoding itself permits; stating it keeps
 /// the arithmetic below obviously bounded rather than only provably so.
 inline constexpr uint64_t kMaxEntryBytes = (2 + 255) * 4;
-
-/// Ceiling on index entries read from one image.  A `.ARM.exidx` covers every
-/// function, and the largest shipped ARM32 objects are far below this.
-inline constexpr size_t kMaxIndexEntries = 1u << 22;
 
 /// ARM register numbers the opcodes name.
 inline constexpr uint16_t kFirstPoppedReg = 4;  // r4
@@ -176,6 +173,14 @@ bool decodeTableEntry(const BinaryImage &Img, va_t TableVA, TableEntry &Out,
 bool readsAnItaniumLSDA(ExceptionPersonality Personality);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
+} // namespace neverd::arm_ehabi
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::arm_ehabi {
+namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail {
+inline constexpr size_t kMaxIndexEntries =
+    ::neverd::limits::loader::kARMEHABIDetailMaxIndexEntries;
+}
 } // namespace neverd::arm_ehabi
 
 #endif // NEVERD_LIB_LOADER_ELF_ARMEHABIDETAIL_H

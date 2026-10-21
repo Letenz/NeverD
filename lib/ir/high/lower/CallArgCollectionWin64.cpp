@@ -16,6 +16,8 @@
 
 #include "CallArgCollectionDetail.h"
 
+#include "neverd/ir/Limits.h"
+
 #include <algorithm>
 #include <functional>
 
@@ -159,7 +161,9 @@ void resolvePassThroughParams(CallArgContext &C) {
   };
   std::function<bool(const MedVar &, int)> IsConstLike =
       [&](const MedVar &V, int Depth) -> bool {
-    if (Depth > 8)
+    if (Depth >
+        ::neverd::limits::ir::
+            kCallArgCollectionWin64ResolvePassThroughParamsIsConstLikeDepthLimit)
       return false;
     if (V.isConst())
       return true;
@@ -172,7 +176,10 @@ void resolvePassThroughParams(CallArgContext &C) {
   };
   std::function<bool(const MedVar &, int, int)> IsSlot =
       [&](const MedVar &V, int Slot, int Depth) -> bool {
-    if (Depth > 8 || Slot < 0)
+    if (Depth >
+            ::neverd::limits::ir::
+                kCallArgCollectionWin64ResolvePassThroughParamsIsSlotDepthLimit ||
+        Slot < 0)
       return false;
     if (V.Kind == MedVar::Param)
       return C.AbiParamIndex(V) == Slot;

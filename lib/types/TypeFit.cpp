@@ -6,6 +6,8 @@
 
 #include "neverd/types/TypeFit.h"
 
+#include "neverd/types/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
@@ -17,12 +19,6 @@
 
 namespace neverd::types {
 namespace {
-
-/// How deep a walk follows records held in records and typedefs of
-/// typedefs before it stops, as one that holds itself would never end.
-constexpr unsigned MaxDepth = 64;
-/// How many places in a record a pointer to one of its members is tried at.
-constexpr size_t MaxShifts = 4096;
 
 bool hasElement(llvm::ArrayRef<MemberStep> Path) {
   return llvm::any_of(
@@ -42,8 +38,9 @@ public:
   /// \p Type through the typedefs that name it.
   const TypeExpr &shapeOf(const TypeExpr &Type) const {
     const TypeExpr *Shape = &Type;
-    for (unsigned Steps = 0;
-         Shape->Kind == TypeExprKind::Named && Steps < MaxDepth; ++Steps) {
+    for (unsigned Steps = 0; Shape->Kind == TypeExprKind::Named &&
+                             Steps < ::neverd::limits::types::kTypeFitMaxDepth;
+         ++Steps) {
       const LocalType *Named = Library.find(Shape->Name);
       if (!Named || Named->Kind != TypeKind::Typedef || !Named->Target)
         break;
@@ -110,7 +107,8 @@ public:
     const TypeExpr &Shape = shapeOf(*Type);
     const RecordDef *Record = recordOf(Shape);
     const bool Array = Shape.Kind == TypeExprKind::Array && Shape.Element;
-    if (Depth >= MaxDepth || (!Record && !Array)) {
+    if (Depth >= ::neverd::limits::types::kTypeFitMaxDepth ||
+        (!Record && !Array)) {
       Whole.Fit = Rel == 0 && (Bytes == 0 || Bytes == Size) ? AccessFit::Exact
                   : Rel == 0                                ? AccessFit::Start
                                                             : AccessFit::Inside;
@@ -229,10 +227,10 @@ public:
   /// begins, from its start; what a pointer into it points at.
   void memberStarts(const RecordDef &Record, uint64_t Base,
                     std::set<uint64_t> &Starts, unsigned Depth) const {
-    if (Depth >= MaxDepth)
+    if (Depth >= ::neverd::limits::types::kTypeFitMaxDepth)
       return;
     for (const Member &Field : Record.Members) {
-      if (Starts.size() >= MaxShifts)
+      if (Starts.size() >= ::neverd::limits::types::kTypeFitMaxShifts)
         return;
       if (!Field.Type || Field.isBitfield())
         continue;
@@ -248,7 +246,7 @@ public:
   void memberPaths(const RecordDef &Record, std::vector<MemberStep> &Path,
                    std::vector<std::vector<MemberStep>> &Paths,
                    unsigned Depth) const {
-    if (Depth >= MaxDepth)
+    if (Depth >= ::neverd::limits::types::kTypeFitMaxDepth)
       return;
     for (const Member &Field : Record.Members) {
       if (!Field.Type)
@@ -472,7 +470,8 @@ std::optional<FuzzyMatch> fuzzyMatch(llvm::StringRef Pattern,
   if (Pattern.empty())
     return FuzzyMatch();
   const size_t N = Pattern.size(), M = Text.size();
-  if (N > M || N > 64 || M > 1024)
+  if (N > M || N > ::neverd::limits::types::kMaxFuzzyPatternBytes ||
+      M > ::neverd::limits::types::kMaxFuzzyCandidateBytes)
     return std::nullopt;
   // A pattern that is no subsequence fails before any scoring.
   for (size_t I = 0, J = 0; I < N; ++I, ++J) {

@@ -19,6 +19,7 @@
 
 #include "HighFrameAddress.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -33,13 +34,16 @@ namespace {
 
 constexpr int64_t kVaListBytes = HighFunc::VaStartForwarder::VaListBytes;
 constexpr int64_t kSaveAreaBytes = HighFunc::VaStartForwarder::SaveAreaBytes;
-constexpr size_t kAddressBudget = 100000;
 
 /// \p E without the conversions a spill puts around the parameter it saves:
 /// a vector register's double is stored as its bits, widened to the slot,
 /// and a parameter narrower than its register reads as its low bytes.
 const HighExpr *spilledValue(const HighExpr *E) {
-  for (unsigned Depth = 0; E && Depth < 8; ++Depth) {
+  for (unsigned Depth = 0;
+       E &&
+       Depth <
+           ::neverd::limits::ir::kHighVaStartForwarderSpilledValueDepthLimit;
+       ++Depth) {
     if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
          (E->Kind == ExprKind::UnaryOp && E->Op == NdOp::INT_ZEXT)) &&
         E->Operands.size() == 1) {
@@ -113,21 +117,24 @@ void recognizeVaStartForwarder(HighFunc &Func, Arch Architecture) {
   std::set<HighSourceLocalIdentity> FrameLocals;
   // Whether \p E's value may be a frame address: one computed from the entry
   // stack pointer, not one read from memory or returned by a call.
-  std::function<bool(const HighExpr &, unsigned)> FrameValue =
-      [&](const HighExpr &E, unsigned Depth) {
-        if (Depth > 64)
-          return true;
-        if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
-          return EntrySp(E) ||
-                 FrameLocals.count(highSourceLocalIdentity(E.Var));
-        if (E.Kind != ExprKind::BinOp && E.Kind != ExprKind::UnaryOp &&
-            E.Kind != ExprKind::Cast && E.Kind != ExprKind::BitCast)
-          return false;
-        for (const ExprPtr &Operand : E.Operands)
-          if (Operand && FrameValue(*Operand, Depth + 1))
-            return true;
-        return false;
-      };
+  std::function<bool(const HighExpr &, unsigned)> FrameValue = [&](const HighExpr
+                                                                       &E,
+                                                                   unsigned
+                                                                       Depth) {
+    if (Depth >
+        ::neverd::limits::ir::
+            kHighVaStartForwarderRecognizeVaStartForwarderFrameValueDepthLimit)
+      return true;
+    if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
+      return EntrySp(E) || FrameLocals.count(highSourceLocalIdentity(E.Var));
+    if (E.Kind != ExprKind::BinOp && E.Kind != ExprKind::UnaryOp &&
+        E.Kind != ExprKind::Cast && E.Kind != ExprKind::BitCast)
+      return false;
+    for (const ExprPtr &Operand : E.Operands)
+      if (Operand && FrameValue(*Operand, Depth + 1))
+        return true;
+    return false;
+  };
   for (bool Grew = true; Grew;) {
     Grew = false;
     walkStmts(Func.Body, [&](const HighStmt &S) {
@@ -142,7 +149,7 @@ void recognizeVaStartForwarder(HighFunc &Func, Arch Architecture) {
     if (Definitions[Local] != 1)
       return;
   std::map<HighSourceLocalIdentity, ExprPtr> Aliases;
-  size_t Budget = kAddressBudget;
+  size_t Budget = ::neverd::limits::ir::kHighVaStartForwarderAddressBudget;
   const auto Alias = [&](const MedVar &V) -> ExprPtr {
     const auto It = Aliases.find(highSourceLocalIdentity(V));
     return It == Aliases.end() ? nullptr : It->second;

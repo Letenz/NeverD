@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -68,7 +69,11 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                              WorkBudget &Budget, SolveReport &Rep) {
   // Bound this optional frontier before allocating or distributing enclosing
   // scales. Low-degree regions keep their existing reconstruction path.
-  constexpr size_t MaxTerms = 128, MaxEdges = 2048, MinCompletionTerms = 6;
+  constexpr size_t
+      MaxTerms = ::neverd::symbolic::detail::limits::kProductCofactorMaxTerms,
+      MaxEdges = ::neverd::symbolic::detail::limits::kProductCofactorMaxEdges,
+      MinCompletionTerms = ::neverd::symbolic::detail::limits::
+          kProductCofactorMinCompletionTerms;
   std::array<SymRef, MaxTerms> Pending;
   size_t Top = 1, TermsSeen = 0, Edges = 0, Visits = 0;
   unsigned Higher = 0;
@@ -853,7 +858,9 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // This optional reading only inspects immediate sums and products. Purely
   // arithmetic factoring belongs to the polynomial normalizer. A small fixed
   // frontier also keeps unsuccessful scans independent of shared tail depth.
-  constexpr size_t MaxTerms = 64, MaxEdges = 256;
+  constexpr size_t
+      MaxTerms = ::neverd::symbolic::detail::limits::kStructuralFactorMaxTerms,
+      MaxEdges = ::neverd::symbolic::detail::limits::kStructuralFactorMaxEdges;
   if (Ctx.op(E) != SymOp::Add || Ctx.numOperands(E) < 3 ||
       Ctx.numOperands(E) > MaxTerms || Budget.exhausted())
     return E;

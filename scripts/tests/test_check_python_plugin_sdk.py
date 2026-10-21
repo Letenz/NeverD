@@ -10,9 +10,68 @@ import unittest
 from unittest import mock
 
 from scripts import check_python_plugin_sdk as audit
+from scripts import generate_python_plugin_limits as limits
 
 
 class PythonPluginSDKAuditTests(unittest.TestCase):
+    def test_generated_limits_match_native_authorities(self) -> None:
+        self.assertEqual(limits.check(), [])
+
+    def test_native_limit_change_invalidates_generated_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in {path for path, _, _ in limits.BINDINGS}:
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text((limits.ROOT / relative).read_text())
+            output = root / limits.OUTPUT
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(limits.render(root))
+            native = root / "include/neverd/sdk/Limits.h"
+            source, count = re.subn(
+                r"(kMaxSourcePatchCompilerArguments\s*=\s*)256\b",
+                r"\g<1>257",
+                native.read_text(),
+            )
+            self.assertEqual(count, 1)
+            native.write_text(source)
+            self.assertTrue(limits.check(root))
+            self.assertIn(
+                "MAX_SOURCE_PATCH_COMPILER_ARGUMENTS: Final[int] = 257",
+                limits.render(root),
+            )
+            output.write_text(limits.render(root))
+            self.assertEqual(limits.check(root), [])
+
+    def test_limit_generator_accepts_native_integer_arithmetic(self) -> None:
+        self.assertEqual(limits.integer_expression("64ULL * 1024 * 1024"), 67108864)
+        self.assertEqual(limits.integer_expression("(1u << 16) + 0x10UL"), 65552)
+        self.assertEqual(limits.integer_expression("20'000'000"), 20000000)
+        self.assertEqual(limits.integer_expression("uint64_t{1} << 26"), 67108864)
+        self.assertEqual(limits.integer_expression("size_t(1) << 22"), 4194304)
+
+    def test_model_default_is_distinct_from_factory_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "model.h").write_text(
+                "struct Other { unsigned Max = 7; };\n"
+                "struct Options {\n"
+                "  unsigned Max = 64;\n"
+                "  static Options small() {\n"
+                "    Options Result; Result.Max = 1; return Result;\n"
+                "  }\n"
+                "};\n"
+            )
+            with mock.patch.object(
+                limits, "BINDINGS", (("model.h", "Options::Max", "MAX"),)
+            ):
+                self.assertIn("MAX: Final[int] = 64", limits.render(root))
+
+    def test_limit_generator_rejects_unaudited_expressions(self) -> None:
+        for expression in ("other_limit", "max(1, 2)", "True", "1.5", "0"):
+            with self.subTest(expression=expression), self.assertRaises(ValueError):
+                limits.integer_expression(expression)
+
     def test_audit_is_directly_runnable_without_pythonpath(self) -> None:
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
@@ -57,6 +116,7 @@ class PythonPluginSDKAuditTests(unittest.TestCase):
             "README.md",
             "pyproject.toml",
             "py.typed",
+            "_limits.py",
             "analysis_report.py",
             "minimal.py",
             "semantic_optimizer.py",

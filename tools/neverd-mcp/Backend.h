@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "ResourceLimits.h"
 #include "common/transport/Json.h"
 
 #include <chrono>
@@ -74,7 +75,8 @@ class AttachBackend final : public Backend {
 public:
   explicit AttachBackend(
       const std::filesystem::path &Credentials,
-      std::chrono::seconds Timeout = std::chrono::seconds(120));
+      std::chrono::seconds Timeout = std::chrono::seconds(
+          ::neverd::limits::mcp::kBackendAttachBackendSeconds));
   ~AttachBackend() override;
   Json query(const std::string &Operation, const Json &Payload,
              const std::optional<std::string> &ExpectedRevision) override;

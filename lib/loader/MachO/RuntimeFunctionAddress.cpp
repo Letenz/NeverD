@@ -2,6 +2,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -50,7 +51,10 @@ runtimeCFunctionAddressHint(const BinaryImage &Image, va_t ImportSlot) {
   if (Function.Convention != SourceFunctionTypeHint::ConventionKind::C ||
       Function.Architecture != Image.Arch || !Function.HasExplicitABI ||
       !validateSourceABI(Function, Error) ||
-      !Function.ReturnComponents.empty() || Function.Parameters.size() > 64)
+      !Function.ReturnComponents.empty() ||
+      Function.Parameters.size() >
+          ::neverd::limits::loader::
+              kRuntimeFunctionAddressRuntimeCFunctionAddressHintFunctionParametersSizeLimit)
     return std::nullopt;
   auto Canonical = Function;
   if (!assignDarwinScalarSourceABI(Canonical, Image.Arch, Error) ||

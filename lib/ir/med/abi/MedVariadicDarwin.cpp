@@ -15,6 +15,7 @@
 #include "MedVariadicDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 
 #include <functional>
 
@@ -92,7 +93,10 @@ bool hasDarwinVariadicPrologue(VariadicScan &S) {
     // post-indexed load address is often a COPY of the walked register).
     std::function<MedVar(const MedVar &, int)> thruCopy =
         [&](const MedVar &V, int Depth) -> MedVar {
-      if (Depth > 32 || V.isConst())
+      if (Depth >
+              ::neverd::limits::ir::
+                  kMedVariadicDarwinHasDarwinVariadicPrologueThruCopyDepthLimit ||
+          V.isConst())
         return V;
       const auto &Copies = getValueIndex().FirstCopies;
       auto It = Copies.find(VariadicValueIndex::walkKeyOf(V));
@@ -105,7 +109,9 @@ bool hasDarwinVariadicPrologue(VariadicScan &S) {
     // constant acts as +c.  Used only inside this tight walk gate.
     std::function<std::optional<int64_t>(const MedVar &, int)> ovfDelta =
         [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
-      if (Depth > 32)
+      if (Depth >
+          ::neverd::limits::ir::
+              kMedVariadicDarwinHasDarwinVariadicPrologueOvfDeltaDepthLimit)
         return std::nullopt;
       if (auto D = entrySpDelta(getValueIndex(), SpOff, V, 0))
         return D;

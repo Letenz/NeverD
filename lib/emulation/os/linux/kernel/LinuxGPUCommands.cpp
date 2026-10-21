@@ -11,6 +11,8 @@
 #include "LinuxKGSL.h"
 #include "LinuxMemory.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -104,7 +106,7 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
   if (Get32(24))
     return unsupported(
         Result, "GPU command flags or IB lists are outside the legacy subset");
-  if (Words > 4096)
+  if (Words > ::neverd::limits::emulation::kMaxGPUCommandWords)
     return unsupported(Result, "GPU command word budget exhausted");
   auto Resolve = [&](uint64_t Address, uint64_t Length,
                      bool Write) -> llvm::Expected<std::optional<MemoryView>> {
@@ -144,7 +146,8 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
   };
   std::vector<Store> Stores;
   std::vector<MemoryView> Programs, Active;
-  unsigned RemainingWords = 4096;
+  unsigned RemainingWords =
+      ::neverd::limits::emulation::kLinuxGPUCommandsRemainingWords;
   auto Admit = [&](auto &&Self, uint64_t Address, unsigned Length,
                    const Location &From) -> llvm::Expected<bool> {
     if (Address % 4 || !Length)

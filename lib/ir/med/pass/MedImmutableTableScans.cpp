@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
@@ -24,10 +25,6 @@
 
 namespace neverd {
 namespace {
-constexpr size_t MaxEvaluationWork = 65536;
-constexpr unsigned MaxEvaluationDepth = 64;
-constexpr unsigned MaxScanIterations = 4096;
-constexpr unsigned MaxFoldRounds = 4;
 
 // A value's identity.  No variable is as wide as the sizes DenseMap reserves
 // for its empty and erased keys.
@@ -203,8 +200,10 @@ public:
 
   std::optional<MedVar> value(const MedVar &V, const Values *Bindings = nullptr,
                               unsigned Depth = 0) {
-    if (!Complete || !Budget || Depth > MaxEvaluationDepth || !V.Size ||
-        V.Size > 8)
+    if (!Complete || !Budget ||
+        Depth >
+            ::neverd::limits::ir::kMedImmutableTableScansMaxEvaluationDepth ||
+        !V.Size || V.Size > 8)
       return std::nullopt;
     --Budget;
     if (V.isConst()) {
@@ -312,8 +311,11 @@ public:
   std::optional<MedVar> operation(const MedOp &Op,
                                   const Values *Bindings = nullptr,
                                   unsigned Depth = 0) {
-    if (!Complete || !Budget || Depth > MaxEvaluationDepth || !Op.Output.Size ||
-        Op.Output.Size > 8 || Op.MemoryOrdering != NdMemoryOrdering::None ||
+    if (!Complete || !Budget ||
+        Depth >
+            ::neverd::limits::ir::kMedImmutableTableScansMaxEvaluationDepth ||
+        !Op.Output.Size || Op.Output.Size > 8 ||
+        Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         Op.SourceCallHint || !Op.IntrinsicOutputs.empty())
       return std::nullopt;
@@ -524,7 +526,10 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
     if (!Found)
       return false;
   }
-  for (unsigned Iteration = 0; Iteration < MaxScanIterations; ++Iteration) {
+  for (unsigned Iteration = 0;
+       Iteration <
+       ::neverd::limits::ir::kMedImmutableTableScansMaxScanIterations;
+       ++Iteration) {
     Values Current = State;
     for (size_t I = 0; I + 1 < Block.Ops.size(); ++I) {
       const auto &Op = Block.Ops[I];
@@ -600,8 +605,11 @@ bool foldImmutableTableScans(MedFunc &Func, const BinaryImage &Image) {
   if (!supportsImmutableImageReads(Image) || Func.SkippedSSA)
     return false;
   bool Changed = false;
-  size_t Budget = MaxEvaluationWork;
-  for (unsigned Round = 0; Round != MaxFoldRounds; ++Round) {
+  size_t Budget =
+      ::neverd::limits::ir::kMedImmutableTableScansMaxEvaluationWork;
+  for (unsigned Round = 0;
+       Round != ::neverd::limits::ir::kMedImmutableTableScansMaxFoldRounds;
+       ++Round) {
     bool Progress = false;
     Evaluator Eval(Func, Image, Budget);
     if (!Eval.complete())

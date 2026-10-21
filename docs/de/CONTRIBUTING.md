@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 284ec1bcba3c77596f6b244b241b3088a37a9ba9238092e0b96b76d0661f84a5 -->
+<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
 
 # Zu NeverD beitragen
 
@@ -279,6 +279,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### Zuständigkeit für Grenzen, Standardwerte und Konfiguration
 
+Verwenden Sie `ResourceLimits.h` in Werkzeugverzeichnissen, die direkt zum Include-Suchpfad gehören. Auf einem Dateisystem ohne Unterscheidung der Groß- und Kleinschreibung kann ein lokales `Limits.h` das Systemheader `<limits.h>` verdecken.
+
 Jede Regel erhält genau eine maßgebliche Definition im zuständigen Grenz-/Konfigurationsheader,
 auch bei nur einem Aufrufer: Ein-/Ausgabekappen, Rekursion/Graphen, Arbeits-/Iterationsbudgets,
 Heuristikschwellen, Cache, Seiten/Batches, Wiederholungen und Zeitlimits. Dies gilt für
@@ -292,7 +294,7 @@ Bestehende Zuständigkeit zuerst wählen:
 | SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) oder bestehende spezielle Definition |
 | Andere Bibliothekskomponente | Bestehender Header/Definitionstabelle, sonst gezieltes `Limits.h` der Schicht |
-| Nur CLI, Worker oder GUI | Werkzeuglokales `Limits.h` oder `Config.h`; Kern hängt nicht davon ab |
+| Nur CLI, Worker oder GUI | Werkzeuglokales `ResourceLimits.h` oder `Config.h`; Kern hängt nicht davon ab |
 | Aufruferoptionen | Zuständiges Modell `Config.h`, `*Options.h` oder `*Configuration.h` |
 
 Header schlank und zweckbezogen halten. Bestehende `*Limits.def`-/Konfigurationstabellen wiederverwenden

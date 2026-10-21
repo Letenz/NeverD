@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object summary(const PackageArchive &A, uint64_t Revision) {
@@ -75,7 +77,8 @@ std::string Session::packageArchiveRecords(std::string_view Revision,
   if (Found == State->PackageArchives.end())
     throw Error("unknown_package_archive");
   const auto &A = Found->second;
-  if (!Limit || Limit > 512 || Offset > A.Members.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > A.Members.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(A.Members.size(), Offset + Limit);
   llvm::json::Array Items;

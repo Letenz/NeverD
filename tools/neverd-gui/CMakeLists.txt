@@ -37,7 +37,9 @@ FetchContent_MakeAvailable(neverd_docking)
 # Worker transport, request dispatch and MCP bridges: no widgets.
 add_library(neverd_gui_core STATIC EngineClient.cpp QueryService.cpp
   LibraryCodeView.cpp mcp/McpConnectionManager.cpp mcp/GuiSessionBroker.cpp)
-target_include_directories(neverd_gui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(neverd_gui_core PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 target_compile_features(neverd_gui_core PUBLIC cxx_std_20)
 target_link_libraries(neverd_gui_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
 
@@ -149,7 +151,9 @@ if(BUILD_TESTING)
 
   qt_add_executable(neverd-gui-query-tests tests/QueryServiceTests.cpp QueryService.cpp)
   target_link_libraries(neverd-gui-query-tests PRIVATE Qt6::Core Qt6::Test)
-  target_include_directories(neverd-gui-query-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_include_directories(neverd-gui-query-tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
   add_test(NAME NeverDGuiQueries COMMAND neverd-gui-query-tests)
   set_tests_properties(NeverDGuiQueries PROPERTIES TIMEOUT 60)
 

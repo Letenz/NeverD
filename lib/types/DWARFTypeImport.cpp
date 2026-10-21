@@ -6,6 +6,8 @@
 
 #include "neverd/types/DWARFTypeImport.h"
 
+#include "neverd/types/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -29,10 +31,6 @@ namespace neverd::types {
 namespace {
 
 namespace dw = llvm::dwarf;
-
-/// How deep a type expression nests: pointers, arrays, qualifiers and the
-/// anonymous records defined in place.
-constexpr unsigned MaxDepth = 64;
 
 std::optional<uint64_t> unsignedOf(const llvm::DWARFDie &Die,
                                    dw::Attribute Attribute) {
@@ -59,7 +57,10 @@ bool ofGo(const llvm::DWARFDie &Die) {
 
 /// The type \p Die names, through its typedefs and qualifiers.
 llvm::DWARFDie heldType(llvm::DWARFDie Die) {
-  for (unsigned Hops = 0; Die.isValid() && Hops < MaxDepth; ++Hops) {
+  for (unsigned Hops = 0;
+       Die.isValid() &&
+       Hops < ::neverd::limits::types::kDWARFTypeImportMaxDepth;
+       ++Hops) {
     switch (Die.getTag()) {
     case dw::DW_TAG_typedef:
     case dw::DW_TAG_const_type:
@@ -294,7 +295,8 @@ private:
         Die.getAttributeValueAsReferencedDie(dw::DW_AT_type);
     for (unsigned Hop = 0;
          Target.isValid() && Target.getTag() == dw::DW_TAG_typedef &&
-         Hop < MaxDepth && qualifiedName(Target) == Name;
+         Hop < ::neverd::limits::types::kDWARFTypeImportMaxDepth &&
+         qualifiedName(Target) == Name;
          ++Hop)
       Target = Target.getAttributeValueAsReferencedDie(dw::DW_AT_type);
     if (Target.isValid() && (isRecordTag(Target.getTag()) ||
@@ -344,7 +346,7 @@ private:
   /// needs its size and alignment; one only pointed to is defined later.
   TypeExprRef expr(const llvm::DWARFDie &Die, std::optional<Refusal> &Why,
                    unsigned Depth, bool ByValue) {
-    if (Depth > MaxDepth) {
+    if (Depth > ::neverd::limits::types::kDWARFTypeImportMaxDepth) {
       Why = Refusal{"its types nest too deep"};
       return nullptr;
     }
@@ -682,7 +684,9 @@ private:
     std::optional<Builtin> Base;
     if (Underlying.isValid()) {
       std::optional<Refusal> Ignored;
-      TypeExprRef Type = expr(Underlying, Ignored, MaxDepth - 4, true);
+      TypeExprRef Type =
+          expr(Underlying, Ignored,
+               ::neverd::limits::types::kDWARFTypeImportMaxDepth - 4, true);
       while (Type && Type->Kind == TypeExprKind::Named) {
         const LocalType *Named = Library.resolve(Type->Name);
         Type =
@@ -1009,7 +1013,8 @@ private:
   /// The integer builtin \p Type is, through typedefs and enumerations.
   std::optional<Builtin> integerOf(const TypeExpr &Type) const {
     const TypeExpr *At = &Type;
-    for (unsigned Hop = 0; At && Hop < MaxDepth; ++Hop) {
+    for (unsigned Hop = 0;
+         At && Hop < ::neverd::limits::types::kDWARFTypeImportMaxDepth; ++Hop) {
       switch (At->Kind) {
       case TypeExprKind::Builtin: {
         const BuiltinClass Class = builtinInfo(At->TheBuiltin).Class;
@@ -1077,7 +1082,8 @@ private:
     }
     Record.Pack = Pack;
     if (!Record.Alignment && Record.Size > alignUp(End, Aligned))
-      for (uint64_t Candidate = uint64_t(Aligned) * 2; Candidate <= 4096;
+      for (uint64_t Candidate = uint64_t(Aligned) * 2;
+           Candidate <= ::neverd::limits::types::kMaxInferredRecordAlignment;
            Candidate *= 2)
         if (alignUp(End, Candidate) == Record.Size) {
           Record.Alignment = uint32_t(Candidate);

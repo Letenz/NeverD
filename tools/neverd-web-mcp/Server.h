@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "ResourceLimits.h"
 #include "common/transport/Json.h"
 
 #include <optional>
@@ -18,9 +19,6 @@
 namespace neverd::mcp {
 using transport::Json;
 inline constexpr std::string_view ProtocolVersion = "2025-06-18";
-inline constexpr std::size_t MaxRequestBytes = 64 * 1024;
-inline constexpr std::size_t MaxResponseBytes = 8 * 1024 * 1024;
-inline constexpr std::size_t MaxToolJsonBytes = 2 * 1024 * 1024;
 
 /// Messages are fixed literals; never put request or target text here.
 struct RpcError {
@@ -49,4 +47,14 @@ public:
   /// Notifications and unsolicited client responses produce no reply.
   std::optional<Json> handle(std::string_view Message);
 };
+} // namespace neverd::mcp
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::mcp {
+inline constexpr std::size_t MaxRequestBytes =
+    ::neverd::limits::web_mcp::kServerMaxRequestBytes;
+inline constexpr std::size_t MaxResponseBytes =
+    ::neverd::limits::web_mcp::kServerMaxResponseBytes;
+inline constexpr std::size_t MaxToolJsonBytes =
+    ::neverd::limits::web_mcp::kServerMaxToolJsonBytes;
 } // namespace neverd::mcp

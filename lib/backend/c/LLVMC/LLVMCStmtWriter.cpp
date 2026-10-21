@@ -24,6 +24,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/MachineInstructionText.h"
 #include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
@@ -86,7 +87,8 @@ bool freezeHasDefinedCProjection(const llvm::Value *Root) {
   std::vector<const llvm::Value *> Work{Root}, Anchors;
   std::set<const llvm::Value *> Seen, Defined;
   std::map<const llvm::Value *, std::vector<const llvm::Value *>> Users;
-  size_t Budget = 65536;
+  size_t Budget = ::neverd::limits::backend::
+      kLLVMCStmtWriterFreezeHasDefinedCProjectionBudget;
   while (!Work.empty()) {
     const auto *Value = Work.back();
     Work.pop_back();
@@ -410,14 +412,14 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
       llvm::DenseMap<const llvm::AllocaInst *, const llvm::Value *> Stores;
       llvm::DenseMap<const llvm::Value *, unsigned> ExpansionDepth;
       llvm::DenseMap<const llvm::Value *, unsigned> ExpansionCost;
-      constexpr unsigned MaxForwardDepth = 8;
-      constexpr unsigned MaxForwardCost = 32;
       auto Expansion = [&](const llvm::Value *V) {
         // A definition outside this local index may itself inline a large
         // expression. Do not silently price an unmeasured instruction as a
         // leaf, including when basic blocks appear out of dominance order.
         if (llvm::isa<llvm::Instruction>(V) && !ExpansionCost.count(V))
-          return std::pair(MaxForwardDepth, MaxForwardCost);
+          return std::pair(
+              ::neverd::limits::backend::kLLVMCStmtWriterMaxForwardDepth,
+              ::neverd::limits::backend::kLLVMCStmtWriterMaxForwardCost);
         return std::pair(ExpansionDepth.lookup(V),
                          std::max(1u, ExpansionCost.lookup(V)));
       };
@@ -427,10 +429,14 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
           const auto [OperandDepth, OperandCost] = Expansion(Operand.get());
           Depth = std::max(Depth, OperandDepth);
           // Count duplicate operands twice: printed expressions are trees.
-          Cost = std::min(MaxForwardCost, Cost + OperandCost);
+          Cost = std::min(
+              ::neverd::limits::backend::kLLVMCStmtWriterMaxForwardCost,
+              Cost + OperandCost);
         }
         if (!I.getType()->isVoidTy()) {
-          ExpansionDepth[&I] = std::min(MaxForwardDepth, Depth + 1);
+          ExpansionDepth[&I] = std::min(
+              ::neverd::limits::backend::kLLVMCStmtWriterMaxForwardDepth,
+              Depth + 1);
           ExpansionCost[&I] = Cost;
         }
         if (const auto *S = llvm::dyn_cast<llvm::StoreInst>(&I)) {
@@ -449,8 +455,10 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
             LocalReachingValues[L] = It->second;
           if (It != Stores.end() && It->second &&
               It->second->getType() == L->getType() &&
-              Expansion(It->second).first < MaxForwardDepth &&
-              Expansion(It->second).second < MaxForwardCost) {
+              Expansion(It->second).first <
+                  ::neverd::limits::backend::kLLVMCStmtWriterMaxForwardDepth &&
+              Expansion(It->second).second <
+                  ::neverd::limits::backend::kLLVMCStmtWriterMaxForwardCost) {
             LocalLoadValues[L] = It->second;
             ExpansionDepth[L] = ExpansionDepth.lookup(It->second) + 1;
             ExpansionCost[L] = ExpansionCost.lookup(It->second) + 1;
@@ -463,7 +471,7 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
   if (Exact == ExactLocalLoadSlots.end()) {
     bool Valid = Slot->getAllocatedType()->isIntegerTy() ||
                  Slot->getAllocatedType()->isPointerTy();
-    size_t Budget = 8 * 1024 * 1024;
+    size_t Budget = ::neverd::limits::backend::kLLVMCStoredValueGraphWork;
     for (const auto *U : Slot->users()) {
       if (!Budget-- || !Valid) {
         Valid = false;
@@ -496,7 +504,7 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
   // Query immutable stores, never the state left by printing another block.
   const llvm::Value *Common = nullptr;
   bool Conflicting = false;
-  unsigned Budget = 4096;
+  unsigned Budget = ::neverd::limits::backend::kLLVMCStoredValueTraversalWork;
   auto FindStore = [&](const llvm::Instruction *End) {
     for (const auto *I = End; I; I = I->getPrevNode()) {
       if (Budget == 0)
@@ -538,10 +546,14 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
     return nullptr;
   // Reprinting a memory read or call would move its observation past effects.
   // Admit only bounded, immutable arithmetic/address expressions here.
-  unsigned Work = 32;
+  unsigned Work = ::neverd::limits::backend::
+      kLLVMCStmtWriterLLVMCWriterAllocaStoredValueBeforeWork;
   auto Stable = [&](auto &&Self, const llvm::Value *Value,
                     unsigned Depth) -> bool {
-    if (Work == 0 || Depth > 8)
+    if (Work == 0 ||
+        Depth >
+            ::neverd::limits::backend::
+                kLLVMCStmtWriterLLVMCWriterAllocaStoredValueBeforeStableDepthLimit)
       return false;
     --Work;
     if (llvm::isa<llvm::Constant, llvm::Argument, llvm::AllocaInst>(Value))
@@ -793,7 +805,11 @@ LLVMCWriter::leftoverPackedCallResult(const llvm::BasicBlock *BB) const {
     }
     return Found;
   };
-  for (unsigned I = 0; I < 12 && Cur && Seen.insert(Cur).second; ++I) {
+  for (unsigned I = 0;
+       I < ::neverd::limits::backend::
+               kLLVMCStmtWriterLLVMCWriterLeftoverPackedCallResultILimit &&
+       Cur && Seen.insert(Cur).second;
+       ++I) {
     const llvm::BasicBlock *Pred = uniqueNormalPred(Cur);
     if (!Pred)
       break;
@@ -920,7 +936,10 @@ bool LLVMCWriter::priorUnknownStoreTo(const llvm::Instruction *SI,
   if (!SI)
     return false;
   unsigned Looked = 0;
-  for (const llvm::Instruction *Prev = SI->getPrevNode(); Prev && Looked < 12;
+  for (const llvm::Instruction *Prev = SI->getPrevNode();
+       Prev &&
+       Looked < ::neverd::limits::backend::
+                    kLLVMCStmtWriterLLVMCWriterPriorUnknownStoreToLookedLimit;
        Prev = Prev->getPrevNode()) {
     const auto *St = llvm::dyn_cast<llvm::StoreInst>(Prev);
     if (!St) {
@@ -977,7 +996,11 @@ bool LLVMCWriter::storeIsLeftoverHomeUndef(const llvm::StoreInst &SI) const {
   if (!Home)
     return false;
   unsigned Looked = 0;
-  for (const llvm::Instruction *Next = SI.getNextNode(); Next && Looked < 12;
+  for (const llvm::Instruction *Next = SI.getNextNode();
+       Next &&
+       Looked <
+           ::neverd::limits::backend::
+               kLLVMCStmtWriterLLVMCWriterStoreIsLeftoverHomeUndefLookedLimit;
        Next = Next->getNextNode()) {
     const auto *St = llvm::dyn_cast<llvm::StoreInst>(Next);
     if (!St) {
@@ -1086,8 +1109,13 @@ void LLVMCWriter::collectLeftoverNarrowCallStores(llvm::Function &Fn) {
       const llvm::StoreInst *Sibling = nullptr;
       const llvm::StoreInst *ArgListCopy = nullptr;
       const uint16_t FillSize = llvmAccessSize(Call->getType());
-      for (llvm::Instruction *Next = Inst.getNextNode(); Next && Looked < 32;
-           Next = Next->getNextNode()) {
+      for (
+          llvm::Instruction *Next = Inst.getNextNode();
+          Next &&
+          Looked <
+              ::neverd::limits::backend::
+                  kLLVMCStmtWriterLLVMCWriterCollectLeftoverNarrowCallStoresLookedLimit;
+          Next = Next->getNextNode()) {
         const auto *St = llvm::dyn_cast<llvm::StoreInst>(Next);
         if (!St)
           continue;
@@ -1320,7 +1348,10 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
   const llvm::BasicBlock *Cur = Br->getParent();
   llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Seen;
   Seen.insert(Cur);
-  for (int Step = 0; Step < 16; ++Step) {
+  for (int Step = 0;
+       Step < ::neverd::limits::backend::
+                  kLLVMCStmtWriterLLVMCWriterImpliedPointerSuccessorStepLimit;
+       ++Step) {
     const llvm::BasicBlock *Pred = Cur->getSinglePredecessor();
     if (!Pred || !Seen.insert(Pred).second)
       return nullptr;
@@ -2186,8 +2217,14 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
             Member->Type->Size == Size) {
           const llvm::Value *Root = Stored;
           std::set<const llvm::Value *> Seen;
-          for (unsigned Depth = 0;
-               Root && Depth < 8 && Seen.insert(Root).second; ++Depth) {
+          for (
+              unsigned Depth = 0;
+              Root &&
+              Depth <
+                  ::neverd::limits::backend::
+                      kLLVMCStmtWriterLLVMCWriterWriteInstructionImplDepthLimit &&
+              Seen.insert(Root).second;
+              ++Depth) {
             if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Root)) {
               if (llvm::isa<llvm::SExtInst, llvm::ZExtInst, llvm::TruncInst,
                             llvm::PtrToIntInst, llvm::IntToPtrInst,
@@ -6077,7 +6114,9 @@ void LLVMCWriter::writeExclusiveArm(
       if (!Cur || Cur == Tail || Cur == Stop || !Owned.count(Cur) ||
           !FromLeft.insert(Cur).second)
         continue;
-      if (FromLeft.size() > 64)
+      if (FromLeft.size() >
+          ::neverd::limits::backend::
+              kLLVMCStmtWriterLLVMCWriterWriteExclusiveArmCommonFromLeftSizeLimit)
         break;
       for (const llvm::BasicBlock *Succ : llvm::successors(Cur))
         if (Owned.count(Succ))
@@ -6103,7 +6142,10 @@ void LLVMCWriter::writeExclusiveArm(
     llvm::SmallVector<const llvm::BasicBlock *, 4> Chain;
     const llvm::BasicBlock *Cur = Start;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Local;
-    while (Cur && Chain.size() < 4 && Local.insert(Cur).second) {
+    while (Cur &&
+           Chain.size() < ::neverd::limits::backend::
+                              kLLVMCStmtWriterPrintReturnChainChainSizeLimit &&
+           Local.insert(Cur).second) {
       if (Cur == Tail || Cur == Stop || Owned.count(Cur))
         return false;
       Chain.push_back(Cur);
@@ -6130,7 +6172,11 @@ void LLVMCWriter::writeExclusiveArm(
         llvm::SmallVector<const llvm::BasicBlock *, 8> Back;
         llvm::SmallPtrSet<const llvm::BasicBlock *, 8> BackSeen;
         const llvm::BasicBlock *Hop = Origin;
-        while (Hop && Back.size() < 8 && BackSeen.insert(Hop).second) {
+        while (Hop &&
+               Back.size() <
+                   ::neverd::limits::backend::
+                       kLLVMCStmtWriterPrintReturnChainBackSizeLimit &&
+               BackSeen.insert(Hop).second) {
           Back.push_back(Hop);
           Hop = Hop->getSinglePredecessor();
         }
@@ -6937,7 +6983,10 @@ std::string LLVMCWriter::importCalleeCName(const llvm::Value *Callee) const {
       GV && GV->isDeclaration() && !GV->getName().empty())
     return canonicalizeCProjectionIdentifier(cNameOfGlobal(GV->getName(), true),
                                              "nd_import");
-  for (unsigned Depth = 0; Op && Depth < 6; ++Depth) {
+  for (unsigned Depth = 0;
+       Op && Depth < ::neverd::limits::backend::
+                         kLLVMCStmtWriterLLVMCWriterImportCalleeCNameDepthLimit;
+       ++Depth) {
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Op))
       return functionIdentifier(*Fn);
     if (const auto *CI = llvm::dyn_cast<llvm::CastInst>(Op)) {

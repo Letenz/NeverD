@@ -40,6 +40,7 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolSpelling.h"
+#include "neverd/pass/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
 #include "neverd/sdk/Limits.h"
@@ -483,7 +484,8 @@ struct Session {
   // entry point.  LastSubstitutionCount records how many operators the most
   // recent patch substituted (0 when the toggle is off).
   bool InstSubstitution = false;
-  unsigned InstSubstitutionRounds = 1;
+  unsigned InstSubstitutionRounds =
+      ::neverd::limits::pass::kDefaultInstructionSubstitutionRounds;
   unsigned LastSubstitutionCount = 0;
 
   // Constant-encryption toggle, consulted by every patch entry point.

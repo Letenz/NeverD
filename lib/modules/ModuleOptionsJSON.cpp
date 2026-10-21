@@ -8,6 +8,7 @@
 /// Explicit module configuration.
 ///
 
+#include "neverd/modules/Limits.h"
 #include "neverd/modules/ModuleOptions.h"
 #include "neverd/support/FilePath.h"
 
@@ -84,10 +85,17 @@ const char *debugKindName(DebugKind Kind) {
 
 llvm::Expected<ModuleOptions> normalizeModuleOptions(ModuleOptions Options) {
   const auto &L = Options.Limits;
-  if (!L.Modules || L.Modules > 4096 || !L.ImageBytes ||
-      L.ImageBytes > (8ULL << 30) || !L.DebugBytes ||
-      L.DebugBytes > (8ULL << 30) || !L.TotalSourceBytes ||
-      L.TotalSourceBytes > (64ULL << 30) || !L.Symbols || L.Symbols > 10000000)
+  if (!L.Modules ||
+      L.Modules > ::neverd::limits::modules::kMaxModuleInstances ||
+      !L.ImageBytes ||
+      L.ImageBytes > ::neverd::limits::modules::kMaxModuleImageBytes ||
+      !L.DebugBytes ||
+      L.DebugBytes > ::neverd::limits::modules::kMaxModuleDebugBytes ||
+      !L.TotalSourceBytes ||
+      L.TotalSourceBytes >
+          ::neverd::limits::modules::
+              kModuleOptionsJSONNormalizeModuleOptionsLTotalSourceBytesLimit ||
+      !L.Symbols || L.Symbols > ::neverd::limits::modules::kMaxModuleSymbols)
     return invalid("module limits must be positive and within their ceilings");
   if (Options.DefaultLoad != LoadPolicy::Eager &&
       Options.DefaultLoad != LoadPolicy::Lazy)
@@ -199,7 +207,10 @@ moduleOptionsFromJSON(llvm::StringRef JSON,
     auto *Array = Value->getAsArray();
     if (!Array)
       return invalid("modules must be an array");
-    if (Array->size() > Options.Limits.Modules || Array->size() > 4096)
+    if (Array->size() > Options.Limits.Modules ||
+        Array->size() >
+            ::neverd::limits::modules::
+                kModuleOptionsJSONModuleOptionsFromJSONArraySizeLimit)
       return invalid("module count exceeds its limit");
     for (const auto &Item : *Array) {
       const auto *Object = Item.getAsObject();

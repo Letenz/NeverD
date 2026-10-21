@@ -1,6 +1,7 @@
 #include "neverd/ir/SourceABI.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/X86Regs.h"
@@ -27,7 +28,8 @@ bool sameLocation(const SourceABIValueLocation &Left,
 
 bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
                 unsigned &Remaining) {
-  if (!Remaining || !Left || !Right || Depth > 16 ||
+  if (!Remaining || !Left || !Right ||
+      Depth > ::neverd::limits::ir::kSourceABIEqualTypesDepthLimit ||
       Left->Kind != Right->Kind || Left->Size != Right->Size ||
       Left->IsSigned != Right->IsSigned)
     return false;
@@ -68,7 +70,8 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
   case NdTypeKind::Func:
     if (Left->Size != 0 || !Left->RetType || !Right->RetType ||
         Left->RetType->Kind == NdTypeKind::Func ||
-        Left->ParamTypes.size() > 64 ||
+        Left->ParamTypes.size() >
+            ::neverd::limits::ir::kSourceABIEqualTypesLeftParamTypesSizeLimit ||
         Left->ParamTypes.size() != Right->ParamTypes.size() ||
         !equalTypes(Left->RetType, Right->RetType, Depth + 1, Remaining))
       return false;
@@ -94,7 +97,9 @@ bool scalarType(const TypeRef &Type) {
     // bits; it does not pass a record or authenticate that pointee's layout.
     TypeRef Pointee = Type;
     for (unsigned Depth = 0;
-         Depth < 16 && Pointee && Pointee->Kind == NdTypeKind::Ptr; ++Depth) {
+         Depth < ::neverd::limits::ir::kSourceABIScalarTypeDepthLimit &&
+         Pointee && Pointee->Kind == NdTypeKind::Ptr;
+         ++Depth) {
       if (Pointee->Size != 8)
         return false;
       Pointee = Pointee->Pointee;
@@ -211,7 +216,10 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
     return scalarType(T) && T->Kind != NdTypeKind::Float &&
            T->SourceName != kSourceBooleanCType;
   };
-  if (!Hint.ReturnType || Hint.Parameters.size() > 64)
+  if (!Hint.ReturnType ||
+      Hint.Parameters.size() >
+          ::neverd::limits::ir::
+              kSourceABISwiftFixedShapeHintParametersSizeLimit)
     return false;
   const auto ReturnMembers = sourceAggregateMembers(Hint.ReturnType);
   const bool MixedResult = mixedSwiftResult(Hint.ReturnType, ReturnMembers);
@@ -343,7 +351,8 @@ bool equalSourceABIs(const SourceFunctionTypeHint &Left,
 }
 
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right) {
-  unsigned Remaining = 4096;
+  unsigned Remaining =
+      ::neverd::limits::ir::kSourceABIEqualSourceTypesRemaining;
   return equalTypes(Left, Right, 0, Remaining);
 }
 
@@ -510,7 +519,10 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
        Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift) ||
       !Hint.HasExplicitABI ||
       (Hint.Architecture != Arch::AArch64 && Hint.Architecture != Arch::X64) ||
-      Hint.Parameters.size() > 64 || !Hint.ReturnType)
+      Hint.Parameters.size() >
+          ::neverd::limits::ir::
+              kSourceABIValidateSourceABIHintParametersSizeLimit ||
+      !Hint.ReturnType)
     return fail(Diagnostic,
                 "Source ABI requires an explicit arm64/x86_64 layout");
   const auto &TRI = getTargetRegInfo(Hint.Architecture);
@@ -608,7 +620,9 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
       return !IsReturn && Location.RegisterOffset == 0 &&
              Location.EntryStackOffset >=
                  (Hint.Architecture == Arch::X64 ? 8 : 0) &&
-             Location.EntryStackOffset <= 4096 - Type->Size &&
+             Location.EntryStackOffset <=
+                 ::neverd::limits::ir::kMaxSourceStackArgumentBytes -
+                     Type->Size &&
              Location.EntryStackOffset % Type->Size == 0;
     if (Location.EntryStackOffset != 0)
       return false;
@@ -813,7 +827,10 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                            SourceFunctionTypeHint::ConventionKind Convention) {
   Diagnostic.clear();
   if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
-      !Hint.ReturnType || Hint.Parameters.size() > 64)
+      !Hint.ReturnType ||
+      Hint.Parameters.size() >
+          ::neverd::limits::ir::
+              kSourceABIAssignDarwinSourceABIHintParametersSizeLimit)
     return fail(Diagnostic, "Unsupported Darwin fixed source ABI");
   const auto &TRI = getTargetRegInfo(Architecture);
   const bool PointTransform =

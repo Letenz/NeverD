@@ -24,6 +24,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMName.h"
@@ -344,7 +345,10 @@ void MedLLVMEmitter::finalizeCxxContinuationPlans() {
   }
   auto ReturnedBlockAddress =
       [](const llvm::Value *Value) -> const llvm::BasicBlock * {
-    for (unsigned Depth = 0; Value && Depth != 4; ++Depth) {
+    for (unsigned Depth = 0;
+         Value &&
+         Depth != ::neverd::limits::backend::kMaxReturnedBlockAddressDepth;
+         ++Depth) {
       if (const auto *Address = llvm::dyn_cast<llvm::BlockAddress>(Value))
         return Address->getBasicBlock();
 
@@ -491,7 +495,7 @@ bool MedLLVMEmitter::isFrameRelativeDisplacement(uint64_t Addr,
   // -4 must not become absolute inttoptr addresses.
   uint64_t Abs = static_cast<uint64_t>(-(Disp + 1)) + 1;
   if (!CurMedFunc || CurMedFunc->FrameSize == 0)
-    return Abs <= 65536;
+    return Abs <= ::neverd::limits::backend::kMaxUnknownFrameDisplacement;
   return Abs <= static_cast<uint64_t>(CurMedFunc->FrameSize) + 128;
 }
 

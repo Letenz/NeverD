@@ -6,6 +6,7 @@
 
 #include "neverd/ir/low/LowUndefinedEffects.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/support/SHA256.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -24,7 +25,6 @@ namespace neverd {
 namespace {
 
 constexpr llvm::StringLiteral DigestDomain("neverd-low-undefined-ops-v1");
-constexpr size_t MaxBufferedBytes = 64 * 1024;
 constexpr size_t HeaderBytes = DigestDomain.size() + sizeof(uint64_t);
 constexpr size_t InputSlots = std::size(LowOp{}.Inputs);
 static_assert(InputSlots == 6, "changing the input slots changes digest v1");
@@ -61,7 +61,10 @@ void operationWords(llvm::ArrayRef<LowOp> Ops, EmitWord Number) {
 std::string lowUndefinedOperationDigest(llvm::ArrayRef<LowOp> Ops) {
   // Check the ceiling before multiplying or allocating. Larger spans retain
   // the original streaming implementation and its exact digest behavior.
-  if (Ops.size() <= (MaxBufferedBytes - HeaderBytes) / BytesPerOperation) {
+  if (Ops.size() <=
+      (::neverd::limits::ir::kLowUndefinedEffectsMaxBufferedBytes -
+       HeaderBytes) /
+          BytesPerOperation) {
     llvm::SmallVector<uint8_t, 1024> Bytes;
     Bytes.resize_for_overwrite(HeaderBytes + Ops.size() * BytesPerOperation);
     std::memcpy(Bytes.data(), DigestDomain.data(), DigestDomain.size());

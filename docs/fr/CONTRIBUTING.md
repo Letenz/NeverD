@@ -1,6 +1,6 @@
 **Langues**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 284ec1bcba3c77596f6b244b241b3088a37a9ba9238092e0b96b76d0661f84a5 -->
+<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
 
 # Contribuer à NeverD
 
@@ -277,6 +277,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### Responsabilité des limites, valeurs par défaut et configurations
 
+Utilisez `ResourceLimits.h` dans les répertoires d’outils ajoutés directement au chemin de recherche des en-têtes. Sur un système de fichiers insensible à la casse, un fichier local `Limits.h` peut masquer le fichier système `<limits.h>`.
+
 Chaque politique a une définition unique dans l’en-tête de limites/configuration de son
 composant, même avec un seul appelant : entrées/sorties, récursion/graphes, budgets de travail
 et d’itération, seuils heuristiques, cache, pagination/lots, reprises et délais. La règle vaut
@@ -290,7 +292,7 @@ Choisissez d’abord l’autorité existante :
 | SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) ou définition ciblée existante |
 | Autre composant | En-tête/table existant, sinon `Limits.h` ciblé dans la couche propriétaire |
-| CLI, worker ou GUI seulement | `Limits.h` ou `Config.h` local à l’outil, sans dépendance du cœur |
+| CLI, worker ou GUI seulement | `ResourceLimits.h` ou `Config.h` local à l’outil, sans dépendance du cœur |
 | Options de l’appelant | Modèle propriétaire `Config.h`, `*Options.h` ou `*Configuration.h` |
 
 Gardez les en-têtes légers, groupés par objet. Réutilisez `*Limits.def` ou les tables de

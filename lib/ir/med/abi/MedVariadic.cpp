@@ -24,6 +24,7 @@
 #include "MedVariadicDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedCallConvention.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -121,7 +122,10 @@ std::optional<int64_t> entrySpDelta(const VariadicValueIndex &Index,
       return std::nullopt;
     }
   };
-  return Eval(Root, Depth > 0 ? 64 - Depth : 64);
+  return Eval(
+      Root, Depth > 0
+                ? 64 - Depth
+                : ::neverd::limits::ir::kMedVariadicEntrySpDeltaDepth0Default);
 }
 
 // Whether \p V is the x86-64 SysV va_start word ((fp_offset << 32) | gp_offset)

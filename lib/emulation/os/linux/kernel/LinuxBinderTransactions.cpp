@@ -11,6 +11,8 @@
 #include "LinuxFiles.h"
 #include "LinuxMemory.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -70,10 +72,12 @@ LinuxFiles::binderCommand(LinuxDeviceState &Device, uint32_t Command,
             .str();
     return unsupported(Result, Message.c_str());
   }
-  if (Get64(32) > 65536)
+  if (Get64(32) > ::neverd::limits::emulation::kMaxBinderTransactionBytes)
     return unsupported(Result, "Binder transaction payload budget exhausted");
   auto &OwnQueue = Device.BinderThreadWork[CurrentTask];
-  if (OwnQueue.size() >= 64)
+  if (OwnQueue.size() >=
+      ::neverd::limits::emulation::
+          kLinuxBinderTransactionsLinuxFilesBinderCommandOwnQueueSizeLimit)
     return unsupported(Result, "Binder thread work budget exhausted");
   auto Error = [&](uint32_t Code) -> Outcome {
     OwnQueue.push_back({Code});
@@ -91,7 +95,9 @@ LinuxFiles::binderCommand(LinuxDeviceState &Device, uint32_t Command,
         Target->BinderOutgoing.at(Call->Thread) != Call)
       return unsupported(Result,
                          "Binder reply requires its live original caller");
-    if (Target->BinderThreadWork[Call->Thread].size() > 62)
+    if (Target->BinderThreadWork[Call->Thread].size() >
+        ::neverd::limits::emulation::
+            kLinuxBinderTransactionsLinuxFilesBinderCommandTargetBinderThreadWorkCallThreadSizeLimit)
       return unsupported(Result, "Binder caller work budget exhausted");
   } else {
     if (Device.BinderIncoming.contains(CurrentTask) ||
@@ -113,14 +119,18 @@ LinuxFiles::binderCommand(LinuxDeviceState &Device, uint32_t Command,
       return Error(Failed);
     if (!Sender)
       return unsupported(Result, "Binder sender open identity is unavailable");
-    if (Target->BinderProcessWork.size() >= 64)
+    if (Target->BinderProcessWork.size() >=
+        ::neverd::limits::emulation::
+            kLinuxBinderTransactionsLinuxFilesBinderCommandTargetBinderProcessWorkSizeLimit)
       return unsupported(Result, "Binder process work budget exhausted");
     Call = std::make_shared<BinderCall>();
     Call->Sender = Sender;
     Call->Thread = CurrentTask;
   }
   const uint64_t Size = Get64(32), Needed = allocationSize(Size);
-  if (Target->BinderBuffers.size() >= 64)
+  if (Target->BinderBuffers.size() >=
+      ::neverd::limits::emulation::
+          kLinuxBinderTransactionsLinuxFilesBinderCommandTargetBinderBuffersSizeLimit)
     return unsupported(Result, "Binder live buffer budget exhausted");
   uint64_t Offset = 0;
   for (const auto &[At, Buffer] : Target->BinderBuffers) {

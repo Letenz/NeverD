@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/NdOps.h"
+#include "neverd/safety/Limits.h"
 
 #include <cstdint>
 #include <optional>
@@ -324,11 +325,11 @@ struct SafetyBudgets {
   unsigned MaxSummaryIterations = 0;
 };
 
-/// Default SAT-search ceiling used when a caller leaves SolverConflicts at
-/// zero.  Safety analysis must remain bounded unless a future API exposes an
-/// explicit unbounded mode.
-inline constexpr uint64_t kDefaultSafetySolverConflicts = uint64_t(1) << 18;
-
 } // namespace neverd::safety
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+
+inline constexpr uint64_t kDefaultSafetySolverConflicts =
+    ::neverd::limits::safety::kSafetyTypesDefaultSafetySolverConflicts;
 
 #endif // NEVERD_SAFETY_SAFETYTYPES_H

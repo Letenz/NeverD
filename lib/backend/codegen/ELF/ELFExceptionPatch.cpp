@@ -7,6 +7,7 @@
 #include "neverd/backend/codegen/ELF/ELFExceptionPatch.h"
 
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/DwarfEHFrame.h"
 #include "neverd/object/ELFLayout.h"
@@ -362,7 +363,8 @@ bool rebuildEhFrameHdr(llvm::ArrayRef<uint8_t> Binary,
                    });
     return Owners == 1 ? Result : nullptr;
   };
-  uint64_t DecodeBudget = 64 * 1024 * 1024;
+  uint64_t DecodeBudget =
+      ::neverd::limits::backend::kELFExceptionPatchDecodeBudget;
   const size_t PrimaryCount = ExistingByRecord.size();
   std::set<uint64_t> SeenPrimary;
 

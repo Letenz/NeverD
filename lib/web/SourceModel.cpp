@@ -12,6 +12,7 @@
 #include "SourceModel.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceNavigation.h"
 
@@ -42,7 +43,7 @@ uint64_t validateSourceModel(const SourceAnalysis &Source) {
       if (Child.ParentID != N.ID || Child.Start < N.Start || Child.End > N.End)
         throw Error("invalid_source_model");
       Depths[C.Index] = Depths[I] + 1;
-      if (Depths[C.Index] >= 256)
+      if (Depths[C.Index] >= ::neverd::limits::web::kMaxSourceModelDepth)
         throw Error("source_model_depth_exceeded");
     }
     if (I && Parents[I] != 1)

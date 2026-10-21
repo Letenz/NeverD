@@ -12,23 +12,11 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 inline constexpr std::string_view PkgProfile = "pkg-5.8.1-uncompressed-vfs-v1";
-inline constexpr uint64_t MaxPkgInputBytes = 256ULL * 1024 * 1024;
-inline constexpr uint64_t MaxPkgPreludeBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxPkgIndexBytes = 1024 * 1024;
-inline constexpr uint64_t MaxPkgPrivateBytes = 4 * 1024 * 1024;
-inline constexpr uint64_t MaxCachedPkgPrivateBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxPkgSteps = 4000000;
-inline constexpr uint64_t MaxPkgJSONNodes = 100000;
-inline constexpr uint64_t MaxPkgStatBytes = 4096;
-inline constexpr uint32_t MaxPkgJSONDepth = 5;
-inline constexpr uint32_t MaxPkgPaths = 4096;
 inline constexpr uint32_t MaxPkgStores = 4 * MaxPkgPaths;
-inline constexpr uint32_t MaxPkgLinks = 4096;
-inline constexpr uint32_t MaxCachedPkgExtractions = 4;
-inline constexpr uint32_t MaxPkgPageRecords = 512;
 
 enum class PkgStore : uint8_t { Cache, Content, DirectoryList, Stat };
 

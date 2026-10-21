@@ -6,6 +6,8 @@
 
 #include "neverd/ir/med/MedPointerAccesses.h"
 
+#include "neverd/ir/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -14,9 +16,6 @@
 
 namespace neverd {
 namespace {
-
-/// How many copies and constant additions an address is followed through.
-constexpr unsigned MaxChain = 32;
 
 /// \p Var, a constant, as a signed value of its width.
 int64_t signedValue(const MedVar &Var) {
@@ -112,7 +111,10 @@ std::optional<std::pair<MedVar, int64_t>>
 MedPointerAccesses::baseOf(const MedVar &Address) const {
   MedVar Var = Address;
   int64_t Offset = 0;
-  for (unsigned Step = 0; Step < MaxChain && !Var.isConst(); ++Step) {
+  for (unsigned Step = 0;
+       Step < ::neverd::limits::ir::kMedPointerAccessesMaxChain &&
+       !Var.isConst();
+       ++Step) {
     const auto Found = Definitions.find(keyOf(Var));
     if (Found == Definitions.end())
       break;

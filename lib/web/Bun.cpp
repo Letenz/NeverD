@@ -84,7 +84,8 @@ class GraphReader {
 
   uint32_t name(Range Part, const char *Kind, uint32_t Module,
                 bool Required = false) {
-    if (Part.Size > 32768 || Part.Size > MaxBunNameBytes - NameBytes)
+    if (Part.Size > ::neverd::limits::web::kBunNamePartSizeLimit ||
+        Part.Size > MaxBunNameBytes - NameBytes)
       throw Error("bun_name_budget_exceeded");
     NameBytes += Part.Size;
     const auto Index = payload(Part, Kind, Module, 1, Required);

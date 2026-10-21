@@ -13,19 +13,11 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/ImportMap.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 inline constexpr std::string_view HTMLProfile =
     "html-utf8-script-candidates-v1";
-inline constexpr uint64_t MaxHTMLBytes = 4 * 1024 * 1024;
-inline constexpr uint64_t MaxHTMLSteps = 16 * 1024 * 1024;
-inline constexpr uint64_t MaxHTMLRecords = 10000;
-inline constexpr uint64_t MaxHTMLDecodedBytes = 1024 * 1024;
-inline constexpr uint64_t MaxHTMLAttributeBytes = 16384;
-inline constexpr uint64_t MaxHTMLPathBytes = 4096;
-inline constexpr uint64_t MaxHTMLLinkSteps = 4 * 1024 * 1024;
-inline constexpr uint64_t MaxHTMLNamespaceEntries = 10001;
-inline constexpr uint64_t MaxHTMLImportMaps = 64;
 inline constexpr uint32_t NoHTMLIndex = UINT32_MAX;
 
 struct HTMLScript {

@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 #include <functional>
 #include <span>
@@ -19,10 +20,6 @@
 namespace neverd::web {
 inline constexpr std::string_view ImportMapProfile =
     "import-map-url-evidence-v1";
-inline constexpr uint64_t MaxImportMapBytes = 1024 * 1024;
-inline constexpr uint64_t MaxImportMapRecords = 10000;
-inline constexpr uint64_t MaxImportMapURLBytes = 4096;
-inline constexpr uint64_t MaxImportMapSteps = 4 * 1024 * 1024;
 using ImportMapCharge = std::function<void(uint64_t)>;
 
 struct ImportMapEntry {

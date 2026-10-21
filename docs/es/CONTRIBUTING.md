@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 284ec1bcba3c77596f6b244b241b3088a37a9ba9238092e0b96b76d0661f84a5 -->
+<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
 
 # Contribuir a NeverD
 
@@ -274,6 +274,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### Propiedad de límites, valores predeterminados y configuración
 
+Use `ResourceLimits.h` en directorios de herramientas añadidos directamente a la ruta de búsqueda de cabeceras. En un sistema de archivos que no distingue mayúsculas de minúsculas, un `Limits.h` local puede ocultar la cabecera del sistema `<limits.h>`.
+
 Cada política tiene una definición autoritativa en la cabecera de límites/configuración de su
 subsistema, incluso con un solo llamante: topes de entrada/salida, recursión/grafos, presupuestos
 de trabajo/iteraciones, umbrales heurísticos, cachés, páginas/lotes, reintentos y tiempos máximos.
@@ -287,7 +289,7 @@ Elija primero la autoridad existente:
 | SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) o definición específica existente |
 | Otro componente | Cabecera/tabla existente, o `Limits.h` específico en su capa |
-| Solo CLI, worker o GUI | `Limits.h` o `Config.h` local, sin dependencia del núcleo |
+| Solo CLI, worker o GUI | `ResourceLimits.h` o `Config.h` local, sin dependencia del núcleo |
 | Opciones del llamante | Modelo propietario `Config.h`, `*Options.h` o `*Configuration.h` |
 
 Mantenga cabeceras ligeras y agrupadas por propósito. Reutilice `*Limits.def` o tablas de

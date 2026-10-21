@@ -25,7 +25,7 @@ namespace neverd::cli {
 namespace {
 
 #define NEVERD_SYMBOL_LIMIT(Name, Value) constexpr long long Name = Value;
-#include "SymbolDownloadABI.def"
+#include "../common/symbols/SymbolDownloadABI.def"
 
 /// The status a server answers with the file.
 constexpr DWORD HttpOk = 200;

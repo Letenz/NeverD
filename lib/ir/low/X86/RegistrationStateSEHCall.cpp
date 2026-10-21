@@ -9,6 +9,7 @@
 #include "RegistrationControl.h"
 #include "RegistrationStateSolver.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowNoReturn.h"
 
 namespace neverd::registration_state {
@@ -26,7 +27,11 @@ RegistrationStateSolver::sehCallContinuation(va_t Call, va_t CallerEntry) {
   va_t Next = Source->second.EndAddress;
   std::set<va_t> Seen;
   while (!Entries.count(Next)) {
-    if (!charge(5) || Seen.size() == 64 || !Seen.insert(Next).second)
+    if (!charge(5) ||
+        Seen.size() ==
+            ::neverd::limits::ir::
+                kRegistrationStateSEHCallRegistrationStateSolverSehCallContinuationSeenSizeLimit ||
+        !Seen.insert(Next).second)
       return std::nullopt;
     const auto Jump = SEHControlIndex.find(Next);
     if (Jump == SEHControlIndex.end() ||

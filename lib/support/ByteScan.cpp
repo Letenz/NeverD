@@ -12,6 +12,8 @@
 
 #include "neverd/support/ByteScan.h"
 
+#include "neverd/support/Limits.h"
+
 #if NEVERD_USE_HIGHWAY
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "ByteScan.cpp"
@@ -56,7 +58,7 @@ HWY_EXPORT(asciiPrefix);
 
 size_t longTextASCIIPrefix(const uint8_t *Data, size_t Size) {
 #if NEVERD_USE_HIGHWAY
-  if (Size >= 32)
+  if (Size >= ::neverd::limits::support::kByteScanLongTextASCIIPrefixSizeLimit)
     return HWY_DYNAMIC_DISPATCH(asciiPrefix)(Data, Size);
 #endif
   size_t I = 0;

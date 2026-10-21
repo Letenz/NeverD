@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/dalvik/Budget.h"
 
+#include "neverd/dalvik/Limits.h"
+
 #include <algorithm>
 #include <limits>
 
@@ -27,9 +29,13 @@ Budget::Budget(Limits configured) : limits(configured) {
     throw Error("mobile analysis deadline is not representable");
   deadline = now + std::chrono::seconds(limits.timeout);
   remaining = std::min<uint64_t>(
-      20000000, std::max<uint64_t>(100000, limits.max_bytes > 5000000
-                                               ? 20000000
-                                               : limits.max_bytes * 4));
+      ::neverd::limits::dalvik::kMaxInputWork,
+      std::max<uint64_t>(
+          ::neverd::limits::dalvik::kMinInputWork,
+          limits.max_bytes > ::neverd::limits::dalvik::kInputWorkSaturationBytes
+              ? ::neverd::limits::dalvik::kMaxInputWork
+              : limits.max_bytes *
+                    ::neverd::limits::dalvik::kInputWorkPerByte));
 }
 
 void Budget::check() const {

@@ -6,6 +6,7 @@
 
 #include "MachODyldFixups.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -217,9 +218,9 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
           if (Skip > InvalidVA - PtrSz)
             return;
           const uint64_t Stride = PtrSz + Skip;
-          constexpr uint64_t MaxBindSlots = 1u << 22;
-          if (Count > MaxBindSlots || Count > (InvalidVA - SegOff) / Stride ||
-              SymName.empty() || SegIdx >= Img.Segments.size())
+          if (Count > ::neverd::limits::loader::kMachODyldBindMaxBindSlots ||
+              Count > (InvalidVA - SegOff) / Stride || SymName.empty() ||
+              SegIdx >= Img.Segments.size())
             return;
           const Segment &Seg = Img.Segments[SegIdx];
           const uint64_t LastOff = SegOff + (Count - 1) * Stride;

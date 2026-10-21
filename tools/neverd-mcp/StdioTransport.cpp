@@ -11,6 +11,7 @@
 
 #include "StdioTransport.h"
 
+#include "ResourceLimits.h"
 #include "Server.h"
 
 #include <atomic>
@@ -27,7 +28,8 @@ namespace neverd::binmcp {
 namespace {
 /// How long requests must pause before idle analysis starts, so that a
 /// client's burst of reads does not queue behind it.
-constexpr auto IdleGracePeriod = std::chrono::milliseconds(150);
+constexpr auto IdleGracePeriod = std::chrono::milliseconds(
+    ::neverd::limits::mcp::kStdioIdleGracePeriodMilliseconds);
 
 Json failure(const Json &ID, int Code, std::string Message) {
   return {{"jsonrpc", "2.0"},
@@ -194,7 +196,11 @@ int serve(Server &Service, Backend &Session, Source Read, Sink Write) {
         Guard.lock();
         // A step that could not advance is retried shortly, not at once.
         if (!Advanced)
-          State.Changed.wait_for(Guard, std::chrono::milliseconds(10), Waiting);
+          State.Changed.wait_for(
+              Guard,
+              std::chrono::milliseconds(
+                  ::neverd::limits::mcp::kStdioServeMilliseconds),
+              Waiting);
       }
       State.Changed.wait(Guard, Waiting);
       if (State.Queue.empty())

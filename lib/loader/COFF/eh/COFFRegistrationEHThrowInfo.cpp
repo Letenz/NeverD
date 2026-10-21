@@ -6,6 +6,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -62,12 +63,11 @@ getCheckedX86IdentityCxxThrowInfo(const BinaryImage &Img, va_t Address) {
       !Result.TypeDescriptorVA || Result.TypeDescriptorVA > UINT32_MAX - 8 ||
       !Img.readVA(Result.TypeDescriptorVA, 9))
     return std::nullopt;
-  // MSVC TypeDescriptor includes two pointer words followed by a bounded
-  // decorated name. Its cache word may be writable; it is not an object-size
-  // authority and must not be conflated with the immutable ThrowInfo graph.
-  constexpr uint32_t MaxTypeName = 4096;
   bool Terminated = false;
-  for (uint32_t Index = 0; Index != MaxTypeName; ++Index) {
+  for (uint32_t Index = 0;
+       Index !=
+       ::neverd::limits::loader::kCOFFRegistrationEHThrowInfoMaxTypeName;
+       ++Index) {
     const uint64_t VA = uint64_t(Result.TypeDescriptorVA) + 8 + Index;
     if (VA > UINT32_MAX)
       return std::nullopt;

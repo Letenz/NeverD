@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceFeatures.h"
 
 #include <array>
@@ -19,9 +20,6 @@
 namespace neverd::web {
 inline constexpr std::string_view ConfigurationOrderProfile =
     "javascript-configuration-object-order-v1";
-inline constexpr uint64_t MaxConfigurationOrderRecords = 256;
-inline constexpr uint64_t MaxConfigurationOrderTerms = 4096;
-inline constexpr uint64_t MaxConfigurationOrderSteps = 2000000;
 
 enum class ConfigurationField {
   Permissions,

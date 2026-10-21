@@ -8,6 +8,7 @@
 
 #include "BytecodeInternal.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/lift/AArch64Regs.h"
@@ -37,8 +38,11 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
     const LowFunc &Function, uint32_t RegisterBytes, Arch SourceArch,
     uint64_t MaxOperations, llvm::ArrayRef<va_t> BoundCalls, bool WithContext) {
   if ((SourceArch != Arch::X64 && SourceArch != Arch::AArch64) ||
-      !RegisterBytes || RegisterBytes > 65536 || Function.Blocks.empty() ||
-      !Function.hasCompleteLiftCoverage() || !MaxOperations)
+      !RegisterBytes ||
+      RegisterBytes >
+          ::neverd::limits::analysis::kMaxBytecodeRegisterBankBytes ||
+      Function.Blocks.empty() || !Function.hasCompleteLiftCoverage() ||
+      !MaxOperations)
     return invalid("invalid function, bank or architecture");
   uint64_t Parameter = SourceArch == Arch::AArch64 ? a64reg::X0 : x86reg::RDI;
   uint64_t ContextParameter =

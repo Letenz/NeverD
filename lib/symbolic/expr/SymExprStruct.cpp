@@ -18,6 +18,7 @@
 
 #include "SymExprCompare.h"
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -67,7 +68,8 @@ std::optional<llvm::APInt> constantBitSlice(const SymContext &Ctx, SymRef A,
   if (!Remaining)
     return std::nullopt;
   --Remaining;
-  if (Depth >= 32)
+  if (Depth >=
+      ::neverd::limits::symbolic::kSymExprStructConstantBitSliceDepthLimit)
     return std::nullopt;
   if (Ctx.isConst(A)) {
     const uint32_t Words = (Ctx.width(A) - 1) / 64 + 1;
@@ -139,7 +141,8 @@ std::optional<llvm::APInt> constantBitSlice(const SymContext &Ctx, SymRef A,
 
 std::optional<llvm::APInt> SymContext::constantWindow(SymRef A, uint32_t Low,
                                                       uint32_t Width) const {
-  unsigned Remaining = 256;
+  unsigned Remaining = ::neverd::limits::symbolic::
+      kSymExprStructSymContextConstantWindowRemaining;
   return constantWindow(A, Low, Width, Remaining);
 }
 
@@ -149,7 +152,10 @@ SymContext::constantWindow(SymRef A, uint32_t Low, uint32_t Width,
   if (!A || A.index() >= Nodes.size() || !Width || Width > 64 ||
       Low > width(A) || Width > width(A) - Low)
     return std::nullopt;
-  const unsigned Available = std::min(WorkBudget, 256U);
+  const unsigned Available =
+      std::min(WorkBudget,
+               ::neverd::limits::symbolic::
+                   kSymExprStructSymContextConstantWindowAvailableMinArgument2);
   unsigned Remaining = Available;
   auto Result = constantBitSlice(*this, A, Low, Width, Remaining);
   WorkBudget -= Available - Remaining;
@@ -174,13 +180,15 @@ SymRef SymContext::findLowWordProjection(SymRef Source, uint32_t Width) const {
 void SymContext::retainLowWordProjection(SymRef Source, uint32_t Width,
                                          SymRef Image) {
   assert(Image && Width < width(Source));
-  constexpr size_t Maximum = 4096;
   if (LowWordProjections.empty() ||
-      (LowWordProjections.size() < Maximum &&
+      (LowWordProjections.size() <
+           ::neverd::limits::symbolic::kSymExprStructMaximum &&
        LowWordProjectionInsertions >= LowWordProjections.size())) {
-    const size_t Next = LowWordProjections.empty()
-                            ? 32
-                            : std::min(Maximum, 2 * LowWordProjections.size());
+    const size_t Next =
+        LowWordProjections.empty()
+            ? 32
+            : std::min(::neverd::limits::symbolic::kSymExprStructMaximum,
+                       2 * LowWordProjections.size());
     std::vector<LowWordProjectionEntry> New(Next);
     for (auto Entry : LowWordProjections)
       if (Entry.Image)
@@ -194,7 +202,9 @@ void SymContext::retainLowWordProjection(SymRef Source, uint32_t Width,
       LowWordProjections[lowWordProjectionSlot(Key, LowWordProjections.size())];
   assert((!Entry.Image || Entry.Key != Key || Entry.Image == Image) &&
          "completed low-word projection changed in an immutable context");
-  if ((!Entry.Image || Entry.Key != Key) && LowWordProjections.size() < Maximum)
+  if ((!Entry.Image || Entry.Key != Key) &&
+      LowWordProjections.size() <
+          ::neverd::limits::symbolic::kSymExprStructMaximum)
     ++LowWordProjectionInsertions;
   Entry = {Key, Image};
 }

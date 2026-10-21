@@ -38,6 +38,7 @@
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/DataSymbolMetadata.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -2341,7 +2342,9 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
 // LLVM owns the dominance/initialization proof for every promoted load.
 static void promoteCallResultHomes(llvm::Function &Function) {
   llvm::DominatorTree Dominators(Function);
-  for (unsigned Round = 0; Round != 8; ++Round) {
+  for (unsigned Round = 0;
+       Round != ::neverd::limits::backend::kMaxLLVMCNamePropagationRounds;
+       ++Round) {
     llvm::SmallVector<llvm::AllocaInst *, 8> Homes;
     for (auto &Instruction : Function.getEntryBlock()) {
       auto *Home = llvm::dyn_cast<llvm::AllocaInst>(&Instruction);
@@ -2362,7 +2365,8 @@ static void promoteCallResultHomes(llvm::Function &Function) {
       const llvm::Value *Value = Definition->getValueOperand();
       unsigned Depth = 0;
       while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Value)) {
-        if (++Depth > 8)
+        if (++Depth > ::neverd::limits::backend::
+                          kLLVMCEmitterPromoteCallResultHomesDepthLimit)
           break;
         Value = Cast->getOperand(0);
       }

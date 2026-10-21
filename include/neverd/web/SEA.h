@@ -12,14 +12,11 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 inline constexpr std::string_view SEABlobProfile =
     "node-sea-22.15.0-blob-le64-v1";
-inline constexpr uint32_t MaxSEAAssets = 4096;
-inline constexpr uint64_t MaxSEAPrivateBytes = 1024 * 1024;
-inline constexpr uint64_t MaxSEANameBytes = 32768;
-inline constexpr uint64_t MaxSEAInputBytes = 256ULL * 1024 * 1024;
 
 /// Byte ranges are relative to the selected container, not host paths.
 struct SEARegion {
