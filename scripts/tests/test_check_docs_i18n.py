@@ -48,6 +48,74 @@ class _OverlayView:
         return self._base.exists(path)
 
 
+class ContributorGuideParityTests(unittest.TestCase):
+    def check(self, overrides: dict[Path, str]) -> list[str]:
+        errors: list[str] = []
+        i18n.validate_contributing_parity(errors, _OverlayView(overrides))
+        return errors
+
+    def test_complete_contributor_matrix_is_reviewed(self) -> None:
+        self.assertEqual(self.check({}), [])
+
+    def test_source_change_requires_every_translation_to_be_reviewed(self) -> None:
+        path = Path("CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8") + "\nA changed contributor requirement.\n"
+        errors = self.check({path: text})
+        self.assertEqual(sum("contributor source revision differs" in e for e in errors),
+                         len(i18n.LOCALES), errors)
+
+    def test_a_translation_cannot_omit_policy_ownership(self) -> None:
+        path = Path("docs/ja/CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"<!-- i18n-section: policy -->.*?(?=<!-- i18n-section: artifacts -->)",
+                      "", text, flags=re.DOTALL)
+        errors = self.check({path: text})
+        self.assertTrue(any("contributor section order differs" in e for e in errors), errors)
+
+    def test_a_translation_cannot_keep_the_old_build_entry(self) -> None:
+        path = Path("docs/de/CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8").replace(
+            "python scripts/build.py build-release --parallel",
+            "cmake --build build-release --parallel", 1)
+        errors = self.check({path: text})
+        self.assertTrue(any("contributor examples differ in build" in e for e in errors), errors)
+
+    def test_cpp_header_template_must_preserve_the_example_boundary(self) -> None:
+        path = Path("docs/ar/CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8").replace("= 65536;", "= 65537;")
+        errors = self.check({path: text})
+        self.assertTrue(any("contributor examples differ in headers" in e for e in errors), errors)
+
+    def test_an_option_cannot_disappear_into_a_comment(self) -> None:
+        path = Path("docs/fr/CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8").replace(
+            "`kRetryDelayMilliseconds`", "<!-- `kRetryDelayMilliseconds` -->")
+        errors = self.check({path: text})
+        self.assertTrue(any("contributor API/options missing in policy" in e for e in errors), errors)
+
+    def test_an_owner_cannot_disappear_from_the_table(self) -> None:
+        path = Path("docs/ko/CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"^\| Web \|.*\n", "", text, flags=re.MULTILINE)
+        errors = self.check({path: text})
+        self.assertTrue(any("contributor table rows differ in policy" in e for e in errors), errors)
+
+    def test_review_checklist_must_link_the_local_style_rules(self) -> None:
+        path = Path("docs/zh-CN/CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8").replace(
+            "](#代码风格)", "](#不存在的章节)")
+        errors = self.check({path: text})
+        self.assertTrue(any("contributor link order or destinations differ in review" in e
+                            for e in errors), errors)
+
+    def test_language_selector_must_keep_every_supported_language(self) -> None:
+        path = Path("docs/it/CONTRIBUTING.md")
+        text = path.read_text(encoding="utf-8").replace(
+            " | [العربية](../ar/CONTRIBUTING.md)", "")
+        errors = self.check({path: text})
+        self.assertTrue(any("contributor language selector differs" in e for e in errors), errors)
+
+
 class SourcePatchDocumentationTests(unittest.TestCase):
     def setUp(self) -> None:
         original_read_text = Path.read_text
