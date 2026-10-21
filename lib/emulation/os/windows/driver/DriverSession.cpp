@@ -24,6 +24,7 @@
 #include "DriverContextCapture.h"
 #include "DriverEntryABI.h"
 #include "DriverImage.h"
+#include "DriverMSR.h"
 #include "DriverObservation.h"
 #include "DriverScenario.h"
 #include "GuardControlFlow.h"
@@ -124,6 +125,9 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       Options.Contract != ExecutionContract::CheckedX64)
     return failure(
         "driver kernel_va_shadow_query requires checked-x64 execution");
+  if (!Options.MSRReads.empty() &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return failure("driver msr_reads requires checked-x64 execution");
   KernelExportRegistry Exports;
   if (auto E = Exports.initialize(Options))
     return std::move(E);
@@ -1185,6 +1189,25 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
           // upper destination bits; no register write or transport helper is
           // involved. The instruction has already consumed its normal budget.
           Kernel.recordUnpackEnvironmentRead();
+          NextPC = PendingEnvironmentRead->NextPC;
+          continue;
+        }
+        if (Action.Source == WindowsX64ExecutionPolicy::Action::Kind::ReadMSR) {
+          auto Index = CPU.reg(X64Register::CX);
+          if (!Index)
+            return Index.takeError();
+          auto Value = driver_msr::query(Options.MSRReads, uint32_t(*Index));
+          if (!Value) {
+            Stop(DriverStopReason::UnsupportedInstruction,
+                 llvm::toString(Value.takeError()));
+            break;
+          }
+          Kernel.recordUnpackEnvironmentRead();
+          // RDMSR preserves RCX and flags and clears both high register halves.
+          if (auto E = CPU.setReg(X64Register::AX, uint32_t(*Value)))
+            return E;
+          if (auto E = CPU.setReg(X64Register::DX, *Value >> 32))
+            return E;
           NextPC = PendingEnvironmentRead->NextPC;
           continue;
         }

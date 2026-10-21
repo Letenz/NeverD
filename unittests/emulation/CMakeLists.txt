@@ -1556,6 +1556,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
   DriverTimestampTests.cpp
   DriverCPUIDTests.cpp
+  DriverMSRReadTests.cpp
   DriverLoaderViewTests.cpp
   DriverBugCheckTests.cpp
   DriverVersionQueryTests.cpp
@@ -1590,6 +1591,7 @@ add_neverd_unittest(NeverDKernelSnapshotTests
   KernelUnpackStateTests.cpp
   KernelLoaderViewTests.cpp
   KernelResidentQueryTests.cpp
+  KernelMSRReadTests.cpp
   KernelBugCheckTests.cpp
   KernelVersionQueryTests.cpp
   KernelPhysicalInventoryTests.cpp

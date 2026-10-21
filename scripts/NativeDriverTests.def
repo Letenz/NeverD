@@ -10,6 +10,28 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverMSRDeclaration.RoundTripsFullWidthValuesAndCanBeCleared")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverMSRDeclaration.RejectsMalformedDuplicateAndUnownedInputs")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMSRRead.EvenUnusedDeclarationsRetainEnvironmentDependencies")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMSRRead.DirectModelInitializationKeepsDeclarationValidation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.DeclaredReadsPreserveStateAndRepeatExactly/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.MissingAndUnsupportedSelectorsStopBeforeResults/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.InstructionBudgetsBoundEveryRead/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.DeclarationDoesNotAdmitWritesOrPrefixedForms/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.DeclaredAddressDoesNotCreateGuestMemory/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelFileObjectExecution."
     "OriginalDriverQueriesBufferedFileInformation/{backend}LegacyPreferred")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
@@ -489,6 +511,14 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelResidentQuery.DispatchCeilingIsCheckedBeforeTheNullResult")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelResidentQuery.QueryBeforeOrAfterBaselineRetainsDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.ExactProvidersIncludeReadOnlyMetadata")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.CurrentRAMPermissionsAreStillRequired")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.AliasesAndDevicesAcquireNoProviderAuthority")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.QueryPreservesOpacityAndRecoveryDependency")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelBugCheck.RegistrationDuplicatesRemovalAndReusePreserveIRQL")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(

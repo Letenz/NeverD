@@ -4,6 +4,8 @@
 
 # 測試 NeverD
 
+`DriverMSRExecution.*` 與 `DriverMSRDeclaration.*` 在可用後端檢查明確 MSR 輸入、全寬拆分、狀態保留、重複讀取、精確指令預算、缺少/無效宣告及不授予記憶體權限。`KernelMSRRead.*` 檢查未使用宣告仍保留依賴。執行原生驅動、驅動模擬與核心快照測試；不可用的 WHP/HVF 記為略過，不算原生驗證。
+
 NeverD 的測試回答三個不同問題：表示形狀是否符合預期、完整 pipeline 路徑能否
 處理二進位 fixture，以及產生的程式碼是否維持行為。先選擇能回答本次變更問題的
 最小套件；對高風險提取請求，再執行較廣的彙總測試。
@@ -1236,7 +1238,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 68 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 135 個負載產生 270 項 WHP 結果：27 個內建映像、68 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 116 driver API checks = 5772`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 135 個負載產生 270 項 WHP 結果：27 個內建映像、68 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 116 driver environment checks + 116 driver API checks = 5785`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 真實 WDK 清單也建置 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的一般及 CFG 版本。`DriverDeviceQueryTests.cpp` 與 `DriverFileObjectTests.cpp` 共用可攜呼叫端的斷言，在兩種契約、基址與排程策略下檢查保留參考後的刪除、失敗 CREATE、行程身分、最後控制代碼 CLEANUP 與延後 CLOSE。三組均為原生必測項；清單驗證獨立探索含 `NEVERD_WDK_FIXTURE` 的原始碼，避免漏建 WDK 版本。
 
