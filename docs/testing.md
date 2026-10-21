@@ -978,6 +978,10 @@ stack slot/SP edits. It is registered only with
 `NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.
 `NeverDWorkerSourceVariableTypes` and `NeverDWorkerSourceVariableEdits` also
 compile and execute their generated C using the configured C compiler.
+When the SDK is built with MSVC, these worker execution fixtures use Clang,
+like the native unit fixtures, because generated C uses Clang C extensions.
+The same compiler selection applies to the worker stack-frame and call-site
+execution fixtures.
 Run these with `NeverDSourceVariableFlowTests`, `NeverDHighVariableEditsTests`
 and `NeverDLLVMVariableEditsTests`. The HighIR tests preserve instruction
 anchors for unchanged statements and refuse old store anchors when a split
