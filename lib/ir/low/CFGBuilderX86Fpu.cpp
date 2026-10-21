@@ -568,6 +568,8 @@ private:
       Facts->Body.Complete = Covered;
       Facts->Body.UnsafeIndirectBranches =
           !F.UnsafeIndirectBranchAddresses.empty();
+      Facts->Body.HasIndependentRoots =
+          CallRegisterBodyView(F).HasIndependentRoots;
       if (MetadataBytes) {
         Facts->Function = std::make_unique<LowFunc>(std::move(F));
         Facts->Body.Blocks = std::move(Facts->Function->Blocks);
