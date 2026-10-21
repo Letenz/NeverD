@@ -861,6 +861,13 @@ refreshes its views as after loading signatures. Every declaration drops
 the context, which reads a copy of the library, and the context takes back
 the members it gave.
 
+On macOS and iOS, a supported user import prototype that already supplies the
+call's argument summary also takes precedence over automatic Darwin SDK
+source-call binding. LowToMed matches the import slot or direct-call stub and
+keeps the ordinary arguments for both C backends. Explicit call-site source
+contracts retain their authority. Prototypes without supported argument summaries
+keep the existing SDK binding.
+
 A RETURN hands back the parameter that arrived in the result register when
 no path from the function's entry to it writes any byte of that register,
 calls a routine, which clobbers it, or enters through an exceptional edge
@@ -977,6 +984,12 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+Both kinds share the image's no-return-name, stack-probe, function-pointer,
+relocation-root and executable-owner indexes. The image, debug context, symbol
+inventory and exact verified entries bind that shared ownership. Each distinct
+candidate-entry set still owns its call proofs, graphs and body summaries;
+changing an unnamed selection cannot reuse another selection's boundaries.
+The shared lazy-name memo is cleared before every run, including a new selection.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
@@ -995,6 +1008,9 @@ before input or policy mutation; image pointers alone do not establish validity.
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
 changed extents rebuild the widths and discard source using the former names.
+Publishing only a recovered extent preserves current function-name derivation
+and lookup indexes, since the names and their list positions stay unchanged.
+Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
 

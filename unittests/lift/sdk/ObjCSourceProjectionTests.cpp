@@ -1015,8 +1015,7 @@ TEST(ObjCSourceProjection, OnlyAnActualUnconditionalTrapTerminatesThePath) {
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.CallExpr = HighExpr::makeCall("trap", 0, {});
-  for (auto Id : {Intrinsic::Ud2, Intrinsic::ArmHlt, Intrinsic::Brk,
-                  Intrinsic::Hlt_A64}) {
+  for (auto Id : {Intrinsic::Ud2, Intrinsic::Brk, Intrinsic::Hlt_A64}) {
     Call.CallExpr->IntrinsicId = Id;
     P.Func.Body = {Call};
     EXPECT_TRUE(P.limitation().empty()) << P.limitation();
@@ -1024,11 +1023,16 @@ TEST(ObjCSourceProjection, OnlyAnActualUnconditionalTrapTerminatesThePath) {
   }
   EXPECT_STREQ(intrinsicCName(Intrinsic::Brk), "__builtin_trap");
 
-  // A debugger can resume after a breakpoint. Its spelling is not proof of
-  // a terminating path, even when the containing native function is flagged.
-  Call.CallExpr->IntrinsicId = Intrinsic::Int3;
-  P.Func.Body = {Call};
-  EXPECT_FALSE(P.limitation().empty());
+  // Breakpoints and raw ARM trap spellings retain their continuations. They
+  // cannot prove source termination, even when the native function is flagged.
+  for (auto Id : {Intrinsic::Int3, Intrinsic::ArmBkpt, Intrinsic::ArmHlt,
+                  Intrinsic::ArmUdf}) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
+    Call.CallExpr->IntrinsicId = Id;
+    P.Func.Body = {Call};
+    EXPECT_FALSE(P.limitation().empty());
+    EXPECT_FALSE(isUnconditionalTrapIntrinsic(Id));
+  }
 
   Call.CallExpr->IntrinsicId = Intrinsic::Ud2;
   Call.CallExpr->SourceCallHint = std::make_shared<SourceCallTypeHint>();

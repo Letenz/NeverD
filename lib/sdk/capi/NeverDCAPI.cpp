@@ -116,7 +116,15 @@ bool Session::synchronizeFunctions() {
       if (Listed.Size == 0 && Recovered.OriginalSize != 0) {
         Listed.Size = Recovered.OriginalSize;
         RecoveredSizes[Listed.Entry] = Recovered.OriginalSize;
+        const auto PreviousRevision = FunctionListRevision;
         functionListChanged();
+        // An extent changes neither names nor their positions in the list.
+        // Preserve current name indexes; all their other input guards still
+        // apply, and additions or renames advance the revision normally.
+        if (NameIndex && NameIndex->Revision == PreviousRevision)
+          NameIndex->Revision = FunctionListRevision;
+        if (NamesDerivedFrom && NamesDerivedFrom->Revision == PreviousRevision)
+          NamesDerivedFrom->Revision = FunctionListRevision;
       }
     };
     // A selected run lifts functions the list, kept in address order,
