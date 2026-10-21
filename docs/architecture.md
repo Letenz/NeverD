@@ -1014,6 +1014,13 @@ Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
 
+Reference and warmup pages share one address-ordered function index for each
+function-list revision. Page lookup is a lower bound plus the requested rows;
+it does not repeatedly sort the remaining image. Stateless access-width scans
+also order their inventory once per scan. Duplicate addresses select the
+first listed identity consistently, and list revisions/storage changes retire
+borrowed pointers before the next page.
+
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
 revision, listing generation and source transformation options identify a
