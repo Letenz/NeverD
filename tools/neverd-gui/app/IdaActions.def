@@ -148,7 +148,8 @@ NEVERD_IDA_PLANNED("JumpUnknown", "Ctrl-U", "Search")
 NEVERD_IDA_PLANNED("JumpExplored", "Ctrl-A", "Search")
 NEVERD_IDA_ACTION("AskNextImmediate", "Alt-I", SearchImmediate)
 NEVERD_IDA_ACTION("JumpImmediate", "Ctrl-I", SearchNextImmediate)
-NEVERD_IDA_ACTION("FindRegisterDefinition", "Shift-Alt-Up", FindRegisterDefinition)
+NEVERD_IDA_ACTION("FindRegisterDefinition", "Shift-Alt-Up",
+                  FindRegisterDefinition)
 NEVERD_IDA_ACTION("FindRegisterUse", "Shift-Alt-Down", FindRegisterUse)
 NEVERD_IDA_ACTION("FindRegisterValue", "Shift-Alt-V", FindRegisterValue)
 

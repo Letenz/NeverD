@@ -121,8 +121,9 @@ class RecoveryMachineExitLookup {
 public:
   virtual ~RecoveryMachineExitLookup() = default;
   /// False means insufficient work. A successful miss leaves Exit empty.
-  virtual bool lookup(va_t Address, uint64_t &Work,
-                      std::optional<SpecializationExternalExit> &Exit) const = 0;
+  virtual bool
+  lookup(va_t Address, uint64_t &Work,
+         std::optional<SpecializationExternalExit> &Exit) const = 0;
 };
 
 /// Native policies live under arch/<isa>. Core owns graph/evidence integrity

@@ -141,8 +141,7 @@ private:
 
 /// The pointer the loader stored in a relocated slot, as a code address when
 /// the slot points to code.
-inline std::optional<va_t> relocatedPointer(const BinaryImage &Img,
-                                            va_t Slot) {
+inline std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
   const size_t Size = Img.getPointerSize();
   const uint8_t *Bytes = Size ? Img.readVA(Slot, Size) : nullptr;
   if (!Bytes)
