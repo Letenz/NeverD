@@ -120,8 +120,16 @@ StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
 InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
                                          const DecodedInsn &DI,
                                          const TargetRegInfo *StackRegisters) {
+  InstructionFlowScratch Scratch;
+  return Scratch.summarize(Img, Dec, DI, StackRegisters);
+}
+
+InstructionFlow
+InstructionFlowScratch::summarize(const BinaryImage &Img, Decoder &Dec,
+                                  const DecodedInsn &DI,
+                                  const TargetRegInfo *StackRegisters) {
   InstructionFlow Flow;
-  std::vector<LowOp> Ops;
+  Ops.clear();
   // Each row is lifted independently of its neighbours.
   Dec.resetX86FpuState();
   try {
@@ -352,7 +360,8 @@ constexpr uint64_t MaxUnsizedInstructions = 65536;
 /// direct jumps reach from \p Entry, short of another function's entry in
 /// \p Entries, in address order.  32-bit ARM, whose jumps can change the
 /// instruction set, reads up to the first terminator instead.
-std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec, va_t Entry,
+std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
+                              InstructionFlowScratch &Scratch, va_t Entry,
                               llvm::ArrayRef<va_t> Entries) {
   const auto OtherEntry = [&](va_t Address) {
     return Address != Entry &&
@@ -370,7 +379,7 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec, va_t Entry,
           if (OtherEntry(DI.Addr) || !Body.insert(DI.Addr).second)
             return false;
           if (FollowsJumps) {
-            const InstructionFlow Flow = summarizeInstructionFlow(Img, Dec, DI);
+            const InstructionFlow Flow = Scratch.summarize(Img, Dec, DI);
             if ((Flow.Kind == "jump" || Flow.Kind == "cjump") &&
                 Flow.Target != InvalidVA && !OtherEntry(Flow.Target) &&
                 !Body.count(Flow.Target))
@@ -387,7 +396,8 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec, va_t Entry,
 bool decodeExtents(
     const BinaryImage &Img, llvm::ArrayRef<std::pair<va_t, uint64_t>> Extents,
     llvm::ArrayRef<va_t> Entries,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit) {
   // The parts of a function its unwind records keep apart from its body,
   // past other functions' code, are its code too: MSVC moves cold paths
@@ -402,21 +412,23 @@ bool decodeExtents(
       DecoderFailed = true;
       return;
     }
+    InstructionFlowScratch Scratch;
     for (size_t Index = Claim(); Index < Total; Index = Claim()) {
       const auto [Entry, Size] = Extents[Index];
       if (Size > 0) {
         (void)decodeNativeRange(
             Img, Local, Entry, Size, Size,
             [&](const DecodedInsn &DI, const uint8_t *, int) {
-              Visit(Index, Local, DI);
+              Visit(Index, Local, DI, Scratch);
               return true;
             });
       } else {
-        for (const va_t Address : unsizedBody(Img, Local, Entry, Entries))
+        for (const va_t Address :
+             unsizedBody(Img, Local, Scratch, Entry, Entries))
           (void)decodeNativeRange(
               Img, Local, Address, 0, 1,
               [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI);
+                Visit(Index, Local, DI, Scratch);
                 return true;
               });
       }
@@ -426,7 +438,7 @@ bool decodeExtents(
               Img, Local, Range.Begin, Range.End - Range.Begin,
               Range.End - Range.Begin,
               [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI);
+                Visit(Index, Local, DI, Scratch);
                 return true;
               });
     }
@@ -442,7 +454,8 @@ bool isDataAccess(const InstructionRef &Ref) {
 
 bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit) {
   std::vector<std::pair<va_t, uint64_t>> Extents;
   Extents.reserve(Page.Functions.size());
@@ -463,9 +476,10 @@ collectDataAccessWidths(const BinaryImage &Img,
     std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(
         Page.Functions.size());
     const bool Decoded = decodeFunctions(
-        Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-          for (const InstructionRef &Ref :
-               summarizeInstructionFlow(Img, Dec, DI).Refs)
+        Img, Page,
+        [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+            InstructionFlowScratch &Scratch) {
+          for (const InstructionRef &Ref : Scratch.summarize(Img, Dec, DI).Refs)
             if (isDataAccess(Ref))
               Slots[Index].emplace_back(Ref.To, Ref.Bytes);
         });
@@ -513,9 +527,10 @@ DataAccessScan::update(const BinaryImage &Img,
   std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(Read.size());
   if (!Read.empty() &&
       !decodeExtents(Img, Read, NextEntries,
-                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+                         InstructionFlowScratch &Scratch) {
                        for (const InstructionRef &Ref :
-                            summarizeInstructionFlow(Img, Dec, DI).Refs)
+                            Scratch.summarize(Img, Dec, DI).Refs)
                          if (isDataAccess(Ref))
                            Slots[Index].emplace_back(Ref.To, Ref.Bytes);
                      })) {

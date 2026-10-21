@@ -201,13 +201,14 @@ std::shared_ptr<const CallReferenceGraph> buildGraph(Session &S) {
   };
   std::vector<std::vector<Reference>> Slots(Bodies.size());
   // The references of one instruction of body \p Index.
-  const auto Collect = [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+  const auto Collect = [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+                           InstructionFlowScratch &Scratch) {
     auto &Out = Slots[Index];
     const auto Add = [&](std::optional<uint32_t> To, uint8_t Kind) {
       if (To)
         Out.push_back({*To, Kind, DI.Addr});
     };
-    const InstructionFlow Flow = summarizeInstructionFlow(Img, Dec, DI);
+    const InstructionFlow Flow = Scratch.summarize(Img, Dec, DI);
     const bool Indirect = Flow.Kind == "icall" || Flow.Kind == "ijump";
     if (Flow.Target != InvalidVA && !Flow.Kind.empty() &&
         Flow.Kind != UnliftedFlow) {
@@ -251,10 +252,11 @@ std::shared_ptr<const CallReferenceGraph> buildGraph(Session &S) {
         Bodies.size(), First + FunctionPage::MaxFunctionsPerPage);
     Page.Functions.assign(Bodies.begin() + First, Bodies.begin() + Last);
     Page.Entries = Entries;
-    if (!decodeFunctions(
-            Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-              Collect(First + Index, Dec, DI);
-            })) {
+    if (!decodeFunctions(Img, Page,
+                         [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+                             InstructionFlowScratch &Scratch) {
+                           Collect(First + Index, Dec, DI, Scratch);
+                         })) {
       S.setError("failed to initialize a decoder for the image");
       return nullptr;
     }
