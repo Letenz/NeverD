@@ -864,6 +864,33 @@ add_custom_command(OUTPUT "${_driver_context_image}" "${_driver_context_object}"
     "${_driver_import_lib}"
   VERBATIM)
 list(APPEND _driver_outputs "${_driver_context_image}")
+set(_driver_seh_v2_image "${_driver_fixture_dir}/driver_seh_v2.sys")
+set(_driver_seh_v2_object "${_driver_fixture_dir}/driver_seh_v2.obj")
+set(_driver_seh_v2_assembly "${_driver_fixture_dir}/driver_seh_v2_asm.obj")
+set(_driver_seh_v2_import "${_driver_fixture_dir}/driver_seh_v2.lib")
+add_custom_command(OUTPUT "${_driver_seh_v2_image}" "${_driver_seh_v2_object}"
+    "${_driver_seh_v2_assembly}" "${_driver_seh_v2_import}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /lib /machine:x64
+    "/def:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.def"
+    "/out:${_driver_seh_v2_import}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -std=c11 -ffreestanding
+    -fno-stack-protector -fms-extensions -fexceptions -O1 -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.c"
+    -o "${_driver_seh_v2_object}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.S"
+    -o "${_driver_seh_v2_assembly}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /machine:x64 /entry:DriverEntry
+    /subsystem:native /driver /dll /nodefaultlib /dynamicbase /timestamp:0
+    /base:0x180000000 "/out:${_driver_seh_v2_image}"
+    "${_driver_seh_v2_object}" "${_driver_seh_v2_assembly}"
+    "${_driver_seh_v2_import}"
+  DEPENDS fixtures/driver_seh_v2.c fixtures/driver_seh_v2.S
+    fixtures/driver_seh_v2.def
+  VERBATIM)
+list(APPEND _driver_outputs "${_driver_seh_v2_image}")
 add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 
 # Microsoft kit files are optional external validation inputs. Never assume a
@@ -1558,6 +1585,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverCPUIDTests.cpp
   DriverMSRReadTests.cpp
   DriverProcessPebTests.cpp
+  DriverSEHV2Tests.cpp
   DriverLoaderViewTests.cpp
   DriverBugCheckTests.cpp
   DriverVersionQueryTests.cpp

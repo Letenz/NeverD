@@ -16,6 +16,7 @@
 #include "NeverDSanitizerPublicationCLI.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -373,6 +374,48 @@ bool configureSBF(neverd_session_t Sess) {
     }
   }
   return true;
+}
+
+/// One C file of \p Root and every function it calls, directly or not,
+/// in one translation unit: the functions neverd_call_tree_json reaches,
+/// with imports and library code that byte signatures name left declared.
+const char *decompileWithCallees(neverd_session_t Sess, uint64_t Root,
+                                 std::string &Out) {
+  const std::string Options = "{\"root\":\"0x" + utohexstr(Root) +
+                              "\",\"max_depth\":64,\"max_listed\":100000}";
+  const char *Tree = neverd_call_tree_json(Sess, Options.c_str());
+  if (!Tree)
+    return "the callees cannot be listed";
+  Expected<json::Value> Parsed = json::parse(Tree);
+  neverd_free_string(Tree);
+  const json::Object *Reply = Parsed ? Parsed->getAsObject() : nullptr;
+  const json::Array *Order = Reply ? Reply->getArray("bottom_up") : nullptr;
+  if (!Order) {
+    if (!Parsed)
+      consumeError(Parsed.takeError());
+    return "the engine gave no callee order";
+  }
+  if (!Reply->getBoolean("complete").value_or(false))
+    return "the callees exceed the listing limit";
+  std::vector<neverd_va_t> Entries;
+  for (const json::Value &Value : *Order) {
+    uint64_t Entry = 0;
+    if (StringRef(Value.getAsString().value_or(""))
+            .drop_front(2)
+            .getAsInteger(16, Entry))
+      return "the engine gave a malformed callee";
+    Entries.push_back(Entry);
+  }
+  const char *Source = neverd_decompile_functions(
+      Sess, InputFile.getValue().c_str(), NEVERD_OUTPUT_C, Entries.data(),
+      static_cast<int>(Entries.size()));
+  if (!Source || !*Source) {
+    neverd_free_string(Source);
+    return "the functions do not decompile";
+  }
+  Out = Source;
+  neverd_free_string(Source);
+  return nullptr;
 }
 
 /// The address the image exports \p Name at: a routine the function list
@@ -870,6 +913,34 @@ int runDecompile(neverd_session_t Sess) {
     }
     const uint64_t Entry =
         FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
+    if (DecompileCallees) {
+      if (LlvmRoute || Devirtualize || NoOpt || DedicatedLanguage ||
+          SourceTransforms || StackFrameInfo || HasStackFrame || JsonOutput) {
+        WithColor::error() << "--callees writes the default C of --func and "
+                              "its callees; omit other view options\n";
+        return 1;
+      }
+      std::string Text;
+      if (const char *Error = decompileWithCallees(Sess, Entry, Text)) {
+        WithColor::error() << "decompile failed: " << Error << ": "
+                           << takeLastError(Sess) << "\n";
+        return 1;
+      }
+      if (OutputFile.empty()) {
+        outs() << Text;
+        return 0;
+      }
+      std::error_code EC;
+      raw_fd_ostream OS(OutputFile, EC);
+      if (EC) {
+        WithColor::error() << "cannot open: " << EC.message() << "\n";
+        return 1;
+      }
+      OS << Text;
+      outs() << "C source of " << ExportFunc.getValue()
+             << " and its callees written to " << OutputFile.getValue() << "\n";
+      return 0;
+    }
     if (StackFrameInfo || HasStackFrame) {
       const char *Frame =
           neverd_stack_frame_json(Sess, Entry, StackPolicyText.c_str());

@@ -1993,7 +1993,8 @@ localTypesOf(Session *S, const char *InputPath, PipelineRunner &R,
 static const char *decompileAllImpl(neverd_session_t Sess,
                                     const char *InputPath, int UseLlvmRoute,
                                     neverd_output_language_t Language,
-                                    int NoOpt, int MaxFunctions) {
+                                    int NoOpt, int MaxFunctions,
+                                    const std::set<va_t> *Only = nullptr) {
   auto *S = static_cast<Session *>(Sess);
   PipelineRunner R;
   std::string Err;
@@ -2026,6 +2027,8 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   if (S) {
     S->applyAnalysisOptions(Opts);
   }
+  if (Only)
+    Opts.OnlyFunctionEntries = *Only;
   if (UseLlvmRoute)
     Opts.LiftMode = true;
   Opts.SourceProjection = true;
@@ -2251,6 +2254,31 @@ const char *neverd_decompile_all_ex(neverd_session_t Sess,
     return nullptr;
   }
   return decompileAllImpl(Sess, InputPath, 0, Language, NoOpt, MaxFunctions);
+}
+
+const char *neverd_decompile_functions(neverd_session_t Sess,
+                                       const char *InputPath,
+                                       neverd_output_language_t Language,
+                                       const neverd_va_t *Entries, int Count) {
+  constexpr int MaxEntries = 65536;
+  auto *S = static_cast<Session *>(Sess);
+  if (!Entries || Count < 1 || Count > MaxEntries) {
+    if (S)
+      S->setError("entries must name 1 to " + std::to_string(MaxEntries) +
+                  " functions");
+    return nullptr;
+  }
+  const std::set<va_t> Only(Entries, Entries + Count);
+  // The selection is checked against the image it is lifted from.
+  if (S && S->Loaded && S->Img.Arch != Arch::EVM && S->Img.Arch != Arch::SBF)
+    for (const va_t Entry : Only) {
+      const Segment *Seg = S->Img.getSegmentFor(Entry);
+      if (!Seg || !Seg->isExecutable()) {
+        S->setError("no native code at " + vaHex(Entry));
+        return nullptr;
+      }
+    }
+  return decompileAllImpl(Sess, InputPath, 0, Language, 0, 0, &Only);
 }
 
 // ===--------------------------------------------------------------------===//

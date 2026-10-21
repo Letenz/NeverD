@@ -131,9 +131,11 @@ class Backend:
             if result.get("type") == "fatal":
                 self.close()
                 raise RuntimeError("NeverD session failed: " + str(result.get("error", result)))
-            if result.get("type") == "response" and result.get("request_id") == request_id:
+            if (result.get("type") == "response" and result.get("request_id") == request_id
+                    and result.get("status") != "progress"):
                 return result
-            # Progress/revision events are allowed, but do not replace the response.
+            # Progress/revision events, including a load's progress responses
+            # to this request, are allowed, but do not replace the response.
 
     def close(self):
         if self.closed:

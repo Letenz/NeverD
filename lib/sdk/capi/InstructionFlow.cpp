@@ -320,6 +320,10 @@ FunctionPage pageFunctions(llvm::ArrayRef<const FuncInfo *> Ordered,
   if (End < static_cast<size_t>(Ordered.end() - First))
     Page.NextEntry = First[End]->Entry;
   Page.Functions.assign(First, First + End);
+  // The order holds each entry once, ascending: every function's entry.
+  Page.Entries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered)
+    Page.Entries.push_back(F->Entry);
   return Page;
 }
 } // namespace
@@ -340,15 +344,51 @@ FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
 }
 
 namespace {
+/// A function without a recorded size reads at most this many instructions;
+/// this bounds a corrupt or missing extent.
+constexpr uint64_t MaxUnsizedInstructions = 65536;
+
+/// The instructions of a function without a recorded size: those its own
+/// direct jumps reach from \p Entry, short of another function's entry in
+/// \p Entries, in address order.  32-bit ARM, whose jumps can change the
+/// instruction set, reads up to the first terminator instead.
+std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec, va_t Entry,
+                              llvm::ArrayRef<va_t> Entries) {
+  const auto OtherEntry = [&](va_t Address) {
+    return Address != Entry &&
+           std::binary_search(Entries.begin(), Entries.end(), Address);
+  };
+  const bool FollowsJumps = Img.Arch != Arch::ARM && !Entries.empty();
+  std::set<va_t> Body;
+  std::vector<va_t> Pending{Entry};
+  while (!Pending.empty() && Body.size() < MaxUnsizedInstructions) {
+    const va_t Start = Pending.back();
+    Pending.pop_back();
+    (void)decodeNativeRange(
+        Img, Dec, Start, 0, MaxUnsizedInstructions - Body.size(),
+        [&](const DecodedInsn &DI, const uint8_t *, int) {
+          if (OtherEntry(DI.Addr) || !Body.insert(DI.Addr).second)
+            return false;
+          if (FollowsJumps) {
+            const InstructionFlow Flow = summarizeInstructionFlow(Img, Dec, DI);
+            if ((Flow.Kind == "jump" || Flow.Kind == "cjump") &&
+                Flow.Target != InvalidVA && !OtherEntry(Flow.Target) &&
+                !Body.count(Flow.Target))
+              Pending.push_back(Flow.Target);
+          }
+          return !Dec.isFunctionTerminator(DI);
+        });
+  }
+  return {Body.begin(), Body.end()};
+}
+
 /// decodeFunctions over the functions of \p Extents, each an entry and its
-/// recorded size.
+/// recorded size; \p Entries are every function's entries.
 bool decodeExtents(
     const BinaryImage &Img, llvm::ArrayRef<std::pair<va_t, uint64_t>> Extents,
+    llvm::ArrayRef<va_t> Entries,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
         Visit) {
-  // A function without a recorded size is decoded only up to its first
-  // terminator; this bounds a corrupt or missing extent.
-  constexpr uint64_t MaxUnsizedInstructions = 65536;
   // The parts of a function its unwind records keep apart from its body,
   // past other functions' code, are its code too: MSVC moves cold paths
   // there.
@@ -364,13 +404,22 @@ bool decodeExtents(
     }
     for (size_t Index = Claim(); Index < Total; Index = Claim()) {
       const auto [Entry, Size] = Extents[Index];
-      const uint64_t Limit = Size > 0 ? Size : MaxUnsizedInstructions;
-      (void)decodeNativeRange(Img, Local, Entry, Size, Limit,
-                              [&](const DecodedInsn &DI, const uint8_t *, int) {
-                                Visit(Index, Local, DI);
-                                return Size > 0 ||
-                                       !Local.isFunctionTerminator(DI);
-                              });
+      if (Size > 0) {
+        (void)decodeNativeRange(
+            Img, Local, Entry, Size, Size,
+            [&](const DecodedInsn &DI, const uint8_t *, int) {
+              Visit(Index, Local, DI);
+              return true;
+            });
+      } else {
+        for (const va_t Address : unsizedBody(Img, Local, Entry, Entries))
+          (void)decodeNativeRange(
+              Img, Local, Address, 0, 1,
+              [&](const DecodedInsn &DI, const uint8_t *, int) {
+                Visit(Index, Local, DI);
+                return true;
+              });
+      }
       if (const auto It = Chunks.find(Entry); It != Chunks.end())
         for (const ExceptionAddressRange &Range : It->second)
           (void)decodeNativeRange(
@@ -399,7 +448,7 @@ bool decodeFunctions(
   Extents.reserve(Page.Functions.size());
   for (const FuncInfo *F : Page.Functions)
     Extents.emplace_back(F->Entry, F->Size);
-  return decodeExtents(Img, Extents, Visit);
+  return decodeExtents(Img, Extents, Page.Entries, Visit);
 }
 
 std::optional<DataAccessWidths>
@@ -439,10 +488,19 @@ DataAccessScan::update(const BinaryImage &Img,
   // The extent collectDataAccessWidths reads each function with: the one
   // its pages give the function's entry.
   std::vector<std::pair<va_t, uint64_t>> Next;
+  std::vector<va_t> NextEntries;
   const auto Ordered = orderedFunctions(Functions);
   Next.reserve(Ordered.size());
-  for (const FuncInfo *F : Ordered)
+  NextEntries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered) {
     Next.emplace_back(F->Entry, F->Size);
+    NextEntries.push_back(F->Entry);
+  }
+  // A function without a size reads up to the other functions' entries, so
+  // with other entries what it read before cannot be read again to take it
+  // back: read the list again whole.
+  if (NextEntries != Entries)
+    clear();
   // The extents read again: those read before that the list no longer
   // holds, which stop counting, and then those not read before.
   std::vector<std::pair<va_t, uint64_t>> Read;
@@ -454,7 +512,7 @@ DataAccessScan::update(const BinaryImage &Img,
   // Each extent's accesses, which only the thread decoding it writes.
   std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(Read.size());
   if (!Read.empty() &&
-      !decodeExtents(Img, Read,
+      !decodeExtents(Img, Read, NextEntries,
                      [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
                        for (const InstructionRef &Ref :
                             summarizeInstructionFlow(Img, Dec, DI).Refs)
@@ -501,6 +559,7 @@ DataAccessScan::update(const BinaryImage &Img,
   Merged.insert(Merged.end(), Kept, Counts.end());
   Counts = std::move(Merged);
   Extents = std::move(Next);
+  Entries = std::move(NextEntries);
   DataAccessWidths Widths;
   for (const Count &Stated : Counts)
     Widths.add(Stated.Address, Stated.Width);

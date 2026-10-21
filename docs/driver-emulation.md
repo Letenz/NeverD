@@ -1095,7 +1095,7 @@ hexadecimal string; the existing numeric `information` field remains available.
 
 `ExRaiseStatus` passes the low 32-bit NTSTATUS to the guest exception handler; `ExRaiseAccessViolation` and `ExRaiseDatatypeMisalignment` raise `STATUS_ACCESS_VIOLATION` and `STATUS_DATATYPE_MISALIGNMENT`. The profile follows the individual Microsoft DDI pages: ExRaiseStatus permits `APC_LEVEL`, while the two no-argument routines require `PASSIVE_LEVEL`. Some WDK SAL annotations permit APC_LEVEL for the wrappers; this profile retains the documented stricter limit. A raised call keeps `result: null` and records the code in `detail`; it never reports a successful API return.
 
-Exception delivery uses the image's decoded x64 version-one unwind tables and
+Exception delivery uses the image's decoded x64 V1/V2 unwind tables and
 `__C_specific_handler` scopes. Search executes real guest filters in table
 order: zero continues searching, a positive result selects the handler, and a
 negative result requests continuation. Constant `EXCEPTION_EXECUTE_HANDLER`
@@ -1105,6 +1105,10 @@ not run during search or when a filter resumes the faulting execution. Ordinary
 helper-frame unwinding restores saved nonvolatile general registers and stays
 within the original execution's stack. `GetExceptionCode()` observes the raised
 code, and handlers can raise into an enclosing supported scope.
+
+The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend. The encoding and Windows restoration rules are cross-checked against [LLVM 22.1.2](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.2/llvm/lib/MC/MCWin64EH.cpp) and [.NET 10 AMD64 unwinding](https://github.com/dotnet/runtime/blob/v10.0.0/src/coreclr/unwinder/amd64/unwinder.cpp).
+
+Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
 
 C SEH ranges remain half-open. A valid `__C_specific_handler` landing pad may lie inside its protected range: [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) emits `EndLabel + 1` as the scope end. The Windows OS model preserves the raw endpoints and independently validates executable targets, function ownership and continuation identity, including after rebasing. `KernelSEHContinuationCases.def` retains the original fixture layout; `ScopeEndLabelMayOverlapTheHandlerLandingPad` checks constant handlers and filters. Companion tests preserve the exclusive end and reject invalid targets without consuming the dispatch state. These pure checks run in `NeverDNativeDriverTests` with Unicorn disabled.
 
@@ -1131,8 +1135,8 @@ Native x64 KVM/WHP delivers actual `#XM` faults to driver C SEH through `X64SIMD
 Nested filter exceptions retain a linked `EXCEPTION_RECORD` and revisit the
 suspended protected scopes; collided finally unwinding resumes after the
 already entered cleanup. The planner restores nonvolatile GPRs and full
-XMM6–XMM15 values, checks chained V1 records, and unwinds partial prologues.
-Canonical epilogues are decoded from current executable guest bytes: only
+XMM6–XMM15 values, checks chained V1/V2 records, and unwinds partial prologues.
+V1 canonical epilogues are decoded from current executable guest bytes: only
 remaining stack adjustments, nonvolatile pops and the return are simulated.
 C++ personalities and incomplete metadata still fail explicitly. An uncaught API or supported user-memory
 exception or integer division exception stops with `model_error`; other CPU memory, interrupt and
