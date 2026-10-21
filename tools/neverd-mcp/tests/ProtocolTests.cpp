@@ -671,9 +671,12 @@ MCP_TEST(AnOverlongMessageEndsTheInput) {
   const auto Lines = served(Service, Session,
                             line(request("ping")) + std::string(MaxLine, ' ') +
                                 "\n" + line(request("ping", nullptr, 2)));
-  require(Lines.size() == 2 && Lines[0]["id"] == 1 &&
-              Lines[1]["error"]["code"] == -32600,
-          "the ping before it is answered, nothing after it");
+  // The reader refuses the long line while the executor answers the ping.
+  require(Lines.size() == 2, "the ping and the refusal, nothing after them");
+  const bool PingFirst = Lines[0]["id"] == 1;
+  require(Lines[PingFirst ? 0 : 1]["id"] == 1 &&
+              Lines[PingFirst ? 1 : 0]["error"]["code"] == -32600,
+          "the ping before it is answered, and the line refused");
 }
 
 MCP_TEST(IdleAnalysisRunsWhileNoRequestWaits) {

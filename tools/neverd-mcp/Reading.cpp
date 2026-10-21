@@ -295,6 +295,9 @@ std::optional<Declaration> declaration(std::string_view Line) {
                      Line.substr(Name, I - Name)};
 }
 
+/// Each run of declarations at one indent as one declaration per type, in
+/// order of the type's first declaration: none has an initializer, so their
+/// order means nothing.  A pointer type gives each name its own stars.
 std::string mergeDeclarations(std::string_view Text) {
   std::vector<std::string_view> Lines;
   for (std::size_t I = 0; I <= Text.size();) {
@@ -314,83 +317,140 @@ std::string mergeDeclarations(std::string_view Text) {
       Out.append(Lines[Index++]);
       continue;
     }
-    Out.append(First->Indent);
-    Out.append(First->Type);
-    Out += ' ';
-    Out.append(First->Name);
-    for (++Index; Index < Lines.size(); ++Index) {
+    std::vector<std::pair<std::string_view, std::vector<std::string_view>>>
+        ByType;
+    for (; Index < Lines.size(); ++Index) {
       const auto Next = declaration(Lines[Index]);
-      if (!Next || Next->Indent != First->Indent || Next->Type != First->Type)
+      if (!Next || Next->Indent != First->Indent)
         break;
-      Out += ", ";
-      Out.append(Next->Name);
+      auto It = std::find_if(ByType.begin(), ByType.end(), [&](const auto &G) {
+        return G.first == Next->Type;
+      });
+      if (It == ByType.end())
+        It = ByType.insert(ByType.end(), {Next->Type, {}});
+      It->second.push_back(Next->Name);
     }
-    Out += ';';
+    for (std::size_t Group = 0; Group < ByType.size(); ++Group) {
+      const auto &[Type, Names] = ByType[Group];
+      if (Group)
+        Out += '\n';
+      Out.append(First->Indent);
+      if (Names.size() == 1) {
+        Out.append(Type);
+        Out += ' ';
+        Out.append(Names.front());
+        Out += ';';
+        continue;
+      }
+      auto Base = Type;
+      while (!Base.empty() && (Base.back() == '*' || Base.back() == ' '))
+        Base.remove_suffix(1);
+      const auto Stars = std::count(Type.begin(), Type.end(), '*');
+      Out.append(Base);
+      Out += ' ';
+      for (std::size_t Name = 0; Name < Names.size(); ++Name) {
+        if (Name)
+          Out += ", ";
+        Out.append(static_cast<std::size_t>(Stars), '*');
+        Out.append(Names[Name]);
+      }
+      Out += ';';
+    }
   }
   return Out;
 }
 
-/// *(TYPE *)(uintptr_t)(&g_BASE_bytes[OFFSET]): a typed access at BASE plus
-/// OFFSET.  Spaces may come where the engine's C admits them.
+/// A use of an address in a byte-array global: a typed access,
+/// `*(TYPE *)(uintptr_t)(&g_BASE_bytes[OFFSET])`, or the address as an
+/// integer, `(uintptr_t)(&g_BASE_bytes[OFFSET])` with or without the
+/// parentheses, whose Type is empty.  Spaces may come where the engine's C
+/// admits them.
 struct Access {
   std::size_t Length;
   std::string Type;
   std::uint64_t Address;
 };
 
-std::optional<Access> accessAt(std::string_view Code, std::size_t At) {
-  std::size_t I = At;
-  const auto Expect = [&](std::string_view Literal) {
+class Scanner {
+  std::string_view Code;
+  std::size_t I;
+
+public:
+  Scanner(std::string_view Code, std::size_t At) : Code(Code), I(At) {}
+  std::size_t at() const { return I; }
+  bool expect(std::string_view Literal) {
     if (Code.substr(I, Literal.size()) != Literal)
       return false;
     I += Literal.size();
     return true;
-  };
-  const auto Spaces = [&] {
+  }
+  void spaces() {
     while (I < Code.size() && std::isspace(static_cast<unsigned char>(Code[I])))
       ++I;
-  };
-  if (!Expect("*("))
+  }
+  /// A type name, `const` allowed.
+  std::optional<std::string_view> type() {
+    const std::size_t Begin = I;
+    if (Code.substr(I, 6) == "const ")
+      I += 6;
+    if (I >= Code.size() || !identifierStart(Code[I]))
+      return std::nullopt;
+    while (I < Code.size() && wordByte(Code[I]))
+      ++I;
+    return Code.substr(Begin, I - Begin);
+  }
+  /// `&g_BASE_bytes[OFFSET]`, as BASE plus OFFSET.
+  std::optional<std::uint64_t> byteAddress() {
+    if (!expect("&g_"))
+      return std::nullopt;
+    const std::size_t Base = I;
+    while (I < Code.size() && upperHex(Code[I]))
+      ++I;
+    const auto BaseText = Code.substr(Base, I - Base);
+    if (BaseText.empty() || BaseText.size() > 16 || !expect("_bytes["))
+      return std::nullopt;
+    const std::size_t Offset = I;
+    while (I < Code.size() && std::isdigit(static_cast<unsigned char>(Code[I])))
+      ++I;
+    const auto OffsetText = Code.substr(Offset, I - Offset);
+    std::uint64_t BaseValue = 0, OffsetValue = 0;
+    if (OffsetText.empty() || !expect("]") ||
+        std::from_chars(BaseText.data(), BaseText.data() + BaseText.size(),
+                        BaseValue, 16)
+                .ec != std::errc() ||
+        std::from_chars(OffsetText.data(),
+                        OffsetText.data() + OffsetText.size(), OffsetValue)
+                .ec != std::errc() ||
+        OffsetValue > UINT64_MAX - BaseValue)
+      return std::nullopt;
+    return BaseValue + OffsetValue;
+  }
+};
+
+std::optional<Access> accessAt(std::string_view Code, std::size_t At) {
+  Scanner Scan(Code, At);
+  std::optional<std::string_view> Type;
+  if (Scan.expect("*(")) {
+    Type = Scan.type();
+    if (!Type)
+      return std::nullopt;
+    Scan.spaces();
+    if (!Scan.expect("*)"))
+      return std::nullopt;
+    Scan.spaces();
+  }
+  if (!Scan.expect("(uintptr_t)"))
     return std::nullopt;
-  const std::size_t TypeBegin = I;
-  if (Code.substr(I, 6) == "const ")
-    I += 6;
-  if (I >= Code.size() || !identifierStart(Code[I]))
+  Scan.spaces();
+  // A typed access always parenthesizes the address.
+  const bool Parenthesized = Scan.expect("(");
+  if (Type && !Parenthesized)
     return std::nullopt;
-  while (I < Code.size() && wordByte(Code[I]))
-    ++I;
-  const auto Type = Code.substr(TypeBegin, I - TypeBegin);
-  Spaces();
-  if (!Expect("*)"))
+  const auto Address = Scan.byteAddress();
+  if (!Address || (Parenthesized && !Scan.expect(")")))
     return std::nullopt;
-  Spaces();
-  if (!Expect("(uintptr_t)"))
-    return std::nullopt;
-  Spaces();
-  if (!Expect("(&g_"))
-    return std::nullopt;
-  const std::size_t Base = I;
-  while (I < Code.size() && upperHex(Code[I]))
-    ++I;
-  const auto BaseText = Code.substr(Base, I - Base);
-  if (BaseText.empty() || BaseText.size() > 16 || !Expect("_bytes["))
-    return std::nullopt;
-  const std::size_t Offset = I;
-  while (I < Code.size() && std::isdigit(static_cast<unsigned char>(Code[I])))
-    ++I;
-  const auto OffsetText = Code.substr(Offset, I - Offset);
-  if (OffsetText.empty() || !Expect("])"))
-    return std::nullopt;
-  std::uint64_t BaseValue = 0, OffsetValue = 0;
-  if (std::from_chars(BaseText.data(), BaseText.data() + BaseText.size(),
-                      BaseValue, 16)
-              .ec != std::errc() ||
-      std::from_chars(OffsetText.data(), OffsetText.data() + OffsetText.size(),
-                      OffsetValue)
-              .ec != std::errc() ||
-      OffsetValue > UINT64_MAX - BaseValue)
-    return std::nullopt;
-  return Access{I - At, std::string(Type), BaseValue + OffsetValue};
+  return Access{Scan.at() - At, Type ? std::string(*Type) : std::string(),
+                *Address};
 }
 
 std::string globalName(std::uint64_t Address) {
@@ -404,12 +464,12 @@ std::string globalName(std::uint64_t Address) {
 }
 
 template <typename VisitT> void accesses(std::string_view Code, VisitT Visit) {
-  for (std::size_t I = Code.find('*'); I != std::string_view::npos;) {
+  for (std::size_t I = Code.find_first_of("*("); I != std::string_view::npos;) {
     if (const auto Found = accessAt(Code, I)) {
       Visit(I, *Found);
-      I = Code.find('*', I + Found->Length);
+      I = Code.find_first_of("*(", I + Found->Length);
     } else {
-      I = Code.find('*', I + 1);
+      I = Code.find_first_of("*(", I + 1);
     }
   }
 }
@@ -469,26 +529,51 @@ ReadingView readingView(std::string_view Text) {
     if (Name.starts_with("var_m") || Name.starts_with("gap"))
       FrameNamesFree = false;
 
-  // Typed accesses into byte-array globals, by address.
-  std::map<std::uint64_t, std::set<std::string>> Types;
+  // Each address used in a byte-array global, with the types it is read
+  // and written as, in order of first use, and how often.
+  std::map<std::uint64_t, std::vector<std::pair<std::string, unsigned>>> Uses;
   (void)outsideLiterals(Text, [&](std::string_view Code) {
     accesses(Code, [&](std::size_t, const Access &Found) {
-      Types[Found.Address].insert(Found.Type);
+      auto &Types = Uses[Found.Address];
+      if (Found.Type.empty())
+        return;
+      const auto It =
+          std::find_if(Types.begin(), Types.end(), [&](const auto &Seen) {
+            return Seen.first == Found.Type;
+          });
+      if (It == Types.end())
+        Types.emplace_back(Found.Type, 1);
+      else
+        ++It->second;
     });
     return std::string(Code);
   });
+  // A name is declared with the type most of its accesses have, the first
+  // of those tied; an address only ever taken is a byte array.
   std::map<std::uint64_t, std::string> Named;
-  for (const auto &[Address, Kinds] : Types)
-    if (Kinds.size() == 1 && !Taken.count(globalName(Address)))
-      Named.emplace(Address, *Kinds.begin());
+  for (const auto &[Address, Types] : Uses) {
+    if (Taken.count(globalName(Address)))
+      continue;
+    const auto Most = std::max_element(
+        Types.begin(), Types.end(),
+        [](const auto &A, const auto &B) { return A.second < B.second; });
+    Named.emplace(Address, Most == Types.end() ? std::string() : Most->first);
+  }
   std::string View = outsideLiterals(Text, [&](std::string_view Code) {
     std::string Out;
     std::size_t Last = 0;
     accesses(Code, [&](std::size_t At, const Access &Found) {
-      if (!Named.count(Found.Address))
+      const auto It = Named.find(Found.Address);
+      if (It == Named.end())
         return;
       Out.append(Code.substr(Last, At - Last));
-      Out += globalName(Found.Address);
+      const auto Name = globalName(Found.Address);
+      if (Found.Type.empty())
+        Out += "(uintptr_t)&" + Name;
+      else if (Found.Type == It->second)
+        Out += Name;
+      else
+        Out += "*(" + Found.Type + " *)&" + Name;
       Last = At + Found.Length;
     });
     Out.append(Code.substr(Last));
@@ -511,13 +596,14 @@ ReadingView readingView(std::string_view Text) {
   // of first address.
   std::vector<std::pair<std::string, std::vector<std::string>>> ByType;
   for (const auto &[Address, Declared] : Named) {
-    const auto Type = replaceIdentifiers(Declared, Short, &UsedTypes);
+    const auto Type = replaceIdentifiers(
+        Declared.empty() ? "uint8_t" : Declared, Short, &UsedTypes);
     auto It =
         std::find_if(ByType.begin(), ByType.end(),
                      [&](const auto &Group) { return Group.first == Type; });
     if (It == ByType.end())
       It = ByType.insert(ByType.end(), {Type, {}});
-    It->second.push_back(globalName(Address));
+    It->second.push_back(globalName(Address) + (Declared.empty() ? "[]" : ""));
   }
   std::vector<std::string> Notes;
   if (UsedTypes)
