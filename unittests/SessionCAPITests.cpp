@@ -44,6 +44,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -3230,6 +3231,54 @@ TEST_F(SessionCAPITest, DiscoveryStepsDiscardTheImageReplacedDuringAJob) {
   EXPECT_EQ(State.Functions, Expected.Functions);
   EXPECT_EQ(State.Img.VerifiedFunctionEntries,
             Expected.Img.VerifiedFunctionEntries);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsReportOnlyTheCurrentSnapshotsFailure) {
+  const auto Input = write("snapshot-failure.elf", makeNativeELF(false));
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Input.c_str()), 1);
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  auto &State = *neverd::sdk::toSession(Session);
+  // A finished job of \p Revision's list whose detector threw.
+  const auto FailedJob = [&](uint64_t Revision) {
+    std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Failure;
+    Failure.set_exception(std::make_exception_ptr(
+        std::runtime_error("snapshot detector failed")));
+    State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+        Revision, Failure.get_future()});
+  };
+  // A snapshot of an earlier list neither fails this image nor stands for
+  // its discovery: the poll starts this image's own snapshot.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  FailedJob(State.FunctionListRevision - 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0)
+      << takeString(neverd_last_error(Session));
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  // Synchronous discovery drains such a job and discovers this image.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  FailedJob(State.FunctionListRevision - 1);
+  EXPECT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // The current list's own snapshot failing is still a failure.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  FailedJob(State.FunctionListRevision);
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session))
+                .find("function discovery failed: snapshot detector failed"),
+            std::string::npos);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  EXPECT_FALSE(State.DiscoveredFunctions);
 }
 
 TEST_F(SessionCAPITest,

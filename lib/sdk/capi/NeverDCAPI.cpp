@@ -980,20 +980,25 @@ void publishDiscovery(Session &S,
 bool takeDiscoveryJob(Session &S, bool Wait) {
   if (!S.FunctionDiscovery)
     return false;
-  auto &Job = *S.FunctionDiscovery;
-  if (!Wait &&
-      Job.Result.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+  if (!Wait && S.FunctionDiscovery->Result.wait_for(std::chrono::seconds(0)) !=
+                   std::future_status::ready)
     return false;
-  const auto Revision = Job.Revision;
-  auto Result = Job.Result.get();
+  auto Job = std::move(*S.FunctionDiscovery);
   S.FunctionDiscovery.reset();
-  if (Revision == S.FunctionListRevision) {
-    S.Img.VerifiedFunctionEntries.merge(Result.VerifiedEntries);
-    S.Img.CodeRefTargets.merge(Result.CodeReferences);
-    publishDiscovery(S, std::move(Result.Functions));
-    return true;
+  if (Job.Revision != S.FunctionListRevision) {
+    // The snapshot predates the current list, perhaps another image: neither
+    // its functions nor its failure belong to this one, which runs again.
+    try {
+      (void)Job.Result.get();
+    } catch (...) {
+    }
+    return false;
   }
-  return false;
+  auto Result = Job.Result.get();
+  S.Img.VerifiedFunctionEntries.merge(Result.VerifiedEntries);
+  S.Img.CodeRefTargets.merge(Result.CodeReferences);
+  publishDiscovery(S, std::move(Result.Functions));
+  return true;
 }
 } // namespace
 
