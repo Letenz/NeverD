@@ -3538,7 +3538,7 @@ HighCWriter::incomingHomeParamName(int64_t Disp) const {
       return MemberThis ? std::string("this") : IndirectReturnName;
   }
   if (Dbg) {
-    if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+    if (const auto &FS = resolvedFunction(CurrentFunc->Entry);
         FS && isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format)) {
       if (isWin64MemberIndirectReturn(*FS)) {
         if (Disp == 8)

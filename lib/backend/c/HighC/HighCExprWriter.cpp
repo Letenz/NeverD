@@ -4462,7 +4462,7 @@ TypeRef HighCWriter::debugParamType(const MedVar &V) const {
       debugParamBinding(*CurrentFunc, static_cast<size_t>(V.Id));
   if (B.Index < 0 || !B.Whole)
     return nullptr;
-  auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+  const auto &FS = resolvedFunction(CurrentFunc->Entry);
   if (!FS || static_cast<size_t>(B.Index) >= FS->Params.size())
     return nullptr;
   TypeRef Ty = FS->Params[B.Index].second;
@@ -4612,7 +4612,7 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
   if (Printed.empty() || !CurrentFunc)
     return nullptr;
   if (Dbg) {
-    if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry); FS) {
+    if (const auto &FS = resolvedFunction(CurrentFunc->Entry); FS) {
       for (const auto &Param : FS->Params) {
         if (Param.first == Printed)
           return RecordFrom(Param.second);
@@ -7712,6 +7712,14 @@ bool HighCWriter::namesFileScope(llvm::StringRef Name) const {
          RecordTypedefs.count(Key);
 }
 
+const std::optional<FunctionSym> &
+HighCWriter::resolvedFunction(va_t Entry) const {
+  auto [It, Added] = ResolvedFunctions.try_emplace(Entry);
+  if (Added && Dbg)
+    It->second = Dbg->resolveFunction(Entry);
+  return It->second;
+}
+
 bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
   if (Name.empty())
     return false;
@@ -7726,7 +7734,7 @@ bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
     if (!Display.empty() && Name == Display)
       return true;
   if (Dbg && CurrentFunc) {
-    if (const auto FS = Dbg->resolveFunction(CurrentFunc->Entry); FS) {
+    if (const auto &FS = resolvedFunction(CurrentFunc->Entry); FS) {
       if (isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format) &&
           Name == "result")
         return true;
@@ -8233,11 +8241,14 @@ std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
 }
 
 bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
+  // The name of the variable an assignment writes, which several tests read.
+  std::string DstName;
   if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
-      (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
-      (AmbiguousFrameAliases.count(varName(Stmt.Dst->Var)) ||
-       JoinPhiNames.count(varName(Stmt.Dst->Var))))
-    return false;
+      (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
+    DstName = varName(Stmt.Dst->Var);
+    if (AmbiguousFrameAliases.count(DstName) || JoinPhiNames.count(DstName))
+      return false;
+  }
   if (Analysis.DeadStmts.count(&Stmt) || Stmt.Kind == StmtKind::Nop)
     return true;
   if (vaStartStatement(Stmt))
@@ -8311,7 +8322,7 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     if (isHiddenCopyForwardAssign(Stmt))
       return true;
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
-      const std::string Name = varName(Stmt.Dst->Var);
+      const std::string &Name = DstName;
       if (!JoinPhiNames.count(Name) &&
           (FieldForward.count(Name) || ValueForward.count(Name) ||
            (UnknownOnlyNames.count(Name) &&
@@ -8320,7 +8331,7 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     }
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
         Stmt.Val) {
-      const std::string Name = varName(Stmt.Dst->Var);
+      const std::string &Name = DstName;
       if (!AmbiguousFrameAliases.count(Name)) {
         auto Alias = FrameAliases.find(Name);
         if (Alias != FrameAliases.end()) {
