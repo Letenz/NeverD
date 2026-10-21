@@ -422,6 +422,13 @@ expandX64MachineExit(const SpecializationInstruction &Instruction,
                             LowInstructionControlFlag::Indirect)))
       return invalid("machine JMP exit requires an unconditional near jump");
     break;
+  case Kind::Trap:
+    if ((Insn.Id != X86_INS_INT3 && Insn.Id != X86_INS_INT1) ||
+        Instruction.IsNativeCall ||
+        Native != SpecializationNativeStackControl::None ||
+        B.Control != LowInstructionControl::Terminator)
+      return invalid("machine trap exit requires a resumable trap terminator");
+    break;
   default:
     return invalid("unknown machine-exit kind");
   }
@@ -435,6 +442,28 @@ expandX64MachineExit(const SpecializationInstruction &Instruction,
     return invalid("machine exit has no complete strict lift");
   }
   const auto OriginalDigest = lowUndefinedOperationDigest(Instruction.Ops);
+  if (Declaration.Kind == Kind::Trap) {
+    // A trap's complete lift carries the trap's own undefined effect, so the
+    // ordinary "no undefined effects" span check does not apply. Verify the
+    // declared bytes re-lift to the same ops and that the provider's recorded
+    // effect metadata matches that fresh lift, then end the region on the
+    // retained trap without modeling any transfer, target or continuation.
+    if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||
+        Instruction.UndefinedEffects.Coverage != Effects.Coverage ||
+        Instruction.UndefinedEffects.OpCount != Effects.OpCount ||
+        Instruction.UndefinedEffects.OperationDigest != OriginalDigest)
+      return invalid("machine trap exit bytes differ from the complete lifted "
+                     "span");
+    NativeStackExpansion Result;
+    Result.Ops = Instruction.Ops;
+    Result.Boundary = B;
+    Result.UndefinedEffects = Instruction.UndefinedEffects;
+    Result.Receipt.OriginalBoundary = B;
+    Result.Receipt.OriginalOperationDigest = OriginalDigest;
+    Result.Receipt.ExpandedOperationDigest = OriginalDigest;
+    Result.Receipt.ReturnMode = NativeReturnExpansion::OuterFunctionBoundary;
+    return Result;
+  }
   if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||
       Effects.Coverage != LowUndefinedCoverage::Complete ||
       !Effects.Effects.empty() ||
