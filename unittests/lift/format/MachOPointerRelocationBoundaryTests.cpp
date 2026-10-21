@@ -14958,7 +14958,7 @@ TEST(LLVMCodePointerInvariantBoundary,
                  [](MedFunc &Caller) { Caller.Blocks[1].Succs[1] = 99; });
   expectRejected("header-has-an-exceptional-side-exit", [](MedFunc &Caller) {
     Caller.Blocks[1].ExceptionalSuccs.push_back(
-        ExceptionalEdge{.BlockId = 4, .TargetVA = Caller.Blocks[4].StartAddr});
+        ExceptionalEdge{4, Caller.Blocks[4].StartAddr});
   });
 }
 
@@ -22599,8 +22599,8 @@ TEST(LLVMCodePointerInvariantBoundary,
             F.Blocks[2].Preds.push_back(0);
           }
           if (C == Case::Exceptional) {
-            F.Blocks[0].ExceptionalSuccs.push_back({2});
-            F.Blocks[2].ExceptionalPreds.push_back({0});
+            F.Blocks[0].ExceptionalSuccs.push_back({2, F.Blocks[2].StartAddr});
+            F.Blocks[2].ExceptionalPreds.push_back({0, F.Blocks[2].StartAddr});
           }
           if (C == Case::HeaderRoot || C == Case::BodyRoot ||
               C == Case::LatchRoot)
@@ -22788,8 +22788,8 @@ TEST(LLVMCodePointerInvariantBoundary,
           if (C == Case::Bypass)
             F.Blocks[2].Succs = {1};
           if (C == Case::Exceptional) {
-            F.Blocks[1].ExceptionalPreds.push_back({2});
-            F.Blocks[2].ExceptionalSuccs.push_back({1});
+            F.Blocks[1].ExceptionalPreds.push_back({2, F.Blocks[1].StartAddr});
+            F.Blocks[2].ExceptionalSuccs.push_back({1, F.Blocks[1].StartAddr});
           }
           if (C == Case::Independent)
             F.ModuleAnalysisRoots.insert(0x140);

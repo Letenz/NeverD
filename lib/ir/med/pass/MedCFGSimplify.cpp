@@ -18,7 +18,6 @@
 #include <map>
 #include <optional>
 #include <set>
-#include <tuple>
 
 namespace neverd {
 
@@ -234,15 +233,11 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
     // Renumbering gives each source a unique ID. Only edges from this source
     // can duplicate one of its predecessors, so do not scan every earlier
     // source already entering a shared cleanup or landing pad.
-    std::set<
-        std::tuple<int, va_t, ExceptionalEdgeKind, uint32_t, int32_t, va_t>>
-        Seen;
+    std::set<ExceptionalEdge> Seen;
     for (const ExceptionalEdge &Edge : Blk.ExceptionalSuccs)
       if (Edge.BlockId >= 0 &&
           Edge.BlockId < static_cast<int>(NewBlocks.size()) &&
-          Seen.emplace(Edge.BlockId, Edge.TargetVA, Edge.Kind, Edge.RegionIndex,
-                       Edge.State, Edge.SourceVA)
-              .second) {
+          Seen.insert(Edge).second) {
         ExceptionalEdge Pred = Edge;
         Pred.BlockId = Blk.Id;
         NewBlocks[Edge.BlockId].ExceptionalPreds.push_back(Pred);

@@ -108,8 +108,16 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.BlockId));
       Number(Edge.TargetVA);
       Number(static_cast<unsigned>(Edge.Kind));
-      Number(Edge.RegionIndex);
-      Number(static_cast<uint64_t>(Edge.State));
+      if (const auto *Context = Edge.singleContext()) {
+        Number(Context->RegionIndex);
+        Number(static_cast<uint64_t>(Context->State));
+      } else {
+        // A region index is only 32 bits. This marker extends the old
+        // singleton encoding without changing existing proof identities.
+        Number(UINT64_MAX);
+        Number(Edge.contexts().size());
+        Hash.update(Edge.SharedContexts->digest());
+      }
     }
   };
   // The absent opt-in retains the prior schema and default proof identities.

@@ -36,7 +36,8 @@ TEST(MedSSAMultiRoot, SharedHandlersRetainEveryDistinctExceptionalPredecessor) {
     SCOPED_TRACE(static_cast<int>(Architecture));
     constexpr int Sources = 256;
     constexpr int Targets = 4;
-    constexpr int Contexts = 6;
+    constexpr int Contexts = 8;
+    constexpr int Duplicates = 3;
     const auto Width = getTargetRegInfo(Architecture).PointerSize;
     LowFunc Low;
     Low.Entry = 0x1000;
@@ -61,7 +62,7 @@ TEST(MedSSAMultiRoot, SharedHandlersRetainEveryDistinctExceptionalPredecessor) {
         continue;
       for (int J = 0; J < Targets; ++J) {
         const va_t Target = Low.Entry + 16 * (Sources + 1 + J);
-        const ExceptionalEdge Edges[] = {
+        std::vector<ExceptionalEdge> Edges = {
             {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 3},
             {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 1, 3},
             {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 4},
@@ -70,6 +71,17 @@ TEST(MedSSAMultiRoot, SharedHandlersRetainEveryDistinctExceptionalPredecessor) {
             {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCatch, 0, 3},
             {Sources + 1 + J, Target + 1, ExceptionalEdgeKind::CxxCleanup, 0,
              3}};
+        // Identical sets of regions and states do not imply identical pairs.
+        // Both domains must survive, and a separately owned equal domain must
+        // deduplicate by value rather than by shared_ptr identity.
+        for (bool Crossed : {false, true}) {
+          auto Edge = Edges.front();
+          Edge.SharedContexts =
+              std::make_shared<const ExceptionalEdgeContextDomain>(
+                  std::vector<ExceptionalEdgeContext>{{0, Crossed ? 4 : 3},
+                                                      {1, Crossed ? 3 : 4}});
+          Edges.push_back(std::move(Edge));
+        }
         for (auto Edge : Edges) {
           Block.ExceptionalSuccs.push_back(Edge);
           Edge.BlockId = I;
@@ -79,6 +91,11 @@ TEST(MedSSAMultiRoot, SharedHandlersRetainEveryDistinctExceptionalPredecessor) {
         // Duplicate metadata does not create another incoming occurrence.
         Block.ExceptionalSuccs.push_back(Edges[0]);
         Block.ExceptionalSuccs.push_back(Edges[2]);
+        auto Duplicate = Edges[6];
+        Duplicate.SharedContexts =
+            std::make_shared<const ExceptionalEdgeContextDomain>(
+                std::vector<ExceptionalEdgeContext>{{1, 4}, {0, 3}});
+        Block.ExceptionalSuccs.push_back(std::move(Duplicate));
       }
       Block.ExceptionalSuccs.push_back(
           {-1, 0x80000, ExceptionalEdgeKind::CxxCleanup, 0, 3});
@@ -92,10 +109,11 @@ TEST(MedSSAMultiRoot, SharedHandlersRetainEveryDistinctExceptionalPredecessor) {
     }
     for (int I = 0; I < Sources; ++I) {
       const auto &Edges = Med.Blocks[I].ExceptionalSuccs;
-      ASSERT_EQ(Edges.size(), Targets * (Contexts + 2) + 1);
+      ASSERT_EQ(Edges.size(), Targets * (Contexts + Duplicates) + 1);
       for (int J = 0; J < Targets; ++J)
-        for (int K = 0; K < Contexts + 2; ++K)
-          EXPECT_EQ(Edges[J * (Contexts + 2) + K].BlockId, Sources + J);
+        for (int K = 0; K < Contexts + Duplicates; ++K)
+          EXPECT_EQ(Edges[J * (Contexts + Duplicates) + K].BlockId,
+                    Sources + J);
       EXPECT_EQ(Edges.back().BlockId, -1);
     }
     EXPECT_TRUE(verifyMedFunc(Med, "shared-exception-handlers"));
@@ -692,8 +710,7 @@ LowFunc makeFixedCxxContinuationFrame(
       E.Kind = ExceptionalEdgeKind::CxxCatch;
       E.BlockId = -1;
       E.TargetVA = Catch.HandlerVA;
-      E.RegionIndex = 0;
-      E.State = 0;
+      E.ExplicitContext = {0, 0};
     }
   }
   Low.CxxContinuationEntries.push_back(
@@ -1054,9 +1071,10 @@ TEST(MedCxxContinuationFrame, ClangInteriorStateMarkersKeepThePrologueFrame) {
     bool FoundCall = false;
     for (const auto &B : Main->Blocks)
       for (const auto &Edge : B.ExceptionalSuccs)
-        FoundCall |= Edge.Kind == ExceptionalEdgeKind::CxxCatch &&
-                     Edge.RegionIndex == 0 && Edge.State == 3 &&
-                     Edge.SourceVA == C.Throw;
+        FoundCall |=
+            Edge.Kind == ExceptionalEdgeKind::CxxCatch &&
+            Edge.singleContext() && Edge.singleContext()->RegionIndex == 0 &&
+            Edge.singleContext()->State == 3 && Edge.SourceVA == C.Throw;
     EXPECT_TRUE(FoundCall);
   }
 #endif

@@ -1425,6 +1425,21 @@ reference separately. Frame facts, catch searches, callback identities and
 lifetime checks remain per block. Copies retain the domain after the solver
 and input function are destroyed. Sharing does not make an unknown state
 complete, remove an exceptional edge or change native admission.
+`ExceptionalEdge::contexts()` retains the correlated table-region and
+originating-state pairs for each transfer. Single contexts live inline;
+registration C++ cleanup edges for a shared level domain can own one immutable
+`ExceptionalEdgeContextDomain` per target. CFG construction skips empty unwind
+tails only after validating the strictly descending state graph, builds every
+pair once, and charges each published edge against the existing work limit.
+Catch searches remain the per-block solver result. The unwind table still
+owns action order; grouping reachability edges does not reorder cleanups.
+Frame proofs, undefined-input fingerprints and source-stack snapshots bind
+every context, and snapshot consumers reuse the domain's content digest.
+Exact singleton consumers reject multiple contexts. MedIR remaps endpoints and
+deduplicates predecessors within each uniquely numbered source, preserving
+distinct domains and throwing instructions without scanning all earlier
+sources of a shared handler. None of this supplies missing frame, lifetime,
+callee or native exception evidence.
 `X86CxxRuntimeABI` owns the shared PE32 provider selection for the FH3 cdecl
 dispatcher and the two-word stdcall throw entry: VCRUNTIME140,
 VCRUNTIME140D and MSVCR100. Both entry proofs still require their exact import

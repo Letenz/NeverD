@@ -1501,6 +1501,12 @@ add_neverd_unittest(NeverDRegistrationStateTests
   IRRegistrationState
 )
 
+add_neverd_unittest(NeverDExceptionEdgeTests
+  eh/ExceptionCFGSeedTests.cpp
+  eh/RegistrationEdgeTests.cpp
+  LINK_COMPONENTS IRLow
+)
+
 add_neverd_unittest(NeverDRegistrationEHTests
   eh/RegistrationEH4WrapperTests.cpp
   eh/RegistrationPrologueSavesTests.cpp

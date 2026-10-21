@@ -313,8 +313,14 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
           return Fail("frame propagation budget exhausted");
         bool HasEdge = false;
         for (const ExceptionalEdge &Edge : Low.Blocks[B].ExceptionalSuccs) {
-          if (Edge.Kind != ExceptionalEdgeKind::CxxCatch ||
-              !Regions.count(Edge.RegionIndex))
+          if (Edge.Kind != ExceptionalEdgeKind::CxxCatch)
+            continue;
+          if (!Charge(Edge.contexts().size() - 1))
+            return Fail("frame propagation budget exhausted");
+          if (std::none_of(Edge.contexts().begin(), Edge.contexts().end(),
+                           [&](const auto &Context) {
+                             return Regions.count(Context.RegionIndex);
+                           }))
             continue;
           if (SynchronousCxx) {
             const auto &Insns = Low.Blocks[B].InstructionBoundaries;

@@ -719,8 +719,14 @@ std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
       Word(Edge.BlockId);
       Word(Edge.TargetVA);
       Word(static_cast<unsigned>(Edge.Kind));
-      Word(Edge.RegionIndex);
-      Word(Edge.State);
+      if (const auto *Context = Edge.singleContext()) {
+        Word(Context->RegionIndex);
+        Word(Context->State);
+      } else {
+        Word(UINT64_MAX);
+        Word(Edge.contexts().size());
+        Hash.update(Edge.SharedContexts->digest());
+      }
       Word(Edge.SourceVA);
     };
     for (const auto &Edge : Block.ExceptionalPreds)
@@ -829,14 +835,17 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
         if (!consume(Remaining))
           return {};
         const auto Position = Positions.find(Edge.BlockId);
+        const auto *Context = Edge.singleContext();
         if (Edge.Kind != ExceptionalEdgeKind::SEHHandler ||
             Edge.TargetVA != Block.StartAddr || Edge.SourceVA != InvalidVA ||
-            !DeclaredHandlers.at(Block.StartAddr).count(Edge.RegionIndex) ||
+            !Context ||
+            !DeclaredHandlers.at(Block.StartAddr).count(Context->RegionIndex) ||
             Position == Positions.end()) {
           CheckedEdges = false;
           break;
         }
-        const auto &Scope = F.ExceptionMetadata->SEH->Scopes[Edge.RegionIndex];
+        const auto &Scope =
+            F.ExceptionMetadata->SEH->Scopes[Context->RegionIndex];
         const auto Range =
             getSemanticSEHGuardedRange(Scope, Arch::X64, *F.ExceptionMetadata);
         const auto &Source = F.Blocks[Position->second];

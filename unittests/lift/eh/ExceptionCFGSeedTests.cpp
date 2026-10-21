@@ -171,7 +171,8 @@ TEST(ExceptionCFGSeed, SynchronousCxxUsesEachCallsReturnPC) {
     for (const auto &Block : Func.Blocks)
       for (const auto &Edge : Block.ExceptionalSuccs)
         if (Edge.Kind == ExceptionalEdgeKind::CxxCatch)
-          Calls.emplace_back(Edge.SourceVA, Edge.State);
+          for (const auto &Context : Edge.contexts())
+            Calls.emplace_back(Edge.SourceVA, Context.State);
     EXPECT_EQ(Calls, (std::vector<std::pair<va_t, int32_t>>{
                          {kEntry, MarkerOffset ? 0 : 1}, {kEntry + 10, 1}}));
   }

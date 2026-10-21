@@ -89,6 +89,7 @@ add_neverd_component_library(NeverDLoader
   Raw/RawLoader.cpp
   ${NEVERD_ISA_MODEL_INC}
   ExecutableCodeOwnerIndex.cpp
+  ExceptionEdge.cpp
   Go/GoDeferInfo.cpp
   Go/GoFuncTable.cpp
   Go/GoModuleData.cpp

@@ -6051,6 +6051,19 @@ Every retained root still exposes the complete possible level set. A separate
 lifetime test copies blocks out of independent analyses and checks their
 distinct domains after the input functions and results are destroyed.
 Incomplete state and cleanup proofs stay rejected.
+`NeverDExceptionEdgeTests` covers exceptional CFG seeds and transfers across
+the supported table formats, plus registration C++ publication with 9,
+257 and 4,096 states through up to 2,048 ordinary blocks, both distinct and
+aliased cleanup targets, and long empty unwind tails. A closed-form oracle
+checks every originating-state/action pair, while each block and reverse edge
+must retain the same owning domain. Irregular unwind graphs are compared with
+flat traversal and per-block catch searches. Dense context output still
+exhausts the unchanged budget and clears partial edges; malformed state graphs
+remain rejected. Domain lifetime and fingerprint tests distinguish correlated
+pairs with identical region and state sets. `MedSSAMultiRoot` checks shared
+handler fan-in, destination renumbering, duplicate contexts with independent
+owners, and distinct state, region, kind, target and throwing-instruction
+identities on x86 and AArch64.
 Self/forward edges, a 129-action chain and record-budget overflow refuse.
 Independent generated-state tests bind both a dense 4,096-state table and a
 two-state table projected from 4,096 source states, rejecting omitted actions
