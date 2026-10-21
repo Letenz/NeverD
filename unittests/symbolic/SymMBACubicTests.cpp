@@ -11,6 +11,7 @@
 
 #include "neverd/solver/SymSynthVerifier.h"
 
+#include <array>
 #include <random>
 
 using namespace neverd;
