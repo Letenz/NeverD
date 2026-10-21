@@ -1037,13 +1037,22 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           MOp.VariadicVectorCount = static_cast<int8_t>(*Count);
       // Bind ordinary register arguments first. The checked stack argument
       // is a separate binary80 operand, not an integer register argument.
-      if (LOp.ConsumesX87Argument && LOp.NumInputs == 2)
+      const unsigned X87Arguments = LOp.X87ImportArguments
+                                        ? LOp.X87ImportArguments
+                                        : unsigned(LOp.ConsumesX87Argument);
+      if (X87Arguments && LOp.NumInputs == X87Arguments + 1)
         MOp.NumInputs = 1;
-      if (!bindFormattedCall(MB, MOp, LOp))
+      if (LOp.X87ImportArguments) {
+        MOp.CalleeRegisterArgs = 0;
+        MOp.CalleeStackArgs = 0;
+        MOp.CalleeVectorArgs = 0;
+      } else if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MOp, LOp);
-      if (LOp.ConsumesX87Argument && LOp.NumInputs == 2) {
+      if (X87Arguments && LOp.NumInputs == X87Arguments + 1) {
         MOp.X87ArgumentInput = MOp.NumInputs;
-        MOp.addInput(ndVarToMedVar(LOp.Inputs[1]));
+        MOp.X87ImportArguments = LOp.X87ImportArguments;
+        for (unsigned K = 1; K <= X87Arguments; ++K)
+          MOp.addInput(ndVarToMedVar(LOp.Inputs[K]));
         const unsigned Slot = x86reg::stRegIndex(LOp.Inputs[1].Offset);
         for (unsigned K = 0; K <= LOp.X87ScratchSlots; ++K)
           MOp.X87ClobberedSlots |= uint8_t(1u << ((Slot + 8 - K) & 7));

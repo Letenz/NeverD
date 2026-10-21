@@ -127,7 +127,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       bool NeedsAdapter = Function.ConsumesX87Argument;
       for (const MedBlock &Block : Function.Blocks)
         for (const MedOp &Op : Block.Ops)
-          NeedsAdapter |= Op.X87ArgumentInput != 0;
+          NeedsAdapter |= Op.X87ArgumentInput != 0 && !Op.X87ImportArguments;
       if (NeedsAdapter) {
         Result.Error =
             "patch output requires a native x87 argument adapter for "

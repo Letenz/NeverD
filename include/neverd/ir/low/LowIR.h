@@ -224,6 +224,9 @@ struct LowOp {
   /// argument must be empty at this call, as proved before admission.
   bool ConsumesX87Argument = false;
   uint8_t X87ScratchSlots = 0;
+  /// A checked CRT import takes Inputs[1..N] in logical ST0, ST1 order and
+  /// returns one x87 value. It requires a native register-stack call adapter.
+  uint8_t X87ImportArguments = 0;
 
   void addInput(NdVar V) {
     if (NumInputs < 6)

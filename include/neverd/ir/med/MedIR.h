@@ -253,10 +253,13 @@ struct MedOp {
   /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
   /// when the convention publishes none.
   int8_t CalleeVectorArgs = -1;
-  /// Operand carrying a checked callee's incoming x87 ST0, or zero when
-  /// there is no such argument. It follows the recovered ordinary arguments
-  /// in the callable signature, independently of the integer return value.
+  /// First operand carrying a checked callee's incoming x87 argument, or
+  /// zero when there is none. Internal consumers append it after ordinary
+  /// arguments; CRT stack calls use only their explicit x87 arguments.
   uint8_t X87ArgumentInput = 0;
+  /// Number of x87 arguments beginning at X87ArgumentInput for a native CRT
+  /// import, or zero for the internal integer-returning consumer contract.
+  uint8_t X87ImportArguments = 0;
   /// Physical slots whose retained payload the checked consumer may change:
   /// its argument and its temporary stack space. Other ST values survive.
   uint8_t X87ClobberedSlots = 0;

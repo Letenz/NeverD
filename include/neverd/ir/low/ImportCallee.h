@@ -95,9 +95,13 @@ inline std::optional<va_t> loadedCallSlot(llvm::ArrayRef<LowBlock> Blocks,
   size_t End = Index;
   bool Loaded = false;
   uint64_t Addend = 0;
+  unsigned LiteralBits = 0;
   for (int Step = 0; Step < limits::kCallTargetSlotDepth; ++Step) {
     if (Loaded && Var.isConst())
-      return static_cast<va_t>(Var.Offset + Addend);
+      return static_cast<va_t>(
+          (LiteralBits ? Var.Offset & ((UINT64_C(1) << LiteralBits) - 1)
+                       : Var.Offset) +
+          Addend);
     if (!Var.isReg() && !Var.isTemp())
       return std::nullopt;
     const LowOp *Def = nullptr;
@@ -148,11 +152,24 @@ inline std::optional<va_t> loadedCallSlot(llvm::ArrayRef<LowBlock> Blocks,
       continue;
     }
     if (Def->Opcode == NdOp::COPY && (Loaded || !Def->Inputs[0].isConst())) {
+      if (LiteralBits && Def->Inputs[0].Size != Def->Output.Size)
+        return std::nullopt;
+      Var = Def->Inputs[0];
+      continue;
+    }
+    // The i386 lifter widens a literal 32-bit memory address to its 64-bit
+    // address temporary. Trace only same-width copies back to that literal;
+    // arithmetic inside the extension needs its own width-aware proof.
+    // An extension of the loaded callable itself is never accepted here.
+    if (Loaded && !LiteralBits && Def->Opcode == NdOp::INT_ZEXT &&
+        Def->NumInputs == 1 && Def->Inputs[0].Size > 0 &&
+        Def->Inputs[0].Size < Def->Output.Size && Def->Output.Size <= 8) {
+      LiteralBits = Def->Inputs[0].Size * 8;
       Var = Def->Inputs[0];
       continue;
     }
     if (Loaded && Def->Opcode == NdOp::INT_ADD && Def->NumInputs == 2 &&
-        Def->Inputs[1].isConst()) {
+        Def->Inputs[1].isConst() && !LiteralBits) {
       Addend += Def->Inputs[1].Offset;
       Var = Def->Inputs[0];
       continue;

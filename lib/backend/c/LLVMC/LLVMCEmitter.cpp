@@ -2377,6 +2377,9 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   for (const auto &Function : Mod) {
     if (Only && &Function != Only)
       continue;
+    if (Function.hasFnAttribute("neverd.x87-import-adapter"))
+      throw std::runtime_error(
+          "C source output requires a native x87 import call adapter");
     HasVectors |= containsVectorType(Function.getFunctionType());
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
@@ -2384,6 +2387,10 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         // discard an unused malformed call, retaining the source error
         // contract.
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
+          if (const auto *Target = Call->getCalledFunction();
+              Target && Target->hasFnAttribute("neverd.x87-import-adapter"))
+            throw std::runtime_error(
+                "C source output requires a native x87 import call adapter");
           (void)scalarIntegerMinMax(*Call);
           (void)scalarIntegerSaturation(*Call);
           (void)scalarUnary(*Call);

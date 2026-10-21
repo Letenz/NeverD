@@ -55,7 +55,8 @@ bool callClobbersRegister(const MedOp &Call, uint64_t RegOff, uint16_t Size,
   if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
       Call.PreservesCallerSaved)
     return false;
-  if (Call.X87ArgumentInput && TRI.TheArch == Arch::X86) {
+  if (Call.X87ArgumentInput && !Call.X87ImportArguments &&
+      TRI.TheArch == Arch::X86) {
     // The checked consumer closure forbids control-word changes.
     if (RegOff == x86reg::FPU_CW && Size <= 2)
       return false;

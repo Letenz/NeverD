@@ -800,6 +800,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       noteRead(CI.TargetAddr);
       if (CallSlot)
         noteRead(*CallSlot);
+      if (Op.X87ImportArguments && Op.X87ArgumentInput &&
+          Op.X87ArgumentInput + Op.X87ImportArguments <= Op.NumInputs) {
+        // This call has no ordinary argument bank. Do not scan incidental
+        // spills or promote live integer registers to the caller's parameters.
+        for (unsigned K = 0; K < Op.X87ImportArguments; ++K)
+          CI.Args.push_back(Op.Inputs[Op.X87ArgumentInput + K]);
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
       // The routine the function-pointer variable an indirect call goes
       // through starts at: the call passes its arguments, but takes neither
       // its name nor its contract (PointerVariableCallee).  An import's slot

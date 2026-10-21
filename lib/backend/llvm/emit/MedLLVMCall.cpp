@@ -21,6 +21,8 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/SafetyCallsiteMetadata.h"
+#include "neverd/backend/llvm/X86X87ImportCall.h"
+#include "neverd/ir/low/X87ImportCall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/object/SectionNames.h"
@@ -639,17 +641,25 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   // This is a typed binary80 argument even when the caller stores its bits
   // as i80, or emits a declaration because the callee body was not selected.
   if (Op.X87ArgumentInput) {
-    if (Args.empty() || (!Args.back()->getType()->isIntegerTy(80) &&
-                         !Args.back()->getType()->isX86_FP80Ty())) {
+    const unsigned Count = Op.X87ImportArguments ? Op.X87ImportArguments : 1;
+    if (Args.size() < Count ||
+        (Op.X87ImportArguments && Args.size() != Count) ||
+        llvm::any_of(llvm::ArrayRef(Args).take_back(
+                         std::min<size_t>(Count, Args.size())),
+                     [](llvm::Value *Value) {
+                       return !Value->getType()->isIntegerTy(80) &&
+                              !Value->getType()->isX86_FP80Ty();
+                     })) {
       syncError() << "med_llvm_emitter: checked x87 call has no binary80 "
                      "argument in "
                   << (CurMedFunc ? CurMedFunc->Name : "<unknown>") << "\n";
       FatalCodePointerResolution = true;
       return;
     }
-    if (Args.back()->getType()->isIntegerTy(80))
-      Args.back() =
-          Builder.CreateBitCast(Args.back(), llvm::Type::getX86_FP80Ty(*Ctx));
+    for (size_t I = Args.size() - Count; I < Args.size(); ++I)
+      if (Args[I]->getType()->isIntegerTy(80))
+        Args[I] =
+            Builder.CreateBitCast(Args[I], llvm::Type::getX86_FP80Ty(*Ctx));
   }
 
   auto *RetTy = llvm::Type::getInt64Ty(*Ctx);
@@ -728,11 +738,25 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                                  getTargetRegInfo(TargetArch).PointerSize * 8)
           : nullptr;
   std::string IndirectImportName;
+  if (Op.X87ImportArguments) {
+    if (!Img || !CI ||
+        x87CRTImportArguments(*Img, CI->TargetAddr) != Op.X87ImportArguments) {
+      syncError() << "med_llvm_emitter: CRT x87 call lost its checked import "
+                     "identity\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
+    // The slot proves the special ABI, but its runtime contents remain the
+    // call target. A writable IAT must not become a fixed-symbol call merely
+    // because the imported routine's name is known.
+    IndirectImportName = importCalleeName(*Img, CI->TargetAddr);
+  }
   if (KnownTarget && !llvm::isa<llvm::Function>(KnownTarget)) {
     const auto It =
         ImportedSymbolPlaceholders.find(KnownTarget->getName().str());
     if (It != ImportedSymbolPlaceholders.end() && It->second == KnownTarget &&
         (libc::libcArityForSymbol(It->first, TargetLibC) ||
+         (Op.X87ImportArguments && isX87CRTImportName(It->first)) ||
          libc::varArgFixedCount(stripLeadingUnderscores(It->first),
                                 TargetLibC)))
       IndirectImportName = It->first;
@@ -967,6 +991,14 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
           ImportedPlaceholder = It->second;
           ImportedPlaceholder->setName(CalleeName + ".import_data");
         }
+      }
+
+      if (Op.X87ImportArguments) {
+        Callee = Mod->getFunction(CalleeName);
+        if (!Callee && !CalleeName.empty())
+          Callee = llvm::Function::Create(
+              llvm::FunctionType::get(llvm::Type::getX86_FP80Ty(*Ctx), false),
+              llvm::GlobalValue::ExternalLinkage, CalleeName, Mod);
       }
 
       // On AArch64, variadic and non-variadic functions use different
@@ -1206,6 +1238,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
       if (ImportedPlaceholder) {
         if (Callee) {
+          if (Target == ImportedPlaceholder)
+            Target = Callee;
           ImportedPlaceholder->replaceAllUsesWith(Callee);
           ImportedPlaceholder->eraseFromParent();
           ImportedSymbolPlaceholders.erase(CalleeName);
@@ -1231,6 +1265,42 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
           prepareX86RegistrationLocalUnwindCall(Op, Builder, Args)) {
     Callee = Runtime;
     KnownTarget = Runtime;
+    Target = nullptr;
+  }
+  if (Op.X87ImportArguments) {
+    if (!Callee) {
+      syncError() << "med_llvm_emitter: CRT x87 call has no import identity\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
+    if (CallAddr > 1 && Callee->isDeclaration()) {
+      auto Identity = rewrite_source::getOriginalVA(*Callee);
+      if (!Identity) {
+        llvm::consumeError(Identity.takeError());
+        FatalCodePointerResolution = true;
+        return;
+      }
+      if (!*Identity)
+        rewrite_source::setOriginalVA(*Callee, CallAddr);
+    }
+    auto Adapter = createX87ImportCallAdapter(*Callee, Op.X87ImportArguments);
+    if (!Adapter) {
+      syncError() << "med_llvm_emitter: " << llvm::toString(Adapter.takeError())
+                  << "\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
+    llvm::Value *RuntimeTarget = Target ? Target : Callee;
+    if (RuntimeTarget->getType()->isIntegerTy())
+      RuntimeTarget = Builder.CreateIntToPtr(RuntimeTarget, PtrTy);
+    if (!RuntimeTarget->getType()->isPointerTy()) {
+      syncError() << "med_llvm_emitter: CRT x87 call has no native pointer\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
+    Args.push_back(RuntimeTarget);
+    Callee = *Adapter;
+    KnownTarget = Callee;
     Target = nullptr;
   }
   std::vector<int> ArgumentIndices;

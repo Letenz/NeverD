@@ -31,6 +31,7 @@
 #include "neverd/ir/low/CallRegisterBody.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/LowNoReturn.h"
+#include "neverd/ir/low/X87ImportCall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/SymbolDecoration.h"
@@ -1011,6 +1012,7 @@ struct X87CallContract {
   int Delta = 0;
   bool ConsumesInput = false;
   unsigned ScratchSlots = 0;
+  unsigned ImportArguments = 0;
 };
 
 class X87CallEffectIndex {
@@ -1364,6 +1366,13 @@ class X87CallEffectIndex {
           Q.Charged.size() > limits::kMaxX87CallProofFunctions)
         return std::nullopt;
       if (const auto Name = importCalleeName(Image, Entry); !Name.empty()) {
+        if (isX87CRTImportName(Name)) {
+          const unsigned Arguments = x87CRTImportArguments(Image, Entry);
+          return Arguments
+                     ? std::optional<X87CallContract>(X87CallContract{
+                           int(Arguments) - 1, false, 8 - Arguments, Arguments})
+                     : std::nullopt;
+        }
         if (const auto Effect = importEffect(Name))
           return X87CallContract{*Effect, false, unsigned(*Effect == -1)};
         return std::nullopt;
@@ -1428,6 +1437,9 @@ class X87CallEffectIndex {
           if (Call) {
             if (Call->ConsumesInput && !read(Value.Top))
               return std::nullopt;
+            for (unsigned K = 0; K < Call->ImportArguments; ++K)
+              if (!read(Value.Top + K))
+                return std::nullopt;
             // Ordinary calls still clobber ST values in typed SSA. They
             // cannot acquire preservation merely from this TOP summary;
             // only checked consumers transport the incoming argument.
@@ -1461,6 +1473,11 @@ class X87CallEffectIndex {
             return std::nullopt;
           if (Call && Call->Delta == -1)
             Value.Defined |= uint8_t(1u << (Value.Top & 7));
+          if (Call && Call->ImportArguments) {
+            Value.Defined = uint8_t(1u << (Value.Top & 7));
+            if ((Value.Top & 7) == 0)
+              Value.InputAlive = false;
+          }
         }
         Exits[Id] = Value;
         for (int S : B.Successors) {
@@ -1640,11 +1657,6 @@ public:
     Answers.emplace(Entry, Result);
     return Result;
   }
-  std::optional<int> effect(va_t Entry) {
-    const auto Result = contract(Entry);
-    return Result && !Result->ConsumesInput ? std::optional<int>(Result->Delta)
-                                            : std::nullopt;
-  }
 };
 
 std::shared_ptr<const X87CallGraphCache::SummaryFacts>
@@ -1705,9 +1717,16 @@ bool X87CallGraphCache::refusesCall(const CFGBuilder &B, va_t Target) {
   // Nested summary requests take their ordinary build, as in validatedSummary.
   llvm::SaveAndRestore<bool> Replaying(ReplayingCallRegisterBody, true);
   X87CallEffectIndex Effects(B);
-  const bool Refuses = (ownsX87Context(*B.CurrentImg) &&
-                        Effects.usesContext(Target).value_or(false)) ||
-                       Effects.effect(Target) == std::optional<int>(-1);
+  // Raw cached bodies precede call operand/result binding. A zero net TOP
+  // change can still require x87 arguments, so it cannot bypass fixup either.
+  bool Refuses = (ownsX87Context(*B.CurrentImg) &&
+                  Effects.usesContext(Target).value_or(false));
+  if (!Refuses) {
+    const auto Contract = Effects.contract(Target);
+    Refuses = (Contract && (Contract->Delta == -1 || Contract->ConsumesInput ||
+                            Contract->ImportArguments)) ||
+              isX87CRTImportName(importCalleeName(*B.CurrentImg, Target));
+  }
   auto Dependencies = Effects.liftDependencies();
   if (!Dependencies || Dependencies->size() > MaxRefusalDependencies)
     return Refuses;
@@ -1842,8 +1861,9 @@ std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
   Q.Remaining = Remaining;
   const auto Result = Index.prove(Entry, Depth, Q);
   Remaining = Q.Remaining;
-  return Result && !Result->ConsumesInput ? std::optional<int>(Result->Delta)
-                                          : std::nullopt;
+  return Result && !Result->ConsumesInput && !Result->ImportArguments
+             ? std::optional<int>(Result->Delta)
+             : std::nullopt;
 }
 
 bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
@@ -1964,6 +1984,31 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
     recordSkippedFpuFixup(Func);
     return;
   }
+  // Neither native-context ownership nor a no-return annotation supplies
+  // the PE32 CRT argument contract. These paths bypass typed stack fixup.
+  if (CurrentImg)
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Boundary : Block.InstructionBoundaries) {
+        if (!ownsX87Context(*CurrentImg) &&
+            !hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                          LowInstructionControlFlag::NoReturn))
+          continue;
+        for (size_t I = Boundary.FirstOp;
+             I < Boundary.FirstOp + Boundary.OpCount && I < Block.Ops.size();
+             ++I) {
+          const auto &Op = Block.Ops[I];
+          if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+              !Op.NumInputs)
+            continue;
+          const auto Target =
+              Op.Inputs[0].isConst()
+                  ? std::optional<va_t>(Op.Inputs[0].Offset)
+                  : loadedCallSlot(Func, Block, I, Op.Inputs[0]);
+          if (Target &&
+              isX87CRTImportName(importCalleeName(*CurrentImg, *Target)))
+            UnsupportedInstructionAddresses.insert(Op.Addr);
+        }
+      }
   if (CurrentImg && ownsX87Context(*CurrentImg)) {
     const auto ContextId = [](const LowOp &Op) {
       return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
@@ -2245,6 +2290,28 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         if (!X87CallEffects)
           X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
         const auto Contract = X87CallEffects->contract(*Target);
+        const bool CRTStackCall =
+            isX87CRTImportName(importCalleeName(*CurrentImg, *Target));
+        if (CRTStackCall) {
+          HasTagOperations = true;
+          if (PriorUnsupported.count(Op.Addr))
+            PriorConsumerRefusals.insert(Op.Addr);
+          UnsupportedInstructionAddresses.insert(Op.Addr);
+          if (!Contract || !Contract->ImportArguments || Op.NumInputs != 1)
+            continue;
+          const unsigned Top = (Rec.FpuTopIn + CallShift) & 7;
+          Op.X87ImportArguments = uint8_t(Contract->ImportArguments);
+          for (unsigned K = 0; K < Contract->ImportArguments; ++K)
+            Op.addInput(
+                NdVar::reg(x86reg::stReg((Top + K) & 7), x86reg::FPURegSize));
+          for (int K = 0; K < Contract->Delta; ++K)
+            PoppedSlots[I][Boundary.Address] |= uint8_t(1u << ((Top + K) & 7));
+          Op.Output = NdVar::reg(x86reg::stReg((Top + Contract->Delta) & 7),
+                                 x86reg::FPURegSize);
+          CallShift += Contract->Delta;
+          BlockDelta[I] += Contract->Delta;
+          continue;
+        }
         if (Contract && Contract->ConsumesInput) {
           HasTagOperations = true;
           if (PriorUnsupported.count(Op.Addr))
@@ -2409,6 +2476,21 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
              O < Boundary.FirstOp + Boundary.OpCount; ++O) {
           const LowOp &Op = Block.Ops[O];
           const bool SignOperation = isX87SignOperation(Op);
+          if (Op.X87ImportArguments) {
+            uint8_t Arguments = 0;
+            for (unsigned K = 1; K <= Op.X87ImportArguments; ++K)
+              Arguments |=
+                  uint8_t(1u << x86reg::stRegIndex(Op.Inputs[K].Offset));
+            if (Publish &&
+                (State.Full & State.Payload & Arguments) == Arguments &&
+                (State.Empty | Arguments) == 0xff)
+              ProvenTags[{Id, O}] = false;
+            // No preservation claim for the CRT's scratch space or control
+            // state. Only its explicitly returned value has a known payload.
+            const uint8_t Result =
+                uint8_t(1u << x86reg::stRegIndex(Op.Output.Offset));
+            State = Tags{Result, uint8_t(~Result), Result};
+          }
           if (Op.ConsumesX87Argument && Op.NumInputs == 2 &&
               isStReg(Op.Inputs[1])) {
             const unsigned Slot = x86reg::stRegIndex(Op.Inputs[1].Offset);
@@ -2443,7 +2525,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
           // are its arguments or clobbers, so unknown. A proven return
           // definition below fills one slot.
           if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-              !Op.ConsumesX87Argument)
+              !Op.ConsumesX87Argument && !Op.X87ImportArguments)
             State = Tags{0, State.Empty, 0};
           if (Op.Opcode == NdOp::INTRINSIC) {
             if (!Op.NumInputs || !Op.Inputs[0].isConst()) {
@@ -2564,7 +2646,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       for (size_t O = 0; O < B.Ops.size(); ++O) {
         NewOffsets[O] = Rewritten.size();
         const LowOp &Op = B.Ops[O];
-        if (Op.ConsumesX87Argument) {
+        if (Op.ConsumesX87Argument || Op.X87ImportArguments) {
           if (ProvenTags.count({B.Id, O}))
             Expanded.insert(Op.Addr);
           else {

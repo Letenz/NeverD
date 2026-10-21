@@ -1435,6 +1435,19 @@ patch cases retain an explicit adapter refusal. The sign suite distinguishes
 unconsumed entry reads from consumers requiring a native entry adapter.
 Run `NeverDX87CallGraphTests` and the x87 integer-load, sign,
 conversion, parameter and function-admission suites when changing this boundary.
+`X87ImportCall` checks PE32 CRT register-stack calls through direct stubs, IAT
+slots and loaded targets, including missing or surplus inputs, unsupported
+providers and calling conventions, no-return bypasses, source refusals, and
+unwind-enabled adapters. Deferred MedIR analysis must still succeed before
+HighIR resumption reports its unsupported native call contract.
+`NativeCRTStackCallsMatchIndependentMachineCallers` compares generated LLVM
+against independent i386 assembly callers with deliberately non-mathematical
+runtime stubs, so replacing the runtime call with `sqrt` or `pow` fails.
+`NativeCRTAdaptersTransportAllBinary80Bits` checks both operand order and bits
+beyond double precision at O0/O2, and compiles the adapters for PE32.
+`ImportCalleeTrace.WidenedLiteralAddressesKeepTheExactLoadSlot` distinguishes
+the i386 lifter's zero-extended literal addresses from altered call pointers,
+sign extensions, partial temporaries and unproved arithmetic.
 `PipelineOutcome.SelectedX87WrappersPreserveReturnsAcrossParallelBuilds`
 compares serial and parallel LowIR analysis of 32 selected wrappers on x86 and
 x64. Each wrapper has no local x87 instruction and calls the same forwarding

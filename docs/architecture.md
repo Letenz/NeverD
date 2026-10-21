@@ -4384,6 +4384,30 @@ This is a typed internal-call contract. Patch output, exported or address-taken
 consumers, and consumers at the image's native entry still require a native
 x87 argument adapter and are refused until one is available.
 
+PE32 `_CI*` imports have a separate physical register-stack ABI. Exact ordinary
+imports from MSVCRT or MSVCR100 currently support `_CIsqrt`, `_CIsin`, `_CIcos`,
+`_CIatan`, `_CIacos` and `_CIpow`. The shared import contract binds one or two
+binary80 inputs in logical ST0/ST1 order and one binary80 result before SSA.
+Callers must prove every argument's full tag and payload and all other slots
+empty; no lower-stack or control-word preservation is inferred for the CRT.
+Ordinary argument recovery cannot collect spills or promote integer registers
+for these calls.
+Raw cached wrappers must still run x87 call binding, including calls whose net
+TOP change is zero; a cached integer-only body cannot erase stack arguments.
+
+LLVM calls a private adapter that places the operands in the original x87
+registers and calls the original import. Indirect calls pass the actual pointer
+loaded from the rebuilt IAT; its writable contents are not replaced by a fixed
+symbol. It preserves the external identity
+and runtime behavior, including precision, global state and error handlers;
+it does not substitute a C or LLVM mathematical operation. The assembly call
+declares caller clobbers and can unwind. Unsupported providers, delay imports,
+other recognized `_CI*` contracts and unproved input states remain refused.
+Native-context and no-return paths cannot bypass the argument contract.
+HighC and LLVMC source output also refuse these calls until they have native
+adapters of their own. Deferred MedIR analysis remains available; resuming its
+HighIR projection enforces the same refusal.
+
 FH3 catch-return evidence binds the source funclet, return instruction and
 owning continuation after module discovery converges. Shared SSA verifies the
 parent's unwind, decoded prologue and converted stack effects before restoring
