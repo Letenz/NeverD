@@ -315,6 +315,13 @@ std::string castOperand(const std::string &Text) {
   return Text;
 }
 
+/// \p Text, an integer, as the operand of a conversion to a pointer: through
+/// uintptr_t, which an address already converted to an integer is.
+std::string uintptrOperand(const std::string &Text) {
+  return c_memory::integerConversion(Text) ? Text
+                                           : "(uintptr_t)" + castOperand(Text);
+}
+
 /// Whether \p Text is a postfix expression whose last step reads a member:
 /// `p->next`, `(*(T *)&slot).opaque`, and not a cast of one
 /// (`(uint32_t)s.len`) or an operation on it.
@@ -2567,7 +2574,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Arg = "(" + Param + ")" + (WidensToPointer ? "(uintptr_t)" : "") +
                 castOperand(Arg);
       } else if (Op->Type && Op->Type->Kind == NdTypeKind::Ptr) {
-        Arg = "(" + Param + ")(uintptr_t)" + castOperand(Arg);
+        Arg = "(" + Param + ")" + uintptrOperand(Arg);
       }
     }
     // A standard function's function-pointer parameter takes the value
@@ -4045,7 +4052,7 @@ HighCWriter::typedArgumentText(const HighExpr &E, const TypeRef &Expected,
     auto AsPointer = [&](const HighExpr &Printed, std::string Text) {
       if (!printsAsInteger(Printed, Text))
         return Text;
-      return "(" + Parameter() + ")(uintptr_t)" + castOperand(Text);
+      return "(" + Parameter() + ")" + uintptrOperand(Text);
     };
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       const std::string Name = copyForwardName(varName(Inner->Var));
