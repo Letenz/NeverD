@@ -61,6 +61,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <list>
 #include <map>
 #include <memory>
@@ -334,6 +335,17 @@ struct Session {
   /// Function entries the detector found on request
   /// (neverd_session_discover_functions); kept until the next load.
   std::optional<std::vector<std::pair<va_t, std::string>>> DiscoveredFunctions;
+  struct FunctionDiscoveryResult {
+    std::vector<std::pair<va_t, std::string>> Functions;
+    std::set<va_t> VerifiedEntries, CodeReferences;
+  };
+  struct FunctionDiscoveryJob {
+    uint64_t Revision;
+    std::future<FunctionDiscoveryResult> Result;
+  };
+  /// The job owns its image; it never borrows Session state. Stale jobs stay
+  /// here until ready, so an edit neither waits nor accumulates retired jobs.
+  std::optional<FunctionDiscoveryJob> FunctionDiscovery;
   std::set<va_t> OnlyFunctionEntries;
   /// Whole-program source simplifies symbolically
   /// (neverd_session_set_source_symbolic).

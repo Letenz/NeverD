@@ -54,6 +54,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #ifndef _WIN32
 #include <csignal>
 #include <fcntl.h>
@@ -2888,6 +2889,70 @@ void seedAccessWidthFunctions(neverd_session_t Session) {
   State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 8),
                        neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
   neverd::sdk::SessionTestAccess::resetFunctions(State);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsPublishTheSynchronousFunctionsAndProofs) {
+  const auto Input = write("discovery-step.elf", accessWidthCacheELF());
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Input.c_str()), 1);
+  seedAccessWidthFunctions(Other.get());
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  // A poll starts work but never publishes a partial candidate inventory.
+  auto &State = *neverd::sdk::toSession(Session);
+  EXPECT_FALSE(State.DiscoveredFunctions);
+  EXPECT_EQ(takeString(neverd_session_file_path(Session)), Input);
+  EXPECT_EQ(neverd_func_count(Session), 2);
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
+  EXPECT_EQ(State.Img.CodeRefTargets, Expected.Img.CodeRefTargets);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // Synchronous callers can also finish an outstanding snapshot job.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  EXPECT_GE(neverd_session_discover_functions(Session), 0);
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_FALSE(State.FunctionDiscovery);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsDiscardTheImageReplacedDuringAJob) {
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("no binary"),
+            std::string::npos);
+  const auto First = write("first.elf", makeNativeELF(false));
+  const auto Next = write("next.elf", makeNativeELF(true));
+  ASSERT_EQ(neverd_session_load(Session, First.c_str()), 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  ASSERT_EQ(neverd_session_load(Session, Next.c_str()), 1);
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Next.c_str()), 1);
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  const auto &State = *neverd::sdk::toSession(Session);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
 }
 
 TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
