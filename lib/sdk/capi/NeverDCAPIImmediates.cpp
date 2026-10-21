@@ -10,6 +10,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/decode/NativeOperands.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/NumericInput.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -74,8 +75,9 @@ llvm::json::Object neverd::sdk::searchNativeImmediates(Session &S,
   if (!D.init(S.Img))
     throw std::invalid_argument("The native decoder is unavailable");
   size_t Work = 0, Bytes = 0;
-  while (Index.Segment < Index.Segments.size() && Work < 4096 &&
-         Bytes < 65536) {
+  while (Index.Segment < Index.Segments.size() &&
+         Work < kImmediateSearchStepInstructions &&
+         Bytes < kImmediateSearchStepBytes) {
     const auto &Seg = S.Img.Segments[Index.Segments[Index.Segment]];
     const size_t End =
         static_cast<size_t>(std::min<uint64_t>(Seg.Size, Seg.Data.size()));
@@ -106,7 +108,7 @@ llvm::json::Object neverd::sdk::searchNativeImmediates(Session &S,
       const auto Resume = Next != Index.Seeds.end() && *Next < Seg.VA + End
                               ? *Next
                               : Seg.VA + End;
-      if (Index.Gaps.size() < 64)
+      if (Index.Gaps.size() < kMaxImmediateSearchGaps)
         Index.Gaps.push_back(
             {PC, Resume, Mode ? "decode_failed" : "unknown_instruction_mode"});
       Index.Offset = static_cast<size_t>(Resume - Seg.VA);
@@ -115,7 +117,7 @@ llvm::json::Object neverd::sdk::searchNativeImmediates(Session &S,
     }
     const auto Operands = describeNativeOperands(D, I, S.Img.Arch, false);
     for (const auto &O : Operands.Immediates) {
-      if (Index.Items.size() >= 2000000)
+      if (Index.Items.size() >= kMaxImmediateSearchOperands)
         throw std::invalid_argument(
             "Immediate index exceeds two million operands");
       Index.Items.push_back({PC, O.Value, O.Operand, O.Bits});
@@ -124,7 +126,7 @@ llvm::json::Object neverd::sdk::searchNativeImmediates(Session &S,
     Bytes += Size;
     Index.Bytes += Size;
     ++Work;
-    if (Index.Bytes > 512ULL * 1024 * 1024)
+    if (Index.Bytes > kMaxImmediateSearchCodeBytes)
       throw std::invalid_argument(
           "Immediate index exceeds 512 MiB of decoded code");
   }

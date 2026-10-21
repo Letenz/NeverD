@@ -45,6 +45,7 @@
 #include "neverd/loader/StaticSymbolTable.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDPlugin.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/FilePath.h"
@@ -574,14 +575,13 @@ const char *neverd_dwarf_reference_json(const char *Path) {
 
 const char *neverd_symbol_table_reference_json(const char *Path) {
   // Enough of the table's names to tell planted ones by, for a question.
-  constexpr size_t SampleNames = 8;
   llvm::json::Object Root;
   const auto Answer = [&] {
     return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
   };
   Root["symbols"] = nullptr;
   auto Found = findStaticSymbolTable(std::filesystem::u8path(Path ? Path : ""),
-                                     SampleNames);
+                                     kDebugFileSampleNames);
   if (!Found) {
     Root["error"] = jsonSafeText(llvm::toString(Found.takeError()));
     return Answer();

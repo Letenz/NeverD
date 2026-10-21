@@ -3232,6 +3232,64 @@ TEST_F(SessionCAPITest, DiscoveryStepsDiscardTheImageReplacedDuringAJob) {
             Expected.Img.VerifiedFunctionEntries);
 }
 
+TEST_F(SessionCAPITest,
+       InstructionFlowScratchDoesNotLeakAcrossInstructionsOrReads) {
+  // A read, NOP and return followed by a separate write, NOP and return.
+  // Reusing lift storage must not make either NOP/return repeat the access,
+  // or hide the conflicting widths the two functions state at the same data.
+  std::string Code(0x30, '\xcc');
+  for (const auto [Offset, Load] :
+       {std::pair{0u, true}, std::pair{0x20u, false}}) {
+    std::string Bytes =
+        Load ? std::string("\x48\x8b\x05", 3) : std::string("\x89\x05", 2);
+    const auto Delta = static_cast<uint32_t>(
+        DataELFData - (DataELFEntry + Offset + Bytes.size() + 4));
+    for (unsigned I = 0; I < 4; ++I)
+      Bytes += static_cast<char>(Delta >> (8 * I));
+    Bytes += std::string("\x90\xc3", 2);
+    Code.replace(Offset, Bytes.size(), Bytes);
+  }
+  const auto Input = write("scratch-accesses.elf",
+                           makeDataELF(std::string("hello world\0", 12), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 9),
+                       neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
+  std::string Previous;
+  for (unsigned Repeat = 0; Repeat < 3; ++Repeat) {
+    const auto Text =
+        takeString(neverd_code_refs_json(Session, DataELFEntry, 2));
+    auto Parsed = llvm::json::parse(Text);
+    ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+    const auto *Rows = Parsed->getAsObject()->getArray("refs");
+    ASSERT_TRUE(Rows && Rows->size() == 2) << Text;
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto *Row = (*Rows)[I].getAsArray();
+      ASSERT_TRUE(Row && Row->size() == 4) << Text;
+      EXPECT_EQ(std::stoull((*Row)[0].getAsString()->str(), nullptr, 16),
+                DataELFEntry + (I ? 0x20 : 0));
+      EXPECT_EQ(std::stoull((*Row)[1].getAsString()->str(), nullptr, 16),
+                DataELFData);
+      EXPECT_EQ((*Row)[2].getAsString().value_or(""), I ? "write" : "read");
+      EXPECT_EQ((*Row)[3].getAsInteger().value_or(0), I ? 4 : 8);
+    }
+    if (Repeat)
+      EXPECT_EQ(Text, Previous);
+    Previous = Text;
+    const auto Strings =
+        takeString(neverd_string_refs_json(Session, nullptr, DataELFEntry, 2));
+    auto StringPage = llvm::json::parse(Strings);
+    ASSERT_TRUE(static_cast<bool>(StringPage)) << Strings;
+    const auto *StringRows = StringPage->getAsObject()->getArray("refs");
+    ASSERT_TRUE(StringRows && StringRows->size() == 2) << Strings;
+    const auto *Widths =
+        neverd::sdk::SessionTestAccess::dataAccessWidths(State);
+    ASSERT_TRUE(Widths);
+    EXPECT_EQ(Widths->at(DataELFData), 0u);
+  }
+}
+
 TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
   const auto Input = write("widths.elf", accessWidthCacheELF());
   std::string Cold;

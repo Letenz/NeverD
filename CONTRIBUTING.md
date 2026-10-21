@@ -221,6 +221,12 @@ file's naming and decomposition patterns, keep platform-specific behavior at
 the relevant loader/lifter/backend boundary, and avoid exposing internal C++
 types through the pure C SDK.
 
+Put tunable limits, thresholds and default work budgets in the owning
+subsystem's limits/configuration header. SDK policy belongs in
+`include/neverd/sdk/Limits.h`; shared pipeline policy belongs in
+`include/neverd/Limits.h`. Keep binary-layout and protocol constants with
+their semantic owners.
+
 Markdown should be concise and source-verifiable. Use relative links for files
 inside the repository, and update documentation in the same pull request when
 CLI behavior, public APIs, support claims, build flags, or test commands change.

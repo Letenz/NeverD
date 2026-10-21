@@ -24,6 +24,7 @@
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectFiles.h"
 #include "neverd/support/StringScan.h"
@@ -44,11 +45,6 @@
 
 using namespace neverd;
 using namespace neverd::sdk;
-
-namespace {
-/// The most bytes neverd_decode_text_json decodes at once.
-constexpr int kMaxDecodedTextBytes = 65536;
-} // namespace
 
 namespace {
 
@@ -345,7 +341,8 @@ const char *neverd_strings_json(neverd_session_t Sess, int MinLength) {
   if (!S->Loaded)
     return dupStr(std::string("[]"));
 
-  unsigned MinLen = MinLength > 0 ? static_cast<unsigned>(MinLength) : 4;
+  unsigned MinLen = MinLength > 0 ? static_cast<unsigned>(MinLength)
+                                  : kDefaultStringMinLength;
   // Streamed in the sorted key order a json::Object prints.
   std::string Buf;
   llvm::raw_string_ostream OS(Buf);
@@ -435,9 +432,8 @@ const char *neverd_strings_page_json(neverd_session_t Sess,
     S->setError(Error);
     return nullptr;
   }
-  constexpr int MaxRowsPerPage = 65536;
   const size_t Limit =
-      static_cast<size_t>(std::clamp(MaxRows, 1, MaxRowsPerPage));
+      static_cast<size_t>(std::clamp(MaxRows, 1, kMaxStringRowsPerPage));
   // The scan runs once per options; a page reads it from its cursor.
   static const std::vector<ImageString> None;
   const auto &Strings = S->Loaded ? imageStrings(*S, Options) : None;
@@ -485,7 +481,6 @@ const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
     return nullptr;
   }
   // A string that does not end within this many bytes is not read.
-  constexpr size_t Window = 65536;
   const Segment *Seg = S->Img.getSegmentFor(Addr);
   const uint64_t Offset = Seg && Addr >= Seg->VA ? Addr - Seg->VA : 0;
   if (!Seg || Addr < Seg->VA || Offset >= Seg->Data.size()) {
@@ -494,7 +489,8 @@ const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
   }
   const llvm::ArrayRef<uint8_t> Bytes(
       Seg->Data.data() + Offset,
-      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Offset)));
+      std::min<size_t>(kStringSearchWindowBytes,
+                       Seg->Data.size() - static_cast<size_t>(Offset)));
   std::optional<strings::FoundString> First;
   strings::scan(Bytes, Options, [&](strings::FoundString &&Found) {
     if (!First)

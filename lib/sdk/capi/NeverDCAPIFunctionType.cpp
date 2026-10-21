@@ -20,6 +20,7 @@
 
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/types/TypeParse.h"
@@ -37,9 +38,6 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 namespace {
-
-/// The longest declaration or type a request holds, as a stated one.
-constexpr size_t MaxDeclarationBytes = 4096;
 
 /// What a parameter's type is read in: the declaration of a function of
 /// its own, whose one parameter it is.
@@ -294,9 +292,10 @@ const char *neverd_func_type_json(neverd_session_t Sess, neverd_va_t Entry,
                           llvm::StringRef Key) -> std::optional<std::string> {
     std::optional<llvm::StringRef> Text =
         Value ? Value->getAsString() : std::nullopt;
-    if (!Text || Text->trim().empty() || Text->size() > MaxDeclarationBytes) {
+    if (!Text || Text->trim().empty() ||
+        Text->size() > kMaxFunctionDeclarationBytes) {
       S->setError("\"" + Key.str() + "\" is C of at most " +
-                  std::to_string(MaxDeclarationBytes) + " bytes");
+                  std::to_string(kMaxFunctionDeclarationBytes) + " bytes");
       return std::nullopt;
     }
     return Text->str();

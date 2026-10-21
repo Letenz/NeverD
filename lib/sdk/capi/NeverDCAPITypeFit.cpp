@@ -17,6 +17,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedPointerAccesses.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPILocalTypes.h"
 #include "neverd/types/TypeFit.h"
@@ -34,14 +35,6 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 namespace {
-
-/// How many accesses a request may judge, how long its text may be and how
-/// many candidates it may ask for.
-constexpr size_t MaxAccesses = 4096;
-constexpr size_t MaxText = 256;
-constexpr int64_t MaxLimit = 500;
-/// The widest access a request may state, in bytes.
-constexpr int64_t MaxAccessBytes = 1 << 16;
 
 llvm::StringRef useName(types::AccessUse Use) {
   switch (Use) {
@@ -131,9 +124,9 @@ bool readAccesses(const llvm::json::Object &Request,
   if (!Value)
     return true;
   const llvm::json::Array *List = Value->getAsArray();
-  if (!List || List->size() > MaxAccesses) {
+  if (!List || List->size() > kMaxTypeFitAccesses) {
     Error = "\"accesses\" must be an array of at most " +
-            std::to_string(MaxAccesses) + " accesses";
+            std::to_string(kMaxTypeFitAccesses) + " accesses";
     return false;
   }
   for (const llvm::json::Value &Entry : *List) {
@@ -142,9 +135,9 @@ bool readAccesses(const llvm::json::Object &Request,
         Access ? Access->getInteger("offset") : std::nullopt;
     std::optional<int64_t> Size =
         Access ? Access->getInteger("size") : std::nullopt;
-    if (!Offset || !Size || *Size < 0 || *Size > MaxAccessBytes) {
+    if (!Offset || !Size || *Size < 0 || *Size > kMaxTypeFitAccessBytes) {
       Error = "an access needs an integer \"offset\" and a \"size\" of 0 to " +
-              std::to_string(MaxAccessBytes) + " bytes";
+              std::to_string(kMaxTypeFitAccessBytes) + " bytes";
       return false;
     }
     types::AccessUse Use =
@@ -329,9 +322,9 @@ const char *neverd_local_types_fit_json(neverd_session_t Sess,
   }
   if (const llvm::json::Value *Text = Request->get("text")) {
     std::optional<llvm::StringRef> Value = Text->getAsString();
-    if (!Value || Value->size() > MaxText) {
+    if (!Value || Value->size() > kMaxTypeFitTextBytes) {
       S->setError("\"text\" must be text of at most " +
-                  std::to_string(MaxText) + " bytes");
+                  std::to_string(kMaxTypeFitTextBytes) + " bytes");
       return nullptr;
     }
     Query.Text = Value->str();
@@ -349,8 +342,9 @@ const char *neverd_local_types_fit_json(neverd_session_t Sess,
     }
   if (const llvm::json::Value *Value = Request->get("limit")) {
     std::optional<int64_t> Limit = Value->getAsInteger();
-    if (!Limit || *Limit < 1 || *Limit > MaxLimit) {
-      S->setError("\"limit\" must be 1 to " + std::to_string(MaxLimit));
+    if (!Limit || *Limit < 1 || *Limit > kMaxTypeFitCandidates) {
+      S->setError("\"limit\" must be 1 to " +
+                  std::to_string(kMaxTypeFitCandidates));
       return nullptr;
     }
     Query.Limit = static_cast<size_t>(*Limit);
@@ -360,8 +354,8 @@ const char *neverd_local_types_fit_json(neverd_session_t Sess,
     S->setError(Error);
     return nullptr;
   }
-  if (Query.Accesses.size() > MaxAccesses)
-    Query.Accesses.resize(MaxAccesses);
+  if (Query.Accesses.size() > kMaxTypeFitAccesses)
+    Query.Accesses.resize(kMaxTypeFitAccesses);
   const types::TypeLibrary *Library = S->readLocalTypes();
   if (!Library)
     return nullptr;
@@ -403,9 +397,9 @@ const char *neverd_local_type_member_json(neverd_session_t Sess,
     S->setError(Error);
     return nullptr;
   }
-  if (!Name || Size > static_cast<unsigned long long>(MaxAccessBytes)) {
+  if (!Name || Size > static_cast<unsigned long long>(kMaxTypeFitAccessBytes)) {
     S->setError(Name ? "an access is at most " +
-                           std::to_string(MaxAccessBytes) + " bytes"
+                           std::to_string(kMaxTypeFitAccessBytes) + " bytes"
                      : std::string("no type named"));
     return nullptr;
   }

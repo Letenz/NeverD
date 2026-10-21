@@ -21,6 +21,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -124,6 +125,19 @@ summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
                          const DecodedInsn &DI,
                          const TargetRegInfo *StackRegisters = nullptr);
 
+/// One decoding worker's temporary lift storage. Only capacity survives a
+/// call: every instruction starts with empty operations and fresh FPU state.
+/// Results own their facts and never borrow this workspace.
+class InstructionFlowScratch {
+public:
+  InstructionFlow summarize(const BinaryImage &Img, Decoder &Dec,
+                            const DecodedInsn &DI,
+                            const TargetRegInfo *StackRegisters = nullptr);
+
+private:
+  std::vector<LowOp> Ops;
+};
+
 /// The pointer the loader stored in a relocated slot, as a code address when
 /// the slot points to code.
 std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot);
@@ -132,7 +146,7 @@ std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot);
 /// in entry order, at most \p MaxFunctions (1 to MaxFunctionsPerPage), and
 /// the entry the next page starts at.
 struct FunctionPage {
-  static constexpr int MaxFunctionsPerPage = 4096;
+  static constexpr int MaxFunctionsPerPage = kMaxFunctionsPerPage;
   std::vector<const FuncInfo *> Functions;
   std::optional<va_t> NextEntry;
   /// The entries of every function of the list the page was read from, in
@@ -144,18 +158,19 @@ FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
 FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions);
 
 /// Decodes each function of \p Page in \p Img with a decoder of its own,
-/// functions in parallel, and calls \p Visit(Index, Decoder, Instruction) for
-/// each of its instructions in address order: up to the function's recorded
-/// size, or, when it has none, the instructions its own direct jumps reach
-/// from its entry short of another function's entry (Page.Entries; on 32-bit
-/// ARM, up to its first terminator), then the parts of it that lie apart
-/// from its body (ExceptionInfo::outlyingChunks).  One function's visits run
-/// on one thread, so writing only to its own output keeps the result
-/// independent of the thread count.  False when a decoder could not be set
-/// up.
+/// functions in parallel, and calls Visit(Index, Decoder, Instruction, Scratch)
+/// with one exclusive scratch workspace per decoding worker for each of its
+/// instructions in address order: up to the function's recorded size, or,
+/// when it has none, the instructions its own direct jumps reach from its
+/// entry short of another function's entry (Page.Entries; on 32-bit ARM, up
+/// to its first terminator), then the parts of it that lie apart from its
+/// body (ExceptionInfo::outlyingChunks).  One function's visits run on one
+/// thread, so writing only to its own output keeps the result independent of
+/// the thread count.  False when a decoder could not be set up.
 bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit);
 
 /// The width of the reads and writes the instructions of each of \p

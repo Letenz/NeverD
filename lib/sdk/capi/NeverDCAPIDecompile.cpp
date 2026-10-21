@@ -36,6 +36,7 @@
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFCEmitter.h"
 #include "neverd/sbf/emit/SBFRustEmitter.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -1288,7 +1289,7 @@ namespace {
 
 SourceViewOptions readSourceOptions(llvm::StringRef Text,
                                     llvm::StringRef Stage) {
-  if (Text.size() > 256 * 1024)
+  if (Text.size() > kMaxSourceOptionsBytes)
     throw std::invalid_argument("source options exceed 256 KiB");
   auto Parsed = llvm::json::parse(Text);
   if (!Parsed) {
@@ -1316,7 +1317,7 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
   else if (Object->get("stack_frame"))
     throw std::invalid_argument("stack_frame must be an object");
   if (const auto *Calls = Object->getArray("call_types")) {
-    if (Calls->size() > 32)
+    if (Calls->size() > kMaxSourceCallEdits)
       throw std::invalid_argument(
           "at most 32 call-site declarations are supported per function");
     std::set<std::string> Seen;
@@ -1329,18 +1330,20 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
       Edit.Id = Call->getString("id").value_or("").str();
       Edit.Snapshot = Call->getString("snapshot").value_or("").str();
       Edit.Declaration = Call->getString("declaration").value_or("").str();
-      if (Edit.Id.empty() || Edit.Id.size() > 256 ||
+      if (Edit.Id.empty() || Edit.Id.size() > kMaxSourceEditIdBytes ||
           !Seen.insert(Edit.Id).second || Edit.Snapshot.empty() ||
-          Edit.Snapshot.size() > 128 || Edit.Declaration.empty() ||
-          Edit.Declaration.size() > 4096)
+          Edit.Snapshot.size() > kMaxSourceSnapshotBytes ||
+          Edit.Declaration.empty() ||
+          Edit.Declaration.size() > kMaxFunctionDeclarationBytes)
         throw std::invalid_argument("invalid call-site declaration identity");
       if (const auto *Actuals = Call->getArray("variadic_types")) {
-        if (Actuals->size() > 32)
+        if (Actuals->size() > kMaxCallVariadicTypes)
           throw std::invalid_argument(
               "at most 32 actual variadic types are supported");
         for (const auto &Actual : *Actuals) {
           const auto Text = Actual.getAsString();
-          if (!Text || Text->empty() || Text->size() > 4096)
+          if (!Text || Text->empty() ||
+              Text->size() > kMaxFunctionDeclarationBytes)
             throw std::invalid_argument(
                 "an actual variadic argument needs a type");
           Edit.VariadicTypes.push_back(Text->str());
@@ -1352,7 +1355,7 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
   } else if (Object->get("call_types"))
     throw std::invalid_argument("call_types must be an array");
   if (const auto *Edits = Object->getArray("variable_edits")) {
-    if (Edits->size() > 64)
+    if (Edits->size() > kMaxSourceVariableAssociations)
       throw std::invalid_argument(
           "at most 64 variable associations are supported");
     for (const auto &Value : *Edits) {
@@ -1365,16 +1368,17 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
       Edit.To = Item->getString("to").value_or("").str();
       Edit.Snapshot = Item->getString("snapshot").value_or("").str();
       if ((Edit.Kind != "map" && Edit.Kind != "split") || Edit.From.empty() ||
-          Edit.From.size() > 256 || Edit.To.size() > 256 ||
+          Edit.From.size() > kMaxSourceEditIdBytes ||
+          Edit.To.size() > kMaxSourceEditIdBytes ||
           (Edit.Kind == "map" && Edit.To.empty()) || Edit.Snapshot.empty() ||
-          Edit.Snapshot.size() > 128)
+          Edit.Snapshot.size() > kMaxSourceSnapshotBytes)
         throw std::invalid_argument("invalid variable association identity");
       Options.VariableEdits.push_back(std::move(Edit));
     }
   } else if (Object->get("variable_edits"))
     throw std::invalid_argument("variable_edits must be an array");
   if (const auto *Types = Object->getArray("variable_types")) {
-    if (Types->size() > 256)
+    if (Types->size() > kMaxSourceVariableTypes)
       throw std::invalid_argument(
           "at most 256 source variable types are supported per view");
     for (const auto &Value : *Types) {
@@ -1403,9 +1407,9 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
       Edit.Id = Type->getString("id").value_or("").str();
       Edit.Snapshot = Type->getString("snapshot").value_or("").str();
       Edit.Type = Type->getString("type").value_or("").str();
-      if (Edit.Id.empty() || Edit.Id.size() > 256 ||
-          Edit.Snapshot.size() > 128 || Edit.Type.empty() ||
-          Edit.Type.size() > 4096)
+      if (Edit.Id.empty() || Edit.Id.size() > kMaxSourceEditIdBytes ||
+          Edit.Snapshot.size() > kMaxSourceSnapshotBytes || Edit.Type.empty() ||
+          Edit.Type.size() > kMaxFunctionDeclarationBytes)
         throw std::invalid_argument("invalid source variable type binding");
       Options.VariableTypes.push_back(std::move(Edit));
     }
@@ -2260,12 +2264,11 @@ const char *neverd_decompile_functions(neverd_session_t Sess,
                                        const char *InputPath,
                                        neverd_output_language_t Language,
                                        const neverd_va_t *Entries, int Count) {
-  constexpr int MaxEntries = 65536;
   auto *S = static_cast<Session *>(Sess);
-  if (!Entries || Count < 1 || Count > MaxEntries) {
+  if (!Entries || Count < 1 || Count > kMaxSourceEntriesPerQuery) {
     if (S)
-      S->setError("entries must name 1 to " + std::to_string(MaxEntries) +
-                  " functions");
+      S->setError("entries must name 1 to " +
+                  std::to_string(kMaxSourceEntriesPerQuery) + " functions");
     return nullptr;
   }
   const std::set<va_t> Only(Entries, Entries + Count);

@@ -9,6 +9,7 @@
 #include "SourceReceiptOccurrences.h"
 
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace swift_value_constructor_detail {
@@ -86,7 +87,7 @@ messageCalls(const BinaryImage &Image, const LowFunc &Low, const MedFunc &Med,
     SourceCallTypeHint Hint;
   };
   std::map<va_t, Site> Expected;
-  size_t Budget = 262144;
+  size_t Budget = kSourceConstructorWork;
   for (const auto &B : Low.Blocks)
     for (const auto &O : B.Ops) {
       if (!Budget--)
@@ -144,7 +145,7 @@ messageCalls(const BinaryImage &Image, const LowFunc &Low, const MedFunc &Med,
       if (!sameHint(H, *O.SourceCallHint, true))
         return std::nullopt;
     }
-  size_t StructuralBudget = 100000;
+  size_t StructuralBudget = kSourceExpressionWork;
   if (!sameStructuredSourceBody(
           High, High, [](const ExprPtr &, const ExprPtr &) { return true; },
           StructuralBudget))
@@ -231,7 +232,7 @@ inline bool sameBody(const HighFunc &E, const HighFunc &A,
   const auto ActualMessages = messageCalls(Image, ActualLow, ActualMed, A);
   if (!ExpectedMessages || !ActualMessages)
     return false;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   return sameCompleteSourceBody(
       E, A,
       [&](const ExprPtr &X, const ExprPtr &Y) {

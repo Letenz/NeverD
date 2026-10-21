@@ -6,6 +6,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -134,7 +135,7 @@ inline bool projectObjCSynchronizedFrameReceiver(
     return false;
   std::vector<HighStmt *> Statements;
   std::vector<std::pair<MedVar, HighStmt *>> Definitions;
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   std::vector<HighStmt *> Pending;
   for (auto &S : Function.Body)
     if (S.Addr < Landing)
@@ -231,7 +232,7 @@ inline bool projectObjCSynchronizedFrameReceiver(
                           Proof.ReceiverOffset < *Offset + Width;
     if (S->Addr != Proof.Store && !Overlaps)
       continue;
-    size_t SliceBudget = 128;
+    size_t SliceBudget = kSourceSliceWork;
     const auto Value =
         objcUnwindScalarSlice(S->StoreVal, {}, false, SliceBudget);
     if (++Stores != 1 || S->Addr != Proof.Store || !Offset ||

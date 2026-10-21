@@ -968,6 +968,22 @@ only when discovery is complete. Worker polling waits for requests rather
 than busy-spinning while a snapshot is computing. Older SDKs retain the
 synchronous fallback.
 
+The worker polls stepped function discovery when the engine exports it;
+the client must also opt in through `open.step_discovery`. The default preserves
+synchronous discovery for older clients that do not coordinate image memory.
+Older engines retain synchronous discovery. Pending work yields to foreground
+requests without publishing a partial discovery result.
+
+Discovery completion is a worker scheduling boundary before the derived
+listing rebuild. The executor publishes an immediate heartbeat using the same
+state envelope as periodic liveness notifications, then waits for requests for
+at most its existing idle grace (waking on arrival). This lets a large-image
+GUI waiting for discovery publication export its analysis snapshot before
+further listing work. The GUI's large-image memory gate remains in force;
+completion does not claim reference-index readiness, and later listing reads
+still build from the published SDK functions. Errors publish an unavailable
+index without keeping replica startup blocked.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -1002,6 +1018,19 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+The GUI owner no longer requests that pipeline warmup: source/CFG views use
+separate analysis sessions and cannot consume the owner's pipeline cache.
+With idle analysis enabled, native images with 4096–65536 functions and at most
+64 MiB of input instead prefetch one source entry in an analysis replica.
+Larger inputs prepare on demand, and fresh replicas wait for discovery to
+release its image snapshot. This bounds simultaneous image ownership while
+owner browsing reads continue. Foreground requests reuse that replica's image
+preparation; concurrent independent views retain the second lane. Prefetch is
+read-only and follows the existing revision, cancellation and replica reset
+rules. It overlaps computation with browsing, not a reduced analysis scope.
+The GUI opts in with `open.step_discovery`; older workers ignore that additive
+field. Clients without the same large-image memory gate keep the worker's
+synchronous-discovery default.
 Both kinds share the image's no-return-name, stack-probe, function-pointer,
 relocation-root and executable-owner indexes. The image, debug context, symbol
 inventory and exact verified entries bind that shared ownership. Each distinct
@@ -1022,6 +1051,14 @@ publication follows both fixed points; budget refusals and proof requirements
 remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
+
+Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
+The workspace reuses only the temporary LowOp vector's storage: operations
+are cleared and the x87 state reset before every instruction, including after
+an unsupported lift. Returned references and transfer facts own their values.
+Disassembly pages own a workspace for that call; parallel access-width,
+reference and string-reference scans retire theirs with each worker. No TLS,
+session cache, new semantic shortcut or cross-instruction state is involved.
 
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;

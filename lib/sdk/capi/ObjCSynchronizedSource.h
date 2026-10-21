@@ -10,6 +10,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BranchEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -1734,7 +1735,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
   std::vector<HighStmt *> Pending;
   for (auto It = Body.begin(); It != Marker; ++It)
     Pending.push_back(&*It);
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   std::optional<MedVar> SavedReceiver;
   std::vector<va_t> NormalCalls;
   while (!Pending.empty()) {
@@ -1762,7 +1763,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
           std::find(NormalCalls.begin(), NormalCalls.end(), S->Addr) !=
               NormalCalls.end())
         return false;
-      size_t Budget = 128;
+      size_t Budget = kSourceSliceWork;
       const auto Receiver =
           objcUnwindScalarSlice(Call->Operands[0], {}, false, Budget);
       if (!Receiver || Receiver->Offset || Receiver->Bytes != 8)
@@ -1823,7 +1824,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
            E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
   };
   const auto Exception = [&](const ExprPtr &E) {
-    size_t Budget = 128;
+    size_t Budget = kSourceSliceWork;
     const auto Slice = objcUnwindScalarSlice(E, Exceptions, true, Budget);
     return Slice && !Slice->Offset && Slice->Bytes == 8;
   };
@@ -1859,7 +1860,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
     if (S.Kind == StmtKind::Assign && Variable(S.Dst) &&
         (S.Dst->Var.Kind == MedVar::Temp || S.Dst->Var.Kind == MedVar::Reg) &&
         S.Dst->Var.Size <= 8) {
-      size_t Budget = 128;
+      size_t Budget = kSourceSliceWork;
       const auto Slice = objcUnwindScalarSlice(S.Val, Exceptions, true, Budget);
       if (Slice && Slice->Bytes == S.Dst->Var.Size) {
         std::erase_if(Exceptions, [&](const auto &Copy) {
@@ -1877,7 +1878,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
         Call->Operands.size() != 1)
       return false;
     const auto &Argument = Call->Operands.front();
-    size_t ReceiverBudget = 128;
+    size_t ReceiverBudget = kSourceSliceWork;
     const auto Receiver =
         objcUnwindScalarSlice(Argument, {}, false, ReceiverBudget);
     if (Call->CallAddr == Proof.LandingPadExitTarget &&
@@ -1930,7 +1931,7 @@ omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
   std::vector<std::pair<const HighStmt *, bool>> Pending;
   for (const auto &Statement : Function.Body)
     Pending.emplace_back(&Statement, false);
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   while (!Pending.empty()) {
     if (!Budget--)
       return false;
@@ -1970,7 +1971,7 @@ omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
     if (It->Addr == Cleanup + 16 && Call && Call->Kind == ExprKind::Call &&
         Call->CallAddr == Proof.ResumeTarget) {
       if (Proof.PrivateFrame) {
-        size_t Budget = 128;
+        size_t Budget = kSourceSliceWork;
         const auto Exception =
             Call->Operands.size() == 1
                 ? objcUnwindScalarSlice(Call->Operands[0], {}, true, Budget)

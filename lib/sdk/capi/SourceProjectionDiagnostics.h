@@ -8,6 +8,7 @@
 #define NEVERD_SDK_CAPI_SOURCEPROJECTIONDIAGNOSTICS_H
 
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/sdk/Limits.h"
 
 #include <string>
 #include <vector>
@@ -49,7 +50,7 @@ struct SourceProjectionDiagnostic {
 struct SourceProjectionDiagnostics {
   enum class Mode { FirstFailure, All };
   struct Stop {};
-  static constexpr size_t MaxDiagnostics = 4096;
+  static constexpr size_t MaxDiagnostics = kMaxSourceProjectionDiagnostics;
 
   Mode Collection = Mode::All;
   bool Complete = true;
