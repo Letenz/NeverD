@@ -19,6 +19,7 @@
 #include "DriverCPUID.h"
 #include "DriverFileSystemJSON.h"
 #include "DriverLoaderViewJSON.h"
+#include "DriverMSR.h"
 #include "DriverPhysicalInventoryJSON.h"
 #include "DriverSchedulingJSON.h"
 #include "DriverVaShadowQueryJSON.h"
@@ -2098,6 +2099,8 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
     if (auto E = kernel_physical_inventory::validate(
             *Options.PhysicalMemoryInventory))
       return E;
+  if (auto E = driver_msr::validate(Options.MSRReads))
+    return E;
   if (auto E = driver_cpuid::validate(Options.CPUID))
     return E;
   if (Options.Scheduling)
@@ -2514,6 +2517,12 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     if (!Boolean)
       return invalid("trace_memory_writes must be boolean");
     Base.TraceMemoryWrites = *Boolean;
+  }
+  if (const auto *MSRs = Object->get(MSRReadsField)) {
+    auto Parsed = driver_msr::parse(*MSRs);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.MSRReads = std::move(*Parsed);
   }
   if (const auto *CPUID = Object->get(CPUIDField)) {
     auto Parsed = driver_cpuid::parse(*CPUID);

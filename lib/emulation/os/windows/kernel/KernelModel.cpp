@@ -13,6 +13,7 @@
 
 #include "../../../core/RAMInitializationWatch.h"
 #include "../driver/DriverImage.h"
+#include "../driver/DriverMSR.h"
 #include "KernelException.h"
 #include "KernelLoaderView.h"
 #include "KernelModelRuntime.h"
@@ -177,6 +178,11 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
       return modelError(
           "driver physical_memory_inventory requires checked-x64 execution");
   }
+  if (auto E = driver_msr::validate(Options.MSRReads))
+    return E;
+  if (!Options.MSRReads.empty() &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return modelError("driver msr_reads requires checked-x64 execution");
   if (Options.KernelVaShadowQuery) {
     if (auto E = kernel_va_shadow_query::validate(*Options.KernelVaShadowQuery))
       return E;
@@ -208,7 +214,8 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   VersionQuery = Options.VersionQuery;
   PhysicalMemoryInventory = Options.PhysicalMemoryInventory;
   KernelVaShadowQuery = Options.KernelVaShadowQuery;
-  if (VersionQuery || PhysicalMemoryInventory || KernelVaShadowQuery)
+  if (VersionQuery || PhysicalMemoryInventory || KernelVaShadowQuery ||
+      !Options.MSRReads.empty())
     UnpackOpaqueEffects = true;
   InstructionClock = Options.Scheduling.has_value();
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
