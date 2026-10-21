@@ -46,7 +46,8 @@ protected:
   }
 
   std::optional<Inputs> fixture(unsigned CodeReferences = 0,
-                                bool PureAfterCall = false) {
+                                bool PureAfterCall = false,
+                                const std::string &ExtraAssembly = {}) {
     const auto Source = tmpFile("inventory.s");
     const auto Object = tmpFile("inventory.o");
     {
@@ -82,6 +83,7 @@ protected:
         Out << "xorl %eax,%eax\nretq\n"
                ".size module_inventory,.-module_inventory\n";
       }
+      Out << ExtraAssembly;
     }
     const auto Built =
         exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-c",
@@ -423,6 +425,96 @@ TEST_F(ModuleJumpTableBudget, UnrelatedCodeOccurrencesUseTheScanAccount) {
     EXPECT_EQ(Result.ProtectedRelocationSlots.count(Slot), 0u);
 }
 
+TEST_F(ModuleJumpTableBudget, UnrelatedAbsoluteFieldsUseTheScanAccount) {
+  const std::string Inventory =
+      "\n.section .text.unexplored_inventory,\"ax\",@progbits\n"
+      ".rept 12000\n"
+      "movabsq $.Lmodule_owner_unrelated_data+8, %rax\n"
+      "movabsq $module_owner_safe_dispatch, %rax\n"
+      ".endr\n";
+  for (bool ExposesTable : {false, true}) {
+    SCOPED_TRACE(ExposesTable);
+    auto I = fixture(
+        0, false,
+        Inventory +
+            (ExposesTable ? "movabsq $.Lmodule_owner_safe_table, %rax\n" : ""));
+    ASSERT_TRUE(I);
+    ASSERT_GE(I->Image.DataAddressRelocOperands.size(), 12000u);
+    ASSERT_GE(I->Image.CodeAddressRelocOperands.size(), 12000u);
+    ASSERT_EQ(I->Functions.front().JumpTables.size(), 1u);
+    const auto &Table = I->Functions.front().JumpTables.front();
+    const auto Slots = Table.SuppressibleRelocationSlots;
+    ASSERT_FALSE(Slots.empty());
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Reverse);
+      if (Reverse)
+        std::reverse(I->Functions.begin(), I->Functions.end());
+      const auto Result = pipeline_detail::arbitrateModuleJumpTablesForTesting(
+          I->Image, I->Functions);
+      ASSERT_TRUE(Result.AnalysisComplete);
+      for (va_t Slot : Slots)
+        EXPECT_EQ(Result.ProtectedRelocationSlots.count(Slot),
+                  ExposesTable ? 1u : 0u);
+      if (Reverse)
+        std::reverse(I->Functions.begin(), I->Functions.end());
+    }
+  }
+}
+
+TEST_F(ModuleJumpTableBudget, UnrelatedLoaderInputsRemainBounded) {
+  for (bool Pointers : {false, true}) {
+    SCOPED_TRACE(Pointers);
+    auto I = fixture(
+        0, false,
+        Pointers ? "\n.section .data.unexplored_inventory,\"aw\",@progbits\n"
+                   ".rept 65537\n.quad .Lmodule_owner_unrelated_data+8\n.endr\n"
+                 : "\n.section .text.unexplored_inventory,\"ax\",@progbits\n"
+                   ".rept 65537\n"
+                   "movabsq $.Lmodule_owner_unrelated_data+8, %rax\n.endr\n");
+    ASSERT_TRUE(I);
+    expectAbandoned(*I);
+  }
+}
+
+TEST_F(ModuleJumpTableBudget, UnrelatedDataPointersDoNotRetainEvidence) {
+  const std::string Inventory =
+      "\n.section .data.unexplored_inventory,\"aw\",@progbits\n"
+      ".rept 5000\n"
+      ".quad .Lmodule_owner_unrelated_data+8\n"
+      ".endr\n";
+  for (bool ExposesTable : {false, true}) {
+    SCOPED_TRACE(ExposesTable);
+    auto I = fixture(
+        0, false,
+        Inventory + (ExposesTable ? ".quad .Lmodule_owner_safe_table\n" : ""));
+    ASSERT_TRUE(I);
+    ASSERT_GE(I->Image.DataPtrRelocSlots.size(), 5000u);
+    ASSERT_EQ(I->Functions.front().JumpTables.size(), 1u);
+    const auto &Table = I->Functions.front().JumpTables.front();
+    const auto Branch = Table.InsnAddr;
+    const auto Slots = Table.SuppressibleRelocationSlots;
+    ASSERT_FALSE(Slots.empty());
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Reverse);
+      if (Reverse)
+        std::reverse(I->Functions.begin(), I->Functions.end());
+      const auto Result = pipeline_detail::arbitrateModuleJumpTablesForTesting(
+          I->Image, I->Functions);
+      ASSERT_TRUE(Result.AnalysisComplete);
+      for (va_t Slot : Slots)
+        EXPECT_EQ(Result.ProtectedRelocationSlots.count(Slot),
+                  ExposesTable ? 1u : 0u);
+      EXPECT_EQ(Result.UnsafeBranches.count(Branch), ExposesTable ? 1u : 0u);
+      if (Reverse)
+        std::reverse(I->Functions.begin(), I->Functions.end());
+    }
+    // Even an unrelated inventory must be read completely. A malformed last
+    // field cannot be discarded merely because earlier pointers were disjoint.
+    I->Image.DataPtrRelocSlots.insert(InvalidVA - 8);
+    expectAbandoned(*I);
+  }
+}
+
 TEST_F(ModuleJumpTableBudget, SharedFieldKeepsEveryIndependentSource) {
   auto I = fixture();
   ASSERT_TRUE(I);
@@ -530,6 +622,9 @@ TEST_F(ModuleJumpTableBudget, MissingPCRelativeSourcesProtectTheirContainer) {
   ASSERT_NE(I->Image.DataAddressRelocOperands.count(FieldVA), 0u);
   ASSERT_TRUE(I->Image.DataAddressRelocOperands.at(FieldVA)
                   .PCRelativeFromInstructionEnd);
+  // This loader approximation lies outside every table envelope. Without a
+  // published instruction end, only its container is authoritative.
+  I->Image.DataAddressRelocOperands.at(FieldVA).TargetVA = 0;
   for (LowFunc &F : I->Functions)
     std::erase_if(
         F.RelocatedInstructionAddressOccurrences,

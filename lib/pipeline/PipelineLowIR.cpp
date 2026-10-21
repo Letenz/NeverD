@@ -2707,6 +2707,8 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     bool Complete = false;
   };
   std::vector<CompletePhysicalEnvelope> PhysicalEnvelopes(Owners.size());
+  CompletePhysicalEnvelope AllPhysicalStorage;
+  AllPhysicalStorage.Complete = true;
   for (size_t OwnerIndex = 0; OwnerIndex < Owners.size(); ++OwnerIndex) {
     const ModuleJumpTableOwner &Owner = Owners[OwnerIndex];
     if (!Budget.consume(Owner.PhysicalIdentityRanges.size()))
@@ -2725,7 +2727,23 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         Envelope.End = *End;
     }
     PhysicalEnvelopes[OwnerIndex] = Envelope;
+    AllPhysicalStorage.Complete &= Envelope.Complete;
+    if (Envelope.Complete) {
+      if (AllPhysicalStorage.Begin == InvalidVA ||
+          Envelope.Begin < AllPhysicalStorage.Begin)
+        AllPhysicalStorage.Begin = Envelope.Begin;
+      if (AllPhysicalStorage.End == InvalidVA ||
+          Envelope.End > AllPhysicalStorage.End)
+        AllPhysicalStorage.End = Envelope.End;
+    }
   }
+  // This is only a rejection filter for exact addresses. Include sparse
+  // filler, gaps and every one-past endpoint; all possible matches still use
+  // the owner-aware range checks below. An incomplete range disables it.
+  auto outsideAllPhysicalStorage = [&](va_t Address) {
+    return AllPhysicalStorage.Complete && (Address < AllPhysicalStorage.Begin ||
+                                           Address > AllPhysicalStorage.End);
+  };
 
   std::map<va_t, std::set<va_t>> TableObjectAliases;
   size_t TableAliasWorkRemaining = limits::kMaxJumpTableEvidenceWork;
@@ -2910,6 +2928,15 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
 
   auto protectRelocationUse = [&](va_t FieldVA,
                                   const RelocatedAddressField &Field) {
+    if (!scanPair())
+      return false;
+    // A complete absolute target outside every physical envelope cannot
+    // expose an owner, regardless of which instruction contexts name it.
+    // Screen it before paying for the field/source lookup. PC-relative loader
+    // approximations must still reach the exact-source/container logic.
+    if (!Field.PCRelativeFromInstructionEnd &&
+        outsideAllPhysicalStorage(Field.TargetVA))
+      return true;
     if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
       return false;
     const auto Sources = SourcesByField.find(FieldVA);
@@ -3034,12 +3061,14 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     if (!protectRelocationUse(FieldVA, Field))
       return abandonAnalysis();
   for (va_t PointerSlot : Img.DataPtrRelocSlots) {
-    if (!Budget.consume())
+    if (!scanPair())
       return abandonAnalysis();
     const uint8_t *P = Img.readVA(PointerSlot, Img.getPointerSize());
     if (!P)
       return abandonAnalysis();
     const va_t Target = static_cast<va_t>(readPtr(P, Img.is64Bit()));
+    if (outsideAllPhysicalStorage(Target))
+      continue;
     va_t TargetOwnerVA = InvalidVA;
     if (auto It = Img.DataPtrRelocTargetOwners.find(PointerSlot);
         It != Img.DataPtrRelocTargetOwners.end())

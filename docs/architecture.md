@@ -2942,7 +2942,12 @@ screening uses the scan account. Retained anchors, field-index nodes and every
 source reference use the evidence account. One frozen field index preserves
 all matching contexts, including imprecise and conflicting sources; a missing
 PC-relative occurrence retains the loader field's container rather than
-authorizing its approximate numeric target. Any exhaustion protects every
+authorizing its approximate numeric target. Loader fields and data pointers
+spend the scan account. Exact absolute targets outside the complete physical
+envelope are rejected before source lookup; the envelope includes sparse
+filler, gaps and one-past endpoints. PC-relative approximations cannot use this
+filter. An unreadable pointer still fails the inventory, and only matching
+owner evidence spends the retained account. Any exhaustion protects every
 requested relocation slot and rejects writable dispatch owners.
 
 An x86/x64 absolute dispatch may name the preceding table's one-past address

@@ -3185,6 +3185,11 @@ scale; the fallback search over every scale in the loop also exhausts it.
 transfer limits. It checks both function orders, unrelated code occurrences,
 same-field independent contexts with no memory consumer, missing PC-relative
 sources, repeated long blocks, final recording and cross-function exhaustion.
+Large real relocation inventories cover 24000 unrelated absolute instruction
+fields and 5000 unrelated data pointers, followed by a table-exposing field.
+The controls retain a PC-relative container despite an out-of-range loader
+approximation, reject an unreadable last pointer, and refuse 65537 input records
+even when every target is disjoint.
 Every exhaustion must protect the nonempty request set. Existing cross-target
 jump-table and returned-code tests exercise the shared collector's semantics.
 
