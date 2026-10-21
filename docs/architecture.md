@@ -1900,6 +1900,14 @@ entry. Its cleanup-only transfer preserves ordered overlapping writes and
 publishes a distinct physical-call receipt, not an ordinary callee stack-pop
 contract. Catch entries and native reconstruction still require separate
 physical transfers; source-slot metadata alone grants neither.
+`RegistrationPrologue` projects this checked physical entry into MedIR before
+stack analysis and SSA. It re-lifts the current three-instruction prefix and
+requires exact operations, boundaries and the source receipt to agree. The
+loader's ordered writes supply the save layout; the x86 lifter supplies XOR's
+arithmetic flags. Both return-PC stores, the cookie read and the FS chain
+transfer remain explicit. Scratch storage is separate from source temporaries,
+and all frame displacements keep their signed representation. This projection
+preserves the source EH metadata and does not grant native reconstruction.
 Registration range recovery uses complete installing prefixes as local entry
 boundaries. A bounded instruction graph can disprove a heuristic start inside
 an operand while retaining stated, exported, relocated and conflicting direct

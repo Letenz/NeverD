@@ -6048,6 +6048,12 @@ state updates' ZF/SF results, returned ESP and FS:[0]. Synthetic
 instruction-boundary and input-value
 mutations must refuse the transfer, as must stale current-image bytes.
 The distinct source call receipt does not yet grant native EH lowering.
+`CxxEAXHelperProjectsItsPhysicalFrameBeforeSSA` also checks all 24 helper forms
+through MedIR: the first stack argument, complete frame extent and ordered
+stack writes, including overlapping saves and both return-PC stores.
+`CxxEAXHelperProjectionRechecksTheCurrentEntry` rejects stale bytes, allocation,
+handler, cookie, fixups, source operations, boundaries, entry ownership and
+receipts. Physical projection must keep the separate native EH gate closed.
 `RegistrationTryLevel.CxxSharedEpilogue*` checks 32 combinations of push width,
 allocation, helper form and parent return-pop, eight overwritten-save cases,
 26 current-image mutations and 18 call/frame mutations. The assembled images

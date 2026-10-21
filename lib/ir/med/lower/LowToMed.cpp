@@ -13,6 +13,7 @@
 
 #include "neverd/ir/med/LowToMed.h"
 
+#include "../X86/RegistrationPrologue.h"
 #include "../X86/RegistrationRoots.h"
 
 #include "neverd/Limits.h"
@@ -575,10 +576,15 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
     }
 }
 
-MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
+MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                    BinaryFormat Fmt) {
   TargetArch = TheArch;
   TargetFormat = Fmt;
+  const auto Physical =
+      Image && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
+          ? x86_registration::projectCxxPrologue(*Image, SourceLow)
+          : std::nullopt;
+  const LowFunc &Low = Physical ? *Physical : SourceLow;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops) {
       if (isLowRawEnvironmentRequirement(Op))
@@ -741,10 +747,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   } else {
     if (Low.RegistrationStates && Image)
       Func.RegistrationCallerCleanupABIComplete =
-          hasCallerCleanupRegistrationABI(Low, *Image);
+          hasCallerCleanupRegistrationABI(SourceLow, *Image);
     if (Low.ExceptionMetadata && Low.ExceptionMetadata->Cxx && Image)
       Func.RegistrationCxxEntryPopBytes =
-          getCheckedX86RegistrationCxxParentABI(Low, *Image);
+          getCheckedX86RegistrationCxxParentABI(SourceLow, *Image);
   }
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
