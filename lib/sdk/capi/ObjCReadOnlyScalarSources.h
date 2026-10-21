@@ -4,6 +4,7 @@
 #include "BorrowedByteSources.h"
 
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/sdk/Limits.h"
 
 #include <algorithm>
 #include <functional>
@@ -159,7 +160,7 @@ readOnlyLoadPlans(const HighFunc &Function, const BinaryImage &Image, bool Bound
   };
   std::vector<Occurrence> Occurrences;
   std::vector<HighSourceUnsignedRangeQuery> Queries;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     if (!Budget)
       return;
@@ -319,7 +320,7 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
            E->Operands.size() == 2 && Local(E->Operands[0]) == L &&
            E->Operands[0]->Type->Size == 8 && Constant(E->Operands[1]) == R;
   };
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   std::function<void(const std::vector<HighStmt> &, unsigned)> Inspect;
   Inspect = [&](const std::vector<HighStmt> &Body, unsigned Depth) {
     if (!Budget || Depth > 200 || Body.size() > 100000)
@@ -557,7 +558,7 @@ inline std::set<const HighExpr *> readOnlyObjectPointerLoadConsumers(
     (void)Unused;
     std::set<Identity> Values;
     bool Changed = true;
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     while (Changed && Budget) {
       Changed = false;
       walkStmts(Function.Body, [&](const HighStmt &S) {
@@ -629,7 +630,7 @@ readOnlyScalarSourceHelpers(const HighFunc &Function,
   for (auto &[Load, Plan] : readOnlyLoopBytePlans(Function, Image, true).Loads)
     Plans.emplace(Load, std::move(Plan));
   std::set<const HighExpr *> Allowed, Escaped;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     if (!Budget)
       return;
@@ -670,7 +671,7 @@ readOnlyObjectPointerSourceHelpers(const HighFunc &Function,
   const auto Consumers =
       readOnlyObjectPointerLoadConsumers(Function, Plans);
   std::set<const HighExpr *> Allowed, Escaped;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     if (!Budget)
       return;

@@ -11,6 +11,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
@@ -21,9 +22,6 @@
 
 namespace neverd::sdk {
 namespace {
-
-/// How deep a type converts: records hold records, which hold more.
-constexpr unsigned MaxDepth = 16;
 
 /// Whether emitted C takes the type \p Name from the headers it includes
 /// (CHeaderNames.def) rather than declaring it.
@@ -68,7 +66,7 @@ public:
   explicit Converter(const types::TypeLibrary &Library) : Library(Library) {}
 
   TypeRef convert(const types::TypeExpr &Type, unsigned Depth) {
-    if (Depth > MaxDepth)
+    if (Depth > kMaxLocalTypeConversionDepth)
       return nullptr;
     switch (Type.Kind) {
     case types::TypeExprKind::Builtin:

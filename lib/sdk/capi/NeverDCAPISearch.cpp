@@ -12,6 +12,8 @@
 #include "JSONText.h"
 #include "SessionImpl.h"
 
+#include "neverd/sdk/Limits.h"
+
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
@@ -138,7 +140,7 @@ const char *neverd_search_page(neverd_session_t Sess, const char *OptionsJSON) {
   };
   if (!S->Loaded)
     return Fail("no binary loaded");
-  if (!OptionsJSON || std::strlen(OptionsJSON) > 32768)
+  if (!OptionsJSON || std::strlen(OptionsJSON) > kMaxSearchOptionsBytes)
     return Fail("search options must be bounded JSON");
   auto Parsed = llvm::json::parse(OptionsJSON);
   if (!Parsed) {
@@ -157,9 +159,11 @@ const char *neverd_search_page(neverd_session_t Sess, const char *OptionsJSON) {
   if (Options->get("kind") && !Options->getString("kind"))
     return Fail("search kind must be a string");
   const auto Pattern = Options->getString("pattern");
-  const auto Limit = Options->getInteger("limit").value_or(256);
-  if (!Pattern || Pattern->empty() || Pattern->size() > 4096 || Limit < 1 ||
-      Limit > 4096)
+  const auto Limit =
+      Options->getInteger("limit").value_or(kDefaultSearchResults);
+  if (!Pattern || Pattern->empty() ||
+      Pattern->size() > kMaxSearchPatternBytes || Limit < 1 ||
+      Limit > kMaxSearchResults)
     return Fail("a bounded pattern and limit in 1..4096 are required");
   for (const char *Flag : {"backward", "case_sensitive"})
     if (Options->get(Flag) && !Options->getBoolean(Flag))

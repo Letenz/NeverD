@@ -19,6 +19,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/BitVector.h"
@@ -97,8 +98,6 @@ std::string displayOperands(Session &S, const Decoder &D,
   }
   return Result;
 }
-
-inline constexpr size_t kShortInstructionByteColumnWidth = 18;
 
 std::string evmBytes(const evm::LowInstruction &Instruction) {
   std::string Bytes;
@@ -377,9 +376,8 @@ const char *neverd_pointer_refs_json(neverd_session_t Sess,
     S->setError("no binary loaded");
     return nullptr;
   }
-  constexpr int MaxSlotsPerQuery = 65536;
   const size_t Limit =
-      static_cast<size_t>(std::clamp(MaxSlots, 1, MaxSlotsPerQuery));
+      static_cast<size_t>(std::clamp(MaxSlots, 1, kMaxDataSlotsPerQuery));
   // Both slot sets are ordered; walk them as one ascending sequence.
   const auto &Code = S->Img.CodePtrRelocSlots;
   const auto &Data = S->Img.DataPtrRelocSlots;

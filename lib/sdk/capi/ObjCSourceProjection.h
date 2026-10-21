@@ -16,6 +16,7 @@
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -111,7 +112,7 @@ inline void collectSourceBodyDiagnostics(
   // own stack. HighC's expression renderer truncates beyond depth 200.
   std::vector<std::pair<const HighStmt *, unsigned>> Statements;
   std::vector<std::tuple<const HighExpr *, unsigned, va_t>> Expressions;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   auto Spend = [&](size_t Count) {
     if (Count > Budget) {
       Diagnostics.Complete = false;

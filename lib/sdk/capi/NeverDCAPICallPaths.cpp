@@ -16,6 +16,8 @@
 #include "JSONText.h"
 #include "SessionImpl.h"
 
+#include "neverd/sdk/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 
@@ -85,17 +87,6 @@ struct CallReferenceGraph {
 namespace {
 
 constexpr uint32_t Unreached = std::numeric_limits<uint32_t>::max();
-constexpr unsigned MaxDepthLimit = 64;
-constexpr unsigned DefaultPathDepth = 16;
-constexpr unsigned DefaultTreeDepth = 1;
-constexpr unsigned MaxPathsLimit = 1000;
-constexpr unsigned DefaultMaxPaths = 32;
-constexpr unsigned MaxListedLimit = 100000;
-constexpr unsigned DefaultMaxListed = 4096;
-constexpr unsigned MaxWaypoints = 64;
-/// Steps one segment's path enumeration may take before it reports itself
-/// incomplete: the number of simple paths grows exponentially with length.
-constexpr uint64_t PathStepBudget = 4'000'000;
 
 std::optional<uint32_t> nodeAt(const CallReferenceGraph &G,
                                const BinaryImage &Img, va_t Address) {
@@ -486,9 +477,9 @@ llvm::json::Object nodeObject(const CallReferenceGraph &G, uint32_t Node) {
 }
 
 struct PathOptions {
-  unsigned MaxDepth = DefaultPathDepth;
-  unsigned MaxPaths = DefaultMaxPaths;
-  unsigned MaxListed = DefaultMaxListed;
+  unsigned MaxDepth = kDefaultCallPathDepth;
+  unsigned MaxPaths = kDefaultCallPaths;
+  unsigned MaxListed = kDefaultCallGraphListed;
   bool ShortestOnly = false;
 };
 
@@ -575,7 +566,7 @@ std::optional<llvm::json::Object> segment(const Traversal &T,
       if (!T.follows(E) || Visited[E.Other] || ToEnd[E.Other] == Unreached ||
           Depth + 1 + ToEnd[E.Other] > Length)
         continue;
-      if (++Steps > PathStepBudget) {
+      if (++Steps > kCallPathStepBudget) {
         Exhausted = true;
         return;
       }
@@ -651,19 +642,20 @@ const char *neverd_call_paths_json(neverd_session_t Sess,
                 Error) ||
       !readNodes(*S, *G, *Options, "waypoints", Waypoints, Error) ||
       !readNodes(*S, *G, *Options, "exclude", Excluded, Error) ||
-      !readBound(*Options, "max_depth", 1, MaxDepthLimit, Limits.MaxDepth,
+      !readBound(*Options, "max_depth", 1, kMaxCallPathDepth, Limits.MaxDepth,
                  Error) ||
-      !readBound(*Options, "max_paths", 0, MaxPathsLimit, Limits.MaxPaths,
+      !readBound(*Options, "max_paths", 0, kMaxCallPaths, Limits.MaxPaths,
                  Error) ||
-      !readBound(*Options, "max_listed", 1, MaxListedLimit, Limits.MaxListed,
-                 Error) ||
+      !readBound(*Options, "max_listed", 1, kMaxCallGraphListed,
+                 Limits.MaxListed, Error) ||
       !readFlag(*Options, "shortest_only", Limits.ShortestOnly, Error) ||
       !readFlag(*Options, "data_refs", T.DataRefs, Error)) {
     S->setError(Error);
     return nullptr;
   }
-  if (Waypoints.size() < 2 || Waypoints.size() > MaxWaypoints) {
-    S->setError("waypoints must name 2 to " + std::to_string(MaxWaypoints) +
+  if (Waypoints.size() < 2 || Waypoints.size() > kMaxCallPathWaypoints) {
+    S->setError("waypoints must name 2 to " +
+                std::to_string(kMaxCallPathWaypoints) +
                 " functions or imports");
     return nullptr;
   }
@@ -718,7 +710,8 @@ const char *neverd_call_tree_json(neverd_session_t Sess,
       S->setError(Error);
     return nullptr;
   }
-  unsigned MaxDepth = DefaultTreeDepth, MaxListed = DefaultMaxListed;
+  unsigned MaxDepth = kDefaultCallTreeDepth,
+           MaxListed = kDefaultCallGraphListed;
   bool ExpandLibrary = false;
   Traversal T{*G};
   T.Excluded.assign(G->Nodes.size(), 0);
@@ -748,8 +741,10 @@ const char *neverd_call_tree_json(neverd_session_t Sess,
                  "exclude", "expand_library"},
                 Error) ||
       !readNodes(*S, *G, *Options, "exclude", Excluded, Error) ||
-      !readBound(*Options, "max_depth", 1, MaxDepthLimit, MaxDepth, Error) ||
-      !readBound(*Options, "max_listed", 1, MaxListedLimit, MaxListed, Error) ||
+      !readBound(*Options, "max_depth", 1, kMaxCallPathDepth, MaxDepth,
+                 Error) ||
+      !readBound(*Options, "max_listed", 1, kMaxCallGraphListed, MaxListed,
+                 Error) ||
       !readFlag(*Options, "data_refs", T.DataRefs, Error) ||
       !readFlag(*Options, "expand_library", ExpandLibrary, Error)) {
     S->setError(Error);

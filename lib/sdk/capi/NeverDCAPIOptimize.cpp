@@ -9,6 +9,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/LLVMContext.h"
@@ -41,11 +42,6 @@ static_assert(static_cast<int>(OptimizationStopReason::VerificationFailed) ==
 static_assert(static_cast<int>(OptimizationStopReason::InputInvalid) ==
               NEVERD_OPTIMIZATION_INPUT_INVALID);
 
-constexpr unsigned kDefaultMaxRounds = 8;
-constexpr uint64_t kDefaultSolverMaxConflicts = uint64_t(1) << 18;
-constexpr uint64_t kDefaultSolverMaxPropagations = uint64_t(1) << 24;
-constexpr uint64_t kDefaultSolverMaxWatchVisits = uint64_t(1) << 26;
-
 #define FIELD_END(Type, Field)                                                 \
   (offsetof(Type, Field) + sizeof(static_cast<Type *>(nullptr)->Field))
 
@@ -75,7 +71,7 @@ struct OptimizationConfig {
 
 OptimizationConfig readOptions(const neverd_optimize_llvm_ir_options *In) {
   OptimizationConfig Config;
-  Config.Options.MaxRounds = kDefaultMaxRounds;
+  Config.Options.MaxRounds = kDefaultOptimizationRounds;
   Config.Options.Semantic.Provider = ProofProvider::BuiltInSolver;
   Config.Options.Semantic.Solver.Sat.MaxConflicts = kDefaultSolverMaxConflicts;
   Config.Options.Semantic.Solver.Sat.MaxPropagations =

@@ -10,6 +10,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/InstructionRelocations.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
@@ -352,9 +353,6 @@ FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
 }
 
 namespace {
-/// A function without a recorded size reads at most this many instructions;
-/// this bounds a corrupt or missing extent.
-constexpr uint64_t MaxUnsizedInstructions = 65536;
 
 /// The instructions of a function without a recorded size: those its own
 /// direct jumps reach from \p Entry, short of another function's entry in
@@ -370,11 +368,11 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
   const bool FollowsJumps = Img.Arch != Arch::ARM && !Entries.empty();
   std::set<va_t> Body;
   std::vector<va_t> Pending{Entry};
-  while (!Pending.empty() && Body.size() < MaxUnsizedInstructions) {
+  while (!Pending.empty() && Body.size() < kMaxUnsizedInstructions) {
     const va_t Start = Pending.back();
     Pending.pop_back();
     (void)decodeNativeRange(
-        Img, Dec, Start, 0, MaxUnsizedInstructions - Body.size(),
+        Img, Dec, Start, 0, kMaxUnsizedInstructions - Body.size(),
         [&](const DecodedInsn &DI, const uint8_t *, int) {
           if (OtherEntry(DI.Addr) || !Body.insert(DI.Addr).second)
             return false;

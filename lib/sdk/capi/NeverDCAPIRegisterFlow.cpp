@@ -12,6 +12,7 @@
 #include "neverd/decode/NativeOperands.h"
 #include "neverd/ir/RegisterFlow.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -61,7 +62,7 @@ const char *neverd_register_flow_json(neverd_session_t Sess, neverd_va_t Entry,
   S->clearError();
   try {
     const llvm::StringRef Text = OptionsJSON ? OptionsJSON : "{}";
-    if (Text.size() > 4096)
+    if (Text.size() > kMaxRegisterFlowOptionsBytes)
       throw std::invalid_argument("Register query exceeds 4 KiB");
     auto Parsed = llvm::json::parse(Text);
     if (!Parsed) {
@@ -86,7 +87,7 @@ const char *neverd_register_flow_json(neverd_session_t Sess, neverd_va_t Entry,
       return nullptr;
     S->clearError();
     const auto *F = S->findLowFunc(Entry);
-    if (!F || F->Blocks.size() > 4096)
+    if (!F || F->Blocks.size() > kMaxRegisterFlowBlocks)
       throw std::invalid_argument("No bounded original native function");
     const auto &TRI = getTargetRegInfo(S->Img.Arch);
     std::set<std::pair<uint64_t, uint16_t>> Storage;
@@ -114,7 +115,8 @@ const char *neverd_register_flow_json(neverd_session_t Sess, neverd_va_t Entry,
       Storage.emplace(Sub.WideRegOff, Sub.WideSize);
       Storage.emplace(Sub.NarrowRegOff, Sub.NarrowSize);
     }
-    if (!Instructions.count(PC) || Instructions.size() > 20000)
+    if (!Instructions.count(PC) ||
+        Instructions.size() > kMaxRegisterFlowInstructions)
       throw std::invalid_argument(
           "Select a retained instruction within the register-flow budget");
     Decoder D;

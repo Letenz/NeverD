@@ -21,6 +21,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -145,7 +146,7 @@ std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot);
 /// in entry order, at most \p MaxFunctions (1 to MaxFunctionsPerPage), and
 /// the entry the next page starts at.
 struct FunctionPage {
-  static constexpr int MaxFunctionsPerPage = 4096;
+  static constexpr int MaxFunctionsPerPage = kMaxFunctionsPerPage;
   std::vector<const FuncInfo *> Functions;
   std::optional<va_t> NextEntry;
   /// The entries of every function of the list the page was read from, in
