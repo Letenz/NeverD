@@ -2576,6 +2576,36 @@ private slots:
     QCOMPARE(session.fileName(), QStringLiteral("replacement.bin"));
   }
 
+  void cancelledPrefetchDoesNotHoldItsLane() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-slow.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    pool.prefetchSource(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture slow decompile started"),
+        OpenTimeoutMs);
+    // Cancel retires the prefetch without completing it. A read queued on
+    // its lane afterwards is not that preparation: an independent view still
+    // takes the other lane instead of waiting behind it.
+    pool.cancelReads({});
+    QObject first, second;
+    const QJsonObject firstPayload{{"address", hexAddress(Base + 32)},
+                                   {"representation", "source"}};
+    auto &firstLane = pool.queries(firstPayload, &first);
+    firstLane.subscribe({"decompile", firstPayload}, &first,
+                        [](const QJsonObject &) {});
+    QCOMPARE(firstLane.pendingReadCount(), 1);
+    const QJsonObject secondPayload{{"address", hexAddress(Base + 64)},
+                                    {"representation", "source"}};
+    QVERIFY(&pool.queries(secondPayload, &second) != &firstLane);
+  }
+
   void analysisPagesKeepTheirReplicaWhenAnotherFunctionQueues() {
     QTemporaryDir directory;
     Session session(QString::fromLocal8Bit(TEST_WORKER));
