@@ -109,13 +109,13 @@ install(SCRIPT ${deploy_script})
 
 if(BUILD_TESTING)
   option(NEVERD_GUI_CI_DIAGNOSTICS
-    "Write file diagnostics for the Windows GUI unit and controller test runners" OFF)
+    "Write file diagnostics for GitHub Actions GUI unit and controller test runners" OFF)
   set(_neverd_controller_test_log_args)
   set(_neverd_units_test_log_args)
   if(NEVERD_GUI_CI_DIAGNOSTICS)
-    if(NOT WIN32 OR NOT "$ENV{CI}" STREQUAL "true" OR
+    if(NOT "$ENV{CI}" STREQUAL "true" OR
        NOT "$ENV{GITHUB_ACTIONS}" STREQUAL "true")
-      message(FATAL_ERROR "GUI contract diagnostics require Windows GitHub Actions")
+      message(FATAL_ERROR "GUI contract diagnostics require GitHub Actions")
     endif()
     set(_neverd_gui_ci_log_dir "${CMAKE_CURRENT_BINARY_DIR}/ci-diagnostics")
     file(MAKE_DIRECTORY "${_neverd_gui_ci_log_dir}")
