@@ -1,5 +1,65 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-21
+
+- Snapshot cutoff and CI sample: **2026-10-21T01:09:00Z**. Reviewed source: dev [2c04bd1451b9688a0a81011df6c1747c9efaf880](https://github.com/NeverSight/NeverD/commit/2c04bd1451b9688a0a81011df6c1747c9efaf880).
+- Since the previous source pin [1c17dade28812e6eba52e5725301704425c36d46](https://github.com/NeverSight/NeverD/commit/1c17dade28812e6eba52e5725301704425c36d46): **285 commits; 477 changed non-directory paths (93 added, 384 modified, zero removed)**. Commit pages contain 100 + 100 + 85 entries. Complete, non-truncated recursive trees were compared because GitHub's comparison file list stops at 300. This inventory is not a full-source audit; PROGRESS-only commits are not implementation progress.
+- **No new defect was proved or repaired in this bounded static review.** This proposal changes only PROGRESS.md. No project, build, test, benchmark, repository script, target execution or manual CI action was performed.
+- Read current root AGENTS.md, CONTRIBUTING.md, SECURITY.md and relevant architecture/testing/roadmap sections. The full tree contains only the root AGENTS.md. Contributor execution requirements remain unperformed under the stricter static-only constraint. Follow the documented topic-branch and draft-PR flow targeting dev; no merge is performed.
+
+### Static review scope and findings
+
+Reviewed the complete latest commit patch, [Defer storage for merged resolver values](https://github.com/NeverSight/NeverD/commit/2c04bd1451b9688a0a81011df6c1747c9efaf880), plus the relevant definitions and six callers in lib/ir/low/jumptable/JumpTableResolverSlice.cpp:
+
+- Traced mergeResolverResults validation, cycle filtering, first-value borrowing, equality comparison, work/depth exhaustion, size validation, deferred vector allocation and budgetedResolverMerge.
+- ResolverValue is an owning shared_ptr to an immutable expression. The equal-result path copies that owner through resolverValue; it does not return a borrowed pointer. The six memory/value/select/address-comparison callers keep their local arrays or vectors alive during the call. The evidence callback changes budget state, not the incoming containers. No introduced dangling reference was established in those paths.
+- Compared the retained-value order, transparent-cycle decisions and logical work charges against the patch. This is static evidence only, not proof of all runtime budget boundaries or performance equivalence.
+- Read ResolverPendingCycles tests covering late loop definitions, real updates versus transparent backedges, and warm/cold budget/depth limits in unittests/lift/core/ResolverGraphCacheTests.cpp. Also inspected InputCapacityDoesNotSpendRetainedEvidence in unittests/lift/core/ModuleJumpTableBudgetTests.cpp as adjacent retained-evidence coverage. These tests were not executed.
+- The latest commit's corpus, test and performance claims are author reports, not measurements or verification performed here.
+
+Not covered: the other changed implementations, every merged PR discussion, complete helper/test files outside the selected paths, all architectures, malformed-input parser behavior, full alias/SSA correctness, runtime ABI qualification, or reproduction of [#1189](https://github.com/NeverSight/NeverD/issues/1189). Yesterday's partial-register return concern remains an unproved coverage question, not a confirmed defect or a newly resolved issue.
+
+### Issues, PRs, reviews and progress changes
+
+- Before this reporting PR: **55 open ordinary issues and 1 open draft PR**, versus 55 / 0 before yesterday's publication. The open-issue endpoint returned 56 entries including one PR, followed by an empty page; the open-PR endpoint returned one item followed by an empty page.
+- Window: **2026-10-20T01:05:00Z through this cutoff**. Updated issue pages contain 89 items followed by an empty page, all PRs: no ordinary issue opened, closed or updated in that interval.
+- **89 PRs created, 88 merged and zero closed without merge** in the window. The 100-item all-state PR page sorted by update time crosses the cutoff and was reconciled with updated items. These are gross events, not independent feature-acceptance counts.
+- Prior reporting [#1505](https://github.com/NeverSight/NeverD/pull/1505) merged externally at **2026-10-20T03:27:49Z**. It is included in gross merge counts but excluded from implementation progress. This new reporting PR is excluded from pre-publication totals.
+- [#1590](https://github.com/NeverSight/NeverD/pull/1590), the Capstone hexadecimal formatting gitlink update, remains draft at head **bd0d7402154254b0c83b08d6f661dc390fbe76b1**. Requested reviewers, submitted reviews, issue comments and inline review comments are empty. The draft needs maintainer review and failed/pending gates resolved; it is not ready merely because selected workflows succeeded.
+- The PR description reports diagnoses involving ARM HLT cleanup expectations, executable-segment fixture evidence and macOS strict-reuse identity. Those explanations were not independently reproduced or fully source-verified here; the observed workflow failure is distinct from an established root cause.
+
+### Existing CI evidence
+
+At **2026-10-21T01:09:00Z**, exact reviewed dev head **2c04bd1451b9688a0a81011df6c1747c9efaf880** has four runs, with an empty next page:
+
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/39524602528): success.
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/39524602436): in progress. The earlier job sample at 2026-10-21T01:06:00Z had 3 success, 4 in progress and 6 skipped among 13 jobs, not an overall pass.
+- [Lift native qualification](https://github.com/NeverSight/NeverD/actions/runs/39524602446): in progress.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/39524602460): queued.
+
+For open draft #1590 at its exact head **bd0d7402154254b0c83b08d6f661dc390fbe76b1**:
+
+- [Native pipeline compatibility](https://github.com/NeverSight/NeverD/actions/runs/39481175146): failure.
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/39481175268): in progress.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/39481175120), [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/39481175057) and [Windows Web product qualification](https://github.com/NeverSight/NeverD/actions/runs/39481175157): success.
+
+These are read-only GitHub observations, not this review's tests. They establish neither all external checks nor release readiness. New documentation-PR checks, if automatically scheduled, belong to a different head and must not be substituted for these source-head results.
+
+### Suggested priorities (not delivery commitments)
+
+1. Resolve #1590's failed/pending gates before moving the draft toward merge. Dependency: maintainer review and existing CI evidence. Acceptance: exact-head failure diagnoses supported by source/log evidence, intended semantics preserved, and required checks completed without bypassing or weakening gates.
+2. Qualify the latest resolver borrowing change against cycle, ownership and budget-boundary regressions. Dependency: maintained fixtures and normal retained CI. Acceptance: equal/different inputs, pending cycles, size mismatch and exhausted work/depth behavior remain covered; report runtime results by exact head rather than treating this static trace as a test pass.
+3. Narrow [#1189](https://github.com/NeverSight/NeverD/issues/1189) to an actionable ownership/work-budget hypothesis. Dependency: an available sanitized reproducer and maintainer-provided resource evidence. Acceptance: identify a specific retained object or unbounded work path with source evidence before proposing a minimal fix; runtime diagnosis remains outside this review.
+
+## Daily log — 2026-10-21
+
+Recorded the 285-commit inventory, reviewed the latest resolver merge-storage change and six callers, inspected selected cycle/budget test source, and found no statically proven new defect. Preserved all prior document content and manual history. Recorded 55 open issues, draft #1590, externally merged reporting #1505 and exact-head CI states. This documentation-only update is unbuilt and untested; no manual workflows were triggered.
+
+<details>
+<summary>Previous snapshots and daily history (preserved verbatim)</summary>
+
+# NeverD Daily Progress
+
 ## Current snapshot — 2026-10-20
 
 - Snapshot cutoff: **2026-10-20T01:05:00Z**. Source pin: dev [1c17dade](https://github.com/NeverSight/NeverD/commit/1c17dade28812e6eba52e5725301704425c36d46).
@@ -2625,5 +2685,8 @@ them are author reports unless separately confirmed by linked workflow results.
 </details>
 
 </details>
+
+</details>
+
 
 </details>
