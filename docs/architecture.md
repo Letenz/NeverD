@@ -1002,6 +1002,19 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+The GUI owner no longer requests that pipeline warmup: source/CFG views use
+separate analysis sessions and cannot consume the owner's pipeline cache.
+With idle analysis enabled, native images with 4096–65536 functions and at most
+64 MiB of input instead prefetch one source entry in an analysis replica.
+Larger inputs prepare on demand, and fresh replicas wait for discovery to
+release its image snapshot. This bounds simultaneous image ownership while
+owner browsing reads continue. Foreground requests reuse that replica's image
+preparation; concurrent independent views retain the second lane. Prefetch is
+read-only and follows the existing revision, cancellation and replica reset
+rules. It overlaps computation with browsing, not a reduced analysis scope.
+The GUI opts in with `open.step_discovery`; older workers ignore that additive
+field. Clients without the same large-image memory gate keep the worker's
+synchronous-discovery default.
 Both kinds share the image's no-return-name, stack-probe, function-pointer,
 relocation-root and executable-owner indexes. The image, debug context, symbol
 inventory and exact verified entries bind that shared ownership. Each distinct

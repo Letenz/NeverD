@@ -278,6 +278,12 @@ void Session::receive(const QJsonObject &incoming) {
     }
   } else if (type == QLatin1String("heartbeat")) {
     const auto background = incoming.value("background").toObject();
+    const auto state = background.value("state").toString();
+    if (loaded_ && background.value("discovery_complete")
+                       .toBool(state == QLatin1String("building") ||
+                               state == QLatin1String("ready") ||
+                               state == QLatin1String("unavailable")))
+      analysis_.setSnapshotBlocked(false);
     if (background != background_) {
       background_ = background;
       const auto generation = background.value("generation").toString();
@@ -391,6 +397,7 @@ void Session::command(const QString &operation, const QJsonObject &payload,
 }
 
 void Session::resetState() {
+  analysis_.setSnapshotBlocked(true);
   if (!projectWatcher_.directories().isEmpty())
     projectWatcher_.removePaths(projectWatcher_.directories());
   if (!projectWatcher_.files().isEmpty())
@@ -588,7 +595,13 @@ void Session::sendOpen(const QString &requested, const QString &path,
   QJsonObject payload{{"path", path},
                       {"debug_info", options.debugInfo},
                       {"analysis", options.analysis},
-                      {"warm", options.analysis}};
+                      // Expensive views run in the analysis pool's separate
+                      // sessions. The owner cannot share its pipeline cache
+                      // with them, so warming it only delays browsing reads.
+                      {"warm", false},
+                      // This client gates large replicas on discovery
+                      // completion before opting in to an owned SDK snapshot.
+                      {"step_discovery", options.analysis}};
   if (!options.pdb.isEmpty())
     payload.insert(QStringLiteral("pdb"), options.pdb);
   if (!options.dwarf.isEmpty())
@@ -718,6 +731,19 @@ void Session::sendOpen(const QString &requested, const QString &path,
                        1);
         if (std::exchange(reloading_, false))
           emit message(tr("Reloaded the input file"), 0);
+        // Bound speculative preparation. On very large images, defer fresh
+        // replicas until discovery releases its snapshot; browsing continues
+        // through the owner while a foreground analysis request waits.
+        const auto arch = architecture();
+        const bool native =
+            arch == QLatin1String("x86") || arch == QLatin1String("x86_64") ||
+            arch == QLatin1String("arm") || arch == QLatin1String("arm64") ||
+            arch == QLatin1String("aarch64");
+        const bool large = functionCount_ > 65536 ||
+                           QFileInfo(filePath_).size() > 64 * 1024 * 1024;
+        analysis_.setSnapshotBlocked(options.analysis && native && large);
+        if (options.analysis && native && !large && functionCount_ >= 4096)
+          analysis_.prefetchSource(entryAddress());
         emit opened();
         emit stateChanged();
         refreshHistory();
