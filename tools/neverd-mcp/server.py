@@ -18,19 +18,30 @@ PROTOCOL = "2025-11-25"
 MAX_LINE = 1024 * 1024
 MAX_RESULT = 512 * 1024
 MAX_CACHED_RESULTS = 8 * 1024 * 1024
-ADDRESS = {"type": "string", "pattern": "^0x[0-9a-fA-F]{1,16}$"}
+# An exact hexadecimal address, or a name a function, import or label goes by.
+ADDRESS = {"type": "string", "maxLength": 512, "pattern": "^(0x[0-9a-fA-F]{1,16}|(?!0[xX]).+)$"}
+HEX_ADDRESS = re.compile(r"0x[0-9a-fA-F]{1,16}")
 PAGE = {"offset": {"type": "integer", "minimum": 0, "maximum": 2147483647},
         "limit": {"type": "integer", "minimum": 1, "maximum": 512}}
 REVISION = {"type": "string", "maxLength": 128}
 FILTER = {"type": "string", "maxLength": 256}
+# A function or import by name, or by exact hexadecimal address.
+NODE = {"type": "string", "minLength": 1, "maxLength": 512}
+NODES = {"type": "array", "items": NODE, "maxItems": 32}
+FLAG = {"type": "boolean"}
+DEPTH = {"type": "integer", "minimum": 1, "maximum": 64}
 # Strings a listing shows before it cuts them, unless the caller asks otherwise.
 DEFAULT_STRING_TEXT_LIMIT = 200
 
 
 def tool(name, operation, description, properties=None, required=()):
+    properties = dict(properties or {})
+    # A revision guards the continuation of a page against analysis that
+    # publishes a newer one meanwhile.
+    if "offset" in properties:
+        properties["expected_revision"] = REVISION
     return {"name": name, "description": description, "operation": operation,
-            "inputSchema": {"type": "object", "properties": {
-                **(properties or {}), "expected_revision": REVISION},
+            "inputSchema": {"type": "object", "properties": properties,
                 "required": list(required), "additionalProperties": False},
             "annotations": {"readOnlyHint": True, "destructiveHint": False,
                             "idempotentHint": True, "openWorldHint": False}}
@@ -40,12 +51,13 @@ TOOLS = [
     tool("project_metadata", "metadata", "Read metadata for the explicitly opened NeverD input."),
     tool("list_functions", "functions", "Read a bounded function page; preserve revision across pages.",
          {**PAGE, "filter": FILTER}),
-    tool("read_disassembly", "disasm", "Read an instruction window at a virtual address.",
+    tool("read_disassembly", "disasm", "Read an instruction window at an address (0x... or a name).",
          {"address": ADDRESS, "limit": PAGE["limit"]}, ("address",)),
     tool("read_decompilation", "decompile",
-         "Read pseudocode (in the function's own language with \"source\", or C, Rust or Go) or IR for one "
-         "function. May require analysis.",
-         {**PAGE, "address": ADDRESS, "representation": {"type": "string", "enum": [
+         "Read one function's pseudocode (\"source\": its own language; or C, Rust, Go) or IR. Starts at the "
+         "definition; prelude=true adds the includes and declarations that make it compile.",
+         {**PAGE, "limit": {"type": "integer", "minimum": 1, "maximum": 2048}, "address": ADDRESS, "prelude": FLAG,
+          "representation": {"type": "string", "enum": [
              "source", "c", "rust", "go", "llvmc", "low", "med", "high", "llvm"]}}, ("address",)),
     tool("read_bytes", "bytes", "Read up to 4096 mapped bytes at a virtual address.",
          {"address": ADDRESS, "size": {"type": "integer", "minimum": 1, "maximum": 4096}}, ("address",)),
@@ -55,11 +67,21 @@ TOOLS = [
          "cut to text_limit bytes (default 200) with an ellipsis.",
          {**PAGE, "filter": FILTER, "text_limit": {"type": "integer", "minimum": 1, "maximum": 1024}}),
     tool("read_cfg", "cfg", "Read the control-flow graph for one function.", {"address": ADDRESS}, ("address",)),
-    tool("list_imports", "imports", "Read a bounded page of imported symbols; filter matches name or module.",
+    tool("list_imports", "imports", "Read imported symbols by module; filter matches name or module.",
          {**PAGE, "filter": FILTER}),
     tool("find_string_references", "string_references",
          "Find the instructions, and their functions, that use strings matching filter (text, function or address).",
          {**PAGE, "filter": FILTER}),
+    tool("find_call_paths", "call_paths",
+         "Call paths from one function or import to another (name or 0x address), through optional via "
+         "waypoints in order; shortest first. data_refs also follows taken addresses.",
+         {"from": NODE, "to": NODE, "via": NODES, "exclude": NODES, "max_depth": DEPTH, "shortest_only": FLAG,
+          "data_refs": FLAG, "max_paths": {"type": "integer", "minimum": 1, "maximum": 200}}, ("from", "to")),
+    tool("list_call_tree", "call_tree",
+         "What a function (name or 0x address) calls, or with callers what calls it, to max_depth levels "
+         "(default 1).",
+         {"function": NODE, "callers": FLAG, "max_depth": DEPTH, "data_refs": FLAG, "exclude": NODES},
+         ("function",)),
 ]
 SELECTION = tool("current_selection", "selection", "Read the current selection in the attached GUI session.")
 NAVIGATION = [tool("navigate_gui", "navigate", "Navigate the attached GUI to an explicit virtual address.", {"address": ADDRESS}, ("address",)),
@@ -83,8 +105,14 @@ def validate(arguments, schema):
         rule = properties[key]
         if rule["type"] == "integer":
             valid = type(value) is int and rule["minimum"] <= value <= rule["maximum"]
+        elif rule["type"] == "boolean":
+            valid = type(value) is bool
+        elif rule["type"] == "array":
+            item = rule["items"]
+            valid = (isinstance(value, list) and len(value) <= rule["maxItems"] and
+                     all(isinstance(v, str) and item["minLength"] <= len(v) <= item["maxLength"] for v in value))
         else:
-            valid = isinstance(value, str) and len(value) <= rule.get("maxLength", 4096)
+            valid = isinstance(value, str) and rule.get("minLength", 0) <= len(value) <= rule.get("maxLength", 4096)
             if "enum" in rule:
                 valid = valid and value in rule["enum"]
             if "pattern" in rule:
@@ -159,13 +187,26 @@ def _xrefs(payload, out, direction):
 
 
 def _imports(payload, out):
-    return _table(payload, out, ["address", "module", "name"], lambda item: [
-        item.get("address"), item.get("module"), item.get("name")])
+    # Names resolve wherever a tool takes an address, so a page groups them
+    # by module rather than repeating module and slot on every row.
+    _page_fields(payload, out)
+    modules = out["modules"] = {}
+    for item in payload.get("items", []):
+        if isinstance(item, dict):
+            modules.setdefault(item.get("module") or "", []).append(item.get("name"))
+    return out
+
+
+def _cut(text, limit=DEFAULT_STRING_TEXT_LIMIT):
+    """A display preview of at most limit UTF-8 bytes, as the worker cuts string texts."""
+    if not isinstance(text, str) or len(text.encode("utf-8")) <= limit:
+        return text
+    return text.encode("utf-8")[:limit].decode("utf-8", "ignore") + "…"
 
 
 def _string_references(payload, out):
     return _table(payload, out, ["address", "function", "kind", "text", "via"], lambda item: [
-        item.get("address"), item.get("function"), item.get("kind"), item.get("text"), item.get("via")])
+        item.get("address"), item.get("function"), item.get("kind"), _cut(item.get("text")), item.get("via")])
 
 
 def _disassembly(payload, out):
@@ -182,7 +223,7 @@ def _disassembly(payload, out):
 def _decompilation(payload, out):
     out["address"] = payload.get("address")
     out["representation"] = payload.get("dialect") or payload.get("representation")
-    for key in ("offset", "total_lines", "next_offset", "complete", "unread"):
+    for key in ("prelude_lines", "offset", "total_lines", "next_offset", "complete", "unread"):
         if payload.get(key) not in (None, [], ""):
             out[key] = payload[key]
     return _code(out, payload.get("text", ""))
@@ -197,10 +238,66 @@ def _cfg(payload, out):
     return out
 
 
+def _node_labels(payload):
+    """How a path or tree names each node: a function by name and address,
+    an import by name; an automatic sub_ name already spells its address."""
+    labels = {}
+    for node in payload.get("nodes", []):
+        address, name = node.get("address"), node.get("name") or node.get("address")
+        if node.get("kind") == "import":
+            labels[address] = name + "@import"
+        elif name.lower() == "sub_" + address[2:].lower():
+            labels[address] = name
+        else:
+            labels[address] = f"{name}@{address}"
+    return labels
+
+
+def _call_paths(payload, out):
+    labels = _node_labels(payload)
+    out["max_depth"] = payload.get("max_depth")
+    lines = []
+    for segment in payload.get("segments", []):
+        head = labels.get(segment.get("from"), segment.get("from")) + " -> " + \
+            labels.get(segment.get("to"), segment.get("to"))
+        if segment.get("shortest") is None:
+            lines.append(head + ": no path either way")
+            continue
+        notes = [f"shortest {segment['shortest']}", f"{segment.get('node_count')} nodes on paths"]
+        if segment.get("reversed"):
+            notes.append("only reversed")
+        if not segment.get("complete", True):
+            notes.append("more paths not listed")
+        lines.append(head + ": " + ", ".join(notes))
+        lines.extend("  " + " -> ".join(labels.get(step, step) for step in path) for path in segment.get("paths", []))
+    return _code(out, "\n".join(lines))
+
+
+def _call_tree(payload, out):
+    labels = _node_labels(payload)
+    callees = payload.get("direction") == "callees"
+    out.update({key: payload[key] for key in ("direction", "depth_limited", "complete") if key in payload})
+    depth = {node["address"]: node.get("depth", 0) for node in payload.get("nodes", [])}
+    children, parent = {}, {}
+    for edge in payload.get("edges", []):
+        near, far = (edge[0], edge[1]) if callees else (edge[1], edge[0])
+        if near in depth and far in depth and depth[far] == depth[near] + 1 and far not in parent:
+            parent[far] = near
+            children.setdefault(near, []).append(far)
+    lines = []
+    def walk(node, indent):
+        lines.append("  " * indent + labels.get(node, node))
+        for child in children.get(node, []):
+            walk(child, indent + 1)
+    if payload.get("nodes"):
+        walk(payload["nodes"][0]["address"], 0)
+    return _code(out, "\n".join(lines))
+
+
 SHAPERS = {
     "metadata": _metadata, "functions": _functions, "strings": _strings, "imports": _imports,
     "string_references": _string_references, "disasm": _disassembly, "decompile": _decompilation,
-    "cfg": _cfg,
+    "cfg": _cfg, "call_paths": _call_paths, "call_tree": _call_tree,
 }
 
 
@@ -277,8 +374,34 @@ class Server:
             revision = arguments.pop("expected_revision", None)
             if selected["operation"] == "strings":
                 arguments.setdefault("text_limit", DEFAULT_STRING_TEXT_LIMIT)
+            elif selected["operation"] == "call_paths":
+                arguments = {"waypoints": [arguments.pop("from"), *arguments.pop("via", []), arguments.pop("to")],
+                             **arguments}
+            elif selected["operation"] == "call_tree":
+                arguments = {"root": arguments.pop("function"),
+                             "direction": "callers" if arguments.pop("callers", False) else "callees", **arguments}
             try:
+                if "address" in arguments and not HEX_ADDRESS.fullmatch(arguments["address"]):
+                    # A name, resolved as the workbench resolves what it shows;
+                    # code views take the entry of the function it lies in.
+                    resolved = self.backend.query("resolve", {"query": arguments["address"]}, revision)
+                    if resolved.get("status") not in ("ok", "success"):
+                        text, _ = compact_result("resolve", {}, resolved)
+                        return self.text_result(text, True, resolved)
+                    found = resolved.get("payload") or {}
+                    entry = found.get("function_address") if selected["operation"] in ("decompile", "cfg") else None
+                    arguments["address"] = entry or found.get("address")
+                prelude = arguments.pop("prelude", False)
                 result = self.backend.query(selected["operation"], arguments, revision)
+                lines = ((result.get("payload") or {}).get("prelude") or {}).get("lines") \
+                    if selected["operation"] == "decompile" and isinstance(result, dict) else None
+                if not prelude and lines and not arguments.get("offset"):
+                    # A source page starts at the definition: the lines before it
+                    # make the file compile and are read on request.
+                    result = self.backend.query(selected["operation"], {**arguments, "offset": lines},
+                                                result.get("revision"))
+                    if isinstance(result.get("payload"), dict):
+                        result["payload"]["prelude_lines"] = lines
                 text, is_error = compact_result(selected["operation"], arguments, result)
                 return self.text_result(text, is_error, result)
             except (OSError, EOFError, ValueError, RuntimeError, TimeoutError) as error:

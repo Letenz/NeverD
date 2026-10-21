@@ -42,10 +42,17 @@ owned worker. Use the worker that ships with the matching engine build.
 
 Tools: `project_metadata`, `list_functions`, `read_disassembly`,
 `read_decompilation`, `read_bytes`, `list_xrefs`, `list_strings`, `read_cfg`,
-`list_imports` and `find_string_references` (the instructions and functions
-that use strings matching a filter, in one call). `list_strings` and
-`list_imports` take a `filter`; `list_strings` cuts texts to `text_limit` bytes,
-200 unless asked otherwise, with an ellipsis.
+`list_imports`, `find_string_references` (the instructions and functions
+that use strings matching a filter, in one call), `find_call_paths` (call
+paths between functions or imports through waypoints, shortest first, as a
+path finder shows them) and `list_call_tree` (what a function calls, or what
+calls it, to a depth). `list_strings` and `list_imports` take a `filter`;
+`list_strings` cuts texts to `text_limit` bytes, 200 unless asked otherwise,
+with an ellipsis. Wherever a tool takes an `address`, a name the workbench
+shows, an import's name or a label also works; it is resolved first.
+`read_decompilation` starts at the function's definition and reports how many
+`prelude_lines` (includes, types and declarations that make the file compile)
+it left out; `prelude: true` returns them too.
 
 Tool results are shaped for a model's context. They omit the worker's transport
 envelope and the presentation data the workbench maps code with (line anchors,
