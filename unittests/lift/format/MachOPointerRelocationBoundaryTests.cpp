@@ -16090,6 +16090,191 @@ TEST(LLVMDataPointerInvariantBoundary,
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
+     MutableImageWordsNeedCompleteStorageWithoutPointerFixups) {
+  enum class Case {
+    Direct,
+    Nested,
+    ZeroFilled,
+    Nonzero,
+    ReadOnly,
+    ReadOnlySection,
+    PointerSlot,
+    PartialPointerSlot,
+    RelativeSlot,
+    RuntimeSlot,
+    ConflictingImport,
+    RawFixup,
+    MissingBytes,
+    OverlappingSegment,
+    OverlappingSection,
+    SectionGap,
+    ForeignOwner,
+    SegmentLoad,
+    WideLoad,
+    ObjectFootprint,
+    MissingFootprint,
+    OverlappingFootprint
+  };
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (Case C : {Case::Direct,
+                     Case::Nested,
+                     Case::ZeroFilled,
+                     Case::Nonzero,
+                     Case::ReadOnly,
+                     Case::ReadOnlySection,
+                     Case::PointerSlot,
+                     Case::PartialPointerSlot,
+                     Case::RelativeSlot,
+                     Case::RuntimeSlot,
+                     Case::ConflictingImport,
+                     Case::RawFixup,
+                     Case::MissingBytes,
+                     Case::OverlappingSegment,
+                     Case::OverlappingSection,
+                     Case::SectionGap,
+                     Case::ForeignOwner,
+                     Case::SegmentLoad,
+                     Case::WideLoad,
+                     Case::ObjectFootprint,
+                     Case::MissingFootprint,
+                     Case::OverlappingFootprint}) {
+        const bool Object = C == Case::ObjectFootprint ||
+                            C == Case::MissingFootprint ||
+                            C == Case::OverlappingFootprint;
+        if (Object && Format != BinaryFormat::ELF)
+          continue;
+        SCOPED_TRACE(std::to_string(static_cast<int>(A)) + "/" +
+                     formatTraceName(Format) + "/" +
+                     std::to_string(static_cast<int>(C)));
+        const uint16_t Width = getTargetRegInfo(A).PointerSize;
+        constexpr va_t GlobalVA = SpilledConstTableVA + 0x1000;
+        constexpr va_t SlotVA = GlobalVA + 16;
+        BinaryImage Image =
+            makeSpilledConstTableImage(A, Format, /*PointerTable=*/true);
+        Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+        Segment Global;
+        Global.Name = ".data";
+        Global.VA = GlobalVA;
+        Global.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+        Global.Size = Global.FileSz = 64;
+        Global.Data.resize(Global.Size, 0);
+        Section Field;
+        Field.Name = Field.SegmentName = ".data";
+        Field.VA = GlobalVA;
+        Field.Flags = Global.Flags;
+        Field.Size = Field.FileSz = Global.Size;
+        if (C == Case::ReadOnly) {
+          Global.Flags = SegmentFlags::Readable;
+          Field.Flags = SegmentFlags::Readable;
+        } else if (C == Case::ReadOnlySection) {
+          Field.Flags = SegmentFlags::Readable;
+        } else if (C == Case::ZeroFilled) {
+          Global.FileSz = Field.FileSz = 8;
+        } else if (C == Case::Nonzero) {
+          Global.Data[SlotVA - GlobalVA] = 3;
+        } else if (C == Case::MissingBytes) {
+          Global.Data.resize(SlotVA - GlobalVA);
+        } else if (C == Case::SectionGap) {
+          Field.Size = Field.FileSz = 8;
+        }
+        Image.Segments.push_back(Global);
+        Image.Sections.push_back(Field);
+        if (C == Case::OverlappingSegment)
+          Image.Segments.push_back(Global);
+        if (C == Case::OverlappingSection)
+          Image.Sections.push_back(Field);
+        if (C == Case::PointerSlot || C == Case::PartialPointerSlot)
+          Image.DataPtrRelocSlots.insert(C == Case::PointerSlot ? SlotVA
+                                                                : SlotVA - 1);
+        if (C == Case::RelativeSlot)
+          Image.RelDataPtrRelocSlots.insert(SlotVA);
+        if (C == Case::RuntimeSlot)
+          Image.RuntimeCallablePointerSlots.push_back({SlotVA});
+        if (C == Case::ConflictingImport)
+          Image.ConflictingImportStorageSlots.insert(SlotVA);
+        if (C == Case::RawFixup) {
+          BaseRelocation Reloc;
+          Reloc.Address = SlotVA;
+          Reloc.Type = llvm::COFF::IMAGE_REL_BASED_HIGHLOW;
+          Image.BaseRelocations.push_back(Reloc);
+        }
+        if (Object) {
+          Image.IsRelocatable = true;
+          if (C != Case::MissingFootprint) {
+            Image.ObjectRelocationWriteBytes.emplace();
+            if (C == Case::OverlappingFootprint)
+              Image.ObjectRelocationWriteBytes->insert(SlotVA + 1);
+          }
+        }
+        MedFunc F;
+        F.Name = "mutable_runtime_word";
+        F.Entry = CallerVA;
+        F.ReturnType = NdType::makeInt(Width);
+        int Next = 0;
+        auto temp = [&](uint16_t Size = 0) {
+          MedVar V;
+          V.Kind = MedVar::Temp;
+          V.TheArch = A;
+          V.Id = Next++;
+          V.SSAVer = 1;
+          V.Size = Size ? Size : Width;
+          return V;
+        };
+        auto number = [&](uint64_t N) {
+          return MedVar::makeConst(N, Width, ConstantAddressProvenance::Scalar);
+        };
+        F.Blocks.resize(1);
+        auto &Block = F.Blocks.front();
+        Block.Id = 0;
+        Block.StartAddr = CallerVA;
+        Block.EndAddr = CallerVA + 0x20;
+        auto append = [&](NdOp Opcode, MedVar Out,
+                          std::initializer_list<MedVar> Inputs) {
+          MedOp Op;
+          Op.Opcode = Opcode;
+          Op.Output = Out;
+          Op.Addr = Block.StartAddr + Block.Ops.size();
+          for (const auto &V : Inputs)
+            Op.addInput(V);
+          Block.Ops.push_back(Op);
+        };
+        MedVar Word = temp(C == Case::WideLoad ? 2 * Width : Width);
+        append(NdOp::LOAD, Word,
+               {MedVar::makeConst(
+                   SlotVA, Width, ConstantAddressProvenance::DataAddress,
+                   C == Case::ForeignOwner ? SpilledConstTableVA : GlobalVA)});
+        if (C == Case::SegmentLoad)
+          Block.Ops.back().MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        if (C == Case::Nested) {
+          MedVar Address = temp(), FieldValue = temp();
+          append(NdOp::INT_ADD, Address, {Word, number(8)});
+          append(NdOp::LOAD, FieldValue, {Address});
+          Word = FieldValue;
+        }
+        MedVar Scaled = temp();
+        append(NdOp::INT_MULT, Scaled, {Word, number(Width)});
+        append(NdOp::RETURN, {}, {Scaled});
+        const bool Expected = C == Case::Direct || C == Case::Nested ||
+                              C == Case::ZeroFilled || C == Case::Nonzero ||
+                              C == Case::ObjectFootprint;
+        MedLLVMEmitter Proof;
+        MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Proof, F, Image, A,
+                                                        Format);
+        EXPECT_EQ(MedLLVMProvenanceTestPeer::runtimeOffset(Proof, Scaled),
+                  Expected);
+        if (Expected) {
+          EXPECT_FALSE(
+              MedLLVMProvenanceTestPeer::stableOffset(Proof, Scaled, nullptr));
+          EXPECT_FALSE(
+              MedLLVMProvenanceTestPeer::pointerTableLoadIsCallableOnly(Proof,
+                                                                        Word));
+        }
+      }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
      RuntimeScalarBoundsBelongToTheScaledDefinition) {
   enum class Case {
     Valid,

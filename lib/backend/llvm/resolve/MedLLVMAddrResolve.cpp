@@ -20,6 +20,7 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/loader/RelocationProvenance.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -2059,6 +2060,74 @@ bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
     return false;
   auto LeaveQuery = llvm::make_scope_exit([&] { ActiveQueries.erase(Query); });
 
+  // An ordinary mutable image word retains its runtime bits, including a
+  // pointer stored there by the program. A field the loader or emitter
+  // reconstructs as a pointer has a different contract. Audit the full load
+  // extent and its owner without reading or folding the initial value.
+  auto mutableRuntimeWord = [&](const MedVar &Address, unsigned Width) {
+    uint64_t VA = 0, OwnerVA = InvalidVA;
+    if (!resolveMaterializableDataAddress(Address, VA, &OwnerVA) ||
+        VA > InvalidVA - Width ||
+        (Img->isMachO() && Img->MachOChainedFixupsAmbiguous))
+      return false;
+    const Segment *Seg = Img->getSegmentFor(VA);
+    const Section *Sec = Img->getSectionFor(VA);
+    const va_t LayoutOwner = Img->layoutAddressOwner(VA);
+    const auto OwnerEnd = Img->mappedObjectOwnerEnd(VA);
+    if (!Seg || !Seg->isReadable() || !Seg->isWritable() ||
+        Seg->isExecutable() || Img->isCodeAddress(VA) ||
+        isReadOnlyAfterReloc(Seg) || Seg->Size > InvalidVA - Seg->VA ||
+        !rangeInBounds(VA - Seg->VA, Width, Seg->Size) ||
+        !rangeInBounds(VA - Seg->VA, Width, Seg->Data.size()) ||
+        LayoutOwner == InvalidVA || !OwnerEnd || *OwnerEnd < VA + Width ||
+        (OwnerVA != InvalidVA && OwnerVA != LayoutOwner) ||
+        (Sec && (!Sec->isWritable() || Sec->isExecutable() ||
+                 section_names::isReadOnlyAfterRelocSectionName(Sec->Name))))
+      return false;
+    auto overlaps = [&](va_t Start, uint64_t Size) {
+      return Size && (Start <= VA ? VA - Start < Size : Start - VA < Width);
+    };
+    for (const Segment &Other : Img->Segments)
+      if (&Other != Seg && overlaps(Other.VA, Other.Size))
+        return false;
+    for (const Section &Other : Img->Sections)
+      if (&Other != Sec && Other.isReadable() && overlaps(Other.VA, Other.Size))
+        return false;
+    if (Img->isELF() && Img->IsRelocatable &&
+        !Img->isUnrelocatedObjectField(VA, Width))
+      return false;
+
+    // Raw fixup records may write up to eight bytes. Include a field that
+    // starts before the LOAD, rather than accepting its pointer suffix.
+    const va_t First = VA - std::min<va_t>(VA, 7), End = VA + Width;
+    if (hasRelocationProvenanceIn(*Img, First, End))
+      return false;
+    auto touches = [&](const auto &Slots) {
+      auto address = [](const auto &Slot) -> va_t {
+        if constexpr (requires { Slot.first; })
+          return Slot.first;
+        else
+          return Slot;
+      };
+      const auto It = Slots.lower_bound(First);
+      return It != Slots.end() && address(*It) < End;
+    };
+    ensureImportStorageSnapshot();
+    return !touches(Img->DataPtrRelocTargetOwners) &&
+           !touches(Img->MachOResolvedChainedPointerSlots) &&
+           !touches(Img->ObjCSourceReferences) &&
+           !touches(Img->DataAddressRelocOperands) &&
+           !touches(Img->CodeAddressRelocOperands) &&
+           !touches(ConflictingImportStorageSlots) &&
+           !touches(EffectiveImportStorageSlots) &&
+           !touches(ExternalFunctionPointerSlots) &&
+           !touches(DataSymbolBindings) &&
+           llvm::none_of(Img->RuntimeCallablePointerSlots,
+                         [&](const auto &Slot) {
+                           return Slot.SlotVA >= First && Slot.SlotVA < End;
+                         });
+  };
+
   // Audit the producer DAG independently of the consumer's domain proof.
   // A nested runtime load retains its address dependencies, and a private
   // reload retains every exact reaching STORE source. Neither may hide image
@@ -2122,7 +2191,10 @@ bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
               if (Source.Size != V.Size || !scalarSource(Source, Depth + 1))
                 return false;
           } else {
-            if (traceValueVA(Address) || !scalarSource(Address, Depth + 1))
+            if (traceValueVA(Address)) {
+              if (!mutableRuntimeWord(Address, V.Size))
+                return false;
+            } else if (!scalarSource(Address, Depth + 1))
               return false;
             SawRuntimeLoad = true;
           }

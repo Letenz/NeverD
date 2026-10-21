@@ -7564,9 +7564,15 @@ retain an unbounded runtime offset without changing the scalar-offset proof.
 Every feasible arm must preserve its complete pointer and use the same
 symbolized address model. The shared runtime-source audit follows nested
 opaque loads, complete acyclic value selections and exact private-frame
-reloads through every reaching store. It excludes image-derived words, hidden
-mapped bases, uninitialized or escaped stack storage and incomplete or cyclic
-value graphs. Load-address dependencies stay visible through every nesting
+reloads through every reaching store. An ordinary mutable image word can also
+supply runtime bits when its complete load extent has one materialized writable
+owner and no relocation, pointer binding or runtime callable-storage contract
+overlaps it. Loader-materialized zero fill qualifies; an ELF object's complete
+relocation write footprint must independently exclude the field. This reads
+live storage, without freezing its initializer or inferring the loaded value's
+pointer target. The audit excludes reconstructed image pointers, hidden mapped
+bases, uninitialized or escaped stack storage and incomplete or cyclic value
+graphs. Load-address dependencies stay visible through every nesting
 level, and this proof grants neither a scalar bound nor a callable domain.
 The container audit requires the complete run, including any exact relocation
 owner. A mutable segment qualifies only when all its memory bytes are present,

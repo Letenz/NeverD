@@ -1137,6 +1137,115 @@ int main(void) {
 }
 
 TEST_F(NativePointerRelocationBoundary,
+       RuntimeGlobalPointersFeedUnboundedScalarIndices) {
+#if !defined(__x86_64__) || defined(__APPLE__) || defined(_WIN32)
+  GTEST_SKIP() << "native execution requires an x86-64 ELF host";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "native fixture requires Clang's GNU-style driver";
+  const fs::path Source = tmpFile("runtime-global-source.s");
+  const fs::path Object = tmpFile("runtime-global-source.o");
+  const fs::path Harness = tmpFile("runtime-global-source-main.c");
+  const fs::path Original = tmpFile("runtime-global-source-original");
+  const fs::path IR = tmpFile("runtime-global-source.ll");
+  const fs::path Rebuilt = tmpFile("runtime-global-source-rebuilt");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS);
+    OS << R"(
+.text
+.globl bind_root
+.type bind_root,@function
+bind_root:
+  mov %rdi, runtime_root(%rip)
+  mov %rdi, %rax
+  ret
+.size bind_root,.-bind_root
+.globl selected_global
+.type selected_global,@function
+selected_global:
+  mov runtime_root(%rip), %rcx
+  mov (%rcx), %rax
+  test %rdi, %rdi
+  jz 1f
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+  jmp 2f
+1:
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+2:
+  mov (%rax), %rax
+  ret
+.size selected_global,.-selected_global
+.data
+.p2align 3
+runtime_root: .quad 0
+.section .data.rel.ro,"aw",@progbits
+.p2align 3
+table_a: .quad 11,23,47,89
+table_b: .quad 101,211,433,877
+mirror_owner: .quad selected_global
+.section .note.GNU-stack,"",@progbits
+)";
+  }
+  {
+    std::ofstream OS(Harness);
+    ASSERT_TRUE(OS);
+    OS << R"(
+#include <stdint.h>
+extern const uint64_t *bind_root(const uint64_t *);
+extern uint64_t selected_global(uint64_t);
+int main(void) {
+ const uint64_t a[]={11,23,47,89},b[]={101,211,433,877};
+ const uint64_t choices[]={0,1,UINT64_MAX,UINT64_C(1)<<63};
+ for(unsigned repeat=0;repeat!=16;++repeat)
+  for(uint64_t index=0;index!=4;++index)
+   for(unsigned c=0;c!=4;++c) {
+    uint64_t reverse=3-index;
+    const uint64_t *source=c&1?&index:&reverse;
+    if(bind_root(source)!=source) return 1;
+    uint64_t expected=choices[c]?a[*source]:b[*source];
+    if(selected_global(choices[c])!=expected) return 2;
+   }
+ return 0;
+}
+)";
+  }
+  auto Compile =
+      exec(NEVERD_TEST_CLANG, {"-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  Compile =
+      exec(NEVERD_TEST_CLANG, {"-fPIE", "-pie", Object.string(),
+                               Harness.string(), "-o", Original.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  auto Native = exec(Original.string(), {});
+  ASSERT_EQ(Native.exitCode, 0) << Native.err;
+  auto Lifted = liftToLLVMIRUnopt(Object);
+  ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+  EXPECT_NE(Lifted.out.find("@__nd_codeptr_"), std::string::npos);
+  const size_t Start = Lifted.out.find("; ModuleID");
+  ASSERT_NE(Start, std::string::npos);
+  {
+    std::ofstream OS(IR);
+    ASSERT_TRUE(OS);
+    OS << std::string_view(Lifted.out).substr(Start);
+  }
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    Compile =
+        exec(NEVERD_TEST_CLANG, {Optimization, "-fPIE", "-pie", IR.string(),
+                                 Harness.string(), "-o", Rebuilt.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    for (unsigned Attempt = 0; Attempt != 5; ++Attempt) {
+      auto Run = exec(Rebuilt.string(), {});
+      EXPECT_EQ(Run.exitCode, 0) << Run.err;
+    }
+  }
+#endif
+}
+
+TEST_F(NativePointerRelocationBoundary,
        MachOObjectAbsoluteCodePointerRelocationSurvivesLift) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "cross-target Mach-O fixtures require Clang's GNU-style "
