@@ -297,6 +297,16 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           // The real native name is resolved by the ordinary call ABI pass.
         }
       }
+      // The user's supported prototype already supplied the ordinary call's
+      // arguments. An automatic SDK binding must not replace them with the
+      // platform declaration. Match both import slots and direct-call stubs.
+      if (Hint && !ExplicitSite &&
+          Hint->CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+          UserPrototypeCallees &&
+          (UserPrototypeCallees->count(Hint->TargetAddress) ||
+           (Op.Inputs[0].isConst() &&
+            UserPrototypeCallees->count(Op.Inputs[0].ConstVal))))
+        Hint.reset();
       if (Hint) {
         const auto Constructor = ConstructorHints.find(Op.Addr);
         if (Constructor != ConstructorHints.end() &&

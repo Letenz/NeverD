@@ -861,6 +861,13 @@ refreshes its views as after loading signatures. Every declaration drops
 the context, which reads a copy of the library, and the context takes back
 the members it gave.
 
+On macOS and iOS, a supported user import prototype that already supplies the
+call's argument summary also takes precedence over automatic Darwin SDK
+source-call binding. LowToMed matches the import slot or direct-call stub and
+keeps the ordinary arguments for both C backends. Explicit call-site source
+contracts retain their authority. Prototypes without supported argument summaries
+keep the existing SDK binding.
+
 A RETURN hands back the parameter that arrived in the result register when
 no path from the function's entry to it writes any byte of that register,
 calls a routine, which clobbers it, or enters through an exceptional edge

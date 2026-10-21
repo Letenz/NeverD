@@ -1148,6 +1148,16 @@ headers as `musl_libc_stub.c` says;
 `SessionCAPITest.DarwinProgramsJoinTheirPlatformsLibrary` loads
 `darwin_libc_calls_{x64,arm64,ios_arm64}`, built against the headers the
 Darwin libraries read as `darwin_libc_stub.c` says;
+`SessionCAPITest.AProgramsOwnDeclarationOfAnImportDecides` checks zero-, one- and
+four-parameter user declarations through both C backends on those three Darwin
+targets as well as Linux x64, i386, AArch64 and ARM32. The Darwin cases first
+populate the SDK-bound pipeline to check declaration invalidation too.
+`NativeSourceHints.UserPrototypeKeepsExplicitCallSiteAuthority` checks that an
+explicit occurrence contract still wins over user and inferred callee summaries
+on x64 and AArch64;
+`ObjCCallHints.UserPrototypesOverrideOnlyMatchingAutomaticSDKCalls` checks
+direct stubs and indirect import slots, unrelated declarations and SDK precedence
+over inferred callee signatures on both architectures;
 `SessionCAPITest.UefiApplicationsJoinTheirFirmwaresLibrary` loads
 `uefi_calls_{x64,x86,arm64}.efi`, built as `uefi_calls.c` says, whose entry
 takes `EFI_IMAGE_ENTRY_POINT`;
