@@ -879,6 +879,9 @@ pass the first argument in the result register, so the bare `ret` beside the
 tail call of `if (b) return g(b); return a;` returns `a`. Whether the
 function returns a value at all stays with the return contracts
 (`settleReturnContracts`).
+An absent ordinary RETURN does not establish a void result. The shared
+no-return proof must also close exceptional paths; an external catch funclet
+can still supply the parent's value when its source body is attached later.
 
 A unit's member access names a member only where the access reads it
 (`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's

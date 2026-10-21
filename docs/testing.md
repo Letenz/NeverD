@@ -1002,6 +1002,9 @@ Thumb addresses, unregistered x86 veneers and section-symbol aliases.
 and rejects treating ordinary data/IAT slots as synthetic object callees.
 `NeverDWorkerCallSiteTypes` compiles and executes both C routes, including all
 five Win64 variadic integer arguments, and retains partial-stack-write refusal.
+`NeverDReturnContractTests` requires the shared no-return proof before an absent
+ordinary return can erase a function's result, including an external catch
+edge. Native pipeline CI executes the complete owner on each compiler.
 Run these with pipeline, session and image-boundary suites after changing
 shared import or source-call ownership. Native platform skips retain their
 own runner requirements.

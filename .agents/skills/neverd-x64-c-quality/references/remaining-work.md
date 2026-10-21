@@ -46,6 +46,12 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## CRT and catch-continuation repairs
 
+- Return contracts require the shared no-return proof before interpreting an
+  absent ordinary RETURN as void. An external catch/continuation keeps the
+  parent result unknown until attachment, so nested rethrows retain the
+  catch object's returned value. Signed 32-bit SEH filter casts preserve the
+  continue-execution sentinel when the frame carrier is unsigned.
+
 - Source-written Win64 frame formats now retain exact reaching scalar bytes.
   Every predecessor and inspected callee return must agree, and the complete
   format through NUL must remain live outside runtime home/scratch areas and

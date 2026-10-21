@@ -11,6 +11,9 @@ on:
       - 'lib/libc/**'
       - 'lib/loader/ObjectExterns.cpp'
       - 'lib/ir/low/CFGBuilderInsn.cpp'
+      - 'lib/pipeline/PipelineReturnContracts.cpp'
+      - 'unittests/lift/core/ReturnContractTests.cpp'
+      - 'unittests/lift/CMakeLists.txt'
       - 'unittests/libc/**'
       - 'unittests/lift/core/High*Tests.cpp'
       - 'lib/safety/StackSlotFlow.h'
@@ -48,6 +51,9 @@ on:
       - 'lib/libc/**'
       - 'lib/loader/ObjectExterns.cpp'
       - 'lib/ir/low/CFGBuilderInsn.cpp'
+      - 'lib/pipeline/PipelineReturnContracts.cpp'
+      - 'unittests/lift/core/ReturnContractTests.cpp'
+      - 'unittests/lift/CMakeLists.txt'
       - 'unittests/libc/**'
       - 'unittests/lift/core/High*Tests.cpp'
       - 'lib/safety/StackSlotFlow.h'
@@ -211,7 +217,7 @@ jobs:
         run: |
           python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests NeverDSessionFunctionDiscoveryTests \
-            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests NeverDLibCTests \
+            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests NeverDLibCTests NeverDReturnContractTests \
             NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
             NeverDX86UndefinedEffectsTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
@@ -234,6 +240,7 @@ jobs:
           pipeline_minimum = 40 + (os.name != 'nt') + (sys.platform == 'linux')
           for owner, minimum in (('NeverDFPParameterMaskTests', 180),
                                   ('NeverDLibCTests', 71),
+                                  ('NeverDReturnContractTests', 21),
                                   ('NeverDPipelineOutcomeTests', pipeline_minimum),
                                   ('NeverDX86NativeStateAuditTests', 8),
                                   ('NeverDX86LegacyAlignedMoveTests', 7),
@@ -318,7 +325,7 @@ jobs:
           cmake -S . -B build-abi -DNEVERD_ENABLE_TBB=OFF
           python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests NeverDSessionFunctionDiscoveryTests \
-            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests NeverDLibCTests \
+            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests NeverDLibCTests NeverDReturnContractTests \
             NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
             NeverDX86UndefinedEffectsTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
