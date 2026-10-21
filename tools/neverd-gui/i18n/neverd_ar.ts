@@ -472,6 +472,30 @@
         <translation>إظهار المراجع إلى العنصر الحالي</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>مستكشف المسارات</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>إيجاد مسارات الاستدعاء بين الدوال</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>إنشاء مسار جديد(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>بدء مسار استدعاء جديد عند الدالة الموجودة تحت المؤشر</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>إضافة إلى المسار(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>إضافة الدالة الموجودة تحت المؤشر إلى مسار الاستدعاء كآخر نقطة طريق فيه</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>الإشارات المرجعية(&amp;B)</translation>
     </message>
@@ -1402,6 +1426,10 @@
     <message>
         <source>&amp;Graphs</source>
         <translation>الرسوم البيانية(&amp;G)</translation>
+    </message>
+    <message>
+        <source>&amp;Pathfinding</source>
+        <translation>إيجاد المسارات(&amp;P)</translation>
     </message>
     <message>
         <source>&amp;Toolbars</source>
@@ -2857,6 +2885,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>unknown</source>
         <translation>مجهول</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>مستكشف المسارات</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>إيجاد المسارات</translation>
     </message>
 </context>
 <context>
@@ -4958,6 +4994,259 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The type libraries could not be changed: %1</source>
         <translation>تعذر تغيير مكتبات الأنواع: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>إضافة نقطة طريق</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>استبعاد دالة</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>إزالة</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>نقل نقطة الطريق لأعلى</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>نقل نقطة الطريق لأسفل</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>مسح نقاط الطريق</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>الدالة</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>العنوان</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>المرجع</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>الاستثناءات</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>الخيارات</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>تضمين مراجع البيانات</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>أقصر المسارات فقط</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>أقصى عمق:</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>استبعاد دالة...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>لا توجد دالة أو استيراد عند %1.</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1 نقطة طريق بالفعل.</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>يقبل المسار %n نقطة طريق على الأكثر.</numerusform>
+            <numerusform>يقبل المسار %n نقطة طريق على الأكثر.</numerusform>
+            <numerusform>يقبل المسار %n نقطتي طريق على الأكثر.</numerusform>
+            <numerusform>يقبل المسار %n نقاط طريق على الأكثر.</numerusform>
+            <numerusform>يقبل المسار %n نقطة طريق على الأكثر.</numerusform>
+            <numerusform>يقبل المسار %n نقطة طريق على الأكثر.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>إضافة نقطة طريق</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>استبعاد دالة</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>الدوال</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>الواردات</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>إضافة</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>استبعاد</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>تعذّر إيجاد مسارات الاستدعاء: %1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>لا يوجد مسار</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>لا تصل أي من نقطتي الطريق إلى الأخرى خلال %n مرجع.</numerusform>
+            <numerusform>لا تصل أي من نقطتي الطريق إلى الأخرى خلال %n مرجع.</numerusform>
+            <numerusform>لا تصل أي من نقطتي الطريق إلى الأخرى خلال %n مرجعين.</numerusform>
+            <numerusform>لا تصل أي من نقطتي الطريق إلى الأخرى خلال %n مراجع.</numerusform>
+            <numerusform>لا تصل أي من نقطتي الطريق إلى الأخرى خلال %n مرجعًا.</numerusform>
+            <numerusform>لا تصل أي من نقطتي الطريق إلى الأخرى خلال %n مرجع.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>مرجع مباشر، في الاتجاه المعاكس</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>مرجع مباشر</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>%n عقدة (الأقصر: %1)، في الاتجاه المعاكس</numerusform>
+            <numerusform>%n عقدة (الأقصر: %1)، في الاتجاه المعاكس</numerusform>
+            <numerusform>%n عقدتان (الأقصر: %1)، في الاتجاه المعاكس</numerusform>
+            <numerusform>%n عقد (الأقصر: %1)، في الاتجاه المعاكس</numerusform>
+            <numerusform>%n عقدة (الأقصر: %1)، في الاتجاه المعاكس</numerusform>
+            <numerusform>%n عقدة (الأقصر: %1)، في الاتجاه المعاكس</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>%n عقدة (الأقصر: %1)</numerusform>
+            <numerusform>%n عقدة (الأقصر: %1)</numerusform>
+            <numerusform>%n عقدتان (الأقصر: %1)</numerusform>
+            <numerusform>%n عقد (الأقصر: %1)</numerusform>
+            <numerusform>%n عقدة (الأقصر: %1)</numerusform>
+            <numerusform>%n عقدة (الأقصر: %1)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>(توجد مسارات أكثر مما هو مدرج)</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>قفزة عند %1</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>استدعاء عبر مؤشر عند %1</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>أُخذ العنوان عند %1</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>استدعاء عند %1</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>المسار %1: %2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>الاستثناءات (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>افتح برنامجًا لإيجاد مسارات الاستدعاء بين دواله.</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>هذا المحرك لا يجد مسارات الاستدعاء.</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>أضف نقطتي طريق أو أكثر لإيجاد مسارات الاستدعاء بينها: يضيف %1 الدالة الموجودة تحت المؤشر.</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>جارٍ إيجاد مسارات الاستدعاء...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>لم يُعثر على مسار.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>%1 من %n مقطع بلا مسار.</numerusform>
+            <numerusform>%1 من %n مقطع بلا مسار.</numerusform>
+            <numerusform>%1 من %n مقطعين بلا مسار.</numerusform>
+            <numerusform>%1 من %n مقاطع بلا مسار.</numerusform>
+            <numerusform>%1 من %n مقطعًا بلا مسار.</numerusform>
+            <numerusform>%1 من %n مقطع بلا مسار.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>عُثر على %n عقدة في المسارات.</numerusform>
+            <numerusform>عُثر على %n عقدة في المسارات.</numerusform>
+            <numerusform>عُثر على %n عقدتين في المسارات.</numerusform>
+            <numerusform>عُثر على %n عقد في المسارات.</numerusform>
+            <numerusform>عُثر على %n عقدة في المسارات.</numerusform>
+            <numerusform>عُثر على %n عقدة في المسارات.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>ليست كل المسارات مدرجة: خفّض أقصى عمق أو استبعد دوال.</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>إضافة نقطة طريق...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>ترقية إلى نقطة طريق</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>استبعاد من المسارات</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>نقل لأعلى</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>نقل لأسفل</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>نسخ</translation>
     </message>
 </context>
 </TS>

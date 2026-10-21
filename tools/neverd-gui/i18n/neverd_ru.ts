@@ -472,6 +472,30 @@
         <translation>Показать ссылки на текущий элемент</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>Пути вызовов</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>Найти пути вызовов между функциями</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>Создать новый &amp;путь</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>Начать новый путь вызовов с функции под курсором</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>&amp;Добавить в путь</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>Добавить функцию под курсором в путь вызовов как последнюю путевую точку</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>&amp;Закладки</translation>
     </message>
@@ -1402,6 +1426,10 @@
     <message>
         <source>&amp;Graphs</source>
         <translation>&amp;Графы</translation>
+    </message>
+    <message>
+        <source>&amp;Pathfinding</source>
+        <translation>Поиск пу&amp;тей</translation>
     </message>
     <message>
         <source>&amp;Toolbars</source>
@@ -2839,6 +2867,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>unknown</source>
         <translation>неизвестно</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>Пути вызовов</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>Поиск путей</translation>
     </message>
 </context>
 <context>
@@ -4874,6 +4910,241 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The type libraries could not be changed: %1</source>
         <translation>Не удалось изменить библиотеки типов: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>Добавить путевую точку</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>Исключить функцию</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Удалить</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>Переместить путевую точку вверх</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>Переместить путевую точку вниз</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>Очистить путевые точки</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Функция</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Адрес</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>Ссылка</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>Исключения</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Параметры</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>Учитывать ссылки на данные</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>Только кратчайшие пути</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>Максимальная глубина:</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>Исключить функцию...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>По адресу %1 нет ни функции, ни импорта.</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1 уже является путевой точкой.</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>Путь вмещает не более %n путевой точки.</numerusform>
+            <numerusform>Путь вмещает не более %n путевых точек.</numerusform>
+            <numerusform>Путь вмещает не более %n путевых точек.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>Добавление путевой точки</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>Исключение функции</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Функции</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>Импорт</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Добавить</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>Исключить</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>Не удалось найти пути вызовов: %1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>Нет пути</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>Ни одна из путевых точек не достигает другой за %n ссылку.</numerusform>
+            <numerusform>Ни одна из путевых точек не достигает другой за %n ссылки.</numerusform>
+            <numerusform>Ни одна из путевых точек не достигает другой за %n ссылок.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>Прямая ссылка, в обратном направлении</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>Прямая ссылка</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>%n узел (кратчайший: %1), в обратном направлении</numerusform>
+            <numerusform>%n узла (кратчайший: %1), в обратном направлении</numerusform>
+            <numerusform>%n узлов (кратчайший: %1), в обратном направлении</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>%n узел (кратчайший: %1)</numerusform>
+            <numerusform>%n узла (кратчайший: %1)</numerusform>
+            <numerusform>%n узлов (кратчайший: %1)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>(путей больше, чем показано)</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>переход в %1</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>вызов через указатель в %1</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>адрес взят в %1</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>вызов в %1</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>Путь %1: %2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>Исключения (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>Откройте программу, чтобы найти пути вызовов между её функциями.</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>Этот движок не находит пути вызовов.</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>Добавьте две или более путевые точки, чтобы найти пути вызовов между ними: %1 добавляет функцию под курсором.</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>Поиск путей вызовов...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>Путь не найден.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>%1 из %n сегмента без пути.</numerusform>
+            <numerusform>%1 из %n сегментов без пути.</numerusform>
+            <numerusform>%1 из %n сегментов без пути.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>Найден %n узел на путях.</numerusform>
+            <numerusform>Найдено %n узла на путях.</numerusform>
+            <numerusform>Найдено %n узлов на путях.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>Показаны не все пути: уменьшите максимальную глубину или исключите функции.</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>Добавить путевую точку...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>Сделать путевой точкой</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>Исключить из путей</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>Переместить вверх</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>Переместить вниз</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Копировать</translation>
     </message>
 </context>
 </TS>

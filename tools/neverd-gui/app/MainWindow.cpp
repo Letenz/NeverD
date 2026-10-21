@@ -22,6 +22,7 @@
 #include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
+#include "PathfinderView.h"
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
@@ -140,6 +141,7 @@ constexpr char RepresentationDock[] = "ir-a";
 constexpr char ExtensionsDock[] = "extensions";
 constexpr char LocalTypesDock[] = "local-types";
 constexpr char TypeLibrariesDock[] = "type-libraries";
+constexpr char PathfinderDock[] = "pathfinder";
 
 QString chooserDockId(ChooserKind kind) {
   return QStringLiteral("chooser-%1").arg(int(kind));
@@ -572,6 +574,16 @@ MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
     typeLibraries_ = new TypeLibrariesView(session_);
     return makeDock(name, QT_TR_NOOP("Type Libraries"),
                     QStringLiteral("type_libraries"), typeLibraries_);
+  }
+  if (name == QLatin1String(PathfinderDock)) {
+    pathfinder_ = new PathfinderView(session_, space_);
+    connect(pathfinder_, &PathfinderView::activated, this,
+            [this](Address address) { navigate(address); });
+    // A desktop restored with the project shows the project's path.
+    if (session_.loaded())
+      pathfinder_->restoreState(pathfinderState_);
+    return makeDock(name, QT_TR_NOOP("Pathfinder"),
+                    QStringLiteral("pathfinder"), pathfinder_);
   }
   for (int kind = 0; kind < int(ChooserKind::Count); ++kind)
     if (name == chooserDockId(ChooserKind(kind)))
@@ -1059,6 +1071,19 @@ CodeView *MainWindow::focusedCodeView() const {
 
 std::optional<Address> MainWindow::currentFunction() const {
   return disassembly_ ? disassembly_->currentFunction() : std::nullopt;
+}
+
+std::optional<Address> MainWindow::pathfinderTarget() const {
+  if (const CodeView *code = focusedCodeView())
+    return code->text()->function();
+  if (const ChooserView *chooser = focusedChooser())
+    return chooser->currentAddress();
+  return currentAddress();
+}
+
+PathfinderView *MainWindow::showPathfinder() {
+  openDock(dockNamed(QString::fromLatin1(PathfinderDock)), false);
+  return pathfinder_;
 }
 
 void MainWindow::activateFunction(Address address) {
@@ -1550,6 +1575,18 @@ void MainWindow::connectActions() {
   });
   on(ActionId::ViewCrossReferences,
      [this] { showCrossReferences(currentAddress(), true); });
+  on(ActionId::ViewPathfinder,
+     [this] { showPathfinder()->waypointList()->setFocus(); });
+  // The view the command came from keeps the focus, so that more of its
+  // functions can join the path.
+  on(ActionId::PathfinderNewPath, [this] {
+    if (const auto target = pathfinderTarget())
+      showPathfinder()->startPath(*target);
+  });
+  on(ActionId::PathfinderAddWaypoint, [this] {
+    if (const auto target = pathfinderTarget())
+      showPathfinder()->addWaypoint(*target);
+  });
   on(ActionId::ViewBookmarks,
      [this] { actions_.action(ActionId::JumpMark)->trigger(); });
   on(ActionId::ViewOutput, [this] {
@@ -1770,6 +1807,12 @@ void MainWindow::updateActions() {
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::OptionsAnalyze)
       ->setEnabled(loaded && !session_.metadata().value("analyzed").toBool());
+  const bool callPaths = loaded && session_.findsCallPaths();
+  actions_.action(ActionId::ViewPathfinder)->setEnabled(callPaths);
+  for (const auto id :
+       {ActionId::PathfinderNewPath, ActionId::PathfinderAddWaypoint})
+    actions_.action(id)->setEnabled(callPaths &&
+                                    pathfinderTarget().has_value());
 }
 
 void MainWindow::updateTitle() {
@@ -3402,6 +3445,16 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   // IDA offers the function's own dialog after its cross references.
   if (auto *edit = actions_.action(ActionId::EditFunction); edit->isEnabled())
     menu.addAction(edit);
+  // IDA's Pathfinding: the function under the cursor joins the call path,
+  // or starts a new one.
+  if (auto *add = actions_.action(ActionId::PathfinderAddWaypoint);
+      add->isEnabled()) {
+    auto *pathfinding =
+        menu.addMenu(icon(QStringLiteral("pathfinder")), tr("Pathfinding"));
+    pathfinding->setObjectName(QStringLiteral("pathfindingMenu"));
+    pathfinding->addAction(add);
+    pathfinding->addAction(actions_.action(ActionId::PathfinderNewPath));
+  }
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditRename));
   // Hex-Rays offers a variable's type, and a parameter's pointer to a
@@ -3530,6 +3583,22 @@ void MainWindow::functionsMenu(const QPoint &position) {
   rowRemove->setEnabled(!session_.readOnly() && session_.keepsFunctionEdits());
   connect(rowRemove, &QAction::triggered, this,
           [this, entry = *entry] { session_.deleteFunction(entry); });
+  // The row's function joins the call path, or starts a new one.
+  if (session_.findsCallPaths()) {
+    menu.addSeparator();
+    for (const auto id :
+         {ActionId::PathfinderAddWaypoint, ActionId::PathfinderNewPath}) {
+      auto *command = actions_.action(id);
+      auto *row = menu.addAction(command->icon(), command->text());
+      connect(row, &QAction::triggered, this, [this, id, entry = *entry] {
+        PathfinderView *pathfinder = showPathfinder();
+        if (id == ActionId::PathfinderNewPath)
+          pathfinder->startPath(entry);
+        else
+          pathfinder->addWaypoint(entry);
+      });
+    }
+  }
   menu.exec(table->viewport()->mapToGlobal(position));
 }
 
@@ -4392,6 +4461,10 @@ QHash<QString, QByteArray> MainWindow::projectState() const {
                QJsonDocument(bookmarks_).toJson(QJsonDocument::Compact));
   state.insert(QString::fromLatin1(ProjectDatabase::DesktopState),
                KDDockWidgets::LayoutSaver().serializeLayout());
+  state.insert(
+      QString::fromLatin1(ProjectDatabase::PathfinderState),
+      QJsonDocument(pathfinder_ ? pathfinder_->state() : pathfinderState_)
+          .toJson(QJsonDocument::Compact));
   return state;
 }
 
@@ -4410,6 +4483,14 @@ void MainWindow::restoreProjectState() {
     for (const auto &row : QSettings().value(bookmarksKey()).toList())
       rows.append(QJsonObject::fromVariantMap(row.toMap()));
   showBookmarks(rows);
+  // The project's call path, for the Pathfinder its desktop shows or one
+  // opened later.
+  pathfinderState_ =
+      QJsonDocument::fromJson(
+          state.value(QString::fromLatin1(ProjectDatabase::PathfinderState)))
+          .object();
+  if (pathfinder_)
+    pathfinder_->restoreState(pathfinderState_);
   if (const auto desktop =
           state.value(QString::fromLatin1(ProjectDatabase::DesktopState));
       !desktop.isEmpty() &&

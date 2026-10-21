@@ -3124,6 +3124,96 @@ void seedAccessWidthFunctions(neverd_session_t Session) {
   neverd::sdk::SessionTestAccess::resetFunctions(State);
 }
 
+/// An ELF image of \p Architecture whose entry runs \p Code, with code to
+/// 0x200 bytes past the entry and __libc_start_main's slot at \p Slot, in a
+/// data segment that holds \p Data.
+neverd::BinaryImage startupImage(neverd::Arch Architecture, neverd::va_t Entry,
+                                 std::vector<uint8_t> Code, neverd::va_t Slot,
+                                 std::vector<uint8_t> Data = {}) {
+  neverd::BinaryImage Img;
+  Img.Arch = Architecture;
+  Img.Bits = Architecture == neverd::Arch::X86 ? neverd::Bitness::Bits32
+                                               : neverd::Bitness::Bits64;
+  Img.Format = neverd::BinaryFormat::ELF;
+  Img.Base = Img.Entry = Entry;
+  Code.resize(0x200, 0);
+  neverd::Segment Text;
+  Text.Name = ".text";
+  Text.VA = Entry;
+  Text.Size = Code.size();
+  Text.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Text.Data = std::move(Code);
+  Img.Segments.push_back(std::move(Text));
+  Data.resize(0x10, 0);
+  neverd::Segment Slots;
+  Slots.Name = ".got";
+  Slots.VA = Slot;
+  Slots.Size = Data.size();
+  Slots.Flags = neverd::SegmentFlags::Readable | neverd::SegmentFlags::Writable;
+  Slots.Data = std::move(Data);
+  Img.Segments.push_back(std::move(Slots));
+  Img.Imports.push_back({"libc.so.6", "__libc_start_main", 0, Slot});
+  return Img;
+}
+
+TEST(ProgramMain, IsWhatTheEntryPassesTheStartRoutine) {
+  using neverd::sdk::SessionTestAccess;
+  // x86-64: lea rdi, [rip + main]; call [rip + __libc_start_main slot].
+  EXPECT_EQ(SessionTestAccess::programMain(
+                startupImage(neverd::Arch::X64, 0x401000,
+                             {0x48, 0x8d, 0x3d, 0xf9, 0x00, 0x00, 0x00, 0xff,
+                              0x15, 0xf3, 0x0f, 0x00, 0x00, 0xf4},
+                             0x402000)),
+            0x401100u);
+  // x86-64 PIC: mov rdi, [rip + main's GOT slot], which holds main.
+  EXPECT_EQ(SessionTestAccess::programMain(startupImage(
+                neverd::Arch::X64, 0x401000,
+                {0x48, 0x8b, 0x3d, 0x01, 0x10, 0x00, 0x00, 0xff, 0x15, 0xf3,
+                 0x0f, 0x00, 0x00, 0xf4},
+                0x402000, {0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x11, 0x40})),
+            0x401100u);
+  // i386 passes main in the stack word the call finds on top: push main;
+  // call [slot].
+  EXPECT_EQ(SessionTestAccess::programMain(
+                startupImage(neverd::Arch::X86, 0x8048000,
+                             {0x68, 0x00, 0x81, 0x04, 0x08, 0xff, 0x15, 0x00,
+                              0x90, 0x04, 0x08, 0xf4},
+                             0x8049000)),
+            0x8048100u);
+  // AArch64: adrp x0, main; add x0, x0, :lo12:main; ldr x16, slot;
+  // blr x16.
+  EXPECT_EQ(SessionTestAccess::programMain(
+                startupImage(neverd::Arch::AArch64, 0x400000,
+                             {0x00, 0x00, 0x00, 0x90, 0x00, 0x00, 0x04, 0x91,
+                              0xd0, 0x7f, 0x00, 0x58, 0x00, 0x02, 0x3f, 0xd6},
+                             0x401000)),
+            0x400100u);
+}
+
+TEST(ProgramMain, NeedsTheStartRoutineToBeTheEntrysFirstCall) {
+  using neverd::sdk::SessionTestAccess;
+  // Another import called first ends the search.
+  auto Img = startupImage(neverd::Arch::X64, 0x401000,
+                          {0x48, 0x8d, 0x3d, 0xf9, 0x00, 0x00, 0x00, 0xff, 0x15,
+                           0xf3, 0x0f, 0x00, 0x00, 0xf4},
+                          0x402000);
+  Img.Imports.front().Name = "puts";
+  EXPECT_FALSE(SessionTestAccess::programMain(Img));
+  // Data passed as main is no main.
+  EXPECT_FALSE(SessionTestAccess::programMain(
+      startupImage(neverd::Arch::X64, 0x401000,
+                   {0x48, 0x8d, 0x3d, 0xf9, 0x0f, 0x00, 0x00, 0xff, 0x15, 0xf3,
+                    0x0f, 0x00, 0x00, 0xf4},
+                   0x402000)));
+  // Without the start-up code to read, a symbol of the image names main.
+  neverd::Symbol Main = neverd::Symbol::makeFunc(0x401180);
+  Main.Name = "main";
+  Main.Origin = neverd::NameOrigin::Stated;
+  Img.Symbols.push_back(Main);
+  EXPECT_EQ(SessionTestAccess::programMain(Img), 0x401180u);
+}
+
 TEST_F(SessionCAPITest, FunctionPagesReuseOneCompleteAddressOrder) {
   auto &State = *neverd::sdk::toSession(Session);
   State.Functions = {{50, 8, "last"},
@@ -10172,17 +10262,17 @@ TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
             0)
       << takeString(neverd_last_error(Session));
   const std::string One = takeString(neverd_decompile(Session, Entry));
-  EXPECT_NE(One.find("stop(arg0);"), std::string::npos) << One;
-  // Without a debug prototype, the recovered entry carrier may retain the
-  // full native register width. It must still be a parameter of main and
-  // reach the callee, rather than being lost with the no-return annotation.
-  EXPECT_TRUE(std::regex_search(One, std::regex("main\\(int(32|64)_t arg0\\)")))
+  // main is declared as the C runtime calls it; its argc still reaches the
+  // callee rather than being lost with the no-return annotation.
+  EXPECT_NE(One.find("main(int32_t argc, char** argv, char** envp)"),
+            std::string::npos)
       << One;
+  EXPECT_NE(One.find("stop(argc);"), std::string::npos) << One;
   EXPECT_EQ(One.find("return 7;"), std::string::npos) << One;
   neverd_session_restrict_function(Session, 0);
   ASSERT_EQ(neverd_session_analyze(Session), 1);
   const std::string Whole = takeString(neverd_decompile(Session, Entry));
-  EXPECT_NE(Whole.find("stop(arg0);"), std::string::npos) << Whole;
+  EXPECT_NE(Whole.find("stop(argc);"), std::string::npos) << Whole;
   EXPECT_EQ(Whole.find("return 7;"), std::string::npos) << Whole;
 }
 

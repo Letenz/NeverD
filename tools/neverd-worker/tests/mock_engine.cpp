@@ -19,6 +19,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -1044,6 +1045,253 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
             index < 600 ? Json(hexAddress(Base + 16 * index)) : Json(nullptr)},
            {"function_count", 600}}
           .dump());
+}
+namespace {
+/// The call graph of call_paths and call_tree: function_0 calls function_1
+/// and function_3, function_1 to function_3 each call the next, and
+/// function_3 calls function_2 back through data slot 1, at the
+/// instruction neverd_code_refs_json lists.
+struct MockCall {
+  int from, to;
+  const char *kind;
+  int site;
+};
+constexpr MockCall MockCalls[] = {{0, 1, "call", 1}, {0, 3, "call", 2},
+                                  {1, 2, "call", 1}, {2, 3, "call", 1},
+                                  {3, 4, "call", 1}, {3, 2, "indirect", 4}};
+
+std::string mockNodeAddress(int index) {
+  return hexAddress(Base + 16 * static_cast<std::uint64_t>(index));
+}
+
+/// The function a waypoint names by its entry, or -1 with the error set.
+int mockNode(neverd_session_t s, const Json &waypoint) {
+  const std::string text =
+      waypoint.is_string() ? waypoint.get<std::string>() : std::string();
+  std::uint64_t address = 0;
+  try {
+    address = parseAddress(text);
+  } catch (const std::exception &) {
+    session(s)->error = "no function or import named " + text;
+    return -1;
+  }
+  const auto &functions = session(s)->functions;
+  if (!std::binary_search(functions.begin(), functions.end(), address) ||
+      address < Base || (address - Base) % 16 || address - Base >= CodeSize) {
+    session(s)->error = "no function or import at " + text;
+    return -1;
+  }
+  return static_cast<int>((address - Base) / 16);
+}
+
+/// The simple paths from \p from to \p to of at most \p depth calls that
+/// pass no node of \p excluded, shortest first.
+std::vector<std::vector<int>> mockPaths(int from, int to, int depth,
+                                        const std::set<int> &excluded) {
+  std::vector<std::vector<int>> paths;
+  std::vector<int> path{from};
+  std::function<void(int)> visit = [&](int node) {
+    if (node == to && path.size() > 1) {
+      paths.push_back(path);
+      return;
+    }
+    if (static_cast<int>(path.size()) > depth)
+      return;
+    for (const MockCall &call : MockCalls)
+      if (call.from == node && !excluded.count(call.to) &&
+          std::find(path.begin(), path.end(), call.to) == path.end()) {
+        path.push_back(call.to);
+        visit(call.to);
+        path.pop_back();
+      }
+  };
+  visit(from);
+  std::stable_sort(
+      paths.begin(), paths.end(),
+      [](const auto &a, const auto &b) { return a.size() < b.size(); });
+  return paths;
+}
+} // namespace
+const char *neverd_call_paths_json(neverd_session_t s, const char *options) {
+  session(s)->error.clear();
+  const Json request = Json::parse(options ? options : "{}", nullptr, false);
+  const Json waypoints =
+      request.is_object() ? request.value("waypoints", Json()) : Json();
+  if (!waypoints.is_array() || waypoints.size() < 2 || waypoints.size() > 64) {
+    session(s)->error = "waypoints must list 2 to 64 functions or imports";
+    return nullptr;
+  }
+  const int depth = request.value("max_depth", 16);
+  if (depth < 1 || depth > 64) {
+    session(s)->error = "max_depth must be 1 to 64";
+    return nullptr;
+  }
+  const bool shortestOnly = request.value("shortest_only", false);
+  const std::size_t maxPaths = request.value("max_paths", 32);
+  std::vector<int> nodes;
+  for (const Json &waypoint : waypoints) {
+    const int node = mockNode(s, waypoint);
+    if (node < 0)
+      return nullptr;
+    nodes.push_back(node);
+  }
+  std::set<int> excluded;
+  for (const Json &node : request.value("exclude", Json::array())) {
+    const int index = mockNode(s, node);
+    if (index < 0)
+      return nullptr;
+    excluded.insert(index);
+  }
+  // Waypoints pass however they are excluded.
+  for (const int node : nodes)
+    excluded.erase(node);
+  Json segments = Json::array();
+  std::set<int> named(nodes.begin(), nodes.end());
+  int unconnected = 0;
+  for (std::size_t i = 0; i + 1 < nodes.size(); ++i) {
+    const int from = nodes[i], to = nodes[i + 1];
+    auto paths = mockPaths(from, to, depth, excluded);
+    bool reversed = false;
+    if (paths.empty()) {
+      paths = mockPaths(to, from, depth, excluded);
+      reversed = !paths.empty();
+    }
+    Json segment = {{"from", mockNodeAddress(from)},
+                    {"to", mockNodeAddress(to)}};
+    if (paths.empty()) {
+      ++unconnected;
+      segment.update({{"shortest", nullptr},
+                      {"node_count", 0},
+                      {"edge_count", 0},
+                      {"nodes", Json::array()},
+                      {"edges", Json::array()},
+                      {"paths", Json::array()},
+                      {"complete", true}});
+      segments.push_back(segment);
+      continue;
+    }
+    const std::size_t shortest = paths.front().size() - 1;
+    if (shortestOnly)
+      std::erase_if(
+          paths, [&](const auto &path) { return path.size() - 1 > shortest; });
+    const bool complete = paths.size() <= maxPaths;
+    if (!complete)
+      paths.resize(maxPaths);
+    // Nodes by their distance from the segment's start, then address.
+    std::map<int, std::size_t> distance;
+    std::set<std::pair<int, int>> steps;
+    for (const auto &path : paths)
+      for (std::size_t at = 0; at < path.size(); ++at) {
+        const auto [it, inserted] = distance.try_emplace(path[at], at);
+        if (!inserted)
+          it->second = std::min(it->second, at);
+        if (at)
+          steps.insert({path[at - 1], path[at]});
+      }
+    std::vector<int> order;
+    for (const auto &[node, far] : distance)
+      order.push_back(node);
+    std::stable_sort(order.begin(), order.end(),
+                     [&](int a, int b) { return distance[a] < distance[b]; });
+    Json listed = Json::array(), edges = Json::array(),
+         listedPaths = Json::array();
+    for (const int node : order) {
+      listed.push_back(mockNodeAddress(node));
+      named.insert(node);
+    }
+    for (const MockCall &call : MockCalls)
+      if (steps.count({call.from, call.to}))
+        edges.push_back(
+            {mockNodeAddress(call.from), mockNodeAddress(call.to), call.kind,
+             hexAddress(Base + 16 * std::uint64_t(call.from) + call.site)});
+    for (const auto &path : paths) {
+      Json listedPath = Json::array();
+      for (const int node : path)
+        listedPath.push_back(mockNodeAddress(node));
+      listedPaths.push_back(listedPath);
+    }
+    segment.update({{"shortest", shortest},
+                    {"node_count", listed.size()},
+                    {"edge_count", edges.size()},
+                    {"nodes", listed},
+                    {"edges", edges},
+                    {"paths", listedPaths},
+                    {"complete", complete}});
+    if (reversed)
+      segment["reversed"] = true;
+    segments.push_back(segment);
+  }
+  Json described = Json::array();
+  for (const int node : named) {
+    const auto address = Base + 16 * static_cast<std::uint64_t>(node);
+    const auto name = session(s)->names.find(address);
+    described.push_back({{"address", hexAddress(address)},
+                         {"name", name != session(s)->names.end()
+                                      ? name->second
+                                      : "function_" + std::to_string(node)},
+                         {"kind", "function"}});
+  }
+  return copy(Json{{"segments", segments},
+                   {"unconnected", unconnected},
+                   {"nodes", described},
+                   {"max_depth", depth},
+                   {"data_refs", request.value("data_refs", false)}}
+                  .dump());
+}
+const char *neverd_call_tree_json(neverd_session_t s, const char *options) {
+  session(s)->error.clear();
+  const Json request = Json::parse(options ? options : "{}", nullptr, false);
+  if (!request.is_object() || !request.contains("root")) {
+    session(s)->error = "root names no function or import";
+    return nullptr;
+  }
+  const int root = mockNode(s, request.at("root"));
+  if (root < 0)
+    return nullptr;
+  const bool callers = request.value("direction", "callees") == "callers";
+  const int depth = request.value("max_depth", 1);
+  if (depth < 1 || depth > 64) {
+    session(s)->error = "max_depth must be 1 to 64";
+    return nullptr;
+  }
+  // Breadth first from the root, as the engine lists the tree.
+  std::map<int, int> reached{{root, 0}};
+  std::vector<int> order{root};
+  Json edges = Json::array();
+  bool limited = false;
+  for (std::size_t at = 0; at < order.size(); ++at) {
+    const int node = order[at];
+    for (const MockCall &call : MockCalls) {
+      const int from = callers ? call.to : call.from;
+      const int next = callers ? call.from : call.to;
+      if (from != node)
+        continue;
+      if (reached.at(node) == depth) {
+        limited = true;
+        continue;
+      }
+      edges.push_back(
+          {mockNodeAddress(call.from), mockNodeAddress(call.to), call.kind,
+           hexAddress(Base + 16 * std::uint64_t(call.from) + call.site)});
+      if (reached.try_emplace(next, reached.at(node) + 1).second)
+        order.push_back(next);
+    }
+  }
+  Json nodes = Json::array();
+  for (const int node : order)
+    nodes.push_back({{"address", mockNodeAddress(node)},
+                     {"name", "function_" + std::to_string(node)},
+                     {"kind", "function"},
+                     {"depth", reached.at(node)}});
+  return copy(Json{
+      {"root", mockNodeAddress(root)},
+      {"direction", callers ? "callers" : "callees"},
+      {"max_depth", depth},
+      {"nodes", nodes},
+      {"edges", edges},
+      {"depth_limited", limited},
+      {"complete",
+       true}}.dump());
 }
 namespace {
 /// local-types.bin has three local types: _LIST_ENTRY, _DEVICE, which holds

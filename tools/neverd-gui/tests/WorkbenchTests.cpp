@@ -15,6 +15,7 @@
 #include "MainWindow.h"
 #include "MapPromptDialog.h"
 #include "OutputWindow.h"
+#include "PathfinderView.h"
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
@@ -6332,6 +6333,102 @@ private slots:
              QJsonArray{QStringLiteral("windows-kernel-x64")});
   }
 
+  void pathfinderListsTheCallPathsBetweenWaypoints() {
+    // IDA's Pathfinder: Shift+F9 starts a path at the function under the
+    // cursor and Ctrl+Shift+F9 adds the next.  Between the two the list
+    // shows the paths, shortest first, each step with the call that reaches
+    // it; an exclusion takes away the paths through a function, and the
+    // project keeps the path.
+    QTemporaryDir directory;
+    const QString input =
+        writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(input);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.findsCallPaths());
+    QCOMPARE(bench.action(ActionId::PathfinderNewPath)->shortcut(),
+             QKeySequence(QStringLiteral("Shift+F9")));
+    QCOMPARE(bench.action(ActionId::PathfinderAddWaypoint)->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+Shift+F9")));
+    auto *disassembly = bench.window->disassembly();
+    // An address inside a function stands for the function.
+    disassembly->navigate(Base + 4);
+    QTRY_COMPARE(disassembly->currentFunction(), std::optional<Address>(Base));
+    QTRY_VERIFY(bench.action(ActionId::PathfinderNewPath)->isEnabled());
+    bench.action(ActionId::PathfinderNewPath)->trigger();
+    auto *view = bench.window->findChild<PathfinderView *>();
+    QVERIFY(view);
+    QTRY_COMPARE_WITH_TIMEOUT(view->waypoints(), QVector<Address>{Base},
+                              OpenTimeoutMs);
+    auto *status =
+        view->findChild<QLabel *>(QStringLiteral("pathfinderStatus"));
+    QVERIFY(status);
+    QVERIFY(
+        status->text().startsWith(QStringLiteral("Add two waypoints or more")));
+    disassembly->navigate(Base + 0x42);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(Base + 0x40));
+    bench.action(ActionId::PathfinderAddWaypoint)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(view->waypoints(),
+                              (QVector<Address>{Base, Base + 0x40}),
+                              OpenTimeoutMs);
+
+    // function_0 reaches function_4 through function_3, and through
+    // function_1, function_2 and function_3.
+    QTreeWidget *list = view->waypointList();
+    QTRY_COMPARE_WITH_TIMEOUT(status->text(),
+                              QStringLiteral("Found 5 nodes on the paths."),
+                              OpenTimeoutMs);
+    QCOMPARE(list->topLevelItemCount(), 3);
+    QCOMPARE(list->topLevelItem(0)->text(0), QStringLiteral("function_0"));
+    QCOMPARE(list->topLevelItem(2)->text(0), QStringLiteral("function_4"));
+    QTreeWidgetItem *segment = list->topLevelItem(1);
+    QCOMPARE(segment->text(0), QStringLiteral("↓ 5 nodes (shortest: 2)"));
+    QCOMPARE(segment->childCount(), 2);
+    QCOMPARE(segment->child(0)->text(0),
+             QStringLiteral("Path 1: function_0 → function_3 → "
+                            "function_4"));
+    QCOMPARE(segment->child(1)->text(0),
+             QStringLiteral("Path 2: function_0 → function_1 → "
+                            "function_2 → function_3 → function_4"));
+    // A step names the instruction that reaches it, where activating it goes.
+    QTreeWidgetItem *step = segment->child(0)->child(0);
+    QCOMPARE(step->text(0), QStringLiteral("function_3"));
+    QCOMPARE(step->text(2),
+             QStringLiteral("call at %1").arg(displayAddress(Base + 2)));
+    emit list->itemActivated(step, 0);
+    QTRY_COMPARE(disassembly->currentAddress(),
+                 std::optional<Address>(Base + 2));
+    // Waypoints copy as their rows.
+    list->clearSelection();
+    list->topLevelItem(0)->setSelected(true);
+    QCOMPARE(view->selectedText(),
+             QStringLiteral("function_0\t%1").arg(displayAddress(Base)));
+
+    // Without function_3 neither waypoint reaches the other.
+    view->addExclusion(Base + 0x30);
+    QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("No path found."),
+                              OpenTimeoutMs);
+    QCOMPARE(view->exclusions(), QVector<Address>{Base + 0x30});
+    QCOMPARE(list->topLevelItem(1)->text(0), QStringLiteral("↓ No path"));
+
+    // The project keeps the waypoints and the exclusion with the user's
+    // place, and shows them when it opens again.
+    bench.session.saveDatabaseState();
+    bench.action(ActionId::FileClose)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(view->waypoints().isEmpty());
+    bench.window->openFile(input);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(view->waypoints(),
+                              (QVector<Address>{Base, Base + 0x40}),
+                              OpenTimeoutMs);
+    QCOMPARE(view->exclusions(), QVector<Address>{Base + 0x30});
+    QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("No path found."),
+                              OpenTimeoutMs);
+  }
+
   void viewsNarrowPastTheirRows() {
     // A status line or a row of buttons is cut at its view's edge.  Kept
     // whole, the disassembly's status line held its dock over 500 pixels
@@ -6347,16 +6444,22 @@ private slots:
     bench.action(ActionId::ViewPseudocode)->trigger();
     bench.action(ActionId::ViewExtensions)->trigger();
     bench.action(ActionId::ViewLocalTypes)->trigger();
+    bench.action(ActionId::ViewPathfinder)->trigger();
     auto *code = bench.codeView(QStringLiteral("source"));
     auto *extensions = bench.window->findChild<ExtensionsView *>();
     auto *types = bench.window->findChild<LocalTypesView *>();
-    QVERIFY(code && extensions && types && bench.functions());
+    auto *pathfinder = bench.window->findChild<PathfinderView *>();
+    QVERIFY(code && extensions && types && pathfinder && bench.functions());
     // Every button shows, as the fold button does for library code.
     for (auto *button : code->findChildren<QToolButton *>())
       button->show();
     const QString wide(400, QLatin1Char('x'));
-    const QList<QWidget *> views{bench.window->disassembly(), code,
-                                 bench.functions(), extensions, types};
+    const QList<QWidget *> views{bench.window->disassembly(),
+                                 code,
+                                 bench.functions(),
+                                 extensions,
+                                 types,
+                                 pathfinder};
     for (auto *view : views) {
       for (auto *label : view->findChildren<QLabel *>())
         label->setText(wide);

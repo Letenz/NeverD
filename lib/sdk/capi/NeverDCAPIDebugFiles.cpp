@@ -184,6 +184,7 @@ int neverd::sdk::reloadDebugInformation(Session &S, DebugInfoRequest Request,
   S.DbgRequest = std::move(Request);
   S.dropLocalTypes();
   S.DiscoveredFunctions.reset();
+  S.ProgramMainFound.reset();
   S.ImageStrings.reset();
   // Signature matches name addresses, which the image keeps; the routines
   // frames install as their personality are adopted into it again.

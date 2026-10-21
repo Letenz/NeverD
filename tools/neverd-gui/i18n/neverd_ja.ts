@@ -472,6 +472,30 @@
         <translation>現在の項目への参照を表示します</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>パスファインダー</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>関数間の呼び出しパスを探索します</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>新しいパスを作成(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>カーソル位置の関数から新しい呼び出しパスを開始します</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>パスに追加(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>カーソル位置の関数を呼び出しパスの最後の経由点として追加します</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>ブックマーク(&amp;B)</translation>
     </message>
@@ -1402,6 +1426,10 @@
     <message>
         <source>&amp;Graphs</source>
         <translation>グラフ(&amp;G)</translation>
+    </message>
+    <message>
+        <source>&amp;Pathfinding</source>
+        <translation>経路探索(&amp;P)</translation>
     </message>
     <message>
         <source>&amp;Toolbars</source>
@@ -2827,6 +2855,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>unknown</source>
         <translation>不明</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>パスファインダー</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>経路探索</translation>
     </message>
 </context>
 <context>
@@ -4818,6 +4854,229 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The type libraries could not be changed: %1</source>
         <translation>型ライブラリを変更できませんでした: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>経由点を追加</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>関数を除外</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>削除</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>経由点を上へ移動</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>経由点を下へ移動</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>経由点をすべて削除</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>参照</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>除外リスト</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>オプション</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>データ参照を含める</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>最短経路のみ</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>最大深さ:</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>関数を除外...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>%1 には関数もインポートもありません。</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1 はすでに経由点です。</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>1 つのパスに指定できる経由点は最大 %n 個です。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>経由点の追加</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>関数の除外</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>インポート</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>追加</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>除外</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>呼び出しパスを探索できませんでした: %1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>経路なし</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>どちらの経由点も %n 個以内の参照で相手に到達しません。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>直接参照、逆方向</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>直接参照</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>%n 個のノード (最短: %1)、逆方向</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>%n 個のノード (最短: %1)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>(一覧にない経路があります)</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>%1 でのジャンプ</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>%1 でのポインター経由の呼び出し</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>%1 でのアドレス取得</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>%1 での呼び出し</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>パス %1: %2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>除外リスト (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>プログラムを開くと、その関数間の呼び出しパスを探索できます。</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>このエンジンは呼び出しパスを探索できません。</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>2 つ以上の経由点を追加すると、その間の呼び出しパスを探索します。%1 でカーソル位置の関数を追加します。</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>呼び出しパスを探索しています...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>経路が見つかりませんでした。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>%n 個の区間のうち %1 個に経路がありません。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>パス上に %n 個のノードが見つかりました。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>すべての経路は表示されていません。最大深さを下げるか、関数を除外してください。</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>経由点を追加...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>経由点に昇格</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>パスから除外</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>上へ移動</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>下へ移動</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>コピー</translation>
     </message>
 </context>
 </TS>

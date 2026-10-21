@@ -283,19 +283,6 @@ InstructionFlowScratch::summarize(const BinaryImage &Img, Decoder &Dec,
   return Flow;
 }
 
-/// The pointer the loader stored in a relocated slot, as a code address when
-/// the slot points to code.
-std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
-  const size_t Size = Img.getPointerSize();
-  const uint8_t *Bytes = Size ? Img.readVA(Slot, Size) : nullptr;
-  if (!Bytes)
-    return std::nullopt;
-  const va_t Target = readPtr(Bytes, Size == 8);
-  return Img.Arch == Arch::ARM && Img.CodePtrRelocSlots.count(Slot)
-             ? clearThumbBit(Target)
-             : Target;
-}
-
 namespace {
 std::vector<const FuncInfo *>
 orderedFunctions(llvm::ArrayRef<FuncInfo> Functions) {

@@ -472,6 +472,30 @@
         <translation>Show references to the current item</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>Pathfinder</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>Find the call paths between functions</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>Create a new &amp;path</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>Start a new call path at the function under the cursor</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>&amp;Add to the path</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>Add the function under the cursor to the call path as its last waypoint</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>&amp;Bookmarks</translation>
     </message>
@@ -1402,6 +1426,10 @@
     <message>
         <source>&amp;Graphs</source>
         <translation>&amp;Graphs</translation>
+    </message>
+    <message>
+        <source>&amp;Pathfinding</source>
+        <translation>&amp;Pathfinding</translation>
     </message>
     <message>
         <source>&amp;Toolbars</source>
@@ -2833,6 +2861,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>unknown</source>
         <translation>unknown</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>Pathfinder</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>Pathfinding</translation>
     </message>
 </context>
 <context>
@@ -4846,6 +4882,235 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>The type libraries could not be changed: %1</source>
         <translation>The type libraries could not be changed: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>Add a waypoint</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>Exclude a function</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Remove</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>Move the waypoint up</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>Move the waypoint down</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>Clear the waypoints</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Function</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Address</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>Reference</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>Exclusions</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Options</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>Include data references</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>Shortest paths only</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>Maximum depth:</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>Exclude a function...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>No function or import is at %1.</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1 is a waypoint already.</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>A path takes at most %n waypoints.</numerusform>
+            <numerusform>A path takes at most %n waypoints.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>Add a Waypoint</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>Exclude a Function</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Functions</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>Imports</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Add</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>Exclude</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>The call paths could not be found: %1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>No path</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>Neither waypoint reaches the other in %n references.</numerusform>
+            <numerusform>Neither waypoint reaches the other in %n references.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>Direct reference, the other way round</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>Direct reference</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>%n nodes (shortest: %1), the other way round</numerusform>
+            <numerusform>%n nodes (shortest: %1), the other way round</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>%n nodes (shortest: %1)</numerusform>
+            <numerusform>%n nodes (shortest: %1)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>(more paths than listed)</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>jump at %1</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>call through a slot at %1</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>address taken at %1</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>call at %1</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>Path %1: %2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>Exclusions (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>Open a program to find the call paths between its functions.</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>This engine does not find call paths.</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>Finding call paths...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>No path found.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>%1 of %n segments have no path.</numerusform>
+            <numerusform>%1 of %n segments have no path.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>Found %n nodes on the paths.</numerusform>
+            <numerusform>Found %n nodes on the paths.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>Not every path is listed: lower the maximum depth or exclude functions.</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>Add a waypoint...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>Promote to waypoint</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>Exclude from paths</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>Move up</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>Move down</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copy</translation>
     </message>
 </context>
 </TS>

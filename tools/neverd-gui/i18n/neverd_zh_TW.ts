@@ -472,6 +472,30 @@
         <translation>顯示對目前項目的參照</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>路徑搜尋器</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>尋找函式之間的呼叫路徑</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>建立新路徑(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>從游標處的函式開始新的呼叫路徑</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>新增至路徑(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>將游標處的函式作為最後一個途經點加入呼叫路徑</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>書籤(&amp;B)</translation>
     </message>
@@ -1402,6 +1426,10 @@
     <message>
         <source>&amp;Graphs</source>
         <translation>圖形(&amp;G)</translation>
+    </message>
+    <message>
+        <source>&amp;Pathfinding</source>
+        <translation>路徑搜尋(&amp;P)</translation>
     </message>
     <message>
         <source>&amp;Toolbars</source>
@@ -2827,6 +2855,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>unknown</source>
         <translation>未知</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>路徑搜尋器</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>路徑搜尋</translation>
     </message>
 </context>
 <context>
@@ -4818,6 +4854,229 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The type libraries could not be changed: %1</source>
         <translation>無法變更型別庫：%1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>新增途經點</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>排除函式</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>移除</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>上移途經點</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>下移途經點</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>清除途經點</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>位址</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>參照</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>排除項目</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>選項</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>包含資料參照</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>僅最短路徑</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>最大深度：</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>排除函式...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>%1 處沒有函式或匯入項目。</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1 已經是途經點。</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>一條路徑最多包含 %n 個途經點。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>新增途經點</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>排除函式</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>匯入表</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>新增</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>排除</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>無法尋找呼叫路徑：%1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>無路徑</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>兩個途經點在 %n 個參照內都無法到達對方。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>直接參照，反向</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>直接參照</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>%n 個節點（最短：%1），反向</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>%n 個節點（最短：%1）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>（路徑多於所列）</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>%1 處的跳轉</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>%1 處經指標的呼叫</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>%1 處的取位址</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>%1 處的呼叫</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>路徑 %1：%2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>排除項目 (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>開啟程式以尋找其函式之間的呼叫路徑。</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>此引擎不支援尋找呼叫路徑。</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>新增兩個或更多途經點以尋找它們之間的呼叫路徑：%1 會加入游標處的函式。</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>正在尋找呼叫路徑...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>找不到路徑。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>%n 段中有 %1 段沒有路徑。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>在路徑上找到 %n 個節點。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>未列出所有路徑：請降低最大深度或排除函式。</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>新增途經點...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>提升為途經點</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>從路徑中排除</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>上移</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>下移</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>複製</translation>
     </message>
 </context>
 </TS>

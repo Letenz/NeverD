@@ -80,6 +80,25 @@ private slots:
     const auto response = readFrame(socket);
     QCOMPARE(response.value("request_id").toString(), "caller-id");
     QCOMPARE(response.value("revision").toString(), "71");
+    // Every read an MCP tool makes reaches the session, as through a server
+    // with its own worker.
+    for (const char *operation : {"resolve", "imports", "string_references",
+                                  "call_paths", "call_tree", "search"}) {
+      const QString name = QString::fromLatin1(operation);
+      sendFrame(socket, {{"protocol_major", 1},
+                         {"request_id", name},
+                         {"operation", name},
+                         {"payload", QJsonObject{}}});
+      QTRY_VERIFY2(query.size() > 0 && query.last()[1].toString() == name,
+                   operation);
+      broker.reply(query.last()[0].toString(), {{"type", "response"},
+                                                {"request_id", "internal-id"},
+                                                {"status", "ok"},
+                                                {"revision", "71"},
+                                                {"payload", QJsonObject{}}});
+      QTRY_VERIFY(socket.bytesAvailable() > 4);
+      QCOMPARE(readFrame(socket).value("request_id").toString(), name);
+    }
     sendFrame(socket, {{"protocol_major", 1},
                        {"request_id", "selection"},
                        {"operation", "selection"},

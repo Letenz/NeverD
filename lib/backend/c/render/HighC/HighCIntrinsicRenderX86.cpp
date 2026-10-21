@@ -388,11 +388,6 @@ unsigned stringElementBytes(Intrinsic Id) {
   }
 }
 
-/// A byte count or byte value as the code prints a number.
-std::string byteNumber(uint64_t Value) {
-  return Value < 10 ? std::to_string(Value) : "0x" + llvm::utohexstr(Value);
-}
-
 /// A forward MOVS or STOS of flat memory as the C library's copy or fill of
 /// the same bytes, or empty where C's routine would not write exactly what
 /// the instruction writes.  STOS stores one value repeatedly, which memset
@@ -401,6 +396,8 @@ std::string byteNumber(uint64_t Value) {
 /// element at a time, which memcpy does when the ranges are \p Disjoint: an
 /// overlapping copy repeats what it already wrote.  The registers the
 /// instruction leaves are separate IR values, which nothing here assigns.
+/// LLVM-C prints the instructions its lifted IR holds alike
+/// (LLVMCWriter::writeFlatStringRoutine).
 std::string renderFlatStringRoutine(
     const HighExpr &Call,
     const std::function<std::string(const HighExpr &)> &ExprFn,
@@ -411,30 +408,24 @@ std::string renderFlatStringRoutine(
     return {};
   const HighExpr &Count = *Call.Operands[IsMovs ? 2 : 1];
   std::optional<uint64_t> Bytes;
-  if (Count.Kind == ExprKind::Const) {
-    // Past 2^63 bytes the instruction faults first.
-    if (Count.ConstVal > (uint64_t{1} << 63) / Element)
-      return {};
-    Bytes = Count.ConstVal * Element;
-  }
-  const auto Pointer = [&](const HighExpr &Address) {
-    return "(void *)" + c_memory::integerOperand(ExprFn(Address));
-  };
+  if (Count.Kind == ExprKind::Const &&
+      !(Bytes = c_memory::elementBytes(Count.ConstVal, Element)))
+    return {};
   if (IsMovs) {
     if (!Bytes || !Disjoint ||
         !Disjoint(*Call.Operands[0], *Call.Operands[1], *Bytes))
       return {};
-    return "__builtin_memcpy(" + Pointer(*Call.Operands[1]) + ", " +
-           Pointer(*Call.Operands[0]) + ", " + byteNumber(*Bytes) + ");\n";
+    return c_memory::copyCall(ExprFn(*Call.Operands[1]),
+                              ExprFn(*Call.Operands[0]),
+                              c_memory::byteNumber(*Bytes));
   }
   const HighExpr &Value = *Call.Operands[2];
   std::string Fill;
   if (Value.Kind == ExprKind::Const) {
-    const uint64_t Byte = Value.ConstVal & 0xFF;
-    for (unsigned I = 1; I < Element; ++I)
-      if (((Value.ConstVal >> (8 * I)) & 0xFF) != Byte)
-        return {};
-    Fill = byteNumber(Byte);
+    const auto Byte = c_memory::uniformByte(Value.ConstVal, Element);
+    if (!Byte)
+      return {};
+    Fill = c_memory::byteNumber(*Byte);
   } else if (Element == 1) {
     Fill = "(uint8_t)" + c_memory::castOperand(ExprFn(Value));
   } else {
@@ -442,13 +433,12 @@ std::string renderFlatStringRoutine(
   }
   std::string Size;
   if (Bytes)
-    Size = byteNumber(*Bytes);
+    Size = c_memory::byteNumber(*Bytes);
   else if (Element == 1)
     Size = "(uintptr_t)" + c_memory::castOperand(ExprFn(Count));
   else
     return {};
-  return "__builtin_memset(" + Pointer(*Call.Operands[0]) + ", " + Fill + ", " +
-         Size + ");\n";
+  return c_memory::fillCall(ExprFn(*Call.Operands[0]), Fill, Size);
 }
 
 bool isLods(Intrinsic Id) {

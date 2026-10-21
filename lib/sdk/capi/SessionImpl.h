@@ -424,6 +424,11 @@ struct Session {
     std::unordered_map<uint64_t, std::string> Signatures;
   };
   std::optional<FunctionNameInputs> NamesDerivedFrom;
+  /// The program's main (findProgramMain), found once for the image: the
+  /// list names it main where nothing else names it, and the decompiler
+  /// types it as the C runtime calls it.
+  std::optional<va_t> programMain();
+  std::optional<std::optional<va_t>> ProgramMainFound;
   /// Where functionIndexNamed() finds a name, read from the list as it was
   /// at Revision.
   struct FunctionNameIndex {

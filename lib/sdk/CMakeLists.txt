@@ -21,6 +21,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPISwift.cpp
     capi/NeverDCAPIDisasm.cpp
     capi/InstructionFlow.cpp
+    capi/ProgramMain.cpp
     capi/ImageStrings.cpp
     capi/LLVMFunctionView.cpp
     capi/NeverDCAPICallPaths.cpp

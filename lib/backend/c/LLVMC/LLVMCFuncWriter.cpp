@@ -70,6 +70,26 @@ namespace {
 /// Holds the frame record's place until the body has named its members.
 constexpr llvm::StringLiteral kFrameRecordMarker = "/*@neverd-frame-record@*/";
 
+/// Whether \p Signature declares main as a hosted C program's runtime calls
+/// it: `int main(int argc, char **argv)`, and envp after argv where it
+/// passes that too (libc::kProgramMainDeclaration).
+bool declaresProgramMain(const FunctionSym &Signature) {
+  const auto Int = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Int && Type->Size == 4;
+  };
+  const auto Strings = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+           Type->Pointee->Kind == NdTypeKind::Ptr && Type->Pointee->Pointee &&
+           Type->Pointee->Pointee->Kind == NdTypeKind::Int &&
+           Type->Pointee->Pointee->Size == 1;
+  };
+  const auto &Params = Signature.Params;
+  return Signature.Name == "main" && Int(Signature.ReturnType) &&
+         (Params.size() == 2 || Params.size() == 3) && Int(Params[0].second) &&
+         Strings(Params[1].second) &&
+         (Params.size() == 2 || Strings(Params[2].second));
+}
+
 std::string allocaAlignment(const llvm::AllocaInst &Alloca) {
   return llvmc::storageAlignment(Alloca.getAllocatedType(),
                                  Alloca.getModule()->getDataLayout(),
@@ -9090,6 +9110,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     return recordPointerSpelling(*Record);
   };
 
+  // The program's main declares what the C runtime passes it and takes back
+  // (libc::kProgramMainDeclaration), as HighC declares it, whatever widths
+  // the code holds them in: the code's integer return converts to int, and
+  // an argument held as an integer converts where the code uses it.
+  const bool ProgramMain = !Opts.PreserveLLVMFunctionTypes && DebugFn &&
+                           SretParamIdx < 0 && declaresProgramMain(*DebugFn);
   auto BindParam = [&](llvm::Argument &Arg, unsigned) { return getName(&Arg); };
   auto ParamTypeStr = [&](llvm::Argument &Arg, unsigned ParamIdx) {
     if (Opts.PreserveLLVMFunctionTypes)
@@ -9156,6 +9182,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         debugParamIndexOf(ParamIdx, SretParamIdx);
     const bool Sret =
         SretParamIdx >= 0 && static_cast<int>(ParamIdx) == SretParamIdx;
+    if (ProgramMain && DebugIdx) {
+      const TypeRef &Ty = DebugFn->Params[*DebugIdx].second;
+      if (Ty->Kind == NdTypeKind::Ptr && Arg.getType()->isIntegerTy())
+        PointerParams.insert(&Arg);
+      return declarationToC(Ty, BindParam(Arg, ParamIdx));
+    }
     if (!Sret && DebugIdx) {
       const TypeRef &Ty = DebugFn->Params[*DebugIdx].second;
       if (const std::string Name = Alias(Ty, Arg.getType()); !Name.empty()) {
@@ -9194,17 +9226,34 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
           !PointerDebugType(DebugFn->ReturnType, FuncTy->getReturnType()))
         RetStr = std::move(Name);
     }
+    if (ProgramMain && !InferredVoid)
+      RetStr = typeToC(DebugFn->ReturnType);
     std::string Signature;
     llvm::raw_string_ostream SignatureOS(Signature);
     SignatureOS << RetStr << " " << FName << "(";
 
     unsigned ParamIdx = 0;
+    std::set<size_t> Declared;
     for (auto &Arg : Fn.args()) {
       if (ParamIdx > 0)
         SignatureOS << ", ";
       SignatureOS << ParamDecl(Arg, ParamIdx);
+      if (const auto DebugIdx = debugParamIndexOf(ParamIdx, SretParamIdx))
+        Declared.insert(*DebugIdx);
       ++ParamIdx;
     }
+    // The parameters main takes that its code never reads, as envp, where
+    // the unit calls it nowhere: a whole module's start-up code passes what
+    // the code reads.
+    if (ProgramMain && OnlyFunction == &Fn && !Fn.isVarArg())
+      for (size_t Index = 0; Index < DebugFn->Params.size(); ++Index)
+        if (!Declared.count(Index) && Index >= ParamIdx) {
+          if (ParamIdx++ > 0)
+            SignatureOS << ", ";
+          const auto &[Name, Ty] = DebugFn->Params[Index];
+          SignatureOS << declarationToC(
+              Ty, Name.empty() ? "arg" + std::to_string(Index) : Name);
+        }
     if (Fn.isVarArg() && ParamIdx != 0) {
       if (ParamIdx > 0)
         SignatureOS << ", ";

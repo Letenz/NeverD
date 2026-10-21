@@ -7,6 +7,7 @@
 #include "SessionTestAccess.h"
 
 #include "InstructionFlow.h"
+#include "ProgramMain.h"
 #include "SessionImpl.h"
 
 namespace neverd::sdk {
@@ -46,6 +47,10 @@ const DataAccessWidths *SessionTestAccess::dataAccessWidths(Session &State) {
 std::optional<DataAccessWidths>
 SessionTestAccess::collectDataAccessWidths(Session &State) {
   return sdk::collectDataAccessWidths(State.Img, State.Functions);
+}
+std::optional<neverd_va_t>
+SessionTestAccess::programMain(const BinaryImage &Img) {
+  return findProgramMain(Img);
 }
 FunctionPage SessionTestAccess::functionPage(const Session &State,
                                              neverd_va_t First, int Limit) {

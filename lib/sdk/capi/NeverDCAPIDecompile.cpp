@@ -1991,7 +1991,7 @@ localTypesOf(Session *S, const char *InputPath, PipelineRunner &R,
       R.Dbg ? *R.Dbg : NoDebugInformation,
       std::make_shared<types::TypeLibrary>(*Library), std::move(Declarations),
       &R.Img, std::move(Headers), S->SigDB.buildNameMap(),
-      S->LocalTypeEntryType);
+      S->LocalTypeEntryType, S->programMain());
 }
 
 static const char *decompileAllImpl(neverd_session_t Sess,

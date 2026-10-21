@@ -22,6 +22,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/sdk/Limits.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -140,7 +141,17 @@ private:
 
 /// The pointer the loader stored in a relocated slot, as a code address when
 /// the slot points to code.
-std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot);
+inline std::optional<va_t> relocatedPointer(const BinaryImage &Img,
+                                            va_t Slot) {
+  const size_t Size = Img.getPointerSize();
+  const uint8_t *Bytes = Size ? Img.readVA(Slot, Size) : nullptr;
+  if (!Bytes)
+    return std::nullopt;
+  const va_t Target = readPtr(Bytes, Size == 8);
+  return Img.Arch == Arch::ARM && Img.CodePtrRelocSlots.count(Slot)
+             ? clearThumbBit(Target)
+             : Target;
+}
 
 /// The functions one page of a reference query covers: from \p FirstEntry
 /// in entry order, at most \p MaxFunctions (1 to MaxFunctionsPerPage), and

@@ -39,6 +39,7 @@ void Session::refreshFunctionNames() {
   // The list is in address order, as the map is, so each name lands at or
   // just before where the last one did instead of being searched for.
   auto Next = OriginalNames.begin();
+  const std::optional<va_t> Main = programMain();
   for (auto &F : Functions) {
     if (F.LinkageName.empty()) {
       F.LinkageName = F.Name;
@@ -50,6 +51,10 @@ void Session::refreshFunctionNames() {
       if (auto I = Names.find(F.Entry);
           I != Names.end() && !I->second.empty()) {
         F.Name = I->second;
+        F.Origin = NameOrigin::Analysis;
+      } else if (F.Entry == Main && isSynthesizedFuncName(F.Name)) {
+        // The function the start routine runs as main, as C names it.
+        F.Name = "main";
         F.Origin = NameOrigin::Analysis;
       }
     }

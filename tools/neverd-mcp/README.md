@@ -53,9 +53,9 @@ with an ellipsis. Wherever a tool takes an `address`, a name the workbench
 shows, an import's name or a label also works; it is resolved first.
 `read_decompilation` starts at the function's definition and reports how many
 `prelude_lines` (includes, types and declarations that make the file compile)
-it left out; `prelude: true` returns them too. C reads in a lossless shorter
-spelling (`Reading.cpp`): fixed-width types as `i64`/`u32`/`uptr`, the stack
-frame on one line with its members named without `stack_storage.` and each
+it left out; `prelude: true` returns them too. C and LLVM-C read in a lossless
+shorter spelling (`Reading.cpp`): fixed-width types as `i64`/`u32`/`uptr`, the
+stack frame on one line with its members named without `stack_storage.` and each
 slot `var_mN` as `sN`, one
 declaration per type run, temporaries `tB_I` numbered `tN` in the order the
 whole function first names them, so every page of it reads them alike, and
@@ -101,7 +101,10 @@ existing worker, and closes connections when sharing is disabled or the GUI
 exits. It does not reopen the project or fall back to a new worker. Credentials
 are temporary, owner-only files and are removed when sharing ends. Keep that
 file private. Opening another project or replacing the worker session revokes
-sharing; enable it again explicitly for the new session. GUI attachment additionally exposes `current_selection`,
+sharing; enable it again explicitly for the new session. Every project tool
+answers through the workbench's worker as through a server's own: the broker
+passes the reads those tools make and refuses anything else, edits included.
+GUI attachment additionally exposes `current_selection`,
 `navigate_gui`, `highlight_gui` and `neverd://gui/selection`. Navigation is an
 explicit tool call; resources never change selection. Highlighting selects the
 address in the current workbench, while navigation also updates function views.

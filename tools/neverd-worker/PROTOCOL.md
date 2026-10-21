@@ -836,13 +836,15 @@ The `listing`, `functions`, `names` and `resolve` operations share one naming
 layer for the workbench. Functions the engine leaves generic take classic
 names: executable import veneers (ELF PLT entries and `.plt.got` stubs that
 jump through an import slot) are thunks named after their import (`_` +
-import on ELF), the image entry is `start`, a function at the start of `.init`
-or `.fini` is `_init_proc` or `_term_proc`, and the first argument the start
-routine passes to `__libc_start_main` is `main`. Engine, symbol and user names
-always take precedence, and `resolve` accepts the workbench names. Import data
-slots, including ELF `GLOB_DAT` entries from `neverd_import_slots_json`, are
-named `<import>_ptr` on ELF. Code text from the engine (C and IR) keeps the
-engine's spellings.
+import on ELF), the image entry is `start`, and a function at the start of
+`.init` or `.fini` is `_init_proc` or `_term_proc`. The engine names `main`
+itself: the function the image's entry passes `__libc_start_main` (or another
+start routine of `libc/LibCStartup.h`) as main, which its C also declares as
+the C runtime calls it, `int main(int argc, char **argv, char **envp)`.
+Engine, symbol and user names always take precedence, and `resolve` accepts
+the workbench names. Import data slots, including ELF `GLOB_DAT` entries
+from `neverd_import_slots_json`, are named `<import>_ptr` on ELF. Code text
+from the engine (C and IR) keeps the engine's spellings.
 
 Heartbeats carry
 `background:{state,done,total,references,generation,functions,discovery_complete}`

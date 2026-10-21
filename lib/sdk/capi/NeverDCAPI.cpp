@@ -386,6 +386,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.TypeLibraryChoice = {};
   S.SigDB.clear();
   S.DiscoveredFunctions.reset();
+  S.ProgramMainFound.reset();
   S.ImageStrings.reset();
   S.resetFunctionsFromImage();
   // The previous image's discovery, if it has finished, is not this one's.

@@ -10,6 +10,10 @@
 
 #include <optional>
 
+namespace neverd {
+struct BinaryImage;
+}
+
 namespace neverd::sdk {
 struct Session;
 struct FunctionPage;
@@ -31,5 +35,8 @@ struct SessionTestAccess {
   collectDataAccessWidths(Session &State);
   NEVERD_API static FunctionPage functionPage(const Session &State,
                                               neverd_va_t First, int Limit);
+  /// findProgramMain of \p Img.
+  NEVERD_API static std::optional<neverd_va_t>
+  programMain(const BinaryImage &Img);
 };
 } // namespace neverd::sdk

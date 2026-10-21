@@ -4668,6 +4668,9 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   }
 
   if (auto Stos = classifyX86RepStos(Opts.TheArch, Call)) {
+    if (Stos->Dir == X86RepStos::Forward &&
+        writeFlatStringRoutine(Call, false, Stos->ElementBytes, Indent))
+      return true;
     // Unsigned address arithmetic also models the final (possibly wrapping)
     // register update without creating an out-of-bounds C pointer. Byte stores
     // preserve little-endian values and avoid alignment/aliasing assumptions.
@@ -4719,6 +4722,9 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     llvm::report_fatal_error("unsupported REP STOS inline assembly contract");
 
   if (auto Movs = classifyX86RepMovs(Opts.TheArch, Call)) {
+    if (Movs->Dir == X86RepMovs::Forward &&
+        writeFlatStringRoutine(Call, true, Movs->ElementBytes, Indent))
+      return true;
     // The processor reads each element whole before it writes it, so an
     // overlapping copy repeats what it already wrote, as `rep movsb` does
     // forward over a destination one byte past its source.
@@ -4794,6 +4800,92 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   OS << Render.Code;
   if (Render.SetIntrinsics)
     HasCIntrinsics = true;
+  return true;
+}
+
+namespace {
+/// The object an integer address points into and its byte offset there: a
+/// pointer converted to an integer, or a number (no object), plus
+/// constants.
+std::optional<std::pair<const llvm::Value *, int64_t>>
+addressParts(const llvm::Value *Address, const llvm::DataLayout &Layout,
+             unsigned Depth = 0) {
+  if (Depth > 16)
+    return std::nullopt;
+  if (const auto *Number = llvm::dyn_cast<llvm::ConstantInt>(Address))
+    return std::pair{static_cast<const llvm::Value *>(nullptr),
+                     static_cast<int64_t>(Number->getZExtValue())};
+  if (const auto *Integer = llvm::dyn_cast<llvm::PtrToIntOperator>(Address)) {
+    const llvm::Value *Pointer = Integer->getPointerOperand();
+    llvm::APInt Offset(Layout.getIndexTypeSizeInBits(Pointer->getType()), 0);
+    const llvm::Value *Base = Pointer->stripAndAccumulateConstantOffsets(
+        Layout, Offset, /*AllowNonInbounds=*/true);
+    return std::pair{Base, Offset.getSExtValue()};
+  }
+  if (const auto *Sum = llvm::dyn_cast<llvm::BinaryOperator>(Address);
+      Sum && (Sum->getOpcode() == llvm::Instruction::Add ||
+              Sum->getOpcode() == llvm::Instruction::Sub))
+    for (unsigned I = 0; I < 2; ++I)
+      if (const auto *Step =
+              llvm::dyn_cast<llvm::ConstantInt>(Sum->getOperand(1 - I));
+          Step && (I == 0 || Sum->getOpcode() == llvm::Instruction::Add))
+        if (auto Parts = addressParts(Sum->getOperand(I), Layout, Depth + 1)) {
+          const int64_t Delta = Step->getSExtValue();
+          Parts->second +=
+              Sum->getOpcode() == llvm::Instruction::Add ? Delta : -Delta;
+          return Parts;
+        }
+  return std::nullopt;
+}
+} // namespace
+
+bool LLVMCWriter::writeFlatStringRoutine(const llvm::CallInst &Call, bool Movs,
+                                         unsigned Element, int Indent) {
+  const llvm::Value *Count = Call.getArgOperand(Movs ? 2 : 1);
+  std::optional<uint64_t> Bytes;
+  if (const auto *Number = llvm::dyn_cast<llvm::ConstantInt>(Count))
+    if (!(Bytes = c_memory::elementBytes(Number->getZExtValue(), Element)))
+      return false;
+  std::string Text;
+  if (Movs) {
+    // Two addresses into one object, or two numbers, that far apart.
+    const llvm::DataLayout &Layout = Call.getModule()->getDataLayout();
+    const auto Source = addressParts(Call.getArgOperand(0), Layout);
+    const auto Destination = addressParts(Call.getArgOperand(1), Layout);
+    if (!Bytes || !Source || !Destination ||
+        Source->first != Destination->first)
+      return false;
+    const auto Low = std::min(Source->second, Destination->second);
+    const auto High = std::max(Source->second, Destination->second);
+    if (static_cast<uint64_t>(High) - static_cast<uint64_t>(Low) < *Bytes)
+      return false;
+    Text = c_memory::copyCall(valueStr(Call.getArgOperand(1)),
+                              valueStr(Call.getArgOperand(0)),
+                              c_memory::byteNumber(*Bytes));
+  } else {
+    const llvm::Value *Value = Call.getArgOperand(2);
+    std::string Fill;
+    if (const auto *Number = llvm::dyn_cast<llvm::ConstantInt>(Value)) {
+      const auto Byte = c_memory::uniformByte(Number->getZExtValue(), Element);
+      if (!Byte)
+        return false;
+      Fill = c_memory::byteNumber(*Byte);
+    } else if (Element == 1) {
+      Fill = "(uint8_t)" + c_memory::castOperand(valueStr(Value));
+    } else {
+      return false;
+    }
+    std::string Size;
+    if (Bytes)
+      Size = c_memory::byteNumber(*Bytes);
+    else if (Element == 1)
+      Size = "(uintptr_t)" + c_memory::castOperand(valueStr(Count));
+    else
+      return false;
+    Text = c_memory::fillCall(valueStr(Call.getArgOperand(0)), Fill, Size);
+  }
+  emitIndent(Indent);
+  OS << Text;
   return true;
 }
 

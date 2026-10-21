@@ -684,6 +684,12 @@ public:
   bool writeIntrinsicCall(llvm::CallBase &Call, int Indent);
   bool writeInlineAsmCall(llvm::CallInst &Call, const std::string &Name,
                           int Indent);
+  /// A forward REP STOS or MOVS of \p Element-byte elements (\p Movs) as
+  /// the C library's fill or copy, where that writes exactly its bytes, as
+  /// HighC prints it (c_memory::fillCall, c_memory::copyCall).  False, with
+  /// nothing written, otherwise.
+  bool writeFlatStringRoutine(const llvm::CallInst &Call, bool Movs,
+                              unsigned Element, int Indent);
   bool callDoesNotReturn(const llvm::CallBase &Call) const;
   void writeGEP(llvm::GetElementPtrInst &GEP, const std::string &Name,
                 int Indent);

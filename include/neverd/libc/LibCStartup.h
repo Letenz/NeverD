@@ -4,8 +4,19 @@
 #include "neverd/libc/LibCNames.h"
 
 #include <array>
+#include <optional>
+#include <string_view>
 
 namespace neverd::libc {
+
+/// The function the start routines below call as a program's main: the C
+/// standard's hosted main (C11 5.1.2.2.1), with the environment that POSIX
+/// systems pass after argv.  kProgramMainDeclaration names its parameters
+/// as the standard does.
+inline constexpr std::string_view kProgramMainPointer =
+    "int (*)(int, char **, char **)";
+inline constexpr std::string_view kProgramMainDeclaration =
+    "int main(int argc, char **argv, char **envp)";
 
 /// The C library routines a program's start files and compiler-generated code
 /// call and no standard header declares.
@@ -22,19 +33,17 @@ namespace neverd::libc {
 /// routines, and the stack protector fails through __stack_chk_fail.
 inline constexpr auto kStartupPrototypes = std::to_array<LibCPrototype>({
     makeLibCPrototype("__libc_start_main", "int",
-                      {"int (*)(int, char **, char **)", "int", "char **",
-                       "void (*)(void)", "void (*)(void)", "void (*)(void)",
-                       "void *"}),
+                      {kProgramMainPointer, "int", "char **", "void (*)(void)",
+                       "void (*)(void)", "void (*)(void)", "void *"}),
     makeLibCPrototype("__uClibc_main", "void",
-                      {"int (*)(int, char **, char **)", "int", "char **",
-                       "void (*)(void)", "void (*)(void)", "void (*)(void)",
-                       "void *"}),
-    makeLibCPrototype("__libc_init", "void",
-                      {"void *", "void (*)(void)",
-                       "int (*)(int, char **, char **)", "const void *"}),
-    makeLibCPrototype("__libc_start1", "void",
-                      {"int", "char **", "char **", "void (*)(void)",
-                       "int (*)(int, char **, char **)"}),
+                      {kProgramMainPointer, "int", "char **", "void (*)(void)",
+                       "void (*)(void)", "void (*)(void)", "void *"}),
+    makeLibCPrototype(
+        "__libc_init", "void",
+        {"void *", "void (*)(void)", kProgramMainPointer, "const void *"}),
+    makeLibCPrototype(
+        "__libc_start1", "void",
+        {"int", "char **", "char **", "void (*)(void)", kProgramMainPointer}),
     makeLibCPrototype("__cxa_atexit", "int",
                       {"void (*)(void *)", "void *", "void *"}),
     makeLibCPrototype("__cxa_thread_atexit_impl", "int",
@@ -56,6 +65,18 @@ inline constexpr auto kStartupPrototypes = std::to_array<LibCPrototype>({
     makeLibCPrototype("__ctype_tolower_loc", "const int32_t **", {}),
     makeLibCPrototype("__ctype_toupper_loc", "const int32_t **", {}),
 });
+
+/// The parameter of the start routine \p Name that takes the program's main,
+/// or none for another routine.
+inline std::optional<unsigned>
+startRoutineMainParameter(std::string_view Name) {
+  for (const LibCPrototype &Prototype : kStartupPrototypes)
+    if (Prototype.Name == Name)
+      for (unsigned Index = 0; Index < Prototype.ParamCount; ++Index)
+        if (Prototype.Params[Index] == kProgramMainPointer)
+          return Index;
+  return std::nullopt;
+}
 
 } // namespace neverd::libc
 

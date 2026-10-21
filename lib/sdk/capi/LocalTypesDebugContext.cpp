@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/libc/LibCStartup.h"
 #include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sdk/Limits.h"
@@ -448,11 +449,12 @@ LocalTypesDebugContext::LocalTypesDebugContext(
     const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types,
     std::map<va_t, std::string> Declarations, const BinaryImage *Image,
     std::vector<types::HeaderLibrary> Headers,
-    std::unordered_map<uint64_t, std::string> Recognized, std::string EntryType)
+    std::unordered_map<uint64_t, std::string> Recognized, std::string EntryType,
+    std::optional<va_t> ProgramMain)
     : Inner(Inner), Types(std::move(Types)),
       Declarations(std::move(Declarations)), Image(Image),
       Headers(std::move(Headers)), Recognized(std::move(Recognized)),
-      EntryType(std::move(EntryType)) {}
+      EntryType(std::move(EntryType)), ProgramMain(ProgramMain) {}
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
@@ -780,6 +782,14 @@ std::optional<FunctionSym> LocalTypesDebugContext::entrySignature() const {
   return Signature;
 }
 
+std::optional<FunctionSym> LocalTypesDebugContext::mainSignature() const {
+  const types::FunctionDeclaration Read = types::parseFunctionDeclaration(
+      std::string(libc::kProgramMainDeclaration), *Types);
+  if (!Read.ok())
+    return std::nullopt;
+  return signatureOf(*Types, *Read.Function, Read.Name);
+}
+
 void LocalTypesDebugContext::readStatedNames() const {
   if (!StatedNames)
     StatedNames = Image ? statedFunctionNamesByAddress(*Image)
@@ -875,6 +885,11 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   // application's (ImageHandle, SystemTable).
   if (!Known && Image && Addr == Image->Entry && !EntryType.empty())
     Known = entrySignature();
+  // The program's main, as its C runtime calls it, under that name where
+  // nothing else names it.
+  const bool Main = !Known && ProgramMain && Addr == *ProgramMain;
+  if (Main)
+    Known = mainSignature();
   // A call through an import's slot or stub reaches the routine another
   // module exports under the import's name, which the call names it by.
   if (!Known && !AtEntry)
@@ -898,6 +913,8 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
   Typed.PrototypeFromCLibrary = Known->PrototypeFromCLibrary;
   Typed.NoReturn = Known->NoReturn;
+  if (Main && (Typed.Name.empty() || isSynthesizedFuncName(Typed.Name)))
+    Typed.Name = "main";
   return Typed;
 }
 
