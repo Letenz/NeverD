@@ -860,6 +860,10 @@ MedLLVMEmitter::affineFrameKey(const MedVar &V,
       const MedOp &Op = *R.Op;
       if (Op.Output.Size < PointerSize || Op.NumInputs < 1)
         return NotAffine;
+      // A runtime definition owns a new coordinate even when its carrier is
+      // a COPY. The fallback must keep the same root as the direct slot walk.
+      if (auto Root = rootOf(Op.Output))
+        return Value{Solution::Known, *Root};
       auto offset = [&](const MedVar &Base, int64_t By) -> Value {
         const Value &In = state(Base);
         if (In.State != Solution::Known)
