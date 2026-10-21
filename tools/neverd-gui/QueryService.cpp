@@ -63,6 +63,7 @@ bool readable(const QString &operation) {
                                         "local_types_fit",
                                         "type_libraries",
                                         "call_paths",
+                                        "call_tree",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }

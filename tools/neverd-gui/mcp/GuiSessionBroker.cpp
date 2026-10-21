@@ -15,9 +15,12 @@
 
 namespace {
 constexpr quint32 MaxFrame = 8 * 1024 * 1024;
-const QSet<QString> ReadOperations{"metadata", "functions", "disasm",
-                                   "bytes",    "decompile", "cfg",
-                                   "xrefs",    "strings"};
+/// The reads neverd-mcp's tools make, so that an attached server answers
+/// each tool as one with its own worker does; nothing that edits.
+const QSet<QString> ReadOperations{
+    "metadata",   "functions", "disasm",  "bytes",   "decompile",
+    "cfg",        "xrefs",     "strings", "imports", "string_references",
+    "call_paths", "call_tree", "search",  "resolve"};
 } // namespace
 
 GuiSessionBroker::GuiSessionBroker(QObject *parent) : QObject(parent) {
