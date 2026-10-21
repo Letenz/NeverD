@@ -6,6 +6,8 @@
 
 #include "SymMBADetail.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -61,6 +63,7 @@ public:
   }
 
   bool stopped() const { return Stopped; }
+  size_t remainingBytes() const { return Bytes; }
 };
 
 class ArithmeticNormalizer {
@@ -556,6 +559,139 @@ bool hasRepeatedCoefficients(const SymContext &Ctx, SymRef E) {
 }
 
 } // namespace
+
+SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
+                                   const MBAOptions &Opts, WorkBudget &Budget,
+                                   SolveReport &Rep) {
+  ArithmeticResources Resources(Budget, Opts.MaxTableBytes);
+  auto MarkStopped = llvm::scope_exit([&] {
+    Rep.BudgetExhausted |= Resources.stopped() || Budget.exhausted();
+  });
+  // Admit the syntactic distribution before allocating polynomial tables.
+  // Repeated small sums often simplify cheaply in the normal deep walk; an
+  // optional completion must not consume that walk's budget by expanding them.
+  unsigned Visits = 0;
+  bool HasProductSum = false;
+  auto FrontierSize = [&](auto &&Self, SymRef R, unsigned Depth,
+                          bool ProductOperand) -> unsigned {
+    if (++Visits > 2048 || Depth > 32 || !Resources.charge(1))
+      return 0;
+    const SymOp Op = Ctx.op(R);
+    if (Op != SymOp::Add && Op != SymOp::Mul)
+      return 1;
+    unsigned Terms = Op == SymOp::Add ? 0 : 1;
+    for (SymRef Child : Ctx.operands(R)) {
+      if (Op == SymOp::Add && ProductOperand && Ctx.op(Child) == SymOp::Mul &&
+          Ctx.numOperands(Child) >= 2 &&
+          Ctx.numOperands(Child) -
+                  unsigned(Ctx.isConst(Ctx.operand(Child, 0))) >=
+              2)
+        HasProductSum = true;
+      unsigned N = Self(Self, Child, Depth + 1, Op == SymOp::Mul);
+      if (!N || (Op == SymOp::Add ? N > 128 - Terms : N > 128 / Terms))
+        return 0;
+      Terms = Op == SymOp::Add ? Terms + N : Terms * N;
+    }
+    return Terms;
+  };
+  if (!FrontierSize(FrontierSize, E, 0, false) || !HasProductSum)
+    return E;
+  ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(E), false);
+  auto Original = Normalizer.normalize(E);
+  if (!Original || Original->size() > 128)
+    return E;
+  auto HigherAtoms = [&](const Polynomial &P, std::set<uint32_t> &Atoms) {
+    size_t Edges = 0, Higher = 0;
+    for (const auto &[Key, Coefficient] : P) {
+      size_t Degree = 0;
+      for (const auto &[Id, Power] : Key) {
+        if (Power > 2048 - Edges || !Resources.charge(1, 128))
+          return size_t(0);
+        Edges += Power;
+        Degree += Power;
+      }
+      if (Degree >= 4) {
+        ++Higher;
+        for (const auto &[Id, Power] : Key)
+          Atoms.insert(Id);
+      }
+    }
+    return Higher;
+  };
+  std::set<uint32_t> Atoms;
+  if (HigherAtoms(*Original, Atoms) < 2)
+    return E;
+
+  // A previous factorization can collapse some partition axes but leave
+  // others split. Restore only an existing AND view of a whole product word:
+  // W = (W & M) + (W & ~M), exactly at every bit width. Bitwise consumers are
+  // opaque here, so this cannot recursively split the word inside its view.
+  std::map<uint32_t, SymRef> Splits;
+  for (uint32_t Id : Atoms) {
+    SymRef View(Id);
+    if (Ctx.op(View) != SymOp::And || Ctx.numOperands(View) < 2 ||
+        Ctx.numOperands(View) > 16)
+      continue;
+    if (!Resources.array(Ctx.numOperands(View), sizeof(SymRef)))
+      return E;
+    llvm::SmallVector<SymRef, 8> Inputs(Ctx.operands(View));
+    for (SymRef Word : Inputs) {
+      if (Splits.size() == 6 || !Atoms.contains(Word.index()) ||
+          Splits.contains(Word.index()))
+        continue;
+      if (!Resources.array(Inputs.size(), 128 + 4 * sizeof(SymRef)))
+        return E;
+      llvm::SmallVector<SymRef, 8> Mask;
+      for (SymRef Input : Inputs)
+        if (Input != Word)
+          Mask.push_back(Input);
+      SymRef Other = Ctx.mkAnd(Word, Ctx.mkNot(Ctx.mkAnd(Mask)));
+      Splits.emplace(Word.index(), Ctx.mkAdd(View, Other));
+    }
+  }
+  llvm::SmallVector<SymRef, 16> Terms, OriginalTerms;
+  for (const auto &[Key, Coefficient] : *Original) {
+    llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Coefficient)};
+    llvm::SmallVector<SymRef, 16> OriginalFactors(Factors);
+    for (const auto &[Id, Power] : Key) {
+      if (!Resources.array(Power, 4 * sizeof(SymRef)))
+        return E;
+      auto It = Splits.find(Id);
+      Factors.append(Power, It == Splits.end() ? SymRef(Id) : It->second);
+      OriginalFactors.append(Power, SymRef(Id));
+    }
+    Terms.push_back(Ctx.mkMul(Factors));
+    OriginalTerms.push_back(Ctx.mkMul(OriginalFactors));
+  }
+  // Check coefficient and multiplicity emission independently, then apply the
+  // exact word partitions and check the expanded spelling as well. Neither
+  // this larger intermediate nor an incomplete completion is ever published.
+  auto OriginalCheck = Normalizer.normalize(Ctx.mkAdd(OriginalTerms));
+  if (!OriginalCheck || *OriginalCheck != *Original)
+    return E;
+  auto Distributed = Normalizer.normalize(Ctx.mkAdd(Terms));
+  Atoms.clear();
+  if (!Distributed || Distributed->size() > 128 ||
+      HigherAtoms(*Distributed, Atoms) < 6)
+    return E;
+  auto Expanded = Normalizer.expanded(*Distributed);
+  if (!Expanded || *Expanded == E)
+    return E;
+  auto Check = Normalizer.normalize(*Expanded);
+  if (!Check || *Check != *Distributed)
+    return E;
+  MBAOptions Inner = Opts;
+  Inner.MaxTableBytes = Resources.remainingBytes();
+  SolveReport Local;
+  SymRef Candidate =
+      solveProductCofactors(Ctx, *Expanded, Inner, Budget, Local);
+  Rep.BudgetExhausted |= Local.BudgetExhausted || Resources.stopped();
+  if (Candidate == *Expanded || Local.Evidence != MBAEvidence::Derivation ||
+      readingScore(Ctx, Candidate) >= readingScore(Ctx, E))
+    return E;
+  Rep = Local;
+  return Candidate;
+}
 
 bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
                              WorkBudget &Budget, size_t MaxBytes,

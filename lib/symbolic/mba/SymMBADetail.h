@@ -543,10 +543,19 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                              WorkBudget &Budget, SolveReport &Rep);
 
+/// Recover a bounded product frontier after earlier arithmetic factoring.
+SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
+                                   const MBAOptions &Opts, WorkBudget &Budget,
+                                   SolveReport &Rep);
+
 /// Necessary multiplicity bounds only; never authorizes a replacement.
 bool productCoefficientsFitScale(const HigherCoefficients &Higher,
                                  unsigned Degree, const llvm::APInt &Scale,
                                  WorkBudget &Budget);
+
+/// Only the low product bit survives a highest-bit scale.
+SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                         size_t &Storage);
 
 /// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to

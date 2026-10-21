@@ -160,9 +160,9 @@ TEST(SymRegionWrap, PreservationUsesExactBudgetAndDoesNotMutateOnShortBudget) {
     const auto Address = at(C, Base, UINT64_MAX - 2);
     EXPECT_FALSE(S.store(Address, C.mkConst(64, 0x1122334455667788), P));
     ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
-    // One extra range, 24 inspected bytes, 16 second-range comparisons and
-    // 16 bytes each saved and restored.
-    ASSERT_EQ(P.WorkUsed, 1u + 24u + 16u + 2u * 16u);
+    // One extra range, 24 inspected bytes, one ordered-range cursor advance
+    // and 16 bytes each saved and restored.
+    ASSERT_EQ(P.WorkUsed, 1u + 24u + 1u + 2u * 16u);
     const auto Required = P.WorkUsed;
     SymState Short = Initial;
     P.MaxWork = Required - 1;

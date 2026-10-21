@@ -134,7 +134,7 @@ def partitioned_elf(mixed=False):
     return elf(code)
 
 
-def cubic_elf(degree=3, perturbed=False):
+def cubic_elf(degree=3, perturbed=False, missing=False):
     # Eight products of separately partitioned A=x^y, B=y|z and C=x|z.
     # Every original instruction remains in the fixture; no host optimizer
     # can fold the expansion before NeverD sees it. Keep a high-bit remainder.
@@ -142,6 +142,8 @@ def cubic_elf(degree=3, perturbed=False):
     for invert_a in (False, True):
         for invert_b in (False, True):
             for invert_c in (False, True):
+                if missing and not (invert_a or invert_b or invert_c):
+                    continue
                 code += bytes.fromhex("4589c2 4589cb")
                 code += bytes.fromhex(
                     "89d1 f7d1 4121ca" if invert_a else "4121d2")
@@ -257,12 +259,13 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
         elif kind in ("quartic", "sextic"):
             assert text.count("&") <= 2, text
             assert text.count("^") <= (1 if kind == "quartic" else 3), text
-        elif kind in ("perturbed-quartic", "perturbed-sextic"):
+        elif kind in ("perturbed-quartic", "perturbed-sextic",
+                      "missing-quartic", "missing-sextic"):
             # Keep the changed original product, but eliminate the remaining
             # complemented partitions. The sextic tail adds two XOR factors.
             assert text.count("&") <= 5 and "~" not in text, text
             assert text.count("^") <= (
-                3 if kind == "perturbed-quartic" else 5), text
+                3 if kind.endswith("quartic") else 5), text
         else:
             assert ">>" not in text, text
 
@@ -287,7 +290,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert ordinary.count("&") >= 7, ordinary
                     elif kind in ("partitioned", "mixed", "cubic", "quartic",
                                   "sextic", "perturbed-quartic",
-                                  "perturbed-sextic"):
+                                  "perturbed-sextic", "missing-quartic",
+                                  "missing-sextic"):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -356,6 +360,14 @@ if __name__ == "__main__":
             ("perturbed-sextic", cubic_elf(degree=6, perturbed=True),
              "37U*(x^y)*(y|z)*(x|z)*(x&y)*(x^z)*(y^z)"
              "+74U*((x^y)&z)*((y|z)&x)*((x|z)&y)*(x&y)*(x^z)*(y^z)"
+             "+x+y+(x&0x80000000U)"),
+            ("missing-quartic", cubic_elf(degree=4, missing=True),
+             "37U*(x^y)*(y|z)*(x|z)*(x&y)"
+             "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y)*(x&y)"
+             "+x+y+(x&0x80000000U)"),
+            ("missing-sextic", cubic_elf(degree=6, missing=True),
+             "37U*(x^y)*(y|z)*(x|z)*(x&y)*(x^z)*(y^z)"
+             "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y)*(x&y)*(x^z)*(y^z)"
              "+x+y+(x&0x80000000U)"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,

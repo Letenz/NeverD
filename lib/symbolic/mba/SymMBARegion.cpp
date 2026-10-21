@@ -130,6 +130,42 @@ std::optional<Region> readRegion(SymContext &Ctx, SymRef E,
 /// both run and the shorter answer wins.
 SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                    WorkBudget &Budget, SolveReport &Rep) {
+  // Generated cubic and higher queries are outside the deep walk. Project
+  // their unobservable product bits before entering the polynomial search.
+  // Two-factor quotients retain their basis for enclosing product recovery.
+  auto Projectable = [&](SymRef R) {
+    return Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) >= 4 &&
+           Ctx.isConst(Ctx.operand(R, 0));
+  };
+  size_t ParityStorage = Opts.MaxTableBytes;
+  SymRef Projected =
+      Projectable(E) ? foldProductParity(Ctx, E, Budget, ParityStorage) : E;
+  if (Ctx.op(E) == SymOp::Add && Ctx.numOperands(E) <= 128 &&
+      llvm::any_of(Ctx.operands(E), Projectable)) {
+    const size_t N = Ctx.numOperands(E);
+    if (N <= ParityStorage / (2 * sizeof(SymRef)) && Budget.consume(N)) {
+      ParityStorage -= N * 2 * sizeof(SymRef);
+      llvm::SmallVector<SymRef, 8> Terms(Ctx.operands(E));
+      bool Changed = false;
+      for (SymRef &Term : Terms) {
+        if (!Projectable(Term))
+          continue;
+        SymRef Next = foldProductParity(Ctx, Term, Budget, ParityStorage);
+        Changed |= Next != Term;
+        Term = Next;
+      }
+      if (Changed)
+        Projected = Ctx.mkAdd(Terms);
+    }
+  }
+  if (Projected != E) {
+    MBAOptions Inner = Opts;
+    Inner.MaxTableBytes = ParityStorage;
+    SymRef Reduced = solveRegion(Ctx, Projected, Inner, Budget, Rep);
+    Rep.Outcome = MBAOutcome::Rewritten;
+    Rep.Evidence = MBAEvidence::Derivation;
+    return Reduced;
+  }
   const SolverLimits Limits = resolveLimits(Opts);
   if (isMinimalVariableSum(Ctx, E, Limits)) {
     Rep.Outcome = MBAOutcome::AlreadyShortest;
@@ -682,6 +718,46 @@ SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   Rep.Outcome = MBAOutcome::Rewritten;
   Rep.Evidence = MBAEvidence::Derivation;
   return Result;
+}
+
+SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                         size_t &Storage) {
+  if (Budget.exhausted() || !Budget.canConsume(1) || Storage < 128)
+    return Root;
+  if (Ctx.op(Root) == SymOp::Mul && Ctx.numOperands(Root) >= 3 &&
+      Ctx.numOperands(Root) <= 32 && Ctx.isConst(Ctx.operand(Root, 0))) {
+    const SymRef Scale = Ctx.operand(Root, 0);
+    const unsigned Width = Ctx.width(Root);
+    const size_t Words = (size_t(Width) - 1) / 64 + 1;
+    bool ObservesLowBit = false;
+    if (Width <= 64) {
+      ObservesLowBit = Ctx.node(Scale).Aux == (uint64_t(1) << (Width - 1));
+    } else if (Words <= Storage / sizeof(uint64_t) && Budget.consume(Words)) {
+      Storage -= Words * sizeof(uint64_t);
+      ObservesLowBit = Ctx.constValue(Scale).isMinSignedValue();
+    }
+    if (ObservesLowBit) {
+      auto Factors = Ctx.operands(Root).drop_front();
+      size_t Edges = 0;
+      for (SymRef Factor : Factors) {
+        const size_t Count =
+            Ctx.op(Factor) == SymOp::And ? Ctx.numOperands(Factor) : 1;
+        if (Count > 128 - Edges)
+          return Root;
+        Edges += Count;
+      }
+      const size_t Bytes = 128 + 4 * sizeof(SymRef) * (Edges + Factors.size());
+      if (Bytes > Storage || !Budget.consume(1 + Edges + Factors.size()))
+        return Root;
+      Storage -= Bytes;
+      llvm::SmallVector<SymRef, 8> Inputs(Factors);
+      // Multiplication modulo two is Boolean AND. Scaling by 2^(Width-1)
+      // discards every other product bit, for arbitrary word-valued factors.
+      // A smaller power of two observes carries and does not admit this fold.
+      return Ctx.mkMul(Scale, Ctx.mkAnd(Inputs));
+    }
+  }
+  return Root;
 }
 
 SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
