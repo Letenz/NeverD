@@ -3191,6 +3191,9 @@ same-field independent contexts with no memory consumer, missing PC-relative
 sources, repeated long blocks, final recording and cross-function exhaustion.
 Large real relocation inventories cover 24000 unrelated absolute instruction
 fields and 5000 unrelated data pointers, followed by a table-exposing field.
+Another 30000 fields target the gap between distinct owners in the same
+section, alongside 1000 published code-address sources; table contents and
+one-past exposures still protect their owner.
 The controls retain a PC-relative container despite an out-of-range loader
 approximation, reject an unreadable last pointer, and refuse 65537 input records
 even when every target is disjoint.

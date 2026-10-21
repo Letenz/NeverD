@@ -2743,12 +2743,56 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         AllPhysicalStorage.End = Envelope.End;
     }
   }
-  // This is only a rejection filter for exact addresses. Include sparse
-  // filler, gaps and every one-past endpoint; all possible matches still use
-  // the owner-aware range checks below. An incomplete range disables it.
-  auto outsideAllPhysicalStorage = [&](va_t Address) {
-    return AllPhysicalStorage.Complete && (Address < AllPhysicalStorage.Begin ||
-                                           Address > AllPhysicalStorage.End);
+  // Retain a prefix maximum of the complete owner envelopes. The last start
+  // at or before an address then proves whether any envelope covers it, even
+  // when envelopes overlap or nest. Do not scan the unrelated space between
+  // disjoint owners as though the whole module were one table object.
+  std::map<va_t, va_t> PhysicalEndByBegin;
+  if (AllPhysicalStorage.Complete) {
+    for (const CompletePhysicalEnvelope &Envelope : PhysicalEnvelopes) {
+      if (!scanPair(
+              detail::orderedContainerLookupWork(PhysicalEndByBegin.size())) ||
+          !Budget.consume())
+        return abandonAnalysis();
+      auto [It, Inserted] =
+          PhysicalEndByBegin.emplace(Envelope.Begin, Envelope.End);
+      if (!Inserted)
+        It->second = std::max(It->second, Envelope.End);
+    }
+    va_t End = 0;
+    for (auto &[Begin, PrefixEnd] : PhysicalEndByBegin) {
+      if (!scanPair())
+        return abandonAnalysis();
+      End = std::max(End, PrefixEnd);
+      PrefixEnd = End;
+    }
+  }
+  // This is only a rejection filter for exact addresses. Each owner keeps
+  // its sparse filler, internal gaps and one-past endpoint; possible matches
+  // still use the owner-aware checks below. An incomplete range disables it.
+  // A frozen gap proves every strictly interior address disjoint. Reuse that
+  // one interval across nearby inputs, each still paying its field-scan debit.
+  std::optional<std::pair<va_t, va_t>> LastPhysicalGap;
+  auto outsideAllPhysicalStorage = [&](va_t Address) -> std::optional<bool> {
+    if (!AllPhysicalStorage.Complete)
+      return false;
+    if (Address < AllPhysicalStorage.Begin || Address > AllPhysicalStorage.End)
+      return true;
+    if (LastPhysicalGap && Address > LastPhysicalGap->first &&
+        Address < LastPhysicalGap->second)
+      return true;
+    if (!scanPair(
+            detail::orderedContainerLookupWork(PhysicalEndByBegin.size())))
+      return std::nullopt;
+    const auto After = PhysicalEndByBegin.upper_bound(Address);
+    if (After == PhysicalEndByBegin.begin())
+      return true;
+    const va_t BeforeEnd = std::prev(After)->second;
+    if (Address <= BeforeEnd)
+      return false;
+    if (After != PhysicalEndByBegin.end())
+      LastPhysicalGap = std::pair{BeforeEnd, After->first};
+    return true;
   };
 
   std::map<va_t, std::set<va_t>> TableObjectAliases;
@@ -2888,7 +2932,10 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
   };
   // Index the frozen public inventory once instead of scanning every source
   // for every loader field. Preserve all sources, including conflicting and
-  // imprecise ones; anchor eligibility is not source eligibility.
+  // imprecise ones; anchor eligibility is not source eligibility. Only actual
+  // loader fields query this index below, so indexing a source needs no
+  // preliminary lookup in both loader maps. Unmatched keys grant no authority
+  // and still spend the same bounded retention account.
   std::map<va_t, std::vector<ExactSource>> SourcesByField;
   for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex)
     for (const auto &Occurrence :
@@ -2896,20 +2943,6 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
       if (!scanPair())
         return abandonAnalysis();
       if (Occurrence.FieldVA == InvalidVA)
-        continue;
-      if (!scanPair(detail::orderedContainerLookupWork(
-              Img.DataAddressRelocOperands.size())))
-        return abandonAnalysis();
-      bool HasLoaderField =
-          Img.DataAddressRelocOperands.count(Occurrence.FieldVA) != 0;
-      if (!HasLoaderField) {
-        if (!scanPair(detail::orderedContainerLookupWork(
-                Img.CodeAddressRelocOperands.size())))
-          return abandonAnalysis();
-        HasLoaderField =
-            Img.CodeAddressRelocOperands.count(Occurrence.FieldVA) != 0;
-      }
-      if (!HasLoaderField)
         continue;
       if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
         return abandonAnalysis();
@@ -2940,9 +2973,13 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     // expose an owner, regardless of which instruction contexts name it.
     // Screen it before paying for the field/source lookup. PC-relative loader
     // approximations must still reach the exact-source/container logic.
-    if (!Field.PCRelativeFromInstructionEnd &&
-        outsideAllPhysicalStorage(Field.TargetVA))
-      return true;
+    if (!Field.PCRelativeFromInstructionEnd) {
+      const auto Outside = outsideAllPhysicalStorage(Field.TargetVA);
+      if (!Outside)
+        return false;
+      if (*Outside)
+        return true;
+    }
     if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
       return false;
     const auto Sources = SourcesByField.find(FieldVA);
@@ -3073,7 +3110,10 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     if (!P)
       return abandonAnalysis();
     const va_t Target = static_cast<va_t>(readPtr(P, Img.is64Bit()));
-    if (outsideAllPhysicalStorage(Target))
+    const auto Outside = outsideAllPhysicalStorage(Target);
+    if (!Outside)
+      return abandonAnalysis();
+    if (*Outside)
       continue;
     va_t TargetOwnerVA = InvalidVA;
     if (auto It = Img.DataPtrRelocTargetOwners.find(PointerSlot);

@@ -476,6 +476,54 @@ TEST_F(ModuleJumpTableBudget, UnrelatedLoaderInputsRemainBounded) {
   }
 }
 
+TEST_F(ModuleJumpTableBudget, DisjointOwnerGapsDoNotSpendSourceScanWork) {
+  // These addresses lie between two complete physical table envelopes, in
+  // the same section. A single module-wide min/max envelope cannot reject
+  // them and used to exhaust the scan account before reaching a real use.
+  const std::string Inventory =
+      "\n.section .text.unexplored_inventory,\"ax\",@progbits\n"
+      ".rept 15000\n"
+      "movabsq $.Lmodule_owner_safe_table+17, %rax\n"
+      "movabsq $.Lmodule_owner_safe_table+23, %rax\n"
+      ".endr\n";
+  for (int ExposedOffset : {-1, 8, 16}) {
+    SCOPED_TRACE(ExposedOffset);
+    auto I = fixture(1000, false,
+                     Inventory + (ExposedOffset < 0
+                                      ? ""
+                                      : "movabsq $.Lmodule_owner_safe_table+" +
+                                            std::to_string(ExposedOffset) +
+                                            ", %rax\n"));
+    ASSERT_TRUE(I);
+    ASSERT_GE(I->Image.DataAddressRelocOperands.size(), 30000u);
+    ASSERT_EQ(I->Functions.front().JumpTables.size(), 1u);
+    ASSERT_EQ(I->Functions[1].JumpTables.size(), 1u);
+    const auto &Table = I->Functions.front().JumpTables.front();
+    va_t End = Table.BaseAddr;
+    for (const auto &Range : Table.StorageRanges) {
+      ASSERT_TRUE(Range.storageEnd());
+      End = std::max(End, *Range.storageEnd());
+    }
+    ASSERT_EQ(End, Table.BaseAddr + 16);
+    ASSERT_EQ(I->Functions[1].JumpTables.front().BaseAddr, Table.BaseAddr + 24);
+    const auto Slots = Table.SuppressibleRelocationSlots;
+    ASSERT_FALSE(Slots.empty());
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Reverse);
+      if (Reverse)
+        std::reverse(I->Functions.begin(), I->Functions.end());
+      const auto Result = pipeline_detail::arbitrateModuleJumpTablesForTesting(
+          I->Image, I->Functions);
+      ASSERT_TRUE(Result.AnalysisComplete);
+      for (va_t Slot : Slots)
+        EXPECT_EQ(Result.ProtectedRelocationSlots.count(Slot),
+                  ExposedOffset >= 0 ? 1u : 0u);
+      if (Reverse)
+        std::reverse(I->Functions.begin(), I->Functions.end());
+    }
+  }
+}
+
 TEST_F(ModuleJumpTableBudget, UnrelatedDataPointersDoNotRetainEvidence) {
   const std::string Inventory =
       "\n.section .data.unexplored_inventory,\"aw\",@progbits\n"
@@ -592,6 +640,19 @@ TEST_F(ModuleJumpTableBudget, SharedFieldKeepsEveryIndependentSource) {
   for (va_t Slot : Slots)
     ASSERT_EQ(WithoutSource.ProtectedRelocationSlots.count(Slot), 0u);
   I->Functions.back().RelocatedInstructionAddressOccurrences = {Source};
+  // A published context is not a loader field. Keeping an unmatched index
+  // key must neither bind it to a numerically related field nor grant the
+  // independent context another source's occurrence permission.
+  auto &IndependentSource =
+      I->Functions.back().RelocatedInstructionAddressOccurrences.front();
+  IndependentSource.FieldVA = InvalidVA - 1;
+  const auto UnmatchedSource =
+      pipeline_detail::arbitrateModuleJumpTablesForTesting(I->Image,
+                                                           I->Functions);
+  ASSERT_TRUE(UnmatchedSource.AnalysisComplete);
+  for (va_t Slot : Slots)
+    ASSERT_EQ(UnmatchedSource.ProtectedRelocationSlots.count(Slot), 0u);
+  IndependentSource = Source;
   for (bool Reverse : {false, true}) {
     SCOPED_TRACE(Reverse);
     if (Reverse)
