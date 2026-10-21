@@ -466,7 +466,10 @@ std::string decompilation(const Json &Payload, Ordered Out, bool Exact) {
   }
   const auto &Body = member(Payload, "text");
   std::string Text = Body.is_string() ? Body.get<std::string>() : "";
-  if (!Exact && Out["representation"] == "c" && !Text.empty()) {
+  // LLVM-C spells the same fixed-width types.
+  if (!Exact &&
+      (Out["representation"] == "c" || Out["representation"] == "llvmc") &&
+      !Text.empty()) {
     // The same C in fewer tokens; the legend lists every abbreviation.
     const auto &Function = member(Payload, "function_text");
     auto View = readingView(Text, Function.is_string()

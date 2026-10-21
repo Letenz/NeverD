@@ -53,9 +53,9 @@ with an ellipsis. Wherever a tool takes an `address`, a name the workbench
 shows, an import's name or a label also works; it is resolved first.
 `read_decompilation` starts at the function's definition and reports how many
 `prelude_lines` (includes, types and declarations that make the file compile)
-it left out; `prelude: true` returns them too. C reads in a lossless shorter
-spelling (`Reading.cpp`): fixed-width types as `i64`/`u32`/`uptr`, the stack
-frame on one line with its members named without `stack_storage.` and each
+it left out; `prelude: true` returns them too. C and LLVM-C read in a lossless
+shorter spelling (`Reading.cpp`): fixed-width types as `i64`/`u32`/`uptr`, the
+stack frame on one line with its members named without `stack_storage.` and each
 slot `var_mN` as `sN`, one
 declaration per type run, temporaries `tB_I` numbered `tN` in the order the
 whole function first names them, so every page of it reads them alike, and

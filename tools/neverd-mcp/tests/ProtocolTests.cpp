@@ -627,6 +627,30 @@ MCP_TEST(SourcePagesStartAtTheDefinition) {
           "the prelude on request");
 }
 
+MCP_TEST(LlvmCReadsInTheShortSpellingToo) {
+  FakeBackend Session;
+  Server Service(Session);
+  ready(Service);
+  Session.Replies = {
+      {{"status", "ok"},
+       {"revision", "4"},
+       {"payload",
+        {{"address", "0x10"},
+         {"representation", "llvmc"},
+         {"text", "uint64_t f(uint32_t a) {\n    return a;\n}\n"},
+         {"offset", 0},
+         {"total_lines", 3},
+         {"next_offset", nullptr},
+         {"complete", true}}}}};
+  const auto [Header, Code] =
+      code(call(Service, "read_decompilation",
+                {{"address", "0x10"}, {"representation", "llvmc"}}));
+  require(Code == "u64 f(u32 a) {\n    return a;\n}\n", "LLVM-C: " + Code);
+  require(Header["legend"].get<std::string>().find("iN/uN") !=
+              std::string::npos,
+          "the legend lists the types");
+}
+
 MCP_TEST(TemporariesReadAlikeOnEveryPage) {
   FakeBackend Session;
   Server Service(Session);
