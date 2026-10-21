@@ -3281,6 +3281,40 @@ TEST_F(SessionCAPITest, DiscoveryStepsReportOnlyTheCurrentSnapshotsFailure) {
   EXPECT_FALSE(State.DiscoveredFunctions);
 }
 
+TEST_F(SessionCAPITest, DiscoveryStepsRetireAnEarlierImagesFinishedJob) {
+  const auto Native = write("retired-native.elf", makeNativeELF(false));
+  const auto Contract = write("retired-contract.evm", "6001600055");
+  auto &State = *neverd::sdk::toSession(Session);
+  // A job the next load leaves running is not waited for. An image without
+  // native discovery still retires it once it has finished.
+  ASSERT_EQ(neverd_session_load(Session, Native.c_str()), 1);
+  std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Running;
+  State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+      State.FunctionListRevision, Running.get_future()});
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), 1);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  Running.set_value({});
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), 1);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // A finished snapshot is retired by the load that replaces its image.
+  ASSERT_EQ(neverd_session_load(Session, Native.c_str()), 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  ASSERT_EQ(State.FunctionDiscovery->Result.wait_for(std::chrono::seconds(60)),
+            std::future_status::ready);
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // So does synchronous discovery of an image without native discovery.
+  std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Finished;
+  Finished.set_value({});
+  State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+      State.FunctionListRevision - 1, Finished.get_future()});
+  EXPECT_GE(neverd_session_discover_functions(Session), 0);
+  EXPECT_FALSE(State.FunctionDiscovery);
+}
+
 TEST_F(SessionCAPITest,
        InstructionFlowScratchDoesNotLeakAcrossInstructionsOrReads) {
   // A read, NOP and return followed by a separate write, NOP and return.
