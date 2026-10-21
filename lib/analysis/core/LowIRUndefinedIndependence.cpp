@@ -284,6 +284,10 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
   Number(Sat.MinimizeLearned);
   Number(Sat.PhaseSaving);
   Number(Sat.DefaultPhase);
+  if (Contract.ExternalReads != LowIRExternalReadModel::None) {
+    Hash.update("ordinary-ram-read-trace-v1");
+    Number(static_cast<unsigned>(Contract.ExternalReads));
+  }
   return llvm::toHex(Hash.final());
 }
 
@@ -297,12 +301,18 @@ std::vector<LowIRNativeAuditBoundary> auditBoundaryReceipts(
   return Receipts;
 }
 
+struct OrdinaryReadEvent {
+  SymRef Address;
+  uint16_t Bytes;
+};
+
 struct TerminalState {
   SymState State;
   SymRef Predicate, SystemFlags, ReturnOperand;
   std::set<uint64_t> Written;
   int Cutpoint = -1;
   std::set<uint64_t> DefinedFunctionTemporaries{};
+  std::vector<OrdinaryReadEvent> ReadTrace{};
 };
 
 struct LoopPrefix {
@@ -331,6 +341,7 @@ struct RefinementSession {
   std::vector<LowIRNativeProfileProjection> Projections;
   std::map<va_t, uint8_t> ImmutableBytes;
   uint64_t ReadEvidenceBytes = 0;
+  std::vector<SymRef> OrdinaryReadInputs;
   const LowIRLoopRefinementPlan *LoopPlan = nullptr;
   std::optional<TerminalState> OriginalStart, CandidateStart;
   int StartingCutpoint = -1;
@@ -465,6 +476,8 @@ class Checker {
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  std::vector<SymRef> OwnedOrdinaryReadInputs;
+  std::vector<SymRef> &OrdinaryReadInputs = OwnedOrdinaryReadInputs;
   // Exact query identities stay within this checker and its actual immutable
   // context. Retain only completed domains under the existing word ceiling.
   detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes, Ctx};
@@ -513,6 +526,7 @@ class Checker {
     SymRef LeftSystemFlags, RightSystemFlags;
     bool SkipCutpoint = false;
     std::set<uint64_t> DefinedFunctionTemporaries;
+    std::vector<OrdinaryReadEvent> ReadTrace{};
   };
   std::deque<Path> Pending;
 
@@ -1585,6 +1599,62 @@ class Checker {
     // at ordinary returns can certify a finite unrolling, never a prefix.
   }
 
+  // The caller first proves two-execution address equality. A common read
+  // input overapproximates ordinary RAM, retaining all prior frame writes.
+  std::pair<SymRef, SymRef> ordinaryLoad(Path &P, SymRef Address,
+                                         uint16_t Bytes) {
+    if (!Bytes || Bytes > 8 || Ctx.width(Address) != 64)
+      fail(Status::Invalid, "invalid ordinary RAM read shape");
+    const auto Charge = [&] {
+      if (Result.Observations >= Limits.MaxObservations)
+        fail(Status::BudgetExceeded, "ordinary RAM read budget exhausted");
+      ++Result.Observations;
+    };
+    Charge();
+    const auto Index = P.ReadTrace.size();
+    if (Index == OrdinaryReadInputs.size())
+      OrdinaryReadInputs.push_back(Ctx.mkFreshVar(64, "ordinary_read"));
+    if (Index >= OrdinaryReadInputs.size())
+      fail(Status::Invalid, "invalid ordinary RAM read ordinal");
+    const auto Sample = OrdinaryReadInputs[Index];
+    SymRef Left, Right;
+    for (uint16_t Byte = 0; Byte != Bytes; ++Byte) {
+      Charge();
+      const auto Shift = Contract.ByteOrder == llvm::endianness::little
+                             ? Byte * 8
+                             : (Bytes - 1 - Byte) * 8;
+      auto L = Ctx.mkExtract(Sample, Shift, 8), R = L;
+      const auto ByteAddress = Ctx.mkAdd(Address, Ctx.mkConst(64, Byte));
+      for (uint64_t Written : P.Written) {
+        Charge();
+        const auto FrameAddress = Ctx.mkAdd(
+            EntryRoot,
+            Ctx.mkConst(64, static_cast<uint64_t>(Contract.Frame->Begin) +
+                                Written));
+        const auto Same = Ctx.mkEq(ByteAddress, FrameAddress);
+        const auto Cell = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Written));
+        L = Ctx.mkIte(Same, P.Left.load(Cell, 1), L);
+        R = Ctx.mkIte(Same, P.Right.load(Cell, 1), R);
+        nodes();
+      }
+      const auto Append = [&](SymRef Prior, SymRef Next) {
+        if (!Prior)
+          return Next;
+        return Contract.ByteOrder == llvm::endianness::little
+                   ? Ctx.mkConcat(Next, Prior)
+                   : Ctx.mkConcat(Prior, Next);
+      };
+      Left = Append(Left, L);
+      Right = Append(Right, R);
+      nodes();
+    }
+    // The ordinal namespace is shared before either execution selects paths.
+    // Address/width/order agreement and complete terminal coverage are checked
+    // separately; sharing the sample alone is never an equality proof.
+    P.ReadTrace.push_back({Address, Bytes});
+    return {Left, Right};
+  }
+
   // The caller first proves two-execution address equality. Enumerate its
   // ordinary projection without assuming a candidate, and require the final
   // no-more-values proof before reading any bytes. A shared ITE retains the
@@ -1963,8 +2033,17 @@ class Checker {
               Difference->getSExtValue() < Frame.End &&
               static_cast<uint64_t>(Frame.End) - Difference->getZExtValue() >=
                   View.AccessSize;
-          if (!InFrame && ReadProvider && !Store &&
-              (!Difference || Ctx.asConst(ordinary(A)))) {
+          if (!InFrame && !Store &&
+              Contract.ExternalReads ==
+                  LowIRExternalReadModel::OrderedOrdinaryRAMV1) {
+            const auto [L, R] = ordinaryLoad(P, ordinary(A), View.AccessSize);
+            P.Left.write(SymSpace::Temporary, AddressTemporary, L);
+            P.Right.write(SymSpace::Temporary, AddressTemporary, R);
+            Op.Opcode = NdOp::COPY;
+            Op.NumInputs = 1;
+            Op.Inputs[0] = NdVar::tmp(AddressTemporary, View.AccessSize);
+          } else if (!InFrame && ReadProvider && !Store &&
+                     (!Difference || Ctx.asConst(ordinary(A)))) {
             const auto Value = immutableLoad(P, ordinary(A), View.AccessSize,
                                              Boundary.Address, Original.Seq);
             P.Left.write(SymSpace::Temporary, AddressTemporary, Value);
@@ -2054,7 +2133,8 @@ class Checker {
                 {std::move(P.Left), P.Predicate, P.LeftSystemFlags,
                  Original.NumInputs ? Left.branchTarget() : SymRef{},
                  std::move(P.Written), -1,
-                 std::move(P.DefinedFunctionTemporaries)});
+                 std::move(P.DefinedFunctionTemporaries),
+                 std::move(P.ReadTrace)});
             ++(CandidateExecution ? Refinement->CandidatePathCount
                                   : Refinement->OriginalPathCount);
           }
@@ -2142,6 +2222,15 @@ class Checker {
   }
 
   void validate() {
+    if (Contract.ExternalReads != LowIRExternalReadModel::None) {
+      if (Contract.ExternalReads !=
+              LowIRExternalReadModel::OrderedOrdinaryRAMV1 ||
+          !Contract.Frame)
+        fail(Status::Invalid, "invalid ordinary RAM read contract");
+      if (inductive())
+        fail(Status::Unsupported,
+             "ordinary RAM read traces require a finite proof");
+    }
     // Both inductive segments and finite executions use the same native
     // collector. Candidate inference needs an actual image reader as well;
     // semantic LowIR labels alone cannot authorize native collection policy.
@@ -2796,6 +2885,16 @@ public:
                                          Original.Predicate)) ==
               solver::SatResult::Unsat)
             continue;
+          if (Original.ReadTrace.size() != Candidate.ReadTrace.size())
+            fail(Status::Dependent, "ordinary RAM read counts differ");
+          for (size_t I = 0; I != Original.ReadTrace.size(); ++I) {
+            const auto &A = Original.ReadTrace[I];
+            const auto &B = Candidate.ReadTrace[I];
+            if (A.Bytes != B.Bytes)
+              fail(Status::Dependent, "ordinary RAM read widths differ");
+            equal(Predicate, A.Address, B.Address,
+                  "ordered ordinary RAM read address");
+          }
           if (inductive() &&
               (Original.Cutpoint >= 0 || Candidate.Cutpoint >= 0)) {
             if (Original.Cutpoint != Candidate.Cutpoint)
@@ -2881,10 +2980,12 @@ public:
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
         Result(Session ? Session->Statistics : OwnedResult),
-        Ctx(Session ? Session->Context : OwnedContext), Refinement(Session),
-        CandidateExecution(Candidate), ReadProvider(Reader),
-        ScheduledPaths(Session ? Session->ScheduledPaths
-                               : OwnedScheduledPaths) {}
+        Ctx(Session ? Session->Context : OwnedContext),
+        OrdinaryReadInputs(Session ? Session->OrdinaryReadInputs
+                                   : OwnedOrdinaryReadInputs),
+        Refinement(Session), CandidateExecution(Candidate),
+        ReadProvider(Reader), ScheduledPaths(Session ? Session->ScheduledPaths
+                                                     : OwnedScheduledPaths) {}
 
   Checker(SpecializationProvider &P, SpecializationCursor Entry,
           const LowIRIndependenceContract &C, const LowIRIndependenceLimits &L,
@@ -2907,9 +3008,12 @@ public:
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
         Result(Session ? Session->Statistics : OwnedResult),
-        Ctx(Session ? Session->Context : OwnedContext), Refinement(Session),
-        ReadProvider(&P), ScheduledPaths(Session ? Session->ScheduledPaths
-                                                 : OwnedScheduledPaths) {
+        Ctx(Session ? Session->Context : OwnedContext),
+        OrdinaryReadInputs(Session ? Session->OrdinaryReadInputs
+                                   : OwnedOrdinaryReadInputs),
+        Refinement(Session), ReadProvider(&P),
+        ScheduledPaths(Session ? Session->ScheduledPaths
+                               : OwnedScheduledPaths) {
     NativeTrace.Entry = Entry.Address;
   }
 

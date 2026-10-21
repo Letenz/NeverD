@@ -42,6 +42,7 @@
 #include "neverd/loader/SymbolSpelling.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sigs/SignatureDB.h"
 #include "neverd/types/HeaderLibrary.h"
@@ -285,7 +286,7 @@ struct Session {
   };
   /// The modules of the functions shown last, the newest first.
   std::list<FunctionLlvmModule> FunctionLlvmModules;
-  static constexpr size_t MaxFunctionLlvmModules = 8;
+  static constexpr size_t MaxFunctionLlvmModules = kMaxFunctionLlvmModules;
   /// The C route that emitted a function's source, or the language its
   /// HighC source is spelled in.
   enum class SourceRoute : uint8_t {
@@ -316,7 +317,7 @@ struct Session {
   };
   /// The sources of the functions shown last, the newest first.
   std::list<FunctionSource> FunctionSources;
-  static constexpr size_t MaxFunctionSources = 8;
+  static constexpr size_t MaxFunctionSources = kMaxFunctionSources;
   /// The widths of the reads and writes the code of every function states
   /// at each address (dataAccessWidths), and the exact function extents they
   /// were read from. Navigation can keep these image facts, but no output IR.

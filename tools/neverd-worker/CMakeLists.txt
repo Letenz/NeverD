@@ -33,11 +33,14 @@ target_link_libraries(neverd_worker_format PUBLIC neverd_worker_protocol)
 # Header-only tables shared with the engine, such as the wide characters.
 target_include_directories(neverd_worker_format PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 target_link_libraries(neverd_worker_graph PUBLIC neverd_worker_protocol)
-add_executable(neverd-worker main.cpp Engine.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp)
-target_compile_features(neverd-worker PRIVATE cxx_std_20)
-target_include_directories(neverd-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+# The engine the worker serves, which neverd-mcp also runs in its own process.
+add_library(neverd_worker_engine STATIC Engine.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp)
+target_compile_features(neverd_worker_engine PUBLIC cxx_std_20)
+target_include_directories(neverd_worker_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 # The C ABI is the only engine dependency. Never add LLVM to this target.
-target_link_libraries(neverd-worker PRIVATE neverd_worker_graph neverd_worker_format neverd_tool_web neverd_shared Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(neverd_worker_engine PUBLIC neverd_worker_graph neverd_worker_format neverd_tool_web neverd_shared Threads::Threads ${CMAKE_DL_LIBS})
+add_executable(neverd-worker main.cpp)
+target_link_libraries(neverd-worker PRIVATE neverd_worker_engine)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDWorkerAllocator.cmake")
 neverd_worker_allocator(neverd-worker)
 set_target_properties(neverd-worker PROPERTIES
@@ -103,6 +106,19 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         ENVIRONMENT "TMPDIR=${_worker_canonical_tmp}")
     endif()
     set_tests_properties(NeverDWorkerTransport PROPERTIES TIMEOUT 40)
+    add_executable(neverd-worker-discovery-test-server main.cpp Engine.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp tests/mock_engine.cpp)
+    set_target_properties(neverd-worker-discovery-test-server PROPERTIES ENABLE_EXPORTS ON)
+    target_compile_features(neverd-worker-discovery-test-server PRIVATE cxx_std_20)
+    target_compile_definitions(neverd-worker-discovery-test-server PRIVATE NEVERD_EXPORTS NEVERD_TEST_STEPPED_DISCOVERY)
+    target_include_directories(neverd-worker-discovery-test-server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+    target_link_libraries(neverd-worker-discovery-test-server PRIVATE neverd_worker_graph neverd_worker_format neverd_tool_web Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME NeverDWorkerDiscoveryReady
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/discovery_ready_test.py"
+              "$<TARGET_FILE:neverd-worker-discovery-test-server>")
+    add_test(NAME NeverDWorkerDiscoveryReadyLegacy
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/discovery_ready_test.py"
+              "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerDiscoveryReady NeverDWorkerDiscoveryReadyLegacy PROPERTIES TIMEOUT 30)
     add_test(NAME NeverDWorkerSourceCache
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_cache_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")
@@ -244,6 +260,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_cli_test.py"
                   "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --engine "$<TARGET_FILE:neverd_shared>")
         set_tests_properties(NeverDWorkerCLIDataPresentation PROPERTIES TIMEOUT 180)
+        add_test(NAME NeverDWorkerCLIInstructionFlow
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/instruction_flow_cli_test.py"
+                  "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}")
+        set_tests_properties(NeverDWorkerCLIInstructionFlow PROPERTIES TIMEOUT 120)
         add_test(NAME NeverDWorkerCLIStackFrame
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_cli_test.py"
                   "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --cc "${CMAKE_C_COMPILER}")

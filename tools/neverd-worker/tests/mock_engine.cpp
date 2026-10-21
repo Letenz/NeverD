@@ -112,6 +112,8 @@ struct MockSession {
   /// The type libraries joined beyond the image's own and those left out.
   Json libraryChoice = {{"added", Json::array()}, {"removed", Json::array()}};
   std::vector<std::uint64_t> functions = listedFunctions({});
+  unsigned discoveryPolls = 0;
+  bool discoveryPublished = false, discoveryRebuild = false;
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
   /// The loader the next load reads with, and the one the image was read
@@ -664,11 +666,60 @@ const char *neverd_dashboard_json(neverd_session_t s) {
 int neverd_func_count(neverd_session_t s) {
   return static_cast<int>(session(s)->functions.size());
 }
-// The fixture's detector finds nothing the image does not list.
+// The ordering fixture publishes one new identity. Its first listing rebuild
+// waits for the test to release it, making request ordering observable without
+// comparing elapsed times on a loaded test host.
 int neverd_session_discover_functions(neverd_session_t s) {
+  auto &state = *session(s);
+  if (state.path.find("discovery-fail") != std::string::npos) {
+    state.error = "Fixture discovery failed";
+    return -1;
+  }
+#ifdef NEVERD_TEST_STEPPED_DISCOVERY
+  if (state.path.find("discovery-order") != std::string::npos &&
+      state.discoveryPolls == 0) {
+    state.error = "Stepped fixture was called synchronously";
+    return -1;
+  }
+#endif
+  if (state.path.find("discovery-order") != std::string::npos &&
+      !state.discoveryPublished) {
+    state.discoveryPublished = true;
+    state.functions.push_back(Base + CodeSize);
+  }
   return neverd_func_count(s);
 }
+#ifdef NEVERD_TEST_STEPPED_DISCOVERY
+NEVERD_API int neverd_session_discover_functions_step(neverd_session_t s) {
+  auto &state = *session(s);
+  if (state.path.find("discovery-sync-only") != std::string::npos) {
+    state.error = "Client did not opt in to snapshot ownership";
+    return -1;
+  }
+  if (state.path.find("discovery-fail") != std::string::npos) {
+    state.error = "Fixture discovery failed";
+    return -1;
+  }
+  if (state.path.find("discovery-order") != std::string::npos &&
+      !state.discoveryPolls++)
+    return 0;
+  neverd_session_discover_functions(s);
+  return 1;
+}
+#endif
 neverd_va_t neverd_func_entry(neverd_session_t s, int index) {
+  auto &state = *session(s);
+  if (index == 0 && state.discoveryPublished && !state.discoveryRebuild) {
+    state.discoveryRebuild = true;
+    std::ofstream(std::filesystem::u8path(state.path + ".rebuild"))
+        << "started";
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!std::filesystem::exists(
+               std::filesystem::u8path(state.path + ".continue")) &&
+           std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
   const auto &functions = session(s)->functions;
   return index >= 0 && index < static_cast<int>(functions.size())
              ? functions[index]

@@ -1248,19 +1248,19 @@ stdio programs with an explicit argument list and Streamable HTTP with TLS
 verification, optional bearer credentials and a custom CA file. Tool schemas,
 arguments and results are inspectable, and the call history keeps parameters,
 results and cancellation states. MCP is an interoperability client, not a model
-provider. The standalone, Qt-free adapter uses MCP **2025-11-25** newline
-JSON-RPC:
+provider. NeverD's own MCP server, the native, Qt-free `neverd-mcp` installed
+beside the worker, uses MCP **2025-11-25** newline JSON-RPC and runs the engine
+in its own process:
 
 ```sh
-tools/neverd-mcp/neverd-mcp --worker /absolute/path/to/neverd-worker \
-  --file /absolute/path/to/binary
+neverd-mcp --file /absolute/path/to/binary
 ```
 
 To share the open GUI project, enable session sharing in MCP connections and
 copy its credential-file path for:
 
 ```sh
-tools/neverd-mcp/neverd-mcp --attach /absolute/path/to/credentials.json
+neverd-mcp --attach /absolute/path/to/credentials.json
 ```
 
 Attachment queries the same worker and revision, never starts another project

@@ -1,5 +1,6 @@
 #include "SessionImpl.h"
 
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/NumericInput.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -17,14 +18,14 @@ const char *neverd_enum_value_json(neverd_session_t Sess, const char *Name,
     const auto Parsed = Value && std::strlen(Value) <= 32
                             ? parseUnsignedDecimalOrHex(Value)
                             : std::nullopt;
-    if (!S->Loaded || !Name || std::strlen(Name) > 512 || !Parsed || !Bits ||
-        Bits > 64)
+    if (!S->Loaded || !Name || std::strlen(Name) > kMaxEnumTypeNameBytes ||
+        !Parsed || !Bits || Bits > 64)
       throw std::invalid_argument(
           "An enum value requires a type and 1..64 logical bits");
     uint64_t Number = *Parsed;
     const auto *Library = S->readLocalTypes();
     const auto *Type = Library ? Library->resolve(Name) : nullptr;
-    if (!Type || !Type->Enum || Type->Enum->Values.size() > 4096)
+    if (!Type || !Type->Enum || Type->Enum->Values.size() > kMaxEnumValues)
       throw std::invalid_argument(
           "Select a bounded enumeration in Local Types");
     const unsigned EnumBits = Library->builtinBytes(Type->Enum->Underlying) * 8;

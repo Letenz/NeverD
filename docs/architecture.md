@@ -968,6 +968,22 @@ only when discovery is complete. Worker polling waits for requests rather
 than busy-spinning while a snapshot is computing. Older SDKs retain the
 synchronous fallback.
 
+The worker polls stepped function discovery when the engine exports it;
+the client must also opt in through `open.step_discovery`. The default preserves
+synchronous discovery for older clients that do not coordinate image memory.
+Older engines retain synchronous discovery. Pending work yields to foreground
+requests without publishing a partial discovery result.
+
+Discovery completion is a worker scheduling boundary before the derived
+listing rebuild. The executor publishes an immediate heartbeat using the same
+state envelope as periodic liveness notifications, then waits for requests for
+at most its existing idle grace (waking on arrival). This lets a large-image
+GUI waiting for discovery publication export its analysis snapshot before
+further listing work. The GUI's large-image memory gate remains in force;
+completion does not claim reference-index readiness, and later listing reads
+still build from the published SDK functions. Errors publish an unavailable
+index without keeping replica startup blocked.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -1035,6 +1051,14 @@ publication follows both fixed points; budget refusals and proof requirements
 remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
+
+Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
+The workspace reuses only the temporary LowOp vector's storage: operations
+are cleared and the x87 state reset before every instruction, including after
+an unsupported lift. Returned references and transfer facts own their values.
+Disassembly pages own a workspace for that call; parallel access-width,
+reference and string-reference scans retire theirs with each worker. No TLS,
+session cache, new semantic shortcut or cross-instruction state is involved.
 
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
@@ -9241,3 +9265,7 @@ loader success. See the [execution boundary](android-application-runtime.md#java
 `SymStorePreservation` uses an empty base for current absolute memory; a nonempty base still requires a nonconstant 64-bit value in the state context. The actual write bank cannot be declared protected. With `ProveStoreFrameSeparation`, recovery also proves each current absolute cell disjoint from the complete symbolic write before preserving it. Projection carries only surviving constant bytes, intersects them at joins and rebinds them together with frame facts. Missing, conflicting or invalidated bytes stay unknown. This grants neither an initial memory value nor immutable storage, access validity or a global nonalias premise.
 
 A complete frame write contained in the declared nonwrapping bounds is disjoint from a complete cell contained in an existing excluded interval. Recovery uses that implication directly; partial containment still requires a solver proof. Same-bank ranges form one union, and ordered nonwrapping unions share a bounded byte/range cursor. Other modular unions retain their original membership semantics.
+
+## Finite ordinary RAM read proofs
+
+`LowIRUndefinedIndependence` owns the opt-in `OrderedOrdinaryRAMV1` contract for finite proofs. Each non-frame read shares an input by occurrence; complete path coverage and address, width and order agreement remain proof obligations. Exact byte-address comparisons apply prior frame writes, including possible aliases. Repeated reads conservatively use independent inputs, and even immutable reads must remain in the candidate trace. Writes stay inside the declared frame. The contract explicitly requires ordinary nonfaulting RAM; it supplies no observed-address constants, nonalias facts, MMIO, atomic or concurrent-writer semantics. Loop proof and inference reject this model. Existing observation/node limits bound the added work, and certificates bind the model while default contracts keep their digest. This adds no concrete backend capability.

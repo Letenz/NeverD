@@ -22,6 +22,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/LoadCandidate.h"
 #include "neverd/loader/Raw/ISAIdentify.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
@@ -219,8 +220,7 @@ std::optional<va_t> automaticNameAddress(llvm::StringRef Name) {
 /// when it can.  The function list must be synchronized.
 std::optional<std::string> nameProblem(const Session &S, va_t Addr,
                                        llvm::StringRef Name) {
-  constexpr size_t MaxNameBytes = 4096;
-  if (Name.size() > MaxNameBytes ||
+  if (Name.size() > kMaxUserNameBytes ||
       llvm::any_of(Name, [](unsigned char C) { return C <= ' ' || C == 0x7f; }))
     return std::string("a name has at most 4096 bytes and no spaces or "
                        "control characters");
@@ -485,10 +485,6 @@ static std::optional<uint32_t> parseColor(llvm::StringRef Text) {
   return Color;
 }
 
-/// The longest declaration a function's "type" holds: a prototype with
-/// dozens of parameters fits.
-constexpr size_t MaxFunctionDeclarationBytes = 4096;
-
 /// The members of \p Attributes the user has stated, as Row's keys
 /// (FunctionAttributes.def).
 static void
@@ -547,12 +543,12 @@ static bool readFunctionAttributes(const llvm::json::Object &Row,
       Attributes.Member.reset();                                               \
     else if (const auto Text = Value.getAsString();                            \
              Text && !Text->trim().empty() &&                                  \
-             Text->size() <= MaxFunctionDeclarationBytes)                      \
+             Text->size() <= kMaxFunctionDeclarationBytes)                     \
       Attributes.Member = Text->trim().str();                                  \
     else {                                                                     \
-      Error = std::string("\"") + KeyName +                                    \
-              "\" is a C declaration of at most " +                            \
-              std::to_string(MaxFunctionDeclarationBytes) + " bytes, or null"; \
+      Error =                                                                  \
+          std::string("\"") + KeyName + "\" is a C declaration of at most " +  \
+          std::to_string(kMaxFunctionDeclarationBytes) + " bytes, or null";    \
       return false;                                                            \
     }                                                                          \
   }
@@ -957,9 +953,6 @@ std::filesystem::path itemsPath(const Session *S) {
   constexpr llvm::StringLiteral k##Id##Base(Spelling);
 #include "neverd/OperandFormats.def"
 
-/// The operands of one instruction a format may name.
-constexpr int MaxFormattedOperands = 8;
-
 std::filesystem::path operandsPath(const Session *S) {
   return project_files::path(S->FilePath, project_files::File::Operands);
 }
@@ -971,9 +964,6 @@ bool isOperandBase(llvm::StringRef Base) {
 #include "neverd/OperandFormats.def"
   return false;
 }
-
-/// The longest name a structure offset's type may have.
-constexpr size_t MaxOperandTypeName = 512;
 
 /// The format \p Object describes, or none with \p Error.
 std::optional<Session::OperandFormat>
@@ -1001,7 +991,7 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
   if (Format.Base == "enum") {
     const auto Name = Object.getString("type");
     const auto Flags = Object.getBoolean("flags");
-    if (!Name || Name->empty() || Name->size() > MaxOperandTypeName ||
+    if (!Name || Name->empty() || Name->size() > kMaxOperandTypeNameBytes ||
         Format.Negate || Format.Invert || Delta ||
         (Object.get("flags") && !Flags)) {
       Error = "An enum operand requires a type and optional flags mode";
@@ -1027,8 +1017,8 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
       Type ? Type->getAsString() : std::nullopt;
   const std::optional<int64_t> Bytes =
       Delta ? Delta->getAsInteger() : std::optional<int64_t>(0);
-  if (!Name || Name->empty() || Name->size() > MaxOperandTypeName || !Bytes ||
-      Format.Negate || Format.Invert) {
+  if (!Name || Name->empty() || Name->size() > kMaxOperandTypeNameBytes ||
+      !Bytes || Format.Negate || Format.Invert) {
     Error = "a structure offset names its local type, an integer delta, and "
             "neither negates nor inverts";
     return std::nullopt;
@@ -1368,7 +1358,7 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
     S->setError("no binary loaded");
     return -1;
   }
-  if (Operand < 0 || Operand >= MaxFormattedOperands) {
+  if (Operand < 0 || Operand >= kMaxFormattedOperands) {
     S->setError("an operand index is 0 to 7");
     return -1;
   }
@@ -1539,7 +1529,8 @@ int neverd_operand_formats_load(neverd_session_t Sess) {
         std::string Error;
         auto Format =
             Object ? parseOperandFormat(*Object, Error) : std::nullopt;
-        if (!Index || *Index < 0 || *Index >= MaxFormattedOperands || !Format) {
+        if (!Index || *Index < 0 || *Index >= kMaxFormattedOperands ||
+            !Format) {
           S->setError("operand formats sidecar has an invalid operand" +
                       (Error.empty() ? std::string() : ": " + Error));
           return -1;

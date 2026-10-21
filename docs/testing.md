@@ -2392,6 +2392,14 @@ require worker protocol/Web and affected mock transport regressions. These
 MCP suites own catalog qualification separately from the existing Python
 native capability checker. See the [profile](web-mcp-profile.md).
 
+The worker build also builds `neverd-mcp`, NeverD's native MCP server, which
+runs the worker's engine in process. `ctest -L '^mcp$'` runs `NeverDMCP`, the
+protocol, tool, result-shape, reading-view and workbench-attachment cases
+against a recording backend and a stand-in workbench socket, and
+`NeverDMCPProcess`, which launches the executable on the test's own binary with
+the real engine and skips on Windows. Changes to the worker engine or its
+operations also run `NeverDMCPProcess`.
+
 `WebNexe.*` covers pinned EOF framing, strict first-shim JSON, malformed binary64
 lengths, first-sentinel window boundaries, private paths, overlap/alias coverage
 and independent member/work/private-metadata budgets. `WebNexeSDK.*` exercises
@@ -9667,3 +9675,7 @@ Unsupported CPU transports are platform skips, not successful qualification.
 `AbsoluteMemoryFactsTests.inc` checks written absolute targets across nodes, conflicting joins, partial and unknown alias writes, and proved stack separation in both byte orders with chaining enabled or disabled. Independent byte execution checks retained effects; missing exclusions and short budgets must refuse. `SymStorePreservation.Absolute*` and `SymState.AbsoluteProjections*` check absolute/symbolic coexistence, upper addresses, pure bounded projections, post-write unknown epochs and transactional refusal. Run `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests` and `NeverDSymMemoryKnowledgeTests`, then the native independence and LowIR refinement suites.
 
 Absolute-memory regressions cover bounded contiguous and sparse batches, complete write/cell containment, and concrete aliases at both frame and exclusion boundaries. Ordered and reversed range unions must preserve the same cells, discard gaps and leave state unchanged when preservation runs one work unit short.
+
+## Finite ordinary RAM read regression tests
+
+`LowIRReadTrace.*` checks shared inputs, both byte orders, changed addresses/widths/order/counts, every branch, partial overlap with prior frame writes, undefined producers, independent repeated reads, exact/short budgets and loop refusal. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` checks original native independence, native-to-LowIR refinement and a changed-pointer rejection. Run `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` and `NeverDInterpreterSpecializationTests`. These proofs do not by themselves qualify compiled C or a concrete CPU backend.

@@ -28,14 +28,12 @@ logo. Every Mach-O image is ad-hoc signed before the complete bundle is signed
 and verified.
 
 For a smaller portable GUI, configure the engine with
-`NEVERD_ENABLE_PYTHON_PLUGINS=OFF`. The standalone MCP adapter remains available
-at `NeverD.app/Contents/MacOS/neverd-mcp` and requires Python 3.10+ on `PATH`.
-The GUI and worker do not require Python in this configuration. A build linked
-to Python.framework includes that framework and uses its interpreter for MCP.
-The native launcher disables Python bytecode caching so running MCP leaves the
-signed application resources unchanged.
-The packaged adapter requires explicit `--worker` and `--file` arguments, or an
-explicit `--attach` credential path, as described in the [MCP guide](../neverd-mcp/README.md).
+`NEVERD_ENABLE_PYTHON_PLUGINS=OFF`; the GUI, worker and MCP server then do not
+require Python. The MCP server is the native executable
+`NeverD.app/Contents/MacOS/neverd-mcp`, which runs the bundled engine and, like
+the worker, keeps the Hypervisor entitlement. It requires an explicit `--file`
+input or `--attach` credential path, as described in the
+[MCP guide](../neverd-mcp/README.md).
 
 Verify the bundle with a native Cocoa launch in a clean environment:
 

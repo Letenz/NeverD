@@ -9,6 +9,7 @@
 
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace native_swift_receiver_detail {
@@ -19,7 +20,7 @@ struct BodyProof {
   std::map<HighSourceLocalIdentity, std::vector<ExprPtr>> Definitions;
   std::set<HighSourceLocalIdentity> AddressTaken, Active;
   std::set<HighSourceLocalIdentity> Comparing;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
 
   bool word(const ExprPtr &E) const {
     return E && E->Type && E->Type->Size == 8 &&
@@ -300,7 +301,7 @@ inline bool objCNativeSwiftReceiverSourceCallBound(
   if (Expected.empty())
     return false;
   std::set<SourceCallOccurrenceKey> Seen;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   for (const auto &B : Current->Med->Blocks)
     for (const auto &Op : B.Ops) {
       if (!Budget--)

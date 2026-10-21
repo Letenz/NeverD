@@ -4,6 +4,8 @@
 #include "ObjCNativeDependencies.h"
 #include "ObjCNativeSwiftReceiverSources.h"
 
+#include "neverd/sdk/Limits.h"
+
 namespace neverd::sdk {
 namespace objc_value_copy_detail {
 // These ordinary declaration owners may accompany a private copy. Other
@@ -98,7 +100,7 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
 }
 inline bool sameBody(const HighFunc &Expected, const HighFunc &Actual,
                      bool BlockAddresses = false) {
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   return sameCompleteSourceBody(
       Expected, Actual,
       [&](const ExprPtr &E, const ExprPtr &A) {
