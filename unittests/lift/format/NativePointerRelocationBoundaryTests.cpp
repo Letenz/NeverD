@@ -1877,4 +1877,70 @@ int main(int argc, char **argv) {
   EXPECT_TRUE(Syntax.ok()) << Syntax.err;
 }
 
+TEST_F(NativePointerRelocationBoundary,
+       ALinkedELFsLoadSegmentsKeepTheirNamesAndRelroIsTheAddresss) {
+  // A linked program's load segment holds many sections.  It keeps its
+  // LOAD_n name, where it took the name of the last section in it (nc's
+  // code was `.fini`), and whether bytes are read-only once relocated is
+  // theirs: relocated constants and what PT_GNU_RELRO covers are, the
+  // `.data` beside them in the same writable segment is not.
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "links an x86-64 Linux program with the host linker";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "needs Clang";
+  const fs::path Source = tmpFile("relro_names.s");
+  const fs::path Program = tmpFile("relro_names");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS) << Source;
+    OS << R"(
+.text
+.globl neverd_test_start
+neverd_test_start:
+  mov table(%rip), %rax
+  mov counter(%rip), %rax
+  ret
+.section .data.rel.ro,"aw",@progbits
+.p2align 3
+table:
+  .quad neverd_test_start
+.data
+.p2align 3
+counter:
+  .quad 0
+)";
+  }
+  const auto Linked =
+      exec(NEVERD_TEST_CLANG,
+           {"-nostdlib", "-pie", "-Wl,-e,neverd_test_start", "-Wl,-z,relro",
+            "-Wl,-z,now", Source.string(), "-o", Program.string()});
+  ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
+  auto Img = loadBinary(Program);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  ASSERT_GE(Img->Segments.size(), 2u);
+  for (const Segment &Seg : Img->Segments)
+    EXPECT_TRUE(llvm::StringRef(Seg.Name).starts_with(kLoadSegmentPrefix))
+        << Seg.Name;
+  const auto section = [&](llvm::StringRef Name) -> const Section * {
+    for (const Section &Sec : Img->Sections)
+      if (Sec.Name == Name)
+        return &Sec;
+    return nullptr;
+  };
+  const Section *Table = section(".data.rel.ro");
+  const Section *Dynamic = section(".dynamic");
+  const Section *Data = section(".data");
+  ASSERT_TRUE(Table && Dynamic && Data);
+  // The relocated constants and the dynamic table share the writable
+  // segment of .data.
+  ASSERT_EQ(Img->getSegmentFor(Table->VA), Img->getSegmentFor(Data->VA));
+  ASSERT_TRUE(Img->getSegmentFor(Data->VA)->isWritable());
+  EXPECT_TRUE(Img->readOnlyAfterRelocations(Table->VA, 8));
+  EXPECT_TRUE(Img->readOnlyAfterRelocations(Dynamic->VA, 8));
+  EXPECT_FALSE(Img->readOnlyAfterRelocations(Data->VA, 8));
+  EXPECT_TRUE(Img->readOnlyAfterRelocations(Img->Entry, 1));
+#endif
+}
+
 } // namespace

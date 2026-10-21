@@ -17,7 +17,6 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
-#include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -424,10 +423,7 @@ bool CFGBuilder::resolveRelocatedInteriorBranch(const BinaryImage &Img,
   auto SlotVA = foldValue(*SourceAddr, ValueLoad - 1, 0);
   if (!SlotVA || !Img.CodePtrRelocSlots.count(*SlotVA))
     return false;
-  const Segment *SlotSeg = Img.getSegmentFor(*SlotVA);
-  if (!SlotSeg ||
-      (SlotSeg->isWritable() &&
-       !section_names::isReadOnlyAfterRelocSectionName(SlotSeg->Name)))
+  if (!Img.readOnlyAfterRelocations(*SlotVA, Img.getPointerSize()))
     return false;
 
   const uint8_t *P = Img.readVA(*SlotVA, Img.getPointerSize());
