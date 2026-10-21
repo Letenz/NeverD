@@ -382,6 +382,44 @@ private slots:
     QCOMPARE(results()->model().total(), 0);
   }
 
+  void searchDuringAJumpStartsWhereTheJumpLands() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("search-jump.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const auto results = [&]() -> ChooserView * {
+      for (auto *view : bench.window->findChildren<ChooserView *>())
+        if (view->model().kind() == ChooserKind::SearchResults)
+          return view;
+      return nullptr;
+    };
+    QTimer input;
+    connect(&input, &QTimer::timeout, &input, [&] {
+      if (auto *dialog =
+              qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+        dialog->setTextValue(QStringLiteral("string 42"));
+        dialog->accept();
+      }
+    });
+    input.start(5);
+    bench.action(ActionId::SearchText)->trigger();
+    input.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(results() && results()->model().total() > 0,
+                             OpenTimeoutMs);
+    auto *listing = bench.window->disassembly()->listing();
+    QTRY_VERIFY_WITH_TIMEOUT(!listing->jumpPending(), OpenTimeoutMs);
+    // The listing answers this jump before the search: the search starts
+    // where the jump lands, and the landing does not drop its reply.
+    bench.window->disassembly()->navigate(Base + 3);
+    QVERIFY(listing->jumpPending());
+    bench.action(ActionId::SearchNextText)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(results()->model().total() > 0, OpenTimeoutMs);
+    // From the old cursor at the first match, Next would skip that match.
+    QCOMPARE(results()->model().addressAt(0),
+             std::optional<Address>(Base + 42));
+  }
+
   void sortingLongStringsKeepsTheTableWithinTheTransportBudget() {
     QTemporaryDir directory;
     Workbench bench;
