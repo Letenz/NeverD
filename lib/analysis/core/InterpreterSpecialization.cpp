@@ -185,27 +185,30 @@ Projection project(SymState &State, SymRef Root,
   return Result;
 }
 
-bool seed(SymContext &Ctx, SymState &State, SymRef Root,
+void seed(SymContext &Ctx, SymState &State, SymRef Root,
           const Projection &Values) {
   for (const auto &[Key, Value] : Values.Scalars)
     State.write(Key.first, Key.second, Ctx.mkConst(8, Value));
-  SymState::MemoryKnowledge Memory{&Ctx, State.byteOrder(), {}};
+  if (Root) {
+    for (const auto &[Register, Displacement] : Values.AffineRegisters)
+      State.write(SymSpace::Register, Register,
+                  Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+    // A complete affine value takes precedence over independently projected
+    // byte marginals. They can agree only under the incoming frame predicate,
+    // which has not been installed yet and is not a syntactic equality.
+    for (const auto &[Offset, Value] : Values.FrameBytes)
+      State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
+                  Ctx.mkConst(8, Value));
+    for (const auto &[Offset, Displacement] : Values.Frame.AffineValues)
+      State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
+                  Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+  }
+  // These are current predecessor facts, intersected after all guest writes.
+  // Seed the absolute bank directly: a program STORE would invalidate frame
+  // facts, while replacing memory knowledge would retire the frame's unknown
+  // input identities used by control-state discovery.
   for (const auto &[Offset, Value] : Values.AbsoluteBytes)
-    Memory.Facts.push_back({{}, Offset, Ctx.mkConst(8, Value)});
-  if (!Root)
-    return Memory.Facts.empty() || State.restoreMemoryKnowledge(Memory);
-  for (const auto &[Register, Displacement] : Values.AffineRegisters)
-    State.write(SymSpace::Register, Register,
-                Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
-  // These are current predecessor facts, intersected at joins after every
-  // guest write has applied its alias effects. Rebinding them is not a guest
-  // STORE: coexisting frame and absolute bytes must not invalidate each other.
-  for (const auto &[Offset, Value] : Values.FrameBytes)
-    Memory.Facts.push_back({Root, Offset, Ctx.mkConst(8, Value)});
-  for (const auto &[Offset, Displacement] : Values.Frame.AffineValues)
-    Memory.Facts.push_back(
-        {Root, Offset, Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement))});
-  return Memory.Facts.empty() || State.restoreMemoryKnowledge(Memory);
+    State.write(SymSpace::Memory, Offset, Ctx.mkConst(8, Value));
 }
 
 template <class Map> bool intersectMap(Map &Into, const Map &Incoming) {
@@ -2240,9 +2243,7 @@ bool Specializer::evaluate(int Id) {
   SymState State(Ctx, Options.ByteOrder);
   const SymRef FrameRoot =
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
-  if (!seed(Ctx, State, FrameRoot, Draft.Incoming))
-    return fail(SpecializationStatus::InvalidInput,
-                "inconsistent projected memory facts");
+  seed(Ctx, State, FrameRoot, Draft.Incoming);
   seedRuntimeMemoryState(Ctx, State, Options);
   auto RuntimeControls = seedRuntimeControlState(Ctx, State, Options);
   // Rebuilt nodes forget correlations, including prior writes, but retain the

@@ -1385,6 +1385,37 @@ TEST(NativeStackSpecialization, RefinesFiniteDispatchBeforeUnsupportedArm) {
     }
 }
 
+TEST(NativeStackSpecialization,
+     AbsoluteFactsKeepFrameInputsAvailableForControlDiscovery) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint32_t Chain : {0, 8}) {
+      auto P = finiteDispatchDecoder(true);
+      P.add(0xff,
+            {operation(NdOp::STORE, {}, {c(0xa800), c(0x501)}), branch(0x100)});
+      P.add(0x500, {operation(NdOp::INT_ADD, r(0), {r(8), c(17)}),
+                    operation(NdOp::LOAD, r(120), {c(0xa800)}),
+                    operation(NdOp::INDIR_BR, {}, {r(120)})});
+      auto O = stackOptions();
+      O.ByteOrder = Order;
+      O.MaxChainedTransfers = Chain;
+      O.DiscoverControlState = true;
+      O.ProveStoreFrameSeparation = true;
+      O.EntryFrameBounds = SpecializationEntryFrameBounds{-64, 8};
+      O.EntryFrameBounds->ExcludedAddressRanges = {{0xa800, 0xa808}};
+      const auto R = specializeInterpreter(P, {0xff}, O);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      for (uint64_t Input : {uint64_t{0}, uint64_t{37}, UINT64_MAX}) {
+        const auto Run = execute(R.Residual, Input, 0, Order);
+        ASSERT_TRUE(Run);
+        EXPECT_EQ(Run->Value, Input + 17);
+        EXPECT_EQ(Run->Stack, 0x10000u);
+      }
+      auto MayAlias = O;
+      MayAlias.EntryFrameBounds->ExcludedAddressRanges.clear();
+      EXPECT_FALSE(specializeInterpreter(P, {0xff}, MayAlias).complete());
+    }
+}
+
 TEST(NativeStackSpecialization, FiniteGuardsDoNotPreemptExistingRefinement) {
   auto P = guardedDecoder(false);
   // A runtime dispatch before the decoder has a large, irrelevant selector
