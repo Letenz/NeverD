@@ -233,7 +233,7 @@ jobs:
           # The stderr descriptor checks are compiled only on their hosts.
           pipeline_minimum = 40 + (os.name != 'nt') + (sys.platform == 'linux')
           for owner, minimum in (('NeverDFPParameterMaskTests', 180),
-                                  ('NeverDLibCTests', 70),
+                                  ('NeverDLibCTests', 71),
                                   ('NeverDPipelineOutcomeTests', pipeline_minimum),
                                   ('NeverDX86NativeStateAuditTests', 8),
                                   ('NeverDX86LegacyAlignedMoveTests', 7),

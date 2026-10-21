@@ -1109,6 +1109,30 @@ TEST(IsNoReturnTarget, UnregisteredX86VeneersAndSectionAliasesMatchLiveLookup) {
   EXPECT_FALSE(Index.contains(Img, 0x1000));
 }
 
+TEST(IsNoReturnTarget, ExactIATNamesPrecedeOtherStorageBindings) {
+  for (bool NoReturn : {false, true}) {
+    BinaryImage Img;
+    Img.Arch = Arch::X64;
+    Img.Bits = Bitness::Bits64;
+    Segment Data;
+    Data.VA = 0x1000;
+    Data.Size = 8;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.Data.resize(Data.Size);
+    Img.Segments.push_back(std::move(Data));
+    Img.Imports.push_back({"runtime", NoReturn ? "abort" : "warn", 0, 0x1000});
+    Img.ImportPtrSlots[0x1000] = NoReturn ? "warn" : "abort";
+    ASSERT_TRUE(Img.isValidImportStorageSlot(0x1000, "abort"));
+    for (bool Restricted : {false, true}) {
+      if (Restricted)
+        Img.LoadOnlyFunctionEntries.insert(0x2000);
+      const NoReturnTargetIndex Index(Img);
+      EXPECT_EQ(isNoReturnTarget(Img, 0x1000), NoReturn);
+      EXPECT_EQ(Index.contains(Img, 0x1000), NoReturn);
+    }
+  }
+}
+
 TEST(IsNoReturnTarget, NewIndexObservesChangedImageAndMismatchUsesLiveLookup) {
   BinaryImage Img, Other;
   constexpr va_t Target = 0x1234;

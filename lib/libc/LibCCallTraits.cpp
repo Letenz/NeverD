@@ -491,17 +491,22 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   // The user's statement decides over every name.
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;
-  if (const Import *Imp = Img.findImportAt(Target))
+  const Import *Imp = Img.findImportAt(Target);
+  if (Imp)
     if (isNoReturnFunction(Imp->Name))
       return true;
   // A pointer slot the loader binds to an import (an ELF GLOB_DAT or
   // JUMP_SLOT, a Mach-O bind): x86 calls through it as `call [slot]`.
-  const ImportStorageSlotCollection Storage =
-      Img.collectImportStorageSlot(Target);
-  if (auto It = Storage.Slots.find(Target);
-      It != Storage.Slots.end() && !Storage.Conflicts.count(Target) &&
-      It->second.Addend == 0 && isNoReturnFunction(It->second.Name))
-    return true;
+  // An exact IAT identity takes precedence over another storage spelling,
+  // including a conflicting no-return name, as in NoReturnTargetIndex.
+  if (!Imp || Imp->IATAddr != Target) {
+    const ImportStorageSlotCollection Storage =
+        Img.collectImportStorageSlot(Target);
+    if (auto It = Storage.Slots.find(Target);
+        It != Storage.Slots.end() && !Storage.Conflicts.count(Target) &&
+        It->second.Addend == 0 && isNoReturnFunction(It->second.Name))
+      return true;
+  }
   if (const Symbol *Sym = Img.findSymbolAt(Target))
     if (isNoReturnFunction(Sym->Name))
       return true;
