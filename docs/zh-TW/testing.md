@@ -2069,3 +2069,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `AbsoluteMemoryFactsTests.inc` 涵蓋絕對位址目標跨節點傳遞、衝突匯合、部分重疊及未知別名寫入，以及兩種位元組序和啟用/停用串接時的堆疊分離證明。獨立位元組執行器檢查副作用；缺少排除範圍或預算不足時必須拒絕。`SymStorePreservation.Absolute*` 與 `SymState.AbsoluteProjections*` 檢查區域共存、高位址、唯讀有界投影、寫入後的未知值世代和交易式拒絕。執行 `NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`，再執行原生獨立性及 LowIR 精化測試。
 
 絕對記憶體回歸涵蓋有界的連續與稀疏批次、完整寫入及單元的包含關係，以及框架邊界和排除邊界兩端的具體別名反例。有序與逆序區間聯集必須保留相同單元、捨棄間隙，並在保留預算少一個工作單位時維持狀態不變。
+
+## 有限普通 RAM 讀取迴歸測試
+
+`LowIRReadTrace.*` 檢查共用輸入、兩種位元組序、位址/寬度/順序/次數變更、所有分支、與先前框架寫入的部分重疊、未定義值、重複讀取的獨立性、精確及不足預算和迴圈拒絕。`OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` 檢查原始機器碼獨立性、機器碼到 LowIR 的精化及指標變更時的拒絕。執行 `NeverDLowIRRefinementTests`、`NeverDLowIRUndefinedIndependenceTests`、`NeverDOriginalBinaryUndefinedIndependenceTests`、`NeverDPEFixedImageTests` 和 `NeverDInterpreterSpecializationTests`。這些證明本身不認證編譯後的 C 或具體 CPU 後端。
