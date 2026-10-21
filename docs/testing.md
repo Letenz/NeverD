@@ -319,6 +319,10 @@ closed product minus missing corners and a coefficient disturbance. Run these
 with `NeverDHighSymSimplifyTests`, `NeverDSymSimplifyGuardTests`,
 `NeverDMBASourceTests` and the worker source-synthesis test to check the common
 CLI and GUI optimization path.
+Interleaved residual tests cover the completed-product traversal boundary at
+15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
+nonzero odd-factor assignments, reject leaked temporary inputs, and require
+the previously exhausted 32-bit two-block case to finish within its allowance.
 `SymParseLexer` checks every punctuation pair at end of input and before an
 identifier, plus unknown bytes and exact diagnostics for malformed operators.
 Sixteen repeated small partitions check that exponential expansion is refused

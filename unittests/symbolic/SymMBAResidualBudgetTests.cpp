@@ -58,6 +58,85 @@ std::string residualText(unsigned Width, unsigned Degree) {
   return Text + "+(x^y)+2*(x&y)+19*x*y*z";
 }
 
+std::string interleavedText(unsigned Width, unsigned Degree) {
+  const char *Words[][8] = {
+      {"(x^y)", "(y|z)", "(x|z)", "(x&y)", "(x^z)", "(y^z)", "(x|y)", "~(x&z)"},
+      {"((x+y)^z)", "((y*z)|w)", "((x+z)&(y|v))", "(x&~y)", "(z|v)", "(y^w)",
+       "~(x&z)", "(x|v)"}};
+  const char *Axes[] = {"z", "x", "y"};
+  const std::pair<unsigned, unsigned> Order[] = {{1, 6}, {0, 2}, {0, 1}, {1, 2},
+                                                 {0, 5}, {1, 3}, {0, 6}, {0, 4},
+                                                 {1, 1}, {1, 5}};
+  std::string Text;
+  for (auto [Block, Corner] : Order) {
+    llvm::APInt Coefficient = Block
+                                  ? llvm::APInt::getOneBitSet(Width, Width - 2)
+                                  : llvm::APInt(Width, 182, false, true);
+    if (Corner == 1)
+      Coefficient += llvm::APInt::getSignMask(Width);
+    llvm::SmallString<96> Number;
+    Coefficient.toStringUnsigned(Number);
+    if (!Text.empty())
+      Text += "+";
+    Text += "(";
+    if (Corner == 2)
+      Text += "-";
+    Text += std::string(Number) + "*";
+    for (unsigned I = 0; I != Degree; ++I) {
+      if (I)
+        Text += "*";
+      const auto *Word = Words[Block][(I + Block) % 8];
+      if (I < 3) {
+        Text += "(" + std::string(Word) + "&";
+        if (Corner & (1u << (2 - I)))
+          Text += "~";
+        Text += std::string(Axes[I]) + ")";
+      } else {
+        Text += Word;
+      }
+    }
+    Text += ")";
+  }
+  return Text + "+(x^y)+2*(x&y)+19*x*y*z";
+}
+
+llvm::APInt interleavedOracle(const std::array<llvm::APInt, 5> &V,
+                              unsigned Degree) {
+  const auto &[X, Y, Z, W, U] = V;
+  const unsigned Width = X.getBitWidth();
+  std::array<llvm::APInt, 5> Axes{Z, X, Y, W, U};
+  llvm::APInt Result = X + Y + llvm::APInt(Width, 19, false, true) * X * Y * Z;
+  for (unsigned Block = 0; Block != 2; ++Block) {
+    std::array<llvm::APInt, 8> Words =
+        Block ? std::array<llvm::APInt, 8>{(X + Y) ^ Z,
+                                           (Y * Z) | W,
+                                           (X + Z) & (Y | U),
+                                           X & ~Y,
+                                           Z | U,
+                                           Y ^ W,
+                                           ~(X & Z),
+                                           X | U}
+              : std::array<llvm::APInt, 8>{X ^ Y, Y | Z, X | Z, X & Y,
+                                           X ^ Z, Y ^ Z, X | Y, ~(X & Z)};
+    auto Product = [&](int Corner) {
+      llvm::APInt R(Width, 1);
+      for (unsigned I = 0; I != Degree; ++I) {
+        auto Word = Words[(I + Block) % 8];
+        if (Corner >= 0 && I < 3)
+          Word &= Corner & (1 << (2 - I)) ? ~Axes[I] : Axes[I];
+        R *= Word;
+      }
+      return R;
+    };
+    auto Scale = Block ? llvm::APInt::getOneBitSet(Width, Width - 2)
+                       : llvm::APInt(Width, 182, false, true);
+    Result += Scale * (Product(-1) - Product(0) - Product(7) -
+                       Product(3 + Block) - Product(2) - Product(2)) +
+              llvm::APInt::getSignMask(Width) * Product(1);
+  }
+  return Result;
+}
+
 llvm::APInt residualOracle(const std::array<llvm::APInt, 5> &V,
                            unsigned Degree) {
   const auto &[X, Y, Z, W, U] = V;
@@ -85,7 +164,14 @@ llvm::APInt residualOracle(const std::array<llvm::APInt, 5> &V,
 }
 
 void checkResidual(SymContext &C, SymRef Input, SymRef Output, unsigned Width,
-                   unsigned Degree) {
+                   unsigned Degree, bool Interleaved = false) {
+  llvm::SmallVector<uint32_t, 5> Used;
+  C.collectVars(Output, Used);
+  for (auto Id : Used) {
+    auto Name = C.varInfo(Id).Name;
+    ASSERT_TRUE(Name == "x" || Name == "y" || Name == "z" || Name == "w" ||
+                Name == "v");
+  }
   std::mt19937_64 Random(0x524553494455414c);
   for (unsigned Sample = 0; Sample != 128; ++Sample) {
     std::array<llvm::APInt, 5> V;
@@ -99,6 +185,11 @@ void checkResidual(SymContext &C, SymRef Input, SymRef Output, unsigned Width,
                : Sample == 2 ? llvm::APInt::getSignMask(Width)
                              : llvm::APInt(Width, 1);
     }
+    if (Sample == 4 || Sample == 5) {
+      const unsigned OddWords[] = {1, 0, 0, 1, 1};
+      for (unsigned I = 0; I != V.size(); ++I)
+        V[I] = llvm::APInt(Width, OddWords[I] ^ unsigned(Sample == 5));
+    }
     llvm::SmallVector<llvm::APInt, 5> Values;
     for (unsigned I = 0; I != C.numVars(); ++I) {
       auto Name = C.varInfo(I).Name;
@@ -108,7 +199,8 @@ void checkResidual(SymContext &C, SymRef Input, SymRef Output, unsigned Width,
                          : Name == "w" ? 3
                                        : 4]);
     }
-    auto Want = residualOracle(V, Degree);
+    auto Want =
+        Interleaved ? interleavedOracle(V, Degree) : residualOracle(V, Degree);
     ASSERT_EQ(C.eval(Input, Values), Want);
     ASSERT_EQ(C.eval(Output, Values), Want);
   }
@@ -128,6 +220,27 @@ TEST(SymMBAResidualBudget, RetainsLinearTailInCompletedCandidate) {
       EXPECT_LE(Result.SizeAfter, 286u);
     checkResidual(C, Input.Root, Result.Expr, Width, 32);
   }
+}
+
+TEST(SymMBAResidualBudget, WalksCompletedInterleavedProductsWithinBudget) {
+  for (unsigned Width : {8u, 32u, 64u, 257u})
+    for (unsigned Degree : {15u, 16u, 17u, 24u, 32u, 64u}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Degree);
+      SymContext C;
+      auto Input = parseSymExpr(C, interleavedText(Width, Degree), Width);
+      ASSERT_TRUE(Input.ok());
+      MBAOptions Options;
+      Options.VerifySamples = 0;
+      auto Result = simplifyMBADeep(C, Input.Root, Options);
+      EXPECT_LE(Result.Work, Options.MaxWork);
+      EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+      if (Width == 32 && Degree == 24) {
+        EXPECT_LT(Result.Work, Options.MaxWork);
+        EXPECT_LE(Result.SizeAfter, 289u);
+      }
+      checkResidual(C, Input.Root, Result.Expr, Width, Degree, true);
+    }
 }
 
 TEST(SymMBAResidualBudget, RefusalAndPartialSearchKeepSparseProductsExact) {

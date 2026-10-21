@@ -1164,6 +1164,22 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     WholeRep.BudgetExhausted |= Factored.BudgetExhausted;
     WholeAlternative =
         simplifyLinearTail(Ctx, WholeAlternative, Opts, Budget, WholeRep);
+
+    // A long completed product can otherwise be distributed and factored
+    // again at every parent in the deep walk. Visit its checked compact form;
+    // short products retain their original spelling for local identities.
+    auto LongProduct = [&](SymRef R) {
+      return Ctx.op(R) == SymOp::Mul &&
+             Ctx.numOperands(R) - unsigned(Ctx.isConst(Ctx.operand(R, 0))) >=
+                 CompletedProductLimits::MinWalkDegree;
+    };
+    if (ProductCofactors &&
+        readingScore(Ctx, WholeAlternative) < readingScore(Ctx, WalkRoot) &&
+        (LongProduct(WalkRoot) ||
+         (Ctx.op(WalkRoot) == SymOp::Add &&
+          Ctx.numOperands(WalkRoot) <= CompletedProductLimits::MaxTerms &&
+          llvm::any_of(Ctx.operands(WalkRoot), LongProduct))))
+      WalkRoot = WholeAlternative;
   }
 
   // Walking children before parents means that by the time a node is reached,
