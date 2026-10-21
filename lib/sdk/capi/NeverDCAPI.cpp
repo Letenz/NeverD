@@ -49,6 +49,7 @@
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectFiles.h"
+#include "neverd/support/StackSizeMain.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Object/Binary.h"
@@ -59,7 +60,9 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
+#include <stdexcept>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -954,6 +957,46 @@ const char *neverd_session_debug_info_path(neverd_session_t Sess) {
   return dupStr(S ? pathToUTF8(S->DbgPath) : std::string());
 }
 
+namespace {
+bool nativeDiscovery(const Session &S) {
+  return S.Img.Arch == Arch::X86 || S.Img.Arch == Arch::X64 ||
+         S.Img.Arch == Arch::ARM || S.Img.Arch == Arch::AArch64;
+}
+
+std::vector<std::pair<va_t, std::string>> detectFunctions(BinaryImage &Image) {
+  Decoder Dec;
+  if (!Dec.init(Image))
+    throw std::runtime_error("failed to initialize a decoder for the image");
+  return FuncDetector().detect(Image, Dec);
+}
+
+void publishDiscovery(Session &S,
+                      std::vector<std::pair<va_t, std::string>> Functions) {
+  S.DiscoveredFunctions = std::move(Functions);
+  if (S.appendDiscoveredFunctions())
+    S.refreshFunctionNames();
+}
+
+bool takeDiscoveryJob(Session &S, bool Wait) {
+  if (!S.FunctionDiscovery)
+    return false;
+  auto &Job = *S.FunctionDiscovery;
+  if (!Wait &&
+      Job.Result.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    return false;
+  const auto Revision = Job.Revision;
+  auto Result = Job.Result.get();
+  S.FunctionDiscovery.reset();
+  if (Revision == S.FunctionListRevision) {
+    S.Img.VerifiedFunctionEntries.merge(Result.VerifiedEntries);
+    S.Img.CodeRefTargets.merge(Result.CodeReferences);
+    publishDiscovery(S, std::move(Result.Functions));
+    return true;
+  }
+  return false;
+}
+} // namespace
+
 int neverd_session_discover_functions(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S)
@@ -963,20 +1006,65 @@ int neverd_session_discover_functions(neverd_session_t Sess) {
     S->setError("no binary loaded");
     return -1;
   }
-  const bool Native = S->Img.Arch == Arch::X86 || S->Img.Arch == Arch::X64 ||
-                      S->Img.Arch == Arch::ARM || S->Img.Arch == Arch::AArch64;
-  if (Native && !S->DiscoveredFunctions) {
-    Decoder Dec;
-    if (!Dec.init(S->Img)) {
-      S->setError("failed to initialize a decoder for the image");
-      return -1;
+  try {
+    if (nativeDiscovery(*S) && !S->DiscoveredFunctions) {
+      if (!takeDiscoveryJob(*S, true))
+        publishDiscovery(*S, detectFunctions(S->Img));
     }
-    FuncDetector Detector;
-    S->DiscoveredFunctions = Detector.detect(S->Img, Dec);
-    if (S->appendDiscoveredFunctions())
-      S->refreshFunctionNames();
+    return static_cast<int>(S->Functions.size());
+  } catch (const std::exception &E) {
+    S->FunctionDiscovery.reset();
+    S->setError(std::string("function discovery failed: ") + E.what());
+    return -1;
+  } catch (...) {
+    S->FunctionDiscovery.reset();
+    S->setError("unexpected function discovery failure");
+    return -1;
   }
-  return static_cast<int>(S->Functions.size());
+}
+
+int neverd_session_discover_functions_step(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  try {
+    if (!nativeDiscovery(*S) || S->DiscoveredFunctions)
+      return 1;
+    if (takeDiscoveryJob(*S, false))
+      return 1;
+    if (!S->FunctionDiscovery) {
+      auto Image = S->Img;
+      S->FunctionDiscovery.emplace(Session::FunctionDiscoveryJob{
+          S->FunctionListRevision,
+          std::async(std::launch::async, [Image = std::move(Image)]() mutable {
+            Session::FunctionDiscoveryResult Result;
+            auto Work = [&] {
+              Result.Functions = detectFunctions(Image);
+              Result.VerifiedEntries = std::move(Image.VerifiedFunctionEntries);
+              Result.CodeReferences = std::move(Image.CodeRefTargets);
+              // An async callable can outlive its invocation until get(). Do
+              // not retain the image while the owner serves foreground reads.
+              Image = BinaryImage{};
+            };
+            runWithLargeStackThreads(1, Work);
+            return Result;
+          })});
+    }
+    return 0;
+  } catch (const std::exception &E) {
+    S->FunctionDiscovery.reset();
+    S->setError(std::string("function discovery failed: ") + E.what());
+    return -1;
+  } catch (...) {
+    S->FunctionDiscovery.reset();
+    S->setError("unexpected function discovery failure");
+    return -1;
+  }
 }
 
 int neverd_session_analyze(neverd_session_t Sess) {

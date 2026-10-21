@@ -4,6 +4,10 @@
 
 # NeverD Architecture
 
+The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
+
+Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
+
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting
 an ABI, a supported body or runtime CFG admission. The low-level detector owns
@@ -950,6 +954,20 @@ Fork after initialization and dynamic SDK unloading are not supported by the
 retained backend; those embedding hosts must select the explicit native-thread
 baseline. Normal builds enable all four performance providers.
 
+The SDK exposes `neverd_session_discover_functions_step` for polling clients.
+Its single retained job owns a value snapshot of the image, including bytes
+and metadata, and never borrows or mutates the live session on its thread.
+Completion publishes both the discovered identities and the detector's
+verified-entry/code-reference facts on the session executor, only if the
+function-list revision still matches. The computation releases its image
+before the result waits for publication. A stale job is drained before another
+starts; edits/reload do not accumulate retired snapshots. Errors remain SDK
+diagnostics, and destruction joins the job before SDK code can unload.
+Explicit synchronous discovery can consume the same job and still returns
+only when discovery is complete. Worker polling waits for requests rather
+than busy-spinning while a snapshot is computing. Older SDKs retain the
+synchronous fallback.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -984,6 +1002,19 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+The GUI owner no longer requests that pipeline warmup: source/CFG views use
+separate analysis sessions and cannot consume the owner's pipeline cache.
+With idle analysis enabled, native images with 4096–65536 functions and at most
+64 MiB of input instead prefetch one source entry in an analysis replica.
+Larger inputs prepare on demand, and fresh replicas wait for discovery to
+release its image snapshot. This bounds simultaneous image ownership while
+owner browsing reads continue. Foreground requests reuse that replica's image
+preparation; concurrent independent views retain the second lane. Prefetch is
+read-only and follows the existing revision, cancellation and replica reset
+rules. It overlaps computation with browsing, not a reduced analysis scope.
+The GUI opts in with `open.step_discovery`; older workers ignore that additive
+field. Clients without the same large-image memory gate keep the worker's
+synchronous-discovery default.
 Both kinds share the image's no-return-name, stack-probe, function-pointer,
 relocation-root and executable-owner indexes. The image, debug context, symbol
 inventory and exact verified entries bind that shared ownership. Each distinct
@@ -1021,6 +1052,13 @@ and lookup indexes, since the names and their list positions stay unchanged.
 Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
+
+Reference and warmup pages share one address-ordered function index for each
+function-list revision. Page lookup is a lower bound plus the requested rows;
+it does not repeatedly sort the remaining image. Stateless access-width scans
+also order their inventory once per scan. Duplicate addresses select the
+first listed identity consistently, and list revisions/storage changes retire
+borrowed pointers before the next page.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -1136,12 +1174,44 @@ compare every retained factor and its multiplicity before grouping. Only
 shared keys are materialized, in the original lexicographic order; short keys
 keep direct construction. Hash equality supplies no semantic evidence, and
 all comparisons, buckets and retained groups share the existing budgets.
+Small frontiers of long residuals instead intersect term pairs and enumerate
+only their shared keys. Exact multiplicities and the same lexicographic group
+order are retained. Cartesian completion materializes each complete corner
+once, avoiding repeated copies of invariant tails in intermediate prefixes.
+Large distribution proofs can cancel identical summands and extract a common
+nonconstant factor from both sides before normalizing the quotients. Proving
+quotient equality is sufficient even when the common word can be zero; no
+modular division or invertibility assumption is used. Every retained scale and
+coefficient difference still participates in the independent equality check.
+The shared expression builder inserts a nonconstant operand into an existing
+canonical product's sorted factors, preserving its leading coefficient and
+multiplicities. It snapshots operands before interning can relocate the arena.
+Both parsing and source expression reconstruction avoid re-flattening and
+re-sorting every growing product prefix; the resulting canonical node is
+unchanged. Canonical flat products and coefficient changes retain the same
+fast path when no unary shift fold can apply. Sum collection reuses an original
+scaled addend only while its coefficient is unchanged; merging another addend
+invalidates that reuse before modular cancellation or reconstruction.
 Arithmetic normalization reads flat monomials directly and skips multiplication
 by unit coefficients. Completed polynomials can be reused only within one
 normalizer with a fixed context, width and complement policy. Candidate emission
 cannot mutate these tables; new roots still require normalization and complete
 coefficient equality. Returned references remain local to that normalizer, and
 later independent verifiers start with fresh state.
+Already allocated monomial keys and coefficients move into polynomial tables;
+copying callers retain separate storage charges. This avoids allocating the
+same product entry twice without sharing mutable proof state.
+The product valuation proof enumerates the complete low-bit domain of up to
+six independent opaque inputs. Bitwise operators, addition and multiplication
+supply exact parity; every even factor contributes a trailing zero. Bit-sliced
+counters preserve repeated-factor correlations across all assignments. A
+product is zero only when these guaranteed zeros and its literal coefficient
+cover the full word width. The proof admits at most 64 factors, 128 reachable
+nodes and eight observable low bits, under the existing work/storage budget.
+Early sum pruning requires every long product to vanish, preserving incomplete
+factor bases. Generated products and residuals can use the proof after their
+complete distribution is established. No additional CLI or GUI switch is
+required: both source routes use the shared symbolic core.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient

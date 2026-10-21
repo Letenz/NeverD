@@ -92,6 +92,9 @@ public:
   /// Whether the engine loads a chosen DWARF file into an open image
   /// (dwarf_load).
   static bool loadsDwarfFiles();
+  /// Whether the engine finds call paths and call trees (call_paths,
+  /// call_tree).
+  static bool findsCallPaths();
 
 private:
   Json executeImpl(const std::string &operation, const Json &payload,

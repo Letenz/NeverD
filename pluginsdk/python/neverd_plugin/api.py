@@ -13,7 +13,7 @@ import re
 import sys
 from types import ModuleType
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, TypeVar, cast
+from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence, TypeVar, cast
 
 from .abi import (
     EventType,
@@ -1002,6 +1002,65 @@ class Session:
     def callgraph(self) -> object:
         return self._json("neverd_callgraph_json", "call graph")
 
+    def call_paths(
+        self,
+        waypoints: Sequence[str],
+        *,
+        exclude: Sequence[str] = (),
+        max_depth: int | None = None,
+        shortest_only: bool = False,
+        data_refs: bool = False,
+        max_paths: int | None = None,
+    ) -> object:
+        """Call paths through ``waypoints`` in order, shortest first.
+
+        Waypoints and exclusions are ``0x`` addresses or names of functions
+        and imports, read from direct references without analysis, as
+        ``neverd_call_paths_json`` takes them.
+        """
+
+        options: dict[str, object] = {
+            "waypoints": [str(point) for point in waypoints],
+            "exclude": [str(point) for point in exclude],
+            "shortest_only": bool(shortest_only),
+            "data_refs": bool(data_refs),
+        }
+        if max_depth is not None:
+            options["max_depth"] = max_depth
+        if max_paths is not None:
+            options["max_paths"] = max_paths
+        return self._json(
+            "neverd_call_paths_json",
+            "call paths",
+            _utf8_argument("call path options", json.dumps(options), allow_empty=False),
+        )
+
+    def call_tree(
+        self,
+        root: str,
+        *,
+        callers: bool = False,
+        max_depth: int | None = None,
+        exclude: Sequence[str] = (),
+        data_refs: bool = False,
+    ) -> object:
+        """The functions and imports ``root`` calls, or with ``callers`` the
+        functions that call it, as ``neverd_call_tree_json`` lists them."""
+
+        options: dict[str, object] = {
+            "root": str(root),
+            "direction": "callers" if callers else "callees",
+            "exclude": [str(point) for point in exclude],
+            "data_refs": bool(data_refs),
+        }
+        if max_depth is not None:
+            options["max_depth"] = max_depth
+        return self._json(
+            "neverd_call_tree_json",
+            "call tree",
+            _utf8_argument("call tree options", json.dumps(options), allow_empty=False),
+        )
+
     def strings(self, minimum_length: int = 4) -> object:
         return self._json(
             "neverd_strings_json",
@@ -1847,6 +1906,35 @@ class Session:
         )
         if value is None:
             raise NeverDError(self.last_error or "decompile-all failed")
+        return value
+
+    def decompile_functions(
+        self,
+        path: os.PathLike[str] | str,
+        entries: Iterable[int],
+        *,
+        language: OutputLanguage | int = OutputLanguage.C,
+    ) -> str:
+        """One translation unit of the functions at ``entries``, as
+        ``decompile_all`` writes the whole program; pass a function and the
+        ``bottom_up`` list of its ``call_tree`` for its file."""
+
+        try:
+            output_language = OutputLanguage(language)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"unknown output language: {language!r}") from error
+        addresses = [_unsigned("entry", entry, 64) for entry in entries]
+        if not addresses:
+            raise ValueError("entries must name at least one function")
+        value = self._owned_string(
+            "neverd_decompile_functions",
+            _utf8_argument("input path", os.fspath(path), allow_empty=False),
+            int(output_language),
+            (ctypes.c_uint64 * len(addresses))(*addresses),
+            _c_int("entry count", len(addresses), minimum=1),
+        )
+        if value is None:
+            raise NeverDError(self.last_error or "decompile failed")
         return value
 
     def set_evm(self, *, strict: bool = True, hardfork: str | None = None) -> None:

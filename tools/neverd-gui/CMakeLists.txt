@@ -106,6 +106,7 @@ qt_generate_deploy_app_script(TARGET neverd-gui OUTPUT_SCRIPT deploy_script
 install(SCRIPT ${deploy_script})
 install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/neverd-mcp" DESTINATION bin)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/server.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/reading.py"
               "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/transport.py" DESTINATION bin)
 
 if(BUILD_TESTING)

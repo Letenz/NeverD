@@ -149,6 +149,29 @@ class WDKDriverFixtureTests(unittest.TestCase):
             "DriverKernelSEH.KernelSSEContinuationUsesTopLevelControlsAndAllRegisters",
             "DriverKernelSEH.KernelSSEFilterEditsPreserveUnwindAndRejectX87",
         }
+        v2_model = re.findall(
+            r"TEST_F\(DriverKernelSEH,\s*(V2\w+)",
+            (source.parent / "KernelSEHTests.cpp").read_text(),
+        )
+        self.assertTrue(v2_model)
+        seh_required.update(f"DriverKernelSEH.{name}" for name in v2_model)
+        v2_native = re.findall(
+            r"TEST_P\(DriverSEHV2Execution,\s*(\w+)\)",
+            (source.parent / "DriverSEHV2Tests.cpp").read_text(),
+        )
+        self.assertTrue(v2_native)
+        for backend in ("kvm", "whp"):
+            _, backend_required = native.declared_inventory(
+                fixtures.ROOT, True, backend,
+            )
+            cases = {
+                f"Native/DriverSEHV2Execution.{name}/{backend}"
+                for name in v2_native
+            }
+            self.assertTrue(cases <= backend_required,
+                            sorted(cases - backend_required))
+            if backend == "whp":
+                seh_required.update(cases)
         modes = {"Handle", "MaskRetry", "OperandRetry", "Constant", "RejectX87"}
         for contract in ("driver", "checked"):
             seh_required.update(
