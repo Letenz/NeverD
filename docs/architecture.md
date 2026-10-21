@@ -3807,12 +3807,21 @@ Summary publication and format-call collection retain the original order,
 depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
 
 Restricted pipeline runs may reuse machine blocks constructed for an x87 callee
-proof as `CallRegisterBody` inputs. This type contains only blocks and coverage
-facts; it is not a `LowFunc` and cannot become SSA or emitted code. Register,
+proof as `CallRegisterBody` inputs. This type contains blocks, coverage and
+the presence of independent roots; it is not a `LowFunc` and cannot become SSA
+or emitted code. Register,
 stack-argument and formatted-call analyses read the same block view for cold
 and reused bodies. Format-derived call reads are still collected at ordered
 publication, so overlapping call sites cannot inherit a different contract
 because a worker completed earlier.
+
+Constant printf formats may reach a shared call from several blocks. A bounded
+fixed point retains at most four constants per register and publishes only
+after convergence. Every possible format must assign the same argument
+registers, widths and classes; an argument is a pointer only if every format
+says so. Missing predecessors, partial writes, clobbering calls and exceptional
+entries discard incoming facts. Bodies with additional independent roots keep
+block-local format analysis, including when read from the callee cache.
 
 Initial default x64 construction can also reconstruct a complete `LowFunc`
 from this inventory when the full metadata payload was retained. Machine

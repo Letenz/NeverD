@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/pipeline/PipelineLowIRDetail.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -1001,6 +1002,296 @@ TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   ASSERT_FALSE(Body.empty()) << Source;
   EXPECT_NE(Body.find("__fprintf_chk("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
+TEST(SysVCallContract, ACallTwoPathsShareTakesTheArgumentsBothFormatsName) {
+  // report(flag, n, s, c) prints n with "%lu%c" in one arm and s with
+  // "%s%c" in the other, and both arms jump to one __fprintf_chk call, as
+  // sed's cross-jumped calls do.  Each arm sets the format and its two
+  // arguments; the call passes them all whichever arm ran.  Formats that name
+  // their arguments in different registers say nothing about the call.
+  constexpr va_t Report = Text, Stub = Text + 0x40, First = 0x402000,
+                 Second = 0x402010;
+  const auto Lift = [&](const char *FirstFormat, const char *SecondFormat) {
+    std::vector<uint8_t> Code(0x50, 0xCC);
+    std::vector<uint8_t> ReportCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                       0x85, 0xFF,             // test edi, edi
+                                       0x74, 0x10,             // je L1
+                                       0x44, 0x0F, 0xBE, 0xC1, // movsx r8d, cl
+                                       0x48, 0x89, 0xF1,       // mov rcx, rsi
+                                       0x48, 0x8D, 0x15}; // lea rdx, [first]
+    for (uint8_t B : rel32(Report + 22, First))
+      ReportCode.push_back(B);
+    for (uint8_t B : {0xEB, 0x0E,             // jmp L2
+                      0x44, 0x0F, 0xBE, 0xC1, // L1: movsx r8d, cl
+                      0x48, 0x89, 0xD1,       // mov rcx, rdx
+                      0x48, 0x8D, 0x15})      // lea rdx, [second]
+      ReportCode.push_back(B);
+    for (uint8_t B : rel32(Report + 38, Second))
+      ReportCode.push_back(B);
+    for (uint8_t B : {0xBE, 0x02, 0x00, 0x00, 0x00, // L2: mov esi, 2
+                      0x31, 0xFF,                   // xor edi, edi
+                      0x31, 0xC0,                   // xor eax, eax
+                      0xE8})                        // call __fprintf_chk
+      ReportCode.push_back(B);
+    for (uint8_t B : rel32(Report + 52, Stub))
+      ReportCode.push_back(B);
+    for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                      0xC3})                  // ret
+      ReportCode.push_back(B);
+    put(Code, Report, ReportCode);
+    BinaryImage Img =
+        makeImportImage(Code, {{Report, "report"}}, {{Stub, "__fprintf_chk"}});
+    addReadOnlyData(Img, First, FirstFormat);
+    addReadOnlyData(Img, Second, SecondFormat);
+    const std::string Source = liftEntries(Img, {Report});
+    return body(Source, "report");
+  };
+  const llvm::Regex FiveArguments(
+      "__fprintf_chk\\([^,]+, 2, [^,]+, [^,]+, [^,]+\\);");
+  const std::string Shared = Lift("%lu%c", "%s%c");
+  ASSERT_FALSE(Shared.empty());
+  EXPECT_TRUE(FiveArguments.match(Shared)) << Shared;
+  const std::string Different = Lift("%lu%c", "%s");
+  ASSERT_FALSE(Different.empty());
+  EXPECT_NE(Different.find("__fprintf_chk("), std::string::npos) << Different;
+  EXPECT_FALSE(FiveArguments.match(Different)) << Different;
+}
+
+TEST(SysVCallContract, JoinedFormatsRequireCompleteCompatibleReachingValues) {
+  constexpr va_t Stub = Text + 0x80, First = 0x402000, Second = First + 0x20;
+  for (const auto Format : {BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Reverse : {false, true})
+      for (unsigned Case = 0; Case < 15; ++Case) {
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(Case);
+        BinaryImage Img =
+            makeImportImage(std::vector<uint8_t>(0x90, 0xCC),
+                            {{Text, "report"}}, {{Stub, "printf"}});
+        Img.Format = Format;
+        if (Format == BinaryFormat::MachO)
+          Img.Imports.front().Name = "_printf";
+        addReadOnlyData(Img, First,
+                        Case == 1    ? "%p%c"
+                        : Case >= 11 ? "%f%c"
+                                     : "%llu%c");
+        const char *Other = Case == 2   ? "%s"
+                            : Case == 3 ? "%f%c"
+                            : Case == 4 ? "%n%c"
+                                        : "%s%c";
+        addReadOnlyData(Img, Second, Case >= 11 ? "%f%c" : Other);
+        auto Op = [](NdOp Code, NdVar Output,
+                     std::initializer_list<NdVar> Inputs) {
+          LowOp O;
+          O.Opcode = Code;
+          O.Output = Output;
+          for (const auto &Input : Inputs)
+            O.addInput(Input);
+          return O;
+        };
+        LowFunc F;
+        F.Entry = Text;
+        F.Blocks.resize(4);
+        for (int I = 0; I < 4; ++I) {
+          F.Blocks[I].Id = I;
+          F.Blocks[I].StartAddr = Text + 0x10 * I;
+        }
+        F.Blocks[0].Succs = {1, 2};
+        for (int I : {1, 2}) {
+          auto &B = F.Blocks[I];
+          B.Preds = {0};
+          B.Succs = {3};
+          B.Ops = {Op(NdOp::COPY, NdVar::reg(x86reg::RDI, 8),
+                      {NdVar::cst(I == 1 ? First : Second, 8)})};
+        }
+        auto &Join = F.Blocks[3];
+        Join.Preds = Reverse ? std::vector<int>{2, 1} : std::vector<int>{1, 2};
+        Join.Ops = {
+            Op(NdOp::COPY, NdVar::reg(x86reg::RAX, 4), {NdVar::cst(0, 4)}),
+            Op(NdOp::CALL, {}, {NdVar::cst(Stub, 8)})};
+        Join.Ops.back().Addr = Join.StartAddr;
+        if (Case == 5)
+          F.Blocks[2].Ops.clear();
+        if (Case == 6)
+          F.Blocks[2].Ops.push_back(
+              Op(NdOp::COPY, NdVar::reg(x86reg::RDI, 1), {NdVar::cst(0, 1)}));
+        if (Case == 7)
+          F.Blocks[2].Ops.push_back(
+              Op(NdOp::CALL, {}, {NdVar::cst(Stub + 0x10, 8)}));
+        if (Case == 8)
+          Join.Preds.push_back(99);
+        if (Case == 9) {
+          ExceptionalEdge Edge;
+          Edge.BlockId = 0;
+          Join.ExceptionalPreds.push_back(Edge);
+        }
+        if (Case == 10)
+          F.OrdinaryModuleAnalysisRoots.insert(Join.StartAddr);
+        if (Case >= 11) {
+          // The vector count reaches the call from its predecessors too.
+          // A zero AL cannot supply the double the format names.
+          for (int I : {1, 2}) {
+            const unsigned Count = Case == 11 || (Case == 13 && I == 2) ? 0
+                                   : Case == 14 && I == 2               ? 257
+                                                                        : 1;
+            F.Blocks[I].Ops.push_back(Op(NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+                                         {NdVar::cst(Count, 4)}));
+          }
+          Join.Ops.erase(Join.Ops.begin());
+        }
+        if (Reverse)
+          std::swap(F.Blocks[1], F.Blocks[2]);
+        std::map<va_t, FormattedCall> Calls;
+        pipeline_detail::collectFormattedCalls(Img, F, Calls);
+        const bool Floating = Case == 12 || Case == 14;
+        if (Case >= 2 && !Floating) {
+          EXPECT_TRUE(Calls.empty());
+          continue;
+        }
+        ASSERT_EQ(Calls.size(), 1u);
+        const auto &Arguments = Calls.begin()->second.Arguments;
+        ASSERT_EQ(Arguments.size(), 3u);
+        EXPECT_EQ(Arguments[1].Register, Floating ? x86reg::XMM0 : x86reg::RSI);
+        EXPECT_EQ(Arguments[1].Bytes, 8);
+        EXPECT_EQ(Arguments[1].Floating, Floating);
+        EXPECT_EQ(Arguments[1].Pointer, Case == 1);
+        EXPECT_EQ(Arguments[2].Register, Floating ? x86reg::RSI : x86reg::RDX);
+        EXPECT_EQ(Arguments[2].Bytes, 4);
+      }
+}
+
+TEST(SysVCallContract, JoinedFormatsKeepEntryValuesAndProofLimitsUnknown) {
+  constexpr va_t Stub = Text + 0x400, Format = 0x402000;
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Img = makeImportImage(std::vector<uint8_t>(0x410, 0xCC),
+                               {{Text, "report"}}, {{Stub, "printf"}});
+    addReadOnlyData(Img, Format, "%d%c");
+    auto Copy = [](va_t Address) {
+      LowOp O;
+      O.Opcode = NdOp::COPY;
+      O.Output = NdVar::reg(x86reg::RDI, 8);
+      O.addInput(NdVar::cst(Address, 8));
+      return O;
+    };
+    auto Call = [&](va_t Address) {
+      LowOp O;
+      O.Opcode = NdOp::CALL;
+      O.Addr = Address;
+      O.addInput(NdVar::cst(Stub, 8));
+      return O;
+    };
+    LowFunc F;
+    F.Entry = Text;
+    auto Initialize = [&](unsigned Count) {
+      F.Blocks.resize(Count);
+      for (unsigned I = 0; I < Count; ++I) {
+        F.Blocks[I].Id = I;
+        F.Blocks[I].StartAddr = Text + 0x10 * I;
+      }
+    };
+    if (Case == 0) {
+      // A real initialization reaches the loop on its first iteration.
+      Initialize(4);
+      F.Blocks[0].Ops = {Copy(Format)};
+      F.Blocks[0].Succs = {1};
+      F.Blocks[1].Preds = {0, 2};
+      F.Blocks[1].Succs = {2, 3};
+      F.Blocks[2].Preds = {1};
+      F.Blocks[2].Succs = {1};
+      F.Blocks[3].Preds = {1};
+      F.Blocks[3].Ops = {Call(F.Blocks[3].StartAddr)};
+    } else if (Case == 1) {
+      // A backedge cannot initialize a format on entry to the function.
+      Initialize(2);
+      F.Blocks[0].Preds = {1};
+      F.Blocks[0].Succs = {1};
+      F.Blocks[0].Ops = {Call(Text)};
+      F.Blocks[1].Preds = {0};
+      F.Blocks[1].Succs = {0};
+      F.Blocks[1].Ops = {Copy(Format)};
+    } else if (Case == 2) {
+      // More alternatives than the bounded set retains prove no format.
+      Initialize(7);
+      for (int I = 1; I <= 5; ++I) {
+        const va_t Address = Format + 0x20 * I;
+        addReadOnlyData(Img, Address, "%d%c");
+        F.Blocks[0].Succs.push_back(I);
+        F.Blocks[I].Preds = {0};
+        F.Blocks[I].Succs = {6};
+        F.Blocks[I].Ops = {Copy(Address)};
+        F.Blocks[6].Preds.push_back(I);
+      }
+      F.Blocks[6].Ops = {Call(F.Blocks[6].StartAddr)};
+    } else {
+      // An early call becomes known, but the reverse-ordered long sibling
+      // path exhausts the fixed-point budget. Publish no partial result.
+      Initialize(18);
+      F.Blocks[0].Ops = {Copy(Format)};
+      F.Blocks[0].Succs = {1, 3};
+      F.Blocks[1].Preds = {0};
+      F.Blocks[1].Succs = {2};
+      F.Blocks[2].Preds = {1};
+      F.Blocks[2].Ops = {Call(F.Blocks[2].StartAddr)};
+      for (int I = 3; I < 18; ++I) {
+        F.Blocks[I].Preds = {I == 3 ? 0 : I - 1};
+        if (I + 1 < 18)
+          F.Blocks[I].Succs = {I + 1};
+      }
+      std::reverse(F.Blocks.begin() + 1, F.Blocks.end());
+    }
+    std::map<va_t, FormattedCall> Calls;
+    pipeline_detail::collectFormattedCalls(Img, F, Calls);
+    EXPECT_EQ(Calls.size(), Case == 0 ? 1u : 0u);
+  }
+}
+
+TEST(SysVCallContract, AJoinedFormatPrintsEveryArgumentOnBothPaths) {
+  // report(buf, size, flag, n, s, c) shares one snprintf after choosing
+  // "%llu%c" or "%s%c". Compile and execute both arms with a number whose
+  // upper word is nonzero and a real string pointer.
+  constexpr va_t Stub = Text + 0x40, First = 0x402000, Second = First + 0x20;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> Report = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                 0x85, 0xD2,             // test edx, edx
+                                 0x74, 0x0D,             // je string
+                                 0x45, 0x0F, 0xBE, 0xC1, // movsx r8d, r9b
+                                 0x48, 0x8D, 0x15};      // lea rdx, [first]
+  for (uint8_t B : rel32(Text + 19, First))
+    Report.push_back(B);
+  for (uint8_t B : {0xEB, 0x0E,             // jmp call
+                    0x4C, 0x89, 0xC1,       // string: mov rcx, r8
+                    0x45, 0x0F, 0xBE, 0xC1, // movsx r8d, r9b
+                    0x48, 0x8D, 0x15})      // lea rdx, [second]
+    Report.push_back(B);
+  for (uint8_t B : rel32(Text + 35, Second))
+    Report.push_back(B);
+  for (uint8_t B : {0x31, 0xC0, 0xE8}) // xor eax, eax; call snprintf
+    Report.push_back(B);
+  for (uint8_t B : rel32(Text + 42, Stub))
+    Report.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, 0xC3})
+    Report.push_back(B);
+  put(Code, Text, Report);
+  auto Img =
+      makeImportImage(Code, {{Text, "joined_report"}}, {{Stub, "snprintf"}});
+  addReadOnlyData(Img, First, "%llu%c");
+  addReadOnlyData(Img, Second, "%s%c");
+  const auto Source = liftEntries(Img, {Text});
+  compileAndRun(Source + R"(
+#include <string.h>
+int main(void) {
+  char Buffer[64];
+  int (*Call)(char *, uint64_t, int, uint64_t, const char *, int) =
+      (int (*)(char *, uint64_t, int, uint64_t, const char *, int))(void *)joined_report;
+  if (Call(Buffer, sizeof Buffer, 1, UINT64_C(4294967303), "joined", '!') != 11 ||
+      strcmp(Buffer, "4294967303!")) return 1;
+  if (Call(Buffer, sizeof Buffer, 0, UINT64_C(4294967303), "joined", '?') != 7 ||
+      strcmp(Buffer, "joined?")) return 2;
+  return 0;
+}
+)");
 }
 
 TEST(SysVCallContract, AVariadicImportTakesTheParameterPassedThroughToIt) {

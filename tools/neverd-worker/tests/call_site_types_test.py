@@ -234,6 +234,17 @@ uint64_t CALLEE_ABI sub_140001040(uint32_t first, ...) {
 int main(void) { return start() != 7 || calls != 1 || errors; }
 """.replace("START_RESULT", "int64_t" if route == "c" else "uint64_t")
                                .replace("MS_ABI_CALL", "0" if route == "c" else "1"))
+                    # A complete declaration also fixes the operand count.
+                    # Other registers and stack bytes set at this call do
+                    # not extend a shorter, explicitly declared signature.
+                    for count in (0, 1, 2, 4, 5):
+                        view = source(client, "c", 0x140001000)
+                        parameters = ", ".join("uint32_t a%d" % index for index in range(count)) or "void"
+                        declaration = "uint64_t call(%s);" % parameters
+                        ok(client, "code_edit", request(view, view["source_calls"][0], declaration))
+                        for route in ("c", "llvmc"):
+                            result = source(client, route, 0x140001000)
+                            assert result["call_type_results"][0]["applied"], result
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -518,10 +518,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         }
       }
     }
-    // Analyst operands were placed and proved at the original call occurrence
-    // before SSA. Register/stack scanning cannot replace their exact widths or
-    // append operands beyond that declaration. A zero-argument binding is also
-    // complete and must not acquire unrelated live registers.
+    // A validated call-site declaration fixes every operand and its width.
+    // A register scan can see the whole register or unrelated setup past
+    // that declared list; neither may replace these bound operands.
+    // A zero-argument binding is also complete, without a heuristic scan.
     if (Hinted.empty() ||
         Call.SourceCallHint->CallKind == SourceCallTypeHint::Kind::Analyst)
       return Hinted;
@@ -1479,7 +1479,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     // selector stubs must not replace `_cmd` with the const-0 overwrite
     // placeholder.
     if (Policy && Policy->MergeScannedArgs)
-      Policy->MergeScannedArgs(Ctx, Hinted);
+      Policy->MergeScannedArgs(Ctx, Hinted,
+                               Ops[CallIdx].SourceCallHint->Signature);
     return MatchOwnSignature(std::move(Hinted));
   }
   Args.clear();

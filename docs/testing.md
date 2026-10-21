@@ -4078,6 +4078,15 @@ before source emission.
 
 ## Structured C control and call checks
 
+`Win64SourceCallsKeepTheirDeclaredCarrierWidths` checks declared scalar carriers
+against whole-register scans. `NeverDWorkerCallSiteTypes` also checks explicit
+Win64 argument counts from zero through five, both C routes and partial-stack
+refusal. `RegisterJoinsRespectEntryValuesInEitherOrder` covers x64/AArch64 PHI
+order, entry widths, nested joins, exceptional inputs and missing predecessors.
+The joined-format SysV tests check compatible and conflicting formats, unknown
+paths, clobbers and independent entries on ELF and Mach-O. Their compiled C
+checks both paths with a full-width number and a real string pointer.
+
 `FoldedStoreArmsPublishTheirOutgoingPhiValues` executes a conditional with
 side-effecting store arms and a shared PHI at O0/O2. Folding the two arms into
 C `if/else` must retain each outgoing SSA assignment.
