@@ -6037,6 +6037,13 @@ must refuse installation. Preferred/rebased execution and wrong-trace controls
 use the same runner checks as the compiled inline parent.
 Large cleanup graph tests cover 129 through 4,096 source states, independent
 lifetimes, a 128-action depth boundary and long empty transition chains.
+`RegistrationCallABI.CleanupCacheUsesTheBoundedUnwindGraph` authenticates 257,
+889 and 4,096 distinct relays, checks cache reuse, and rejects changed code,
+record overflow and exhausted cumulative work. `RegistrationState` checks
+that shared unwind suffixes retain separate complete source-level effects.
+Its unknown-state case reaches both callback roots through a 4,096-state graph
+without exhausting the unchanged budget, in either block order and with or
+without cleanup contracts. Incomplete state and cleanup proofs stay rejected.
 Self/forward edges, a 129-action chain and record-budget overflow refuse.
 Independent generated-state tests bind both a dense 4,096-state table and a
 two-state table projected from 4,096 source states, rejecting omitted actions

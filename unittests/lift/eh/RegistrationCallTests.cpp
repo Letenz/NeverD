@@ -1640,6 +1640,68 @@ TEST(RegistrationCallABI, MemoizesCleanupRelaysWithoutGrantingAFrameBorrow) {
   EXPECT_TRUE(NextImage.cleanupContracts(Parent)->empty());
 }
 
+TEST(RegistrationCallABI, CleanupCacheUsesTheBoundedUnwindGraph) {
+  for (unsigned Count : {257u, 889u, limits::kMaxRegistrationEHRecords}) {
+    SCOPED_TRACE(Count);
+    CleanupRelayImage F;
+    auto &Text = F.Image.Segments[0];
+    Text.Data.resize(0x100 + Count * 16, 0xcc);
+    Text.Size = Text.FileSz = Text.Data.size();
+    F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = Text.Size;
+    LowFunc Parent;
+    auto &Cxx = Parent.ExceptionMetadata.emplace().Cxx.emplace();
+    Cxx.MaxState = Count;
+    for (unsigned I = 0; I != Count; ++I) {
+      const unsigned Offset = 0x100 + I * 16;
+      const va_t Entry = Text.VA + Offset;
+      Text.Data[Offset] = 0x8d; // lea ecx, [ebp + object]
+      Text.Data[Offset + 1] = 0x8d;
+      writeLE<int32_t>(Text.Data.data() + Offset + 2, -24 - 4 * int32_t(I));
+      Text.Data[Offset + 6] = 0xe9;
+      writeLE<uint32_t>(Text.Data.data() + Offset + 7,
+                        CleanupRelayImage::LeafVA - (Entry + 11));
+      Cxx.UnwindMap.push_back({-1, Entry, CxxUnwindAction::ActionKind::Direct});
+    }
+    size_t Work = 0;
+    RegistrationCallCalleeIndex Index(F.Image, &Work);
+    const auto Contracts = Index.cleanupContracts(Parent);
+    ASSERT_TRUE(Contracts);
+    ASSERT_EQ(Contracts->size(), Count);
+    for (unsigned I = 0; I != Count; ++I) {
+      const auto &C = (*Contracts)[I];
+      EXPECT_EQ(C.ActionState, I);
+      EXPECT_EQ(C.RelayTarget, Text.VA + 0x100 + I * 16);
+      ASSERT_EQ(C.Calls.size(), 1u);
+      EXPECT_EQ(C.Calls[0].ObjectFrameOffset, -24 - 4 * int32_t(I));
+      EXPECT_EQ(C.Calls[0].Leaf.Target, CleanupRelayImage::LeafVA);
+      EXPECT_EQ(C.Calls[0].Leaf.ECXReads,
+                (std::vector<RegistrationObjectExtent>{{0, 4}}));
+    }
+    const size_t FirstWork = Work;
+    const auto Again = Index.cleanupContracts(Parent);
+    ASSERT_TRUE(Again);
+    EXPECT_EQ(Again->size(), Count);
+    EXPECT_LT(Work - FirstWork, FirstWork);
+    EXPECT_LT(Work, limits::kMaxRegistrationEHStateWork);
+
+    // A fresh current-image query rejects an altered relay even beyond the
+    // old cache boundary, while preserving unrelated exact contracts.
+    Text.Data[0x100 + (Count - 1) * 16] = 0x90;
+    RegistrationCallCalleeIndex Changed(F.Image);
+    const auto Partial = Changed.cleanupContracts(Parent);
+    ASSERT_TRUE(Partial);
+    ASSERT_EQ(Partial->size(), Count - 1);
+    EXPECT_EQ(Partial->back().ActionState, Count - 2);
+
+    size_t Exhausted = limits::kMaxRegistrationEHStateWork - 1;
+    RegistrationCallCalleeIndex Limited(F.Image, &Exhausted);
+    EXPECT_FALSE(Limited.cleanupContracts(Parent));
+    EXPECT_EQ(Exhausted, limits::kMaxRegistrationEHStateWork);
+    Cxx.UnwindMap.resize(limits::kMaxRegistrationEHRecords + 1);
+    EXPECT_FALSE(Index.cleanupContracts(Parent));
+  }
+}
+
 namespace {
 struct CxxMetadataImage {
   static constexpr va_t TableVA = 0x403000;

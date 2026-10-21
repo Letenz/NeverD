@@ -1875,6 +1875,14 @@ PE32 scalar/array new/delete entries keep their exact decorated spelling.
 Direct IAT calls and authenticated jump veneers share the same provider and
 storage checks. Their allocation, deallocation, aliasing and callback effects
 remain outside this register-only proof.
+Cleanup relay caching uses the existing unwind-record bound, independently of
+the smaller ordinary-callee cache. Successful and failed lookups still consume
+the same cumulative work budget. Within one dispatch snapshot, each unwind
+action supplies its callback root once: its `ToState` and frame input do not
+depend on the originating level. Complete cleanup-effect proofs retain every
+originating level separately. Once that proof fails, no cleanup effects can be
+published, and already visited suffixes need no further traversal. Unknown
+states and all reachable callback roots remain conservative.
 `getCheckedX86RegistrationLeafCalleeABI` uses the same affine transfer for
 callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller

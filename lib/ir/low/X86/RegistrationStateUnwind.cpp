@@ -9,6 +9,8 @@
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
 
+#include "llvm/ADT/SmallBitVector.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -30,6 +32,14 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
     CompleteCookies = false;
   const std::set<int32_t> &DispatchLevels =
       Before.Unknown || Facts.Invalid ? AllLevels : Before.Levels;
+  // Every originating level sees the same frame snapshot here. A cleanup
+  // callback receives its action's ToState, so dispatching that same action
+  // again cannot add a different root. Keep per-level object proofs separate
+  // while they can still establish the complete cleanup contract.
+  const size_t States = EH.Cxx ? EH.Cxx->UnwindMap.size() : 0;
+  if (!charge(1 + (States + 63) / 64))
+    return;
+  llvm::SmallBitVector Dispatched(States);
   for (int32_t Level : DispatchLevels) {
     if (!charge(1))
       break;
@@ -53,8 +63,15 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
       if (!charge(1) || Walk < 0 ||
           static_cast<size_t>(Walk) >= Cxx.UnwindMap.size())
         break;
+      const bool Seen = Dispatched.test(Walk);
+      // A failed cleanup proof is monotone and publishes no effects. After
+      // that failure (or without a requested proof), a previously visited
+      // suffix has already supplied every possible callback root.
+      if (Seen && !CompleteCleanups)
+        break;
+      Dispatched.set(Walk);
       const CxxUnwindAction &Action = Cxx.UnwindMap[Walk];
-      if (CheckCleanups && Action.ActionVA) {
+      if (CheckCleanups && CompleteCleanups && Action.ActionVA) {
         const CleanupKey Identity{Block.Id, Level, uint32_t(Walk)};
         const auto Contract = CleanupIndices.find(uint32_t(Walk));
         const auto SP = parentStackOffset(Before);
@@ -98,7 +115,8 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
           CompleteImageReads = false;
         }
       }
-      dispatch(Action.ActionVA, {Action.ToState}, Before, true, true);
+      if (!Seen)
+        dispatch(Action.ActionVA, {Action.ToState}, Before, true, true);
       Walk = Action.ToState;
     }
   }
