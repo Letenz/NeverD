@@ -23,6 +23,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/FuncDetector.h"
+#include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/RegistrationCxxState.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
@@ -1968,6 +1969,7 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
         ExitCall = Op.Addr;
       }
   EXPECT_TRUE(FoundExit);
+  EXPECT_TRUE(getCheckedX86RegistrationCxxParentABI(Function, *Image));
   const bool IntactSaves =
       Word("prologue_variant") == 0 || Word("prologue_allocation") >= 4;
   const auto &ExitStates = *ExitFunction.RegistrationStates;
@@ -1987,6 +1989,8 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
             });
       });
   EXPECT_EQ(RetainedExitCall, !IntactSaves);
+  EXPECT_EQ(bool(getCheckedX86RegistrationCxxParentABI(ExitFunction, *Image)),
+            IntactSaves);
   const va_t GuardedParent = Export("guarded_state_parent");
   ASSERT_NE(GuardedParent, InvalidVA);
   const auto GuardedFunction = liftEntry(*Image, GuardedParent);
@@ -2016,6 +2020,7 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   EXPECT_EQ(GuardedStates.CallFrameEffectsComplete, IntactCookie);
   EXPECT_FALSE(cxxRegistrationFrameCoordinate(
       *GuardedFunction.ExceptionMetadata, &GuardedStates));
+  EXPECT_FALSE(getCheckedX86RegistrationCxxParentABI(GuardedFunction, *Image));
 }
 
 TEST(RegistrationTryLevel, CxxEAXHelperProjectsItsPhysicalFrameBeforeSSA) {
@@ -2090,8 +2095,9 @@ TEST(RegistrationTryLevel, CxxEAXHelperProjectionRechecksTheCurrentEntry) {
   const auto Proven = liftEntry(Original, kText + 0x20);
   ASSERT_TRUE(Proven.RegistrationStates);
   ASSERT_TRUE(Proven.RegistrationStates->CxxPrologue);
+  ASSERT_TRUE(getCheckedX86RegistrationCxxParentABI(Proven, Original));
   const va_t Call = Proven.RegistrationStates->CxxPrologue->Address;
-  for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 33; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Image = Original;
     auto Low = Proven;
@@ -2172,7 +2178,38 @@ TEST(RegistrationTryLevel, CxxEAXHelperProjectionRechecksTheCurrentEntry) {
       break;
     case 23:
       break; // No image cannot authorize a physical shared-call projection.
+    case 30:
+      Low.RegistrationStates->Complete = false;
+      break;
+    case 31:
+      Low.RegistrationStates->CallbackStatesComplete = false;
+      break;
+    case 32:
+      Low.RegistrationStates->RegistrationLifetimeComplete = false;
+      break;
+    default: {
+      auto &Accesses = Low.RegistrationStates->ChainAccesses;
+      auto It = std::find_if(Accesses.begin(), Accesses.end(),
+                             [&](const auto &A) { return A.Address == Call; });
+      ASSERT_NE(It, Accesses.end());
+      if (Mutation == 24)
+        Accesses.erase(It);
+      else if (Mutation == 25 || Mutation == 29) {
+        auto Extra = *It;
+        if (Mutation == 29)
+          Extra.AccessKind = RegistrationChainAccess::Kind::ReadPreviousHead;
+        Accesses.push_back(Extra);
+      } else if (Mutation == 26)
+        It->AccessKind = RegistrationChainAccess::Kind::Remove;
+      else if (Mutation == 27)
+        ++It->EndAddress;
+      else
+        ++It->OpSeq;
+      break;
     }
+    }
+    if (Mutation != 23)
+      EXPECT_FALSE(getCheckedX86RegistrationCxxParentABI(Low, Image));
     LowToMedConverter Converter;
     if (Mutation != 23)
       Converter.setBinaryImage(&Image);
@@ -2718,12 +2755,41 @@ TEST(RegistrationTryLevel,
         }
 }
 
+TEST(RegistrationTryLevel, CxxSharedHelpersHaveTheCheckedParentEntryABI) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2})
+      for (uint32_t Allocation : {0, 1, 4, 32})
+        for (bool PopArguments : {false, true}) {
+          if (Variant && Allocation < 4)
+            continue;
+          SCOPED_TRACE(::testing::Message()
+                       << Wide << ' ' << Variant << ' ' << Allocation << ' '
+                       << PopArguments);
+          auto [Image, Call] = makeCxxSharedEpilogueImage(
+              Wide, Variant, Allocation, PopArguments);
+          const auto Low = liftEntry(Image, kText + 0x20);
+          ASSERT_TRUE(Low.RegistrationStates);
+          ASSERT_TRUE(Low.RegistrationStates->CallFrameEffectsComplete);
+          const auto ABI = getCheckedX86RegistrationCxxParentABI(Low, Image);
+          ASSERT_TRUE(ABI);
+          EXPECT_EQ(*ABI, PopArguments ? 8u : 0u);
+          EXPECT_EQ(hasCallerCleanupRegistrationABI(Low, Image), !PopArguments);
+          LowToMedConverter Converter;
+          Converter.setBinaryImage(&Image);
+          const auto Med =
+              Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+          EXPECT_EQ(Med.RegistrationCxxEntryPopBytes, ABI);
+          EXPECT_FALSE(cxxRegistrationFrameCoordinate(
+              *Med.ExceptionMetadata, &*Med.RegistrationStates));
+        }
+}
+
 TEST(RegistrationTryLevel, CxxSharedEpilogueProjectionRequiresItsCurrentCall) {
   auto [Original, Call] = makeCxxSharedEpilogueImage(false, 2, 32);
   const auto Proven = liftEntry(Original, kText + 0x20);
   ASSERT_TRUE(Proven.RegistrationStates);
   ASSERT_TRUE(Proven.RegistrationStates->ChainOperationsComplete);
-  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Image = Original;
     auto Low = Proven;
@@ -2808,7 +2874,17 @@ TEST(RegistrationTryLevel, CxxSharedEpilogueProjectionRequiresItsCurrentCall) {
     case 21:
       Low.RegistrationStates->ChainOperationsComplete = false;
       break;
+    case 22: {
+      auto Extra = *Access;
+      Extra.AccessKind = RegistrationChainAccess::Kind::ReadInstalledHead;
+      Accesses.push_back(Extra);
+      break;
     }
+    case 23:
+      Boundary.Control = LowInstructionControl::Branch;
+      break;
+    }
+    EXPECT_FALSE(getCheckedX86RegistrationCxxParentABI(Low, Image));
     LowToMedConverter Converter;
     Converter.setBinaryImage(&Image);
     const auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
@@ -3228,6 +3304,7 @@ TEST(RegistrationTryLevel, CxxGuardedSharedEpilogueProvesTheCookieBeforeExit) {
           EXPECT_TRUE(States.CallFrameEffects.empty());
           EXPECT_FALSE(cxxRegistrationFrameCoordinate(
               *Function.ExceptionMetadata, &States));
+          EXPECT_FALSE(getCheckedX86RegistrationCxxParentABI(Function, Image));
           LowToMedConverter Converter;
           Converter.setBinaryImage(&Image);
           const auto Med =

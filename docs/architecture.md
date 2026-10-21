@@ -1908,6 +1908,13 @@ arithmetic flags. Both return-PC stores, the cookie read and the FS chain
 transfer remain explicit. Scratch storage is separate from source temporaries,
 and all frame displacements keep their signed representation. This projection
 preserves the source EH metadata and does not grant native reconstruction.
+`RegistrationSharedCall` in LowIR binds each source occurrence to current
+immutable helper bytes, exact re-lifted caller operations, entry ownership,
+and a unique chain receipt. MedIR expansion and the parent's call/frame ABI
+query share this authority. The ABI closure treats these source invocations
+as physical frame operations; it still checks every ordinary callee and does
+not grant the shared helper an ordinary calling convention. Guarded exits
+remain outside this ABI projection until their checker is preserved.
 `RegistrationEpilogue` subsequently expands unguarded shared exits from the
 current helper instructions, using the same decoder, relocations and x86
 lifter as ordinary instructions. Exact caller boundaries and chain-removal

@@ -7,91 +7,21 @@
 
 #include "RegistrationPrologue.h"
 
-#include "neverd/decode/Decoder.h"
-#include "neverd/decode/InstructionRelocations.h"
+#include "neverd/ir/low/RegistrationSharedCall.h"
 #include "neverd/lift/X86Lifter.h"
-#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include <algorithm>
 
 namespace neverd::x86_registration {
-namespace {
-
-bool matchesEntry(const BinaryImage &Image, const LowFunc &Source,
-                  const LowBlock &Entry,
-                  const coff_loader::X86CxxPrologueCall &Call) {
-  if (Source.Entry != Call.Caller.Begin || Entry.StartAddr != Source.Entry ||
-      Entry.EndAddr != Call.Caller.End || !Entry.Preds.empty() ||
-      !Entry.ExceptionalPreds.empty() ||
-      Entry.InstructionBoundaries.size() != 3 || Entry.Ops.size() > 64)
-    return false;
-  const auto Root =
-      Source.OrdinaryModuleAnalysisRoots.upper_bound(Source.Entry);
-  if (Root != Source.OrdinaryModuleAnalysisRoots.end() &&
-      *Root < Call.Caller.End)
-    return false;
-  Decoder Dec;
-  if (!Dec.init(Image))
-    return false;
-  Dec.setStrict(true);
-  std::vector<LowOp> Expected;
-  va_t Address = Call.Caller.Begin;
-  for (unsigned I = 0; I != 3; ++I) {
-    const auto &Boundary = Entry.InstructionBoundaries[I];
-    const bool IsCall = I == 2;
-    const auto *Bytes = Image.readVA(Address, Call.Caller.End - Address);
-    DecodedInsn Insn;
-    if (!Bytes ||
-        !Dec.decodeOne(Bytes, Call.Caller.End - Address, Address, Insn) ||
-        Boundary.Address != Address || Boundary.Size != Insn.Size ||
-        Boundary.Mode != InstructionMode::Default ||
-        Boundary.TargetMode != LowInstructionTargetMode::Preserve ||
-        Boundary.Control != (IsCall ? LowInstructionControl::Call
-                                    : LowInstructionControl::None) ||
-        Boundary.ControlFlags != (IsCall ? LowInstructionControlFlag::Call
-                                         : LowInstructionControlFlag::None) ||
-        (IsCall ? Boundary.Immediate != Call.Helper.Begin
-                : Boundary.Immediate.has_value()) ||
-        Boundary.FirstOp != Expected.size())
-      return false;
-    const auto Relocations = instructionRelocations(Image, Insn);
-    try {
-      Dec.liftToLow(Insn, Expected, Relocations.Addresses, Relocations.Scalars);
-    } catch (const UnliftedInstruction &) {
-      return false;
-    }
-    if (Boundary.OpCount != Expected.size() - Boundary.FirstOp)
-      return false;
-    Address += Insn.Size;
-  }
-  return Address == Call.Caller.End && Entry.Ops == Expected;
-}
-
-} // namespace
 
 std::optional<LowFunc> projectCxxPrologue(const BinaryImage &Image,
                                           const LowFunc &Source) {
-  if (Image.Arch != Arch::X86 || !Image.isCOFF() || !Source.ExceptionMetadata ||
-      !Source.RegistrationStates ||
-      !Source.RegistrationStates->ChainOperationsComplete ||
-      !Source.RegistrationStates->CxxPrologue)
-    return std::nullopt;
-  const auto Call = coff_loader::getCheckedX86CxxPrologueCall(
-      Image, *Source.ExceptionMetadata);
+  const auto Call = getCheckedX86RegistrationCxxPrologueCall(Image, Source);
   if (!Call)
     return std::nullopt;
-  const auto &Receipt = *Source.RegistrationStates->CxxPrologue;
   const auto Entry = std::find_if(
       Source.Blocks.begin(), Source.Blocks.end(),
       [&](const auto &Block) { return Block.StartAddr == Source.Entry; });
-  if (Receipt.Address != Call->CallVA ||
-      Receipt.EndAddress != Call->Caller.End ||
-      Receipt.HelperVA != Call->Helper.Begin ||
-      Receipt.StackOffset != Call->PostCallStackOffset ||
-      Entry == Source.Blocks.end() ||
-      !matchesEntry(Image, Source, *Entry, *Call) ||
-      Entry->Ops.back().Seq != Receipt.OpSeq)
-    return std::nullopt;
 
   // Keep synthetic scratch storage disjoint from every source temporary,
   // including values that survive across source instruction boundaries.

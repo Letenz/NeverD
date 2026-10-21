@@ -134,6 +134,7 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationSEHCallNext.cpp
   X86/RegistrationSEHParentEpilogue.cpp
   X86/RegistrationCallerABI.cpp
+  X86/RegistrationSharedCall.cpp
   X86/RegistrationEntryABI.cpp
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp

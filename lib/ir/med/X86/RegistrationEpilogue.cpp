@@ -8,9 +8,9 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/decode/InstructionRelocations.h"
+#include "neverd/ir/low/RegistrationSharedCall.h"
 #include "neverd/lift/LiftCommon.h"
 #include "neverd/lift/X86Regs.h"
-#include "neverd/loader/COFF/COFFCxxEpilogue.h"
 
 #include <algorithm>
 #include <map>
@@ -26,38 +26,12 @@ expandExit(const BinaryImage &Image, const LowFunc &Source,
   // separate exits follow source temporaries close to the storage limit.
   if (TempId > (UINT64_MAX - TmpBase) / TmpStride - 512)
     return std::nullopt;
-  if (Block.Ops.empty() || Block.InstructionBoundaries.empty())
+  const auto Call =
+      getCheckedX86RegistrationCxxEpilogueCall(Image, Source, Block);
+  // A source cookie receipt cannot replace the checker and failure path.
+  if (!Call || Call->CookieCheck)
     return std::nullopt;
   const auto &Op = Block.Ops.back();
-  const auto &Boundary = Block.InstructionBoundaries.back();
-  if (Op.Opcode != NdOp::CALL ||
-      std::count_if(Source.RegistrationStates->ChainAccesses.begin(),
-                    Source.RegistrationStates->ChainAccesses.end(),
-                    [&](const auto &Access) {
-                      return Access.Address == Op.Addr &&
-                             Access.EndAddress == Block.EndAddr &&
-                             Access.OpSeq == Op.Seq &&
-                             Access.AccessKind ==
-                                 RegistrationChainAccess::Kind::Remove;
-                    }) != 1)
-    return std::nullopt;
-  const auto Call = coff_loader::getCheckedX86CxxEpilogueCall(
-      Image, *Source.ExceptionMetadata, Op.Addr);
-  // Guarded exits need their observable checker and failure path preserved.
-  // A source cookie receipt alone cannot replace that invocation with success.
-  if (!Call || Call->CookieCheck || Call->Caller.End != Block.EndAddr ||
-      Boundary.Address != Op.Addr || Boundary.Size != 5 ||
-      Boundary.FirstOp != Block.Ops.size() - 1 || Boundary.OpCount != 1 ||
-      Boundary.Mode != InstructionMode::Default ||
-      Boundary.TargetMode != LowInstructionTargetMode::Preserve ||
-      Boundary.Control != LowInstructionControl::Call ||
-      Boundary.ControlFlags != LowInstructionControlFlag::Call ||
-      Boundary.Immediate != Call->Helper.Begin)
-    return std::nullopt;
-  const auto Root = Source.OrdinaryModuleAnalysisRoots.upper_bound(Op.Addr);
-  if (Root != Source.OrdinaryModuleAnalysisRoots.end() &&
-      *Root < Call->Caller.End)
-    return std::nullopt;
   Decoder Dec;
   if (!Dec.init(Image))
     return std::nullopt;
@@ -76,11 +50,6 @@ expandExit(const BinaryImage &Image, const LowFunc &Source,
     }
     return Insn.Size;
   };
-  std::vector<LowOp> Caller;
-  if (Lift(Op.Addr, Call->Caller.End, Caller) != 5 || Caller.size() != 1 ||
-      Caller.front() != Op)
-    return std::nullopt;
-
   std::vector<LowOp> Ops;
   LiftStateBase S(Op.Addr, 5, Ops);
   S.TmpId = TempId;
