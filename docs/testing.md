@@ -1093,6 +1093,12 @@ execute.
 `<netdb.h>`'s `struct addrinfo` and `struct servent` through a pointer
 `getaddrinfo` stores in a local and through `getservbyname`'s result, and
 requires C that names the members; a host without `<netdb.h>` skips it.
+`NeverDWorkerProgramMain` strips a program the host compiler builds and
+requires the function its start-up code passes `__libc_start_main` to resolve
+as `main`, defined `int32_t main(int32_t argc, char** argv, char** envp)` by
+HighC and LLVM-C alike; a host without `strip` skips it.
+`NeverDSessionCAPITests` (`ProgramMain`) reads the same argument from x86-64,
+i386 and AArch64 start-up code.
 `NeverDReturnContractTests` requires the shared no-return proof before an absent
 ordinary return can erase a function's result, including an external catch
 edge. Native pipeline CI executes the complete owner on each compiler.

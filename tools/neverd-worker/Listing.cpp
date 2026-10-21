@@ -818,10 +818,6 @@ struct Listing::Impl {
       }
     if (auto *function = functionAtEntry(entry))
       rename(*function, std::string(EntryFunctionName));
-    if (!functionNamed(MainFunctionName))
-      if (const auto main = startArgumentMain(entry))
-        if (auto *function = functionAtEntry(*main))
-          rename(*function, std::string(MainFunctionName));
     aliases.clear();
     for (const auto &function : functions)
       if (function.name != function.engineName) {
@@ -933,81 +929,6 @@ struct Listing::Impl {
         if (auto it = slots.find(address); it != slots.end())
           return it->second.name;
     return {};
-  }
-
-  /// main is the first argument the image's start routine passes to the C
-  /// runtime (`__libc_start_main` and its variants): RDI/EDI on x86-64, the
-  /// last pushed code address on x86, X0 from ADRP+ADD on AArch64.
-  std::optional<std::uint64_t> startArgumentMain(std::uint64_t entry) {
-    const int index = functionIndex(entry);
-    if (index < 0 || functions[index].entry != entry)
-      return std::nullopt;
-    const auto isCode = [&](std::uint64_t address) {
-      const int region = regionIndex(address);
-      return region >= 0 && regions[region].exec;
-    };
-    std::optional<std::uint64_t> argument;
-    std::optional<std::uint64_t> page; // AArch64 ADRP x0
-    for (const auto &instruction : decode(index).instructions) {
-      const std::string_view mnemonic = instruction.mnemonic;
-      const std::string_view operands = instruction.operands;
-      const auto firstOffset = [&]() -> std::optional<std::uint64_t> {
-        for (const auto &[address, kind] : instruction.refs)
-          if ((kind == RefKind::Offset || kind == RefKind::Read) &&
-              isCode(address))
-            return address;
-        return std::nullopt;
-      };
-      if (instruction.flow == Flow::Call ||
-          instruction.flow == Flow::IndirectCall) {
-        if (isStartRoutine(calledImport(instruction)))
-          return argument;
-        argument.reset();
-        continue;
-      }
-      if ((mnemonic == "lea" || mnemonic == "mov") &&
-          (operands.starts_with("rdi,") || operands.starts_with("edi,"))) {
-        argument = firstOffset();
-      } else if (mnemonic == "push" && !wide) {
-        if (const auto value = firstOffset())
-          argument = value;
-      } else if (mnemonic == "adrp" && operands.starts_with("x0,")) {
-        page = parseImmediate(operands.substr(3));
-      } else if (mnemonic == "add" && operands.starts_with("x0, x0,") && page) {
-        if (const auto offset = parseImmediate(operands.substr(7)))
-          argument = *page + *offset;
-        page.reset();
-      }
-    }
-    return std::nullopt;
-  }
-
-  static bool isStartRoutine(std::string_view import) {
-    static constexpr std::string_view Routines[] = {
-#define NEVERD_START_ROUTINE(Name) Name,
-#include "ListingVocabulary.def"
-    };
-    for (const auto routine : Routines)
-      if (import == routine)
-        return true;
-    return false;
-  }
-
-  /// `#0x1234`, `0x1234` or decimal, as disassembler operands spell them.
-  static std::optional<std::uint64_t> parseImmediate(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '#'))
-      text.remove_prefix(1);
-    int base = 10;
-    if (text.starts_with("0x")) {
-      text.remove_prefix(2);
-      base = 16;
-    }
-    std::uint64_t value = 0;
-    const auto parsed =
-        std::from_chars(text.data(), text.data() + text.size(), value, base);
-    if (parsed.ec != std::errc{} || parsed.ptr == text.data())
-      return std::nullopt;
-    return value;
   }
 
   void buildRegions() {

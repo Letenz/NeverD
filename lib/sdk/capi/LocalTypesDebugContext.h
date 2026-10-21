@@ -83,7 +83,8 @@ public:
   /// prototype names as its source.  \p Recognized names the functions
   /// signatures recognized by their bytes, which nothing else names.
   /// \p EntryType names the type of \p Image's entry point, a pointer to a
-  /// function, where its kind's specification gives it one.
+  /// function, where its kind's specification gives it one.  \p ProgramMain
+  /// is the function the C runtime runs as main (findProgramMain).
   LocalTypesDebugContext(
       const DebugContext &Inner,
       std::shared_ptr<const types::TypeLibrary> Types,
@@ -91,7 +92,8 @@ public:
       const BinaryImage *Image = nullptr,
       std::vector<types::HeaderLibrary> Headers = {},
       std::unordered_map<uint64_t, std::string> Recognized = {},
-      std::string EntryType = {});
+      std::string EntryType = {},
+      std::optional<va_t> ProgramMain = std::nullopt);
   /// Takes back the members and enumerators it gave the debug information's
   /// types, and gives back those they held, so that the context made after
   /// a change to the library gives them anew.
@@ -253,6 +255,9 @@ private:
   std::string EntryType;
   /// The function type EntryType points to, as a signature.
   std::optional<FunctionSym> entrySignature() const;
+  std::optional<va_t> ProgramMain;
+  /// Main as the C runtime calls it (libc::kProgramMainDeclaration).
+  std::optional<FunctionSym> mainSignature() const;
   mutable std::mutex Mutex;
   mutable llvm::StringMap<std::optional<FunctionSym>> Signatures;
   /// What spells the prototypes' declarations, by the spelling of builtins

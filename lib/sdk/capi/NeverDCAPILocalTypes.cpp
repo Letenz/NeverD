@@ -779,7 +779,7 @@ DebugContext *Session::decompileDebug() {
       Library ? std::make_shared<types::TypeLibrary>(*Library)
               : std::shared_ptr<types::TypeLibrary>(libraryFor(Img)),
       std::move(Declarations), &Img, std::move(Headers), SigDB.buildNameMap(),
-      LocalTypeEntryType);
+      LocalTypeEntryType, programMain());
   return LocalTypesDbg.get();
 }
 

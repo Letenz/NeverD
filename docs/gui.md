@@ -171,9 +171,10 @@ differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a 
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
 their classic forms in the listing, function list, jumps and source views:
-import thunks after their import, the entry point `start`, and `main` as passed
-to the C runtime's start routine. The pseudocode of `sub_13E0` therefore defines
-`main`, and a rename of the function still wins over the classic name.
+import thunks after their import and the entry point `start`. The engine names
+the function the entry passes the C runtime's start routine `main`, and its
+pseudocode defines it as the runtime calls it, `int main(int argc, char **argv,
+char **envp)`; a rename of the function still wins over that name.
 
 **Graph view** (Space) lays the current function out in layers with the
 conditional (green/red) and unconditional edges routed around blocks; panning

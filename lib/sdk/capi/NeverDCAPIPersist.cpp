@@ -590,6 +590,7 @@ static void restartWithUserNoReturn(neverd_session_t Sess, Session *S) {
   const bool Discovered = S->DiscoveredFunctions.has_value();
   S->applyUserNoReturn();
   S->DiscoveredFunctions.reset();
+  S->ProgramMainFound.reset();
   S->invalidatePipeline();
   if (Discovered)
     (void)neverd_session_discover_functions(Sess);
