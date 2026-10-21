@@ -341,6 +341,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidScanningTests.cpp
   AndroidFinalizerTests.cpp
   TIMEOUT 30
+  NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
 include(AndroidFixtures.cmake)
