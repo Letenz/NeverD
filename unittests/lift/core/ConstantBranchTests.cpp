@@ -22,7 +22,8 @@ using namespace neverd;
 namespace {
 
 LowFunc build(std::vector<uint8_t> Bytes, Arch Architecture = Arch::X64,
-              BinaryFormat Format = BinaryFormat::ELF) {
+              BinaryFormat Format = BinaryFormat::ELF, va_t Entry = 0x1000,
+              const std::set<va_t> &Entries = {}) {
   BinaryImage Image;
   Image.Arch = Architecture;
   Image.Bits = Architecture == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
@@ -40,7 +41,8 @@ LowFunc build(std::vector<uint8_t> Bytes, Arch Architecture = Arch::X64,
     return {};
   }
   CFGBuilder Builder;
-  auto Function = Builder.build(Image, Dec, Image.Base, "constant_branch");
+  Builder.setKnownFuncEntries(&Entries);
+  auto Function = Builder.build(Image, Dec, Entry, "constant_branch");
   auto Error = validateLowInstructionBoundaries(
       Function, LowInstructionBoundaryRequirement::Required);
   EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
@@ -77,6 +79,42 @@ TEST(ConstantBranch, UnknownLiveInAndPartialRegisterStayUnknown) {
   const auto Partial =
       build({0x66, 0xb8, 0x08, 0x10, 0xff, 0xe0, 0xe9, 0x90, 0xc3});
   EXPECT_FALSE(addresses(Partial).count(0x1008));
+}
+
+TEST(ConstantBranch, NoncontiguousTargetsRetainTheirFrame) {
+  // An unrelated function at 0x1008 bounds the entry's initial range, but
+  // does not own the distant continuation. That continuation branches back
+  // below the selected entry. Neither transfer is a new ABI invocation.
+  for (auto Architecture : {Arch::X86, Arch::X64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      const auto Function =
+          build({0xc3, 0xb8, 0x10, 0x10, 0,    0,    0xff, 0xe0,
+                 0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xe9,
+                 0xb8, 0x00, 0x10, 0,    0,    0xff, 0xe0},
+                Architecture, Format, 0x1001, {0x1008});
+      EXPECT_EQ(addresses(Function),
+                (std::set<va_t>{0x1000, 0x1001, 0x1006, 0x1010, 0x1015}));
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          EXPECT_NE(Op.Opcode, NdOp::INDIR_CALL);
+    }
+}
+
+TEST(ConstantBranch, AnExactIndependentEntryRemainsATailCall) {
+  const auto Function = build(
+      {0xb8, 0x0a, 0x10, 0, 0, 0xff, 0xe0, 0xe9, 0x90, 0x90, 0x31, 0xc0, 0xc3},
+      Arch::X64, BinaryFormat::COFF, 0x1000, {0x100a});
+  EXPECT_FALSE(addresses(Function).count(0x100c));
+  EXPECT_EQ(addresses(Function), (std::set<va_t>{0x1000, 0x1005}));
+  bool FoundCall = false;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst()) {
+        FoundCall |= Op.Inputs[0].Offset == 0x100a;
+        EXPECT_EQ(Op.Addr, 0x1005u);
+      }
+  EXPECT_TRUE(FoundCall);
 }
 
 TEST(ConstantBranch, CallsDoNotPreserveAnInventedRegisterValue) {

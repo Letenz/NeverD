@@ -729,6 +729,9 @@ public:
   std::optional<va_t>
   uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;
+  /// Recognized image text beside the load that reads it, even when the
+  /// object's declaration is folded out of the displayed function body.
+  std::string imageLoadComment(const llvm::LoadInst &Load) const;
   std::optional<va_t> imageDataVA(const llvm::Value *V) const;
   static unsigned imageIntegerAccessSize(const llvm::Type *Ty) {
     if (!Ty || !Ty->isIntegerTy())
@@ -935,12 +938,11 @@ public:
   /// from; nullopt where the image names no data there.
   std::optional<std::pair<std::string, std::string>>
   imageDataSymbolName(va_t Addr) const;
-  /// The comment naming the symbol of each image object whose identifier is
-  /// not that symbol (symbolComment()), by identifier.
+  /// Original symbol spellings and recognized image text, by identifier.
   mutable std::map<std::string, std::string> ImageObjectSymbols;
-  /// The line before the declaration of image object \p Name that names its
-  /// symbol, as a definition names its function's; empty for an object named
-  /// as its symbol is.
+  /// Text already scanned while naming an image object, reused at its reads.
+  mutable std::map<va_t, std::string> ImageObjectStrings;
+  /// Original symbol spelling or recognized text beside an image declaration.
   std::string imageObjectSymbolLine(llvm::StringRef Name) const;
   /// Image data no symbol or debug information names: its name is the
   /// writer's own.

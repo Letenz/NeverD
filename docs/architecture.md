@@ -75,6 +75,21 @@ listings and replaces their linear reference-scan results, so skipped bytes do
 not swallow real code targets. Analyst Undefine overrides presentation inside
 a function without deleting the function or changing the original bytes.
 
+Exact scalar transfers may reach backward or discontiguous blocks beyond a
+next-entry search bound. Known independent entries retain tail-call ownership
+and the original transfer's instruction address. The worker indexes complete
+recovered instruction ranges separately from contiguous listing extents;
+explicit metadata chunks keep their own headers and share their parent's
+identity. Cold address navigation probes a bounded set of nearby entries and
+accepts only recovered instruction evidence, never proximity alone. Ambiguous
+ownership stays unresolved. The index survives display-cache eviction and is
+cleared when function discovery or edits rebuild the listing. Reference
+overlays cover recovered bytes without erasing unrelated functions in the gaps.
+New GUI jumps and invalidated cursors request this bounded lookup through the
+listing's optional `recover_address` when that cursor is not a known instruction
+start. Paging and scrolling reuse the existing presentation cache; explicit
+analyst items remain authoritative for display.
+
 The GUI owns the relationship between a packed `.nddb` and its unpacked working
 copy; the worker owns edit journals and their replay. Before a database opens a
 working copy with a pending journal, `ProjectDatabase` writes a local recovery
@@ -1357,6 +1372,38 @@ offsets, and never expands the product. Traversal, comparison, wide constants,
 scratch storage and final emission use the same request budgets. Partial
 proofs leave their products intact, while already proved zero summands can be
 removed safely before ordinary MBA recovery.
+Scaled affine factors are read as complete coefficient maps over exact opaque
+atoms, with bounded traversal of nested additions and scalar products. Fixed
+powers of two are removed first; checked odd inverses normalize the remaining
+low-bit coefficients and offsets. Only identical complete projected maps share
+a residue group. Prefix truncation weakens a bound and cannot invent equality
+of the original full-width factors. Unit copies and native scalar multiplies
+avoid unnecessary wide multiplication work.
+When a nonzero product observes at most eight bits, the same maps can establish
+one common affine word by checking every present and absent coordinate. Its
+entire observed domain is then enumerated. Per-bit periodic lookups may widen
+byte-sized inputs to native 64-bit words; a common low-bit support condition
+also permits an exact lower-degree polynomial. The enclosing power of two
+restores full-width semantics. Candidates must beat both the original product
+and its normalized factored form, preserving simpler existing recovery paths.
+All candidates, wide constants and scratch consume the existing work/storage
+budgets; refusal retains the original product. These are shared symbolic-core
+rules, so CLI and GUI source optimization use them through their existing switches.
+HighC lowers a zero-extended sub-byte extract as a masked native-word operation
+with the exact extraction offset. The fragment is never materialized as a byte
+for signed extension, which would change its sign bit. Other unsupported
+non-byte-width operations retain the existing refusal.
+LLVM emission admits a generated variable shift only when bounded symbolic
+known-bit analysis proves every count below the operand width. The shared query
+allowance is finite, and failures retain the original IR. Existing input poison,
+opaque-leaf and instruction-profitability checks are unchanged.
+Available same-width scalar definitions also retain an exact source-local view
+for reconstruction, including the exact low view of a zero/sign-extended
+definition. Proof expansion can inspect the complete value while
+emission reuses the live local, avoiding repeated copies that erase a cost
+improvement. Existing mutation, alias and control-flow kills still determine
+which definitions are available; constants and bare input variables do not
+acquire compound aliases.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient

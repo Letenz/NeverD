@@ -18,6 +18,7 @@ add_neverd_component_library(NeverDSymbolic
   mba/SymMBAMaskPartition.cpp
   mba/SymMBAMaskedSum.cpp
   mba/SymMBAAbstract.cpp
+  mba/SymMBAAffineResidue.cpp
   mba/SymMBAArithmetic.cpp
   mba/SymMBAFactor.cpp
   mba/SymMBAMeasure.cpp

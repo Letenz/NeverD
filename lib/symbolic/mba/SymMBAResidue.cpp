@@ -9,7 +9,9 @@
 /// A factor B+c contributes one trailing zero for each matching low-bit prefix
 /// of -B and c. Partition all offsets by these prefixes, and take the minimum
 /// count along every residue path. This covers every word value of B, including
-/// opaque nonlinear bases and correlated bases in different groups.
+/// opaque nonlinear bases and correlated bases in different groups. Scaled
+/// affine factors use the same bound and may synthesize a smaller nonzero
+/// result from their complete observed residue table.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -50,6 +52,8 @@ SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage) {
   if (!hasOffsetFactors(Ctx, Root) || Budget.exhausted())
     return Root;
+  if (auto Affine = foldAffineProductResidues(Ctx, Root, Budget, Storage))
+    return *Affine;
   const unsigned Width = Ctx.width(Root);
   const size_t Words = (size_t(Width) - 1) / 64 + 1;
   using Groups = std::map<std::vector<uint32_t>, std::vector<llvm::APInt>>;
@@ -102,42 +106,7 @@ SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     (void)Base;
     if (Offsets.size() < 2)
       continue;
-    // Both children must be present to descend. The smaller child is solved
-    // first; its complete bound often excludes the other child immediately.
-    // Thus a dense 2^k-offset family takes O(k*2^k) work, not a Cartesian table
-    // of every residue against every factor. Depth is also bounded by N.
-    auto Bound = [&](auto &&Self, size_t Begin, size_t End, unsigned Bit,
-                     unsigned Ceiling) -> std::optional<unsigned> {
-      if (Bit == Width || !Ceiling)
-        return 0;
-      if (!Budget.consume(End - Begin))
-        return std::nullopt;
-      auto Middle =
-          std::partition(Offsets.begin() + Begin, Offsets.begin() + End,
-                         [&](const llvm::APInt &C) { return !C[Bit]; });
-      const size_t Split = Middle - Offsets.begin();
-      const size_t Left = Split - Begin, Right = End - Split;
-      if (!Left || !Right)
-        return 0;
-      const bool SmallLeft = Left <= Right;
-      const size_t Small = SmallLeft ? Left : Right;
-      const size_t Large = SmallLeft ? Right : Left;
-      if (Small >= Ceiling)
-        return Ceiling;
-      auto A = Self(Self, SmallLeft ? Begin : Split, SmallLeft ? Split : End,
-                    Bit + 1, Ceiling - Small);
-      if (!A)
-        return std::nullopt;
-      const unsigned SmallBound = Small + *A;
-      if (Large >= SmallBound)
-        return SmallBound;
-      auto B = Self(Self, SmallLeft ? Split : Begin, SmallLeft ? End : Split,
-                    Bit + 1, SmallBound - Large);
-      if (!B)
-        return std::nullopt;
-      return std::min<unsigned>(SmallBound, Large + *B);
-    };
-    auto Zeros = Bound(Bound, 0, Offsets.size(), 0, Needed);
+    auto Zeros = minimumProductResidueZeros(Offsets, Width, Needed, Budget);
     if (!Zeros)
       return Root;
     Needed -= *Zeros;
@@ -148,6 +117,47 @@ SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
 }
 
 } // namespace
+
+std::optional<unsigned>
+minimumProductResidueZeros(llvm::MutableArrayRef<llvm::APInt> Offsets,
+                           unsigned Width, unsigned Ceiling,
+                           WorkBudget &Budget) {
+  // Both children must be present to descend. The smaller child is solved
+  // first; its complete bound often excludes the other child immediately.
+  // Thus a dense 2^k-offset family takes O(k*2^k) work, not a Cartesian table
+  // of every residue against every factor. Depth is also bounded by N.
+  auto Bound = [&](auto &&Self, size_t Begin, size_t End, unsigned Bit,
+                   unsigned Ceiling) -> std::optional<unsigned> {
+    if (Bit == Width || !Ceiling)
+      return 0;
+    if (!Budget.consume(End - Begin))
+      return std::nullopt;
+    auto Middle = std::partition(Offsets.begin() + Begin, Offsets.begin() + End,
+                                 [&](const llvm::APInt &C) { return !C[Bit]; });
+    const size_t Split = Middle - Offsets.begin();
+    const size_t Left = Split - Begin, Right = End - Split;
+    if (!Left || !Right)
+      return 0;
+    const bool SmallLeft = Left <= Right;
+    const size_t Small = SmallLeft ? Left : Right;
+    const size_t Large = SmallLeft ? Right : Left;
+    if (Small >= Ceiling)
+      return Ceiling;
+    auto A = Self(Self, SmallLeft ? Begin : Split, SmallLeft ? Split : End,
+                  Bit + 1, Ceiling - Small);
+    if (!A)
+      return std::nullopt;
+    const unsigned SmallBound = Small + *A;
+    if (Large >= SmallBound)
+      return SmallBound;
+    auto B = Self(Self, SmallLeft ? Split : Begin, SmallLeft ? End : Split,
+                  Bit + 1, SmallBound - Large);
+    if (!B)
+      return std::nullopt;
+    return std::min<unsigned>(SmallBound, Large + *B);
+  };
+  return Bound(Bound, 0, Offsets.size(), 0, Ceiling);
+}
 
 SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                            size_t &Storage) {

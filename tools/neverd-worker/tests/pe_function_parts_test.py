@@ -140,10 +140,14 @@ def run(worker):
             texts = [" ".join(line["text"].split()) for line in cold]
             assert "; START OF FUNCTION CHUNK FOR Split" in texts, texts
             assert "; END OF FUNCTION CHUNK FOR Split" in texts, texts
+            assert sum("END OF FUNCTION CHUNK FOR Split" in text for text in texts) == 1, texts
+            assert not any(text.endswith(" endp") for text in texts), texts
             assert any(text.startswith("loc_140001100:") for text in texts), texts
             body = [line for line in cold if line["kind"] == "insn"
                     and BASE + COLD <= int(line["address"], 16) < BASE + COLD + COLD_SIZE]
             assert len(body) == 3 and all(line["function_address"] == hex(BASE + SPLIT) for line in body), body
+            resolved = client.call("resolve", {"query": hex(BASE + COLD + 7)})
+            assert resolved["payload"]["function_address"] == hex(BASE + SPLIT), resolved
 
             # The part's reference to the string is its function's: the
             # string lists it, and so do its references.

@@ -607,6 +607,18 @@ bool productCoefficientsFitScale(const HigherCoefficients &Higher,
 SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                            size_t &Storage);
 
+/// A complete lower bound over every low-bit residue, capped at Ceiling.
+std::optional<unsigned>
+minimumProductResidueZeros(llvm::MutableArrayRef<llvm::APInt> Offsets,
+                           unsigned Width, unsigned Ceiling,
+                           WorkBudget &Budget);
+
+/// No value means the cheap affine hint declined; a value is a complete
+/// result or the original product when proof resources were insufficient.
+std::optional<SymRef> foldAffineProductResidues(SymContext &Ctx, SymRef Root,
+                                                WorkBudget &Budget,
+                                                size_t &Storage);
+
 /// Only the low product bit survives a highest-bit scale.
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                              size_t &Storage);

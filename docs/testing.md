@@ -150,7 +150,18 @@ jump, ordinary calls and indirect tail calls.
 opcode bytes, repeated transfers, flags, unknown live-ins, partial registers,
 call clobbers, overlapping reachable streams and late incoming edges that
 invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
-ownership and an AArch64 scalar transfer.
+ownership and an AArch64 scalar transfer. Discontiguous and backward targets
+retain the original frame across another entry's search bound; independently
+known targets remain tail calls with their original instruction address.
+
+`NeverDWorkerConstantBranch` also checks cold expression resolution and literal
+GUI listing jumps into forward and backward fragments, both C routes, retained
+stack names, chunk headers/footers, bytecode ownership, and reference overlays
+that preserve an intervening independent call. Rename invalidation and paging
+from either direction must retain the cursor's recovered instruction even when
+an independent decode stream overlaps it.
+Run it with `NeverDWorkerPEFunctionParts` to retain explicit unwind-metadata
+chunks and their parent identity alongside recovered fragments.
 
 `NeverDSymMBAKnownFactTests` checks reuse of existing known-bit facts at
 mask and predicate consumers, including independent sign-extension and
@@ -375,15 +386,22 @@ Use `--family extreme-frontier --count 6` for degree-192/256 products,
 three mixed-degree blocks, complemented nonlinear powers, missing corners and
 multiple coefficient disturbances. Use `--family residue-product --count 80`
 for correlated factor residues through degree 256, odd strides, wrapped
-offsets, multiple opaque bases and nearby nonzero controls. Run all fifteen
+offsets, multiple opaque bases and nearby nonzero controls.
+Use `--family affine-residue --count 96` for independent odd units, even
+factors, nested/distributed affine bases, correlated bases, partial-prefix
+perturbations and nonzero neighbors through degree 256. Run all sixteen
 families at 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
 with no output-cost regression against the frozen baseline. Keep both the CLI
 executable and its matching shared library when freezing a comparison engine.
-Measure per-query SDK CPU time in alternating baseline/candidate processes,
-including parsing, proof and rendering; compare identical outputs and work
-counts to the CLI report before computing latency percentiles.
+Measure per-query SDK CPU time in alternating baseline/candidate calls after
+warmup, including parsing, proof and rendering. Keep both libraries independently
+bound when pairing calls in one process; compare identical outputs, costs and
+work counts to the CLI report before computing per-case medians and percentiles.
+The independent evaluator handles explicit word widths, extracts, extensions
+and modular shifts. Check it with
+`python3 tools/neverd-bench/tests/test_symbolic_masks.py`.
 The mixed-degree C++ regression adds an independently generated three-block
 variant and a full-word arithmetic oracle through 257 bits. Cache regressions
 cover compatible and incompatible complement bases, storage refusal followed by
@@ -401,6 +419,25 @@ full-width zero replacements at 8/16/32/64 bits. The real worker/CLI source
 synthesis test includes original x64 quartic and octic machine code, requires
 product removal in both source modes, tests toggle/cache isolation, and
 executes every generated C output at O0/O2.
+`SymMBAAffineResidue` checks independent factor slopes across five bases at
+8/16/32/64/65/128/257 bits, exhaustive four-bit slopes and inputs, nonzero
+neighbors, extra/missing/perturbed coordinates, exact/short work and storage,
+and independent full-width Z3 proofs. Worker fixtures add original x64 scaled
+quartic/octic products and a nonzero octic neighbor, exercising both backends,
+CLI whole/function requests, GUI worker requests and toggle/cache isolation.
+`HighSymSimplify.PreservesSupportedAndRefusedSubByteProjections` checks 1/3/7-bit
+fragments at low and high offsets in 8/16/32/64-bit words against independent
+modular arithmetic, including closed refusal of unsupported narrow arithmetic.
+`HighSymSimplify.ReusesLiveAffineWordInNonzeroResidueLookups` requires compact
+lookup output through live definitions and widened carriers at the same four
+widths. Existing
+assignment, effect, alias and control-flow tests protect definition invalidation.
+The worker neighbor also compiles and executes the native lookup lowering in
+both C routes.
+`SymSimplifyGuard.GeneratedVariableShiftsRequireCompleteValueBounds` checks
+all three shifts at 8/16/32/64/65/128/257 bits, casts, unbounded counts,
+width-valued masks and carries past the bound. Existing poison and synthesis
+refusal tests remain mandatory when changing this emission gate.
 Interleaved residual tests cover the completed-product traversal boundary at
 15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
 nonzero odd-factor assignments, reject leaked temporary inputs, and require
@@ -2361,8 +2398,10 @@ ctest --test-dir build-release \
 
 `NeverDCSourcePresentationTests` covers mapped array/record allocations through
 248 bytes and image text reached through wide reads in HighC and LLVM C.
-ASCII, UTF-8, both byte orders of UTF-16/UTF-32 and GBK retain readable comments;
-disabling comments leaves the original storage representation. It also checks
+ASCII, UTF-8, both byte orders of UTF-16/UTF-32 and GBK retain readable comments
+beside ordinary and volatile reads in the function body, even when the GUI
+folds declarations. Unknown pointers have no guessed text; disabling comments
+leaves the original storage representation. It also checks
 comment escaping and that aggregate storage cannot become a scalar edit type.
 
 `NeverDMedLLVMDirectDataTests` covers finite native data accesses in pointer-bearing
