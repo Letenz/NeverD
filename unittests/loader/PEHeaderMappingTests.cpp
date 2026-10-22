@@ -59,6 +59,8 @@ TEST(PEHeaderMapping, OriginalHeadersAreReadableInFullAndRestrictedImages) {
           EXPECT_EQ(Image->readVA(Base + Size, 1), nullptr);
           const auto *Owner = Image->getSectionFor(Base);
           ASSERT_NE(Owner, nullptr);
+          EXPECT_TRUE(Owner->IsImageHeader);
+          EXPECT_FALSE(Image->Sections.front().IsImageHeader);
           EXPECT_TRUE(Owner->isReadable());
           EXPECT_FALSE(Owner->isWritable());
           EXPECT_FALSE(Owner->isExecutable());

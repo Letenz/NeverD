@@ -34,7 +34,10 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace neverd {
 
@@ -3313,22 +3316,6 @@ std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,
 }
 
 void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
-  auto UsesName = [&](const HighExpr *E, const std::string &Name) -> bool {
-    std::function<bool(const HighExpr *)> Walk = [&](const HighExpr *N) {
-      if (!N)
-        return false;
-      if ((N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi) &&
-          varName(N->Var) == Name)
-        return true;
-      bool Hit = false;
-      N->forEachChildExpr([&](const ExprPtr &C) {
-        if (Walk(C.get()))
-          Hit = true;
-      });
-      return Hit;
-    };
-    return Walk(E);
-  };
   // Only a load whose variable is the base of some in-place add can be
   // hidden.  Find those names once rather than rescanning the body for every
   // load assignment.
@@ -3345,6 +3332,41 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
   });
   if (IncrementBaseNames.empty())
     return;
+  // The uses and the in-place adds do not change as loads are hidden.  Read
+  // them once; a load hidden below is not a later use because it is dead.
+  std::map<std::string, std::vector<const HighStmt *>> UsesOf, AddsOf;
+  // rawVarName is the string varName returns.  ReserveNames already recorded
+  // every variable, so this walk does not write the source map again.
+  struct VarNames {
+    const HighCWriter *Writer;
+    std::set<std::string> *Names;
+    void visit(const HighExpr *N) const {
+      if (!N)
+        return;
+      if (N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi)
+        if (std::string Name = Writer->rawVarName(N->Var); !Name.empty())
+          Names->insert(std::move(Name));
+      N->forEachChildExpr([&](const ExprPtr &C) { visit(C.get()); });
+    }
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    std::set<std::string> Names;
+    VarNames Collect{this, &Names};
+    forEachRhsExpr(S, [&](const ExprPtr &E) { Collect.visit(E.get()); });
+    if (S.Kind == StmtKind::Assign && S.Dst)
+      Collect.visit(S.Dst.get());
+    for (const std::string &Name : Names)
+      UsesOf[Name].push_back(&S);
+    int64_t Delta = 0;
+    if (!isInplaceAddStore(S, Delta))
+      return;
+    const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
+    if (!Base || (Base->Kind != ExprKind::Var && Base->Kind != ExprKind::Phi))
+      return;
+    const std::string Name = rawVarName(Base->Var);
+    if (!Name.empty())
+      AddsOf[Name].push_back(&S);
+  });
   walkStmts(Func.Body, [&](const HighStmt &Assign) {
     if (Analysis.DeadStmts.count(&Assign))
       return;
@@ -3362,31 +3384,27 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
         !IncrementBaseNames.count(Name))
       return;
     unsigned IncrementStores = 0;
-    bool OtherUse = false;
-    walkStmts(Func.Body, [&](const HighStmt &S) {
-      if (&S == &Assign || Analysis.DeadStmts.count(&S))
-        return;
-      int64_t Delta = 0;
-      if (isInplaceAddStore(S, Delta)) {
-        const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
-        if (Base &&
-            (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi) &&
-            varName(Base->Var) == Name &&
-            samePeeledAddr(*Assign.Val->Operands[0], *S.StoreAddr)) {
-          ++IncrementStores;
-          return;
-        }
+    std::vector<const HighStmt *> MatchingAdds;
+    if (const auto Adds = AddsOf.find(Name); Adds != AddsOf.end())
+      for (const HighStmt *S : Adds->second) {
+        if (S == &Assign || Analysis.DeadStmts.count(S) || !S->StoreAddr)
+          continue;
+        if (!samePeeledAddr(*Assign.Val->Operands[0], *S->StoreAddr))
+          continue;
+        ++IncrementStores;
+        MatchingAdds.push_back(S);
       }
-      bool Hit = false;
-      forEachRhsExpr(S, [&](const ExprPtr &E) {
-        if (UsesName(E.get(), Name))
-          Hit = true;
-      });
-      if (S.Kind == StmtKind::Assign && S.Dst && UsesName(S.Dst.get(), Name))
-        Hit = true;
-      if (Hit)
+    bool OtherUse = false;
+    if (const auto Uses = UsesOf.find(Name); Uses != UsesOf.end())
+      for (const HighStmt *S : Uses->second) {
+        if (S == &Assign || Analysis.DeadStmts.count(S))
+          continue;
+        if (std::find(MatchingAdds.begin(), MatchingAdds.end(), S) !=
+            MatchingAdds.end())
+          continue;
         OtherUse = true;
-    });
+        break;
+      }
     if (!OtherUse && IncrementStores > 0) {
       Analysis.DeadStmts.insert(&Assign);
       Analysis.DeadVars.insert(Name);
@@ -3395,22 +3413,6 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
 }
 
 void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
-  auto UsesName = [&](const HighExpr *E, const std::string &Name) -> bool {
-    std::function<bool(const HighExpr *)> Walk = [&](const HighExpr *N) {
-      if (!N)
-        return false;
-      if ((N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi) &&
-          varName(N->Var) == Name)
-        return true;
-      bool Hit = false;
-      N->forEachChildExpr([&](const ExprPtr &C) {
-        if (Walk(C.get()))
-          Hit = true;
-      });
-      return Hit;
-    };
-    return Walk(E);
-  };
   auto SlotOfCopy = [&](const HighExpr &E) -> std::optional<std::string> {
     const HighExpr *P = peelIntegerViewOps(&E);
     if (!P)
@@ -3446,32 +3448,29 @@ void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
       return R;
     return nullptr;
   };
-  auto StoresBitClear = [&](const HighStmt &S, const std::string &Name,
-                            const std::string &Slot) {
-    const HighExpr *Val = nullptr;
-    std::optional<std::string> Dest;
-    if (S.Kind == StmtKind::Store && S.StoreAddr && S.StoreVal) {
-      Dest = namedFrameSlot(*S.StoreAddr);
-      Val = S.StoreVal.get();
-    } else if (S.Kind == StmtKind::Assign && S.Dst && S.Val) {
-      if (S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty() &&
-          S.Dst->Operands[0])
-        Dest = namedFrameSlot(*S.Dst->Operands[0]);
-      else if (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi)
-        Dest = varName(S.Dst->Var);
-      Val = S.Val.get();
+  // Whether a statement is hidden does not change until a copy is hidden
+  // or this walk enters a handler.  Remember it: each assignment otherwise
+  // asks again for every statement in its block.
+  std::unordered_map<const HighStmt *, bool> Hidden;
+  int HiddenFlags = -1;
+  auto HiddenNow = [&](const HighStmt &S) {
+    const int Flags = (InEHClauseBody ? 1 : 0) | (InCxxCleanupBody ? 2 : 0);
+    if (Flags != HiddenFlags) {
+      Hidden.clear();
+      HiddenFlags = Flags;
     }
-    if (!Val || !Dest || *Dest != Slot)
-      return false;
-    const HighExpr *Base = AndBase(*Val);
-    if (!Base)
-      return false;
-    if ((Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi) &&
-        varName(Base->Var) == Name)
+    if (Analysis.DeadStmts.count(&S))
       return true;
-    return SlotOfCopy(*Base) == Slot;
+    if (const auto It = Hidden.find(&S); It != Hidden.end())
+      return It->second;
+    const bool Result = stmtHiddenFromC(S);
+    Hidden.emplace(&S, Result);
+    return Result;
   };
-
+  auto ForgetHidden = [&] {
+    Hidden.clear();
+    HiddenFlags = -1;
+  };
   std::function<void(const std::vector<HighStmt> &, bool)> Walk;
   Walk = [&](const std::vector<HighStmt> &Stmts, bool Handler) {
     const bool SavedHandler = InEHClauseBody;
@@ -3479,6 +3478,64 @@ void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
     InEHClauseBody = Handler;
     if (Handler)
       InCxxCleanupBody = true;
+    // The uses of a name, and which stores clear a slot with that name, do
+    // not change as copies are hidden.  Hiding only changes which of those
+    // statements still count.  Reading them once keeps a large block from
+    // renaming every variable once per assignment.
+    struct VarNames {
+      const HighCWriter *Writer;
+      std::set<std::string> *Names;
+      void visit(const HighExpr *N) const {
+        if (!N)
+          return;
+        if (N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi)
+          if (std::string Name = Writer->rawVarName(N->Var); !Name.empty())
+            Names->insert(std::move(Name));
+        N->forEachChildExpr([&](const ExprPtr &C) { visit(C.get()); });
+      }
+    };
+    struct ClearSite {
+      const HighStmt *Stmt = nullptr;
+      std::string BaseVar;
+      std::optional<std::string> BaseSlot;
+    };
+    std::unordered_map<std::string, std::vector<const HighStmt *>> UsesOf;
+    std::unordered_map<std::string, std::vector<ClearSite>> ClearsByDest;
+    for (const HighStmt &S : Stmts) {
+      std::set<std::string> Names;
+      VarNames Collect{this, &Names};
+      forEachRhsExpr(S, [&](const ExprPtr &E) { Collect.visit(E.get()); });
+      if (S.Kind == StmtKind::Assign && S.Dst)
+        Collect.visit(S.Dst.get());
+      for (const std::string &Name : Names)
+        UsesOf[Name].push_back(&S);
+      const HighExpr *Val = nullptr;
+      std::optional<std::string> Dest;
+      if (S.Kind == StmtKind::Store && S.StoreAddr && S.StoreVal) {
+        Dest = namedFrameSlot(*S.StoreAddr);
+        Val = S.StoreVal.get();
+      } else if (S.Kind == StmtKind::Assign && S.Dst && S.Val) {
+        if (S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty() &&
+            S.Dst->Operands[0])
+          Dest = namedFrameSlot(*S.Dst->Operands[0]);
+        else if (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi)
+          Dest = varName(S.Dst->Var);
+        Val = S.Val.get();
+      }
+      if (!Val || !Dest)
+        continue;
+      const HighExpr *Base = AndBase(*Val);
+      if (!Base)
+        continue;
+      ClearSite Site;
+      Site.Stmt = &S;
+      if (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi)
+        Site.BaseVar = varName(Base->Var);
+      Site.BaseSlot = SlotOfCopy(*Base);
+      if (Site.BaseVar.empty() && !Site.BaseSlot)
+        continue;
+      ClearsByDest[*Dest].push_back(std::move(Site));
+    }
     for (const HighStmt &Assign : Stmts) {
       if (!Analysis.DeadStmts.count(&Assign) &&
           Assign.Kind == StmtKind::Assign && Assign.Dst && Assign.Val &&
@@ -3489,30 +3546,32 @@ void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
         if (Slot && !Name.empty() && Name != *Slot &&
             !isEmittedParamName(Name)) {
           unsigned Clears = 0;
-          bool OtherUse = false;
-          for (const HighStmt &S : Stmts) {
-            if (&S == &Assign || Analysis.DeadStmts.count(&S) ||
-                stmtHiddenFromC(S))
-              continue;
-            if (StoresBitClear(S, Name, *Slot)) {
-              ++Clears;
-              continue;
+          std::unordered_set<const HighStmt *> ClearStmts;
+          if (const auto It = ClearsByDest.find(*Slot);
+              It != ClearsByDest.end())
+            for (const ClearSite &Site : It->second) {
+              if (Site.Stmt == &Assign || HiddenNow(*Site.Stmt))
+                continue;
+              if (Site.BaseVar == Name ||
+                  (Site.BaseSlot && *Site.BaseSlot == *Slot)) {
+                ++Clears;
+                ClearStmts.insert(Site.Stmt);
+              }
             }
-            bool Hit = false;
-            forEachRhsExpr(S, [&](const ExprPtr &E) {
-              if (UsesName(E.get(), Name))
-                Hit = true;
-            });
-            if (S.Kind == StmtKind::Assign && S.Dst &&
-                UsesName(S.Dst.get(), Name))
-              Hit = true;
-            if (Hit)
+          bool OtherUse = false;
+          if (const auto It = UsesOf.find(Name); It != UsesOf.end())
+            for (const HighStmt *S : It->second) {
+              if (S == &Assign || HiddenNow(*S) || ClearStmts.count(S))
+                continue;
               OtherUse = true;
-          }
+              break;
+            }
           if (!OtherUse && Clears > 0) {
             Analysis.DeadStmts.insert(&Assign);
             Analysis.DeadVars.insert(Name);
             CopyForward[Name] = *Slot;
+            // Hiding a copy changes which later statements are hidden.
+            ForgetHidden();
           }
         }
       }
@@ -3545,7 +3604,7 @@ HighCWriter::incomingHomeParamName(int64_t Disp) const {
       return MemberThis ? std::string("this") : IndirectReturnName;
   }
   if (Dbg) {
-    if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+    if (const auto &FS = resolvedFunction(CurrentFunc->Entry);
         FS && isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format)) {
       if (isWin64MemberIndirectReturn(*FS)) {
         if (Disp == 8)

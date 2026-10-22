@@ -66,8 +66,8 @@ struct AnalysisCacheWarmup {
 struct OmittedCalleeMemo;
 struct ImageImportCounts;
 
-/// Optional facts for consecutive restricted x64, AArch64 and ARM analyses
-/// of an unchanged image. Owns the indexes borrowed by bounded
+/// Optional facts for consecutive restricted x64, i386, AArch64 and ARM
+/// analyses of an unchanged image. Owns the indexes borrowed by bounded
 /// machine-graph/body caches, not output IR or caller-dependent summaries. The
 /// image and debug context must outlive the cache; reset it before changing
 /// either, including symbols, exception metadata, bytes or analysis policy.
@@ -77,6 +77,9 @@ struct ImageImportCounts;
 /// that adds its own entry, so passing through such a selection leaves them in
 /// place.  It reads that inventory from the image's symbols once for the cache.
 /// Additive CodeRefTargets publication is allowed, as for the raw graph cache.
+/// Import-address names are image facts too. A run overlays the names of the
+/// functions it lifts, and their debug and thunk names, and removes that
+/// overlay before it returns. forgetDeclarations does not drop them.
 /// Use from one pipeline invocation at a time; its internal workers join before
 /// run() returns. Other architectures and whole-image runs stay local.
 class PipelineAnalysisCache {
@@ -107,8 +110,8 @@ private:
   /// The callees' signature bodies of restricted runs on any architecture
   /// (PipelineResult::CalleeSignatureMemo).
   std::shared_ptr<OmittedCalleeMemo> CalleeSignatures;
-  /// The prototype counts of every import of the image
-  /// (PipelineResult::OmittedCalleeArgumentCounts).
+  /// The prototype counts and stack-slot identities of every image import
+  /// (PipelineResult::OmittedCalleeArgumentCounts/OmittedCalleeStackArgs).
   std::shared_ptr<const ImageImportCounts> ImportCounts;
 };
 
@@ -136,6 +139,9 @@ struct PipelineOptions {
   /// Native source views may postpone HighIR projection after shared ABI and
   /// return recovery. Patch/lift, VM routes and DumpHigh retain eager behavior.
   bool DeferHighIR = false;
+  /// A native view of the control-flow graphs alone may postpone everything
+  /// after LowIR as well (resumeMedIR), under the same restrictions.
+  bool DeferMedIR = false;
   bool PatchMode = false;
   bool LiftMode = false;
   /// LLVM-to-C uses the LLVM route without authorizing source-only rewrites
@@ -327,6 +333,10 @@ struct PipelineResult {
   /// selected functions need not call.  Null where the convention counts
   /// none.
   std::shared_ptr<const std::map<va_t, int>> OmittedCalleeArgumentCounts;
+  /// Image-wide import stack counts and exact-slot identities read by omitted
+  /// i386 callees, independently of the imports the current selection calls.
+  std::shared_ptr<const std::map<va_t, int>> OmittedCalleeStackArgs;
+  std::shared_ptr<const std::set<va_t>> OmittedCalleeStackSlots;
   /// The imports, by their stubs and slots, whose integer argument summary
   /// a user declaration or header record layout gives. Their machine
   /// positions override the arity tables, which count source parameters.
@@ -346,6 +356,8 @@ struct PipelineResult {
   std::vector<HighFunc> HighFuncs;
   /// Shared source MedIR is ready; HighIR projection has not been requested.
   bool HighIRDeferred = false;
+  /// LowIR is ready; MedIR and everything after it have not been requested.
+  bool MedIRDeferred = false;
   std::vector<sigs::LibraryRecognition> LibraryRecognitions;
   /// Includes analyzed functions with no match, for cheap identity queries.
   std::map<va_t, std::vector<size_t>> LibraryRecognitionsByFunction;
@@ -430,6 +442,11 @@ public:
   /// through the same completion boundary as eager HighIR conversion.
   bool resumeHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                     PipelineResult &Result, DebugContext *Dbg = nullptr);
+  /// Continue a run that deferred MedIR from its LowIR, as the run would
+  /// have: MedIR and the shared source analysis, then HighIR unless \p Opts
+  /// defers it.  \p Opts are the run's own, apart from the deferrals.
+  bool resumeMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
+                   PipelineResult &Result, DebugContext *Dbg = nullptr);
 
   /// Run the HelloWorldPass on a module.  Wraps PassBuilder/AnalysisManager
   /// setup so callers avoid instantiating LLVM PassManager templates (which
@@ -751,8 +768,18 @@ private:
       const SourceViewOptions &View = {});
 
   /// Shared source call/return recovery before either HighIR or LLVM emission.
+  /// \p Cache keeps the image's import-address names when this run shares one.
   void prepareSourceMedIR(const BinaryImage &Img, PipelineResult &Result,
-                          DebugContext *Dbg);
+                          DebugContext *Dbg, PipelineAnalysisCache *Cache);
+  /// prepareSourceMedIR for a run that defers HighIR, which then succeeds;
+  /// a failure is the run's error.
+  void prepareDeferredSource(const BinaryImage &Img, PipelineResult &Result,
+                             DebugContext *Dbg, PipelineAnalysisCache *Cache);
+  /// The import-address names of \p Img kept with \p Cache's image inputs, or
+  /// null when \p Cache is null or those inputs are not built yet. Additions
+  /// a run makes belong to that run and must not remain on the kept map.
+  std::map<va_t, std::string> *importAddressNames(const BinaryImage &Img,
+                                                  PipelineAnalysisCache *Cache);
 
   /// Phase 3: convert MedIR -> HighIR in parallel.
   void buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,

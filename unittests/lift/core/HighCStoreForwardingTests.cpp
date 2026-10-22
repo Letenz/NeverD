@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/HighC/HighCWriter.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -23,6 +24,52 @@
 namespace {
 
 using namespace neverd;
+
+TEST(HighCStoreForwarding, IncompleteFrameRecordsKeepTheirInteriorFields) {
+  class LazyFrameTypes : public NullDebugContext {
+  public:
+    void completeType(const TypeRef &Type) const override {
+      if (!Type || Type->Kind != NdTypeKind::Struct || Type->IsEnum ||
+          Type->SourceName != "Pair" || !Type->FieldDisplayNames.empty())
+        return;
+      Type->FieldDisplayNames = {"first", "second"};
+      Type->FieldDisplayOffsets = {0, 4};
+      Type->FieldDisplayTypes = {NdType::makeInt(4), NdType::makeInt(4)};
+    }
+  } Debug;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  CEmitterOptions Options;
+  HighCWriter Writer(OS, Options, &Debug);
+  for (const bool CallOverlay : {false, true}) {
+    SCOPED_TRACE(CallOverlay);
+    Writer.FrameSlots.clear();
+    const TypeRef Record = NdType::makeNamedRecord("Pair", 8);
+    HighCWriter::NamedFrameSlot Slot;
+    Slot.Name = "pair";
+    Slot.Type = CallOverlay ? NdType::makeInt(8) : Record;
+    Slot.CallType = CallOverlay ? Record : nullptr;
+    Writer.FrameSlots[-16] = Slot;
+    Writer.FrameSlots[-24].Name = "integer";
+    Writer.FrameSlots[-24].Type = NdType::makeInt(8);
+    EXPECT_EQ(Writer.frameTypedMemberAccess(-12, 4),
+              std::optional<std::string>("pair.second"));
+    const TypeRef Member = Writer.frameTypedMemberType(-12, 4);
+    ASSERT_TRUE(Member);
+    EXPECT_EQ(Member->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Member->Size, 4);
+
+    // Two records covering the same bytes cannot choose one member's name.
+    const TypeRef Overlap = NdType::makeNamedRecord("Overlap", 12);
+    Overlap->FieldDisplayNames = {"value"};
+    Overlap->FieldDisplayOffsets = {8};
+    Overlap->FieldDisplayTypes = {NdType::makeInt(4)};
+    Writer.FrameSlots[-20].Name = "overlap";
+    Writer.FrameSlots[-20].Type = Overlap;
+    EXPECT_FALSE(Writer.frameTypedMemberAccess(-12, 4));
+    EXPECT_FALSE(Writer.frameTypedMemberType(-12, 4));
+  }
+}
 
 ExprPtr makeParam(unsigned Id, uint16_t Size, TypeRef Type,
                   Arch Architecture = Arch::X64) {

@@ -3881,10 +3881,10 @@ std::map<va_t, va_t> callArgumentSourcesOf(
 /// The argument counts of every prototyped import of \p Img, as \p Kept
 /// holds them where they were read from the image as it is with \p Dbg; read
 /// now, and kept there, otherwise (PipelineAnalysisCache::ImportCounts).
-std::shared_ptr<const std::map<va_t, int>>
-imageImportCounts(const BinaryImage &Img, const DebugContext *Dbg,
-                  const std::map<va_t, PointerVariableCallee> &PointerCallees,
-                  std::shared_ptr<const ImageImportCounts> *Kept) {
+std::shared_ptr<const ImageImportCounts> imageImportArguments(
+    const BinaryImage &Img, const DebugContext *Dbg,
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    std::shared_ptr<const ImageImportCounts> *Kept) {
   std::shared_ptr<const ImageImportCounts> Everywhere =
       Kept && *Kept && (*Kept)->readFrom(Img, Dbg) ? *Kept : nullptr;
   if (!Everywhere) {
@@ -3898,19 +3898,44 @@ imageImportCounts(const BinaryImage &Img, const DebugContext *Dbg,
       Addresses.push_back(Slot);
     for (const Export &Exp : Img.Exports)
       Addresses.push_back(Exp.Addr);
+    const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+    ImportPrototypeArguments Prototyped = importPrototypeArguments(
+        Img, {}, {}, /*StackArguments=*/true, Dbg,
+        /*RegisterArguments=*/!Convention ||
+            !Convention->RegparmOnlyForInternalCalls,
+        &PointerCallees, /*ExportStarts=*/nullptr, &Addresses);
     Everywhere = std::make_shared<const ImageImportCounts>(ImageImportCounts{
         &Img, Dbg, Img.Imports.data(), Img.Imports.size(),
         Img.Relocations.data(), Img.Relocations.size(), Img.Exports.data(),
-        Img.Exports.size(),
-        importPrototypeArguments(Img, {}, {}, /*StackArguments=*/true, Dbg,
-                                 /*RegisterArguments=*/true, &PointerCallees,
-                                 /*ExportStarts=*/nullptr, &Addresses)
-            .Counts});
+        Img.Exports.size(), std::move(Prototyped.Counts),
+        std::move(Prototyped.StackArgs), std::move(Prototyped.StackSlots)});
     if (Kept)
       *Kept = Everywhere;
   }
-  return std::shared_ptr<const std::map<va_t, int>>(Everywhere,
-                                                    &Everywhere->Counts);
+  return Everywhere;
+}
+
+/// Omitted callees read the image's declarations, including imports absent
+/// from the selection. Warming and demand conversion share that same input.
+void setOmittedImportArguments(
+    const BinaryImage &Img, const DebugContext *Dbg,
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    std::shared_ptr<const ImageImportCounts> *Kept, PipelineResult &Result) {
+  const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+  if (!Convention || !Convention->ImportArgumentsFromPrototype ||
+      !Convention->ArgumentsFromCallSetup)
+    return;
+  const auto Arguments = imageImportArguments(Img, Dbg, PointerCallees, Kept);
+  if (Convention->RegparmOnlyForInternalCalls) {
+    Result.OmittedCalleeStackArgs = std::shared_ptr<const std::map<va_t, int>>(
+        Arguments, &Arguments->StackArgs);
+    Result.OmittedCalleeStackSlots = std::shared_ptr<const std::set<va_t>>(
+        Arguments, &Arguments->StackSlots);
+  } else {
+    Result.OmittedCalleeArgumentCounts =
+        std::shared_ptr<const std::map<va_t, int>>(Arguments,
+                                                   &Arguments->Counts);
+  }
 }
 
 void computeCallRegisterEffects(
@@ -3959,15 +3984,11 @@ void computeCallRegisterEffects(
           Img, Result.LowFuncs, {}, /*StackArguments=*/true, Dbg,
           /*RegisterArguments=*/true, &PointerCallees);
       Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
-      // An omitted callee's conversion reads the counts of the imports its
-      // own calls reach, as its own selection does, whichever functions this
-      // run selects: those of every import, counted once while the
-      // program's declarations stay (PipelineAnalysisCache::ImportCounts).
-      Result.OmittedCalleeArgumentCounts =
-          imageImportCounts(Img, Dbg, PointerCallees, KeptImportCounts);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
+    setOmittedImportArguments(Img, Dbg, PointerCallees, KeptImportCounts,
+                              Result);
     return;
   }
   // Each function's effect.  A callee's is the one its kept facts hold,
@@ -4307,6 +4328,30 @@ struct PipelineAnalysisCache::Impl {
           StackProbes(Img), PointerCallees(collectPointerVariableCallees(Img)),
           Roots(Img), Owners(Img) {}
 
+    /// Import-address names (getImportAddressNames). HighIR lays a run's own
+    /// function, debug and thunk names over this map and takes them off
+    /// before returning. The fingerprint is the import storage and the counts
+    /// admission of an import stub reads. Exception metadata is not in it, so
+    /// reset the cache before changing the image.
+    struct ImportNameMemo {
+      const void *ImportData = nullptr;
+      size_t ImportCount = 0;
+      size_t StubCount = 0;
+      size_t DataInCodeCount = 0;
+      size_t ContinuationCount = 0;
+      std::shared_ptr<std::map<va_t, std::string>> Names;
+
+      bool matches(const BinaryImage &Img) const {
+        return Names &&
+               ImportData == static_cast<const void *>(Img.Imports.data()) &&
+               ImportCount == Img.Imports.size() &&
+               StubCount == Img.ImportStubIndices.size() &&
+               DataInCodeCount == Img.DataInCode.size() &&
+               ContinuationCount == Img.ContinuationCodeStarts.size();
+      }
+    };
+    ImportNameMemo ImportNames;
+
     bool matches(const BinaryImage &Img, DebugContext *Dbg,
                  const SymbolInventory *CandidateInventory) const {
       return Image == &Img && Debug == Dbg &&
@@ -4369,6 +4414,45 @@ struct PipelineAnalysisCache::Impl {
                        CandidateEntries.end()));
   }
 };
+
+std::map<va_t, std::string> *
+Pipeline::importAddressNames(const BinaryImage &Img,
+                             PipelineAnalysisCache *Cache) {
+  if (!Cache)
+    return nullptr;
+  // Facts and a selection can each hold image inputs. Prefer a memo that
+  // already names this image's imports; otherwise fill the first inputs that
+  // belong to it. HighIR removes whatever it adds before it returns.
+  using InputsPtr = std::shared_ptr<PipelineAnalysisCache::Impl::ImageInputs>;
+  InputsPtr Inputs;
+  for (const std::shared_ptr<PipelineAnalysisCache::Impl> &Kept :
+       {Cache->Facts, Cache->SelectionFacts}) {
+    if (!Kept || !Kept->Inputs || Kept->Inputs->Image != &Img)
+      continue;
+    if (!Inputs)
+      Inputs = Kept->Inputs;
+    if (Kept->Inputs->ImportNames.matches(Img)) {
+      Inputs = Kept->Inputs;
+      break;
+    }
+  }
+  if (!Inputs)
+    return nullptr;
+  PipelineAnalysisCache::Impl::ImageInputs::ImportNameMemo &Memo =
+      Inputs->ImportNames;
+  if (Memo.matches(Img))
+    return Memo.Names.get();
+  auto Built = std::make_shared<std::map<va_t, std::string>>(
+      Img.getImportAddressNames());
+  Memo.Names.reset();
+  Memo.ImportData = static_cast<const void *>(Img.Imports.data());
+  Memo.ImportCount = Img.Imports.size();
+  Memo.StubCount = Img.ImportStubIndices.size();
+  Memo.DataInCodeCount = Img.DataInCode.size();
+  Memo.ContinuationCount = Img.ContinuationCodeStarts.size();
+  Memo.Names = std::move(Built);
+  return Memo.Names.get();
+}
 
 namespace {
 /// The starts of the image's function symbols that are not boundary
@@ -4554,26 +4638,49 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
                             DebugContext *Dbg, llvm::ArrayRef<va_t> Functions) {
   if (!Opts.AnalysisCache)
     return std::nullopt;
+  // The facts a selected-function run of a symbol start keeps (buildLowIR
+  // below), with what every run reads of the image's names, runtime routines
+  // and catch continuations, read here rather than in the first run.
+  const auto symbolFacts = [&](PipelineAnalysisCache &Cache) {
+    const auto Inventory =
+        PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
+    const std::vector<va_t> &CandidateEntries = Inventory->Starts;
+    (void)Inventory->functionNames(Img);
+    (void)Inventory->runtimeRoutineCalls(Img);
+    (void)Inventory->fh4ContinuationCandidates(Img);
+    // Facts for another symbol inventory serve no later run.
+    if (!Cache.Facts ||
+        !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get()))
+      Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
+          PipelineAnalysisCache::Impl::imageInputs(
+              Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
+          std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
+          /*RetainBodies=*/true, /*SymbolEntries=*/true);
+    else
+      Cache.Facts->Callees.trimMemoizedProofs(
+          limits::kMaxRetainedNoReturnAnswers);
+  };
   if (Img.Arch != Arch::X64) {
+    // i386, AArch64 and ARM runs share those facts too (sharedAnalysisCache).
+    if (Img.Arch == Arch::X86 || Img.Arch == Arch::AArch64 ||
+        Img.Arch == Arch::ARM)
+      symbolFacts(*Opts.AnalysisCache);
     // Where each call's setup gives its arguments, a restricted run reads
-    // the signature bodies of the callees it leaves out.  Outside the
-    // regparm convention, the summaries their conversions read are the same
-    // for every selection (computeCallRegisterEffects): the function-pointer
-    // variables' routines and the counts of every import.  Read those of
-    // Functions as such a run reads them.
+    // the signature bodies of the callees it leaves out. Those conversions
+    // read the image's import counts and stack-slot identities, together with
+    // the function-pointer variables' routines, independently of the current
+    // selection's calls. Warming supplies those same declaration facts.
     const CallArgumentConvention *Convention =
         callArgumentConvention(Img.Arch, Img.abiFormat());
-    if (!Convention || !Convention->ArgumentsFromCallSetup ||
-        Convention->RegparmOnlyForInternalCalls || Img.IsRelocatable)
+    if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
       return std::nullopt;
     PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
     const std::map<va_t, PointerVariableCallee> PointerCallees =
         collectPointerVariableCallees(Img);
     PipelineResult Summaries;
     Summaries.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
-    if (Convention->ImportArgumentsFromPrototype)
-      Summaries.OmittedCalleeArgumentCounts =
-          imageImportCounts(Img, Dbg, PointerCallees, &Cache.ImportCounts);
+    setOmittedImportArguments(Img, Dbg, PointerCallees, &Cache.ImportCounts,
+                              Summaries);
     if (!Cache.CalleeSignatures)
       Cache.CalleeSignatures = std::make_shared<OmittedCalleeMemo>();
     Summaries.CalleeSignatureMemo = Cache.CalleeSignatures;
@@ -4582,25 +4689,7 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
   // The entries a selected-function run of a symbol start knows (buildLowIR
   // below): its own entry adds nothing to them, so its run shares this state.
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
-  const auto Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
-  const std::vector<va_t> &CandidateEntries = Inventory->Starts;
-  // What every run reads of the image's names, runtime routines and catch
-  // continuations, read here rather than in the first run.
-  (void)Inventory->functionNames(Img);
-  (void)Inventory->runtimeRoutineCalls(Img);
-  (void)Inventory->fh4ContinuationCandidates(Img);
-  // Facts for another symbol inventory serve no later run.
-  if (!Cache.Facts ||
-      !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get())) {
-    Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
-        PipelineAnalysisCache::Impl::imageInputs(
-            Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
-        std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
-        /*RetainBodies=*/true, /*SymbolEntries=*/true);
-  } else {
-    Cache.Facts->Callees.trimMemoizedProofs(
-        limits::kMaxRetainedNoReturnAnswers);
-  }
+  symbolFacts(Cache);
   auto &Facts = *Cache.Facts;
   Facts.Inputs->Targets.clearMemoizedNames();
   const auto &Inputs = *Facts.Inputs;
