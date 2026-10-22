@@ -2242,3 +2242,10 @@ Las regresiones comprueban la conservación exacta de CC, F1 y CD 03, el rechazo
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
 Estas comprobaciones validan regiones declaradas, sin demostrar el manejo de excepciones ni la equivalencia fuente/nativa.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+Las regresiones de objetos de entrada comprueban copias simbólicas, guardados y ranuras copiadas, bucles en ejecución, enlaces perdidos y uniones, alias, escrituras anchas/atómicas/segmentadas completas, límites relativos, declaraciones inválidas, mutaciones de recibos y presupuestos exactos o insuficientes de preparación y operaciones, y límites de nodos agotados. Oráculos independientes de bytes y registros comprueban los efectos retenidos. Ejecutar juntas las suites responsables y los rechazos de consumidores raw; estas comprobaciones no generan un certificado de función completa, C compilado o ABI ordinaria.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

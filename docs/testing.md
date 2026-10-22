@@ -10358,3 +10358,10 @@ Absolute-memory regressions cover bounded contiguous and sparse batches, complet
 `NativeQueryTrace.*` covers independent query answers, all four zero extensions, selector/count/order mutations, undefined selectors, ordinary-read interleaving, every branch, unaffected state, strict byte/detail audits, malformed bundles, budgets, digest binding and static/inductive refusal. `NativeScalarQueryDescriptor.*` tests the generic descriptor limits and the actual receipt binding.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+The entry-object regressions check symbolic copies, spills and copied slots, runtime loops, lost bindings and joins, object aliases, full wide/atomic/segmented writes, relative-range boundaries, malformed declarations, receipt mutations, exact/short preparation and operation budgets, and exhausted node limits. Independent byte/register oracles check retained effects. Run the owning suites and raw consumer refusals together; these checks establish no whole-function, compiled-C or ordinary-ABI certificate.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

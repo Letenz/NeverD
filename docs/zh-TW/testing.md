@@ -2087,3 +2087,10 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
 這些檢查驗證宣告區域，不證明例外處理或原始碼／原生等價。
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+入口物件回歸檢查符號複製、溢出槽與槽複製、執行期迴圈、遺失綁定與匯合、物件別名、完整寬／原子／分段寫入、相對邊界、無效宣告、憑據變異，以及準備和操作預算的精確或不足邊界及節點預算耗盡。獨立的位元組及暫存器判定器檢查保留效果。須一起執行所屬測試集與 raw 消費者拒絕測試；這些檢查不提供整函式、編譯後 C 或普通 ABI 憑證。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

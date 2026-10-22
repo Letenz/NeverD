@@ -2209,3 +2209,10 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
 Эти проверки подтверждают заявленные области, но не обработку исключений и не эквивалентность исходного и машинного кода.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+Регрессии входных объектов проверяют символические копии, сохранённые и скопированные слоты, циклы времени выполнения, потерянные привязки и слияния, алиасы объектов, полные широкие/атомарные/сегментированные записи, относительные границы, неверные объявления, изменения квитанций и точные либо недостаточные бюджеты подготовки и операций, а также исчерпание бюджета узлов. Независимые байтовые и регистровые оракулы проверяют сохранённые эффекты. Запускать вместе профильные наборы и проверки отказа raw-потребителей; это не даёт сертификата целой функции, скомпилированного C или обычного ABI.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

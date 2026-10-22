@@ -2167,3 +2167,10 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
 تتحقق هذه الاختبارات من المناطق المعلنة، ولا تثبت معالجة الاستثناءات أو تكافؤ المصدر والتنفيذ الأصلي.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+تتحقق اختبارات كائنات الدخول من النسخ الرمزية ومواضع الحفظ ونسخها، وحلقات وقت التشغيل، والربط المفقود والتقاء المسارات، وأسماء الذاكرة البديلة للكائنات، والكتابات العريضة والذرية والمقطعية الكاملة، والحدود النسبية، والإعلانات غير الصالحة، وتغيير الإيصالات، وحدود ميزانيات الإعداد والعمليات الدقيقة أو الناقصة ونفاد ميزانية العقد. تتحقق مراجع مستقلة للبايتات والسجلات من الآثار المحتفظ بها. شغّل المجموعات المالكة ورفض مستهلكي raw معا؛ لا تمنح هذه الفحوص شهادة لدالة كاملة أو C مترجم أو ABI عادي.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

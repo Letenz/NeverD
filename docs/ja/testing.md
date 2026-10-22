@@ -2141,3 +2141,10 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
 これらの検査が検証するのは宣言された領域であり、例外処理やソース/native 等価性は証明しません。
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+入口オブジェクトの回帰は、記号的コピー、退避・コピー済みスロット、実行時ループ、失われた束縛と合流、オブジェクトのエイリアス、完全な幅広・アトミック・セグメント書き込み、相対境界、不正な宣言、整合性情報の変更、準備・操作予算の丁度および不足境界とノード予算の枯渇を検査する。独立したバイト／レジスターのオラクルで保持された効果を確認する。担当スイートと raw 消費側の拒否を共に実行する。関数全体、コンパイル済み C、通常 ABI の証明書は得られない。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
