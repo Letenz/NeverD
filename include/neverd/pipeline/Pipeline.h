@@ -110,8 +110,8 @@ private:
   /// The callees' signature bodies of restricted runs on any architecture
   /// (PipelineResult::CalleeSignatureMemo).
   std::shared_ptr<OmittedCalleeMemo> CalleeSignatures;
-  /// The prototype counts of every import of the image
-  /// (PipelineResult::OmittedCalleeArgumentCounts).
+  /// The prototype counts and stack-slot identities of every image import
+  /// (PipelineResult::OmittedCalleeArgumentCounts/OmittedCalleeStackArgs).
   std::shared_ptr<const ImageImportCounts> ImportCounts;
 };
 
@@ -333,6 +333,10 @@ struct PipelineResult {
   /// selected functions need not call.  Null where the convention counts
   /// none.
   std::shared_ptr<const std::map<va_t, int>> OmittedCalleeArgumentCounts;
+  /// Image-wide import stack counts and exact-slot identities read by omitted
+  /// i386 callees, independently of the imports the current selection calls.
+  std::shared_ptr<const std::map<va_t, int>> OmittedCalleeStackArgs;
+  std::shared_ptr<const std::set<va_t>> OmittedCalleeStackSlots;
   /// The imports, by their stubs and slots, whose integer argument summary
   /// a user declaration or header record layout gives. Their machine
   /// positions override the arity tables, which count source parameters.

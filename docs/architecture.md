@@ -1134,6 +1134,14 @@ remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
 
+`importPrototypeArguments` owns import counts and exact stack-slot placement.
+Omitted i386 callees read those facts for all imports in the image, retained by
+the existing import-count cache. The selected function still reads the
+summaries of its own calls. Omitted conversion, memo validation and warming
+share the same complete import view, so an unrelated import in another
+selection cannot change a cached callee's inputs. Declaration changes retire
+that view through `forgetDeclarations`; reuse still checks the values read.
+
 Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
 The workspace reuses only the temporary LowOp vector's storage: operations
 are cleared and the x87 state reset before every instruction, including after

@@ -68,6 +68,17 @@ omittedCalleeArgumentCounts(const PipelineResult &Result) {
              ? *Result.OmittedCalleeArgumentCounts
              : Result.CallEntryArgumentCounts;
 }
+
+const std::map<va_t, int> &
+omittedCalleeStackArgs(const PipelineResult &Result) {
+  return Result.OmittedCalleeStackArgs ? *Result.OmittedCalleeStackArgs
+                                       : Result.CallEntryStackArgs;
+}
+
+const std::set<va_t> &omittedCalleeStackSlots(const PipelineResult &Result) {
+  return Result.OmittedCalleeStackSlots ? *Result.OmittedCalleeStackSlots
+                                        : Result.CallEntryStackSlots;
+}
 } // namespace
 
 OmittedCalleeMemo::SummaryRead
@@ -80,10 +91,10 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   if (const auto It = Result.CallEntryReadGPRs.find(Key);
       It != Result.CallEntryReadGPRs.end())
     Read.EntryReads = It->second;
-  if (const auto It = Result.CallEntryStackArgs.find(Key);
-      It != Result.CallEntryStackArgs.end())
+  const auto &StackArgs = omittedCalleeStackArgs(Result);
+  if (const auto It = StackArgs.find(Key); It != StackArgs.end())
     Read.StackArgs = It->second;
-  Read.StackSlot = Result.CallEntryStackSlots.count(Key) != 0;
+  Read.StackSlot = omittedCalleeStackSlots(Result).count(Key) != 0;
   const std::map<va_t, int> &Counts = omittedCalleeArgumentCounts(Result);
   if (const auto It = Counts.find(Key); It != Counts.end())
     Read.ArgumentCount = It->second;
@@ -420,8 +431,8 @@ public:
       Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
       Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
       Converter.setCallArgumentSources(&Result.CallArgumentSources);
-      Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
-      Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
+      Converter.setCallEntryStackArgs(&omittedCalleeStackArgs(Result));
+      Converter.setCallEntryStackSlots(&omittedCalleeStackSlots(Result));
       Converter.setCallEntryArgumentCounts(
           &omittedCalleeArgumentCounts(Result));
       Converter.setCallSummaryKeysRead(&Keys);

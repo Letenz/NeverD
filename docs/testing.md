@@ -28,6 +28,13 @@ regression executes generated C at O0/O2 for ELF and Mach-O; conflicting joins,
 narrowing and overflowing arithmetic retain negative coverage. ARM32 record
 placement and native non-x64 record-call execution remain unqualified.
 
+`I386CallContract.OmittedImportStackFactsDoNotDependOnTheSelection` switches
+between callers with different direct imports, with and without warming,
+across ELF, COFF and Mach-O. The omitted callee keeps its single stack
+parameter and reuses one conversion. Run `NeverDI386CallContractTests` with
+`NeverDPipelineOutcomeTests` and the other call-contract owners after changing
+these shared import facts.
+
 `AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
 terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
 calls. Independent O0/O2 fixtures run across relocation packing and available

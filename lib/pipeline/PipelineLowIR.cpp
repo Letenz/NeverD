@@ -3881,10 +3881,10 @@ std::map<va_t, va_t> callArgumentSourcesOf(
 /// The argument counts of every prototyped import of \p Img, as \p Kept
 /// holds them where they were read from the image as it is with \p Dbg; read
 /// now, and kept there, otherwise (PipelineAnalysisCache::ImportCounts).
-std::shared_ptr<const std::map<va_t, int>>
-imageImportCounts(const BinaryImage &Img, const DebugContext *Dbg,
-                  const std::map<va_t, PointerVariableCallee> &PointerCallees,
-                  std::shared_ptr<const ImageImportCounts> *Kept) {
+std::shared_ptr<const ImageImportCounts> imageImportArguments(
+    const BinaryImage &Img, const DebugContext *Dbg,
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    std::shared_ptr<const ImageImportCounts> *Kept) {
   std::shared_ptr<const ImageImportCounts> Everywhere =
       Kept && *Kept && (*Kept)->readFrom(Img, Dbg) ? *Kept : nullptr;
   if (!Everywhere) {
@@ -3898,19 +3898,44 @@ imageImportCounts(const BinaryImage &Img, const DebugContext *Dbg,
       Addresses.push_back(Slot);
     for (const Export &Exp : Img.Exports)
       Addresses.push_back(Exp.Addr);
+    const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+    ImportPrototypeArguments Prototyped = importPrototypeArguments(
+        Img, {}, {}, /*StackArguments=*/true, Dbg,
+        /*RegisterArguments=*/!Convention ||
+            !Convention->RegparmOnlyForInternalCalls,
+        &PointerCallees, /*ExportStarts=*/nullptr, &Addresses);
     Everywhere = std::make_shared<const ImageImportCounts>(ImageImportCounts{
         &Img, Dbg, Img.Imports.data(), Img.Imports.size(),
         Img.Relocations.data(), Img.Relocations.size(), Img.Exports.data(),
-        Img.Exports.size(),
-        importPrototypeArguments(Img, {}, {}, /*StackArguments=*/true, Dbg,
-                                 /*RegisterArguments=*/true, &PointerCallees,
-                                 /*ExportStarts=*/nullptr, &Addresses)
-            .Counts});
+        Img.Exports.size(), std::move(Prototyped.Counts),
+        std::move(Prototyped.StackArgs), std::move(Prototyped.StackSlots)});
     if (Kept)
       *Kept = Everywhere;
   }
-  return std::shared_ptr<const std::map<va_t, int>>(Everywhere,
-                                                    &Everywhere->Counts);
+  return Everywhere;
+}
+
+/// Omitted callees read the image's declarations, including imports absent
+/// from the selection. Warming and demand conversion share that same input.
+void setOmittedImportArguments(
+    const BinaryImage &Img, const DebugContext *Dbg,
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    std::shared_ptr<const ImageImportCounts> *Kept, PipelineResult &Result) {
+  const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+  if (!Convention || !Convention->ImportArgumentsFromPrototype ||
+      !Convention->ArgumentsFromCallSetup)
+    return;
+  const auto Arguments = imageImportArguments(Img, Dbg, PointerCallees, Kept);
+  if (Convention->RegparmOnlyForInternalCalls) {
+    Result.OmittedCalleeStackArgs = std::shared_ptr<const std::map<va_t, int>>(
+        Arguments, &Arguments->StackArgs);
+    Result.OmittedCalleeStackSlots = std::shared_ptr<const std::set<va_t>>(
+        Arguments, &Arguments->StackSlots);
+  } else {
+    Result.OmittedCalleeArgumentCounts =
+        std::shared_ptr<const std::map<va_t, int>>(Arguments,
+                                                   &Arguments->Counts);
+  }
 }
 
 void computeCallRegisterEffects(
@@ -3959,15 +3984,11 @@ void computeCallRegisterEffects(
           Img, Result.LowFuncs, {}, /*StackArguments=*/true, Dbg,
           /*RegisterArguments=*/true, &PointerCallees);
       Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
-      // An omitted callee's conversion reads the counts of the imports its
-      // own calls reach, as its own selection does, whichever functions this
-      // run selects: those of every import, counted once while the
-      // program's declarations stay (PipelineAnalysisCache::ImportCounts).
-      Result.OmittedCalleeArgumentCounts =
-          imageImportCounts(Img, Dbg, PointerCallees, KeptImportCounts);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
+    setOmittedImportArguments(Img, Dbg, PointerCallees, KeptImportCounts,
+                              Result);
     return;
   }
   // Each function's effect.  A callee's is the one its kept facts hold,
@@ -4645,14 +4666,10 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
         Img.Arch == Arch::ARM)
       symbolFacts(*Opts.AnalysisCache);
     // Where each call's setup gives its arguments, a restricted run reads
-    // the signature bodies of the callees it leaves out.  Outside the
-    // regparm convention, the summaries their conversions read are the same
-    // for every selection (computeCallRegisterEffects): the function-pointer
-    // variables' routines and the counts of every import.  Read those of
-    // Functions as such a run reads them.  An i386 run states the stack
-    // arguments of only the imports its own functions call, so a callee
-    // converted here reads none, as in a run that calls none of those; a
-    // run that calls one converts that callee again (readsHold).
+    // the signature bodies of the callees it leaves out. Those conversions
+    // read the image's import counts and stack-slot identities, together with
+    // the function-pointer variables' routines, independently of the current
+    // selection's calls. Warming supplies those same declaration facts.
     const CallArgumentConvention *Convention =
         callArgumentConvention(Img.Arch, Img.abiFormat());
     if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
@@ -4662,10 +4679,8 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
         collectPointerVariableCallees(Img);
     PipelineResult Summaries;
     Summaries.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
-    if (Convention->ImportArgumentsFromPrototype &&
-        !Convention->RegparmOnlyForInternalCalls)
-      Summaries.OmittedCalleeArgumentCounts =
-          imageImportCounts(Img, Dbg, PointerCallees, &Cache.ImportCounts);
+    setOmittedImportArguments(Img, Dbg, PointerCallees, &Cache.ImportCounts,
+                              Summaries);
     if (!Cache.CalleeSignatures)
       Cache.CalleeSignatures = std::make_shared<OmittedCalleeMemo>();
     Summaries.CalleeSignatureMemo = Cache.CalleeSignatures;
