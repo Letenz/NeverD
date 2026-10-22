@@ -18,6 +18,9 @@
 
 namespace neverd::limits::ir {
 
+/// Shared HighIR text printing, including structured statement children.
+inline constexpr unsigned kMaxHighIRPrintNesting = 200;
+
 /// Maximum workers in statement-region symbolic simplification.
 inline constexpr unsigned kMaxHighSymbolicWorkers = 4u;
 

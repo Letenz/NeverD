@@ -75,6 +75,13 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
           "APX atomic intrinsic has an invalid operand/output contract");
     return llvm::Error::success();
   }
+  if (isX86VirtualizationIntrinsic(Id)) {
+    if (!x86VirtualizationShapeIsValid(
+            Id, x86VirtualizationLowShape(Op, Arch::Unknown)))
+      return invalid("x86 virtualization intrinsic has an invalid "
+                     "operand/output contract");
+    return llvm::Error::success();
+  }
   if (Id == Intrinsic::X86Invalidate) {
     if (!intrinsicX86InvalidateShapeIsValid(
             Id, x86InvalidateLowShape(Op, Arch::Unknown)))

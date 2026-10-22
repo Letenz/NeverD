@@ -493,8 +493,9 @@ bool NdOpEmulator::step(const LowOp &Op) {
       Op.Inputs[0].isConst() &&
       (static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
            Intrinsic::X86Invalidate ||
-       static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
-           Intrinsic::X86MsrAccess)) {
+       static_cast<Intrinsic>(Op.Inputs[0].Offset) == Intrinsic::X86MsrAccess ||
+       isX86VirtualizationIntrinsic(
+           static_cast<Intrinsic>(Op.Inputs[0].Offset)))) {
     // A scalar tracer has neither CPL/CR4/CPUID state nor a guest TLB.  Even a
     // structurally valid invalidation or MSR access must therefore stop here
     // rather than pretending the architectural state transition succeeded.

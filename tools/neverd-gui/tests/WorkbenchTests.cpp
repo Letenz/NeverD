@@ -1274,6 +1274,7 @@ private slots:
     QTest::newRow("pseudocode") << QStringLiteral("source") << false << false;
     QTest::newRow("llvm-c") << QStringLiteral("llvmc") << false << false;
     QTest::newRow("low-ir") << QStringLiteral("low") << false << false;
+    QTest::newRow("high-ir") << QStringLiteral("high") << false << false;
     QTest::newRow("pseudocode-graph")
         << QStringLiteral("source") << false << true;
     if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
@@ -1282,6 +1283,8 @@ private slots:
           << QStringLiteral("source") << true << false;
       QTest::newRow("native-llvm-c")
           << QStringLiteral("llvmc") << true << false;
+      QTest::newRow("native-high-ir")
+          << QStringLiteral("high") << true << false;
       QTest::newRow("native-pseudocode-graph")
           << QStringLiteral("source") << true << true;
     }
@@ -1298,8 +1301,13 @@ private slots:
         native
             ? qEnvironmentVariable("NEVERD_CODE_NAV_FILE")
             : writeFixture(directory, QStringLiteral("code-edits-mapped.bin"));
+    if (native)
+      bench.window->setAsksForDebugInfo(false);
+    LoadDialogAcceptor acceptLoad;
     bench.window->openFile(path);
-    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY2_WITH_TIMEOUT(bench.session.loaded(),
+                              qPrintable(bench.session.lastError()),
+                              native ? NativeOpenTimeoutMs : OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     auto *functions = bench.functions();
     QTRY_VERIFY(functions && functions->model().total() >= 2);
@@ -1313,7 +1321,8 @@ private slots:
       QTRY_VERIFY(assembly->graphMode() && assembly->graph()->loaded());
     }
     bench
-        .action(representation == QLatin1String("low") ? ActionId::ViewLowIR
+        .action(representation == QLatin1String("low")    ? ActionId::ViewLowIR
+                : representation == QLatin1String("high") ? ActionId::ViewHighIR
                 : representation == QLatin1String("llvmc")
                     ? ActionId::ViewLLVMC
                     : ActionId::ViewPseudocode)
@@ -1323,9 +1332,14 @@ private slots:
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() > 2);
     code->setPreludeFolded(false);
+    bool queryRow = false;
     if (native) {
       code->setCursorLine(0);
-      QVERIFY(code->findText(QStringLiteral("return ("), true));
+      queryRow = code->findText(representation == QLatin1String("llvmc")
+                                    ? QStringLiteral("\"cpuid\"")
+                                    : QStringLiteral("__cpuid"),
+                                true);
+      QVERIFY(queryRow || code->findText(QStringLiteral("return "), true));
     } else
       code->setCursorLine(2);
     const auto target = code->currentAddress();
@@ -1340,6 +1354,9 @@ private slots:
             decoded = !rows.isEmpty() &&
                       addressValue(rows.first().toObject().value("address")) ==
                           target;
+            if (queryRow)
+              decoded = decoded && rows.first().toObject().value("mnemonic") ==
+                                       QLatin1String("cpuid");
           });
       QTRY_VERIFY(decoded);
     } else

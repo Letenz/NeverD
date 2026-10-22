@@ -341,6 +341,10 @@ bool liftSIMDAVXFloat(X86Lifter &L, X86Lifter::LiftState &S,
 bool liftLegacyBCD(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                    const cs_x86 &X86);
 
+/// Architectural VMX/SVM operands and completion.
+bool liftVirtualization(X86Lifter &L, X86Lifter::LiftState &S,
+                        const cs_insn *Insn, const cs_x86 &X86);
+
 /// 3DNow!, TBM, CET, VIA PadLock, GFNI, LWP and the other minor extensions.
 bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                    const cs_x86 &X86);
