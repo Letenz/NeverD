@@ -35,6 +35,12 @@ parameter and reuses one conversion. Run `NeverDI386CallContractTests` with
 `NeverDPipelineOutcomeTests` and the other call-contract owners after changing
 these shared import facts.
 
+`HighCStoreForwarding.IncompleteFrameRecordsKeepTheirInteriorFields` checks
+lazy display-field completion for frame records and call-type overlays among
+scalar slots. Both member names and types retain ambiguous-owner refusal.
+Run the store-forwarding, source-dialect and local-types debug-context owners
+after changing frame-member queries.
+
 `AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
 terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
 calls. Independent O0/O2 fixtures run across relocation packing and available

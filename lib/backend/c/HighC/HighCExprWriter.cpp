@@ -4883,9 +4883,13 @@ std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
   return Path;
 }
 
+bool canHaveInteriorFields(const TypeRef &Ty) {
+  return Ty && Ty->Kind == NdTypeKind::Struct && !Ty->IsEnum;
+}
+
 std::optional<std::string> interiorFieldPath(const TypeRef &Ty, uint64_t Rel,
                                              uint16_t AccessSize = 0) {
-  if (!Ty || Ty->Kind != NdTypeKind::Struct || Ty->IsEnum)
+  if (!canHaveInteriorFields(Ty))
     return std::nullopt;
   if (Rel == 0)
     return std::nullopt;
@@ -4913,10 +4917,16 @@ HighCWriter::frameTypedMemberAccess(int64_t Disp, uint16_t AccessSize) const {
   for (const auto &[SlotDisp, Slot] : FrameSlots) {
     if (Slot.Name.empty() || SlotDisp > Disp)
       continue;
+    const bool Record = canHaveInteriorFields(Slot.Type);
+    const bool CallRecord = canHaveInteriorFields(Slot.CallType);
+    if (!Record && !CallRecord)
+      continue;
     const uint64_t Rel = static_cast<uint64_t>(Disp - SlotDisp);
     if (Dbg) {
-      Dbg->completeType(Slot.Type);
-      Dbg->completeType(Slot.CallType);
+      if (Record)
+        Dbg->completeType(Slot.Type);
+      if (CallRecord)
+        Dbg->completeType(Slot.CallType);
     }
     auto Canon = interiorFieldPath(Slot.Type, Rel, AccessSize);
     if (!Canon)
@@ -5195,10 +5205,16 @@ TypeRef HighCWriter::frameTypedMemberType(int64_t Disp,
   for (const auto &[SlotDisp, Slot] : FrameSlots) {
     if (Slot.Name.empty() || SlotDisp > Disp)
       continue;
+    const bool Record = canHaveInteriorFields(Slot.Type);
+    const bool CallRecord = canHaveInteriorFields(Slot.CallType);
+    if (!Record && !CallRecord)
+      continue;
     const uint64_t Rel = static_cast<uint64_t>(Disp - SlotDisp);
     if (Dbg) {
-      Dbg->completeType(Slot.Type);
-      Dbg->completeType(Slot.CallType);
+      if (Record)
+        Dbg->completeType(Slot.Type);
+      if (CallRecord)
+        Dbg->completeType(Slot.CallType);
     }
     TypeRef FieldTy = interiorFieldType(Slot.Type, Rel, AccessSize);
     if (!FieldTy)
