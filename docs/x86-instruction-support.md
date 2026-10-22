@@ -258,6 +258,19 @@ Fault probes compare signal and fault code with original machine bytes in
 isolated Linux x64 subprocesses. Successful shadow-stack writes and real
 device enqueue acceptance remain outside this host qualification.
 
+After integrating the Windows type-import changes through `62ab9af81`, the
+broad selection again passes 1,885 checks with the same 17 skips. The combined
+x86, type and SDK selection passes 430 of 436 checks; six require unavailable
+Windows kernel corpus inputs. All 97 binary-comparison and discovery checks
+and six Windows type-generator Python tests pass. The signatures fixture uses
+the repository-pinned revision without changing its gitlink.
+
+The final integration through `404e39369` adds symbolic MBA changes. All 62
+x86 focused checks pass again. The affected residue suites pass 36 checks and
+skip six independent SMT proofs because this build does not enable Z3; all
+seven symbolic-mask Python oracle tests pass. The broad results above belong
+to `62ab9af81`; the final symbolic merge received these incremental checks.
+
 The architectural references are Intel's
 [Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 and the SHA512 entries in the
