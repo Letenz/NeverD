@@ -7835,11 +7835,12 @@ TEST_F(SessionCAPITest,
         << takeString(neverd_last_error(Session));
     const auto Entry = neverd_session_entry_addr(Session);
     const uint64_t ReturnAddress = Entry + (AArch64 ? 4 : 5);
-    for (const char *Stage : {"low", "med"}) {
+    for (const char *Stage : {"low", "med", "high"}) {
       SCOPED_TRACE(Stage);
       const std::string Legacy = takeString(
-          std::strcmp(Stage, "low") == 0 ? neverd_ir_low(Session, Entry)
-                                         : neverd_ir_med(Session, Entry));
+          std::strcmp(Stage, "low") == 0   ? neverd_ir_low(Session, Entry)
+          : std::strcmp(Stage, "med") == 0 ? neverd_ir_med(Session, Entry)
+                                           : neverd_ir_high(Session, Entry));
       ASSERT_FALSE(Legacy.empty()) << takeString(neverd_last_error(Session));
       size_t Offset = 0, Anchors = 0;
       std::string Reassembled;
@@ -7945,6 +7946,51 @@ TEST_F(SessionCAPITest, CSourcePagesRetainCanonicalReturnAnchors) {
       EXPECT_EQ(Text, Original);
       EXPECT_GT(Mapped, 0u);
     }
+  }
+}
+
+TEST_F(SessionCAPITest, IntrinsicSourcePagesKeepTheExecutedInstruction) {
+  // Preserve RBX, query leaf 7/subleaf 1, and return EBX. The packed primary
+  // result is dead: navigation must follow the CPUID itself after cleanup.
+  // CLI/STI have no value output but must keep their own effect anchors.
+  const std::string Code("\x53\xb8\x07\0\0\0\xb9\x01\0\0\0\x0f\xa2"
+                         "\x89\xd8\xfa\xfb\x5b\xc3",
+                         19);
+  const auto Path =
+      write("cpuid-navigation.elf", makeNativeELF(false, 0x400000, {}, Code));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const uint64_t Entry = neverd_session_entry_addr(Session);
+  for (const char *Stage : {"c", "llvmc", "source", "high"}) {
+    SCOPED_TRACE(Stage);
+    auto Page = takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 1000));
+    const auto Text = Page.getString("text");
+    ASSERT_TRUE(Text);
+    ASSERT_NE(Text->find("cpuid"), llvm::StringRef::npos);
+    const auto *Rows = Page.getArray("rows");
+    ASSERT_NE(Rows, nullptr);
+    bool QueryMapped = false, CliMapped = false, StiMapped = false;
+    size_t Begin = 0;
+    for (const auto &Value : *Rows) {
+      const size_t End = Text->find('\n', Begin);
+      const auto Line = Text->slice(Begin, End);
+      Begin = End == llvm::StringRef::npos ? Text->size() : End + 1;
+      const auto *Row = Value.getAsObject();
+      ASSERT_NE(Row, nullptr);
+      const auto *Addresses = Row->getArray("addresses");
+      ASSERT_NE(Addresses, nullptr);
+      for (const auto &Address : *Addresses)
+        if (const auto Hex = Address.getAsString()) {
+          const auto Address = std::stoull(Hex->str(), nullptr, 16);
+          QueryMapped |= Line.contains("cpuid") && Address == Entry + 11;
+          CliMapped |= (Line.contains("cli") || Line.contains("_disable")) &&
+                       Address == Entry + 15;
+          StiMapped |= (Line.contains("sti") || Line.contains("_enable")) &&
+                       Address == Entry + 16;
+        }
+    }
+    EXPECT_TRUE(QueryMapped) << Text->str();
+    EXPECT_TRUE(CliMapped) << Text->str();
+    EXPECT_TRUE(StiMapped) << Text->str();
   }
 }
 
@@ -8158,7 +8204,7 @@ TEST_F(SessionCAPITest,
   EXPECT_TRUE(VM.getArray("rows")->empty());
   EXPECT_FALSE(VM.getString("text"));
   auto High = takeView(neverd_ir_view_json(Session, 0, "high", 0, 2));
-  EXPECT_EQ(High.getString("mapping_status"), "unsupported_representation");
+  EXPECT_EQ(High.getString("mapping_status"), "unsupported_architecture");
   EXPECT_TRUE(High.getArray("rows")->empty());
   // Bytecode shows its whole LLVM module (neverd_ir_llvm); only native code
   // pages one function's.
@@ -9603,7 +9649,7 @@ TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {
   EXPECT_EQ(neverd_ir_view_json(Session, 0, "\xff", 0, 1), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("UTF-8"),
             std::string::npos);
-  auto Unsupported = takeView(neverd_ir_view_json(Session, 0, "high", 0, 1));
+  auto Unsupported = takeView(neverd_ir_view_json(Session, 0, "unknown", 0, 1));
   EXPECT_EQ(Unsupported.getString("mapping_status"),
             "unsupported_representation");
   EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
@@ -9716,11 +9762,12 @@ TEST_F(SessionCAPITest, IRViewPreservesMultibyteUTF8AcrossPhysicalPages) {
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
       << takeString(neverd_last_error(Session));
   const auto Entry = neverd_session_entry_addr(Session);
-  for (const char *Stage : {"low", "med"}) {
+  for (const char *Stage : {"low", "med", "high"}) {
     SCOPED_TRACE(Stage);
-    const std::string Legacy = takeString(std::strcmp(Stage, "low") == 0
-                                              ? neverd_ir_low(Session, Entry)
-                                              : neverd_ir_med(Session, Entry));
+    const std::string Legacy = takeString(
+        std::strcmp(Stage, "low") == 0   ? neverd_ir_low(Session, Entry)
+        : std::strcmp(Stage, "med") == 0 ? neverd_ir_med(Session, Entry)
+                                         : neverd_ir_high(Session, Entry));
     ASSERT_NE(Legacy.find(Name), std::string::npos);
     size_t Offset = 0;
     std::string Reassembled;

@@ -133,6 +133,7 @@ add_neverd_component_library(NeverDLift
   X86/X86LiftString.cpp
   X86/X86LiftStringMove.cpp
   X86/X86LiftSystem.cpp
+  X86/X86LiftVirtualization.cpp
   X86/X86Lifter.cpp
   X86/X86Regs.cpp
 

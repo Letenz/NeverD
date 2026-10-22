@@ -1121,6 +1121,24 @@ escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
 Timing-independent cache tests complement
 `source_revisit_bench.py`, which measures complete real source pages.
 
+`NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
+VMREAD success/failure merges, instruction-owned memory, segmented addresses and
+strict scalar-emulator refusal. `NeverDX86VirtualizationSourceTests` covers both
+C routes across x86/x64 ELF, COFF and Mach-O with default/NoOpt, preserves actual
+query/effect anchors, and prevents folding an incoming stack value across
+VMREAD. Its Clang check assembles both C routes at O0/O2 for both word sizes;
+privileged instructions are not executed on the host. CPUID sibling cases keep
+EAX/ECX inputs, Windows subleaf spelling and ordered effects, including CLI/STI.
+The CPUID C execution check replaces only the intrinsic environment, verifies
+one query with leaf 7/subleaf 1, and stores four high-bit output words into
+64-bit cells at O0/O2 across all three formats and default/NoOpt.
+`SessionCAPITest.IntrinsicSourcePagesKeepTheExecutedInstruction` checks CPUID in
+C, LLVMC, pseudocode and HighIR, alongside CLI/STI effect rows. Native HighIR
+paging also shares the UTF-8,
+canonical-address and exact legacy-text checks. The GUI controller's `high-ir`
+row verifies both Tab directions; the optional `native-high-ir` row uses CPUID
+from a real worker and native file. The worker native-mapping test includes HighIR.
+
 `NeverDWorkerLocalNameCache` checks unchanged preparation/page counters through
 repeated local renames, clearing aliases, readonly replica updates, rejected
 collisions and obsolete targets. Changed input identities, annotations and

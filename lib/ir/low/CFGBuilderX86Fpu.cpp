@@ -1089,6 +1089,14 @@ class X87CallEffectIndex {
     // a double in an XMM register and returns it on the x87 stack.
     if (isX86FPStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
       return true;
+    // These VMX/SVM operations leave x87 state unchanged on fallthrough.
+    // VMLAUNCH/VMRESUME reach it only on VM-entry failure. VMRUN, whose guest
+    // can change unsaved registers and floating state, is not in this family.
+    if (isX86VirtualizationIntrinsic(
+            static_cast<Intrinsic>(Op.Inputs[0].Offset)))
+      return x86VirtualizationShapeIsValid(
+          static_cast<Intrinsic>(Op.Inputs[0].Offset),
+          x86VirtualizationLowShape(Op, Architecture));
     // The decoder already accounts for the numeric x87 operations' pops and
     // pushes. Environment restores, tag changes and unknown intrinsics have
     // additional state effects and cannot acquire a net-stack summary here.

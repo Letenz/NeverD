@@ -4754,8 +4754,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // An engine that pages no LLVM IR answers without text; its whole text
     // follows below.
     if (representation == "low" || representation == "med" ||
-        representation == "llvm" || representation == "c" ||
-        representation == "llvmc" || spelled) {
+        representation == "high" || representation == "llvm" ||
+        representation == "c" || representation == "llvmc" || spelled) {
       if (auto named = namedViewPage(address, representation, offset, limit,
                                      options, encoded))
         return std::move(*named);
