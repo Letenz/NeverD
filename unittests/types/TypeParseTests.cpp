@@ -10,6 +10,7 @@
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <cstdlib>
@@ -76,6 +77,35 @@ TEST(TypeParse, LaysAStructureOutAsMSVC) {
   const RecordDef &B = recordOf(Library, "B");
   EXPECT_EQ(shapeOf(B), "struct{a@0b:4 b@4b:4 c@32b:3 d@64b:1}");
   EXPECT_EQ(B.Size, 12u);
+}
+
+TEST(TypeParse, ReportsForwardRecordsWithoutInventingTheirLayout) {
+  TypeLibrary Library;
+  const auto Read = parseCTypes(R"(
+    struct Handle;
+    union Entry;
+    typedef struct Handle *HANDLE;
+    void Use(HANDLE Value, union Entry *Item);
+  )",
+                                Library);
+  ASSERT_TRUE(Read.Problems.empty());
+  EXPECT_EQ(Read.Types,
+            (std::vector<std::string>{"Handle", "Entry", "HANDLE"}));
+  EXPECT_FALSE(recordOf(Library, "Handle").Defined);
+  EXPECT_FALSE(recordOf(Library, "Entry").Defined);
+  EXPECT_FALSE(Library.sizeOf(*makeNamed("Handle", TypeKind::Struct)));
+  EXPECT_EQ(Library.sizeOf(*makeNamed("HANDLE", TypeKind::Typedef)), 8u);
+  RenderOptions Options;
+  Options.Prototypes = true;
+  TypeLibrary Restored;
+  const auto Again = parseCTypes(renderTypes(Library, {}, Options), Restored);
+  ASSERT_TRUE(Again.Problems.empty());
+  EXPECT_TRUE(llvm::is_contained(Again.Types, "Handle"));
+  EXPECT_TRUE(llvm::is_contained(Again.Types, "Entry"));
+  EXPECT_FALSE(recordOf(Restored, "Handle").Defined);
+  EXPECT_FALSE(Restored.sizeOf(*makeNamed("Handle", TypeKind::Struct)));
+  ASSERT_NE(Restored.findPrototype("Use"), nullptr);
+  EXPECT_EQ(Restored.findPrototype("Use")->Params.size(), 2u);
 }
 
 TEST(TypeParse, ReadsOneFunctionsDeclarationAgainstTheLibrary) {

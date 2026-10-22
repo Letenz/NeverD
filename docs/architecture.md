@@ -151,6 +151,13 @@ window used to route branch arrows. Revision and navigation fences still apply.
 `lib/diff` owns the immutable comparison model, normalization-independent matching,
 block/instruction deltas, correspondence overrides and versioned persistence.
 It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+The C API's `functions_json` inventory projects the same accepted mappings and
+retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
+the full group's target-side inventory, with ordinary search/sort/paging; it
+does not run another matcher or promote a candidate. Mapping edits and restore
+invalidate that inventory cache. CLI and the Qt counterpart picker consume this
+projection; the picker keeps bounded pages and invalidates its selection when
+the worker's comparison revision changes.
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
@@ -614,9 +621,19 @@ time, through `neverd_types_convert` and the standalone CLI. It imports missing
 prototypes with their dependency closure, shares structurally identical types,
 and renames conflicting types and affected dependents without replacing earlier
 declarations. Type identity includes pointees, qualifiers, callbacks and enum
-values as well as layout. Provider parse errors prevent an import. This owner
+values as well as layout. Exact prototype selections keep only the selected
+dependency closure; absent selected names and provider parse errors prevent
+an import. This owner
 is separate from the runtime priority merge of system and program types; the
 flattened generated headers add no provider merge during decompilation.
+Callback types retain their source calling convention when local declarations
+become `NdType` values. The lightweight `CallingConvention.h` and existing
+`CallingConventions.def` own that identity; CodeView imports share one mapping.
+HighC and LLVMC use `declarationToC` to attach the convention to the correct
+function layer, including a function returning a callback. This display
+evidence does not authorize an ordinary-C source ABI projection for a callback
+with a different convention. Unsupported CodeView callback conventions remain
+unknown in debug types and opaque in local types, with an import count.
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
 a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
 provider headers declare into `lib/types/headers/WindowsKernelX64.h`

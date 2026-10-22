@@ -633,8 +633,8 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
     auto V = json(Query ? Query : "{}");
     const auto *O = V.getAsObject();
     require(O, "inventory query must be an object");
-    keys(*O,
-         {"side", "kind", "search", "offset", "limit", "sort", "descending"});
+    keys(*O, {"side", "kind", "search", "offset", "limit", "sort", "descending",
+              "ambiguous_with"});
     const auto Side = string(*O, "side", "primary");
     require(Side == "primary" || Side == "secondary", "invalid inventory side");
     const bool Secondary = Side == "secondary";
@@ -642,6 +642,17 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
     const auto &Other = Secondary ? C.Primary : C.Secondary;
     const auto &Amb =
         Secondary ? C.Result.SecondaryAmbiguity : C.Result.PrimaryAmbiguity;
+    std::optional<uint32_t> Source;
+    const Ambiguity *Group = nullptr;
+    if (O->get("ambiguous_with")) {
+      Source = Other.functionAt(address(*O, "ambiguous_with"));
+      require(Source.has_value(),
+              "ambiguity source is not in the opposite comparison snapshot");
+      const auto &OtherAmb =
+          Secondary ? C.Result.PrimaryAmbiguity : C.Result.SecondaryAmbiguity;
+      if (*Source < OtherAmb.size() && OtherAmb[*Source] != NoIndex)
+        Group = &C.Result.Ambiguities[OtherAmb[*Source]];
+    }
     const auto Kind = string(*O, "kind", "all");
     require(Kind == "all" || Kind == "matched" || Kind == "changed" ||
                 Kind == "ambiguous" || Kind == "unmatched",
@@ -653,19 +664,22 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
                 Sort == "changes",
             "invalid inventory sort key");
     const bool Descending = flag(*O, "descending", false);
-    const std::string Key =
-        jsonToString(llvm::json::Object{{"side", Side},
-                                        {"kind", Kind},
-                                        {"search", Search},
-                                        {"sort", Sort},
-                                        {"descending", Descending}});
+    const std::string Key = jsonToString(llvm::json::Object{
+        {"side", Side},
+        {"kind", Kind},
+        {"search", Search},
+        {"sort", Sort},
+        {"descending", Descending},
+        {"ambiguous_with",
+         Source ? llvm::json::Value(vaHex(Other.Functions[*Source].Address))
+                : llvm::json::Value(nullptr)}});
     const auto Pair = [&](uint32_t I) {
       return Secondary ? C.Result.matchOfSecondary(I)
                        : C.Result.matchOfPrimary(I);
     };
     if (Key != C.InventoryKey) {
       std::vector<uint32_t> Order;
-      for (uint32_t I = 0; I < P.Functions.size(); ++I) {
+      const auto Include = [&](uint32_t I) {
         const auto *M = Pair(I);
         const bool Ambiguous = I < Amb.size() && Amb[I] != NoIndex;
         if ((Kind == "matched" && !M) ||
@@ -673,17 +687,25 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
              (!M || !M->Measured || !(M->Changes & ~MovementChanges))) ||
             (Kind == "ambiguous" && !Ambiguous) ||
             (Kind == "unmatched" && (M || Ambiguous)))
-          continue;
+          return;
         if (!Search.empty() &&
             llvm::StringRef(P.Functions[I].Name).lower().find(Search) ==
                 std::string::npos &&
             llvm::StringRef(vaHex(P.Functions[I].Address))
                     .lower()
                     .find(Search) == std::string::npos)
-          continue;
+          return;
         Order.push_back(I);
+      };
+      if (Source) {
+        if (Group)
+          for (const auto I : Secondary ? Group->Secondary : Group->Primary)
+            Include(I);
+      } else {
+        for (uint32_t I = 0; I < P.Functions.size(); ++I)
+          Include(I);
       }
-      if (Sort != "address" || Descending) {
+      if (Sort != "address" || Descending || Source) {
         const auto Number = [&](uint32_t I) -> double {
           const auto *M = Pair(I);
           if (Sort == "size")
@@ -744,7 +766,7 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
       Rows.push_back(std::move(Row));
     }
     const auto Returned = Rows.size();
-    return dupStr(jsonToString(llvm::json::Object{
+    llvm::json::Object Out{
         {"schema", "neverd.bindiff.functions"},
         {"version", 1},
         {"side", Side},
@@ -753,7 +775,19 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
         {"next_offset", Offset + Returned < Count
                             ? llvm::json::Value(Offset + Returned)
                             : nullptr},
-        {"items", std::move(Rows)}}));
+        {"items", std::move(Rows)}};
+    if (Source)
+      Out["ambiguity"] = llvm::json::Object{
+          {"source_side", Secondary ? "primary" : "secondary"},
+          {"source", function(Other, *Source)},
+          {"candidate_total",
+           Group ? (Secondary ? Group->Secondary.size() : Group->Primary.size())
+                 : 0},
+          {"active", Group != nullptr},
+          {"explanation",
+           Group ? stepDescription(Group->Step)
+                 : "No retained ambiguity group for this function"}};
+    return dupStr(jsonToString(std::move(Out)));
   });
 }
 

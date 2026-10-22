@@ -2259,6 +2259,32 @@ TEST(HighCSourceCalls, CallbackDeclaratorsPreserveArgumentsAndReturnTypes) {
   Enumerator->Size = 4;
   EXPECT_EQ(declarationToC(Enumerator, "proc"),
             "int32_t (*proc)(void*, uint32_t)");
+  Enumerator->Pointee->FunctionConvention = types::CallingConvention::Stdcall;
+  EXPECT_EQ(declarationToC(Enumerator, "proc"),
+            "int32_t (__attribute__((stdcall)) *proc)(void*, uint32_t)");
+  auto CallbackFactory =
+      NdType::makePtr(NdType::makeFunc(Enumerator, {Enumerator}));
+  EXPECT_EQ(declarationToC(CallbackFactory, "factory"),
+            "int32_t (__attribute__((stdcall)) *(*factory)(int32_t "
+            "(__attribute__((stdcall)) *)(void*, uint32_t)))(void*, uint32_t)");
+  // Clang checks which function owns the convention. Putting the returned
+  // callback's attribute before the entire declaration changes the factory.
+  source_call_execution_test::checkSyntax(
+      std::string(
+          "#include <stdint.h>\n"
+          "typedef int32_t (__attribute__((stdcall)) *ExpectedCallback)(void*, "
+          "uint32_t);\n"
+          "typedef ExpectedCallback (*ExpectedFactory)(ExpectedCallback);\n") +
+          declarationToC(Enumerator, "handler") + ";\n" +
+          declarationToC(CallbackFactory, "factory") +
+          ";\n"
+          "_Static_assert(__builtin_types_compatible_p(__typeof__(handler), "
+          "ExpectedCallback), \"callback\");\n"
+          "_Static_assert(__builtin_types_compatible_p(__typeof__(factory), "
+          "ExpectedFactory), \"factory\");\n",
+      {"--target=i686-pc-windows-msvc", "-ffreestanding"});
+  Enumerator->Pointee->FunctionConvention.reset();
+  EXPECT_THROW(typeToC(Enumerator), std::invalid_argument);
   auto Cycle = NdType::makePtr();
   Cycle->Pointee = Cycle;
   EXPECT_THROW(typeToC(Cycle), std::invalid_argument);

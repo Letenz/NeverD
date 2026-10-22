@@ -16,6 +16,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -92,6 +93,128 @@ protected:
     return {0xb8, Immediate, 0, 0, 0, 0x83, 0xc0, 3, 0xc3};
   }
 };
+
+TEST_F(BinaryDiffSDK, AmbiguityInventoryPagesEveryRetainedCandidate) {
+  constexpr unsigned Count = 40, Stride = 16;
+  const auto Copies = [&](uint64_t Base, const std::string &Prefix,
+                          bool Changed) {
+    std::vector<uint8_t> Bytes(Count * Stride, 0xcc);
+    for (unsigned I = 0; I < Count; ++I) {
+      const auto Code = body();
+      std::copy(Code.begin(), Code.end(), Bytes.begin() + I * Stride);
+    }
+    if (Changed)
+      Bytes.back() = 0xdd; // Different file, identical returning bodies.
+    const auto S = input(Bytes, Base);
+    EXPECT_GE(neverd_session_discover_functions(S), Count);
+    EXPECT_GE(neverd_func_count(S), Count);
+    for (unsigned I = 0; I < Count; ++I) {
+      EXPECT_GE(neverd_func_find_by_addr(S, Base + I * Stride), 0);
+      EXPECT_EQ(neverd_rename_addr(S, Base + I * Stride,
+                                   (Prefix + std::to_string(I)).c_str()),
+                0);
+    }
+    return S;
+  };
+  const auto A = Copies(0x1000, "before_copy_", false);
+  const auto B = Copies(0x8000, "after_copy_", true);
+  const auto C = compare(A, B, R"({"discover":false,"use_names":false})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  const auto Query = [&](llvm::json::Object Options) {
+    const auto Text = render(std::move(Options));
+    return parsed(neverd_comparison_functions_json(C, Text.c_str()));
+  };
+  for (const bool Secondary : {false, true}) {
+    SCOPED_TRACE(Secondary);
+    const auto Side = Secondary ? "secondary" : "primary";
+    const auto Anchor = Secondary ? "0x1010" : "0x8010";
+    auto First = Query(llvm::json::Object{
+        {"side", Side}, {"ambiguous_with", Anchor}, {"limit", 7}});
+    ASSERT_TRUE(First.getAsObject());
+    const auto *O = First.getAsObject();
+    const auto Total = O->getInteger("total").value_or(0);
+    ASSERT_GE(Total, Count - 1) << render(First);
+    ASSERT_TRUE(O->getObject("ambiguity"));
+    EXPECT_TRUE(
+        O->getObject("ambiguity")->getBoolean("active").value_or(false));
+    EXPECT_EQ(O->getObject("ambiguity")->getInteger("candidate_total"), Total);
+    EXPECT_EQ(O->getObject("ambiguity")->getString("source_side"),
+              Secondary ? "primary" : "secondary");
+    std::vector<std::string> Addresses;
+    for (int64_t Offset = 0; Offset < Total; Offset += 7) {
+      auto Page = Query(llvm::json::Object{{"side", Side},
+                                           {"ambiguous_with", Anchor},
+                                           {"offset", Offset},
+                                           {"limit", 7}});
+      ASSERT_TRUE(Page.getAsObject()->getArray("items"));
+      const auto &Items = *Page.getAsObject()->getArray("items");
+      ASSERT_EQ(Items.size(), std::min<int64_t>(7, Total - Offset));
+      for (const auto &Row : Items) {
+        const auto Address = Row.getAsObject()->getString("address");
+        ASSERT_TRUE(Address);
+        if (!Addresses.empty())
+          EXPECT_LT(Addresses.back(), Address->str());
+        Addresses.push_back(Address->str());
+      }
+      if (Offset + 7 < Total)
+        EXPECT_EQ(Page.getAsObject()->getInteger("next_offset"), Offset + 7);
+      else
+        EXPECT_FALSE(Page.getAsObject()->getInteger("next_offset"));
+    }
+    ASSERT_EQ(Addresses.size(), Total);
+    auto End = Query(llvm::json::Object{
+        {"side", Side}, {"ambiguous_with", Anchor}, {"offset", Total}});
+    EXPECT_TRUE(End.getAsObject()->getArray("items")->empty());
+    auto Reverse = Query(llvm::json::Object{{"side", Side},
+                                            {"ambiguous_with", Anchor},
+                                            {"sort", "address"},
+                                            {"descending", true},
+                                            {"limit", 1}});
+    EXPECT_EQ(Reverse.getAsObject()
+                  ->getArray("items")
+                  ->front()
+                  .getAsObject()
+                  ->getString("address"),
+              Addresses.back());
+    auto Filtered = Query(llvm::json::Object{
+        {"side", Side},
+        {"ambiguous_with", Anchor},
+        {"search", Secondary ? "after_copy_31" : "before_copy_31"}});
+    EXPECT_EQ(Filtered.getAsObject()->getInteger("total"), 1);
+    const auto Invalid = render(llvm::json::Object{
+        {"side", Side}, {"ambiguous_with", Anchor}, {"offset", Total + 1}});
+    EXPECT_EQ(neverd_comparison_functions_json(C, Invalid.c_str()), nullptr);
+  }
+  const auto Original = Query(
+      llvm::json::Object{{"side", "secondary"}, {"ambiguous_with", "0x1010"}});
+  EXPECT_EQ(neverd_comparison_functions_json(
+                C, R"({"side":"secondary","ambiguous_with":"0xdead"})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_functions_json(
+                C, R"({"side":"secondary","ambiguous_with":4112})"),
+            nullptr);
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"match","primary":"0x1010","secondary":"0x8030"})"),
+      1);
+  auto Resolved = Query(
+      llvm::json::Object{{"side", "secondary"}, {"ambiguous_with", "0x1010"}});
+  EXPECT_EQ(Resolved.getAsObject()->getInteger("total"), 0);
+  EXPECT_FALSE(Resolved.getAsObject()
+                   ->getObject("ambiguity")
+                   ->getBoolean("active")
+                   .value_or(true));
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(render(Query(llvm::json::Object{{"side", "secondary"},
+                                            {"ambiguous_with", "0x1010"}})),
+            render(Original));
+  ASSERT_EQ(neverd_comparison_redo(C), 1);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+  EXPECT_EQ(render(Query(llvm::json::Object{{"side", "secondary"},
+                                            {"ambiguous_with", "0x1010"}})),
+            render(Original));
+}
 
 TEST_F(BinaryDiffSDK, ScalarValidationBindsNativeLiftsAndExplicitInputDomain) {
   const auto A = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});

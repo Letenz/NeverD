@@ -1150,6 +1150,11 @@ cl::opt<bool> TypesMergePrototypes(
              "prototypes from later files and prefix conflicting types with "
              "their file stems; requires --data-model without a binary"),
     cl::sub(TypesCmd));
+cl::list<std::string> TypesImportPrototypes(
+    "import-prototype",
+    cl::desc("With --merge-prototypes and exactly two --declare files, import "
+             "only this prototype from the second file; repeat for more"),
+    cl::value_desc("name"), cl::sub(TypesCmd));
 cl::opt<bool>
     TypesSave("save",
               cl::desc("Persist --declare types in the binary's project for "
@@ -1674,6 +1679,28 @@ cl::opt<unsigned> DiffOffset("offset", cl::desc("Inventory page offset"),
 cl::opt<unsigned> DiffLimit("limit", cl::desc("Inventory page size"),
                             cl::init(::neverd::limits::diff::kDefaultPageSize),
                             cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffListSide("list-side",
+                 cl::desc("Function inventory side: primary or secondary"),
+                 cl::init("primary"), cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffListSearch("list-search",
+                   cl::desc("Filter function names or hexadecimal addresses"),
+                   cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffListSort("list-sort",
+                 cl::desc("Sort functions: address, name, size, similarity, "
+                          "confidence or changes"),
+                 cl::init("address"), cl::sub(DiffCmd));
+cl::opt<bool>
+    DiffListDescending("list-descending",
+                       cl::desc("Reverse the function inventory sort order"),
+                       cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffAmbiguousWith("ambiguous-with",
+                      cl::desc("Page all retained candidates for this "
+                               "opposite-side function entry (hex)"),
+                      cl::sub(DiffCmd));
 
 //===----------------------------------------------------------------------===//
 // Annotate-specific options

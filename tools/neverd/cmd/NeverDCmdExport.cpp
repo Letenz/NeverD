@@ -186,7 +186,10 @@ int runDiff() {
       DiffProfile.getNumOccurrences() ||
       DiffMinSimilarity.getNumOccurrences() ||
       DiffTimeout.getNumOccurrences() || DiffOffset.getNumOccurrences() ||
-      DiffLimit.getNumOccurrences()) {
+      DiffLimit.getNumOccurrences() || DiffListSide.getNumOccurrences() ||
+      DiffListSearch.getNumOccurrences() || DiffListSort.getNumOccurrences() ||
+      DiffListDescending.getNumOccurrences() ||
+      DiffAmbiguousWith.getNumOccurrences()) {
     WithColor::error()
         << "structural comparison options require --structural\n";
     return 1;

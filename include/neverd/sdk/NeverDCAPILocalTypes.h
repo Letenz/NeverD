@@ -51,6 +51,8 @@ extern "C" {
 /// "header" for a header library NeverD ships, "user" for the user's
 /// declarations; "headers" lists the libraries joined as
 /// [{"name","types","prototypes","conflicts":[name,...]} | {"name","error"}].
+/// "unsupportedFunctionTypes" counts PDB function types left opaque because
+/// their source calling convention is unsupported.
 /// "skipped" lists the types of the DWARF left out, with why
 /// (["name: reason",...]), and "conflicts" the names two of its different
 /// types share, of which the first stays; a PDB leaves both empty.  An image
@@ -136,7 +138,8 @@ NEVERD_API const char *neverd_local_types_forget(neverd_session_t Sess,
 /// "microsoft"|"mingw-x64"|"mingw-x86"|"itanium"|"apple-arm64"|"i386-sysv"|
 /// "android-i386"|"aapcs32",
 /// "declarations":
-/// [{"language":"c"|"cpp"|"rust"|"go","source","importPrefix"?:string},...],
+/// [{"language":"c"|"cpp"|"rust"|"go","source","importPrefix"?:string,
+/// "importPrototypes"?:[name,...]},...],
 /// "keepGoing"?:bool,
 /// "render"?:{...as neverd_local_types_source's options, and
 /// "prototypes":bool}}: the declarations read in order into one library
@@ -147,6 +150,9 @@ NEVERD_API const char *neverd_local_types_forget(neverd_session_t Sess,
 /// C and C++ declarations that read.  {"error"} when the request is
 /// malformed. With "importPrefix", that declaration parses independently;
 /// only missing prototypes and their dependency types join the library.
+/// Optional "importPrototypes" selects exact names from that provider; every
+/// name must exist, and an empty array imports nothing. Omission imports all
+/// missing prototypes. The selection requires "importPrefix".
 /// Conflicting type identities receive the C identifier prefix, preserving
 /// existing declarations. A provider with parse problems contributes nothing,
 /// even with "keepGoing". Successful imports add "imports":[{"declaration",

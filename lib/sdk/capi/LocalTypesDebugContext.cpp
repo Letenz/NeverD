@@ -221,7 +221,8 @@ private:
         return NdType::makeVoid();
       Params.push_back(std::move(Converted));
     }
-    return NdType::makeFunc(std::move(Return), std::move(Params));
+    return NdType::makeFunc(std::move(Return), std::move(Params),
+                            Function.Convention);
   }
 
   /// A record by its name, its members named for display where they lie, as

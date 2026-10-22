@@ -222,9 +222,9 @@ llvm::Error problem(const llvm::Twine &Message) {
 
 } // namespace
 
-llvm::Expected<PrototypeImport> importPrototypes(TypeLibrary &Library,
-                                                 const TypeLibrary &Provider,
-                                                 llvm::StringRef Prefix) {
+llvm::Expected<PrototypeImport> importPrototypes(
+    TypeLibrary &Library, const TypeLibrary &Provider, llvm::StringRef Prefix,
+    std::optional<llvm::ArrayRef<llvm::StringRef>> RequestedNames) {
   if (Library.dataModel() != Provider.dataModel() ||
       Library.recordABI() != Provider.recordABI())
     return problem(
@@ -234,6 +234,14 @@ llvm::Expected<PrototypeImport> importPrototypes(TypeLibrary &Library,
       !llvm::all_of(Prefix,
                     [](char C) { return llvm::isAlnum(C) || C == '_'; }))
     return problem("a prototype provider prefix must be a C identifier");
+
+  llvm::StringSet<> Selected;
+  if (RequestedNames)
+    for (llvm::StringRef Name : *RequestedNames) {
+      if (!Provider.findPrototype(Name))
+        return problem("selected provider prototype is missing: " + Name.str());
+      Selected.insert(Name);
+    }
 
   PrototypeImport Result;
   const std::map<std::string, std::string> UnchangedNames;
@@ -247,6 +255,8 @@ llvm::Expected<PrototypeImport> importPrototypes(TypeLibrary &Library,
         Pending.push_back(Name);
   };
   for (const auto &Entry : Provider.prototypes()) {
+    if (RequestedNames && !Selected.contains(Entry.first()))
+      continue;
     if (Library.findPrototype(Entry.first()))
       continue;
     if (!Entry.second)

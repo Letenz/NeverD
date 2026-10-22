@@ -74,8 +74,14 @@ neverd_comparison_export_json(neverd_comparison_t Comparison);
 NEVERD_API int neverd_comparison_restore_json(neverd_comparison_t Comparison,
                                               const char *Saved);
 /// Page a side's inventory. Query: side (primary/secondary), kind
-/// (all/matched/changed/ambiguous/unmatched), search, offset, limit. Addresses
-/// are hexadecimal strings. Unknown options and out-of-range pages fail.
+/// (all/matched/changed/ambiguous/unmatched), search, offset, limit, sort and
+/// descending. Optional ambiguous_with is a function entry on the opposite
+/// side: page every retained ambiguity candidate for that source, rather than
+/// only its inventory preview. A valid source with no ambiguity has no rows.
+/// The returned ambiguity object identifies that source and explains the group;
+/// these candidates are hypotheses, not accepted matches. Search/sort/paging
+/// apply to the target side as usual. Addresses are hexadecimal strings.
+/// Unknown options, missing source entries and out-of-range pages fail.
 NEVERD_API const char *
 neverd_comparison_functions_json(neverd_comparison_t Comparison,
                                  const char *Query);

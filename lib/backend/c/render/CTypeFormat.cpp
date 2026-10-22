@@ -599,7 +599,7 @@ bool spellsAsDeclarator(const TypeRef &Type, unsigned Depth,
     return (Type->Size == 4 || Type->Size == 8) &&
            spellsAsDeclarator(Type->Pointee, Depth + 1, Remaining);
   case NdTypeKind::Func:
-    if (Type->Size != 0 || !Type->RetType ||
+    if (!Type->FunctionConvention || Type->Size != 0 || !Type->RetType ||
         Type->RetType->Kind == NdTypeKind::Func ||
         !spellsAsDeclarator(Type->RetType, Depth + 1, Remaining))
       return false;
@@ -612,6 +612,29 @@ bool spellsAsDeclarator(const TypeRef &Type, unsigned Depth,
   default:
     return equalSourceTypes(Type, Type);
   }
+}
+
+std::string functionConventionSpelling(types::CallingConvention Convention) {
+  llvm::StringRef Spelling;
+  switch (Convention) {
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide, Pops)              \
+  case types::CallingConvention::Name:                                         \
+    Spelling = C;                                                              \
+    break;
+#include "neverd/types/CallingConventions.def"
+  default:
+    throw std::invalid_argument("C callback has an unknown calling convention");
+  }
+  if (Spelling.empty())
+    return {};
+  // The declaration table owns the convention. Use GNU attributes so the
+  // emitted C also compiles without Microsoft keyword extensions.
+  if (Spelling.starts_with("__attribute__"))
+    return Spelling.str() + " ";
+  if (Spelling.consume_front("__"))
+    return "__attribute__((" + Spelling.str() + ")) ";
+  throw std::invalid_argument(
+      "C callback has an unsupported calling convention");
 }
 
 bool containsFunction(const TypeRef &Type) {
@@ -628,13 +651,12 @@ bool containsFunction(const TypeRef &Type) {
     throw std::invalid_argument("C type exceeds the pointer nesting limit");
   return false;
 }
-} // namespace
-
-std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
+std::string declarationToCImpl(const TypeRef &Ty, llvm::StringRef Declarator,
+                               bool ConventionPlaced) {
   if (Ty && Ty->Kind == NdTypeKind::Array && Ty->ElemType) {
     std::string Inner = Declarator.str();
     Inner += Ty->ArrayCount ? "[" + std::to_string(Ty->ArrayCount) + "]" : "[]";
-    return declarationToC(Ty->ElemType, Inner);
+    return declarationToCImpl(Ty->ElemType, Inner, false);
   }
   if (!containsFunction(Ty))
     return typeToC(Ty) + (Declarator.empty() ? "" : " " + Declarator.str());
@@ -644,11 +666,17 @@ std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
     throw std::invalid_argument("C callback type has no supported signature");
   if (Ty->Kind == NdTypeKind::Ptr) {
     std::string Pointer = "*" + Declarator.str();
-    if (Ty->Pointee->Kind == NdTypeKind::Func)
-      Pointer = "(" + Pointer + ")";
-    return declarationToC(Ty->Pointee, Pointer);
+    const bool Function = Ty->Pointee->Kind == NdTypeKind::Func;
+    if (Function)
+      Pointer = "(" +
+                functionConventionSpelling(*Ty->Pointee->FunctionConvention) +
+                Pointer + ")";
+    return declarationToCImpl(Ty->Pointee, Pointer, Function);
   }
-  std::string Function = Declarator.str() + "(";
+  std::string Function =
+      (ConventionPlaced ? ""
+                        : functionConventionSpelling(*Ty->FunctionConvention)) +
+      Declarator.str() + "(";
   for (size_t I = 0; I < Ty->ParamTypes.size(); ++I) {
     if (I)
       Function += ", ";
@@ -656,7 +684,12 @@ std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
   }
   if (Ty->ParamTypes.empty())
     Function += "void";
-  return declarationToC(Ty->RetType, Function + ")");
+  return declarationToCImpl(Ty->RetType, Function + ")", false);
+}
+} // namespace
+
+std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
+  return declarationToCImpl(Ty, Declarator, false);
 }
 
 namespace {
