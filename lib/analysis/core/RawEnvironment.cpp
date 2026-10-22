@@ -302,6 +302,16 @@ void appendRawEnvironmentPolicy(RecoveryDigest &H,
       }
     }
   }
+  if (!O.EntryFrameExcludedObjects.empty()) {
+    H.text("entry-frame-excluded-objects-v1");
+    H.number(O.EntryFrameExcludedObjects.size());
+    for (const auto &Object : O.EntryFrameExcludedObjects) {
+      H.number(Object.Register.Offset);
+      H.number(Object.Register.Bytes);
+      H.number(Object.Begin);
+      H.number(Object.End);
+    }
+  }
   H.number(O.EntryFrameAlignment.has_value());
   if (O.EntryFrameAlignment) {
     H.number(O.EntryFrameAlignment->Alignment);

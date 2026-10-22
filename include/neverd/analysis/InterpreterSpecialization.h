@@ -213,6 +213,15 @@ struct SpecializationEntryFrameBounds {
   std::vector<SpecializationFrameExclusion> ExcludedAddressRanges;
 };
 
+struct SpecializationEntryObject {
+  /// Complete physical entry register holding this object's arbitrary root.
+  symbolic::SymRegisterRange Register;
+  /// Nonempty, nonwrapping half-open range relative to that entry value.
+  /// This grants no accessibility, initialization or loaded-pointer facts.
+  int64_t Begin = 0;
+  int64_t End = 0;
+};
+
 struct SpecializationOptions {
   /// Preserve incoming machine flags as symbolic machine-state inputs rather
   /// than claiming they are supplied by an ordinary source-language ABI.
@@ -319,6 +328,14 @@ struct SpecializationOptions {
   /// Requires FrameBaseRegister. Native proof APIs require the same bounds in
   /// their explicit frame contract. Absence keeps the full modular root domain.
   std::optional<SpecializationEntryFrameBounds> EntryFrameBounds;
+  /// Explicit raw-domain preconditions: each complete object range misses
+  /// EntryFrameBounds. The entry pointer remains symbolic. Objects may alias
+  /// each other, and their roots may equal the frame root when the declared
+  /// ranges are disjoint. No store exemption is implied: enable
+  /// ProveStoreFrameSeparation to prove each complete access independently.
+  /// Requires distinct complete x64 GPRs, excluding the frame register and
+  /// overlapping EntryConstants. Ordinary source/native consumers refuse.
+  std::vector<SpecializationEntryObject> EntryFrameExcludedObjects;
   /// Optional congruence domain for the entry frame root. Requires explicit
   /// machine state and an RSP FrameBaseRegister. Raw residual consumers enforce
   /// it; machine source rejects other roots before guest effects. Native proof
@@ -450,7 +467,7 @@ struct SpecializationOptions {
 
   bool hasRawEnvironment() const {
     return !X64CodeRegions.empty() || !X64ImportBindings.empty() ||
-           !X64MachineExits.empty();
+           !X64MachineExits.empty() || !EntryFrameExcludedObjects.empty();
   }
 
   uint32_t chainedVisitLimit() const {
