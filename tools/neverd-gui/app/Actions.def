@@ -454,8 +454,8 @@ NEVERD_ACTION(PathfinderNewPath,
                                 "Start a new call path at the function under "
                                 "the cursor"))
 NEVERD_ACTION(PathfinderAddWaypoint,
-              QT_TRANSLATE_NOOP("Actions", "&Add to the path"),
-              "Ctrl+Shift+F9", "pathfinder",
+              QT_TRANSLATE_NOOP("Actions", "&Add to the path"), "Ctrl+Shift+F9",
+              "pathfinder",
               QT_TRANSLATE_NOOP("Actions",
                                 "Add the function under the cursor to the "
                                 "call path as its last waypoint"))
