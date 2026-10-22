@@ -101,7 +101,8 @@ std::string locals(const X86SystemStateAsm &P,
 
 std::string
 renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
-                               const std::vector<std::string> &Arguments) {
+                               const std::vector<std::string> &Arguments,
+                               bool MsvcIntrinsics, bool &HasCIntrinsics) {
   const auto Id = Expression.IntrinsicId;
   const auto C = x86SystemStateContract(Id);
   X86SystemStateShape Shape;
@@ -126,6 +127,17 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
   }
   if (!x86SystemStateShapeIsValid(Id, Shape))
     throw std::invalid_argument("invalid x86 system expression contract");
+  // Preserve the established MSVC spelling after the shared admission check.
+  // These compiler intrinsics own the actual shadow-stack access; segmented
+  // operands instead need the explicit assembly contract below.
+  if (MsvcIntrinsics && C.Kind == X86SystemStateKind::ShadowWrite &&
+      Shape.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+    const auto Width = x86SystemStateWidth(Id, Shape);
+    HasCIntrinsics = true;
+    return "_" + std::string(C.Mnemonic) + (Width == 8 ? "q" : "d") + "((" +
+           unsignedType(Width) + ")(" + Arguments[1] +
+           "), (void *)(uintptr_t)(" + Arguments[0] + "))";
+  }
   const auto P = x86SystemStateAsm(
       Id, TargetArch, x86SystemStateWidth(Id, Shape), Shape.MemoryAddressSpace);
   if (!P)

@@ -16,7 +16,12 @@ code with original machine bytes for invalid operands, including instruction
 enablement/privilege before address faults. They do not certify successful
 shadow-stack updates or real device enqueue completion on this host. Malformed
 assembly, missing effects and forged memory attributes remain rejected. The
-existing concrete enqueue tests independently cover retry, unchanged memory,
+Windows HighC cases also retain the unsegmented CET MSVC intrinsics and header.
+Clang compiles their actual generated C for i686/x64 Windows MSVC targets at
+O0/O2 with shadow-stack intrinsics enabled; this is compile-only coverage.
+The fixture supplies standard memory prototypes when target CRT headers are
+unavailable, retaining the compiler's actual intrinsic headers and emitted bodies.
+The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
 
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.

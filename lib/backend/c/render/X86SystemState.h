@@ -25,7 +25,8 @@ struct HighExpr;
 
 std::string
 renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
-                               const std::vector<std::string> &Arguments);
+                               const std::vector<std::string> &Arguments,
+                               bool MsvcIntrinsics, bool &HasCIntrinsics);
 
 std::optional<std::string>
 renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,

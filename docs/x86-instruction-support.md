@@ -65,6 +65,9 @@ implementations own all permission checks and memory accesses; no compiler
 preload or ordinary store is substituted. The existing scalar enqueue executor
 continues to require explicit CPL/PASID state and returns retry for ordinary
 memory. It does not acquire a real device portal from this change.
+Windows HighC keeps MSVC intrinsics for unsegmented CET writes, including the
+required header, after the common operand validation. Other source spellings
+use the owned assembly contract.
 
 LLVM-to-C now lowers masked memory operations to guarded lane accesses in its
 private module clone before scalarization. Inactive lanes neither access memory
@@ -240,6 +243,20 @@ and retains the same 17 skips, with no failures. All 99 selected FP contract,
 encoding, corpus and source-route integration checks pass. This validates the
 new decoder's table lookup and instruction-byte copy changes; the full numerical
 FP matrices above were not repeated for that dependency-only merge.
+
+After the system-memory follow-up and integration through `76dffec6e`, the
+expanded broad selection passes 1,885 of 1,902 checks, with the same 17
+platform/corpus skips and no failures. All 62 focused system, APX, encoding
+corpus and source-route tests pass; a further 97 binary-comparison and SDK
+discovery integration tests pass. The source checks cover 30 system-memory
+encodings, both pipeline settings and both native word sizes. Generated ELF C
+and IR compile at O0/O2, and the repository LLVM backend produces objects.
+The six unsegmented CET word-size forms also compile as actual Windows-target
+C using Clang's MSVC intrinsic headers. A freestanding memory declaration shim
+replaces the unavailable target CRT header without altering generated bodies.
+Fault probes compare signal and fault code with original machine bytes in
+isolated Linux x64 subprocesses. Successful shadow-stack writes and real
+device enqueue acceptance remain outside this host qualification.
 
 The architectural references are Intel's
 [Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)

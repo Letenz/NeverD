@@ -407,6 +407,18 @@ int main(void) {
 }
 
 namespace {
+std::string freestandingC(std::string Source) {
+  // Cross-target checks use the real compiler intrinsic headers without
+  // requiring a target CRT installation. Only the standard memory prototypes
+  // are supplied; generated declarations, bodies and assembly stay intact.
+  const std::string Include = "#include <string.h>";
+  if (const auto At = Source.find(Include); At != std::string::npos)
+    Source.replace(At, Include.size(),
+                   "extern void *memcpy(void *, const void *, __SIZE_TYPE__);\n"
+                   "extern void *memset(void *, int, __SIZE_TYPE__);");
+  return Source;
+}
+
 std::string faultDriver(const BinaryImage &Image) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -499,12 +511,8 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   for (auto Source : {High, LLVM, Native}) {
     SCOPED_TRACE(Route);
     const bool IR = Route++ == 2;
-    const std::string Include = "#include <string.h>";
-    if (const auto At = Source.find(Include); At != std::string::npos)
-      Source.replace(
-          At, Include.size(),
-          "extern void *memcpy(void *, const void *, __SIZE_TYPE__);\n"
-          "extern void *memset(void *, int, __SIZE_TYPE__);");
+    if (!IR)
+      Source = freestandingC(std::move(Source));
     llvm::SmallString<128> Input(Directory), Output(Directory),
         ErrorFile(Directory), Driver(Directory), Executable(Directory);
     llvm::sys::path::append(Input, IR ? "source.ll" : "source.c");
@@ -755,14 +763,24 @@ TEST(X86SystemMemorySource, BothSourceRoutesRetainEffectsAcrossAllFormats) {
           auto Image = image(A, Format, function(A, E.Bytes, Offset));
           std::string High, LLVM;
           sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, &High, &LLVM);
-          for (const auto &Source : {High, LLVM}) {
-            EXPECT_NE(Source.find("__asm__ volatile"), std::string::npos);
-            EXPECT_NE(Source.find("\"memory\""), std::string::npos);
-            if (E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
+          const bool Segmented =
+              E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65;
+          for (const auto *Source : {&High, &LLVM}) {
+            if (Format == BinaryFormat::COFF && Source == &High && !Segmented &&
+                (E.Id == Intrinsic::CetWrss || E.Id == Intrinsic::CetWruss)) {
+              EXPECT_NE(Source->find("_" + std::string(E.Mnemonic) + "("),
+                        std::string::npos)
+                  << *Source;
+              EXPECT_NE(Source->find("#include <intrin.h>"), std::string::npos);
+              continue;
+            }
+            EXPECT_NE(Source->find("__asm__ volatile"), std::string::npos);
+            EXPECT_NE(Source->find("\"memory\""), std::string::npos);
+            if (Segmented)
               EXPECT_NE(
-                  Source.find(E.Bytes.front() == 0x64 ? "%%fs:" : "%%gs:"),
+                  Source->find(E.Bytes.front() == 0x64 ? "%%fs:" : "%%gs:"),
                   std::string::npos)
-                  << Source;
+                  << *Source;
           }
           if (::testing::Test::HasFailure())
             return;
@@ -779,6 +797,62 @@ TEST(X86SystemMemorySource, GeneratedInstructionsCompileAtO0AndO2) {
       compileRoutes(Image, false, Entry + Offset, E.Mnemonic);
       if (::testing::Test::HasFailure())
         return;
+    }
+}
+
+TEST(X86SystemMemorySource, WindowsShadowWritesCompileWithMsvcIntrinsics) {
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "Clang is unavailable";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-cet-coff", Directory));
+  auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  llvm::SmallString<128> Input(Directory), Object(Directory),
+      ErrorFile(Directory);
+  llvm::sys::path::append(Input, "shadow.c");
+  llvm::sys::path::append(Object, "shadow.obj");
+  llvm::sys::path::append(ErrorFile, "clang.err");
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : systemMemoryEncodings(A)) {
+      if ((E.Id != Intrinsic::CetWrss && E.Id != Intrinsic::CetWruss) ||
+          E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
+        continue;
+      SCOPED_TRACE(E.Mnemonic);
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      size_t Offset;
+      auto Image = image(A, BinaryFormat::COFF, function(A, E.Bytes, Offset));
+      std::string High;
+      sourceRoutes(Image, false, Entry + Offset, E.Mnemonic, &High);
+      std::error_code Error;
+      llvm::raw_fd_ostream OS(Input, Error);
+      ASSERT_FALSE(Error);
+      OS << freestandingC(High);
+      OS.close();
+      ASSERT_FALSE(OS.has_error());
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        const std::vector<llvm::StringRef> Arguments = {
+            Compiler,
+            A == Arch::X64 ? "--target=x86_64-pc-windows-msvc"
+                           : "--target=i686-pc-windows-msvc",
+            "-ffreestanding",
+            "-fno-strict-aliasing",
+            "-mshstk",
+            "-Werror=implicit-function-declaration",
+            Optimization,
+            "-c",
+            Input,
+            "-o",
+            Object};
+        const std::optional<llvm::StringRef> Redirects[] = {
+            std::nullopt, std::nullopt, ErrorFile.str()};
+        const int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments,
+                                                     std::nullopt, Redirects);
+        const auto Diagnostics = llvm::MemoryBuffer::getFile(ErrorFile);
+        ASSERT_EQ(Status, 0)
+            << (Diagnostics ? (*Diagnostics)->getBuffer().str() : "") << High;
+      }
     }
 }
 

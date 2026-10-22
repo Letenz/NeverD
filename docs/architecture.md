@@ -5139,6 +5139,8 @@ without issuing a load or store, then executes the owned assembly and captures
 ZF. HighC and LLVMC use the same operand and effect constraints. The concrete
 enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
 retry behavior; CET writes still require an execution environment it lacks.
+Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
+CET writes, after validating the same operand contract.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.
