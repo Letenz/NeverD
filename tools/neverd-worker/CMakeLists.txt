@@ -151,6 +151,12 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
     set_tests_properties(NeverDWorkerFunctionalRegressions PROPERTIES TIMEOUT 60)
     option(NEVERD_WORKER_REAL_ENGINE_TESTS "Run smoke tests against the real engine" ON)
     if(NEVERD_WORKER_REAL_ENGINE_TESTS)
+      if(_neverd_worker_allocator STREQUAL "mimalloc")
+        add_test(NAME NeverDWorkerIdleMemory
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/idle_memory_test.py"
+                  "$<TARGET_FILE:neverd-worker>")
+        set_tests_properties(NeverDWorkerIdleMemory PROPERTIES TIMEOUT 60)
+      endif()
       # Generated C uses Clang C extensions, including scalar bit casts.
       # Match the native unit fixtures' frontend when the SDK is built by cl.
       # GCC's C front end lacks them too; it remains the fallback only when

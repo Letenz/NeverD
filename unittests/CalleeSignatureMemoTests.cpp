@@ -19,6 +19,7 @@
 
 #include <iterator>
 #include <memory>
+#include <utility>
 
 namespace {
 
@@ -103,6 +104,33 @@ TEST(CalleeSignatureMemo, ACalleeKeepsTheConversionOfEachSummaryItReads) {
   EXPECT_EQ(&Callee.Conversions.front(), Found);
   EXPECT_EQ(Callee.conversionFor(*Three), nullptr);
   EXPECT_EQ(Callee.Conversions.size(), 2u);
+}
+
+TEST(CalleeSignatureMemo, WideOperandsCountAgainstTheBodyBudget) {
+  using Memo = neverd::OmittedCalleeMemo;
+  const auto HeldBytes = [](unsigned Count, bool Shrink = false) {
+    neverd::MedFunc Body;
+    Body.Blocks.resize(1);
+    auto &Call = Body.Blocks.front().Ops.emplace_back();
+    Call.Opcode = neverd::NdOp::CALL;
+    for (unsigned I = 0; I < Count; ++I)
+      Call.addInput(neverd::MedVar::makeConst(I, 8));
+    if (Shrink) {
+      Call.Inputs.resize(2);
+      Call.NumInputs = 2;
+    }
+    Memo Kept;
+    Memo::Conversion Converted;
+    Converted.Body = std::make_shared<const neverd::MedFunc>(std::move(Body));
+    const auto &Held = Kept.keep(*Kept.find(0x4000), std::move(Converted));
+    EXPECT_EQ(Kept.bytes(), Held.Bytes);
+    return Held.Bytes;
+  };
+  const size_t Inline = HeldBytes(2);
+  EXPECT_GE(HeldBytes(3), Inline + 3 * sizeof(neverd::MedVar));
+  EXPECT_GE(HeldBytes(65), Inline + 65 * sizeof(neverd::MedVar));
+  // Shrinking the active operands retains the external allocation.
+  EXPECT_GE(HeldBytes(65, true), Inline + 65 * sizeof(neverd::MedVar));
 }
 
 TEST(CalleeSignatureMemo, AConversionKeepsTheProbesUsedLast) {

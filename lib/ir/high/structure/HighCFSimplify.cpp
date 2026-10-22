@@ -1012,17 +1012,6 @@ static unsigned readsOf(const HighExpr *E, const VarKey &K) {
   return N;
 }
 
-/// Count each read occurrence, including repeated edges in a shared expression.
-static void countVariableReads(const HighExpr *E,
-                               std::map<VarKey, unsigned> &Counts) {
-  if (!E)
-    return;
-  if (E->Kind == ExprKind::Var)
-    ++Counts[varKey(E->Var)];
-  E->forEachChildExpr(
-      [&](const ExprPtr &Op) { countVariableReads(Op.get(), Counts); });
-}
-
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize,
                                const std::set<va_t> &DispatcherEntries) {
   constexpr size_t kMaxTailAssigns = limits::kMaxReturnTailStatements;
@@ -1726,10 +1715,10 @@ bool foldTempsInReturnTails(std::vector<HighStmt> &Body) {
       // An assigned variable is written, not read.
       if (&E == &S.Dst && S.Kind == StmtKind::Assign)
         return;
-      std::map<VarKey, unsigned> Counts;
-      countVariableReads(E.get(), Counts);
-      for (const auto &[K, N] : Counts)
-        Reads_[K] += N;
+      std::set<VarKey> Seen;
+      ReadSet(E.get(), Seen);
+      for (const VarKey &K : Seen)
+        Reads_[K] += Reads(E.get(), K);
     });
   });
   std::function<void(std::vector<HighStmt> &)> CountCovered =
@@ -1755,11 +1744,11 @@ bool foldTempsInReturnTails(std::vector<HighStmt> &Body) {
           std::set<VarKey> Assigned;
           for (size_t J = Start; J <= R; ++J) {
             if (ExprPtr *Read = ReadOf(L[J])) {
-              std::map<VarKey, unsigned> Counts;
-              countVariableReads(Read->get(), Counts);
-              for (const auto &[K, N] : Counts)
+              std::set<VarKey> Seen;
+              ReadSet(Read->get(), Seen);
+              for (const VarKey &K : Seen)
                 if (Assigned.count(K))
-                  Covered[K] += N;
+                  Covered[K] += Reads(Read->get(), K);
             }
             if (std::optional<VarKey> W = WrittenVar(L[J]))
               Assigned.insert(*W);

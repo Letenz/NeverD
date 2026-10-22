@@ -1086,6 +1086,12 @@ Applications embedding the SDK continue to own their allocator policy. On macOS,
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
+The mimalloc worker returns free allocator pages after discovery, warming and
+foreground requests have paused for the allocator's configured purge delay.
+A queued request wakes this idle wait immediately. Temporary graph pages can
+return to the OS while live SDK caches retain their ownership and lifetimes.
+`cmake/NeverDWorkerAllocator.cmake` enables that executable-only integration
+from the selected allocator backend.
 
 `cmake/NeverDPerformance.cmake` owns the acceleration providers. The shared
 `cmake/NeverDForks.cmake` boundary resolves NeverSight default branches through

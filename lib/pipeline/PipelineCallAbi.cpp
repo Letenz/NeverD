@@ -244,9 +244,14 @@ const OmittedCalleeMemo::Conversion &
 OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
   if (Converted.Body) {
     Converted.Bytes = sizeof(MedFunc);
-    for (const MedBlock &Block : Converted.Body->Blocks)
+    for (const MedBlock &Block : Converted.Body->Blocks) {
       Converted.Bytes += sizeof(MedBlock) + Block.Ops.size() * sizeof(MedOp) +
                          Block.Phis.size() * sizeof(PhiNode);
+      // Expanded operand storage remains allocated when an operation shrinks.
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Inputs.capacity() > MedOp::InlineInputs)
+          Converted.Bytes += Op.Inputs.capacity() * sizeof(MedVar);
+    }
     if (const auto &Summary = Converted.Summary)
       Converted.Bytes +=
           sizeof(CalleeSummary) +
