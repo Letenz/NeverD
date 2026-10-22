@@ -24,6 +24,22 @@ unavailable, retaining the compiler's actual intrinsic headers and emitted bodie
 The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
 
+The system-memory matrix also covers 24 MOVDIRI/MOVDIR64B encodings, including
+16-bit addressing within the i386 target, long-mode address-size overrides,
+both scalar widths and FS/GS. `X86DirectStore.*` checks scalar memory projection
+and malformed decoder detail. Run `NeverDX86MOVDIR64BStateTests` for source
+snapshots, overlap, fault ordering and destination write admission.
+`X86DirectStoreSource.*` executes both C routes, emitted LLVM IR, repository
+LLVM objects and original bytes on a host with the corresponding feature.
+It checks aligned/unaligned scalar stores, full-width values, preserved flags
+and overlapping block sources against an independent byte-array oracle at
+O0/O2 and both pipeline settings. A scalar stack fixture verifies that a later
+load observes the direct store rather than a forwarded earlier value.
+`X86FenceSource.*` verifies that all three
+hardware fence instructions survive LLVM optimization and object generation.
+These checks do not measure concurrent bus transactions or device completion;
+their native instruction and memory-effect contracts retain those operations.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.
@@ -734,7 +750,12 @@ ctest --test-dir build-release/unittests/allocator --output-on-failure
 
 `NeverDMimallocConfigure` checks explicit opt-out and suppression for combined,
 configuration-specific and LLVM sanitizer settings, plus Windows CRT/toolchain
-rejections, without fetching dependencies.
+rejections, without fetching dependencies. It also checks that upstream THP
+defaults and explicit `MI_ALLOW_THP` selections (`OFF`, `ON`, `FULL` and
+`DEFAULT`) survive reconfiguration. `NeverDWorkerTHPPolicy` checks the Linux
+worker's `MIMALLOC_ALLOW_THP` runtime overrides, complete C output and the SDK
+host's unchanged process policy. Kernels without `THP_enabled` in
+`/proc/PID/status` explicitly skip this check.
 Repeat the standalone runtime check with `-DNEVERD_ENABLE_MIMALLOC=OFF` and with
 `-DCMAKE_C_FLAGS=-fsanitize=address -DCMAKE_CXX_FLAGS=-fsanitize=address` to check
 the system-allocator paths.
@@ -774,7 +795,16 @@ timings. Check function counts, instruction counts and rejection/audit records
 for equality before attributing a speed difference to the allocator. Use
 `MIMALLOC_VERBOSE=1` for a separate activation check, not during timed runs.
 Decode-only results do not measure the allocation-heavy IR stages; an allocator
-change does not guarantee an improvement for every workload.
+change does not guarantee an improvement for every workload. For Linux THP
+comparisons, also record the process's `THP_enabled` state and the kernel's THP
+and defrag settings. Separate user CPU, system CPU and minor/major page faults
+in diagnostic runs: similar user CPU can conceal expensive kernel allocation
+work. Hold purge settings constant when isolating THP; do not change global
+kernel settings or mix instrumented and uninstrumented timings. Setting
+`-DMI_ALLOW_THP=OFF` at configure time or `MIMALLOC_ALLOW_THP=0` at runtime can
+reduce memory and allocation stalls, but can also slow hot decompilation.
+Qualify both cold and warm workloads before selecting it; NeverD retains the
+upstream default and preserves explicit choices.
 
 The mimalloc worker collects free pages after a request-free interval matching
 its configured purge delay. Check full source output after idle collection,
@@ -959,6 +989,17 @@ manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker
 checks compile the owned `unittests/diff/patch_fixture.c` and compare the same
 saved schema across public surfaces, including failure and stale-result refusal.
+Ambiguity inventory tests page more than the preview limit in both directions,
+checking search/sort, strict source binding, empty/final/invalid pages, edits,
+undo and restore. CLI uses 40 independently named compiled copies; the worker
+uses authored raw bodies. The real Qt picker test uses 417 raw functions to
+cross the page boundary, then checks search, selection, address zero, displaced
+pairs, undo, cancellation and revision invalidation. These are UI and inventory
+contracts, not matching-quality or throughput measurements.
+The CLI regression sends SIGINT during each input's actual hashing phase,
+requires exit 3 with empty result output, preserves an existing saved report,
+then runs an ordinary comparison again. Child SIGINT delivery is tested on
+POSIX hosts; Windows reports this specific delivery check as skipped.
 Function-detail tests cancel a real large native alignment while polling status,
 check its cached stop state and unclassified CFG, then refresh and time out a new
 calculation. The real Qt/worker test verifies that a stopped page exposes Retry
@@ -1061,6 +1102,16 @@ close an active job. SDK and real-worker comparison checks retain the discovery
 stop phase and incomplete coverage; stopped snapshots never authorize scalar
 validation. Run the image-boundary, session-discovery and comparison suites when
 changing these shared cancellation boundaries. No input instructions execute.
+`NativeLoadCancellation.*` and controlled `InputDigest.*` cases in
+`NeverDNativeBufferTests` check ELF/x64, ELF/AArch64, PE and Mach-O cancellation,
+retry byte/digest parity with LLVM, chunk/padding edges, and loader callback
+lifetime. `SessionCAPITest.Cancelled*Load*`/`CancelledPDBPublics*` check stopped
+hash/copy/parse/debug/final-preparation stages, preserved image/analysis/edits,
+first-load retry, cross-architecture replacement and real PDB publics. Worker
+comparison checks stop during both inputs' hashing and retain the old comparison
+and mapping revision, then retry. These fixtures do not execute loaded code or
+qualify every parser helper's latency; include native loader, session, worker
+and GUI checks when changing these ownership boundaries.
 Dependency integration covers graph/page/slice ownership after sessions close,
 saved SSA fact tampering, native and retained-node admission limits, and the
 CLI/worker/Qt review path. The Qt check switches input sides and disables a new
@@ -1700,11 +1751,21 @@ and Go renderers. The fixture's source says how to rebuild the
 
 `TypeImport.*` checks independent prototype providers with equal-size but
 different pointees, recursive dependencies, callback conventions and
-transactional refusal. `SessionCAPITypeConversion.*` exercises the same owner
+transactional refusal, including exact-name selection and absent-name errors.
+`SessionCAPITypeConversion.*` exercises the same owner
 through `neverd_types_convert`, including provider provenance and rejection of
 partial providers even with `keepGoing`. The optional Microsoft generator
 checks original and imported record layouts for x86, x64 and ARM64; these local
 SDK/WDK inputs are not required by the synthetic unit tests.
+`LocalTypesDebugContext.CallbackConventionsSurviveParameterAndReturnTypes`
+checks callback conventions through the declaration-to-debug-type adapter on
+32-bit and 64-bit models. `HighCSourceCalls.CallbackDeclaratorsPreserveArgumentsAndReturnTypes`
+checks nested callback declarations used by both emitters; `SourceABI` rejects
+specialized callbacks from ordinary-C projection. CodeView convention tests
+cover target-width normalization and unsupported-convention refusal.
+`I386CallContract.LLVMCCallbackFactoryKeepsBothCallingConventions` compiles
+the generated import declaration against an independent expected function
+type for all cdecl/stdcall combinations of a factory and its callback.
 
 To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
 `ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,

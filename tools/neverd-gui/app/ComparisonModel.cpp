@@ -63,12 +63,19 @@ int ComparisonModel::rowCount(const QModelIndex &Parent) const {
   return Parent.isValid() ? 0 : Total;
 }
 int ComparisonModel::columnCount(const QModelIndex &Parent) const {
-  return Parent.isValid() ? 0 : Type == Kind::Instructions ? 7 : 6;
+  return Parent.isValid()             ? 0
+         : Type == Kind::Instructions ? 7
+         : Type == Kind::Candidates   ? 5
+                                      : 6;
 }
 QVariant ComparisonModel::headerData(int Section, Qt::Orientation Direction,
                                      int Role) const {
   if (Role != Qt::DisplayRole || Direction != Qt::Horizontal)
     return {};
+  if (Type == Kind::Candidates)
+    return QStringList{tr("Address"), tr("Function"), tr("Bytes"),
+                       tr("Pairing"), tr("Current counterpart")}
+        .value(Section);
   const QStringList Functions{tr("Address"),     tr("Function"),
                               tr("Counterpart"), tr("Similarity"),
                               tr("Confidence"),  tr("State")};
@@ -195,7 +202,7 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
                 "They do not validate behavior, calls, memory effects or patch "
                 "presence.") +
              '\n' + R["id"].toString();
-    if (Type == Kind::Functions)
+    if (Type == Kind::Functions || Type == Kind::Candidates)
       return E["explanation"].toString() + '\n' +
              tr("Heuristic confidence; structural similarity does not prove "
                 "semantic equivalence.") +
@@ -467,6 +474,27 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
                                        : tr("Repeated seed");
     }
   }
+  if (Type == Kind::Candidates) {
+    const auto Counterpart = R["counterpart"].toObject();
+    switch (Index.column()) {
+    case 0:
+      return R["address"].toString();
+    case 1:
+      return R["name"].toString();
+    case 2:
+      return R["size"].toInteger() ? R["size"].toVariant()
+                                   : QVariant(tr("Unknown"));
+    case 3:
+      return !Counterpart.isEmpty()                  ? tr("Paired")
+             : R["state"] == QJsonValue("ambiguous") ? tr("Ambiguous")
+                                                     : tr("Unpaired");
+    case 4:
+      return Counterpart.isEmpty() ? tr("None")
+                                   : Counterpart["name"].toString() + " · " +
+                                         Counterpart["address"].toString();
+    }
+    return {};
+  }
   if (Type == Kind::Functions) {
     switch (Index.column()) {
     case 0:
@@ -535,8 +563,8 @@ void ComparisonModel::reload() {
   endResetModel();
   if (QueryActive && Session.ready() && !Session.busy() &&
       !Session.revision().isEmpty() &&
-      (Type == Kind::Functions || Type == Kind::FlowFunctions ||
-       Type == Kind::Reviews ||
+      (Type == Kind::Functions || Type == Kind::Candidates ||
+       Type == Kind::FlowFunctions || Type == Kind::Reviews ||
        ((Type == Kind::ImpactFunctions || Type == Kind::ImpactSites) &&
         Query.contains("seeds")) ||
        Query.contains("address") || Query.contains("region_id") ||
@@ -585,8 +613,9 @@ void ComparisonModel::fetch(int Page) const {
             ? "comparison_flow_regions"
         : Self->Type == Kind::FlowFunctions || Self->Type == Kind::FlowNodes
             ? "comparison_dataflow"
-        : Self->Type == Kind::FlowSlice    ? "comparison_slice"
-        : Self->Type == Kind::Functions    ? "comparison_functions"
+        : Self->Type == Kind::FlowSlice ? "comparison_slice"
+        : Self->Type == Kind::Functions || Self->Type == Kind::Candidates
+            ? "comparison_functions"
         : Self->Type != Kind::Instructions ? "comparison_regions"
         : Self->Query.contains("anchor")   ? "comparison_region_page"
                                            : "comparison_function_page";

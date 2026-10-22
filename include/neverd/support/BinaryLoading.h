@@ -15,6 +15,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Raw/RawLoader.h"
+#include "neverd/support/LoadProgress.h"
 
 #include "llvm/Support/Error.h"
 
@@ -45,6 +46,9 @@ struct BinaryLoadOptions {
   /// Declining it for an object file, whose relocations name its symbols,
   /// fails the load.
   bool ReadStaticSymbols = true;
+  /// Borrowed only during loadBinary/loadBinaryBuffer. No callback is retained
+  /// by the returned image. Cancellation returns operation_canceled.
+  LoadProgress Progress;
 };
 
 /// Normalize every externally sourced text field in an already loaded image so

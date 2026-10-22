@@ -3,9 +3,14 @@
 import argparse
 import ctypes
 import json
+import os
 import pathlib
+import queue
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 
 
 def run(args, expected):
@@ -17,6 +22,92 @@ def run(args, expected):
 def stable(document):
     document.pop("timings", None)
     return document
+
+
+def cancel_input_loading(args, root, small):
+    if os.name != "posix":
+        print("SKIP: CLI loading interrupt requires POSIX child SIGINT delivery")
+        return
+    large = root / "loading.bin"
+    with large.open("wb") as stream:
+        stream.truncate(64 * 1024 * 1024)
+    project = pathlib.Path(str(large) + ".neverd")
+    project.mkdir()
+    (project / "load.json").write_text(json.dumps({
+        "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": "0x1000"}))
+    saved = root / "interrupted-review.nddiff"
+    saved.write_text("existing review must survive\n")
+    for side in ("primary", "secondary"):
+        paths = (str(large), small) if side == "primary" else (small, str(large))
+        output = root / f"stopped-{side}.json"
+        with output.open("w") as stdout:
+            process = subprocess.Popen([args.neverd, "diff", "--structural", "-a", paths[0],
+                                        "-b", paths[1], "--json", "--save", str(saved)],
+                                       stdout=stdout, stderr=subprocess.PIPE, text=True)
+            messages, captured = queue.Queue(), []
+
+            def drain():
+                for line in process.stderr:
+                    captured.append(line)
+                    messages.put(line)
+                messages.put(None)
+
+            reader = threading.Thread(target=drain, daemon=True)
+            reader.start()
+            try:
+                deadline = time.monotonic() + 15
+                while True:
+                    remaining = deadline - time.monotonic()
+                    assert remaining > 0, captured
+                    line = messages.get(timeout=remaining)
+                    assert line is not None, captured
+                    if line.startswith(f"diff: {side}:load:hash "):
+                        process.send_signal(signal.SIGINT)
+                        break
+                process.wait(timeout=15)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=15)
+                reader.join(timeout=5)
+                process.stderr.close()
+        assert process.returncode == 3, (side, process.returncode, captured)
+        assert "input loading stopped; no comparison was published" in "".join(captured), captured
+        assert output.read_text() == "", output.read_text()
+        assert saved.read_text() == "existing review must survive\n"
+    # An ordinary failed load remains an error, rather than a requested stop.
+    run([args.neverd, "diff", "--structural", "-a", str(root / "missing.exe"), "-b", small], {1})
+
+
+def ambiguity_pages(args, root):
+    source = root / "copies.c"
+    source.write_text("\n".join(f"int copy_{index:02d}(void) {{ return 7; }}" for index in range(40))
+                      + "\nint comparison_marker = MARKER;\n")
+    paths = [root / "copies-before.o", root / "copies-after.o"]
+    for marker, path in enumerate(paths):
+        run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O0",
+             "-fno-asynchronous-unwind-tables", f"-DMARKER={marker}", str(source), "-o", str(path)], {0})
+    base = [args.neverd, "diff", "--structural", "-a", str(paths[0]), "-b", str(paths[1]), "--ignore-names"]
+    for side, opposite in (("secondary", "primary"), ("primary", "secondary")):
+        inventory = json.loads(run(base + ["--list", "ambiguous", "--list-side", opposite,
+                                          "--list-search", "copy_01"], {2, 3}).stdout)
+        assert inventory["total"] == 1, inventory
+        anchor = inventory["items"][0]["address"]
+        query = ["--list", "all", "--list-side", side, "--ambiguous-with", anchor]
+        first = json.loads(run(base + query + ["--limit", "7"], {2, 3}).stdout)
+        assert first["total"] >= 39 and first["ambiguity"]["active"], first
+        assert len(first["items"]) == 7 and first["next_offset"] == 7
+        tail = json.loads(run(base + query + ["--offset", str(first["total"] - 3), "--limit", "7"], {2, 3}).stdout)
+        assert len(tail["items"]) == 3 and tail["next_offset"] is None
+        descending = json.loads(run(base + query + ["--list-sort", "address", "--list-descending", "--limit", "1"], {2, 3}).stdout)
+        assert descending["items"][0] == tail["items"][-1]
+        filtered = json.loads(run(base + query + ["--list-search", "copy_31"], {2, 3}).stdout)
+        assert filtered["total"] == 1 and filtered["items"][0]["name"] == "copy_31"
+        run(base + query + ["--offset", str(first["total"] + 1)], {1})
+    for options in (["--ambiguous-with", "0x10"], ["--list", "reviews", "--list-side", "secondary"],
+                    ["--list", "all", "--list-side", "wrong"], ["--list", "all", "--ambiguous-with", "0xdead"]):
+        run(base + options, {1})
+    run([args.neverd, "diff", "-a", str(paths[0]), "-b", str(paths[1]), "--list-search", "copy"], {1})
 
 
 def main():
@@ -41,10 +132,12 @@ def main():
     lib.neverd_free_string.argtypes = [pointer]
     with tempfile.TemporaryDirectory(prefix="neverd-diff-cli-") as folder:
         root = pathlib.Path(folder)
+        ambiguity_pages(args, root)
         for limit in (17, 9):
             run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",
                  f"-DPATCH_LIMIT={limit}", args.fixture, "-o", str(root / f"{limit}.o")], {0})
         a, b = str(root / "17.o"), str(root / "9.o")
+        cancel_input_loading(args, root, a)
         base = [args.neverd, "diff", "--structural", "-a", a, "-b", b]
         saved = root / "review.nddiff"
         result = run(base + ["--json", "--save", str(saved)], {2, 3})

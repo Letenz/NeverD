@@ -136,3 +136,63 @@ TEST(SessionCAPITypeConversion, InvalidProviderPrefixesAreRefused) {
     EXPECT_EQ(Reply.get("source"), nullptr);
   }
 }
+
+TEST(SessionCAPITypeConversion, SelectedProfilesKeepTheirOriginalPointees) {
+  auto Wide =
+      declaration("typedef unsigned short UNIT; struct Record { UNIT *Text; };"
+                  "void QueryW(struct Record **Value); void QueryA(struct "
+                  "Record **Value);");
+  Wide["importPrefix"] = "Unicode";
+  Wide["importPrototypes"] = llvm::json::Array{"QueryW"};
+  auto Narrow = declaration("typedef char UNIT; struct Record { UNIT *Text; };"
+                            "void QueryW(struct Record **Value); void "
+                            "QueryA(struct Record **Value);");
+  Narrow["importPrefix"] = "ANSI";
+  const auto Reply =
+      convert(llvm::json::Array{std::move(Wide), std::move(Narrow)});
+  ASSERT_FALSE(Reply.get("error"));
+  ASSERT_TRUE(Reply.getString("source"));
+  TypeLibrary Library(DataModel::ILP32);
+  ASSERT_TRUE(
+      parseCTypes(*Reply.getString("source"), Library).Problems.empty());
+  const auto *W = Library.findPrototype("QueryW");
+  const auto *A = Library.findPrototype("QueryA");
+  ASSERT_NE(W, nullptr);
+  ASSERT_NE(A, nullptr);
+  EXPECT_EQ(W->Params[0].Type->Element->Element->Name, "Record");
+  EXPECT_EQ(A->Params[0].Type->Element->Element->Name, "ANSI_Record");
+  ASSERT_NE(Library.find("Record"), nullptr);
+  ASSERT_NE(Library.find("ANSI_Record"), nullptr);
+  EXPECT_EQ(
+      Library.sizeOf(*Library.find("Record")->Record->Members[0].Type->Element),
+      2u);
+  EXPECT_EQ(Library.sizeOf(
+                *Library.find("ANSI_Record")->Record->Members[0].Type->Element),
+            1u);
+}
+
+TEST(SessionCAPITypeConversion,
+     ProviderSelectionRejectsMalformedAndMissingNames) {
+  for (auto Selection :
+       {llvm::json::Value("Added"), llvm::json::Value(llvm::json::Array{3}),
+        llvm::json::Value(llvm::json::Array{""}),
+        llvm::json::Value(llvm::json::Array{"Missing"})}) {
+    auto Provider = declaration("int Added(void);");
+    Provider["importPrefix"] = "Provider";
+    Provider["importPrototypes"] = std::move(Selection);
+    const auto Reply = convert(llvm::json::Array{std::move(Provider)});
+    EXPECT_TRUE(Reply.getString("error"));
+    EXPECT_EQ(Reply.get("source"), nullptr);
+  }
+  auto Unbound = declaration("int Added(void);");
+  Unbound["importPrototypes"] = llvm::json::Array{"Added"};
+  EXPECT_TRUE(
+      convert(llvm::json::Array{std::move(Unbound)}).getString("error"));
+  auto Empty = declaration("int Added(void);");
+  Empty["importPrefix"] = "Provider";
+  Empty["importPrototypes"] = llvm::json::Array{};
+  const auto Reply = convert(llvm::json::Array{std::move(Empty)});
+  ASSERT_FALSE(Reply.get("error"));
+  ASSERT_NE(Reply.getArray("prototypes"), nullptr);
+  EXPECT_TRUE(Reply.getArray("prototypes")->empty());
+}

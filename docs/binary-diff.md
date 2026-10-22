@@ -28,6 +28,40 @@ Progress goes to stderr. `--list` supports `all`, `matched`, `changed`,
 primary entry address or an unambiguous name and returns paired original bytes,
 operands, instruction alignment, CFG and matching evidence.
 
+Ctrl+C cooperatively stops input loading as well as comparison work. Loading
+reports per-side stages on stderr. A stop before comparison publication exits
+with code 3, writes no JSON result, and leaves an existing `--save` file intact.
+Individual file reads, allocations and metadata helpers can delay the next stop
+checkpoint; this is not a hard stop deadline. Ordinary load failures exit with
+code 1.
+
+Function inventories support `--list-side primary|secondary`, `--list-search`
+(name or hexadecimal address), `--list-sort` (address, name, size, similarity,
+confidence or changes), and `--list-descending`. To inspect every retained
+ambiguity candidate for a primary function, select the secondary inventory:
+
+```sh
+neverd diff --structural -a original.exe -b patched.exe --list all \
+  --list-side secondary --ambiguous-with 0x140001000 --limit 200
+```
+
+Continue with `--offset` using the response's `next_offset`. `ambiguous_with`
+always names a function on the opposite side; an absent source is an error,
+while a valid source with no retained ambiguity group returns an empty page.
+The `ambiguity` metadata identifies the source, group explanation and unfiltered
+candidate count. Search and sort apply to the returned candidate functions.
+The usual inventory's short `candidates` array remains a preview; it does not
+limit this query's total. These are the engine's retained hypotheses, not all
+possible correspondences or accepted matches.
+
+In the desktop, select a function and choose **Pair with…**. The resizable
+picker pages all retained ambiguity candidates and can switch to **All
+functions** for manual pairing. Search accepts names and hexadecimal addresses,
+including zero. Rows show current pairings; a selection explains which pairs
+will be replaced. **Pair functions** records the edit and **Undo** restores the
+previous pairs. Searching, browsing and cancelling do not edit the mapping.
+Changed comparison revisions invalidate the picker until it is reopened.
+
 `--options FILE` accepts an object containing:
 
 | Option | Meaning |
@@ -633,15 +667,27 @@ The standard worker `cancel` operation acknowledges the request first. Only the
 terminal comparison reply reports computation stopped and whether a partial
 result was retained. The worker advertises `comparison_cancellable_operations`;
 the GUI uses that list for queued/running analysis requests and Cancel state.
-Native discovery, decoding, feature extraction and delta measurement cooperate
-with cancellation. Discovery checks its metadata, architecture scan, verification
+Input loading, native discovery, decoding, feature extraction and delta
+measurement cooperate with cancellation. `neverd_session_load_cancellable`
+returns 1 for a completed load, 0 for failure and -2 for an observed stop before
+publication. Stopped preparation preserves the previous session's image,
+analysis and edits. Worker replacement during either input's loading preserves
+the old comparison and its revision, without publishing a new partial result.
+The GUI displays readable per-side loading stages, formats byte counts in the
+user's locale, keeps Cancel pending until the terminal acknowledgement and
+allows another attempt. A stopped replacement leaves the old review available.
+Native byte hashing and copying check bounded batches without capping file size;
+format parsing, load-time scans and PDB progress share the loading control. Discovery checks its metadata, architecture scan, verification
 and overlap walks, joins its workers and publishes no partial candidate inventory.
 Stopped extraction reports `stopped_phase:"discovery"` or `"decode"`; retry starts
 fresh discovery, and closing a session stops its owned discovery job. The additive
 `neverd_session_discover_functions_cancellable` returns -2 for cancellation,
 separately from -1 for failure and nonnegative completed function counts.
-Input loading, indivisible metadata helpers, sorting and allocation can still
-delay a stop; cancellation remains cooperative rather than a hard deadline.
+File I/O, allocations, individual metadata helpers and sorting can still delay
+a stop. Cancellation remains cooperative, with no hard deadline. Session
+publication and sidecar restoration after final preparation finish normally if
+a stop arrives after the final checkpoint; old engines lacking the additive load
+API finish loading before observing a comparison stop.
 
 ## Current boundaries and verification
 

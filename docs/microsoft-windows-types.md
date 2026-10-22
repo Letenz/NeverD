@@ -50,6 +50,22 @@ dependents receive a provider prefix. This includes callbacks, arrays,
 anonymous records and recursive references. Existing prototypes retain
 priority. Provider parse errors prevent that entire provider from joining.
 
+Additional independent units cover ESENT, Configuration Manager and device
+installation, DNS, Windows Installer, failover clustering, TAPI/TSPI, and
+OpenGL/GLU. Each unit declares its own preprocessor settings. TAPI uses
+`WIN32=1`, as Microsoft's metadata partition does, because its headers test
+that macro's value. Both preprocessing and the independent compiler check use
+the same settings, which are recorded in the manifest.
+
+DNS also has a Unicode profile. Its official `PDNS_RECORD` alias changes with
+`UNICODE`, including in declarations with an explicit `_W` name. An exact
+selection imports the reviewed Unicode entry points first; the ANSI profile
+then supplies the remaining declarations with its own type identities. The
+selection is explicit, not a rule that guesses encoding from arbitrary export
+names. It covers the four record-taking Unicode interfaces, `DnsQueryEx`, and
+`DnsServiceBrowse`. See Microsoft's [DnsQuery documentation](https://learn.microsoft.com/windows/win32/api/windns/nf-windns-dnsquery_w)
+and [asynchronous DNS sample](https://github.com/microsoft/Windows-classic-samples/tree/main/Samples/DNSAsyncQuery).
+
 The standalone `neverd types --merge-prototypes` command exposes this operation
 through the C API. Its first `--declare` file is the primary library; subsequent
 files parse independently, with their file stems used as prefixes. The JSON
@@ -58,6 +74,21 @@ names and renames. The generator checks required provider records against the
 original Clang layouts under those imported names. Unused provider records do
 not count toward this check. All merging happens during generation, without
 adding a provider merge to the decompilation path.
+With exactly two files, repeat `--import-prototype=Name` to select prototypes
+from the second provider. The C API's per-declaration `importPrototypes` array
+offers the same selection with `importPrefix`; missing names fail before any
+mutation, an empty array imports nothing, and omission imports all missing
+prototypes. Selection retains the complete dependent types and callbacks.
+Forward-declared structs and unions are reported as declarations and survive
+the round-trip inventory. Their unknown record size remains unknown; pointer
+parameters retain the target's pointer width. These opaque records are not
+counted as verified complete layouts.
+
+The decompiler preserves calling conventions on callback parameters and
+callback return values. Both C emitters share the declarator formatter; a
+stdcall callback returned by a cdecl function must not turn the outer function
+into stdcall. PDB callback types use the same source convention identity.
+An unsupported callback convention is not substituted with the ordinary C ABI.
 
 Generation rejects parser errors, missing declarations on round trip and named
 record layout differences against Clang reading the original Microsoft headers.

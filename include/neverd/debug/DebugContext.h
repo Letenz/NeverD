@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/support/LoadProgress.h"
 
 #include <cstdint>
 #include <map>
@@ -26,20 +27,6 @@
 #include <vector>
 
 namespace neverd {
-
-/// Optional load-time progress.  Image parse and PDB publics must not look
-/// idle.
-struct LoadProgress {
-  using Fn = void (*)(void *User, const char *Phase, unsigned long long Done,
-                      unsigned long long Total, const char *Detail);
-  Fn Callback = nullptr;
-  void *User = nullptr;
-  void report(const char *Phase, unsigned long long Done,
-              unsigned long long Total, const char *Detail = "") const {
-    if (Callback)
-      Callback(User, Phase, Done, Total, Detail ? Detail : "");
-  }
-};
 
 struct SourceLoc {
   std::string File;

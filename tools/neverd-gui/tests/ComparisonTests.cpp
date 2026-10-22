@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ComparisonChangesDialog.h"
+#include "ComparisonCounterpartDialog.h"
 #include "ComparisonDialog.h"
 #include "ComparisonFlowDialog.h"
 #include "ComparisonGraph.h"
@@ -62,6 +63,206 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        Directory.path());
     Theme::instance().apply();
+  }
+  void counterpartPickerPagesSearchesAndPreservesMappingIntent() {
+    constexpr int Count = 417;
+    const auto A = Directory.filePath("candidate-before.bin");
+    const auto B = Directory.filePath("candidate-after.bin");
+    auto Bytes =
+        QByteArray::fromHex("b80700000083c003c3cccccccccccccc").repeated(Count);
+    QVERIFY(write(A, Bytes));
+    Bytes.back() = char(0xdd);
+    QVERIFY(write(B, Bytes));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    const auto Input = [](const QString &Path, const QString &Base) {
+      return QJsonObject{{"path", Path},
+                         {"load_options", QJsonObject{{"loader", "binary"},
+                                                      {"processor", "x86_64"},
+                                                      {"platform", "sysv"},
+                                                      {"base", Base}}}};
+    };
+    Session.start(Input(A, "0x1000"), Input(B, "0x0"), {{"use_names", false}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    Session.command(
+        "comparison_override",
+        {{"kind", "match"}, {"primary", "0x1000"}, {"secondary", "0x0"}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    const auto OriginalCounts = Session.summary()["counts"];
+    const auto OriginalRevision = Session.revision();
+    auto *Inventory = View.findChild<QTableView *>("comparisonFunctions");
+    auto *Functions = qobject_cast<ComparisonModel *>(Inventory->model());
+    Inventory->sortByColumn(0, Qt::AscendingOrder);
+    QTRY_VERIFY_WITH_TIMEOUT(Functions->rowCount() >= Count, Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(Functions->row(1)["address"].toString(),
+                              QString("0x1010"), Timeout);
+    Inventory->selectRow(1);
+    auto *Open = View.findChild<QPushButton *>("comparisonPairWith");
+    QTRY_VERIFY_WITH_TIMEOUT(Open->isEnabled(), Timeout);
+    QTest::mouseClick(Open, Qt::LeftButton);
+    QTRY_VERIFY(View.findChild<ComparisonCounterpartDialog *>());
+    auto *Picker = View.findChild<ComparisonCounterpartDialog *>();
+    auto *Table = Picker->findChild<QTableView *>("counterpartFunctions");
+    auto *Model = qobject_cast<ComparisonModel *>(Table->model());
+    auto *Search = Picker->findChild<QLineEdit *>("counterpartSearch");
+    auto *Sort = Picker->findChild<QComboBox *>("counterpartSort");
+    auto *Pair = Picker->findChild<QPushButton *>("counterpartPair");
+    auto *Status = Picker->findChild<QLabel *>("counterpartStatus");
+    QTRY_VERIFY_WITH_TIMEOUT(Model->rowCount() >= Count - 1, Timeout);
+    QVERIFY(Status->text().contains("hypotheses"));
+    QVERIFY(!Pair->isEnabled());
+    const int Last = Model->rowCount() - 1;
+    Table->scrollTo(Model->index(Last, 1));
+    QTRY_VERIFY_WITH_TIMEOUT(!Model->row(Last).isEmpty(), Timeout);
+    const auto LastAddress = Model->row(Last)["address"].toString();
+    Table->selectRow(Last);
+    QTRY_VERIFY(Pair->isEnabled());
+    QVERIFY(Picker->findChild<QLabel *>("counterpartSelection")
+                ->text()
+                .contains(LastAddress));
+    QVERIFY(Model->cachedPages() >= 2);
+    Sort->setCurrentIndex(1);
+    QVERIFY(!Pair->isEnabled());
+    QTRY_COMPARE_WITH_TIMEOUT(Model->row(0)["address"].toString(), LastAddress,
+                              Timeout);
+    Search->setText("0x20");
+    QTest::keyClick(Search, Qt::Key_Return);
+    QCoreApplication::processEvents();
+    Search->setText("no matching function");
+    QVERIFY(!Pair->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(Status->text().contains("No ambiguity candidates"),
+                             Timeout);
+    QCOMPARE(Model->rowCount(), 0);
+    QCOMPARE(Session.revision(), OriginalRevision);
+    Search->setText(LastAddress);
+    QTRY_COMPARE_WITH_TIMEOUT(Model->rowCount(), 1, Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(Model->row(0)["address"].toString(), LastAddress,
+                              Timeout);
+    Table->selectRow(0);
+    QTRY_VERIFY(Pair->isEnabled());
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QDir().mkpath(Captures);
+      for (const auto Mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
+        Theme::instance().setMode(Mode);
+        const auto Prefix = Mode == Theme::Mode::Dark ? "dark" : "light";
+        Picker->resize(940, 620);
+        QTest::qWait(100);
+        QVERIFY(
+            Picker->grab().save(Captures + '/' + Prefix + "-counterpart.png"));
+        Picker->resize(Picker->minimumSize());
+        QTest::qWait(100);
+        QVERIFY(Picker->grab().save(Captures + '/' + Prefix +
+                                    "-counterpart-minimum.png"));
+      }
+    }
+    QTest::mouseClick(Pair, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !Session.busy() && Session.revision() != OriginalRevision, Timeout);
+    QJsonObject Paired;
+    Session.request("comparison_functions",
+                    {{"side", "primary"}, {"search", "0x1010"}}, &View,
+                    [&](const QJsonObject &Message) {
+                      Paired = Message["payload"].toObject();
+                    });
+    QTRY_VERIFY_WITH_TIMEOUT(Paired.contains("items"), Timeout);
+    QCOMPARE(Paired["items"]
+                 .toArray()
+                 .first()
+                 .toObject()["counterpart"]
+                 .toObject()["address"]
+                 .toString(),
+             LastAddress);
+    Session.command("comparison_undo");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Session.summary()["counts"], OriginalCounts);
+    // All-function search admits address zero and explains displaced pairs.
+    ComparisonCounterpartDialog Manual(Session, "primary", "0x1010", {}, &View);
+    Manual.show();
+    auto *All = Manual.findChild<QComboBox *>("counterpartScope");
+    auto *ManualSearch = Manual.findChild<QLineEdit *>("counterpartSearch");
+    auto *ManualTable = Manual.findChild<QTableView *>("counterpartFunctions");
+    auto *ManualModel = qobject_cast<ComparisonModel *>(ManualTable->model());
+    auto *ManualPair = Manual.findChild<QPushButton *>("counterpartPair");
+    All->setCurrentIndex(1);
+    ManualSearch->setText("0x0");
+    QTRY_COMPARE_WITH_TIMEOUT(ManualModel->rowCount(), 1, Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(ManualModel->row(0)["address"].toString(),
+                              QString("0x0"), Timeout);
+    ManualTable->selectRow(0);
+    QTRY_VERIFY(ManualPair->isEnabled());
+    QVERIFY(Manual.findChild<QLabel *>("counterpartSelection")
+                ->text()
+                .contains("0x1000"));
+    const auto BeforeManual = Session.revision();
+    QTest::keyClick(ManualSearch, Qt::Key_Return);
+    QCOMPARE(Session.revision(), BeforeManual);
+    QTRY_COMPARE_WITH_TIMEOUT(ManualModel->rowCount(), 1, Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!ManualModel->row(0).isEmpty(), Timeout);
+    ManualTable->selectRow(0);
+    QTest::mouseClick(ManualPair, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !Session.busy() && Session.revision() != BeforeManual, Timeout);
+    Session.command("comparison_undo");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Session.summary()["counts"], OriginalCounts);
+    // Browsing the reverse direction and cancelling never records an edit.
+    ComparisonCounterpartDialog Existing(Session, "primary", "0x1000", "0x0",
+                                         &View);
+    Existing.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Existing.findChild<QLabel *>("counterpartStatus")
+                                 ->text()
+                                 .contains("no retained ambiguity group"),
+                             Timeout);
+    Existing.findChild<QComboBox *>("counterpartScope")->setCurrentIndex(1);
+    Existing.findChild<QLineEdit *>("counterpartSearch")->setText("0x0");
+    auto *ExistingTable =
+        Existing.findChild<QTableView *>("counterpartFunctions");
+    auto *ExistingModel =
+        qobject_cast<ComparisonModel *>(ExistingTable->model());
+    QTRY_COMPARE_WITH_TIMEOUT(ExistingModel->rowCount(), 1, Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!ExistingModel->row(0).isEmpty(), Timeout);
+    ExistingTable->selectRow(0);
+    QVERIFY(!Existing.findChild<QPushButton *>("counterpartPair")->isEnabled());
+    QVERIFY(Existing.findChild<QLabel *>("counterpartSelection")
+                ->text()
+                .contains("already paired"));
+    QTest::keyClick(&Existing, Qt::Key_Escape);
+    ComparisonCounterpartDialog Cancelled(Session, "secondary", "0x10", {},
+                                          &View);
+    Cancelled.show();
+    auto *ReverseTable =
+        Cancelled.findChild<QTableView *>("counterpartFunctions");
+    auto *ReverseModel = qobject_cast<ComparisonModel *>(ReverseTable->model());
+    QTRY_VERIFY_WITH_TIMEOUT(ReverseModel->rowCount() >= Count - 1, Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(ReverseModel->row(0)["address"].toString(),
+                              QString("0x1010"), Timeout);
+    const auto BeforeCancel = Session.revision();
+    QTest::keyClick(&Cancelled, Qt::Key_Escape);
+    QVERIFY(!Cancelled.isVisible());
+    QCOMPARE(Session.revision(), BeforeCancel);
+    ComparisonCounterpartDialog Stale(Session, "primary", "0x1010", {}, &View);
+    Stale.show();
+    auto *StaleTable = Stale.findChild<QTableView *>("counterpartFunctions");
+    auto *StaleModel = qobject_cast<ComparisonModel *>(StaleTable->model());
+    auto *StalePair = Stale.findChild<QPushButton *>("counterpartPair");
+    QTRY_VERIFY_WITH_TIMEOUT(!StaleModel->row(0).isEmpty(), Timeout);
+    StaleTable->selectRow(0);
+    QTRY_VERIFY(StalePair->isEnabled());
+    Session.command(
+        "comparison_override",
+        {{"kind", "match"}, {"primary", "0x1010"}, {"secondary", "0x20"}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QVERIFY(!StalePair->isEnabled());
+    QCOMPARE(StaleModel->rowCount(), 0);
+    QVERIFY(Stale.findChild<QLabel *>("counterpartStatus")
+                ->text()
+                .contains("comparison changed"));
+    QCOMPARE(Failures.count(), 0);
   }
   void scalarValidationShowsAssumptionsAndClearsStaleResults() {
     const auto A = Directory.filePath("scalar-before.bin");
@@ -383,6 +584,85 @@ private slots:
     delete Dialog;
     QCOMPARE(Failure.count(), 0);
   }
+  void cancellingInputLoadingKeepsThePreviousComparison() {
+    const auto Large = Directory.filePath("loading-large.bin");
+    QFile Sparse(Large);
+    QVERIFY(Sparse.open(QIODevice::WriteOnly));
+    QVERIFY(Sparse.resize(64 * 1024 * 1024));
+    Sparse.close();
+    const auto Small = Directory.filePath("loading-small.bin");
+    QVERIFY(write(Small, QByteArray::fromHex("b807000000c3")));
+    ComparisonDialog Dialog(TEST_COMPARISON_WORKER);
+    Dialog.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Dialog.session().ready(), Timeout);
+    QSignalSpy Failures(&Dialog.session(), &ComparisonSession::failed);
+    auto *Primary = Dialog.findChild<QLineEdit *>("comparisonPrimary");
+    auto *Secondary = Dialog.findChild<QLineEdit *>("comparisonSecondary");
+    for (const char *Name : {"primaryLoader", "secondaryLoader"})
+      Dialog.findChild<QComboBox *>(Name)->setCurrentIndex(1);
+    auto *Start = Dialog.findChild<QPushButton *>("comparisonStart");
+    auto *Cancel = Dialog.findChild<QPushButton *>("comparisonCancel");
+    auto *Status = Dialog.findChild<QLabel *>("comparisonStatus");
+    for (const bool Retain : {false, true}) {
+      const auto Before = Dialog.session().summary();
+      QCOMPARE(!Before.isEmpty(), Retain);
+      Primary->setText(Large);
+      Secondary->setText(Small);
+      bool Clicked = false, StillRunning = false, Enabled = false;
+      QString StageText;
+      const auto Connection = connect(
+          &Dialog.session(), &ComparisonSession::progress, &Dialog,
+          [&](const auto &P) {
+            if (Clicked || P["phase"] != QJsonValue("primary:load:hash") ||
+                P["done"].toDouble() <= 0)
+              return;
+            Clicked = true;
+            StageText = Status->text();
+            Enabled = Cancel->isEnabled();
+            QTest::mouseClick(Cancel, Qt::LeftButton);
+            StillRunning = Dialog.session().busy();
+          });
+      QTest::mouseClick(Start, Qt::LeftButton);
+      QTRY_VERIFY_WITH_TIMEOUT(Clicked && !Dialog.session().busy(), Timeout);
+      disconnect(Connection);
+      QVERIFY(Enabled);
+      QVERIFY(StillRunning);
+      QVERIFY(StageText.contains("Checking file identity"));
+      QVERIFY(!StageText.contains("primary:load"));
+      QCOMPARE(Dialog.session().summary(), Before);
+      QVERIFY(Status->text().contains("Loading stopped"));
+      QVERIFY(Status->text().contains(Retain ? "previous comparison"
+                                             : "try again"));
+      QVERIFY(Start->isEnabled());
+      QVERIFY(!Cancel->isEnabled());
+      QCOMPARE(Failures.count(), 0);
+      const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+      if (Retain && !Captures.isEmpty()) {
+        QDir().mkpath(Captures);
+        QVERIFY(Dialog.grab().save(Captures + "/loading-stopped-retained.png"));
+      }
+      // The same UI can start again, clearing the stopped state on completion.
+      Primary->setText(Small);
+      QTest::mouseClick(Start, Qt::LeftButton);
+      QTRY_VERIFY_WITH_TIMEOUT(!Dialog.session().busy(), Timeout);
+      QCOMPARE(Dialog.session().summary()["state"].toString(),
+               QString("complete"));
+      QVERIFY(Dialog.session().operationMessage().isEmpty());
+      QCOMPARE(Failures.count(), 0);
+    }
+    // A failed replacement has the same retention guarantee and its reason
+    // remains visible after the request bookkeeping emits another update.
+    const auto BeforeFailure = Dialog.session().summary();
+    Primary->setText(Directory.filePath("missing-input.bin"));
+    QTest::mouseClick(Start, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Dialog.session().busy(), Timeout);
+    QCOMPARE(Failures.count(), 1);
+    QCOMPARE(Dialog.session().summary(), BeforeFailure);
+    QVERIFY(Status->text().contains("Could not replace"));
+    QVERIFY(Status->text().contains("previous comparison"));
+    Dialog.close();
+  }
+
   void cancelButtonWaitsForActualStop() {
     const auto Path = Directory.filePath("large.bin");
     QVERIFY(write(Path, QByteArray(8 * 1024 * 1024, char(0x90)) + char(0xc3)));

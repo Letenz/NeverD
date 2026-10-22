@@ -398,6 +398,12 @@ bool declare(neverd_session_t Sess) {
 /// The checks of options both ways of running share; false with an error
 /// printed.
 bool optionsValid() {
+  if (!TypesImportPrototypes.empty() &&
+      (!TypesMergePrototypes || TypesDeclare.size() != 2)) {
+    WithColor::error() << "--import-prototype requires --merge-prototypes and "
+                          "exactly two --declare files\n";
+    return false;
+  }
   if (TypesMergePrototypes &&
       (!TypesInput.empty() || TypesDeclare.size() < 2)) {
     WithColor::error() << "--merge-prototypes needs at least two --declare "
@@ -594,6 +600,12 @@ int runTypesConvert() {
       if (Prefix.empty() || isDigit(Prefix.front()))
         Prefix.insert(Prefix.begin(), '_');
       Declaration["importPrefix"] = std::move(Prefix);
+      if (!TypesImportPrototypes.empty()) {
+        json::Array Names;
+        for (const auto &Name : TypesImportPrototypes)
+          Names.push_back(Name);
+        Declaration["importPrototypes"] = std::move(Names);
+      }
     }
     Declarations.push_back(std::move(Declaration));
   }

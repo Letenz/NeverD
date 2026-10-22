@@ -43,6 +43,8 @@ complete instruction support or semantic test coverage.
 | Shared 32-bit VEX3/EVEX register and address validators | Mode-aware register-bank selection for their callers, including F16C, FMA4, SHA512 and EVEX integer/vector families. Ignored extension fields select the low bank; reserved fields still fail clearly. |
 | REX2 and 32-bit VEX floating-point forms | Shared prefix validation replaces eight local parsers. The 13 previously failing REX2 and nine 32-bit VEX examples now strictly lift, retaining distinct GPR/vector/address extension rules. Concrete and executable source/native-route regressions cover the new behavior. |
 | WRSSD/Q, WRUSSD/Q, ENQCMD and ENQCMDS native output | The shared system contract emits the real instruction in LLVM, HighC and LLVM-to-C. Memory stays inside the instruction, enqueue returns its actual ZF, and FS/GS qualifies only the explicit memory operand. |
+| MOVDIRI and long-mode MOVDIR64B native output | The shared system contract retains real direct stores, their widths, memory effects and source/destination address roles. Native output no longer substitutes ordinary or masked stores. |
+| MFENCE, LFENCE and SFENCE native output | LLVM emits the hardware barrier and a compiler memory effect. Generic LLVM acquire/release fences can disappear on x86 and cannot order direct/non-temporal stores. |
 
 `X86SystemState.def` and `X86SystemState.h` own the system-instruction inventory
 and operand/completion shapes. LowIR, Low-to-Med conversion, Med verification,
@@ -103,10 +105,10 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Explicit-operand RDMSR/WRMSRNS, URDMSR and UWRMSR native LLVM output | The `X86MsrAccess` backend guard remains explicit. Operand-free legacy RDMSR uses a separate existing intrinsic. The documented VEX immediate RDMSR/WRMSRNS encodings also need decoder/lifter admission. |
 | ENQCMD, ENQCMDS, MOVDIR64B in 32-bit mode | Implicit ES destination base/limit ownership. Existing 64-bit support does not prove these forms. |
 
-MOVDIRI and MOVDIR64B also need a native direct-store review: their current
-lowering uses ordinary memory operations or a full-mask store. Concrete
-emulator tests for an indivisible destination update do not establish native
-direct-store atomicity and ordering.
+The direct-store execution checks cover ordinary memory. Native instructions
+retain WC protocol, concurrent write completion and device transactions, but
+these tests do not independently measure those properties. The concrete
+emulator models only the single-threaded ordinary-memory projection.
 
 The six system mnemonics above still fail strict lifting explicitly. The
 existing AMX LLVM guard remains explicit. Adding an opaque helper declaration,
@@ -270,6 +272,29 @@ x86 focused checks pass again. The affected residue suites pass 36 checks and
 skip six independent SMT proofs because this build does not enable Z3; all
 seven symbolic-mask Python oracle tests pass. The broad results above belong
 to `62ab9af81`; the final symbolic merge received these incremental checks.
+
+The direct-store follow-up, built on `e3b53b598`, again passes 1,885 of 1,902
+broad checks with the same 17 platform/corpus skips. Its 300 focused system,
+instruction-boundary, APX, LLVM-to-C and source-route checks pass 299 and skip
+one Windows x64 CPUID single-step observer. This matrix includes 24 additional
+direct-store encodings, bringing the system-memory source matrix to 54 forms.
+Both pipeline settings execute scalar and block direct stores through generated
+HighC, LLVM-to-C, externally compiled LLVM IR and repository LLVM objects.
+Original bytes independently pass the same byte-array and flag oracle. Scalar
+cases cover unaligned and cache-line-crossing writes; block cases cover aliasing
+and unaligned sources. The fence checks retain real machine opcodes after LLVM
+optimization and compile both C routes. The new executable checks exposed and
+fixed a missing x86 intrinsic header in LLVM-to-C; the freestanding i386 driver
+also supplies its required standard `memcpy` implementation.
+
+After integrating loader cancellation through `f34344003`, all 30 incremental
+checks pass: 23 system-state, encoding-corpus and native-buffer checks, three
+SDK cancellation/state-preservation checks, and four executable direct-store
+and fence source checks. The added stack-alias fixture verifies that scalar
+direct stores invalidate an earlier stack value before a subsequent load in
+every generated route, both word sizes and both pipeline settings. The broad
+and 300-check results above precede this loader-only integration; GUI and worker
+builds remain disabled in this qualification profile.
 
 The architectural references are Intel's
 [Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)

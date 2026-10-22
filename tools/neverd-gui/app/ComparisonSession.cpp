@@ -115,15 +115,30 @@ void ComparisonSession::command(const QString &Operation,
   if (!Ready || Busy)
     return;
   Busy = true;
+  OperationMessage.clear();
   CancelRequested = false;
   emit changed();
   request(Operation, Payload, this, [this, Operation](const auto &Message) {
     Busy = false;
     if (Message["status"] != QJsonValue("ok")) {
-      emit changed();
       const auto Error = Message["error"].toObject();
-      emit failed(tr("%1: %2").arg(Error["code"].toString(),
-                                   Error["message"].toString()));
+      if (Operation == "comparison_start" &&
+          Error["code"] == QJsonValue("cancelled")) {
+        OperationMessage =
+            Summary.isEmpty()
+                ? tr("Loading stopped. Ready to try again.")
+                : tr("Loading stopped. Your previous comparison is "
+                     "still available.");
+        emit changed();
+        return;
+      }
+      OperationMessage = Error["message"].toString();
+      if (Operation == "comparison_start" && !Summary.isEmpty())
+        OperationMessage = tr("Could not replace the comparison. Your previous "
+                              "comparison is still available. %1")
+                               .arg(OperationMessage);
+      emit changed();
+      emit failed(OperationMessage);
       return;
     }
     const auto Result = Message["payload"].toObject();

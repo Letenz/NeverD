@@ -14,6 +14,7 @@
 #include "neverd/backend/llvm/X86SystemStateAsm.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/NdOpEmulator.h"
+#include "neverd/lift/X86Lifter.h"
 #include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
@@ -161,6 +162,7 @@ TEST(X86SystemMemory, SharedContractRetainsAddressesWidthAndRealCompletion) {
       EXPECT_TRUE(x86SystemStateShapeIsValid(E.Id, Shape));
       const bool Enqueue =
           E.Id == Intrinsic::Enqcmd || E.Id == Intrinsic::Enqcmds;
+      const bool Block = Enqueue || E.Id == Intrinsic::X86DirectStore64B;
       EXPECT_EQ(It->Output.Size, Enqueue ? 1 : 0);
       const auto Plan = x86SystemStateAsm(
           E.Id, A, x86SystemStateWidth(E.Id, Shape), Shape.MemoryAddressSpace);
@@ -171,7 +173,7 @@ TEST(X86SystemMemory, SharedContractRetainsAddressesWidthAndRealCompletion) {
       EXPECT_EQ(Plan->Text.find("setz") != std::string::npos, Enqueue);
       EXPECT_EQ(
           x86SystemStateMemoryBytes(E.Id, x86SystemStateWidth(E.Id, Shape)),
-          Enqueue ? 64 : It->Inputs[2].Size);
+          Block ? 64 : It->Inputs[2].Size);
       for (unsigned Fault = 0; Fault != 7; ++Fault) {
         auto Bad = Shape;
         switch (Fault) {
@@ -199,12 +201,110 @@ TEST(X86SystemMemory, SharedContractRetainsAddressesWidthAndRealCompletion) {
         }
         EXPECT_FALSE(x86SystemStateShapeIsValid(E.Id, Bad));
       }
-      if (Enqueue || It->Inputs[2].Size == 8) {
+      if (Block || It->Inputs[2].Size == 8) {
         auto Bad = Shape;
         Bad.TargetArch = Arch::X86;
         EXPECT_FALSE(x86SystemStateShapeIsValid(E.Id, Bad));
       }
     }
+}
+
+TEST(X86DirectStore, ScalarMemoryProjectionKeepsWidthWrappingSegmentsAndFlags) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : test::directStoreEncodings(A)) {
+      if (E.Id != Intrinsic::X86DirectStore)
+        continue;
+      const auto Ops = lift(A, E.Bytes);
+      ASSERT_FALSE(Ops.empty());
+      const auto &Store = Ops.back();
+      ASSERT_EQ(Store.Opcode, NdOp::INTRINSIC);
+      const unsigned Width = Store.Inputs[2].Size;
+      const uint64_t Base =
+          Store.MemoryAddressSpace == NdMemoryAddressSpace::Default ? 0
+                                                                    : 0x100000;
+      for (unsigned Misalignment : {0, 1}) {
+        BinaryImage Image;
+        Image.Arch = A;
+        Segment Memory;
+        Memory.VA = Base + 0x3000;
+        Memory.Size = Memory.FileSz = 64;
+        Memory.Data.assign(64, 0x5a);
+        Memory.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+        Image.Segments.push_back(Memory);
+        NdOpEmulator Emu(Image);
+        Emu.setStrictMode(true);
+        if (Base)
+          ASSERT_TRUE(
+              Emu.setMemoryAddressSpaceBase(Store.MemoryAddressSpace, Base));
+        Emu.setRegister(x86reg::RAX, 0x3010 + Misalignment);
+        Emu.setRegister(x86reg::RBX, 0xfff0);
+        Emu.setRegister(x86reg::RSI, 0x3020 + Misalignment);
+        constexpr uint64_t Value = 0xfedcba9876543210;
+        Emu.setRegister(x86reg::RCX, Value);
+        for (uint64_t F : {x86reg::CF, x86reg::ZF, x86reg::OF, x86reg::SF,
+                           x86reg::AF, x86reg::PF})
+          Emu.setRegister(F, 1);
+        ASSERT_EQ(Emu.run(Ops), Ops.size());
+        LowOp Read;
+        Read.Opcode = NdOp::LOAD;
+        Read.Output = NdVar::reg(x86reg::XMM0, 64);
+        Read.addInput(NdVar::cst(Memory.VA, 8));
+        ASSERT_TRUE(Emu.step(Read));
+        const auto Actual = Emu.getRegisterBytes(x86reg::XMM0);
+        ASSERT_TRUE(Actual);
+        auto Expected = Memory.Data;
+        for (unsigned I = 0; I != Width; ++I)
+          Expected[16 + Misalignment + I] = Value >> (8 * I);
+        EXPECT_EQ(*Actual, Expected);
+        for (uint64_t F : {x86reg::CF, x86reg::ZF, x86reg::OF, x86reg::SF,
+                           x86reg::AF, x86reg::PF})
+          EXPECT_EQ(Emu.getRegister(F), 1u);
+        EXPECT_FALSE(Emu.skips().any());
+      }
+    }
+}
+
+TEST(X86DirectStore, ForgedOperandDetailsRefuseBeforeEmission) {
+  Decoder Decode;
+  ASSERT_TRUE(Decode.init(Arch::X64));
+  for (const auto &E : test::directStoreEncodings(Arch::X64)) {
+    DecodedInsn I{};
+    ASSERT_EQ(
+        Decode.decodeOneForLift(E.Bytes.data(), E.Bytes.size(), 0x1000, I),
+        E.Bytes.size());
+    const bool Block = E.Id == Intrinsic::X86DirectStore64B;
+    for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+      cs_insn Raw = *I.Raw;
+      cs_detail Detail = *Raw.detail;
+      Raw.detail = &Detail;
+      auto &X = Detail.x86;
+      switch (Mutation) {
+      case 0:
+        X.operands[Block ? 0 : 1].reg = X86_REG_XMM0;
+        break;
+      case 1:
+        X.operands[Block ? 1 : 0].size = 2;
+        break;
+      case 2:
+        X.operands[Block ? 1 : 0].mem.base = X86_REG_R15;
+        break;
+      case 3:
+        X.op_count = 1;
+        break;
+      case 4:
+        X.addr_size = 2;
+        break;
+      case 5:
+        X.prefix[0] = 0xf0;
+        break;
+      }
+      X86Lifter L(Arch::X64);
+      L.setStrict(true);
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(L.lift(&Raw, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+    }
+  }
 }
 
 TEST(X86MaskedStore, SelectedLanesWriteWithoutTouchingMaskedUnmappedMemory) {

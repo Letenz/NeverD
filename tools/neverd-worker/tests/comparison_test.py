@@ -16,6 +16,58 @@ def ok(client, operation, payload=None):
     return reply["payload"]
 
 
+def ambiguity_pages(client, root):
+    # More than the inventory's preview, with independently known boundaries.
+    body = bytes.fromhex("b80700000083c003c3") + b"\xcc" * 7
+    inputs = []
+    for side, base in (("primary", 0x1000), ("secondary", 0x8000)):
+        path = root / f"candidates-{side}.bin"
+        data = bytearray(body * 40)
+        if side == "secondary":
+            data[-1] = 0xdd
+        path.write_bytes(data)
+        inputs.append({"path": str(path), "load_options": {
+            "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": hex(base)}})
+    summary = ok(client, "comparison_start", {
+        "primary": inputs[0], "secondary": inputs[1], "options": {"use_names": False}})
+    revision = summary["comparison_revision"]
+    for side, source in (("secondary", "0x1010"), ("primary", "0x8010")):
+        query = {"side": side, "ambiguous_with": source, "limit": 7,
+                 "expected_comparison_revision": revision}
+        first = ok(client, "comparison_functions", query)
+        assert first["total"] >= 39 and first["ambiguity"]["active"], first
+        assert first["total"] == first["ambiguity"]["candidate_total"]
+        addresses, page = [], first
+        while True:
+            addresses += [item["address"] for item in page["items"]]
+            if page["next_offset"] is None:
+                break
+            page = ok(client, "comparison_functions", {**query, "offset": page["next_offset"]})
+        assert len(set(addresses)) == len(addresses) == first["total"]
+        assert addresses == sorted(addresses, key=lambda address: int(address, 16))
+        filtered = ok(client, "comparison_functions", {**query, "search": addresses[-1]})
+        assert filtered["total"] == 1 and filtered["items"][0]["address"] == addresses[-1]
+        reversed_page = ok(client, "comparison_functions", {**query, "sort": "address", "descending": True})
+        assert reversed_page["items"][0]["address"] == addresses[-1]
+        refused = client.call("comparison_functions", {**query, "offset": len(addresses) + 1})
+        assert refused["status"] == "error", refused
+    query = {"side": "secondary", "ambiguous_with": "0x1010"}
+    original = ok(client, "comparison_functions", query)
+    edited = ok(client, "comparison_override", {
+        "kind": "match", "primary": "0x1010", "secondary": "0x8030",
+        "expected_comparison_revision": revision})
+    stale = client.call("comparison_functions", {**query, "expected_comparison_revision": revision})
+    assert stale["error"]["code"] == "stale_comparison", stale
+    resolved = ok(client, "comparison_functions", query)
+    assert resolved["total"] == 0 and not resolved["ambiguity"]["active"], resolved
+    assert resolved["comparison_revision"] == edited["comparison_revision"]
+    ok(client, "comparison_undo")
+    restored = ok(client, "comparison_functions", query)
+    assert restored["items"] == original["items"] and restored["ambiguity"] == original["ambiguity"]
+    for source in ("0xdead", 4112):
+        assert client.call("comparison_functions", {**query, "ambiguous_with": source})["status"] == "error"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("worker")
@@ -37,6 +89,7 @@ def main():
                     "comparison_cfg_summary", "comparison_cfg_viewport", "comparison_cfg_focus"}.issubset(
                         client.hello["comparison_cancellable_operations"])
             assert client.call("comparison_functions")["error"]["code"] == "comparison_not_loaded"
+            ambiguity_pages(client, root)
             start = {"primary": {"path": str(a)}, "secondary": {"path": str(b)}, "options": {"regions": True, "dataflow": True, "flow_regions": {"min_nodes": 2}}}
             summary = ok(client, "comparison_start", start)
             assert summary["schema"] == "neverd.bindiff.summary"
@@ -178,6 +231,37 @@ def main():
             assert ok(client, "comparison_observations", detail_query) == expired_changes
             fresh_changes = ok(client, "comparison_observations", {"address": "0x1000", "refresh": True})
             assert fresh_changes["state"] == "complete" and fresh_changes["visited_native_rows"] == 60001
+            # A replacement stopped during either input load never replaces
+            # the existing comparison, its mapping revision or its query state.
+            loading = root / "loading.bin"
+            with loading.open("wb") as stream:
+                stream.truncate(64 * 1024 * 1024)
+            loading_input = {"path": str(loading), "load_options": {
+                "loader": "binary", "processor": "x86_64", "base": "0x1000",
+                "platform": "sysv"}}
+            retained_summary = ok(client, "comparison_summary")
+            retained_rows = ok(client, "comparison_functions")
+            for side in ("primary", "secondary"):
+                replacement = {"primary": start["primary"], "secondary": start["secondary"]}
+                replacement[side] = loading_input
+                request = client.send("comparison_start", replacement)
+                progress = client.next(
+                    lambda m: m.get("request_id") == request and m.get("status") == "progress"
+                    and m.get("payload", {}).get("phase") == f"{side}:load:hash"
+                    and m["payload"].get("done", 0) > 0, timeout=30)
+                assert progress["payload"]["done"] < progress["payload"]["total"], progress
+                load_stop_began = time.monotonic()
+                acknowledged = ok(client, "cancel", {"request_id": request})
+                assert acknowledged["accepted"] and not acknowledged["requires_restart"], acknowledged
+                stopped_load = client.response(request)
+                assert stopped_load["status"] == "error" and stopped_load["error"]["code"] == "cancelled", stopped_load
+                assert stopped_load["calculation_stopped"] and not stopped_load["completed_before_cancellation"], stopped_load
+                assert not stopped_load["partial_result_retained"], stopped_load
+                assert ok(client, "comparison_summary") == retained_summary
+                assert ok(client, "comparison_functions") == retained_rows
+                print(f"{side} input loading stop and retained comparison: {time.monotonic() - load_stop_began:.3f}s")
+            retried = ok(client, "comparison_start", start)
+            assert retried["state"] == "complete", retried
             # Actual cooperative cancellation: acknowledge request while work is running;
             # publish 'stopped' and retained partial state only in the terminal response.
             large = root / "large.bin"

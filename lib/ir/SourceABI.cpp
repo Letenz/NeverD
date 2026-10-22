@@ -68,7 +68,11 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
     return true;
   }
   case NdTypeKind::Func:
-    if (Left->Size != 0 || !Left->RetType || !Right->RetType ||
+    // These projections currently support the ordinary platform C convention.
+    // A displayable stdcall/vectorcall callback is not evidence for that ABI.
+    if (Left->FunctionConvention != types::CallingConvention::Unspecified ||
+        Right->FunctionConvention != types::CallingConvention::Unspecified ||
+        Left->Size != 0 || !Left->RetType || !Right->RetType ||
         Left->RetType->Kind == NdTypeKind::Func ||
         Left->ParamTypes.size() >
             ::neverd::limits::ir::kSourceABIEqualTypesLeftParamTypesSizeLimit ||

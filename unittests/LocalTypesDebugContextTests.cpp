@@ -46,6 +46,36 @@ public:
 
 } // namespace
 
+TEST(LocalTypesDebugContext,
+     CallbackConventionsSurviveParameterAndReturnTypes) {
+  using namespace neverd;
+  for (auto Model : {types::DataModel::ILP32, types::DataModel::LLP64}) {
+    auto Library = std::make_shared<types::TypeLibrary>(Model);
+    ASSERT_TRUE(types::parseCTypes(R"(
+      typedef int (__stdcall *EventCallback)(void *Context, unsigned int Code);
+      EventCallback __stdcall SetCallback(EventCallback Handler, void *Context);
+    )",
+                                   *Library)
+                    .ok());
+    NamesOnlyDebugContext Names;
+    sdk::LocalTypesDebugContext Context(Names, Library);
+    const auto Signature = Context.resolvePrototype("SetCallback");
+    ASSERT_TRUE(Signature);
+    ASSERT_EQ(Signature->Params.size(), 2u);
+    for (const auto &Type :
+         {Signature->ReturnType, Signature->Params[0].second}) {
+      ASSERT_NE(Type, nullptr);
+      ASSERT_EQ(Type->Kind, NdTypeKind::Ptr);
+      ASSERT_NE(Type->Pointee, nullptr);
+      ASSERT_EQ(Type->Pointee->Kind, NdTypeKind::Func);
+      const auto Expected = Model == types::DataModel::ILP32
+                                ? types::CallingConvention::Stdcall
+                                : types::CallingConvention::Unspecified;
+      EXPECT_EQ(Type->Pointee->FunctionConvention, Expected);
+    }
+  }
+}
+
 TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();

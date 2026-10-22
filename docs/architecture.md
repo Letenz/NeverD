@@ -151,6 +151,13 @@ window used to route branch arrows. Revision and navigation fences still apply.
 `lib/diff` owns the immutable comparison model, normalization-independent matching,
 block/instruction deltas, correspondence overrides and versioned persistence.
 It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+The C API's `functions_json` inventory projects the same accepted mappings and
+retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
+the full group's target-side inventory, with ordinary search/sort/paging; it
+does not run another matcher or promote a candidate. Mapping edits and restore
+invalidate that inventory cache. CLI and the Qt counterpart picker consume this
+projection; the picker keeps bounded pages and invalidates its selection when
+the worker's comparison revision changes.
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
@@ -254,6 +261,20 @@ reports identify the binding mode. Reopen constructs fresh sources; saved files
 never authorize proof reuse. Failed worker replacement retains the old comparison
 and its sources; destruction/close releases them. Other immutable snapshot
 queries retain their session-independent contract.
+`LoadProgress` in support owns borrowed loading progress and stop checkpoints.
+It carries no session state and is never retained in a `BinaryImage`.
+Controlled loader calls restore the previous control on every exit and translate
+stops to `operation_canceled`; legacy calls retain their existing contracts.
+Hashing keeps the shared hardware-accelerated SHA-256 implementation and polls
+between bounded byte batches, as does raw-byte copying. Native parsers and
+load-time discovery poll at phase/loop boundaries; PDB work shares its existing
+progress checkpoints. The SDK latches stop requests only for the synchronous
+load and returns -2 before publishing any replacement. Its final preparation
+checkpoint precedes decoder initialization and session publication; once
+publication starts, completion wins. File I/O, allocations, individual metadata
+helpers and post-publication sidecar reads remain indivisible. These checkpoints
+set no input-size ceiling or hard latency guarantee. Worker input loading
+forwards actual per-side stages and preserves the old comparison on stop.
 `lib/sdk/capi/BinaryComparison` adapts the native loader and the shared
 `InstructionFlow` traversal; it must not introduce a second sized/unsized or
 exception-chunk traversal. The adapter preserves original bytes/operands and
@@ -600,9 +621,19 @@ time, through `neverd_types_convert` and the standalone CLI. It imports missing
 prototypes with their dependency closure, shares structurally identical types,
 and renames conflicting types and affected dependents without replacing earlier
 declarations. Type identity includes pointees, qualifiers, callbacks and enum
-values as well as layout. Provider parse errors prevent an import. This owner
+values as well as layout. Exact prototype selections keep only the selected
+dependency closure; absent selected names and provider parse errors prevent
+an import. This owner
 is separate from the runtime priority merge of system and program types; the
 flattened generated headers add no provider merge during decompilation.
+Callback types retain their source calling convention when local declarations
+become `NdType` values. The lightweight `CallingConvention.h` and existing
+`CallingConventions.def` own that identity; CodeView imports share one mapping.
+HighC and LLVMC use `declarationToC` to attach the convention to the correct
+function layer, including a function returning a callback. This display
+evidence does not authorize an ordinary-C source ABI projection for a callback
+with a different convention. Unsupported CodeView callback conventions remain
+unknown in debug types and opaque in local types, with an import count.
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
 a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
 provider headers declare into `lib/types/headers/WindowsKernelX64.h`
@@ -1229,7 +1260,11 @@ analysis allocations use the executable's process allocator. Windows MSVC ABI
 executables instead import a shared mimalloc before their other dependencies;
 the matching redirection DLL overrides the dynamic CRT (`/MD` or `/MDd`),
 including later-loaded plugins. Both runtime DLLs travel with the executable.
-Applications embedding the SDK continue to own their allocator policy. On macOS, dependency
+Applications embedding the SDK continue to own their allocator policy.
+Linux executables preserve mimalloc's `MI_ALLOW_THP` build setting and the
+runtime `MIMALLOC_ALLOW_THP` override. Disabling transparent huge pages acts
+on that executable's process; loading the SDK does not impose this policy
+on its host or change system-wide kernel settings. On macOS, dependency
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
@@ -5184,6 +5219,18 @@ enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
 retry behavior; CET writes still require an execution environment it lacks.
 Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
 CET writes, after validating the same operand contract.
+MOVDIRI and long-mode MOVDIR64B also use the shared native memory contract.
+MOVDIRI retains its scalar width; MOVDIR64B carries both addresses, with FS/GS
+applying only to the source. No ordinary load, masked store or eager alignment
+check replaces the instruction's WC transaction and write-completion atomicity.
+The scalar emulator retains a single-threaded ordinary-memory projection,
+including a complete source snapshot before the block destination write. It
+does not model cache/WC protocol, feature faults or real device completion.
+X86 LLVM lowering preserves MFENCE/LFENCE/SFENCE as hardware instructions with
+compiler memory effects; generic acquire/release fences do not guarantee the
+barriers required by direct or non-temporal stores.
+LLVM-to-C collects ISA headers from the same intrinsic-rendering decision on
+all architectures, including x86 fence assembly rendered as `_mm_*` calls.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.

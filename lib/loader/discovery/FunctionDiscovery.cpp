@@ -12,6 +12,7 @@
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
+#include "neverd/support/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -386,7 +387,23 @@ void recordRelocatedLiteralTargets(BinaryImage &Img) {
   });
 }
 
-void scanPaddingBoundaries(BinaryImage &Img) {
+static const void *findLoadByte(const uint8_t *Data, int Byte, size_t Size,
+                                const LoadProgress &Progress) {
+  if (!Progress)
+    return std::memchr(Data, Byte, Size);
+  for (size_t Done = 0; Done < Size;) {
+    Progress.check();
+    const size_t Count =
+        std::min(limits::support::kLoadByteCheckpointBytes, Size - Done);
+    if (const void *Found = std::memchr(Data + Done, Byte, Count))
+      return Found;
+    Done += Count;
+  }
+  return nullptr;
+}
+
+void scanPaddingBoundaries(BinaryImage &Img, const LoadProgress &Progress) {
+  Progress.check();
   // LC_FUNCTION_STARTS lists every function a linked Mach-O image lays out,
   // so a byte between two of its starts belongs to the function before it.
   // Padding there begins no function: an `int3` byte inside an instruction
@@ -409,6 +426,7 @@ void scanPaddingBoundaries(BinaryImage &Img) {
 
   [[maybe_unused]] size_t Added = 0;
   for (const auto &Seg : Img.Segments) {
+    Progress.check();
     if (!Seg.isExecutable() || Seg.Data.size() < 4)
       continue;
     const uint8_t *D = Seg.Data.data();
@@ -427,16 +445,23 @@ void scanPaddingBoundaries(BinaryImage &Img) {
     // A boundary is a byte that is no padding right after one that is, past
     // the padding the segment may open with.
     size_t First = 0;
-    while (First < N && D[First] == PadByte)
+    while (First < N && D[First] == PadByte) {
+      if (First % limits::support::kLoadByteCheckpointBytes == 0)
+        Progress.check();
       ++First;
+    }
     if (Alignment == 1) {
       for (size_t From = First; From < N;) {
-        const void *Pad = std::memchr(D + From, PadByte, N - From);
+        Progress.check();
+        const void *Pad = findLoadByte(D + From, PadByte, N - From, Progress);
         if (!Pad)
           break;
         size_t I = static_cast<size_t>(static_cast<const uint8_t *>(Pad) - D);
-        while (I < N && D[I] == PadByte)
+        while (I < N && D[I] == PadByte) {
+          if (I % limits::support::kLoadByteCheckpointBytes == 0)
+            Progress.check();
           ++I;
+        }
         if (I >= N)
           break;
         Consider(I);
@@ -447,15 +472,18 @@ void scanPaddingBoundaries(BinaryImage &Img) {
     // Only a boundary a prologue can begin at is looked at.
     const size_t Skew = static_cast<size_t>((Seg.VA + First + 1) % Alignment);
     for (size_t I = First + 1 + (Skew ? Alignment - Skew : 0); I < N;
-         I += Alignment)
+         I += Alignment) {
+      Progress.check();
       if (D[I - 1] == PadByte && D[I] != PadByte)
         Consider(I);
+    }
   }
   LLVM_DEBUG(llvm::dbgs() << "func-discovery: padding scan added " << Added
                           << " functions\n");
 }
 
-void scanX86HotpatchEntries(BinaryImage &Img) {
+void scanX86HotpatchEntries(BinaryImage &Img, const LoadProgress &Progress) {
+  Progress.check();
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
       Img.IsRelocatable)
     return;
@@ -464,13 +492,15 @@ void scanX86HotpatchEntries(BinaryImage &Img) {
 
   [[maybe_unused]] size_t Added = 0;
   for (const auto &Seg : Img.Segments) {
+    Progress.check();
     if (!Seg.isExecutable())
       continue;
     const uint8_t *D = Seg.Data.data();
     const size_t N = Seg.Data.size();
     // Every entry begins with 8B, so only those bytes are examined.
     for (size_t Off = 0; Off < N; ++Off) {
-      const void *Hit = std::memchr(D + Off, 0x8B, N - Off);
+      Progress.check();
+      const void *Hit = findLoadByte(D + Off, 0x8B, N - Off, Progress);
       if (!Hit)
         break;
       Off = static_cast<size_t>(static_cast<const uint8_t *>(Hit) - D);
@@ -492,7 +522,8 @@ void scanX86HotpatchEntries(BinaryImage &Img) {
                           << " functions\n");
 }
 
-void scanDataFuncPointers(BinaryImage &Img) {
+void scanDataFuncPointers(BinaryImage &Img, const LoadProgress &Progress) {
+  Progress.check();
   const size_t PtrSize = Img.getPointerSize();
   if (PtrSize == 0)
     return;
@@ -583,7 +614,12 @@ void scanDataFuncPointers(BinaryImage &Img) {
     if (Misalignment != 0)
       Cur += PtrSize - Misalignment;
     std::optional<va_t> OwnerEnd;
+    Progress.check();
     for (; Cur <= End && End - Cur >= PtrSize; Cur += PtrSize) {
+      // Pointer scans can visit millions of slots. Poll by covered bytes,
+      // preserving every semantic visit without calling the host per pointer.
+      if (Cur % limits::support::kLoadByteCheckpointBytes == 0)
+        Progress.check();
       if (!OwnerEnd || !OwnerPerRange)
         OwnerEnd = Img.mappedObjectOwnerEnd(Cur);
       if (!OwnerEnd || *OwnerEnd < Cur || PtrSize > *OwnerEnd - Cur)
@@ -622,6 +658,7 @@ void scanDataFuncPointers(BinaryImage &Img) {
         !Sec.isWritable() && !Img.isCodeAddress(Sec.VA))
       ScanRange(Img.getSegmentFor(Sec.VA), Sec.VA, Sec.Size);
   for (const Segment &Seg : Img.Segments) {
+    Progress.check();
     if (section_names::isDebugSectionName(Seg.Name) || Seg.Name == "__DWARF" ||
         Img.segmentHasReadableSectionMetadata(Seg) || !Seg.isReadable() ||
         Seg.isExecutable() || Seg.isWritable())
