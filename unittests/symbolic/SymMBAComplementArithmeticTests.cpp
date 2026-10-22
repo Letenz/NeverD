@@ -314,7 +314,7 @@ TEST(SymMBAComplementArithmetic, ReusesOnlyCompatibleCompletedBases) {
     const auto Near = C.mkAdd(Input, C.mkMul(Power, X));
     detail::SolveReport Report;
     const auto R = detail::solveArithmetic(C, Near, Options, Budget, Report);
-    for (uint64_t V : {0ULL, 1ULL, 2ULL, 7ULL, UINT64_MAX}) {
+    for (uint64_t V : std::array<uint64_t, 5>{0, 1, 2, 7, UINT64_MAX}) {
       llvm::SmallVector<llvm::APInt, 3> Values{
           llvm::APInt(Width, V), llvm::APInt(Width, 3), llvm::APInt(Width, 5)};
       EXPECT_EQ(C.eval(R, Values), C.eval(Near, Values));
