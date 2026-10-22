@@ -6,11 +6,14 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
+#include <algorithm>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -455,6 +458,96 @@ TEST(MedStackAlignment, AJoinHoldsTheOffsetEveryWayInAgreesOn) {
     } else {
       ASSERT_TRUE(Offset.has_value());
       EXPECT_EQ(*Offset, -8);
+    }
+  }
+}
+
+TEST(MedStackAlignment, BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      const unsigned Width = getTargetRegInfo(Architecture).PointerSize;
+      MedFunc Func = frameWithEntrySP(Architecture);
+      Func.Blocks[0].Ops.push_back(op(NdOp::INT_SUB, temp(2, Architecture),
+                                      reg(0, Architecture),
+                                      MedVar::makeConst(8, Width)));
+      MedBlock Loop;
+      Loop.Id = 1;
+      Loop.StartAddr = 0x1010;
+      for (int Id : {5, 7}) {
+        PhiNode Join;
+        Join.Output = temp(Id, Architecture);
+        Join.Args = {{0, temp(2, Architecture)},
+                     {1, temp(Id + 1, Architecture)}};
+        Loop.Phis.push_back(std::move(Join));
+        Loop.Ops.push_back(
+            Id == 5 ? op(NdOp::COPY, temp(Id + 1, Architecture),
+                         temp(Id, Architecture))
+                    : op(NdOp::INT_ADD, temp(Id + 1, Architecture),
+                         temp(Id, Architecture), MedVar::makeConst(1, Width)));
+      }
+      PhiNode Mixed;
+      Mixed.Output = temp(9, Architecture);
+      Mixed.Args = {{0, temp(5, Architecture)}, {1, temp(7, Architecture)}};
+      Loop.Phis.push_back(std::move(Mixed));
+      // Multiple definitions stay ambiguous, independently of a previous
+      // query's accepted loop assumption or depth refusal.
+      Loop.Ops.push_back(
+          op(NdOp::COPY, temp(13, Architecture), reg(0, Architecture)));
+      Loop.Ops.push_back(
+          op(NdOp::COPY, temp(13, Architecture), temp(2, Architecture)));
+      MedVar Deep = reg(0, Architecture);
+      for (unsigned I = 0; I <= limits::ir::kMedStackAlignmentResolveDepthLimit;
+           ++I) {
+        const MedVar Next = temp(100 + I, Architecture);
+        Loop.Ops.push_back(op(NdOp::COPY, Next, Deep));
+        Deep = Next;
+      }
+      Func.Blocks.push_back(std::move(Loop));
+      MedVar Narrow = temp(2, Architecture);
+      Narrow.Size /= 2;
+      std::vector<MedVar> Values = {temp(5, Architecture),
+                                    temp(9, Architecture),
+                                    Narrow,
+                                    temp(12, Architecture),
+                                    temp(13, Architecture),
+                                    temp(7, Architecture),
+                                    temp(5, Architecture),
+                                    Deep,
+                                    temp(100, Architecture),
+                                    Deep,
+                                    reg(0, Architecture),
+                                    temp(2, Architecture)};
+      std::vector<std::optional<int64_t>> Expected = {-8,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      -8,
+                                                      std::nullopt,
+                                                      0,
+                                                      std::nullopt,
+                                                      0,
+                                                      -8};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        const auto Offsets =
+            entryStackOffsets(Func, Values, Architecture, Format);
+        ASSERT_EQ(Offsets.size(), Expected.size());
+        for (size_t I = 0; I < Values.size(); ++I) {
+          SCOPED_TRACE(I);
+          EXPECT_EQ(Offsets[I], Expected[I]);
+          EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                    Expected[I]);
+        }
+      }
     }
   }
 }

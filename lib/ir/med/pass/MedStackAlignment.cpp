@@ -70,6 +70,13 @@ std::optional<AlignmentMask> alignmentMask(const MedOp &Op,
 }
 
 class StackOffsetProof {
+  struct ValueDefinition {
+    const MedOp *Op = nullptr;
+    const PhiNode *Join = nullptr;
+    bool Ambiguous = false;
+    bool Active = false;
+  };
+
 public:
   /// \p FollowJoins also takes a join whose incoming offsets agree, and an
   /// entry stack pointer no operation defines, which SSA makes the incoming
@@ -80,15 +87,21 @@ public:
         Architecture(Architecture), Format(Format), Entry(Entry),
         FollowJoins(FollowJoins) {
     for (const MedBlock &Block : Func.Blocks) {
-      for (const PhiNode &Phi : Block.Phis)
-        if (!FollowJoins || !Joins.emplace(key(Phi.Output), &Phi).second)
-          Ambiguous.insert(key(Phi.Output));
+      for (const PhiNode &Phi : Block.Phis) {
+        auto &Definition = Definitions[key(Phi.Output)];
+        if (!FollowJoins || Definition.Join)
+          Definition.Ambiguous = true;
+        else
+          Definition.Join = &Phi;
+      }
       for (const MedOp &Op : Block.Ops) {
         if (Op.Output.isConst() || Op.Output.Size == 0)
           continue;
-        if (!Definitions.emplace(key(Op.Output), &Op).second ||
-            Joins.count(key(Op.Output)))
-          Ambiguous.insert(key(Op.Output));
+        auto &Definition = Definitions[key(Op.Output)];
+        if (Definition.Op || Definition.Join)
+          Definition.Ambiguous = true;
+        if (!Definition.Op)
+          Definition.Op = &Op;
       }
     }
   }
@@ -118,13 +131,14 @@ public:
   bool realignmentRoot(const MedOp &Op,
                        const std::set<const MedOp *> &EarlierEntryOps) {
     const auto Mask = alignmentMask(Op, TRI.PointerSize);
-    const Key K = key(Op.Output);
     if (!Mask || Op.Output.Kind != MedVar::Reg ||
         Op.Output.TheArch != Architecture ||
         Op.Output.RegOff != TRI.StackPointer ||
-        Op.RegistrationRoot != MedOp::RegistrationRootKind::None ||
-        Ambiguous.count(K) || Definitions.find(K) == Definitions.end() ||
-        Definitions.at(K) != &Op)
+        Op.RegistrationRoot != MedOp::RegistrationRootKind::None)
+      return false;
+    const auto Definition = Definitions.find(key(Op.Output));
+    if (Definition == Definitions.end() || Definition->second.Ambiguous ||
+        Definition->second.Op != &Op)
       return false;
     AllowedDefinitions = &EarlierEntryOps;
     return offset(Op.Inputs[Mask->BaseIndex]).has_value();
@@ -139,7 +153,8 @@ public:
 private:
   /// The offset every way into \p Phi brings.  A way back through the join
   /// itself is checked against the offset the other ways agree on.
-  std::optional<int64_t> join(const PhiNode &Phi, unsigned Depth) {
+  std::optional<int64_t> join(const PhiNode &Phi, ValueDefinition &Definition,
+                              unsigned Depth) {
     std::optional<int64_t> Agreed;
     std::vector<const MedVar *> Cyclic;
     for (const auto &[Pred, Arg] : Phi.Args) {
@@ -162,7 +177,7 @@ private:
     if (Cyclic.empty())
       return Agreed;
     const Key K = key(Phi.Output);
-    Active.erase(K);
+    Definition.Active = false;
     Assumed.emplace(K, *Agreed);
     bool Holds = true;
     for (const MedVar *Arg : Cyclic) {
@@ -173,7 +188,7 @@ private:
       }
     }
     Assumed.erase(K);
-    Active.insert(K);
+    Definition.Active = true;
     return Holds ? Agreed : std::nullopt;
   }
 
@@ -193,36 +208,41 @@ private:
         (AllowedDefinitions && Value.TheArch != Architecture))
       return std::nullopt;
     const Key K = key(Value);
-    if (Ambiguous.count(K))
+    const auto It = Definitions.find(K);
+    ValueDefinition *Definition =
+        It == Definitions.end() ? nullptr : &It->second;
+    if (Definition && Definition->Ambiguous)
       return std::nullopt;
-    const auto Definition = Definitions.find(K);
     if (AllowedDefinitions &&
-        (Definition == Definitions.end() ||
-         !AllowedDefinitions->count(Definition->second) ||
-         Definition->second->MemoryOrdering != NdMemoryOrdering::None ||
-         Definition->second->MemoryAddressSpace !=
-             NdMemoryAddressSpace::Default ||
-         !Definition->second->IntrinsicOutputs.empty()))
+        (!Definition || !Definition->Op ||
+         !AllowedDefinitions->count(Definition->Op) ||
+         Definition->Op->MemoryOrdering != NdMemoryOrdering::None ||
+         Definition->Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+         !Definition->Op->IntrinsicOutputs.empty()))
       return std::nullopt;
     if (Value.Kind == MedVar::Reg && Value.RegOff == TRI.StackPointer &&
         (safety::detail::isAuthenticatedEntryRegisterLiveIn(Func, Value) ||
-         (FollowJoins && Value.SSAVer == 0 && !Definitions.count(K))))
+         (FollowJoins && Value.SSAVer == 0 &&
+          (!Definition || !Definition->Op))))
       return 0;
     if (auto It = Assumed.find(K); It != Assumed.end())
       return It->second;
-    if (!Active.insert(K).second) {
+    if (!Definition)
+      return std::nullopt;
+    if (Definition->Active) {
       CycleHit = true;
       return std::nullopt;
     }
-    if (auto Join = Joins.find(K); Join != Joins.end()) {
-      std::optional<int64_t> Result = join(*Join->second, Depth);
-      Active.erase(K);
+    Definition->Active = true;
+    if (Definition->Join) {
+      std::optional<int64_t> Result =
+          join(*Definition->Join, *Definition, Depth);
+      Definition->Active = false;
       return Result;
     }
-    const auto It = Definitions.find(K);
     std::optional<int64_t> Result;
-    if (It != Definitions.end()) {
-      const MedOp &Op = *It->second;
+    if (Definition->Op) {
+      const MedOp &Op = *Definition->Op;
       if (sameOccurrence(Op.Output, Value) &&
           Op.MemoryOrdering == NdMemoryOrdering::None &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
@@ -255,7 +275,7 @@ private:
         }
       }
     }
-    Active.erase(K);
+    Definition->Active = false;
     if (Result && !fitsPointerOffset(*Result))
       Result.reset();
     return Result;
@@ -270,10 +290,9 @@ private:
   // A realignment root must be established by the exact entry prefix already
   // executed before its mask. Ordinary entry-offset queries also follow joins.
   const std::set<const MedOp *> *AllowedDefinitions = nullptr;
-  std::map<Key, const MedOp *> Definitions;
-  std::map<Key, const PhiNode *> Joins;
-  std::set<Key> Ambiguous;
-  std::set<Key> Active;
+  // Stable nodes also own traversal state; visiting a value does not allocate
+  // an active-set entry. Offsets and failed proofs are deliberately not cached.
+  std::map<Key, ValueDefinition> Definitions;
   std::map<Key, int64_t> Assumed;
   bool CycleHit = false;
   static constexpr size_t kMaxProofSteps =

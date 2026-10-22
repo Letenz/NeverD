@@ -3940,6 +3940,11 @@ Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
 
+The entry-stack proof keeps definitions, joins, ambiguity and transient active
+flags in one ordered index. Each visit still consumes its ordinary work and
+depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
+and failed queries are not memoized, and each query clears its active flags.
+
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C
 route prints `frame0`. Every frame access and address the writer can certify
