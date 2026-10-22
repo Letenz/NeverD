@@ -3,7 +3,8 @@
 # (HeaderLibrarySource.cpp.in): the largest compiles in about 5 s and 0.6 GB.
 set(NEVERD_HEADER_LIBRARIES
   WindowsKernelX64 WindowsUserX64 WindowsKernelX86 WindowsUserX86
-  WindowsUserARM64 LinuxX64 LinuxX86 LinuxARM64 LinuxARM AndroidX64 AndroidX86
+  WindowsUserARM64 WindowsKernelARM64 LinuxX64 LinuxX86 LinuxARM64 LinuxARM
+  AndroidX64 AndroidX86
   AndroidARM64 AndroidARM MuslX64 MuslX86 MuslARM64 MuslARM MacOSX64
   MacOSARM64 IOSARM64 FreeBSDX64 FreeBSDX86 FreeBSDARM64 FreeBSDARM UefiX64
   UefiX86 UefiARM64)

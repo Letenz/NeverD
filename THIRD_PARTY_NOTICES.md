@@ -293,6 +293,14 @@ verifies the input's SHA-256. The kernel libraries also use phnt's
 `SYSTEM_INFORMATION_CLASS` enumeration under its MIT license. Provider
 libraries regenerated on 2026-10-22.
 
+`WindowsKernelARM64.h` also reads the public-domain core DDK templates under
+ReactOS `sdk/include/xdk` at that revision, plus its public-domain driver
+annotation headers. `scripts/windows_types/reactos-arm64.sha256` records all
+inputs. Generation uses ReactOS's GPL header-preprocessing tool locally;
+the tool's implementation is not embedded or redistributed in NeverD.
+The generated declarations retain their DDK notices in
+[LICENSES/reactos-ddk.txt](LICENSES/reactos-ddk.txt).
+
 ## Linux type libraries
 
 `lib/types/headers/LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and

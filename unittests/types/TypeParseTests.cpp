@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 #include <map>
 #include <optional>
+#include <utility>
 
 using namespace neverd::types;
 using neverd::types::test::shapeOf;
@@ -400,6 +401,54 @@ TEST(TypeParse, ReadsWhatGnuPreprocessedHeadersHold) {
   const FunctionDef &Log = *Library.findPrototype("logv");
   ASSERT_EQ(Log.Params.size(), 2u);
   EXPECT_EQ(Log.Params[1].Type->Kind, TypeExprKind::Pointer);
+}
+
+TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
+  for (auto [Model, ABI] : {std::pair{DataModel::ILP32, RecordABI::Microsoft},
+                            {DataModel::LLP64, RecordABI::Microsoft},
+                            {DataModel::ILP32, RecordABI::MinGW32},
+                            {DataModel::LLP64, RecordABI::MinGW64}}) {
+    const TypeLibrary Library = parsed(R"(
+      typedef struct _HEADER { unsigned short Tag; void *Link; } HEADER;
+      typedef HEADER HEADER_ALIAS;
+      typedef union { unsigned int Code; unsigned short Parts[2]; } VALUE;
+      struct Packet { char Prefix; HEADER_ALIAS; unsigned char Payload[3]; };
+      struct Promoted { VALUE; unsigned char Tail; };
+      #pragma pack(push, 1)
+      struct Packed { char Prefix; HEADER_ALIAS; unsigned char Payload[3]; };
+      #pragma pack(pop)
+      struct Declaration { struct _HEADER; unsigned char Tail; };
+      _Static_assert(__builtin_offsetof(Packet, Tag) == sizeof(void *), "Tag");
+      _Static_assert(__builtin_offsetof(Packet, Link) == 2 * sizeof(void *), "Link");
+      _Static_assert(__builtin_offsetof(Packet, Payload) == 3 * sizeof(void *), "Payload");
+      _Static_assert(__builtin_offsetof(Promoted, Tail) == 4, "anonymous union");
+      _Static_assert(sizeof(Declaration) == 1, "a tag declaration has no storage");
+    )",
+                                       {}, Model, ABI);
+    const uint64_t Pointer = Model == DataModel::LLP64 ? 8 : 4;
+    EXPECT_EQ(recordOf(Library, "Packet").Size, 4 * Pointer);
+    EXPECT_EQ(recordOf(Library, "Packed").Size, 2 * Pointer + 4);
+    EXPECT_EQ(recordOf(Library, "Promoted").Size, 8u);
+    ASSERT_EQ(recordOf(Library, "Packet").Members.size(), 3u);
+    EXPECT_TRUE(recordOf(Library, "Packet").Members[1].isAnonymous());
+    const auto RoundTrip = parsed(
+        renderType(Library, *Library.find("Packet"), {}), {}, Model, ABI);
+    EXPECT_EQ(recordOf(RoundTrip, "Packet").Size, 4 * Pointer);
+  }
+  TypeLibrary Incomplete(DataModel::LLP64);
+  EXPECT_FALSE(parseCTypes("typedef struct Unfinished U; "
+                           "struct Broken { U; int Tail; };",
+                           Incomplete)
+                   .ok());
+  ParseOptions Cpp;
+  Cpp.Lang = Language::Cpp;
+  const auto Declaration = parsed(R"(
+    typedef struct H { unsigned short Tag; void *Link; } Header;
+    struct P { char Prefix; Header; unsigned char Payload[3]; };
+    static_assert(sizeof(P) == 4, "C++ typedef declaration has no storage");
+  )",
+                                  Cpp);
+  EXPECT_EQ(recordOf(Declaration, "P").Size, 4u);
 }
 
 TEST(TypeParse, SizesAStringLiteralWithItsTerminator) {

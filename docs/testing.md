@@ -1557,6 +1557,19 @@ Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
 Without the two inputs they remain explicit skips. The Linux Lift qualification
 requires every `SessionCAPITest.*` case to execute and pass using repository
 fixtures; it does not claim Windows kernel input coverage.
+
+`HeaderLibrary.Arm64KernelKeepsItsOwnContextAndRecordAlignment` checks ARM64
+CONTEXT register offsets/alignment, lookaside records, I/O stack layout and
+provider alignment. `DriverProvidersHaveExactConfigurationCallContracts`
+checks x86, x64 and ARM64 declarations.
+`SessionCAPITest.DriverProviderImportsUseTheirDeclaredSourceABI` loads linked
+x64 and ARM64 driver fixtures through both HighC and LLVM C;
+`ARM64ImportsPassWhatTheirPrototypesCount` covers user-mode imports, including
+stack parameters and LLVM C. Run these with `NeverDAAPCS64CallContractTests`
+and `TypeParse.*`. Microsoft C anonymous typedef-member tests cover both
+pointer widths, packed records, promoted members and incomplete-type refusal.
+These are declaration, layout and source-generation checks, not execution of
+a driver on native Windows ARM64 hardware.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `LocalTypesDebugContext.TypesTheFunctionsByTheNamesTheyAreShownUnder` covers
