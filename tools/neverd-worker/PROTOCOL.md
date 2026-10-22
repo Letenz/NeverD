@@ -293,6 +293,15 @@ ignores case in any script, by the engine's Unicode simple case folding
 (`neverd_fold_case`; only ASCII letters fold with an engine without it), so
 "ПРИВЕТ" finds "привет"; the rows keep their original text.
 
+`functions`, `strings`, `names`, `imports`, `exports`, `segments` and `regions`
+also accept `seek_address:"0x..."`. The worker locates the address in the complete
+filtered, sorted order and returns the containing page instead of the requested
+offset, adding `selected_index` (global row index) and `selected_address` (the
+canonical row address). Segment and region queries locate the containing range;
+the other tables require an exact row address. Missing rows return `not_found`.
+Selection cannot be combined with a `from` cursor and requires a positive limit.
+Filtering, preview limits, sort direction and ordinary page bounds still apply.
+
 Metadata also includes `loader_diagnostics:[{code,message}]`. An older engine
 without the additive query exposes an empty array. The `open` reply includes
 these messages in `warnings`; they describe the currently loaded image without

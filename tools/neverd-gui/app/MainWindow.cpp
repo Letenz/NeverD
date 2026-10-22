@@ -1218,6 +1218,11 @@ void MainWindow::copyLink() {
   output_->append(tr("Copied link: %1").arg(text), 0);
 }
 
+void MainWindow::reportLinkError(const QString &error) {
+  if (!error.isEmpty())
+    output_->append(error, 2);
+}
+
 void MainWindow::jumpToLink() {
   // A link on the clipboard, as one pasted from a chat, is offered.
   const QString clipboard = QApplication::clipboard()->text().trimmed();
@@ -1256,8 +1261,7 @@ void MainWindow::openLink(const DeepLink &link,
     return;
   }
   const auto finish = [this, done = std::move(done)](const QString &error) {
-    if (!error.isEmpty())
-      output_->append(error, 2);
+    reportLinkError(error);
     if (done)
       done(error);
   };
@@ -1276,13 +1280,16 @@ void MainWindow::openLink(const DeepLink &link,
                         .arg(link.input, session_.fileName()),
                     1);
   const quint64 epoch = session_.epoch();
+  const auto serial = ++codeNavigationSerial_;
   if (link.resource == LinkResource::Types) {
     session_.read(
         QStringLiteral("local_type"), {{QStringLiteral("name"), link.name}},
         this,
-        [this, link, finish, epoch](const QJsonObject &) {
+        [this, link, finish, epoch, serial](const QJsonObject &) {
           if (session_.epoch() != epoch)
             return finish(tr("The program changed before the link opened."));
+          if (serial != codeNavigationSerial_)
+            return finish(tr("Another link took this one's place."));
           openDock(dockNamed(QString::fromLatin1(LocalTypesDock)), true);
           localTypes_->showType(link.name);
           finish({});
@@ -1307,18 +1314,58 @@ void MainWindow::openLink(const DeepLink &link,
                                 QStringLiteral("address"))) == address;
                    }))
     return finish(tr("No bookmark is at %1.").arg(displayAddress(*address)));
+  const auto kind = [&]() -> std::optional<ChooserKind> {
+    switch (link.resource) {
+    case LinkResource::Strings:
+      return ChooserKind::Strings;
+    case LinkResource::Segments:
+      return ChooserKind::Segments;
+    case LinkResource::Names:
+      return ChooserKind::Names;
+    case LinkResource::Imports:
+      return ChooserKind::Imports;
+    case LinkResource::Exports:
+      return ChooserKind::Exports;
+    default:
+      return std::nullopt;
+    }
+  }();
+  if (kind) {
+    chooserDock(*kind);
+    choosers_.value(int(*kind))
+        ->locateAddress(*address, [this, address = *address, view, finish,
+                                   epoch, serial](std::optional<int> row,
+                                                  const QString &error) {
+          if (session_.epoch() != epoch)
+            return finish(tr("The program changed before the link opened."));
+          if (serial != codeNavigationSerial_)
+            return finish(tr("Another link took this one's place."));
+          if (!row)
+            return finish(error);
+          showLinkedAddress(address, view);
+          finish({});
+        });
+    return;
+  }
   if (link.resource != LinkResource::Functions) {
     showLinkedAddress(*address, view);
+    return finish({});
+  }
+  if (const auto function =
+          disassembly_->listing()->loadedFunctionAt(*address)) {
+    showLinkedAddress(*function, view);
     return finish({});
   }
   // A function, named by an address in it, shows from its entry.
   session_.read(
       QStringLiteral("resolve"),
       {{QStringLiteral("query"), hexAddress(*address)}}, this,
-      [this, address = *address, view, finish,
-       epoch](const QJsonObject &payload) {
+      [this, address = *address, view, finish, epoch,
+       serial](const QJsonObject &payload) {
         if (session_.epoch() != epoch)
           return finish(tr("The program changed before the link opened."));
+        if (serial != codeNavigationSerial_)
+          return finish(tr("Another link took this one's place."));
         const auto function =
             addressValue(payload.value(QStringLiteral("function_address")));
         if (!function)
@@ -1403,8 +1450,7 @@ QJsonObject MainWindow::instanceInfo() const {
   info.insert(QStringLiteral("input_name"), session_.fileName());
   info.insert(QStringLiteral("project"), session_.projectPath());
   info.insert(QStringLiteral("sha256"), inputSha256());
-  info.insert(QStringLiteral("analysis_complete"),
-              !session_.opening() && session_.indexReady());
+  info.insert(QStringLiteral("analysis_complete"), session_.analysisComplete());
   if (const auto address = currentAddress()) {
     QJsonObject location{{QStringLiteral("address"), hexAddress(*address)}};
     if (const auto base = imageBase())

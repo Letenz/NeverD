@@ -93,6 +93,8 @@ public:
   /// input, no such function, type or bookmark, or no such address.
   void openLink(const DeepLink &link,
                 std::function<void(const QString &error)> done = {});
+  /// Report a link failure from a native URL event or local navigation.
+  void reportLinkError(const QString &error);
   /// The link to open once the next file opens, as the command line asks.
   void openLinkAfterOpen(const DeepLink &link) { pendingLink_ = {link, {}}; }
   /// What other programs reach this window by.

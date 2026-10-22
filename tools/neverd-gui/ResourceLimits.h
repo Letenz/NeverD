@@ -254,11 +254,15 @@ inline constexpr int kInstanceServerMaxRequestBytes = 64 * 1024;
 inline constexpr qint64 kInstanceServerMaxReplyBytes = 1024 * 1024;
 /// How long a client waits for a workbench to answer.
 inline constexpr int kInstanceServerRequestTimeoutMs = 2000;
+/// Concurrent probes share one discovery deadline.
+inline constexpr int kInstanceProbeConcurrency = 8;
 
 // tools/neverd-gui/app/LinkDispatch.cpp
 /// How long a workbench may take to open a link, which resolves through its
 /// worker.
 inline constexpr int kLinkDispatchOpenTimeoutMs = 30000;
+/// The desktop's scheme registration helper must not block indefinitely.
+inline constexpr int kLinkHandlerCommandTimeoutMs = 5000;
 
 } // namespace neverd::limits::gui
 
