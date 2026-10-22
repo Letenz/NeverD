@@ -568,13 +568,35 @@ target_include_directories(NeverDX86MOVDIR64BStateTests PRIVATE
 
 # Keeps opaque system-memory side effects independently runnable through
 # decode, lift and strict fail-closed emulation without executing host state.
+add_neverd_unittest(NeverDX86InstructionCoverageTests
+  x86_64/X86InstructionCoverageTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+target_compile_definitions(NeverDX86InstructionCoverageTests PRIVATE
+  NEVERD_X86_MC_DIRECTORY="${CMAKE_SOURCE_DIR}/third_party/capstone/suite/MC/X86")
+
+add_neverd_unittest(NeverDX86SHA512Tests
+  x86_64/X86SHA512Tests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86VectorEncodingModeTests
+  x86_64/X86VectorEncodingModeTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86FPEncodingTests
+  x86_64/X86FPEncodingTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86SystemStateTests
+  x86_64/X86SystemStateTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
 add_neverd_unittest(NeverDX86VirtualizationTests
   x86_64/X86VirtualizationTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86VirtualizationSourceTests
   x86_64/X86VirtualizationSourceTests.cpp
-  LINK_COMPONENTS Pipeline BackendC)
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 

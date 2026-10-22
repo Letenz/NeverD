@@ -262,7 +262,8 @@ bool parseCanonicalEvexEncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
   Encoding.Opcode = Insn->bytes[Encoding.Offset + 4];
   Encoding.ModRM = Insn->bytes[Encoding.Offset + 5];
   if (!Encoding.Is64Bit &&
-      ((Encoding.P0 & 0x08) != 0 || (Encoding.P1 & 0x04) == 0))
+      ((Encoding.P0 & 0xc8) != 0xc0 || (Encoding.P1 & 0x04) == 0 ||
+       (Encoding.P2 & 0x08) == 0))
     return false;
   Encoding.AddressSize = Encoding.Is64Bit ? (Encoding.AddressOverride ? 4 : 8)
                                           : (Encoding.AddressOverride ? 2 : 4);
@@ -307,7 +308,7 @@ bool parseCanonicalVex3EncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
   Encoding.P1 = Insn->bytes[Encoding.Offset + 2];
   Encoding.Opcode = Insn->bytes[Encoding.Offset + 3];
   Encoding.ModRM = Insn->bytes[Encoding.Offset + 4];
-  if (!Encoding.Is64Bit && (Encoding.P0 & 0xe0) != 0xe0)
+  if (!Encoding.Is64Bit && (Encoding.P0 & 0xc0) != 0xc0)
     return false;
   Encoding.AddressSize = Encoding.Is64Bit ? (Encoding.AddressOverride ? 4 : 8)
                                           : (Encoding.AddressOverride ? 2 : 4);
@@ -337,14 +338,10 @@ bool validateCanonicalEvexMemoryTail(const cs_insn *Insn, const cs_x86 &X86,
                                      const cs_x86_op &Operand,
                                      uint16_t TupleScale,
                                      size_t TrailingBytes) {
-  const unsigned BaseExtension = ((Encoding.P0 & 0x20) == 0 ? 8 : 0) |
-                                 ((Encoding.P0 & 0x08) != 0 ? 16 : 0);
-  const unsigned IndexExtension = ((Encoding.P0 & 0x40) == 0 ? 8 : 0) |
-                                  ((Encoding.P1 & 0x04) == 0 ? 16 : 0);
   return validateCanonicalVectorMemoryTail(
       Insn, X86, Encoding.Offset + 6, Encoding.ModRM, Encoding.SegmentPrefix,
-      Encoding.Is64Bit, Encoding.AddressSize, BaseExtension, IndexExtension,
-      TupleScale, Operand, TrailingBytes);
+      Encoding.Is64Bit, Encoding.AddressSize, Encoding.baseExtension(),
+      Encoding.indexExtension(), TupleScale, Operand, TrailingBytes);
 }
 
 bool validateCanonicalEvexRegisterTail(
@@ -358,12 +355,10 @@ bool validateCanonicalVex3MemoryTail(const cs_insn *Insn, const cs_x86 &X86,
                                      const CanonicalVex3EncodingInfo &Encoding,
                                      const cs_x86_op &Operand,
                                      size_t TrailingBytes) {
-  const unsigned BaseExtension = (Encoding.P0 & 0x20) == 0 ? 8 : 0;
-  const unsigned IndexExtension = (Encoding.P0 & 0x40) == 0 ? 8 : 0;
   return validateCanonicalVectorMemoryTail(
       Insn, X86, Encoding.Offset + 5, Encoding.ModRM, Encoding.SegmentPrefix,
-      Encoding.Is64Bit, Encoding.AddressSize, BaseExtension, IndexExtension, 1,
-      Operand, TrailingBytes);
+      Encoding.Is64Bit, Encoding.AddressSize, Encoding.baseExtension(),
+      Encoding.indexExtension(), 1, Operand, TrailingBytes);
 }
 
 bool validateCanonicalVex3RegisterTail(

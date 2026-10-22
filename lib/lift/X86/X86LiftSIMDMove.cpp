@@ -209,8 +209,7 @@ bool liftEvexFullVectorMove(X86Lifter &L, X86Lifter::LiftState &S,
   const cs_x86_op &RawRegOperand = IsStoreEncoding ? Source : Destination;
   const cs_x86_op &RawRMOperand = IsStoreEncoding ? Destination : Source;
   const auto RawRegIndex = vectorRegisterIndex(RawRegOperand);
-  if (!RawRegIndex ||
-      decodeEvexVectorRegIndex(Encoding.P0, Encoding.ModRM) != *RawRegIndex)
+  if (!RawRegIndex || Encoding.regIndex() != *RawRegIndex)
     return false;
 
   const uint16_t VectorSize = RawRegOperand.size;
@@ -228,7 +227,7 @@ bool liftEvexFullVectorMove(X86Lifter &L, X86Lifter::LiftState &S,
   } else {
     const auto RawRMIndex = vectorRegisterIndex(RawRMOperand);
     if (!RawRMIndex || RawRMOperand.size != VectorSize ||
-        decodeEvexVectorRMIndex(Encoding.P0, Encoding.ModRM) != *RawRMIndex ||
+        Encoding.rmIndex() != *RawRMIndex ||
         !validateCanonicalEvexRegisterTail(Insn, X86, Encoding))
       return false;
   }
@@ -418,7 +417,7 @@ bool liftEvexScalarBroadcast(X86Lifter &L, X86Lifter::LiftState &S,
       (!Spec->Supports128 && Destination.size == 16) ||
       !isVectorRegisterOfSize(Destination, Destination.size) ||
       Destination.size % Spec->ElementSize != 0 ||
-      decodeEvexVectorRegIndex(Encoding.P0, Encoding.ModRM) !=
+      Encoding.regIndex() !=
           static_cast<unsigned>(Destination.reg -
                                 (Destination.size == 16   ? X86_REG_XMM0
                                  : Destination.size == 32 ? X86_REG_YMM0
@@ -463,8 +462,7 @@ bool liftEvexScalarBroadcast(X86Lifter &L, X86Lifter::LiftState &S,
   } else if (!GprForm && Source.type == X86_OP_REG && Source.size == 16 &&
              Source.reg >= X86_REG_XMM0 && Source.reg <= X86_REG_XMM31) {
     if (!validateCanonicalEvexRegisterTail(Insn, X86, Encoding) ||
-        decodeEvexVectorRMIndex(Encoding.P0, Encoding.ModRM) !=
-            static_cast<unsigned>(Source.reg - X86_REG_XMM0))
+        Encoding.rmIndex() != static_cast<unsigned>(Source.reg - X86_REG_XMM0))
       return false;
     Raw = repeatLowElement(S, L.operandRead(S, Source), Spec->ElementSize,
                            Destination.size);

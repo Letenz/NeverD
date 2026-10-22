@@ -25,21 +25,6 @@ bool hasUnsupportedEvexValueModifier(const cs_x86 &X86) {
   return false;
 }
 
-unsigned decodeEvexVectorRegIndex(uint8_t P0, uint8_t ModRM) {
-  return ((ModRM >> 3) & 0x07) | ((P0 & 0x80) == 0 ? 0x08 : 0) |
-         ((P0 & 0x10) == 0 ? 0x10 : 0);
-}
-
-unsigned decodeEvexVectorRMIndex(uint8_t P0, uint8_t ModRM) {
-  return (ModRM & 0x07) | ((P0 & 0x20) == 0 ? 0x08 : 0) |
-         ((P0 & 0x40) == 0 ? 0x10 : 0);
-}
-
-unsigned decodeEvexVectorVvvvIndex(uint8_t P1, uint8_t P2) {
-  return ((~static_cast<unsigned>(P1) >> 3) & 0x0f) |
-         ((P2 & 0x08) == 0 ? 0x10 : 0);
-}
-
 NdVar expandCompactLaneMask(X86Lifter::LiftState &S, NdVar CompactMask,
                             uint16_t VectorSize, uint16_t ElementSize) {
   if (CompactMask.Size == 0 || ElementSize == 0 || ElementSize > 8 ||
@@ -207,8 +192,7 @@ bool liftEvexCompressExpandRegister(X86Lifter &L, X86Lifter::LiftState &S,
         VectorSize == 16 ? 0 : (VectorSize == 32 ? 0x20 : 0x40);
     if ((Encoding.P2 & 0x60) != ExpectedLength ||
         (Encoding.P2 & 0x18) != 0x08 ||
-        decodeEvexVectorRegIndex(Encoding.P0, Encoding.ModRM) !=
-            VectorIndex(VectorOperand) ||
+        Encoding.regIndex() != VectorIndex(VectorOperand) ||
         (Compress && (Encoding.P2 & 0x80) != 0) ||
         !validateCanonicalEvexMemoryTail(Insn, X86, Encoding, MemoryOperand,
                                          ElementSize))
@@ -270,15 +254,11 @@ bool liftEvexCompressExpandRegister(X86Lifter &L, X86Lifter::LiftState &S,
   const unsigned DestinationIndex = VectorIndex(DestinationOperand);
   const unsigned SourceRegisterIndex = VectorIndex(SourceOperand);
   if (Compress) {
-    if (decodeEvexVectorRegIndex(Encoding.P0, Encoding.ModRM) !=
-            SourceRegisterIndex ||
-        decodeEvexVectorRMIndex(Encoding.P0, Encoding.ModRM) !=
-            DestinationIndex)
+    if (Encoding.regIndex() != SourceRegisterIndex ||
+        Encoding.rmIndex() != DestinationIndex)
       return false;
-  } else if (decodeEvexVectorRegIndex(Encoding.P0, Encoding.ModRM) !=
-                 DestinationIndex ||
-             decodeEvexVectorRMIndex(Encoding.P0, Encoding.ModRM) !=
-                 SourceRegisterIndex) {
+  } else if (Encoding.regIndex() != DestinationIndex ||
+             Encoding.rmIndex() != SourceRegisterIndex) {
     return false;
   }
 

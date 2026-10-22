@@ -94,6 +94,12 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
             Err("x86 virtualization intrinsic has an invalid operand/output "
                 "contract",
                 Blk.Id, Op.Addr);
+          const bool IsSystemState = isX86SystemStateIntrinsic(Id);
+          if (IsSystemState &&
+              !x86SystemStateShapeIsValid(Id, x86SystemStateMedShape(Op)))
+            Err("x86 system state intrinsic has an invalid operand/output "
+                "contract",
+                Blk.Id, Op.Addr);
           const bool IsX86Invalidate = Id == Intrinsic::X86Invalidate;
           if (IsX86Invalidate && !intrinsicX86InvalidateShapeIsValid(
                                      Id, x86InvalidateMedShape(Op)))
@@ -147,6 +153,7 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
                   Op.NumInputs > 1 ? Op.Inputs[1].Size : 0);
           if (IsMemoryIntrinsic && !IsDefaultString && !IsDefaultRegisterForm &&
               !IsApxAtomic && !IsX86Invalidate && !IsVirtualization &&
+              !IsSystemState &&
               !intrinsicMemoryAddressSpaceShapeIsValid(
                   Id, Op.NumInputs, Op.Output.Size,
                   Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,

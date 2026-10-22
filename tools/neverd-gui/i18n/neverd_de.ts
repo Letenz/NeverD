@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>Abwärts</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>Die Funktionen haben sich während der Tabellenaktualisierung geändert.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>Die ausgewählten Funktionen überschreiten das Limit für Tabellenseiten.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>Zu viele Auswahländerungen während der Tabellenaktualisierung.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1809,6 +1821,10 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>Die gespeicherte Aufrufstellendeklaration muss überprüft werden: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>Quellcode konnte nicht aktualisiert werden: %1</translation>
     </message>
 </context>
 <context>
@@ -2211,18 +2227,6 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
     <message>
         <source>Description:</source>
         <translation>Beschreibung:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>In Ansicht suchen</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>Text:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>„%1“ wurde in den geladenen Zeilen nicht gefunden</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3718,6 +3722,96 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Die Symboldatei kann nicht unter %1 gespeichert werden: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>In Ansicht suchen</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>Text suchen</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>Groß-/Kleinschreibung beachten</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>Ganze Wörter</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>Am Ende von vorn beginnen</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Zurück</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Weiter</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>Vorheriger Treffer (Shift+Enter oder Shift+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>Nächster Treffer (Enter oder F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;Text:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Schließen</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: aktuelle Funktion einschließlich eingeklapptem Code</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>Disassemblierung: geladene Zeilen einschließlich sichtbarer Adressen</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>Ende des Suchbereichs</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>Anfang des Suchbereichs</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>Warten auf Quellcode…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>Kein durchsuchbarer Text verfügbar</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>Suchtext eingeben</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>Keine Treffer</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 von %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n Treffer</numerusform>
+            <numerusform>%n Treffer</numerusform>
+        </translation>
     </message>
 </context>
 <context>

@@ -24,7 +24,7 @@ inline bool liftF16CState(X86Lifter &L, X86Lifter::LiftState &S,
   const unsigned Control = (Narrow ? 1 : 0) | ((E.P1 & 4) ? 2 : 0);
   const unsigned SourceBytes = x86F16CSourceBytes(Control);
   const unsigned Bytes = x86F16CDestinationBytes(Control);
-  const unsigned Reg = ((E.ModRM >> 3) & 7) | ((E.P0 & 0x80) ? 0 : 8);
+  const unsigned Reg = E.regIndex();
   const auto &Register = X86.operands[Narrow ? 1 : 0];
   const auto &RM = X86.operands[Narrow ? 0 : 1];
   const unsigned RegBytes = Narrow ? SourceBytes : Bytes;
@@ -42,7 +42,7 @@ inline bool liftF16CState(X86Lifter &L, X86Lifter::LiftState &S,
         !validateCanonicalVex3MemoryTail(Insn, X86, E, RM, Narrow ? 1 : 0))
       return Refuse();
   } else if (RM.type != X86_OP_REG || RM.size != 16 ||
-             RM.reg != X86_REG_XMM0 + (E.ModRM & 7) + ((E.P0 & 0x20) ? 0 : 8) ||
+             RM.reg != X86_REG_XMM0 + E.rmIndex() ||
              !validateCanonicalVex3RegisterTail(Insn, X86, E, Narrow ? 1 : 0))
     return Refuse();
   unsigned Immediate = 0;

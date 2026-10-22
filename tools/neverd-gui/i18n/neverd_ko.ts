@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>아래</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>테이블을 새로 고치는 동안 함수가 변경되었습니다.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>선택한 함수가 테이블 페이지 한도를 초과합니다.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>테이블을 새로 고치는 동안 선택 항목이 너무 많이 변경되었습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1804,6 +1816,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>저장된 호출 지점 선언을 검토해야 합니다: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>소스 코드를 새로 고칠 수 없습니다: %1</translation>
     </message>
 </context>
 <context>
@@ -2205,18 +2221,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>설명:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>보기에서 찾기</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>텍스트:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>불러온 줄에서 &apos;%1&apos;을(를) 찾을 수 없습니다</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3711,6 +3715,95 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>심볼 파일을 %1에 저장할 수 없습니다: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>보기에서 찾기</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>찾을 텍스트</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>대/소문자 구분</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>단어 단위로</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>처음부터 다시 검색</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>이전</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>다음</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>이전 일치 항목(Shift+Enter 또는 Shift+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>다음 일치 항목(Enter 또는 F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>텍스트(&amp;T):</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>닫기</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: 현재 함수(접힌 코드 포함)</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>디스어셈블리: 불러온 줄(표시된 주소 포함)</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>검색 범위의 끝</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>검색 범위의 시작</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>소스 코드를 기다리는 중…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>검색할 수 있는 텍스트가 없습니다</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>찾을 텍스트 입력</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>일치 항목 없음</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>일치 항목 %n개</numerusform>
+        </translation>
     </message>
 </context>
 <context>

@@ -378,8 +378,45 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/X86Virtualization.def"
 #undef NEVERD_X86_VIRTUALIZATION
 
+#define NEVERD_X86_SYSTEM_STATE(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_SYSTEM_STATE
+
   _Count = 16000
 };
+
+enum class X86SystemStateKind : uint8_t {
+  ReadPid,
+  ReadBase,
+  WriteBase,
+  Void,
+  Monitor,
+  Wait,
+  AccessRights,
+  AdjustRpl
+};
+
+struct X86SystemStateContract {
+  const char *Mnemonic = nullptr;
+  X86SystemStateKind Kind = X86SystemStateKind::Void;
+  int8_t MemoryArgument = -1;
+};
+
+constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, Kind, MemoryArgument)            \
+  case Intrinsic::Id:                                                          \
+    return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
+#include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_SYSTEM_STATE
+  default:
+    return {};
+  }
+}
+
+constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
+  return x86SystemStateContract(Id).Mnemonic != nullptr;
+}
 
 enum class X86VirtualizationResult : uint8_t { None, Flags, Read };
 
@@ -688,6 +725,8 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   if (isX86VirtualizationIntrinsic(Id))
     return x86VirtualizationContract(Id).MemoryArgument >= 0;
+  if (isX86SystemStateIntrinsic(Id))
+    return x86SystemStateContract(Id).MemoryArgument >= 0;
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
   case Intrinsic::X86FPMaskCompareMemoryState:

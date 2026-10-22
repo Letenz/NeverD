@@ -5929,7 +5929,15 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   // so passes the one it was given on.
   const std::string Owner = takeString(neverd_decompile(Session, 0x180001000));
   EXPECT_NE(Owner.find("Owner(int64_t arg0) {"), std::string::npos) << Owner;
-  EXPECT_NE(Owner.find("IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0)"),
+  // ntifs.h's official public aliases name _KTHREAD/_KPROCESS; the bundled
+  // compatibility headers name _ETHREAD/_EPROCESS. Both are opaque pointers.
+  const std::string ThreadType =
+      takeString(neverd_local_type_json(Session, "PETHREAD", nullptr));
+  const std::string Thread = ThreadType.find("_KTHREAD") != std::string::npos
+                                 ? "_KTHREAD"
+                                 : "_ETHREAD";
+  const std::string Process = Thread == "_KTHREAD" ? "_KPROCESS" : "_EPROCESS";
+  EXPECT_NE(Owner.find("IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0)"),
             std::string::npos)
       << Owner;
   // The calls take what the prototypes declare and return what they
@@ -5938,16 +5946,17 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   ASSERT_GE(Index, 0);
   const std::string Probe =
       takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
-  EXPECT_NE(Probe.find("extern _EPROCESS* IoThreadToProcess(_ETHREAD* "
-                       "Thread);"),
+  EXPECT_NE(Probe.find("extern " + Process + "* IoThreadToProcess(" + Thread +
+                       "* Thread);"),
             std::string::npos)
       << Probe;
   EXPECT_NE(Probe.find("extern void ExFreePoolWithTag(void* P, uint32_t "
                        "Tag);"),
             std::string::npos)
       << Probe;
-  EXPECT_NE(Probe.find(" = IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0);"),
-            std::string::npos)
+  EXPECT_NE(
+      Probe.find(" = IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0);"),
+      std::string::npos)
       << Probe;
   EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
 }
@@ -6053,8 +6062,9 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");
-  EXPECT_NE(Atoms.find("WINBOOL InitAtomTable(DWORD nSize) {"),
-            std::string::npos)
+  // Microsoft spells the Win32 boolean BOOL, mingw-w64 spells it WINBOOL.
+  EXPECT_TRUE(std::regex_search(
+      Atoms, std::regex(R"(\b(BOOL|WINBOOL) InitAtomTable\(DWORD nSize\) \{)")))
       << Atoms;
   // ExitProcess returns to no caller: Finish ends at its call, where it
   // would run on into the trap after it and the function after that.
