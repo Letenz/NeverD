@@ -1,0 +1,1536 @@
+//===- BinaryDiffSDKTests.cpp - Native comparison integration -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Real loader/decoder/C API fixtures. Test binaries are authored machine
+/// code; comparisons never execute them or contact a service.
+//===----------------------------------------------------------------------===//
+
+#include "gtest/gtest.h"
+
+#include "neverd/sdk/NeverDCAPI.h"
+
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <future>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace {
+std::string take(const char *S) {
+  const std::string Out = S ? S : "";
+  neverd_free_string(S);
+  return Out;
+}
+llvm::json::Value parsed(const char *S) {
+  auto V = llvm::json::parse(take(S));
+  if (!V) {
+    ADD_FAILURE() << llvm::toString(V.takeError());
+    return llvm::json::Object{};
+  }
+  return std::move(*V);
+}
+std::string render(const llvm::json::Value &V) {
+  std::string S;
+  llvm::raw_string_ostream OS(S);
+  OS << V;
+  return S;
+}
+
+class BinaryDiffSDK : public ::testing::Test {
+protected:
+  std::filesystem::path Directory;
+  std::vector<neverd_session_t> Sessions;
+  std::vector<neverd_comparison_t> Comparisons;
+  void SetUp() override {
+    llvm::SmallString<128> Path;
+    ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-bindiff", Path));
+    Directory = Path.c_str();
+  }
+  void TearDown() override {
+    for (auto C : Comparisons)
+      neverd_comparison_destroy(C);
+    for (auto S : Sessions)
+      if (S)
+        neverd_session_destroy(S);
+    std::error_code Error;
+    std::filesystem::remove_all(Directory, Error);
+  }
+  neverd_session_t input(llvm::ArrayRef<uint8_t> Bytes, uint64_t Base = 0x1000,
+                         const char *Processor = "x86_64") {
+    const auto Path = Directory / (std::to_string(Sessions.size()) + ".raw");
+    std::ofstream File(Path, std::ios::binary);
+    File.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+    File.close();
+    auto S = neverd_session_create();
+    Sessions.push_back(S);
+    const auto Options = render(llvm::json::Object{{"loader", "binary"},
+                                                   {"processor", Processor},
+                                                   {"base", Base},
+                                                   {"platform", "sysv"}});
+    EXPECT_EQ(neverd_session_set_load_options(S, Options.c_str()), 0);
+    EXPECT_EQ(neverd_session_load(S, Path.string().c_str()), 1)
+        << take(neverd_last_error(S));
+    return S;
+  }
+  neverd_comparison_t compare(neverd_session_t A, neverd_session_t B,
+                              const char *Options = "{\"discover\":false}") {
+    auto C = neverd_comparison_create();
+    Comparisons.push_back(C);
+    EXPECT_EQ(neverd_comparison_run(C, A, B, Options, nullptr, nullptr), 1)
+        << take(neverd_comparison_last_error(C));
+    return C;
+  }
+  static std::vector<uint8_t> body(uint8_t Immediate = 7) {
+    return {0xb8, Immediate, 0, 0, 0, 0x83, 0xc0, 3, 0xc3};
+  }
+};
+
+TEST_F(BinaryDiffSDK, AmbiguityInventoryPagesEveryRetainedCandidate) {
+  constexpr unsigned Count = 40, Stride = 16;
+  const auto Copies = [&](uint64_t Base, const std::string &Prefix,
+                          bool Changed) {
+    std::vector<uint8_t> Bytes(Count * Stride, 0xcc);
+    for (unsigned I = 0; I < Count; ++I) {
+      const auto Code = body();
+      std::copy(Code.begin(), Code.end(), Bytes.begin() + I * Stride);
+    }
+    if (Changed)
+      Bytes.back() = 0xdd; // Different file, identical returning bodies.
+    const auto S = input(Bytes, Base);
+    EXPECT_GE(neverd_session_discover_functions(S), Count);
+    EXPECT_GE(neverd_func_count(S), Count);
+    for (unsigned I = 0; I < Count; ++I) {
+      EXPECT_GE(neverd_func_find_by_addr(S, Base + I * Stride), 0);
+      EXPECT_EQ(neverd_rename_addr(S, Base + I * Stride,
+                                   (Prefix + std::to_string(I)).c_str()),
+                0);
+    }
+    return S;
+  };
+  const auto A = Copies(0x1000, "before_copy_", false);
+  const auto B = Copies(0x8000, "after_copy_", true);
+  const auto C = compare(A, B, R"({"discover":false,"use_names":false})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  const auto Query = [&](llvm::json::Object Options) {
+    const auto Text = render(std::move(Options));
+    return parsed(neverd_comparison_functions_json(C, Text.c_str()));
+  };
+  for (const bool Secondary : {false, true}) {
+    SCOPED_TRACE(Secondary);
+    const auto Side = Secondary ? "secondary" : "primary";
+    const auto Anchor = Secondary ? "0x1010" : "0x8010";
+    auto First = Query(llvm::json::Object{
+        {"side", Side}, {"ambiguous_with", Anchor}, {"limit", 7}});
+    ASSERT_TRUE(First.getAsObject());
+    const auto *O = First.getAsObject();
+    const auto Total = O->getInteger("total").value_or(0);
+    ASSERT_GE(Total, Count - 1) << render(First);
+    ASSERT_TRUE(O->getObject("ambiguity"));
+    EXPECT_TRUE(
+        O->getObject("ambiguity")->getBoolean("active").value_or(false));
+    EXPECT_EQ(O->getObject("ambiguity")->getInteger("candidate_total"), Total);
+    EXPECT_EQ(O->getObject("ambiguity")->getString("source_side"),
+              Secondary ? "primary" : "secondary");
+    std::vector<std::string> Addresses;
+    for (int64_t Offset = 0; Offset < Total; Offset += 7) {
+      auto Page = Query(llvm::json::Object{{"side", Side},
+                                           {"ambiguous_with", Anchor},
+                                           {"offset", Offset},
+                                           {"limit", 7}});
+      ASSERT_TRUE(Page.getAsObject()->getArray("items"));
+      const auto &Items = *Page.getAsObject()->getArray("items");
+      ASSERT_EQ(Items.size(), std::min<int64_t>(7, Total - Offset));
+      for (const auto &Row : Items) {
+        const auto Address = Row.getAsObject()->getString("address");
+        ASSERT_TRUE(Address);
+        if (!Addresses.empty())
+          EXPECT_LT(Addresses.back(), Address->str());
+        Addresses.push_back(Address->str());
+      }
+      if (Offset + 7 < Total)
+        EXPECT_EQ(Page.getAsObject()->getInteger("next_offset"), Offset + 7);
+      else
+        EXPECT_FALSE(Page.getAsObject()->getInteger("next_offset"));
+    }
+    ASSERT_EQ(Addresses.size(), Total);
+    auto End = Query(llvm::json::Object{
+        {"side", Side}, {"ambiguous_with", Anchor}, {"offset", Total}});
+    EXPECT_TRUE(End.getAsObject()->getArray("items")->empty());
+    auto Reverse = Query(llvm::json::Object{{"side", Side},
+                                            {"ambiguous_with", Anchor},
+                                            {"sort", "address"},
+                                            {"descending", true},
+                                            {"limit", 1}});
+    EXPECT_EQ(Reverse.getAsObject()
+                  ->getArray("items")
+                  ->front()
+                  .getAsObject()
+                  ->getString("address"),
+              Addresses.back());
+    auto Filtered = Query(llvm::json::Object{
+        {"side", Side},
+        {"ambiguous_with", Anchor},
+        {"search", Secondary ? "after_copy_31" : "before_copy_31"}});
+    EXPECT_EQ(Filtered.getAsObject()->getInteger("total"), 1);
+    const auto Invalid = render(llvm::json::Object{
+        {"side", Side}, {"ambiguous_with", Anchor}, {"offset", Total + 1}});
+    EXPECT_EQ(neverd_comparison_functions_json(C, Invalid.c_str()), nullptr);
+  }
+  const auto Original = Query(
+      llvm::json::Object{{"side", "secondary"}, {"ambiguous_with", "0x1010"}});
+  EXPECT_EQ(neverd_comparison_functions_json(
+                C, R"({"side":"secondary","ambiguous_with":"0xdead"})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_functions_json(
+                C, R"({"side":"secondary","ambiguous_with":4112})"),
+            nullptr);
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"match","primary":"0x1010","secondary":"0x8030"})"),
+      1);
+  auto Resolved = Query(
+      llvm::json::Object{{"side", "secondary"}, {"ambiguous_with", "0x1010"}});
+  EXPECT_EQ(Resolved.getAsObject()->getInteger("total"), 0);
+  EXPECT_FALSE(Resolved.getAsObject()
+                   ->getObject("ambiguity")
+                   ->getBoolean("active")
+                   .value_or(true));
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(render(Query(llvm::json::Object{{"side", "secondary"},
+                                            {"ambiguous_with", "0x1010"}})),
+            render(Original));
+  ASSERT_EQ(neverd_comparison_redo(C), 1);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+  EXPECT_EQ(render(Query(llvm::json::Object{{"side", "secondary"},
+                                            {"ambiguous_with", "0x1010"}})),
+            render(Original));
+}
+
+TEST_F(BinaryDiffSDK, ScalarValidationBindsNativeLiftsAndExplicitInputDomain) {
+  const auto A = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});
+  const auto B =
+      input({0x89, 0xf8, 0x83, 0xc0, 1, 0x83, 0xc0, 2, 0xc3}, 0x8000);
+  const auto C = compare(
+      A, B,
+      R"({"discover":false,"overrides":[{"kind":"match","primary":"0x1000","secondary":"0x8000"}]})");
+  const char *Query = R"({"side":"primary","address":"0x1000"})";
+  auto Checked =
+      parsed(neverd_comparison_scalar_validation_json(C, A, B, Query));
+  auto *R = Checked.getAsObject();
+  ASSERT_TRUE(R);
+  EXPECT_EQ(R->getString("status"), "proved") << render(Checked);
+  EXPECT_EQ(R->getString("input_domain"), "defined_bitvectors");
+  EXPECT_EQ(R->getString("native_state_equivalence"), "not_proved");
+  EXPECT_EQ(R->getBoolean("inputs_revalidated"), true);
+  EXPECT_EQ(R->getBoolean("inputs_bound"), true);
+  EXPECT_EQ(R->getString("input_source_binding"), "revalidated_sessions");
+  EXPECT_EQ(neverd_comparison_owned_scalar_validation_json(C, Query), nullptr);
+  EXPECT_EQ(R->getInteger("result_bits"), 32);
+  ASSERT_TRUE(R->getArray("arguments"));
+  ASSERT_EQ(R->getArray("arguments")->size(), 1U);
+  EXPECT_EQ(R->getArray("arguments")
+                ->front()
+                .getAsObject()
+                ->getInteger("register_offset"),
+            56);
+  EXPECT_EQ(R->getObject("primary_lift")->getBoolean("verified_native_body"),
+            true);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  EXPECT_EQ(Saved.find("scalar_validation"), std::string::npos);
+  auto Reopened = compare(A, B);
+  ASSERT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1);
+  Checked =
+      parsed(neverd_comparison_scalar_validation_json(Reopened, A, B, Query));
+  EXPECT_EQ(Checked.getAsObject()->getString("status"), "proved");
+  for (const auto *Bounds :
+       {R"({"address":"0x1000","max_work":1})",
+        R"({"address":"0x1000","max_native_instructions":1})"}) {
+    auto Limited =
+        parsed(neverd_comparison_scalar_validation_json(C, A, B, Bounds));
+    EXPECT_EQ(Limited.getAsObject()->getString("state"), "resource_limited");
+    EXPECT_EQ(Limited.getAsObject()->getString("status"), "budget_exceeded");
+  }
+  EXPECT_EQ(neverd_comparison_scalar_validation_json(
+                C, A, B, R"({"address":"0x1000","max_work":0})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_scalar_validation_json(C, nullptr, B, Query),
+            nullptr);
+  const auto Wrong = input({0x8d, 0x47, 5, 0xc3}, 0x8000);
+  EXPECT_EQ(neverd_comparison_scalar_validation_json(C, A, Wrong, Query),
+            nullptr);
+  EXPECT_NE(take(neverd_comparison_last_error(C)).find("stale comparison"),
+            std::string::npos);
+  const auto WrongPrimary = input({0x8d, 0x47, 5, 0xc3});
+  EXPECT_EQ(neverd_comparison_scalar_validation_json(C, WrongPrimary, B, Query),
+            nullptr);
+  EXPECT_NE(take(neverd_comparison_last_error(C)).find("stale comparison"),
+            std::string::npos);
+  auto Retried =
+      parsed(neverd_comparison_scalar_validation_json(C, A, B, Query));
+  EXPECT_EQ(Retried.getAsObject()->getString("status"), "proved");
+}
+
+TEST_F(BinaryDiffSDK, OwnedScalarInputsSurvivePathReplacementAndNeverReopenIt) {
+  input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});
+  input({0x89, 0xf8, 0x83, 0xc0, 1, 0x83, 0xc0, 2, 0xc3}, 0x8000);
+  const auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(
+      neverd_comparison_run_owned(
+          C, &Sessions[0], &Sessions[1],
+          R"({"discover":false,"overrides":[{"kind":"match","primary":"0x1000","secondary":"0x8000"}]})",
+          nullptr, nullptr),
+      1);
+  EXPECT_EQ(Sessions[0], nullptr);
+  EXPECT_EQ(Sessions[1], nullptr);
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(Summary.getAsObject()->getBoolean("owned_validation_inputs"), true);
+  const char *Query = R"({"address":"0x1000"})";
+  const auto First =
+      parsed(neverd_comparison_owned_scalar_validation_json(C, Query));
+  const auto *R = First.getAsObject();
+  ASSERT_TRUE(R);
+  EXPECT_EQ(R->getString("status"), "proved") << render(First);
+  EXPECT_EQ(R->getString("input_source_binding"), "owned_sessions");
+  EXPECT_EQ(R->getBoolean("inputs_bound"), true);
+  EXPECT_EQ(R->getBoolean("inputs_revalidated"), false);
+  EXPECT_GT(R->getInteger("work").value_or(0), 0);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  EXPECT_EQ(Saved.find("owned_sessions"), std::string::npos);
+  EXPECT_EQ(Saved.find("scalar_validation"), std::string::npos);
+  {
+    std::ofstream Changed(Directory / "0.raw",
+                          std::ios::binary | std::ios::trunc);
+    const uint8_t Bytes[] = {0x89, 0xf8, 0x83, 0xc0, 5, 0xc3};
+    Changed.write(reinterpret_cast<const char *>(Bytes), sizeof(Bytes));
+  }
+  std::filesystem::remove(Directory / "1.raw");
+  EXPECT_EQ(take(neverd_comparison_owned_scalar_validation_json(C, Query)),
+            render(First));
+  const auto Changed = input({0x89, 0xf8, 0x83, 0xc0, 5, 0xc3});
+  const auto Other = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3}, 0x8000);
+  EXPECT_EQ(neverd_comparison_scalar_validation_json(C, Changed, Other, Query),
+            nullptr);
+  EXPECT_NE(take(neverd_comparison_last_error(C)).find("stale comparison"),
+            std::string::npos);
+  EXPECT_EQ(take(neverd_comparison_owned_scalar_validation_json(C, Query)),
+            render(First));
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_owned_scalar_validation_json(C, Query)),
+            render(First));
+}
+
+TEST_F(BinaryDiffSDK, OwnedRunTransferIsExplicitOnAdmissionAndFailure) {
+  input(body());
+  input(body());
+  const auto A = Sessions[0], B = Sessions[1];
+  const auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  EXPECT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[0], "{}",
+                                        nullptr, nullptr),
+            0);
+  auto Alias = A;
+  EXPECT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Alias, "{}", nullptr,
+                                        nullptr),
+            0);
+  EXPECT_EQ(neverd_comparison_run_owned(C, nullptr, &Sessions[1], "{}", nullptr,
+                                        nullptr),
+            0);
+  EXPECT_EQ(neverd_comparison_run_owned(nullptr, &Sessions[0], &Sessions[1],
+                                        "{}", nullptr, nullptr),
+            0);
+  EXPECT_EQ(Sessions[0], A);
+  EXPECT_EQ(Sessions[1], B);
+  // Ownership admission succeeds before the options parser rejects the job.
+  EXPECT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[1],
+                                        R"({"unknown_option":true})", nullptr,
+                                        nullptr),
+            0);
+  EXPECT_EQ(Sessions[0], nullptr);
+  EXPECT_EQ(Sessions[1], nullptr);
+  EXPECT_EQ(neverd_comparison_owned_scalar_validation_json(
+                C, R"({"address":"0x1000"})"),
+            nullptr);
+  const auto NewA = input(body()), NewB = input(body());
+  EXPECT_EQ(neverd_comparison_run_owned(C, &Sessions[2], &Sessions[3], "{}",
+                                        nullptr, nullptr),
+            0);
+  EXPECT_EQ(Sessions[2], NewA);
+  EXPECT_EQ(Sessions[3], NewB);
+  const auto D = neverd_comparison_create();
+  Comparisons.push_back(D);
+  EXPECT_EQ(neverd_comparison_run_owned(D, &Sessions[2], &Sessions[2], "{}",
+                                        nullptr, nullptr),
+            0);
+  EXPECT_FALSE(take(neverd_comparison_last_error(D)).empty());
+  ASSERT_EQ(neverd_comparison_run_owned(D, &Sessions[2], &Sessions[3],
+                                        R"({"discover":false})", nullptr,
+                                        nullptr),
+            1);
+  EXPECT_EQ(Sessions[2], nullptr);
+  EXPECT_EQ(Sessions[3], nullptr);
+  EXPECT_TRUE(take(neverd_comparison_last_error(D)).empty());
+  const auto Status = parsed(neverd_comparison_status_json(D));
+  EXPECT_EQ(Status.getAsObject()->getString("error"), "");
+}
+
+TEST_F(BinaryDiffSDK, OwnedValidationRequiresCompleteNativeCapture) {
+  input(body());
+  input(body());
+  const auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(neverd_comparison_run_owned(
+                C, &Sessions[0], &Sessions[1],
+                R"({"discover":false,"max_instructions":1})", nullptr, nullptr),
+            1);
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(Summary.getAsObject()->getBoolean("owned_validation_inputs"),
+            false);
+  EXPECT_EQ(neverd_comparison_owned_scalar_validation_json(
+                C, R"({"address":"0x1000"})"),
+            nullptr);
+  EXPECT_NE(
+      take(neverd_comparison_last_error(C)).find("completed native capture"),
+      std::string::npos);
+}
+
+TEST_F(BinaryDiffSDK, OwnedScalarQueryCanCancelTimeOutAndRetryFreshLifting) {
+  std::vector<uint8_t> Bytes{0x89, 0xf8}; // mov eax, edi
+  Bytes.insert(Bytes.end(), 8000, 0x90);
+  Bytes.insert(Bytes.end(), {0x83, 0xc0, 3, 0xc3}); // add eax, 3; ret
+  input(Bytes);
+  input(Bytes);
+  const auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[1],
+                                        R"({"discover":false})", nullptr,
+                                        nullptr),
+            1);
+  const char *Query = R"({"address":"0x1000","max_native_instructions":16384})";
+  auto Work = std::async(std::launch::async, [&] {
+    return take(neverd_comparison_owned_scalar_validation_json(C, Query));
+  });
+  bool CancelledDuringLift = false;
+  while (Work.wait_for(std::chrono::milliseconds(0)) !=
+         std::future_status::ready) {
+    const auto Status = parsed(neverd_comparison_status_json(C));
+    if (Status.getAsObject()->getString("phase") == "validation:primary_lift") {
+      neverd_comparison_cancel(C);
+      CancelledDuringLift = true;
+      break;
+    }
+    std::this_thread::yield();
+  }
+  auto Stopped = llvm::json::parse(Work.get());
+  ASSERT_TRUE(static_cast<bool>(Stopped));
+  ASSERT_TRUE(CancelledDuringLift);
+  EXPECT_EQ(Stopped->getAsObject()->getString("state"), "cancelled");
+  EXPECT_EQ(Stopped->getAsObject()->getString("status"), "cancelled");
+  const auto Again =
+      parsed(neverd_comparison_owned_scalar_validation_json(C, Query));
+  EXPECT_EQ(Again.getAsObject()->getString("status"), "proved")
+      << render(Again);
+  const auto Timed = parsed(neverd_comparison_owned_scalar_validation_json(
+      C,
+      R"({"address":"0x1000","max_native_instructions":16384,"timeout_ms":1})"));
+  EXPECT_EQ(Timed.getAsObject()->getString("state"), "timed_out")
+      << render(Timed);
+  EXPECT_EQ(Timed.getAsObject()->getString("status"), "cancelled");
+  EXPECT_EQ(take(neverd_comparison_owned_scalar_validation_json(C, Query)),
+            render(Again));
+}
+
+TEST_F(BinaryDiffSDK, ScalarValidationCanStopRebindingAndRetry) {
+  std::vector<uint8_t> Bytes(60000, 0x90);
+  Bytes.push_back(0xc3);
+  const auto A = input(Bytes);
+  const auto C = compare(A, A);
+  auto Future = std::async(std::launch::async, [&] {
+    return take(neverd_comparison_scalar_validation_json(
+        C, A, A, R"({"address":"0x1000"})"));
+  });
+  bool Cancelled = false;
+  while (Future.wait_for(std::chrono::milliseconds(0)) !=
+         std::future_status::ready) {
+    auto S = parsed(neverd_comparison_status_json(C));
+    if (S.getAsObject()->getBoolean("running").value_or(false) &&
+        S.getAsObject()->getString("phase").value_or("").starts_with(
+            "validation:")) {
+      neverd_comparison_cancel(C);
+      Cancelled = true;
+      break;
+    }
+    std::this_thread::yield();
+  }
+  const auto Text = Future.get();
+  ASSERT_TRUE(Cancelled);
+  auto Stopped = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Stopped));
+  EXPECT_EQ(Stopped->getAsObject()->getString("state"), "cancelled");
+  EXPECT_NE(Stopped->getAsObject()->getString("status"), "proved");
+  const auto Retry = parsed(neverd_comparison_scalar_validation_json(
+      C, A, A, R"({"address":"0x1000","max_native_instructions":1})"));
+  EXPECT_EQ(Retry.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_EQ(Retry.getAsObject()->getBoolean("inputs_revalidated"), true);
+  const auto Expired = parsed(neverd_comparison_scalar_validation_json(
+      C, A, A, R"({"address":"0x1000","timeout_ms":1})"));
+  EXPECT_EQ(Expired.getAsObject()->getString("state"), "timed_out");
+  EXPECT_EQ(Expired.getAsObject()->getBoolean("inputs_revalidated"), false);
+}
+
+TEST_F(BinaryDiffSDK, ScalarValidationRefusesDifferentBindingsAndMemory) {
+  const auto A = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});
+  for (const auto &Bytes :
+       {std::vector<uint8_t>{0x89, 0xf8, 0x83, 0xc0, 5,
+                             0xc3}, // Changed return.
+        std::vector<uint8_t>{0x89, 0xf0, 0x83, 0xc0, 3, 0xc3}, // Different GPR.
+        std::vector<uint8_t>{0x8d, 0x47, 3,
+                             0xc3}, // 64-bit input, 32-bit result.
+        std::vector<uint8_t>{0x8b, 0x07, 0xc3}}) { // Memory read.
+    const auto B = input(Bytes, 0x8000);
+    const auto C = compare(
+        A, B,
+        R"({"discover":false,"overrides":[{"kind":"match","primary":"0x1000","secondary":"0x8000"}]})");
+    auto R = parsed(neverd_comparison_scalar_validation_json(
+        C, A, B, R"({"address":"0x1000"})"));
+    EXPECT_NE(R.getAsObject()->getString("status"), "proved") << render(R);
+    EXPECT_EQ(R.getAsObject()->getBoolean("unproved_means_inequivalent"),
+              false);
+    EXPECT_EQ(R.getAsObject()->getString("security_assessment"),
+              "not_performed");
+    if (Bytes.size() == 6 && Bytes[4] == 5)
+      EXPECT_EQ(R.getAsObject()->getString("status"), "unproved") << render(R);
+    else
+      EXPECT_EQ(R.getAsObject()->getString("status"), "unsupported")
+          << render(R);
+  }
+}
+
+TEST_F(BinaryDiffSDK,
+       IdenticalNativeInputsKeepOriginalEvidenceAndOutliveSessions) {
+  auto A = input(body());
+  auto B = input(body());
+  auto C = compare(A, B);
+  neverd_session_destroy(A);
+  Sessions[0] = nullptr;
+  neverd_session_destroy(B);
+  Sessions[1] = nullptr;
+  auto Document = parsed(neverd_comparison_export_json(C));
+  auto *Root = Document.getAsObject();
+  ASSERT_NE(Root, nullptr);
+  EXPECT_EQ(Root->getString("state"), "complete");
+  auto *Matches = Root->getArray("matches");
+  ASSERT_NE(Matches, nullptr);
+  ASSERT_EQ(Matches->size(), 1u);
+  auto *M = (*Matches)[0].getAsObject();
+  ASSERT_NE(M, nullptr);
+  EXPECT_TRUE(M->getBoolean("analysis_complete").value_or(false));
+  ASSERT_NE(M->getArray("changes"), nullptr);
+  EXPECT_TRUE(M->getArray("changes")->empty());
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  auto *D = Detail.getAsObject();
+  ASSERT_NE(D, nullptr);
+  auto *Rows = D->getArray("rows");
+  ASSERT_NE(Rows, nullptr);
+  ASSERT_EQ(Rows->size(), 3u);
+  auto *First = (*Rows)[0].getAsObject()->getObject("primary");
+  ASSERT_NE(First, nullptr);
+  EXPECT_EQ(First->getString("mnemonic"), "mov");
+  EXPECT_EQ(First->getString("bytes"), "B807000000");
+  EXPECT_EQ(First->getString("operands"), "eax, 7");
+  EXPECT_TRUE(D->getObject("evidence")
+                  ->getBoolean("normalized_unchanged")
+                  .value_or(false));
+}
+
+TEST_F(BinaryDiffSDK, SameSizeImmediateEditIsNotHiddenBySimilarStructure) {
+  auto C = compare(input(body()), input(body(9)),
+                   "{\"discover\":false,\"use_names\":false}");
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *D = Detail.getAsObject();
+  ASSERT_NE(D, nullptr);
+  const auto *E = D->getObject("evidence");
+  ASSERT_NE(E, nullptr);
+  EXPECT_FALSE(E->getBoolean("normalized_unchanged").value_or(true));
+  const auto *Rows = D->getArray("rows");
+  ASSERT_NE(Rows, nullptr);
+  bool Constant = false;
+  for (const auto &R : *Rows)
+    Constant |= R.getAsObject()->getString("kind") == "constant";
+  EXPECT_TRUE(Constant);
+}
+
+TEST_F(BinaryDiffSDK,
+       CallImpactRetainsOriginalWitnessesUnknownsAndReopenParity) {
+  // entry: call 0x1010; call rax; ret. Callee is authored, never executed.
+  std::vector<uint8_t> Bytes{0xe8, 0x0b, 0, 0, 0, 0xff, 0xd0, 0xc3};
+  Bytes.resize(16, 0xcc);
+  const auto Body = body();
+  Bytes.insert(Bytes.end(), Body.begin(), Body.end());
+  auto A = input(Bytes), B = input(Bytes, 0x8000);
+  auto C = compare(A, B, R"({"discover":true})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  const char *Query = R"({"seeds":["0x1010"],"limit":1})";
+  auto Page = parsed(neverd_comparison_impact_json(C, Query));
+  auto *O = Page.getAsObject();
+  ASSERT_NE(O, nullptr);
+  ASSERT_EQ(O->getInteger("total"), 2);
+  ASSERT_EQ(O->getArray("rows")->size(), 1u);
+  EXPECT_EQ(O->getString("state"), "complete");
+  EXPECT_EQ(O->getString("assessment"), "possible_call_reachability");
+  EXPECT_EQ(O->getString("parameter_return_binding"), "not_modeled");
+  EXPECT_EQ(O->getString("semantic_validation"), "not_performed");
+  EXPECT_EQ(O->getInteger("boundary_count"), 1);
+  auto Next = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1010"],"offset":1,"limit":1})"));
+  const auto *Rows = Next.getAsObject()->getArray("rows");
+  ASSERT_EQ(Rows->size(), 1u);
+  const auto *Caller = (*Rows)[0].getAsObject();
+  EXPECT_EQ(Caller->getString("address"), "0x1000");
+  EXPECT_EQ(Caller->getInteger("depth"), 1);
+  ASSERT_NE(Caller->getObject("witness"), nullptr);
+  EXPECT_EQ(Caller->getObject("witness")
+                ->getObject("instruction")
+                ->getString("bytes"),
+            "E80B000000");
+  auto Path = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1010"],"kind":"path","witness":1})"));
+  ASSERT_EQ(Path.getAsObject()->getInteger("total"), 1);
+  EXPECT_EQ(Path.getAsObject()->getInteger("work"), O->getInteger("work"));
+  auto Entries = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1010"],"kind":"entrypoints"})"));
+  ASSERT_EQ(Entries.getAsObject()->getInteger("total"), 1);
+  const auto *Entry =
+      (*Entries.getAsObject()->getArray("rows"))[0].getAsObject();
+  EXPECT_EQ(Entry->getString("address"), "0x1000");
+  EXPECT_TRUE(Entry->getBoolean("entry_point").value_or(false));
+  auto Boundary = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1010"],"kind":"boundaries"})"));
+  ASSERT_EQ(Boundary.getAsObject()->getInteger("total"), 1);
+  EXPECT_EQ((*Boundary.getAsObject()->getArray("rows"))[0]
+                .getAsObject()
+                ->getObject("instruction")
+                ->getString("address"),
+            "0x1005");
+  auto Limited = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1010"],"max_depth":0,"kind":"frontier"})"));
+  EXPECT_EQ(Limited.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_EQ(Limited.getAsObject()->getInteger("total"), 1);
+  const char *EffectsQuery =
+      R"({"seeds":["0x1010"],"kind":"effects","limit":1})";
+  const auto Effects = parsed(neverd_comparison_impact_json(C, EffectsQuery));
+  const auto *EO = Effects.getAsObject();
+  ASSERT_NE(EO, nullptr);
+  ASSERT_NE(EO->getObject("effect_review"), nullptr);
+  EXPECT_EQ(EO->getInteger("total"), 2);
+  EXPECT_EQ(EO->getObject("effect_review")->getString("profile"),
+            "native-import-effects-v1");
+  EXPECT_EQ(EO->getObject("effect_review")->getInteger("qualified_contracts"),
+            0);
+  EXPECT_EQ(
+      (*EO->getArray("rows"))[0].getAsObject()->getObject("effect")->getString(
+          "status"),
+      "internal_target");
+  auto UnknownEffect = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1010"],"kind":"effects","offset":1,"limit":1})"));
+  EXPECT_EQ((*UnknownEffect.getAsObject()->getArray("rows"))[0]
+                .getAsObject()
+                ->getObject("effect")
+                ->getString("status"),
+            "unresolved_target");
+  EXPECT_EQ(UnknownEffect.getAsObject()
+                ->getObject("effect_review")
+                ->getInteger("work"),
+            EO->getObject("effect_review")->getInteger("work"));
+  auto EffectStop = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1010"],"kind":"effects","max_effect_work":1})"));
+  EXPECT_EQ(EffectStop.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_TRUE(
+      EffectStop.getAsObject()->getBoolean("index_complete").value_or(false));
+  EXPECT_FALSE(EffectStop.getAsObject()
+                   ->getObject("effect_review")
+                   ->getBoolean("inspection_complete")
+                   .value_or(true));
+  for (const char *Invalid :
+       {R"({"seeds":[]})", R"({"seeds":["0x1001"]})", R"({"seeds":[4096]})",
+        R"({"seeds":["0x1010"],"max_work":0})",
+        R"({"seeds":["0x1010"],"witness":1})",
+        R"({"seeds":["0x1010"],"kind":"path","witness":99})",
+        R"({"seeds":["0x1010"],"max_effect_records":1})",
+        R"({"seeds":["0x1010"],"kind":"effects","max_effect_records":0})",
+        R"({"seeds":["0x1010"],"direction":"backward"})"})
+    EXPECT_EQ(neverd_comparison_impact_json(C, Invalid), nullptr);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(render(parsed(neverd_comparison_impact_json(C, EffectsQuery))),
+            render(Effects));
+  EXPECT_EQ(render(parsed(neverd_comparison_impact_json(C, Query))),
+            render(Page));
+  neverd_session_destroy(A);
+  neverd_session_destroy(B);
+  Sessions[0] = Sessions[1] = nullptr;
+  auto Secondary = parsed(neverd_comparison_impact_json(
+      C, R"({"side":"secondary","seeds":["0x8010"],"kind":"sites"})"));
+  ASSERT_EQ(Secondary.getAsObject()->getInteger("total"), 1);
+  EXPECT_EQ((*Secondary.getAsObject()->getArray("rows"))[0]
+                .getAsObject()
+                ->getObject("instruction")
+                ->getString("address"),
+            "0x8000");
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+}
+
+TEST_F(BinaryDiffSDK, ScalarCoincidingWithImageBaseDoesNotNormalizeAsAddress) {
+  auto Left = body();
+  Left[1] = 0;
+  Left[2] = 0x10;
+  auto Right = Left;
+  Right[2] = 0x20;
+  auto C = compare(input(Left, 0x1000), input(Right, 0x2000),
+                   "{\"discover\":false,\"use_names\":false}");
+  auto D = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  ASSERT_NE(D.getAsObject()->getObject("evidence"), nullptr);
+  EXPECT_FALSE(D.getAsObject()
+                   ->getObject("evidence")
+                   ->getBoolean("normalized_unchanged")
+                   .value_or(true));
+}
+
+TEST_F(BinaryDiffSDK, RebasedBranchBodyRetainsCFGAndCorrespondence) {
+  // cmp edi, 1; je second; mov eax, 2; ret; second: mov eax, 3; ret
+  const std::vector<uint8_t> Code{0x83, 0xff, 1,    0x74, 6, 0xb8, 2, 0,   0,
+                                  0,    0xc3, 0xb8, 3,    0, 0,    0, 0xc3};
+  auto C = compare(input(Code, 0x1000), input(Code, 0x8000),
+                   "{\"discover\":false,\"use_names\":false}");
+  auto D = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *O = D.getAsObject();
+  ASSERT_NE(O->getObject("evidence"), nullptr);
+  EXPECT_TRUE(O->getObject("evidence")
+                  ->getBoolean("normalized_unchanged")
+                  .value_or(false));
+  EXPECT_EQ(O->getObject("primary")->getArray("blocks")->size(), 3u);
+  EXPECT_EQ(O->getObject("primary")->getArray("edges")->size(), 2u);
+  EXPECT_EQ(
+      O->getObject("secondary")->getObject("function")->getString("address"),
+      "0x8000");
+}
+
+TEST_F(BinaryDiffSDK, TruncatedTailIsVisibleEvenWhenInputsAreIdentical) {
+  auto Code = body();
+  Code.pop_back();
+  Code.push_back(0x0f);
+  auto C = compare(input(Code), input(Code));
+  auto D = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  auto *O = D.getAsObject();
+  EXPECT_TRUE(O->getObject("primary")
+                  ->getObject("function")
+                  ->getBoolean("incomplete")
+                  .value_or(false));
+  ASSERT_NE(O->getObject("evidence"), nullptr);
+  EXPECT_FALSE(O->getObject("evidence")
+                   ->getBoolean("normalized_unchanged")
+                   .value_or(true));
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  const auto *Counts = Summary.getAsObject()->getObject("counts");
+  ASSERT_NE(Counts, nullptr);
+  EXPECT_EQ(Counts->getInteger("changed"), 0);
+  EXPECT_EQ(Counts->getInteger("normalized_unchanged"), 0);
+  EXPECT_EQ(Counts->getInteger("incomplete_without_observed_change"), 1);
+  auto Changed = parsed(
+      neverd_comparison_functions_json(C, R"({"kind":"changed","limit":1})"));
+  EXPECT_EQ(Changed.getAsObject()->getInteger("total"), 0);
+}
+
+TEST_F(BinaryDiffSDK,
+       SaveRestoreEditsUndoAndRevisionRejectionAreTransactional) {
+  auto A = input(body()), B = input(body(9));
+  auto C = compare(A, B);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"unmatch","primary":"0x1000","secondary":"0x1000"})"),
+      1);
+  auto Unmatched = parsed(
+      neverd_comparison_functions_json(C, R"({"kind":"unmatched","limit":1})"));
+  EXPECT_EQ(Unmatched.getAsObject()->getInteger("total"), 1);
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  ASSERT_EQ(neverd_comparison_redo(C), 1);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  auto Stale = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(Stale));
+  auto *Primary = Stale->getAsObject()->getObject("primary");
+  ASSERT_NE(Primary, nullptr);
+  (*Primary)["revision"] = "other-analysis";
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*Stale).c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  EXPECT_EQ(neverd_comparison_validate_inputs(C, A, B), 1);
+  EXPECT_EQ(neverd_comparison_validate_inputs(C, B, A), 0);
+  auto Reopened = compare(A, B);
+  EXPECT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1);
+}
+
+TEST_F(BinaryDiffSDK, SavedFactsCannotHideAChangedOrIncompleteBody) {
+  auto Check = [&](neverd_comparison_t C, auto Mutate) {
+    const auto Saved = take(neverd_comparison_export_json(C));
+    auto Forged = llvm::json::parse(Saved);
+    ASSERT_TRUE(bool(Forged));
+    auto *Match =
+        (*Forged->getAsObject()->getArray("matches"))[0].getAsObject();
+    ASSERT_NE(Match, nullptr);
+    Mutate(*Match);
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  };
+  auto C = compare(input(body()), input(body(9)));
+  Check(C, [](auto &M) {
+    M["changes"] = llvm::json::Array{};
+    M["similarity"] = 1.0;
+  });
+  Check(C, [](auto &M) { M["identity_only"] = true; });
+  Check(C, [](auto &M) { M["equal_instructions"] = 999; });
+  auto Code = body();
+  Code.pop_back();
+  Code.push_back(0x0f);
+  auto Partial = compare(input(Code), input(Code));
+  Check(Partial, [](auto &M) { M["analysis_complete"] = true; });
+}
+
+TEST_F(BinaryDiffSDK, InvalidContractsAndUnsupportedProfilesFailWithoutResult) {
+  auto A = input(body()), B = input(body());
+  for (const char *Options :
+       {R"({"profile":"cross-isa"})", R"({"discover":1})",
+        R"({"min_similarity":2})", R"({"max_candidates":0})", R"({"typo":1})",
+        R"({"primary":{"begin":"0x20","end":"0x10"}})"}) {
+    auto C = neverd_comparison_create();
+    Comparisons.push_back(C);
+    EXPECT_EQ(neverd_comparison_run(C, A, B, Options, nullptr, nullptr), 0)
+        << Options;
+    EXPECT_FALSE(take(neverd_comparison_last_error(C)).empty());
+    auto Status = parsed(neverd_comparison_status_json(C));
+    EXPECT_FALSE(
+        Status.getAsObject()->getBoolean("result_available").value_or(true));
+    EXPECT_EQ(Status.getAsObject()->getString("state"), "failed");
+  }
+  auto C = compare(A, B);
+  EXPECT_EQ(neverd_comparison_functions_json(C, R"({"limit":0})"), nullptr);
+  EXPECT_EQ(neverd_comparison_functions_json(C, R"({"side":"invalid"})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_restore_json(C, "[]"), 0);
+}
+
+TEST_F(BinaryDiffSDK, CallEffectInspectionCanCancelCacheAndRefresh) {
+  std::vector<uint8_t> Code(60000, 0x90);
+  Code.insert(Code.end(), {0xff, 0xd0, 0xc3});
+  auto C = compare(input(Code), input(Code));
+  const char *Query = R"({"seeds":["0x1000"],"kind":"effects","limit":1})";
+  auto Future = std::async(std::launch::async, [&] {
+    return take(neverd_comparison_impact_json(C, Query));
+  });
+  bool Cancelled = false;
+  const auto Deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (Future.wait_for(std::chrono::milliseconds(0)) !=
+             std::future_status::ready &&
+         std::chrono::steady_clock::now() < Deadline) {
+    const auto Status = parsed(neverd_comparison_status_json(C));
+    const auto *O = Status.getAsObject();
+    if (O && O->getBoolean("running").value_or(false) &&
+        O->getString("phase") == "impact:effects") {
+      neverd_comparison_cancel(C);
+      Cancelled = true;
+    }
+    std::this_thread::yield();
+  }
+  ASSERT_EQ(Future.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  ASSERT_TRUE(Cancelled);
+  const auto Text = Future.get();
+  auto Stopped = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Stopped));
+  const auto *O = Stopped->getAsObject();
+  ASSERT_NE(O, nullptr);
+  EXPECT_EQ(O->getString("state"), "cancelled");
+  EXPECT_TRUE(O->getBoolean("index_complete").value_or(false));
+  EXPECT_EQ(O->getObject("effect_review")->getString("state"), "cancelled");
+  EXPECT_EQ(take(neverd_comparison_impact_json(C, Query)), Text);
+  const auto Fresh = parsed(neverd_comparison_impact_json(
+      C, R"({"seeds":["0x1000"],"kind":"effects","limit":1,"refresh":true})"));
+  EXPECT_EQ(Fresh.getAsObject()->getString("state"), "complete");
+  EXPECT_EQ(Fresh.getAsObject()->getInteger("total"), 1);
+  const auto *Effect =
+      (*Fresh.getAsObject()->getArray("rows"))[0].getAsObject()->getObject(
+          "effect");
+  EXPECT_EQ(Effect->getString("status"), "unresolved_target");
+  ASSERT_NE(Effect->get("release_may_fail"), nullptr);
+  EXPECT_EQ(Effect->get("release_may_fail")->kind(), llvm::json::Value::Null);
+  auto Timeout = parsed(neverd_comparison_impact_json(
+      C,
+      R"({"seeds":["0x1000"],"kind":"effects","timeout_ms":1,"refresh":true})"));
+  EXPECT_EQ(Timeout.getAsObject()->getString("state"), "timed_out");
+}
+
+TEST_F(BinaryDiffSDK, FunctionDetailCancellationCacheAndRefreshKeepState) {
+  // A large, owned straight-line body keeps the real alignment operation
+  // running long enough to exercise concurrent status/cancel, without target
+  // execution or test-only hooks in the implementation.
+  std::vector<uint8_t> Code(60000, 0x90);
+  Code.push_back(0xc3);
+  auto C = compare(input(Code), input(Code));
+  auto Future = std::async(std::launch::async, [&] {
+    return take(neverd_comparison_function_page_json(
+        C, R"({"address":"0x1000","refresh":true,"limit":1})"));
+  });
+  bool Cancelled = false;
+  const auto Deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (Future.wait_for(std::chrono::milliseconds(0)) !=
+             std::future_status::ready &&
+         std::chrono::steady_clock::now() < Deadline) {
+    const auto Status = parsed(neverd_comparison_status_json(C));
+    const auto *O = Status.getAsObject();
+    if (O && O->getBoolean("running").value_or(false) &&
+        O->getString("phase") == "detail:compare") {
+      neverd_comparison_cancel(C);
+      Cancelled = true;
+    }
+    std::this_thread::yield();
+  }
+  ASSERT_EQ(Future.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  ASSERT_TRUE(Cancelled);
+  const auto Text = Future.get();
+  auto Stopped = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Stopped));
+  const auto *O = Stopped->getAsObject();
+  ASSERT_NE(O, nullptr);
+  EXPECT_EQ(O->getString("state"), "cancelled");
+  EXPECT_FALSE(O->getBoolean("computation_complete").value_or(true));
+  ASSERT_NE(O->getArray("rows"), nullptr);
+  EXPECT_TRUE(O->getArray("rows")->empty());
+  const auto Cached = take(neverd_comparison_function_page_json(
+      C, R"({"address":"0x1000","limit":1})"));
+  EXPECT_EQ(Cached, Text);
+  auto LaterPage = parsed(neverd_comparison_function_page_json(
+      C, R"({"address":"0x1000","offset":200,"limit":1})"));
+  EXPECT_EQ(LaterPage.getAsObject()->getString("state"), "cancelled");
+  auto Graph =
+      parsed(neverd_comparison_graph_json(C, R"({"address":"0x1000"})"));
+  EXPECT_EQ(Graph.getAsObject()->getString("state"), "cancelled");
+  auto *Nodes = Graph.getAsObject()->getArray("nodes");
+  ASSERT_NE(Nodes, nullptr);
+  ASSERT_FALSE(Nodes->empty());
+  for (const auto &Node : *Nodes)
+    EXPECT_EQ(Node.getAsObject()->getObject("comparison")->getString("state"),
+              "not_compared");
+  auto Fresh = parsed(neverd_comparison_function_page_json(
+      C, R"({"address":"0x1000","refresh":true,"limit":1})"));
+  EXPECT_EQ(Fresh.getAsObject()->getString("state"), "complete");
+  EXPECT_TRUE(
+      Fresh.getAsObject()->getBoolean("computation_complete").value_or(false));
+  EXPECT_EQ(Fresh.getAsObject()->getInteger("total"), Code.size());
+  EXPECT_EQ(Fresh.getAsObject()->getArray("rows")->size(), 1u);
+  auto Timeout = parsed(neverd_comparison_function_page_json(
+      C, R"({"address":"0x1000","refresh":true,"timeout_ms":1,"limit":1})"));
+  EXPECT_EQ(Timeout.getAsObject()->getString("state"), "timed_out");
+  EXPECT_FALSE(
+      Timeout.getAsObject()->getBoolean("computation_complete").value_or(true));
+  EXPECT_EQ(neverd_comparison_function_page_json(
+                C, R"({"address":"0x1000","timeout_ms":-1})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_graph_json(
+                C, R"({"address":"0x1000","refresh":"true"})"),
+            nullptr);
+}
+
+TEST_F(BinaryDiffSDK, AnalystReviewPersistsWithoutBecomingComputedEvidence) {
+  auto C = compare(input(body()), input(body(9), 0x8000));
+  const auto Before =
+      take(neverd_comparison_function_page_json(C, R"({"address":"0x1000"})"));
+  const auto Initial = parsed(neverd_comparison_reviews_json(C, "{}"));
+  EXPECT_EQ(Initial.getAsObject()->getString("head"), "");
+  auto Record =
+      llvm::json::Object{{"primary", "0x1000"},
+                         {"secondary", "0x8000"},
+                         {"case", "owned-case-42"},
+                         {"author", "Fixture analyst"},
+                         {"note", "Owned test statement; no proof attached."},
+                         {"assessment", "candidate_fix"},
+                         {"reference", "owned-test:42"},
+                         {"expected_head", ""}};
+  const auto RecordText = render(llvm::json::Value(llvm::json::Object(Record)));
+  ASSERT_EQ(neverd_comparison_review_record_json(C, RecordText.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+  const auto First =
+      parsed(neverd_comparison_reviews_json(C, R"({"address":"0x1000"})"));
+  EXPECT_EQ(First.getAsObject()->getInteger("record_count"), 1);
+  EXPECT_EQ(First.getAsObject()->getString("assessment_source"), "analyst");
+  const auto Head = First.getAsObject()->getString("head")->str();
+  EXPECT_EQ(neverd_comparison_review_record_json(C, RecordText.c_str()), 0);
+  Record["expected_head"] = Head;
+  Record["assessment"] = "patch_present";
+  const auto NextText = render(llvm::json::Value(std::move(Record)));
+  ASSERT_EQ(neverd_comparison_review_record_json(C, NextText.c_str()), 1);
+  const auto History = take(neverd_comparison_reviews_json(C, "{}"));
+  auto Latest = parsed(neverd_comparison_reviews_json(
+      C, R"({"latest":true,"case":"owned-case-42"})"));
+  EXPECT_EQ(Latest.getAsObject()->getInteger("total"), 1);
+  const auto &Last = Latest.getAsObject()->getArray("rows")->front();
+  EXPECT_EQ(Last.getAsObject()->getString("supersedes"), Head);
+  EXPECT_EQ(Last.getAsObject()->getString("semantic_validation"),
+            "not_performed");
+  EXPECT_EQ(
+      take(neverd_comparison_function_page_json(C, R"({"address":"0x1000"})")),
+      Before);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"unmatch","primary":"0x1000","secondary":"0x8000"})"),
+      1);
+  const auto Unmatched =
+      parsed(neverd_comparison_reviews_json(C, R"({"address":"0x1000"})"));
+  EXPECT_FALSE(Unmatched.getAsObject()
+                   ->getObject("selection")
+                   ->getBoolean("pair_active")
+                   .value_or(true));
+  for (const auto &Row : *Unmatched.getAsObject()->getArray("rows"))
+    EXPECT_FALSE(Row.getAsObject()->getBoolean("pair_active").value_or(true));
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(take(neverd_comparison_reviews_json(C, "{}")), History);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_reviews_json(C, "{}")), History);
+  auto Forged = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(Forged));
+  auto *Events =
+      Forged->getAsObject()->getObject("reviews")->getArray("records");
+  (*Events)[0].getAsObject()->operator[]("assessment") = "patch_absent";
+  const auto Tampered = render(*Forged);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Tampered.c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_reviews_json(C, "{}")), History);
+}
+
+TEST_F(BinaryDiffSDK, ChangeObservationStopRefreshAndDeadlineShareOneJob) {
+  std::vector<uint8_t> Code(60000, 0x90);
+  Code.push_back(0xc3);
+  auto C = compare(input(Code), input(Code));
+  // Reuse an admitted native delta so cancellation reaches observation
+  // indexing.
+  ASSERT_FALSE(take(neverd_comparison_function_page_json(
+                        C, R"({"address":"0x1000","limit":1})"))
+                   .empty());
+  auto Future = std::async(std::launch::async, [&] {
+    return take(
+        neverd_comparison_observations_json(C, R"({"address":"0x1000"})"));
+  });
+  bool Requested = false;
+  const auto Deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (Future.wait_for(std::chrono::milliseconds(0)) !=
+             std::future_status::ready &&
+         std::chrono::steady_clock::now() < Deadline) {
+    const auto Status = parsed(neverd_comparison_status_json(C));
+    if (Status.getAsObject()->getString("phase") == "changes:observations" &&
+        Status.getAsObject()->getBoolean("running").value_or(false)) {
+      neverd_comparison_cancel(C);
+      Requested = true;
+    }
+    std::this_thread::yield();
+  }
+  ASSERT_EQ(Future.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  ASSERT_TRUE(Requested);
+  const auto Text = Future.get();
+  auto Stopped = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Stopped));
+  EXPECT_EQ(Stopped->getAsObject()->getString("state"), "cancelled");
+  EXPECT_EQ(
+      take(neverd_comparison_observations_json(C, R"({"address":"0x1000"})")),
+      Text);
+  const auto Expired = parsed(neverd_comparison_observations_json(
+      C, R"({"address":"0x1000","refresh":true,"timeout_ms":1})"));
+  EXPECT_EQ(Expired.getAsObject()->getString("state"), "timed_out");
+  const auto Fresh = parsed(neverd_comparison_observations_json(
+      C, R"({"address":"0x1000","refresh":true})"));
+  EXPECT_EQ(Fresh.getAsObject()->getString("state"), "complete");
+  EXPECT_EQ(Fresh.getAsObject()->getInteger("visited_native_rows"),
+            Code.size());
+  EXPECT_TRUE(Fresh.getAsObject()->getArray("rows")->empty());
+}
+
+TEST_F(BinaryDiffSDK, ChangeObservationsKeepNativePredicateEvidenceAndScope) {
+  std::vector<uint8_t> Code{0x83, 0xff, 0x11, 0x74, 0x06, 0xb8,
+                            0x02, 0x00, 0x00, 0x00, 0xc3, 0xb8,
+                            0x03, 0x00, 0x00, 0x00, 0xc3};
+  const auto A = input(Code);
+  Code[2] = 9;
+  const auto B = input(Code, 0x8000);
+  const auto C = compare(A, B, R"({"discover":false,"dataflow":true})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  neverd_session_destroy(A);
+  neverd_session_destroy(B);
+  Sessions[0] = Sessions[1] = nullptr;
+  const auto Text = take(neverd_comparison_observations_json(
+      C, R"({"address":"0x1000","limit":2})"));
+  auto Value = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Value)) << take(neverd_comparison_last_error(C));
+  const auto *R = Value->getAsObject();
+  ASSERT_NE(R, nullptr);
+  EXPECT_EQ(R->getString("state"), "complete");
+  EXPECT_EQ(R->getString("security_inference"), "not_performed");
+  EXPECT_EQ(R->getString("fix_presence"), "not_assessed");
+  EXPECT_EQ(R->getString("semantic_validation"), "not_performed");
+  EXPECT_EQ(R->getObject("primary_ssa")->getString("availability"),
+            "available");
+  ASSERT_NE(R->getArray("rows"), nullptr);
+  ASSERT_EQ(R->getArray("rows")->size(), 2u) << Text;
+  const auto *Fact = R->getArray("rows")->front().getAsObject();
+  ASSERT_NE(Fact, nullptr);
+  EXPECT_EQ(Fact->getObject("primary")->getString("bytes"), "7406");
+  EXPECT_EQ(Fact->getObject("secondary")->getString("bytes"), "7406");
+  EXPECT_EQ(Fact->getString("association"), "direct_synthetic_operand");
+  EXPECT_EQ(Fact->getObject("primary_node")->getInteger("origin_sequence"), -1);
+  EXPECT_NE(Fact->getInteger("primary_anchor_node"),
+            Fact->getObject("primary_node")->getInteger("id"));
+  const auto *Native = (*R->getArray("rows"))[1].getAsObject();
+  EXPECT_EQ(Native->getObject("primary")->getString("bytes"), "83FF11");
+  EXPECT_EQ(Native->getObject("secondary")->getString("bytes"), "83FF09");
+  EXPECT_EQ(Native->getString("association"), "native_origin");
+  ASSERT_NE(Fact->getObject("primary_node"), nullptr);
+  bool Predicate = false, Constant = false;
+  for (const auto &Name : *Fact->getArray("primary_context"))
+    Predicate |= Name.getAsString() == "predicate_dependency";
+  for (const auto &Name : *Fact->getArray("kinds"))
+    Constant |= Name.getAsString() == "constant";
+  EXPECT_TRUE(Predicate && Constant) << Text;
+  EXPECT_EQ(take(neverd_comparison_observations_json(
+                C, R"({"side":"secondary","address":"0x8000","limit":2})")),
+            Text);
+  const auto Filtered = parsed(neverd_comparison_observations_json(
+      C, R"({"address":"0x1000","context":"predicate_dependency"})"));
+  EXPECT_EQ(Filtered.getAsObject()->getInteger("work"), R->getInteger("work"));
+  EXPECT_GT(Filtered.getAsObject()->getInteger("total").value_or(0), 0);
+  const auto Partial = parsed(neverd_comparison_observations_json(
+      C, R"({"address":"0x1000","max_work":1})"));
+  EXPECT_EQ(Partial.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_EQ(Partial.getAsObject()->getInteger("visited_native_rows"), 0);
+  const auto Confirm =
+      R"({"kind":"confirm","primary":"0x1000","secondary":"0x8000"})";
+  ASSERT_EQ(neverd_comparison_override_json(C, Confirm), 1);
+  const auto Confirmed = parsed(neverd_comparison_observations_json(
+      C, R"({"address":"0x1000","limit":1})"));
+  EXPECT_TRUE(Confirmed.getAsObject()
+                  ->getObject("pairing")
+                  ->getBoolean("confirmed")
+                  .value_or(false));
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_observations_json(
+                C, R"({"address":"0x1000","limit":2})")),
+            Text);
+  EXPECT_EQ(neverd_comparison_observations_json(
+                C, R"({"address":"0x1000","context":"authorization"})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_observations_json(
+                C, R"({"address":"0x1000","max_rows":0})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_observations_json(C, R"({"address":"0x1001"})"),
+            nullptr);
+}
+
+TEST_F(BinaryDiffSDK,
+       CancellationReportsRequestStopAndRetainedPartialSeparately) {
+  auto A = input(body()), B = input(body());
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  struct Callback {
+    neverd_comparison_t C;
+    bool ObservedRunning = false;
+  } State{C};
+  auto Progress = [](void *Context, const char *, neverd_va_t, neverd_va_t) {
+    auto &State = *static_cast<Callback *>(Context);
+    neverd_comparison_cancel(State.C);
+    auto Status = parsed(neverd_comparison_status_json(State.C));
+    EXPECT_TRUE(
+        Status.getAsObject()->getBoolean("cancel_requested").value_or(false));
+    EXPECT_FALSE(
+        Status.getAsObject()->getBoolean("computation_stopped").value_or(true));
+    State.ObservedRunning = true;
+  };
+  EXPECT_EQ(
+      neverd_comparison_run(C, A, B, R"({"discover":false})", Progress, &State),
+      1)
+      << take(neverd_comparison_last_error(C));
+  EXPECT_TRUE(State.ObservedRunning);
+  auto Status = parsed(neverd_comparison_status_json(C));
+  EXPECT_EQ(Status.getAsObject()->getString("state"), "cancelled");
+  EXPECT_TRUE(
+      Status.getAsObject()->getBoolean("computation_stopped").value_or(false));
+  EXPECT_TRUE(Status.getAsObject()
+                  ->getBoolean("partial_result_retained")
+                  .value_or(false));
+}
+
+TEST_F(BinaryDiffSDK,
+       DiscoveryCancellationKeepsItsPhaseAndIncompleteInventory) {
+  auto A = input(body()), B = input(body());
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  const auto Cancel = [](void *Context, const char *Phase, neverd_va_t,
+                         neverd_va_t) {
+    if (std::string_view(Phase) == "primary:discovery")
+      neverd_comparison_cancel(Context);
+  };
+  ASSERT_EQ(neverd_comparison_run(C, A, B, "{}", Cancel, C), 1)
+      << take(neverd_comparison_last_error(C));
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(Summary.getAsObject()->getString("state"), "cancelled");
+  EXPECT_EQ(Summary.getAsObject()->getString("stopped_phase"), "discovery");
+  const auto Saved = parsed(neverd_comparison_export_json(C));
+  ASSERT_TRUE(Saved.getAsObject());
+  const auto *Primary = Saved.getAsObject()->getObject("primary");
+  const auto *Secondary = Saved.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Primary);
+  ASSERT_TRUE(Secondary);
+  EXPECT_FALSE(Primary->getBoolean("discovery_complete").value_or(true));
+  EXPECT_FALSE(Secondary->getBoolean("discovery_complete").value_or(true));
+  // This stopped comparison must not make later discovery believe it is done.
+  EXPECT_GE(neverd_session_discover_functions(A), 1);
+  EXPECT_GE(neverd_session_discover_functions(B), 1);
+}
+
+TEST_F(BinaryDiffSDK, ExhaustedInstructionBudgetCannotLookComplete) {
+  auto C = compare(input(body()), input(body()),
+                   R"({"discover":false,"max_instructions":1})");
+  auto Status = parsed(neverd_comparison_status_json(C));
+  EXPECT_EQ(Status.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_TRUE(Status.getAsObject()
+                  ->getBoolean("partial_result_retained")
+                  .value_or(false));
+  auto Saved = take(neverd_comparison_export_json(C));
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+}
+
+TEST_F(BinaryDiffSDK,
+       PagedDetailsAndGraphsShareEvidenceAndInvalidateAfterEdits) {
+  auto C = compare(input(body()), input(body(9)));
+  auto Full = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  llvm::json::Array Combined;
+  for (unsigned Offset = 0; Offset < 3; ++Offset) {
+    const auto Query = render(llvm::json::Object{
+        {"address", "0x1000"}, {"offset", Offset}, {"limit", 1}});
+    auto Page = parsed(neverd_comparison_function_page_json(C, Query.c_str()));
+    ASSERT_EQ(Page.getAsObject()->getInteger("total"), 3);
+    const auto *Rows = Page.getAsObject()->getArray("rows");
+    ASSERT_EQ(Rows->size(), 1u);
+    Combined.push_back((*Rows)[0]);
+  }
+  EXPECT_EQ(Combined, *Full.getAsObject()->getArray("rows"));
+  auto Graph =
+      parsed(neverd_comparison_graph_json(C, R"({"address":"0x1000"})"));
+  ASSERT_EQ(Graph.getAsObject()->getArray("nodes")->size(), 1u);
+  const auto *Node = (*Graph.getAsObject()->getArray("nodes"))[0].getAsObject();
+  EXPECT_EQ(Node->getObject("comparison")->getString("state"), "changed");
+  EXPECT_EQ(Node->getObject("comparison")->getString("counterpart"), "0x1000");
+  EXPECT_EQ(
+      neverd_comparison_graph_json(C, R"({"address":"0x1000","node_limit":0})"),
+      nullptr);
+  EXPECT_EQ(neverd_comparison_functions_json(C, R"({"sort":"wrong"})"),
+            nullptr);
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"unmatch","primary":"0x1000","secondary":"0x1000"})"),
+      1);
+  auto Unmatched = parsed(neverd_comparison_function_page_json(
+      C, R"({"address":"0x1000","limit":1})"));
+  EXPECT_TRUE(
+      Unmatched.getAsObject()->get("secondary")->getAsNull().has_value());
+  EXPECT_EQ(
+      (*Unmatched.getAsObject()->getArray("rows"))[0].getAsObject()->getString(
+          "kind"),
+      "deleted");
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_TRUE(Summary.getAsObject()->getBoolean("can_undo").value_or(false));
+  EXPECT_EQ(Summary.getAsObject()->get("matches"), nullptr);
+}
+
+TEST_F(BinaryDiffSDK, NativeRegionPagesPersistWithoutChangingAcceptedPairs) {
+  // mov eax,edi; add eax,3; xor eax,23; imul eax,eax,7; add eax,9; ret.
+  const std::vector<uint8_t> Code{0x89, 0xf8, 0x83, 0xc0, 0x03,
+                                  0x83, 0xf0, 0x17, 0x6b, 0xc0,
+                                  0x07, 0x83, 0xc0, 0x09, 0xc3};
+  auto A = input(Code), B = input(Code, 0x8000);
+  auto C = compare(A, B, R"({"discover":false,"regions":true})");
+  const auto SavedText = take(neverd_comparison_export_json(C));
+  auto Page = parsed(neverd_comparison_regions_json(C, R"({"limit":1})"));
+  auto *O = Page.getAsObject();
+  ASSERT_EQ(O->getInteger("total"), 1);
+  const auto *H = (*O->getArray("items"))[0].getAsObject();
+  ASSERT_TRUE(H->getString("id"));
+  const auto Id = H->getString("id")->str();
+  EXPECT_EQ(H->getString("semantic_validation"), "not_performed");
+  auto AnchorsQuery =
+      render(llvm::json::Object{{"region_id", Id}, {"limit", 1}});
+  auto Anchors =
+      parsed(neverd_comparison_regions_json(C, AnchorsQuery.c_str()));
+  const auto *Anchor =
+      (*Anchors.getAsObject()->getArray("items"))[0].getAsObject();
+  EXPECT_EQ(Anchor->getObject("primary")->getString("begin"), "0x1000");
+  EXPECT_EQ(Anchor->getObject("secondary")->getString("begin"), "0x8000");
+  auto Query =
+      render(llvm::json::Object{{"region_id", Id},
+                                {"anchor", *Anchor->getInteger("anchor")},
+                                {"limit", 2}});
+  auto Rows = parsed(neverd_comparison_region_page_json(C, Query.c_str()));
+  EXPECT_EQ(Rows.getAsObject()->getInteger("total"), 5);
+  ASSERT_EQ(Rows.getAsObject()->getArray("rows")->size(), 2u);
+  EXPECT_EQ((*Rows.getAsObject()->getArray("rows"))[0]
+                .getAsObject()
+                ->getObject("primary")
+                ->getString("bytes"),
+            "89F8");
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), SavedText);
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"unmatch","primary":"0x1000","secondary":"0x8000"})"),
+      1);
+  // Region evidence is independent of the editable function bijection.
+  auto After = parsed(neverd_comparison_region_page_json(C, Query.c_str()));
+  EXPECT_EQ(render(After), render(Rows));
+  // Unknown IDs must fail, never selecting another hypothesis by position.
+  EXPECT_EQ(neverd_comparison_regions_json(C, R"({"region_id":"missing"})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_restore_json(C, SavedText.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), SavedText);
+  auto Forged = llvm::json::parse(SavedText);
+  auto *Span =
+      (*Forged->getAsObject()->getObject("regions")->getArray("anchors"))[0]
+          .getAsObject()
+          ->getArray("primary");
+  (*Span)[3] = 1000000;
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), SavedText);
+  auto Without = compare(A, B);
+  EXPECT_EQ(neverd_comparison_regions_json(Without, "{}"), nullptr);
+}
+
+TEST_F(BinaryDiffSDK, UngroupedRegionEvidenceRemainsPageableAfterBudgetStop) {
+  const std::vector<uint8_t> Code{0x89, 0xf8, 0x83, 0xc0, 3,    0x83, 0xf0, 23,
+                                  0x6b, 0xc0, 7,    0x83, 0xc0, 9,    0xeb, 0,
+                                  0x89, 0xf2, 0x83, 0xc2, 19,   0x83, 0xf2, 93,
+                                  0x6b, 0xd2, 11,   0x83, 0xc2, 27,   0xc3};
+  auto C = compare(input(Code), input(Code, 0x8000),
+                   R"({"discover":false,"regions":{"max_anchors":1}})");
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(Summary.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_EQ(Summary.getAsObject()->getObject("regions")->getInteger(
+                "hypothesis_count"),
+            0);
+  auto Page = parsed(
+      neverd_comparison_regions_json(C, R"({"all_anchors":true,"limit":1})"));
+  EXPECT_EQ(Page.getAsObject()->getInteger("total"), 1);
+  EXPECT_TRUE(Page.getAsObject()->get("hypothesis")->getAsNull().has_value());
+  auto Rows = parsed(
+      neverd_comparison_region_page_json(C, R"({"anchor":0,"limit":2})"));
+  EXPECT_EQ(Rows.getAsObject()->getInteger("total"), 5);
+  EXPECT_EQ(Rows.getAsObject()->getArray("rows")->size(), 2u);
+  EXPECT_TRUE(Rows.getAsObject()->get("hypothesis")->getAsNull().has_value());
+  EXPECT_EQ(neverd_comparison_region_page_json(C, R"({"anchor":1})"), nullptr);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+}
+
+TEST_F(BinaryDiffSDK, NativeDataFlowPagesSlicesAndSavedFactsOutliveSessions) {
+  const std::vector<uint8_t> Code{0x89, 0xf8, 0x83, 0xc0, 3,    0x83, 0xf0, 23,
+                                  0x6b, 0xc0, 7,    0x83, 0xc0, 9,    0xc3};
+  auto A = input(Code), B = input(Code, 0x8000);
+  auto C = compare(A, B, R"({"discover":false,"dataflow":true})");
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  const auto *Flow = Summary.getAsObject()->getObject("dataflow");
+  ASSERT_NE(Flow, nullptr);
+  EXPECT_EQ(Flow->getObject("primary")->getInteger("available"), 1);
+  EXPECT_EQ(Flow->getObject("secondary")->getInteger("available"), 1);
+  auto Inventory = parsed(neverd_comparison_dataflow_json(C, "{}"));
+  EXPECT_EQ(Inventory.getAsObject()->getInteger("total"), 1);
+  auto Page = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000","limit":200})"));
+  const auto *Rows = Page.getAsObject()->getArray("rows");
+  ASSERT_NE(Rows, nullptr);
+  ASSERT_FALSE(Rows->empty()) << render(Page);
+  int64_t Mul = -1;
+  for (const auto &Row : *Rows)
+    if (Row.getAsObject()->getString("opcode") == "INT_MULT")
+      Mul = Row.getAsObject()->getInteger("id").value_or(-1);
+  ASSERT_GE(Mul, 0);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Reopened = compare(A, B, R"({"discover":false,"dataflow":true})");
+  EXPECT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+  EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
+  EXPECT_EQ(neverd_comparison_validate_inputs(C, A, B), 1);
+  auto Forged = llvm::json::parse(Saved);
+  auto *SavedGraph = Forged->getAsObject()
+                         ->getObject("dataflow")
+                         ->getObject("primary")
+                         ->getArray("entries")
+                         ->front()
+                         .getAsObject()
+                         ->getObject("graph");
+  (*SavedGraph->getArray("nodes"))[Mul].getAsObject()->operator[]("opcode") =
+      "INT_ADD";
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  auto Without = compare(A, B);
+  EXPECT_EQ(neverd_comparison_restore_json(Without, Saved.c_str()), 0);
+  EXPECT_EQ(neverd_comparison_dataflow_json(Without, "{}"), nullptr);
+  neverd_session_destroy(A);
+  neverd_session_destroy(B);
+  Sessions[0] = Sessions[1] = nullptr;
+  llvm::json::Object Query{
+      {"address", "0x1000"}, {"seeds", llvm::json::Array{Mul}}, {"limit", 2}};
+  auto Slice = parsed(neverd_comparison_slice_json(
+      C, render(llvm::json::Object(Query)).c_str()));
+  const auto *SliceObject = Slice.getAsObject();
+  EXPECT_EQ(SliceObject->getString("state"), "complete");
+  ASSERT_EQ(SliceObject->getArray("rows")->size(), 2u);
+  EXPECT_GT(SliceObject->getInteger("total").value_or(0), 2);
+  Query["offset"] = 2;
+  auto Next = parsed(neverd_comparison_slice_json(
+      C, render(llvm::json::Object(Query)).c_str()));
+  EXPECT_EQ(Next.getAsObject()->getInteger("total"),
+            SliceObject->getInteger("total"));
+  EXPECT_NE(render(*Next.getAsObject()->get("rows")),
+            render(*SliceObject->get("rows")));
+  EXPECT_EQ(parsed(neverd_comparison_status_json(C))
+                .getAsObject()
+                ->getString("phase"),
+            "dataflow:slice");
+  EXPECT_EQ(neverd_comparison_slice_json(
+                C, R"({"address":"0x1000","seeds":[99999]})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_dataflow_json(
+                C, R"({"kind":"nodes","address":"0x1000","limit":0})"),
+            nullptr);
+}
+
+TEST_F(BinaryDiffSDK, DataFlowLimitsRetainNativeMatchesAndUnavailableReasons) {
+  auto A = input(body()), B = input(body(8));
+  auto C = compare(
+      A, B, R"({"discover":false,"dataflow":{"max_native_instructions":1}})");
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(Summary.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_EQ(Summary.getAsObject()->getObject("counts")->getInteger("changed"),
+            1);
+  auto Page = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000"})"));
+  EXPECT_EQ(Page.getAsObject()->getString("availability"), "resource_limited");
+  EXPECT_FALSE(Page.getAsObject()->getString("reason")->empty());
+  EXPECT_TRUE(Page.getAsObject()->getArray("rows")->empty());
+  EXPECT_EQ(
+      neverd_comparison_slice_json(C, R"({"address":"0x1000","seeds":[0]})"),
+      nullptr);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  auto Small =
+      compare(A, B, R"({"discover":false,"dataflow":{"max_total_nodes":1}})");
+  auto SmallSummary = parsed(neverd_comparison_summary_json(Small));
+  EXPECT_EQ(SmallSummary.getAsObject()
+                ->getObject("dataflow")
+                ->getObject("primary")
+                ->getInteger("available"),
+            0);
+}
+
+TEST_F(BinaryDiffSDK,
+       SSARegionPagesKeepVerifiedNodesAndOriginalBytesAfterRestore) {
+  const std::vector<uint8_t> Code{0x89, 0xf8, 0x83, 0xc0, 3,    0x83, 0xf0, 23,
+                                  0x6b, 0xc0, 7,    0x83, 0xc0, 9,    0xc3};
+  auto A = input(Code), B = input(Code, 0x8000);
+  auto C = compare(A, B, R"({"discover":false,"flow_regions":true})");
+  auto Page = parsed(neverd_comparison_flow_regions_json(C, R"({"limit":1})"));
+  ASSERT_GT(Page.getAsObject()->getInteger("total").value_or(0), 0);
+  const auto *H = Page.getAsObject()->getArray("items")->front().getAsObject();
+  const auto Id = H->getString("id")->str();
+  EXPECT_TRUE(H->getBoolean("open_control_frontier").value_or(false));
+  EXPECT_EQ(H->get("anchors"), nullptr);
+  llvm::json::Object Query{{"region_id", Id}, {"limit", 1}};
+  auto Anchors = parsed(neverd_comparison_flow_regions_json(
+      C, render(llvm::json::Object(Query)).c_str()));
+  const auto *Anchor =
+      Anchors.getAsObject()->getArray("items")->front().getAsObject();
+  EXPECT_EQ(Anchor->get("nodes"), nullptr);
+  Query["anchor"] = *Anchor->getInteger("anchor");
+  auto Nodes = parsed(neverd_comparison_flow_regions_json(
+      C, render(llvm::json::Object(Query)).c_str()));
+  ASSERT_EQ(Nodes.getAsObject()->getArray("rows")->size(), 1u);
+  const auto *Row =
+      Nodes.getAsObject()->getArray("rows")->front().getAsObject();
+  for (const char *Side : {"primary", "secondary"}) {
+    const auto *N = Row->getObject(Side);
+    ASSERT_NE(N, nullptr);
+    EXPECT_EQ(N->getObject("original") != nullptr,
+              N->getInteger("origin_sequence").value_or(-1) >= 0);
+  }
+  auto WholeQuery = Query;
+  WholeQuery["limit"] = 200;
+  auto Whole = parsed(neverd_comparison_flow_regions_json(
+      C, render(std::move(WholeQuery)).c_str()));
+  unsigned NativePairs = 0;
+  for (const auto &Value : *Whole.getAsObject()->getArray("rows")) {
+    const auto *Pair = Value.getAsObject();
+    const auto *P = Pair->getObject("primary"),
+               *S = Pair->getObject("secondary");
+    if (const auto *Original = P->getObject("original")) {
+      ASSERT_NE(S->getObject("original"), nullptr);
+      ASSERT_TRUE(Original->getString("bytes").has_value());
+      EXPECT_FALSE(Original->getString("bytes")->empty());
+      EXPECT_NE(P->getString("address"), S->getString("address"));
+      ++NativePairs;
+    }
+  }
+  EXPECT_GE(NativePairs, 2u);
+  auto Saved = take(neverd_comparison_export_json(C));
+  auto Reopened = compare(A, B, R"({"discover":false,"flow_regions":true})");
+  EXPECT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+  EXPECT_EQ(render(parsed(neverd_comparison_flow_regions_json(
+                Reopened, render(llvm::json::Object(Query)).c_str()))),
+            render(Nodes));
+  auto Forged = llvm::json::parse(Saved);
+  (*Forged->getAsObject()->getObject("flow_regions")->getArray("anchors"))[0]
+      .getAsObject()
+      ->operator[]("primary_root") = 99999;
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  neverd_session_destroy(A);
+  neverd_session_destroy(B);
+  Sessions[0] = Sessions[1] = nullptr;
+  Query["offset"] = 1;
+  auto Next = parsed(neverd_comparison_flow_regions_json(
+      C, render(llvm::json::Object(Query)).c_str()));
+  EXPECT_EQ(Next.getAsObject()->getInteger("total"),
+            Nodes.getAsObject()->getInteger("total"));
+  EXPECT_NE(render(*Next.getAsObject()->get("rows")),
+            render(*Nodes.getAsObject()->get("rows")));
+  EXPECT_EQ(neverd_comparison_flow_regions_json(C, R"({"anchor":99999})"),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_flow_regions_json(
+                C, R"({"anchor":0,"all_anchors":true})"),
+            nullptr);
+  EXPECT_EQ(
+      neverd_comparison_flow_regions_json(C, R"({"coordinates":"phi_blocks"})"),
+      nullptr);
+  EXPECT_EQ(neverd_comparison_flow_regions_json(C, R"({"limit":0})"), nullptr);
+}
+
+} // namespace

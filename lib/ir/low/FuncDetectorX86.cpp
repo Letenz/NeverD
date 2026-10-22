@@ -122,13 +122,15 @@ std::optional<CallScanStep> stepCallsX86(const BinaryImage &Img, Decoder &Dec,
 }
 
 void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
-                         std::set<va_t> &Out) {
+                         std::set<va_t> &Out, const Cancellation *Control) {
   const bool KeptDetail = Dec.detailEnabled(), KeptText = Dec.textEnabled();
   Dec.setText(false);
   for (const Segment &Seg : Img.Segments) {
+    func_detect_detail::checkCancellation(Control);
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
     for (size_t Off = 0; Off < Seg.Data.size();) {
+      func_detect_detail::checkCancellation(Control);
       const va_t Cur = Seg.VA + Off;
       const uint8_t *Bytes = Seg.Data.data() + Off;
       const size_t Remain = Seg.Data.size() - Off;
@@ -175,12 +177,14 @@ void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
 }
 
 void scanCodeAddressImmediatesX86(const BinaryImage &Img, Decoder &Dec,
-                                  std::vector<std::pair<va_t, va_t>> &Out) {
+                                  std::vector<std::pair<va_t, va_t>> &Out,
+                                  const Cancellation *Control) {
   const auto &Fields = Img.CodeAddressRelocOperands;
   if (Fields.empty())
     return;
   const bool KeptDetail = Dec.detailEnabled(), KeptText = Dec.textEnabled();
   for (const Section &Sec : Img.Sections) {
+    func_detect_detail::checkCancellation(Control);
     if (Sec.Size == 0 || !Sec.isExecutable() || !Img.isCodeAddress(Sec.VA))
       continue;
     const Segment *Seg = Img.getSegmentFor(Sec.VA);
@@ -191,6 +195,7 @@ void scanCodeAddressImmediatesX86(const BinaryImage &Img, Decoder &Dec,
         std::min<va_t>(Sec.VA + Sec.Size, Seg->VA + Seg->Data.size());
     auto Field = Fields.lower_bound(Sec.VA);
     for (va_t Cur = Sec.VA; Cur < End;) {
+      func_detect_detail::checkCancellation(Control);
       while (Field != Fields.end() && Field->first < Cur)
         ++Field;
       if (Field == Fields.end() || Field->first >= End)
@@ -240,9 +245,10 @@ bool isX86EscapingCodeImmediate(const BinaryImage &Img, va_t Insn) {
 
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
-                         std::set<va_t> &Out) {
+                         std::set<va_t> &Out, const Cancellation *Control) {
   CodeInterval Known = codeIntervalAround(Img, Start);
   for (va_t Cur = Start; Cur < End;) {
+    func_detect_detail::checkCancellation(Control);
     const std::optional<CallScanStep> Step =
         stepCallsX86(Img, Dec, Seg, Cur, End, Known);
     if (!Step)
@@ -384,6 +390,7 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
                                               std::set<va_t> &Out) {
   std::vector<std::pair<va_t, va_t>> Occupied;
   for (const Symbol &Sym : Img.Symbols) {
+    func_detect_detail::checkCancellation(Cancellation);
     if (!Sym.IsFunc || Sym.Size == 0 || Sym.Size > InvalidVA - Sym.Addr)
       continue;
     Occupied.emplace_back(Sym.Addr, Sym.Addr + Sym.Size);
@@ -393,6 +400,7 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
   const bool PrevDetail = Dec.detailEnabled();
   Dec.setDetail(false);
   for (const Section &Sec : Img.Sections) {
+    func_detect_detail::checkCancellation(Cancellation);
     if (Sec.Size < 4 || !Sec.isExecutable() || !Img.isCodeAddress(Sec.VA))
       continue;
     const Segment *Seg = Img.getSegmentFor(Sec.VA);
@@ -412,6 +420,7 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
     // 16-byte MSVC alignment: SEH, callee-saved pushes, vtable thunks, frames.
     va_t Aligned = (Sec.VA + 15u) & ~static_cast<va_t>(15u);
     for (; Aligned + 3 < SecEnd; Aligned += 16) {
+      func_detect_detail::checkCancellation(Cancellation);
       if (!isX86MsvcPrologue(At(Aligned)))
         continue;
       considerX86Prologue(Img, Dec, *Seg, Aligned, Occupied, Out,
@@ -425,6 +434,7 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
     const uint8_t *Cur = Base;
     const uint8_t *Limit = Base + DataN;
     while (Cur + 3 < Limit) {
+      func_detect_detail::checkCancellation(Cancellation);
       const void *Hit =
           std::memchr(Cur, 0x55, static_cast<size_t>(Limit - Cur));
       if (!Hit)
@@ -443,6 +453,7 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
 
     // Packed `sub esp` immediately after ret / int3 / nop.
     for (size_t Off = 1; Off + 3 < DataN; ++Off) {
+      func_detect_detail::checkCancellation(Cancellation);
       if (!isX86FunctionEndBefore(SecBytes.data(), Off))
         continue;
       const va_t Addr = Seg->VA + Off;
@@ -483,12 +494,15 @@ bool readsX86TableAmongCode(const BinaryImage &Img, va_t Addr, va_t Next) {
 template <typename TakeFn>
 bool walkX86OwnCode(const BinaryImage &Img, Decoder &Dec, va_t Entry, va_t End,
                     llvm::ArrayRef<va_t> Cases, std::set<va_t> &Visited,
-                    TakeFn Take, std::map<va_t, va_t> *DecodedSpans = nullptr) {
+                    TakeFn Take,
+                    const func_detect_detail::Cancellation *Control,
+                    std::map<va_t, va_t> *DecodedSpans = nullptr) {
   bool Computed = false;
   std::vector<std::pair<va_t, X86Reach>> Work{{Entry, X86Reach::Inside}};
   for (va_t Case : Cases)
     Work.emplace_back(Case, X86Reach::Inside);
   while (!Work.empty()) {
+    func_detect_detail::checkCancellation(Control);
     const auto [Addr, How] = Work.back();
     Work.pop_back();
     if (Addr < Entry || Addr >= End)
@@ -595,6 +609,7 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
   Dec.setText(true);
   Dec.setDetail(true);
   for (va_t Owner : Owners) {
+    func_detect_detail::checkCancellation(Cancellation);
     const auto It = Cases.find(Owner);
     std::set<va_t> Visited;
     std::set<va_t> Reached;
@@ -616,7 +631,7 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
           Interior.insert(Addr);
           return true;
         },
-        &DecodedSpans);
+        Cancellation, &DecodedSpans);
     // An unresolved computed transfer may enter an overlapping instruction
     // stream that the walk has not observed.
     if (Computed)
@@ -627,6 +642,7 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
     // or any overlapping decode prevents that span from disproving an entry.
     va_t PreviousEnd = 0;
     for (const auto &[Addr, Next] : DecodedSpans) {
+      func_detect_detail::checkCancellation(Cancellation);
       const bool OverlapsBefore = PreviousEnd > Addr;
       PreviousEnd = std::max(PreviousEnd, Next);
       const auto Other = Reached.upper_bound(Addr);
@@ -641,6 +657,7 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
   Dec.setText(KeptText);
 
   for (va_t Addr : Interior) {
+    func_detect_detail::checkCancellation(Cancellation);
     Entries.erase(Addr);
     UnsymbolizedX86Entries.erase(Addr);
   }
@@ -658,7 +675,8 @@ std::set<va_t> FuncDetector::x86OwnCodeReached(const BinaryImage &Img,
   Dec.setDetail(true);
   Computed = walkX86OwnCode(
       Img, Dec, Entry, End, Cases, Visited,
-      [](va_t, X86Reach, llvm::ArrayRef<uint8_t>) { return true; });
+      [](va_t, X86Reach, llvm::ArrayRef<uint8_t>) { return true; },
+      Cancellation);
   Dec.setDetail(KeptDetail);
   Dec.setText(KeptText);
   return Visited;

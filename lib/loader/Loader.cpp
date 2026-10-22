@@ -11,6 +11,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/loader/Loader.h"
+
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoader.h"
@@ -18,15 +20,112 @@
 #include "neverd/loader/EVM/EVMLoader.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/ObjectFileUtils.h"
+#include "neverd/support/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
+#include <system_error>
 
 namespace neverd {
+
+llvm::Expected<BinaryImage>
+Loader::loadWithProgress(const std::filesystem::path &Path,
+                         const LoadProgress &Control) {
+  llvm::SaveAndRestore<LoadProgress> Scope(Progress, Control);
+  try {
+    Progress.check();
+    auto Image = load(Path);
+    if (!Image)
+      return Image.takeError();
+    Progress.check();
+    return Image;
+  } catch (const LoadCancelled &) {
+    return llvm::make_error<llvm::StringError>(
+        LoadCancelled::Message,
+        std::make_error_code(std::errc::operation_canceled));
+  }
+}
+
+llvm::Expected<BinaryImage>
+Loader::loadBufferWithProgress(llvm::MemoryBufferRef Buffer,
+                               const LoadProgress &Control) {
+  llvm::SaveAndRestore<LoadProgress> Scope(Progress, Control);
+  try {
+    Progress.check();
+    auto Image = loadBuffer(Buffer);
+    if (!Image)
+      return Image.takeError();
+    Progress.check();
+    return Image;
+  } catch (const LoadCancelled &) {
+    return llvm::make_error<llvm::StringError>(
+        LoadCancelled::Message,
+        std::make_error_code(std::errc::operation_canceled));
+  }
+}
+
+llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>>
+Loader::readFileBuffer(const std::filesystem::path &Path, BinaryFormat Fmt,
+                       const LoadProgress &Control) {
+  const auto Name = pathToUTF8(Path);
+  Control.report("read", 0, 1, Name.c_str());
+  auto Buffer = llvm::MemoryBuffer::getFile(Name);
+  if (!Buffer)
+    return llvm::make_error<llvm::StringError>(std::string(getFormatTag(Fmt)) +
+                                                   ": cannot open " + Name,
+                                               llvm::inconvertibleErrorCode());
+  Control.report("read", 1, 1, Name.c_str());
+  return std::move(*Buffer);
+}
+
+void Loader::copyImageBytes(llvm::ArrayRef<uint8_t> Bytes,
+                            std::vector<uint8_t> &Destination,
+                            const LoadProgress &Control) {
+  Control.report("copy", 0, Bytes.size());
+  if (!Control) {
+    Destination.assign(Bytes.begin(), Bytes.end());
+    return;
+  }
+  Destination.clear();
+  Destination.reserve(Bytes.size());
+  for (size_t Done = 0; Done < Bytes.size();) {
+    Control.check();
+    const size_t Count = std::min(limits::support::kLoadByteCheckpointBytes,
+                                  Bytes.size() - Done);
+    Destination.insert(Destination.end(), Bytes.begin() + Done,
+                       Bytes.begin() + Done + Count);
+    Done += Count;
+    Control.report("copy", Done, Bytes.size());
+  }
+}
+
+void Loader::initializeImage(llvm::MemoryBufferRef Buffer, BinaryImage &Img,
+                             BinaryFormat Fmt, bool CopyRaw,
+                             const LoadProgress &Control) {
+  Img.Format = Fmt;
+  const llvm::ArrayRef<uint8_t> Bytes(
+      reinterpret_cast<const uint8_t *>(Buffer.getBufferStart()),
+      Buffer.getBufferSize());
+  Img.InputFileSHA256 = sha256(Bytes, Control);
+  if (CopyRaw)
+    copyImageBytes(Bytes, Img.Raw, Control);
+}
+
+llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>>
+Loader::readFileInto(const std::filesystem::path &Path, BinaryImage &Img,
+                     BinaryFormat Fmt, bool CopyRaw,
+                     const LoadProgress &Control) {
+  auto Buffer = readFileBuffer(Path, Fmt, Control);
+  if (!Buffer)
+    return Buffer.takeError();
+  initializeImage((*Buffer)->getMemBufferRef(), Img, Fmt, CopyRaw, Control);
+  return std::move(*Buffer);
+}
 
 llvm::StringRef getLoadRowLoader(LoadRow Row) {
   switch (Row) {

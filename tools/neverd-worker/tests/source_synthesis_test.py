@@ -256,6 +256,22 @@ def prefix_residue_elf(degree, neighbor=False, *, prefix_bits=None,
     return elf(code), expected
 
 
+
+def multiple_residual_elf(degree, neighbor=False):
+    # Every odd x row retains several independent high-bit disturbances.
+    # The lower scale in the neighbor keeps cross terms observable.
+    scale = 1 << (32 - (5 if neighbor else 3))
+    code = bytearray.fromhex("b8") + struct.pack("<I", scale)
+    factors = []
+    for i in range(degree):
+        code += bytes.fromhex("89f9 81c1") + struct.pack("<I", 2*i)
+        code += bytes.fromhex("4189f0 4181c0") + struct.pack("<I", i)
+        code += bytes.fromhex("4183e0fc 4431c1 0fafc1")
+        factors.append(f"((x+{2*i}U)^((y+{i}U)&0xfffffffcU))")
+    code += bytes.fromhex("01f8 01f0 01d0 c3")
+    return elf(code), "x+y+z+" + str(scale) + "U*" + "*".join(factors)
+
+
 def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
@@ -338,6 +354,10 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             # its original product oracle; allow the lookup's literal scale.
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert code.count("*") <= 1 and "<<" not in code, text
+        elif kind.startswith("multiple-residual-"):
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            if not kind.endswith("neighbor"):
+                assert code.count("*") <= 3, text
         elif kind == "distributed-residue-neighbor":
             # The original-product execution oracle checks the retained
             # nonzero residual without prescribing a particular spelling.
@@ -398,7 +418,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith("residue-") or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
+                    if kind.startswith(("residue-", "multiple-residual-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -417,7 +437,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
-                    if kind != "distributed-residue-neighbor":
+                    if kind not in ("distributed-residue-neighbor", "multiple-residual-neighbor"):
                         assert enhanced != ordinary
                 # Turning the menu off restores its independent ordinary page.
                 assert source(client, representation, False) == ordinary
@@ -467,6 +487,9 @@ if __name__ == "__main__":
             ("residue-distributed-quartic", *prefix_residue_elf(4, distributed_zeros=True)),
             ("residue-distributed-octic", *prefix_residue_elf(8, distributed_zeros=True)),
             ("distributed-residue-neighbor", *prefix_residue_elf(4, True, distributed_zeros=True)),
+            ("multiple-residual-quartic", *multiple_residual_elf(4)),
+            ("multiple-residual-octic", *multiple_residual_elf(8)),
+            ("multiple-residual-neighbor", *multiple_residual_elf(4, True)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

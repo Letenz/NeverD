@@ -95,6 +95,23 @@ add_neverd_unittest(NeverDGraphCyclesTests
 target_include_directories(NeverDGraphCyclesTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
+add_neverd_unittest(NeverDBinaryDiffTests
+  BinaryDiffTests.cpp
+  BinaryDiffDataFlowTests.cpp
+  BinaryDiffFlowRegionsTests.cpp
+  BinaryDiffImpactTests.cpp
+  BinaryDiffCallEffectTests.cpp
+  BinaryDiffObservationTests.cpp
+  BinaryDiffReviewTests.cpp
+  BinaryDiffScalarValidationTests.cpp
+  LINK_COMPONENTS Diff
+  LINK_LIBS LLVMAsmParser
+)
+add_neverd_unittest(NeverDBinaryDiffFlowPipelineTests
+  BinaryDiffDataFlowPipelineTests.cpp
+  LINK_COMPONENTS Diff Pipeline
+)
+
 add_neverd_unittest(NeverDSourceVariableFlowTests
   SourceVariableFlowTests.cpp
   LINK_COMPONENTS IR
@@ -226,8 +243,56 @@ if(TARGET neverd_shared)
     NEVERD_MOBILE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/scripts/tests/fixtures/mobile")
   set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/ObjCRuntimeTestProperties.cmake")
+  if(Python3_EXECUTABLE AND NEVERD_TEST_CLANG_EXECUTABLE)
+    add_test(NAME NeverDBinaryDiffCLI
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/diff/cli_test.py"
+        --neverd $<TARGET_FILE:neverd> --library $<TARGET_FILE:neverd_shared>
+        --compiler "${NEVERD_TEST_CLANG_EXECUTABLE}"
+        --fixture "${CMAKE_CURRENT_SOURCE_DIR}/diff/patch_fixture.c")
+    set_tests_properties(NeverDBinaryDiffCLI PROPERTIES
+      TIMEOUT 120 LABELS "NeverDBinaryDiff")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+      set(_neverd_diff_effect_worker)
+      if(TARGET neverd-worker)
+        list(APPEND _neverd_diff_effect_worker --worker $<TARGET_FILE:neverd-worker>)
+      endif()
+      add_test(NAME NeverDBinaryDiffCallEffects
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/diff/call_effects_test.py"
+          --neverd $<TARGET_FILE:neverd> --library $<TARGET_FILE:neverd_shared>
+          --compiler "${NEVERD_TEST_CLANG_EXECUTABLE}" ${_neverd_diff_effect_worker})
+      set_tests_properties(NeverDBinaryDiffCallEffects PROPERTIES
+        TIMEOUT 120 LABELS "NeverDBinaryDiff")
+      add_test(NAME NeverDBinaryDiffScalarValidation
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/diff/scalar_validation_test.py"
+          --neverd $<TARGET_FILE:neverd> --library $<TARGET_FILE:neverd_shared>
+          --compiler "${NEVERD_TEST_CLANG_EXECUTABLE}" ${_neverd_diff_effect_worker})
+      set_tests_properties(NeverDBinaryDiffScalarValidation PROPERTIES
+        TIMEOUT 120 LABELS "NeverDBinaryDiff")
+    endif()
+    find_program(NEVERD_DIFF_TEST_GCC NAMES x86_64-linux-gnu-gcc gcc)
+    set(NEVERD_DIFF_GCC_ARGS)
+    if(NEVERD_DIFF_TEST_GCC)
+      list(APPEND NEVERD_DIFF_GCC_ARGS --gcc "${NEVERD_DIFF_TEST_GCC}")
+    endif()
+    add_test(NAME NeverDBinaryDiffCompilerRegions
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/diff/compiler_regions_test.py"
+        --neverd $<TARGET_FILE:neverd> --clang "${NEVERD_TEST_CLANG_EXECUTABLE}"
+        ${NEVERD_DIFF_GCC_ARGS}
+        --fixture "${CMAKE_CURRENT_SOURCE_DIR}/diff/compiler_regions_fixture.c"
+        --artifacts "${CMAKE_CURRENT_BINARY_DIR}/bindiff-compiler-regions")
+    set_tests_properties(NeverDBinaryDiffCompilerRegions PROPERTIES
+      TIMEOUT 120 LABELS "NeverDBinaryDiff")
+  endif()
+  add_neverd_unittest(NeverDBinaryDiffSDKTests
+    BinaryDiffSDKTests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDBinaryDiffSDKTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
+    TypeConversionCAPITests.cpp
+    LINK_COMPONENTS Types
     LINK_LIBS neverd_shared
   )
   add_neverd_unittest(NeverDFunctionDisasmCAPITests

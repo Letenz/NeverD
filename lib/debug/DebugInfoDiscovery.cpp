@@ -523,10 +523,10 @@ std::string describeMapMismatch(const MapCheck &Check) {
   return "it does not match the image";
 }
 
-DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
-                              const BinaryImage &Img,
-                              const DebugInfoRequest &Req,
-                              const LoadProgress &Progress) {
+static DebugInfoResult
+loadDebugInfoImpl(const std::filesystem::path &BinaryPath,
+                  const BinaryImage &Img, const DebugInfoRequest &Req,
+                  const LoadProgress &Progress) {
   DebugInfoResult Result;
   if (!Req.Enabled)
     return Result;
@@ -587,6 +587,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
   if (Result || !Searches || !Req.SearchMap)
     return Result;
   for (const std::filesystem::path &C : mapCandidates(BinaryPath)) {
+    Progress.check();
     if (!isReadableFile(C))
       continue;
     MapRead Map = readMap(C, Img, BinaryPath);
@@ -602,6 +603,16 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
     return Result;
   }
 
+  return Result;
+}
+
+DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
+                              const BinaryImage &Img,
+                              const DebugInfoRequest &Req,
+                              const LoadProgress &Progress) {
+  Progress.report("debug", 0, 1);
+  auto Result = loadDebugInfoImpl(BinaryPath, Img, Req, Progress);
+  Progress.report("debug", 1, 1);
   return Result;
 }
 

@@ -14,6 +14,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
 
@@ -2012,6 +2013,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     return "({ " + Type + " " + Temp + " = (" + Type + ")(" +
            exprStr(*E.Operands[0]) + "); __asm__ volatile(\"" + Op +
            "\" : \"+r\"(" + Temp + ") :: \"memory\"); " + Result + "; })";
+  }
+  if (isX86SystemStateIntrinsic(E.IntrinsicId)) {
+    std::vector<std::string> Arguments;
+    for (const auto &Operand : E.Operands)
+      Arguments.push_back(Operand ? exprStr(*Operand) : "");
+    return renderX86SystemStateExpression(Opts.TheArch, E, Arguments,
+                                          Opts.Format == BinaryFormat::COFF,
+                                          HasCIntrinsics);
   }
   if (E.SourceCallHint)
     return renderSourceCallExpr(E);

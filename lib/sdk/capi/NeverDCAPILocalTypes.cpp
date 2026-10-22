@@ -23,6 +23,7 @@
 #include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/types/DWARFTypeImport.h"
+#include "neverd/types/TypeImport.h"
 #include "neverd/types/TypeJSON.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
@@ -870,6 +871,8 @@ const char *neverd_local_types_json(neverd_session_t Sess,
                           {"unions", S->LocalTypeStats.Unions},
                           {"enums", S->LocalTypeStats.Enums},
                           {"declaredOnly", S->LocalTypeStats.DeclaredOnly},
+                          {"unsupportedFunctionTypes",
+                           S->LocalTypeStats.UnsupportedFunctionTypes},
                           {"nestingMismatches", std::move(Mismatches)},
                           {"skipped", std::move(Skipped)},
                           {"conflicts", std::move(Conflicts)},
@@ -1161,7 +1164,7 @@ const char *neverd_types_convert(const char *RequestJson) {
   types::TypeLibrary Library(*Model);
   if (ABI)
     Library.setRecordABI(*ABI);
-  llvm::json::Array Types, Prototypes, Problems;
+  llvm::json::Array Types, Prototypes, Problems, Imports;
   const llvm::json::Array *Declarations = Request->getArray("declarations");
   if (!Declarations)
     return refuse("\"declarations\" must be an array");
@@ -1176,11 +1179,64 @@ const char *neverd_types_convert(const char *RequestJson) {
     if (!Lang || !Source)
       return refuse("a declaration needs a language (c, cpp, rust or go) and "
                     "its source");
+    std::optional<llvm::StringRef> Prefix;
+    if (const auto *Value = Declaration->get("importPrefix")) {
+      Prefix = Value->getAsString();
+      if (!Prefix || Prefix->empty())
+        return refuse("\"importPrefix\" must be a nonempty C identifier");
+    }
+    std::vector<llvm::StringRef> Selected;
+    std::optional<llvm::ArrayRef<llvm::StringRef>> Selection;
+    if (const auto *Value = Declaration->get("importPrototypes")) {
+      const auto *Names = Value->getAsArray();
+      if (!Prefix || !Names)
+        return refuse(
+            "\"importPrototypes\" requires importPrefix and an array of names");
+      for (const auto &Name : *Names) {
+        const auto Text = Name.getAsString();
+        if (!Text || Text->empty())
+          return refuse("\"importPrototypes\" names must be nonempty strings");
+        Selected.push_back(*Text);
+      }
+      Selection = Selected;
+    }
     types::ParseOptions Parse;
     Parse.Lang = *Lang;
     Parse.KeepGoing = KeepGoing;
-    const types::ParseResult Result =
-        types::parseTypes(*Source, Library, Parse);
+    types::TypeLibrary Provider(*Model);
+    Provider.setRecordABI(Library.recordABI());
+    types::ParseResult Result =
+        types::parseTypes(*Source, Prefix ? Provider : Library, Parse);
+    if (Prefix) {
+      // Partial provider declarations cannot establish a complete dependency
+      // closure. Even keepGoing must not import a partly parsed provider.
+      Result.Types.clear();
+      Result.Prototypes.clear();
+      if (Result.Problems.empty()) {
+        auto Imported =
+            types::importPrototypes(Library, Provider, *Prefix, Selection);
+        if (!Imported)
+          return refuse("declaration " + std::to_string(I) + ": " +
+                        llvm::toString(Imported.takeError()));
+        llvm::json::Array Renamed, Dependencies, Added;
+        for (const auto &Name : Imported->Dependencies)
+          Dependencies.push_back(jsonSafeText(Name));
+        for (const auto &Name : Imported->Prototypes)
+          Added.push_back(jsonSafeText(Name));
+        for (const auto &[Original, Name] : Imported->Renamed)
+          Renamed.push_back(
+              llvm::json::Object{{"original", jsonSafeText(Original)},
+                                 {"name", jsonSafeText(Name)}});
+        Imports.push_back(
+            llvm::json::Object{{"declaration", static_cast<int64_t>(I)},
+                               {"prefix", jsonSafeText(*Prefix)},
+                               {"renamed", std::move(Renamed)},
+                               {"dependencies", std::move(Dependencies)},
+                               {"prototypes", std::move(Added)}});
+        Result.Types = std::move(Imported->Types);
+        Result.Prototypes = std::move(Imported->Prototypes);
+      }
+    }
     for (const std::string &Name : Result.Types)
       Types.push_back(jsonSafeText(Name));
     for (const std::string &Name : Result.Prototypes)
@@ -1194,6 +1250,8 @@ const char *neverd_types_convert(const char *RequestJson) {
   }
   llvm::json::Object Reply{{"types", std::move(Types)},
                            {"prototypes", std::move(Prototypes)}};
+  if (!Imports.empty())
+    Reply["imports"] = std::move(Imports);
   // Nothing renders from declarations that do not read, unless asked to
   // keep going past them.
   if (const llvm::json::Object *Render = Request->getObject("render");

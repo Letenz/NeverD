@@ -347,7 +347,9 @@ namespace {
 /// instruction set, reads up to the first terminator instead.
 std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
                               InstructionFlowScratch &Scratch, va_t Entry,
-                              llvm::ArrayRef<va_t> Entries) {
+                              llvm::ArrayRef<va_t> Entries,
+                              const std::function<bool()> &Stop,
+                              FunctionDecodeStatus &Status) {
   const auto OtherEntry = [&](va_t Address) {
     return Address != Entry &&
            std::binary_search(Entries.begin(), Entries.end(), Address);
@@ -355,24 +357,35 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
   const bool FollowsJumps = Img.Arch != Arch::ARM && !Entries.empty();
   std::set<va_t> Body;
   std::vector<va_t> Pending{Entry};
-  while (!Pending.empty() && Body.size() < kMaxUnsizedInstructions) {
+  while (!Pending.empty() && Body.size() < kMaxUnsizedInstructions &&
+         !(Stop && Stop())) {
     const va_t Start = Pending.back();
     Pending.pop_back();
-    (void)decodeNativeRange(
+    bool Terminated = false;
+    const bool ModeKnown = decodeNativeRange(
         Img, Dec, Start, 0, kMaxUnsizedInstructions - Body.size(),
         [&](const DecodedInsn &DI, const uint8_t *, int) {
-          if (OtherEntry(DI.Addr) || !Body.insert(DI.Addr).second)
+          if ((Stop && Stop()) || OtherEntry(DI.Addr) ||
+              !Body.insert(DI.Addr).second) {
+            Terminated = true;
             return false;
+          }
           if (FollowsJumps) {
             const InstructionFlow Flow = Scratch.summarize(Img, Dec, DI);
+            Status.Incomplete |=
+                Flow.Kind == UnliftedFlow || Flow.Kind == "ijump";
             if ((Flow.Kind == "jump" || Flow.Kind == "cjump") &&
                 Flow.Target != InvalidVA && !OtherEntry(Flow.Target) &&
                 !Body.count(Flow.Target))
               Pending.push_back(Flow.Target);
           }
-          return !Dec.isFunctionTerminator(DI);
+          Terminated = Dec.isFunctionTerminator(DI);
+          return !Terminated;
         });
+    Status.Incomplete |= !ModeKnown || !Terminated;
   }
+  Status.Incomplete |= !Pending.empty();
+  Status.Stopped = Stop && Stop();
   return {Body.begin(), Body.end()};
 }
 
@@ -383,7 +396,10 @@ bool decodeExtents(
     llvm::ArrayRef<va_t> Entries,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
                             InstructionFlowScratch &)>
-        Visit) {
+        Visit,
+    const std::function<bool()> &Stop = {},
+    std::vector<FunctionDecodeStatus> *Status = nullptr) {
+  std::vector<FunctionDecodeStatus> Reports(Extents.size());
   // The parts of a function its unwind records keep apart from its body,
   // past other functions' code, are its code too: MSVC moves cold paths
   // there.
@@ -398,36 +414,52 @@ bool decodeExtents(
       return;
     }
     InstructionFlowScratch Scratch;
-    for (size_t Index = Claim(); Index < Total; Index = Claim()) {
+    for (size_t Index = Claim(); Index < Total && !(Stop && Stop());
+         Index = Claim()) {
       const auto [Entry, Size] = Extents[Index];
+      auto &Report = Reports[Index];
+      const auto ReadRange = [&](va_t Start, uint64_t Span, uint64_t Limit) {
+        uint64_t Bytes = 0;
+        const bool ModeKnown =
+            decodeNativeRange(Img, Local, Start, Span, Limit,
+                              [&](const DecodedInsn &DI, const uint8_t *, int) {
+                                if (Stop && Stop())
+                                  return false;
+                                ++Report.Instructions;
+                                Report.Bytes += DI.Size;
+                                Bytes += DI.Size;
+                                Visit(Index, Local, DI, Scratch);
+                                return true;
+                              });
+        Report.Incomplete |= !ModeKnown || (Span && Bytes != Span);
+        Report.Stopped |= Stop && Stop();
+      };
       if (Size > 0) {
-        (void)decodeNativeRange(
-            Img, Local, Entry, Size, Size,
-            [&](const DecodedInsn &DI, const uint8_t *, int) {
-              Visit(Index, Local, DI, Scratch);
-              return true;
-            });
+        ReadRange(Entry, Size, Size);
       } else {
         for (const va_t Address :
-             unsizedBody(Img, Local, Scratch, Entry, Entries))
-          (void)decodeNativeRange(
-              Img, Local, Address, 0, 1,
-              [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI, Scratch);
-                return true;
-              });
+             unsizedBody(Img, Local, Scratch, Entry, Entries, Stop, Report)) {
+          if (Stop && Stop())
+            break;
+          ReadRange(Address, 0, 1);
+        }
       }
       if (const auto It = Chunks.find(Entry); It != Chunks.end())
-        for (const ExceptionAddressRange &Range : It->second)
-          (void)decodeNativeRange(
-              Img, Local, Range.Begin, Range.End - Range.Begin,
-              Range.End - Range.Begin,
-              [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI, Scratch);
-                return true;
-              });
+        for (const ExceptionAddressRange &Range : It->second) {
+          if (Stop && Stop())
+            break;
+          ReadRange(Range.Begin, Range.End - Range.Begin,
+                    Range.End - Range.Begin);
+        }
     }
   });
+  if (Stop && Stop())
+    for (auto &Report : Reports) {
+      Report.Stopped = true;
+      Report.Incomplete = true;
+    }
+  if (Status)
+    *Status = std::move(Reports);
   return !DecoderFailed;
 }
 
@@ -441,12 +473,14 @@ bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
                             InstructionFlowScratch &)>
-        Visit) {
+        Visit,
+    const std::function<bool()> &Stop,
+    std::vector<FunctionDecodeStatus> *Status) {
   std::vector<std::pair<va_t, uint64_t>> Extents;
   Extents.reserve(Page.Functions.size());
   for (const FuncInfo *F : Page.Functions)
     Extents.emplace_back(F->Entry, F->Size);
-  return decodeExtents(Img, Extents, Page.Entries, Visit);
+  return decodeExtents(Img, Extents, Page.Entries, Visit, Stop, Status);
 }
 
 std::optional<DataAccessWidths>

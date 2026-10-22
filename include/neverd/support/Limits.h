@@ -34,6 +34,11 @@ inline constexpr unsigned MaxMinLength = 1024;
 
 namespace neverd::limits::support {
 
+// Hashing and copying loaded bytes. This is a checkpoint granularity, not a
+// maximum input size or a wall-clock deadline. Keep it a SHA-256 block
+// multiple.
+inline constexpr size_t kLoadByteCheckpointBytes = 1024 * 1024;
+
 // lib/support/TextEvidence.cpp
 inline constexpr size_t kTextEvidenceMinTableAscentIdeographs = 3;
 inline constexpr unsigned kTextEvidenceMinWordLetters = 3;

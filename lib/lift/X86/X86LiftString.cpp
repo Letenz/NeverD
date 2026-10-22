@@ -221,7 +221,7 @@ bool X86Lifter::liftString(LiftState &S, const cs_insn *Insn,
       }
     }
     if (HasXmm || InsnId == X86_INS_CMPSS ||
-        hasLegacyFPMaskCompareOpcode(Insn)) {
+        hasLegacyFPMaskCompareOpcode(Insn, TargetArch)) {
       return liftFPMaskCompareState(*this, S, Insn, X86,
                                     InsnId == X86_INS_CMPSD, true, false);
     } else if (!hasRepOrRepnePrefix(X86)) {

@@ -1,0 +1,727 @@
+# Structural binary comparison
+
+`neverd diff --structural` compares decoded native functions, basic blocks and
+instructions. The desktop exposes the same operation under **File → Compare
+binaries…**. Both use the shared comparison C API; the GUI runs it in a separate
+worker and does not replace the open project. The original name-based `diff`
+command remains available without `--structural`.
+
+This is an experimental foundation for issue #1462. The implemented profile is
+`native-x86-v1`, for two x86 inputs or two x86-64 inputs with the same ABI. Other
+ISA/ABI pairs fail explicitly. Raw and compiled ELF fixtures exercise the real
+loader and decoder. Acceptance for other native formats, optimized transformation
+families and large production inputs requires separate evidence.
+
+## Command line
+
+```sh
+neverd diff --structural -a original.exe -b patched.exe
+neverd diff --structural -a original.exe -b patched.exe --json --save review.nddiff
+neverd diff --structural -a original.exe -b patched.exe --reopen review.nddiff --json
+neverd diff --structural -a original.exe -b patched.exe --list changed --limit 200
+neverd diff --structural -a original.exe -b patched.exe --func 0x140001000 --json
+neverd diff --structural -a original.exe -b patched.exe --ignore-names --timeout-ms 30000
+```
+
+Progress goes to stderr. `--list` supports `all`, `matched`, `changed`,
+`ambiguous` and `unmatched`, with `--offset` and `--limit`. `--func` selects a
+primary entry address or an unambiguous name and returns paired original bytes,
+operands, instruction alignment, CFG and matching evidence.
+
+Ctrl+C cooperatively stops input loading as well as comparison work. Loading
+reports per-side stages on stderr. A stop before comparison publication exits
+with code 3, writes no JSON result, and leaves an existing `--save` file intact.
+Individual file reads, allocations and metadata helpers can delay the next stop
+checkpoint; this is not a hard stop deadline. Ordinary load failures exit with
+code 1.
+
+Function inventories support `--list-side primary|secondary`, `--list-search`
+(name or hexadecimal address), `--list-sort` (address, name, size, similarity,
+confidence or changes), and `--list-descending`. To inspect every retained
+ambiguity candidate for a primary function, select the secondary inventory:
+
+```sh
+neverd diff --structural -a original.exe -b patched.exe --list all \
+  --list-side secondary --ambiguous-with 0x140001000 --limit 200
+```
+
+Continue with `--offset` using the response's `next_offset`. `ambiguous_with`
+always names a function on the opposite side; an absent source is an error,
+while a valid source with no retained ambiguity group returns an empty page.
+The `ambiguity` metadata identifies the source, group explanation and unfiltered
+candidate count. Search and sort apply to the returned candidate functions.
+The usual inventory's short `candidates` array remains a preview; it does not
+limit this query's total. These are the engine's retained hypotheses, not all
+possible correspondences or accepted matches.
+
+In the desktop, select a function and choose **Pair with…**. The resizable
+picker pages all retained ambiguity candidates and can switch to **All
+functions** for manual pairing. Search accepts names and hexadecimal addresses,
+including zero. Rows show current pairings; a selection explains which pairs
+will be replaced. **Pair functions** records the edit and **Undo** restores the
+previous pairs. Searching, browsing and cancelling do not edit the mapping.
+Changed comparison revisions invalidate the picker until it is reopened.
+
+`--options FILE` accepts an object containing:
+
+| Option | Meaning |
+| --- | --- |
+| `profile` | `native-x86-v1` |
+| `discover`, `use_names`, `approximate` | Enable discovery, stated names, approximate candidates |
+| `min_similarity`, `min_context_similarity`, `ambiguity_margin` | Heuristic thresholds in `[0,1]` |
+| `max_candidates` | Bounded candidates per unmatched function |
+| `max_instructions`, `max_functions`, `max_memory_bytes` | Snapshot extraction allowances |
+| `timeout_ms` | Comparison deadline; zero disables it |
+| `primary`, `secondary` | Optional `{begin,end,function}` filters |
+| `overrides` | Ordered analyst decisions |
+| `regions` | Boolean or bounded native region settings object |
+| `dataflow` | Boolean or bounded native SSA collection settings object |
+| `flow_regions` | Boolean or bounded verified SSA neighborhood settings object |
+
+Unknown fields and wrong types fail. Policy defaults and ceilings live in
+`include/neverd/diff/Limits.h`. The memory allowance accounts for decoded/model
+storage; it is **not a process RSS limit** and does not include caller-owned
+loaded images. A budget-limited snapshot is rebuilt as a deterministic prefix in
+address order before publication. Cancelled and deadline-limited prefixes can
+differ according to when the stop was observed.
+
+`--overrides FILE` applies a JSON array of decisions after comparison/reopen:
+
+```json
+[
+  {"kind":"match","primary":"0x140001000","secondary":"0x140002000"},
+  {"kind":"confirm","primary":"0x140001000","secondary":"0x140002000"}
+]
+```
+
+`match` replaces conflicting pairs, `unmatch` dissolves a pair, and `confirm`
+records an analyst's decision. The SDK and GUI support undo/redo. These actions
+change correspondence, not input bytes or project annotations.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | No observed non-movement changes or unresolved functions, with complete coverage |
+| 1 | Load, option, comparison, saved-result binding or output failure |
+| 2 | Changes or unresolved functions with complete coverage |
+| 3 | Stopped work or incomplete analysis/discovery coverage |
+
+## Native region hypotheses
+
+`--regions` adds the experimental `native-runs-v1` search below function
+boundaries. In the desktop, enable **Settings → Region hypotheses** before
+comparing, then open **Regions…**. The separate review window pages hypotheses,
+shared spans and their paired original instructions; it does not modify accepted
+function pairs. Full-function inspection remains available from each span.
+
+```sh
+neverd diff --structural -a before.o -b after.o --regions --save regions.nddiff
+neverd diff --structural -a before.o -b after.o --list regions --region-kind split
+neverd diff --structural -a before.o -b after.o --region region-ID --limit 200
+neverd diff --structural -a before.o -b after.o --region region-ID --region-anchor 0 --limit 200
+neverd diff --structural -a before.o -b after.o --reopen regions.nddiff --list region-anchors
+neverd diff --structural -a before.o -b after.o --reopen regions.nddiff --region-anchor 0
+```
+
+Rare normalized instruction windows grow into exact shared runs, retaining scalar
+changes outside those runs. A bipartite graph groups their function memberships.
+One-to-many, many-to-one and many-to-many components retain alternative split,
+merge, clone and redistribution explanations. Observed calls among participating
+functions support inline/outline hypotheses; shared terminal runs and stated
+module ownership support shared-tail and module-movement hypotheses. These are
+inferences about transformations, not recovered source facts. Overlapping copies
+remain ambiguous and do not replace the one-to-one mapping.
+
+Coverage counts decoded non-transfer instructions in participating functions.
+Calls, branches and returns are excluded from seed growth and remain visible in
+the ordinary function delta. Memory effects, register renaming, scheduling,
+source-level dataflow and cross-ISA semantics are not validated by this profile.
+An unchanged shared run does not hide a changed constant elsewhere in the body.
+
+Repeated runs shorter than the default eight instructions are omitted unless
+they cover at least half the eligible instructions of either function. This
+limits components formed from common short sequences; it is a heuristic
+abstention, not evidence that a transformation is absent. Unique seeds retain
+the ordinary minimum run length.
+
+`regions` may be an object with `enabled`, `min_instructions`,
+`min_repeated_instructions`, `max_occurrences`, `max_seeds`, `max_work`,
+`max_anchors` and `max_hypotheses`. Work/storage admission
+and defaults have one owner in `diff/Limits.h`. Frequent seed groups and oversized
+components and weak candidates are counted as explicit abstentions. Exhausting a budget, cancellation
+or deadline retains completed evidence and publishes the actual stop state.
+No feature hash, score or region explanation is a semantic certificate.
+The **All shared spans (including unclassified)** filter and `--list region-anchors`
+also page anchors retained before grouping could finish. Use the saved report
+when revisiting a partial result: anchor indices belong to that exact result.
+
+## Dependency evidence and slices
+
+`--dataflow` captures the existing pipeline's verified MedIR as detached SSA/CFG
+observations. Enable **Settings → Dependency evidence** in the desktop, choose a
+function allowance, compare, and open **Dependencies…**. The window pages both
+inputs' function availability, operations, native instruction addresses, widths,
+operands and gaps. **Trace inputs** and **Trace uses** request backward/forward
+slices with optional control dependencies. Original-function navigation retains
+the ordinary native delta alongside these observations.
+
+```sh
+neverd diff --structural -a before.o -b after.o --dataflow --save flow.nddiff
+neverd diff --structural -a before.o -b after.o --list dataflow --limit 200
+neverd diff --structural -a before.o -b after.o --flow-function 0x1000 --limit 200
+neverd diff --structural -a before.o -b after.o --flow-function 0x1000 --flow-kind blocks
+neverd diff --structural -a before.o -b after.o --flow-function 0x1000 --slice-node 12
+neverd diff --structural -a before.o -b after.o --flow-function 0x1000 --slice-node 12 --slice-direction forward --slice-data-only
+neverd diff --structural -a before.o -b after.o --reopen flow.nddiff --list dataflow
+```
+
+`--flow-side secondary` selects the second input. Node IDs and function entry
+addresses come from that side's pages; an ID belongs to one saved graph. The
+collection visits decoded bodies in address order, subject to the input filters.
+The default allowance is 16 functions per input, 4096 native instructions per
+function, 65536 SSA nodes per graph, and 262144 retained nodes per input. The
+`dataflow` settings object accepts `enabled`, `max_functions`,
+`max_native_instructions`, `max_total_nodes`, and `graph`; `graph` accepts
+`max_nodes`, `max_blocks`, `max_work`, and `rounds`. Limits have one owner in
+`diff/Limits.h`. Collection summaries distinguish eligible, processed,
+unprocessed, available, unsupported, failed and resource-limited functions.
+Increasing one allowance does not remove the other bounds.
+
+SSA capture uses the machine ABI preparation shared with native lifting and
+verifies its final MedIR, without emitting HighIR or LLVM. Source presentation
+hints do not supply its argument contracts. Existing bounded omitted-callee
+summary recovery may inspect bodies outside the selected function.
+
+The selected native pipeline invocation is synchronous. Stop/deadline checks
+occur between functions and during graph projection/slicing; pipeline temporary
+memory and work are not hard-limited by retained-node bounds. Native instruction
+admission prevents starting an oversized decoded body, but this is not a process
+RSS or real-time deadline guarantee. The GUI uses a separate worker and bounded
+page caches. The last exact slice request is cached for paging; the C API accepts
+`refresh:true` to recompute a stopped slice.
+
+SSA names/register identities are not correspondence evidence. Scalar bits,
+widths, address provenance, PHI predecessor edges and native origins are retained.
+Synthetic operations have block provenance rather than an invented instruction.
+The `med-ssa-v2` profile and dependency schema 2 also retain recovered call
+arguments. Each call's `call_argument_begin`/`call_argument_count` identifies
+their exact range in the input array, after raw operation inputs and before
+preserved call-clobber inputs. An absent record (`call_argument_begin:null`)
+remains an unknown input boundary; it differs from an observed zero-argument record. Stale or
+duplicate call-record owners are refused. These records add caller-side data
+dependencies, not callee/formal parameter or return bindings. Earlier development
+schema-1 graphs require fresh extraction rather than silent reinterpretation.
+Slices traverse explicit SSA edges and optional postdominator-derived control
+dependencies on paths to observed exits. Aliases, opaque calls, exceptional flow,
+unknown inputs and missing exits remain visible gaps. These are pipeline
+observations with inferred calling conventions, not qualified machine-state or
+whole-program equivalence. The internal finite-neighborhood fingerprints expose
+open data frontiers; hash equality never marks code unchanged.
+
+Saved dependency graphs stream into the shared document. Reopen reconstructs
+the bounded native projection and checks the recipe, coverage, origins and every
+dependency fact before publishing it. A saved stopped collection may retain a
+verified prefix of fresh evidence. CLI and worker restart/reopen reuse saved
+comparison settings; original input load/discovery/filter settings still need to
+match. These dependency pages alone do not qualify compiler transformations or
+cross-ISA profiles.
+
+## SSA region hypotheses
+
+`--flow-regions` enables `med-neighborhoods-v1` and dependency extraction. In the
+desktop, enable **Settings → SSA region hypotheses**, compare, then choose
+**Regions → SSA dependency regions**. The separate native instruction comparison
+continues to show residual changes and uncovered code.
+
+```sh
+neverd diff --structural -a before.o -b after.o --flow-regions --save ssa.nddiff
+neverd diff --structural -a before.o -b after.o --reopen ssa.nddiff --list flow-regions
+neverd diff --structural -a before.o -b after.o --reopen ssa.nddiff --flow-region flow-region-ID
+neverd diff --structural -a before.o -b after.o --reopen ssa.nddiff --flow-region-anchor 0 --limit 200
+neverd diff --structural -a before.o -b after.o --reopen ssa.nddiff --flow-region-anchor 0 --flow-region-coordinates phi_blocks
+neverd diff --structural -a before.o -b after.o --reopen ssa.nddiff --list flow-region-anchors
+```
+
+Finite fingerprints nominate native-origin expression roots. Exact checks then
+preserve node sharing, operation/operand widths, scalar bits, address provenance
+and PHI incoming branch-arm context within the admitted depth. Distinct tied
+definitions abstain. Candidates must contain at least four verified nodes and
+two distinct original instruction addresses by default. Overlapping anchors keep
+their node pairs and original byte records; their group coverage counts each
+node once. Different counterparts for the same node add a clone alternative.
+Function topology and observed native calls can suggest split, merge,
+redistribution, inline, outline or module movement. These explanations are not
+accepted function mappings, calibrated probabilities, semantic validation or
+patch-presence findings. Control beyond PHI context remains open in every anchor.
+
+`flow_regions` accepts `enabled`, `min_nodes`, `min_origins`, `max_occurrences`,
+`max_seeds`, `max_work`, `max_anchors` and `max_node_pairs`. Defaults admit eight
+occurrences of a seed per side, 262144 indexed roots per side, 67108864 work
+units, 20000 anchors and 1048576 retained node/PHI-block pairs. Dependency
+collection and graph limits also apply. Repeated seeds, weak or ambiguous
+candidates, limited graphs and oversized groups have separate counters. Scope
+flags describe whether extraction and fingerprinting covered the decoded
+function inventory; they do not assert complete semantic coverage. A work stop
+keeps completed anchors even when no group was published. The raw-anchor view
+can inspect them. Save before revisiting a partial result, since anchor indices
+belong to that result.
+
+Reopen recomputes the regions from freshly bound dependency observations.
+Completed/resource-limited records must reproduce their mappings and coverage;
+cancelled/deadline records may retain only a verified completed prefix.
+Work counters are bounded diagnostics and may differ on recomputation. SSA
+numbering and source addresses are coordinates, not correspondence features.
+The current profile requires the same admitted ISA, ABI and normalization and
+has not been qualified across compiler versions, optimization/obfuscation
+families or cross-ISA builds.
+
+## Call paths and possible impact
+
+`native-call-paths-v1` traces observed native callers or callees from one or more
+function entries. It uses admitted call relations, including tail transfers and
+resolved import slots, and needs no SSA extraction. Select a function in the GUI
+and choose **Call paths…** to inspect functions, observed program entries/exports,
+one shortest witness per function, all traversed call sites, unresolved scope and
+known edges beyond the depth/function allowance. Site rows retain original bytes
+and navigate to the caller. An absence of callers never establishes an entry.
+
+```sh
+neverd diff --structural -a before.o -b after.o --impact-function 0x401000
+neverd diff --structural -a before.o -b after.o --impact-function 0x401000,0x402000 --impact-side secondary
+neverd diff --structural -a before.o -b after.o --impact-function 0x401000 --impact-direction callees --impact-kind sites
+neverd diff --structural -a before.o -b after.o --impact-function 0x401000 --impact-kind path --impact-witness 1
+neverd diff --structural -a before.o -b after.o --impact-function 0x401000 --impact-depth 0 --impact-kind frontier
+```
+
+`--impact-kind` also accepts `entrypoints` and `boundaries`; default `functions`
+is in breadth-first discovery order. `--impact-witness` selects a global function
+row, independent of the current page/filter. `--offset`/`--limit` page every view.
+Witness ties use stable reverse native instruction order; recursive and repeated
+call sites remain in the full site view without enumerating every possible path.
+Default bounds are depth 32, 4096 reached functions, 262144 indexed call/boundary
+sites and 16777216 work units. `--impact-max-functions`, `--impact-max-sites`,
+`--impact-max-work` and `--timeout-ms` can adjust them within core ceilings.
+Indexing is limited to 1048576 native functions. A resource stop retains completed
+observations and reports partial indexing/traversal; depth/function omissions
+also have explicit frontier sites. Cancellation is cooperative.
+
+The result is **possible call reachability**, not proven interprocedural data
+impact. Path feasibility, parameter/return bindings, aliases and external callers
+are not modeled. The global boundary inventory includes unresolved transfers
+outside the reached set, so missing indirect callers are never treated as proof
+that a change is isolated. Native coverage, discovery, exception and external-body
+gaps remain visible. This operation establishes neither patch presence nor
+vulnerability elimination and performs no semantic validation.
+
+`neverd_comparison_impact_json` and worker `comparison_impact` share the same
+query: `side`, `seeds` (address strings), `direction`, `kind`, optional `witness`,
+`max_depth`, `max_functions`, `max_sites`, `max_work`, `timeout_ms`, `offset`,
+`limit`, `refresh`. One exact analysis is cached across ordinary page kinds. A refresh
+recomputes a stopped result. Every page binds its input hash/revision and query;
+saved comparison reopening freshly reconstructs the native evidence, then the
+query can be repeated. Call-path queries are not stored as analyst confirmations.
+
+### Qualified import-call contracts
+
+In **Call paths…**, choose **Call contracts in reached functions**. Select a row
+and open **Selected call** to inspect its original instruction, SSA node,
+argument roles, assumptions and remaining boundaries. **Dependency evidence**
+must have been enabled when comparing to qualify contracts; without it, calls
+remain listed with explicit missing-SSA status. Double-click a site to inspect
+the original caller.
+
+```sh
+neverd diff --structural -a before.so -b after.so --dataflow \
+  --impact-function 0x401000 --impact-direction callees --impact-kind effects
+```
+
+`native-import-effects-v1` inspects every indexed transfer in a reached caller,
+including unresolved sites and known targets beyond the traversal frontier.
+Only a bodiless native import with a unique original-instruction SSA call and
+recovered arguments can receive a contract. Safety's shared exact-name, arity,
+format and ABI rules own the contract and argument roles. Internal functions,
+similar names, missing or ambiguous SSA and unsupported signatures stay explicit.
+For example, a copy contract can identify the length argument without knowing
+destination capacity. Fallible release remains distinct from successful release.
+The stated assumption is that the import resolves to its catalog contract.
+
+These are applicability-checked call contracts, not observed executions or
+security findings. Parameter/return propagation, aliases, must-release, capacity,
+authorization, path feasibility, patch presence and semantic validation remain
+unproved. Qualifying a contract never clears SSA or native coverage gaps.
+The current real-binary fixture covers Linux x64 ELF imports and PLT transfers;
+authored ABI/arity cases additionally test refusal and fallible-release metadata.
+This does not qualify whole-program lifetime or cross-format security analysis.
+
+The shared impact API/worker `kind:"effects"` adds `max_effect_records` and
+`max_effect_work`; CLI flags are `--effect-max-records` and `--effect-max-work`.
+Defaults are 4096 records and 16777216 review work units, with ceilings of 65536
+and 1073741824. Native indexing keeps its independent impact budgets. One query
+deadline covers fresh native and review work, with cooperative polling; graph
+validation and output serialization are bounded, not hard real-time deadlines.
+The effect query has its own cache recipe; pages reuse that result and refresh
+retries stopped work. Inspection completeness is separate from native scope.
+Reopen rederives contracts from freshly bound native/SSA facts; it does not trust
+saved effect verdicts. The output records content/revision, SSA recipe, profile,
+contract authority and assumptions.
+
+## Local change review
+
+Select an accepted function pair and choose **Change review…**. The ranked table
+keeps original instructions and bytes, local SSA operations, dependency context
+and association evidence. Select an input to trace a retained node's inputs or
+uses, inspect its original function, or open its native call paths. Filtering and
+paging reuse a bounded cached calculation; **Refresh review** explicitly retries
+stopped work. SSA is optional: enable **Dependency evidence** before comparing to
+collect it; missing or unsupported graphs retain native change rows.
+
+```sh
+neverd diff --structural -a before.o -b after.o --changes-function 0x401000
+neverd diff --structural -a before.o -b after.o --dataflow \
+  --changes-function 0x401000 --changes-context predicate_dependency --limit 200
+```
+
+The `native-ssa-changes-v1` profile observes literal bits, local operand/result
+widths, operation changes within compatible families, signed/unsigned integer
+order or extension changes, and recovered call-argument counts. It uses the
+accepted native alignment, including unchanged instructions whose SSA operands
+changed after rewriting or constant propagation. Compatible SSA families must be
+unique at both native origins. A unique direct synthetic arithmetic operand can
+also be associated through that native anchor. Such records explicitly carry
+`association:"direct_synthetic_operand"`, both anchor node IDs and the retained
+SSA nodes. A synthetic address never becomes an original instruction address.
+Multiple node operands, PHIs, deeper synthetic expressions and incompatible
+families are not recursively paired. Ambiguous native families abstain and are
+counted. Native changed rows remain visible when no finer fact is available.
+
+Contexts are syntactic dependencies to predicates, returns, recovered call
+arguments or stores. They do not establish feasible paths, buffer capacity,
+authorization, error handling, lifetime effects or external callee behavior.
+Call target/clobber operands are excluded from local argument comparison; a
+missing argument record differs from a known empty record. Known address
+provenance is excluded from literal comparisons. Graph-wide uncertainty stays
+separate from individual local observations. An empty filtered page or completed
+calculation does not prove unchanged behavior or absence of a vulnerability.
+
+Priority is a review heuristic: base 10, literal 40, width/return 60, call argument
+70, signedness/memory write 80 and predicate 90; the highest applicable value wins.
+It is neither probability nor severity. Responses explicitly report
+`semantic_validation:"not_performed"`, `security_inference:"not_performed"` and
+`fix_presence:"not_assessed"`. Matching evidence and analyst confirmation remain
+separate from these observations.
+
+The query accepts `side`, `address`, `context`, `max_rows`, `max_observations`,
+`max_work`, `timeout_ms`, `refresh`, `offset` and `limit`. Contexts are `all`,
+`predicate_dependency`, `return_dependency`, `call_argument_dependency` and
+`memory_write_dependency`. CLI selectors use `--changes-side`, `--changes-context`,
+`--changes-max-rows`, `--changes-max-observations` and `--changes-max-work`, with the
+shared `--timeout-ms`, `--offset` and `--limit`. Defaults admit 65536 native rows,
+4096 observations and 16777216 units of indexing/local work; maxima are 1048576,
+65536 and 1073741824. Shared native alignment has its own admission allowance.
+One cooperative cancellation/deadline covers delta acquisition and observation
+work. Bounded output sorting and page serialization are not hard deadlines.
+Stop state, visited rows, work, per-side SSA availability/indexing and graph gaps
+remain visible. CLI stopped review returns partial exit code 3.
+
+The cache binds the accepted pair and query recipe to immutable snapshots and
+retained SSA recipes. Context/page selectors reuse that cache; mapping edits,
+undo or restore invalidate it. Derived review rows are recomputed after reopening
+instead of trusted from a saved report. Broader security-effect classification and engine patch-presence assessment
+remain future work. Manual assessments use the independent history below.
+
+## Bounded scalar return validation
+
+Select an accepted pair and choose **Validate returns…**, or request:
+
+```sh
+neverd diff --structural -a before.so -b after.so \
+  --validate-function 0x1000 --timeout-ms 5000
+```
+
+`--validation-side primary|secondary` selects the address's input. The optional
+`--validation-max-instructions` bounds each selected native body (default 2,048,
+ceiling 16,384); `--validation-max-work` controls the shared scalar proof budget
+(default 16,777,216, ceiling 1,073,741,824). These flags require
+`--validate-function`. Model construction, projection, control partitions,
+block visits and symbolic nodes have separate finite limits listed in each
+report. A result other than `proved` gives partial-analysis exit code 3;
+ordinary comparison coverage and change exit rules still apply to proved models.
+
+The `lifted-scalar-returns-v1` profile requires x64 native inputs with the same
+ABI, complete strict machine-ABI lifts, equal integer return widths and identical
+ordered GPR parameter locations/widths. It checks all **defined integer input
+bitvectors**. This is an explicit precondition; no `noundef` annotation is added
+to the source IR. Native calls, unknown transfers, exception handlers, memory/pointer
+models and unsupported contracts are refused. Different recovered input widths
+remain unsupported even when both native functions return the same width.
+Ordinary unwind-only records are admitted only when complete, bound to the
+entire selected native body, and identical to the emitter's canonical projection
+of that lift's normalized source record. Records with a personality, LSDA,
+handler or incomplete parse remain unsupported. The original unwind information
+and IR stay intact; this admission does not prove native unwind behavior.
+
+| Status | Meaning |
+| --- | --- |
+| `proved` | Equal integer returns and defined termination in the supplied lifted models over the complete admitted input domain |
+| `unsupported` | A binding, operation, effect or contract lies outside this profile |
+| `unproved` | The bounded algebra did not establish equality or definedness; **not** evidence of inequivalence |
+| `budget_exceeded` | A finite model/proof allowance prevented completion |
+| `cancelled` | A cooperative stop was observed; `state` distinguishes cancellation from timeout |
+
+A proved result assumes lift correctness. It does not prove full native register
+state, flags, memory, faults, call effects, vulnerability elimination or fix
+presence. Native input hashes/revisions, original entries, verified lift counts,
+LLVM content digests, argument bindings, work and partitions remain visible in
+the report. It is an inspection result, not a signed or persistent certificate.
+The UI shows assumptions beside the outcome and clears results when input or
+mapping revisions change. Time, native-instruction and proof-work controls allow
+bounded retries; changing any limit also clears the old result. **Check again**
+always starts a fresh query.
+
+CLI and GUI validate against the comparison's retained input sources. Only the
+selected pair is freshly lifted and proved, with NoOpt and scaffold mem2reg;
+there is no proof cache. The report says `input_source_binding:owned_sessions`,
+with `inputs_bound:true` and `inputs_revalidated:false`. Reopening builds a fresh
+capture. The worker also checks whether the source paths have changed and asks
+for a new comparison if they have. Direct API clients inspecting an owned capture
+continue to inspect its originally loaded bytes even if those paths are replaced.
+
+The C API offers two lifetime contracts, with the same query fields `side`,
+`address`, `max_native_instructions`, `max_work`, `timeout_ms`:
+
+- `neverd_comparison_run` borrows live input sessions. Its
+  `neverd_comparison_scalar_validation_json(comparison, primary, secondary, query)`
+  revalidates both complete native revisions on every query, without recapturing
+  optional SSA. The report identifies `revalidated_sessions`.
+- `neverd_comparison_run_owned(comparison, &primary, &secondary, …)` takes two
+  distinct sessions in distinct slots. Ownership admission nulls both slots;
+  the comparison then owns them, including if analysis subsequently fails.
+  Invalid ownership arguments or a reused comparison leave the slots unchanged.
+  Transferred handles must never be used or destroyed by the caller. With both
+  native captures complete, `neverd_comparison_owned_scalar_validation_json`
+  uses these exclusive sources and avoids full input decoding per query.
+
+The shared scalar prover owns definedness, arithmetic and complete finite control
+domains. Neither input code nor its LLVM body is modified or executed. Comparison
+destruction releases transferred sessions; ordinary snapshot queries can still
+outlive borrowed sessions. No proof verdict is stored in comparison files or
+trusted on reopen. Cancellation covers live rebinding and model/proof work;
+a native lift, LLVM copy/verification or serialization step can delay it, so
+`timeout_ms` is a cooperative deadline rather than a hard wall-clock bound.
+
+## Analyst cases and assessment history
+
+**Analyst review…** opens a paged case history for the selected function, or the
+whole comparison when no function is selected. An accepted pair can receive an
+explicit case identifier, author, assessment, reference and note. **Append
+assessment** adds an event; it never edits earlier statements. **Save comparison…**
+uses the comparison's existing Save/export flow. Appending in memory alone does
+not write a report to disk.
+
+Assessments include investigating, relevant/unrelated change, candidate fix,
+patch present/absent/partial/reverted and inconclusive. These are manual statements,
+including statuses that mention patches. They do not change computed deltas,
+matching, confidence, observation ranking or engine fix-presence/validation status.
+Authors are self-described; NeverD does not authenticate them. A reference is
+stored as text and is not fetched or executed.
+
+Each event binds to the exact content and analysis identities and both function
+entries. It has a sequence, previous-event digest and the previous event for its
+case/function pair. These digest links detect inconsistent content and order;
+they are not signatures or independent proof of authorship. The latest event and
+whether its original pair is currently accepted are distinct fields. Unmatching,
+remapping and mapping undo retain the complete history. Revising a judgment means
+appending a new event, not rewriting or undoing an old one. Draft text survives
+navigation and changed inputs, but cannot silently move to another input/pair;
+**New draft for selected pair** explicitly starts that draft.
+
+```sh
+neverd diff --structural -a before.o -b after.o --reopen review.nddiff --list reviews
+neverd diff --structural -a before.o -b after.o --reopen review.nddiff \
+  --review-record record.json --save reviewed.nddiff --list reviews
+neverd diff --structural -a before.o -b after.o --reopen reviewed.nddiff \
+  --list reviews --review-case local-case-42 --review-latest
+```
+
+A record file has `primary`/`secondary` hexadecimal function entries, `case`,
+`author`, `note`, optional `reference`, `assessment` (the names above with
+underscores) and required `expected_head`. Use the `head` returned by the history
+query; the first event uses an empty string. A stale head fails without appending.
+The CLI requires `--save` when recording, so successful annotations are preserved.
+`--review-function` and optional `--review-side` filter history by function;
+`--offset` and `--limit` use the shared page limits. History is newest first.
+
+A journal admits 4096 events and 4 MiB of combined user text. Per-event UTF-8 limits
+are 256 bytes each for case and author, 16384 for note and 2048 for reference.
+Required fields cannot be blank. Notes allow newline/tab; unsupported control
+characters and invalid UTF-8 fail. Each input's semantic identity strings must
+also be valid UTF-8 and total at most 4096 bytes before canonical digest encoding.
+Schema 3 persists this journal independently
+of rederived native/SSA facts. Schema 2 reports are read with no assessment history;
+a version-2 document claiming a journal is rejected. Input changes, inconsistent
+links/digests, missing functions and unsupported proof/authentication claims fail
+before replacing the current comparison.
+
+## Interpretation and persistence
+
+Scores describe heuristic structural correspondence. They do not prove semantic
+equivalence, vulnerability removal or patch presence. Identical normalized code
+with incomplete decoding is never reported as normalized unchanged. Ordinary
+scalar immediates remain meaningful even when their value happens to equal an
+image address. Only decoded control-flow operands, exact relocation fields and
+known address references receive address normalization.
+
+Duplicate names and indistinguishable bodies remain explicit ambiguities.
+Unmatched functions are not automatically additions/deletions when discovery is
+partial. Imports, thunks, libraries and incomplete bodies carry separate traits.
+Pairs with no body on either side report `identity_only`, with no body similarity
+claim, and do not count as normalized unchanged. Pairing a body with a bodiless
+symbol exposes the observed structural differences and incomplete coverage.
+The GUI Evidence tab shows the matching step, scores, change categories, analyst
+confirmation and stable identities; change text accompanies semantic colors.
+
+The versioned `neverd.bindiff` JSON document stores both input hashes, format,
+ISA, bitness, endian, ABI, image base, entry point, normalization/analysis/content
+revisions, settings, inventories, pairs, ambiguity groups, coverage, timings and
+overrides, plus requested region evidence. Function pairs use entry addresses.
+Region spans use coordinates in the exact revision-bound snapshots; reopening
+checks their bounds, normalized instructions and derived hypothesis fields.
+Positive unique-seed claims are checked against both complete seed indexes;
+saved hypothesis membership must agree with the connected anchor components.
+Schema version 2 introduced identity-only pairs; version 3 adds analyst history. Reopening recomputes each
+measured function delta under the saved correspondence and rejects inconsistent
+changes, body coverage, scores or instruction/block/edge tallies. Analyst pairing
+and confirmation decisions remain distinct from those decoded facts.
+Reopening requires the original input content and extraction settings. A stale
+identity or reversed direction is rejected without replacing the current result.
+Save uses atomic replacement. A saved document retains inventories and mapping
+evidence; it does not embed both binaries or their full decoded snapshots.
+
+## Shared API and worker
+
+`NeverDCAPIDiff.h` provides an opaque comparison handle. `run` captures two
+borrowed loaded sessions; callers retain ownership and must grant exclusive
+access for that call. Its snapshots outlive the sessions. `run_owned` instead
+transfers both sessions through handle slots that it clears on admission, keeping
+the loaded inputs for fresh scalar validation. Use `status_json` concurrently for progress and `cancel` to request a stop. Destroy
+the handle only after its running call and other concurrent queries have joined.
+All returned strings use `neverd_free_string`.
+
+Use `summary_json` for bounded overview metadata, `functions_json` for filtered,
+sorted inventory pages, and `function_page_json` for aligned instruction pages.
+`regions_json` pages hypotheses, a selected hypothesis's anchors (`region_id`),
+or every retained anchor (`all_anchors:true`). `region_page_json` pages one
+global anchor index's original instructions; optional `region_id` checks its
+membership. `flow_regions_json` shares hypothesis/anchor selectors and, with
+`anchor`, pages paired SSA nodes plus original bytes; `coordinates:"phi_blocks"`
+selects the verified PHI context pairs. `graph_json` accepts
+explicit node/edge allowances. Full export and legacy full
+function detail are intended for batch use; interactive consumers should page.
+
+Function pages and CFG queries also accept `timeout_ms` and `refresh`. The shared
+delta calculation cooperates with cancellation and reports `state` separately
+from `computation_complete`. A stopped delta retains no fabricated unchanged
+rows; a direct CFG query keeps native topology with `not_compared` annotations.
+The exact stopped query stays cached until a refresh or a different query.
+The GUI clears stopped comparison graphs and offers **Retry difference**.
+Full legacy detail uses the same delta cache and an instruction allowance;
+its JSON serialization and the worker's bounded graph layout are not hard
+deadline guarantees. CLI full-detail cancellation returns partial exit code 3.
+
+The Qt-free worker advertises these operations only when the linked engine has
+the required additive C ABI:
+
+- `comparison_start`: `primary` and `secondary` each contain `path` and optional
+  `load_options`; accepts comparison `options` and optional `restore_path`.
+- `comparison_summary`, `comparison_functions`, `comparison_function_page` and
+  `comparison_function`: overview, inventories, paged and full details.
+- `comparison_cfg_summary`, `comparison_cfg_viewport`, `comparison_cfg_focus`:
+  deterministic shared layout, bounded viewport pages and counterpart navigation.
+- `comparison_regions`, `comparison_region_page`: hypothesis/anchor pages and
+  paired native instruction spans; requires requested region analysis.
+- `comparison_dataflow`, `comparison_slice`: bounded SSA function/node/block
+  pages and dependency slices; requires requested dependency extraction.
+- `comparison_flow_regions`: verified SSA hypothesis, anchor and node/PHI-context
+  pages; requires requested SSA region analysis.
+- `comparison_impact`: observed caller/callee witnesses, entries and global
+  unresolved scope; independent of SSA extraction and cancellable.
+- `comparison_observations`: ranked local native/SSA changes, original-code
+  anchors and scope; optional retained SSA, bounded paging and cancellation.
+- `comparison_scalar_validation`: fresh input binding, audited native lifting
+  and bounded conditional scalar return validation, with cooperative stop.
+- `comparison_reviews`: paged manual history, latest/current-pair binding and
+  the expected head for optimistic updates.
+- `comparison_review_record`: append an explicit assessment; changes the
+  comparison revision and preserves independent mapping undo history.
+- `comparison_override`, `comparison_undo`, `comparison_redo`: mapping edits.
+- `comparison_save`/`comparison_restore`: a local `path`;
+  `comparison_export`: the shared document in a bounded response.
+- `comparison_validate`, `comparison_close`: re-read/check inputs or release them.
+
+Responses carry `comparison_revision`, separate from the main project's
+revision. Clients may send `expected_comparison_revision` to reject obsolete
+reads or edits. Input file stamp changes invalidate interactive review; explicit
+validation and reopening re-read content and verify its identity. Large exports
+should use `comparison_save` instead of a transport frame.
+
+The standard worker `cancel` operation acknowledges the request first. Only the
+terminal comparison reply reports computation stopped and whether a partial
+result was retained. The worker advertises `comparison_cancellable_operations`;
+the GUI uses that list for queued/running analysis requests and Cancel state.
+Input loading, native discovery, decoding, feature extraction and delta
+measurement cooperate with cancellation. `neverd_session_load_cancellable`
+returns 1 for a completed load, 0 for failure and -2 for an observed stop before
+publication. Stopped preparation preserves the previous session's image,
+analysis and edits. Worker replacement during either input's loading preserves
+the old comparison and its revision, without publishing a new partial result.
+The GUI displays readable per-side loading stages, formats byte counts in the
+user's locale, keeps Cancel pending until the terminal acknowledgement and
+allows another attempt. A stopped replacement leaves the old review available.
+Native byte hashing and copying check bounded batches without capping file size;
+format parsing, load-time scans and PDB progress share the loading control. Discovery checks its metadata, architecture scan, verification
+and overlap walks, joins its workers and publishes no partial candidate inventory.
+Stopped extraction reports `stopped_phase:"discovery"` or `"decode"`; retry starts
+fresh discovery, and closing a session stops its owned discovery job. The additive
+`neverd_session_discover_functions_cancellable` returns -2 for cancellation,
+separately from -1 for failure and nonnegative completed function counts.
+File I/O, allocations, individual metadata helpers and sorting can still delay
+a stop. Cancellation remains cooperative, with no hard deadline. Session
+publication and sidecar restoration after final preparation finish normally if
+a stop arrives after the final checkpoint; old engines lacking the additive load
+API finish loading before observing a comparison stop.
+
+## Current boundaries and verification
+
+Owned x64 and AArch64 pipeline fixtures exercise SSA projection, native origins,
+entry live-ins and deep constant dependencies. Public comparison admission still
+requires the native x86 profile; the AArch64 projection test does not qualify a
+cross-ISA comparison profile. SDK coverage exercises dependency lifetime after
+closing inputs, slices, resource refusals and saved-fact tamper rejection.
+An owned unsigned-expression regression also retains regions across Clang/GCC
+optimization levels and Windows COFF, with names disabled. A changed final
+constant remains visible, saved evidence rebinds, and incompatible ABIs fail.
+This is one small source family; broad compiler/optimization qualification and
+LTO/PGO/obfuscation coverage remain outstanding.
+
+The GUI uses bounded function/instruction page caches and worker-owned CFG
+viewport indexes. Its graph viewport reports when a display allowance is reached.
+The decoded profile explicitly reports pseudocode unavailable. Source/IR anchored
+comparison, saved-session inputs, full reference provenance and broader profile
+qualification remain work in progress.
+
+Native runs and verified finite SSA neighborhoods are parts of the required
+transformation work. Broader CFG/IR region matching, compiler/O-level/LTO/PGO/obfuscation
+qualification, cross-ISA profiles, security-fix triage, interprocedural data effects,
+broader semantic validation beyond the pure scalar-return profile, branch-aware
+multi-version lineage, native/game package
+adapters and competitive qualification remain outstanding. No comparative
+performance superiority is established.
+Observed native caller/callee reachability is available as review context;
+parameter/return/alias propagation remains separate unfinished work.
+
+Focused targets are `NeverDBinaryDiffTests`, `NeverDBinaryDiffSDKTests`,
+`neverd-worker`, `neverd`, and `neverd-gui-comparison-tests`. The
+`NeverDBinaryDiff` CTest label includes CLI, real worker and GUI integration
+checks. SDK/core suites have their respective test labels. Shared traversal
+changes also require the session discovery and worker/CLI instruction-flow tests.
+Set `NEVERD_DIFF_SCREENSHOTS` while running the GUI test to retain real light/dark
+Qt captures; run separately with `QT_SCALE_FACTOR=1` and `1.5` for DPI review.

@@ -392,6 +392,8 @@ extern llvm::cl::opt<bool> TypesAsserts;
 extern llvm::cl::opt<bool> TypesDecimalOffsets;
 extern llvm::cl::opt<bool> TypesNoOffsets;
 extern llvm::cl::list<std::string> TypesDeclare;
+extern llvm::cl::opt<bool> TypesMergePrototypes;
+extern llvm::cl::list<std::string> TypesImportPrototypes;
 extern llvm::cl::opt<bool> TypesSave;
 extern llvm::cl::opt<bool> TypesSaveDeclarations;
 extern llvm::cl::opt<std::string> TypesInput;
@@ -480,6 +482,27 @@ extern llvm::cl::opt<std::string> DiffFileA;
 extern llvm::cl::opt<std::string> DiffFileB;
 extern llvm::cl::opt<std::string> DiffFunc;
 extern llvm::cl::opt<bool> DiffJson;
+extern llvm::cl::opt<bool> DiffStructural;
+extern llvm::cl::opt<std::string> DiffProfile, DiffOptions, DiffSave,
+    DiffReopen, DiffOverrides, DiffList, DiffRegion, DiffRegionKind,
+    DiffFlowFunction, DiffFlowSide, DiffFlowKind, DiffSliceDirection,
+    DiffFlowRegion, DiffFlowRegionCoordinates, DiffImpactFunction,
+    DiffImpactSide, DiffImpactDirection, DiffImpactKind, DiffChangesFunction,
+    DiffChangesSide, DiffChangesContext, DiffReviewRecord, DiffReviewCase,
+    DiffReviewFunction, DiffReviewSide, DiffValidationFunction,
+    DiffValidationSide, DiffListSide, DiffListSearch, DiffListSort,
+    DiffAmbiguousWith;
+extern llvm::cl::opt<bool> DiffIgnoreNames, DiffRegions, DiffDataFlow,
+    DiffSliceDataOnly, DiffFlowRegions, DiffReviewLatest, DiffListDescending;
+extern llvm::cl::opt<double> DiffMinSimilarity;
+extern llvm::cl::opt<unsigned long long> DiffTimeout;
+extern llvm::cl::opt<unsigned long long> DiffImpactWork, DiffChangesWork,
+    DiffEffectWork, DiffValidationWork;
+extern llvm::cl::opt<unsigned> DiffOffset, DiffLimit, DiffRegionAnchor,
+    DiffSliceNode, DiffFlowRegionAnchor, DiffImpactDepth, DiffImpactFunctions,
+    DiffImpactSites, DiffImpactWitness, DiffChangesRows, DiffChangesCount,
+    DiffEffectRecords, DiffValidationInstructions;
+int runStructuralDiff();
 
 // Annotate.
 extern llvm::cl::opt<bool> AnnotateList;

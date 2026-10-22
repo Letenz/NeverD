@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>Down</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>Functions changed while refreshing the table.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>Selected functions exceed the table page budget.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>Too many selection changes while refreshing the table.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1809,6 +1821,10 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>Saved call-site declaration needs review: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>Could not refresh source: %1</translation>
     </message>
 </context>
 <context>
@@ -2211,18 +2227,6 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Description:</source>
         <translation>Description:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>Find in view</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>Text:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>&apos;%1&apos; was not found among the loaded lines</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3718,6 +3722,96 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Cannot save the symbol file to %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>Find in view</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>Find text</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>Match case</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>Whole words</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>Wrap around</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Previous</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Next</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>Previous match (Shift+Enter or Shift+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>Next match (Enter or F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;Text:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Close</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: current function, including folded code</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>Disassembly: loaded lines, including visible addresses</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>End of search range</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>Start of search range</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>Waiting for source…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>No searchable text available</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>Enter text to find</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>No matches</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 of %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n matches</numerusform>
+            <numerusform>%n matches</numerusform>
+        </translation>
     </message>
 </context>
 <context>

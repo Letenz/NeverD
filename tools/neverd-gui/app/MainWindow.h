@@ -33,6 +33,7 @@ namespace web {
 class PackageReviewDialog;
 }
 
+class ComparisonDialog;
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
@@ -364,6 +365,7 @@ private:
   QPointer<QDialog> quickStart_;
   QPointer<FindInViewDialog> FindDialog;
   QPointer<web::PackageReviewDialog> packageReview_;
+  QPointer<ComparisonDialog> comparison_;
   bool startupQuickStartPending_ = false;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;

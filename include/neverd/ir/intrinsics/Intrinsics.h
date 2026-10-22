@@ -378,8 +378,62 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/X86Virtualization.def"
 #undef NEVERD_X86_VIRTUALIZATION
 
+#define NEVERD_X86_SYSTEM_STATE(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_SYSTEM_STATE
+
   _Count = 16000
 };
+
+enum class X86SystemStateKind : uint8_t {
+  ReadPid,
+  ReadBase,
+  WriteBase,
+  Void,
+  Monitor,
+  Wait,
+  AccessRights,
+  AdjustRpl,
+  ShadowWrite,
+  Enqueue,
+  DirectStore,
+  DirectStore64B
+};
+
+struct X86SystemStateContract {
+  const char *Mnemonic = nullptr;
+  X86SystemStateKind Kind = X86SystemStateKind::Void;
+  int8_t MemoryArgument = -1;
+};
+
+constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, Kind, MemoryArgument)            \
+  case Intrinsic::Id:                                                          \
+    return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
+#define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
+#include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_EXISTING_SYSTEM_STATE
+#undef NEVERD_X86_SYSTEM_STATE
+  default:
+    return {};
+  }
+}
+
+constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
+  return x86SystemStateContract(Id).Mnemonic != nullptr;
+}
+
+/// The enqueue portal and block direct-store destination are second addresses.
+/// Their implicit ES segment is flat in long mode and never inherits the
+/// source operand's FS/GS override.
+constexpr bool isX86SystemStateAddressArgument(Intrinsic Id, unsigned Index) {
+  const auto C = x86SystemStateContract(Id);
+  return (C.MemoryArgument >= 0 && Index == unsigned(C.MemoryArgument)) ||
+         ((C.Kind == X86SystemStateKind::Enqueue ||
+           C.Kind == X86SystemStateKind::DirectStore64B) &&
+          Index == 1);
+}
 
 enum class X86VirtualizationResult : uint8_t { None, Flags, Read };
 
@@ -688,6 +742,8 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   if (isX86VirtualizationIntrinsic(Id))
     return x86VirtualizationContract(Id).MemoryArgument >= 0;
+  if (isX86SystemStateIntrinsic(Id))
+    return x86SystemStateContract(Id).MemoryArgument >= 0;
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
   case Intrinsic::X86FPMaskCompareMemoryState:

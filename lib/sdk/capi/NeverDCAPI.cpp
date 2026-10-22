@@ -62,6 +62,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <stdexcept>
@@ -343,20 +344,26 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
                       std::filesystem::path Path,
                       std::filesystem::path SanitizeSourcePath,
                       std::optional<uint64_t> MemoryBytes = std::nullopt,
-                      std::string NativeProvenance = {}) {
+                      std::string NativeProvenance = {},
+                      const LoadProgress *ProgressOverride = nullptr) {
+  const auto &Progress =
+      ProgressOverride ? *ProgressOverride : S.LoadProgressCb;
   // Prepare the complete replacement before changing the current image, its
   // analysis, or the user's edits. An authoritative debug-file failure must
   // leave a previously loaded session usable.
-  S.LoadProgressCb.report("image", 1, 1, "binary parsed");
+  Progress.report("image", 1, 1, "binary parsed");
   DebugInfoResult Found;
   if (!MemoryBytes)
-    Found = loadDebugInfo(Path, Image, S.DbgRequest, S.LoadProgressCb);
+    Found = loadDebugInfo(Path, Image, S.DbgRequest, Progress);
+  Progress.check();
   if (!Found.Error.empty()) {
     S.setError(Found.Error);
     return 0;
   }
+  Progress.report("debug-apply", 0, 1);
   applyDebugInfo(Image, Found);
-  S.LoadProgressCb.report("ready", 1, 1, "");
+  Progress.report("debug-apply", 1, 1);
+  Progress.report("ready", 1, 1, "");
 
   // Decoder::init retains its existing state on failure, so it is the final
   // preparation step before publishing the replacement.
@@ -622,79 +629,115 @@ int neverd::sdk::loadNativeSnapshotSession(neverd_session_t Sess,
 }
 
 int neverd_session_load(neverd_session_t Sess, const char *Path) {
+  return neverd_session_load_cancellable(Sess, Path, nullptr, nullptr);
+}
+
+int neverd_session_load_cancellable(neverd_session_t Sess, const char *Path,
+                                    neverd_cancel_probe_fn Cancelled,
+                                    void *UserData) {
   auto *S = toSession(Sess);
   if (!S)
     return 0;
   NativePhaseTrace Trace(NativePhaseTrace::Phase::SessionLoad);
   S->clearError();
+  struct StopState {
+    neverd_cancel_probe_fn Probe;
+    void *User;
+    std::atomic<bool> Requested{false};
+    static int check(void *Context) {
+      auto &State = *static_cast<StopState *>(Context);
+      if (State.Requested.load(std::memory_order_relaxed))
+        return 1;
+      if (State.Probe && State.Probe(State.User)) {
+        State.Requested.store(true, std::memory_order_relaxed);
+        return 1;
+      }
+      return 0;
+    }
+  } Stop{Cancelled, UserData};
+  LoadProgress Progress = S->LoadProgressCb;
+  Progress.Stop = Cancelled ? StopState::check : nullptr;
+  Progress.StopUser = &Stop;
+  try {
+    Progress.check();
 
-  if (!Path || Path[0] == '\0') {
-    S->setError("input path is empty");
-    Trace.finish(false);
-    return 0;
-  }
-  auto P = std::filesystem::u8path(Path);
-  if (!std::filesystem::exists(P)) {
-    S->setError(std::string("file not found: ") + Path);
-    Trace.finish(false);
-    return 0;
-  }
+    if (!Path || Path[0] == '\0') {
+      S->setError("input path is empty");
+      Trace.finish(false);
+      return 0;
+    }
+    auto P = std::filesystem::u8path(Path);
+    if (!std::filesystem::exists(P)) {
+      S->setError(std::string("file not found: ") + Path);
+      Trace.finish(false);
+      return 0;
+    }
 
-  // Capture a separate absolute, symlink-free source locator at the trusted
-  // load boundary.  Keep P unchanged: FilePath is an older public contract
-  // used by sidecar discovery and must preserve the caller's spelling.
-  std::error_code CanonicalError;
-  std::filesystem::path SanitizeSourcePath =
-      std::filesystem::canonical(P, CanonicalError);
-  if (CanonicalError) {
-    S->setError("cannot canonicalize input path: " + CanonicalError.message());
-    Trace.finish(false);
-    return 0;
-  }
+    // Capture a separate absolute, symlink-free source locator at the trusted
+    // load boundary.  Keep P unchanged: FilePath is an older public contract
+    // used by sidecar discovery and must preserve the caller's spelling.
+    std::error_code CanonicalError;
+    std::filesystem::path SanitizeSourcePath =
+        std::filesystem::canonical(P, CanonicalError);
+    if (CanonicalError) {
+      S->setError("cannot canonicalize input path: " +
+                  CanonicalError.message());
+      Trace.finish(false);
+      return 0;
+    }
 
-  S->LoadProgressCb.report("image", 0, 1, "reading binary");
-  BinaryLoadOptions LoadOpts;
-  LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
-  LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
-  LoadOpts.ReadStaticSymbols = S->ReadsStaticSymbols;
-  // A project an older NeverD kept as files beside the input moves into its
-  // folder, where the rest of the C API and the workbench read it.
-  project_files::migrate(P);
-  // The file reads with the loader the caller chose, else the one its
-  // project keeps.
-  if (S->RequestedLoad) {
-    LoadOpts.Choice = *S->RequestedLoad;
-  } else if (auto Kept = readLoadOptionsSidecar(P); !Kept) {
-    S->setError(llvm::toString(Kept.takeError()));
+    Progress.report("image", 0, 1, "reading binary");
+    BinaryLoadOptions LoadOpts;
+    LoadOpts.Progress = Progress;
+    LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
+    LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
+    LoadOpts.ReadStaticSymbols = S->ReadsStaticSymbols;
+    // A project an older NeverD kept as files beside the input moves into its
+    // folder, where the rest of the C API and the workbench read it.
+    project_files::migrate(P);
+    // The file reads with the loader the caller chose, else the one its
+    // project keeps.
+    if (S->RequestedLoad) {
+      LoadOpts.Choice = *S->RequestedLoad;
+    } else if (auto Kept = readLoadOptionsSidecar(P); !Kept) {
+      S->setError(llvm::toString(Kept.takeError()));
+      Trace.finish(false);
+      return 0;
+    } else {
+      LoadOpts.Choice = *Kept;
+    }
+    if (auto Unsettled = settleBinaryFileProcessor(P, LoadOpts.Choice)) {
+      S->setError(llvm::toString(std::move(Unsettled)));
+      Trace.finish(false);
+      return 0;
+    }
+    auto ImgOrErr = loadBinary(P, LoadOpts);
+    if (!ImgOrErr) {
+      std::string Err;
+      llvm::raw_string_ostream OS(Err);
+      logAllUnhandledErrors(ImgOrErr.takeError(), OS);
+      Progress.check();
+      S->setError(Err);
+      Trace.finish(false);
+      return 0;
+    }
+    Progress.report("platform", 0, 1);
+    settleBinaryFilePlatform(*ImgOrErr, LoadOpts.Choice);
+    Progress.report("platform", 1, 1);
+    const int Result = finishSessionLoad(
+        Sess, *S, std::move(*ImgOrErr), std::move(P),
+        std::move(SanitizeSourcePath), std::nullopt, {}, &Progress);
+    if (Result) {
+      S->LoadedChoice = LoadOpts.Choice;
+      S->ReadFromFile = true;
+    }
+    Trace.finish(Result != 0);
+    return Result;
+  } catch (const LoadCancelled &) {
+    S->setError(LoadCancelled::Message);
     Trace.finish(false);
-    return 0;
-  } else {
-    LoadOpts.Choice = *Kept;
+    return -2;
   }
-  if (auto Unsettled = settleBinaryFileProcessor(P, LoadOpts.Choice)) {
-    S->setError(llvm::toString(std::move(Unsettled)));
-    Trace.finish(false);
-    return 0;
-  }
-  auto ImgOrErr = loadBinary(P, LoadOpts);
-  if (!ImgOrErr) {
-    std::string Err;
-    llvm::raw_string_ostream OS(Err);
-    logAllUnhandledErrors(ImgOrErr.takeError(), OS);
-    S->setError(Err);
-    Trace.finish(false);
-    return 0;
-  }
-  settleBinaryFilePlatform(*ImgOrErr, LoadOpts.Choice);
-  const int Result =
-      finishSessionLoad(Sess, *S, std::move(*ImgOrErr), std::move(P),
-                        std::move(SanitizeSourcePath));
-  if (Result) {
-    S->LoadedChoice = LoadOpts.Choice;
-    S->ReadFromFile = true;
-  }
-  Trace.finish(Result != 0);
-  return Result;
 }
 
 int neverd::sdk::loadNativeMobileSession(neverd_session_t Sess,
@@ -977,11 +1020,14 @@ bool nativeDiscovery(const Session &S) {
          S.Img.Arch == Arch::ARM || S.Img.Arch == Arch::AArch64;
 }
 
-std::vector<std::pair<va_t, std::string>> detectFunctions(BinaryImage &Image) {
+std::optional<std::vector<std::pair<va_t, std::string>>>
+detectFunctions(BinaryImage &Image, const std::function<bool()> &Cancelled) {
   Decoder Dec;
   if (!Dec.init(Image))
     throw std::runtime_error("failed to initialize a decoder for the image");
-  return FuncDetector().detect(Image, Dec);
+  if (!Cancelled)
+    return FuncDetector().detect(Image, Dec);
+  return FuncDetector().detect(Image, Dec, Cancelled);
 }
 
 void publishDiscovery(Session &S,
@@ -991,12 +1037,26 @@ void publishDiscovery(Session &S,
     S.refreshFunctionNames();
 }
 
-bool takeDiscoveryJob(Session &S, bool Wait) {
+enum class DiscoveryJobState { Pending, Complete, Cancelled };
+
+DiscoveryJobState
+takeDiscoveryJob(Session &S, bool Wait,
+                 const std::function<bool()> &Cancelled = {}) {
   if (!S.FunctionDiscovery)
-    return false;
-  if (!Wait && S.FunctionDiscovery->Result.wait_for(std::chrono::seconds(0)) !=
-                   std::future_status::ready)
-    return false;
+    return DiscoveryJobState::Pending;
+  bool Stop = false;
+  for (;;) {
+    if (Cancelled && Cancelled()) {
+      Stop = true;
+      S.FunctionDiscovery->Cancel->store(true, std::memory_order_relaxed);
+    }
+    if (S.FunctionDiscovery->Result.wait_for(std::chrono::milliseconds(
+            Wait ? kFunctionDiscoveryPollMilliseconds : 0)) ==
+        std::future_status::ready)
+      break;
+    if (!Wait)
+      return DiscoveryJobState::Pending;
+  }
   auto Job = std::move(*S.FunctionDiscovery);
   S.FunctionDiscovery.reset();
   if (Job.Revision != S.FunctionListRevision) {
@@ -1006,17 +1066,25 @@ bool takeDiscoveryJob(Session &S, bool Wait) {
       (void)Job.Result.get();
     } catch (...) {
     }
-    return false;
+    return Stop ? DiscoveryJobState::Cancelled : DiscoveryJobState::Pending;
   }
   auto Result = Job.Result.get();
+  if (Stop || Result.Cancelled || (Cancelled && Cancelled()))
+    return DiscoveryJobState::Cancelled;
   S.Img.VerifiedFunctionEntries.merge(Result.VerifiedEntries);
   S.Img.CodeRefTargets.merge(Result.CodeReferences);
   publishDiscovery(S, std::move(Result.Functions));
-  return true;
+  return DiscoveryJobState::Complete;
 }
 } // namespace
 
 int neverd_session_discover_functions(neverd_session_t Sess) {
+  return neverd_session_discover_functions_cancellable(Sess, nullptr, nullptr);
+}
+
+int neverd_session_discover_functions_cancellable(neverd_session_t Sess,
+                                                  neverd_cancel_probe_fn Probe,
+                                                  void *UserData) {
   auto *S = toSession(Sess);
   if (!S)
     return -1;
@@ -1025,11 +1093,30 @@ int neverd_session_discover_functions(neverd_session_t Sess) {
     S->setError("no binary loaded");
     return -1;
   }
+  const std::function<bool()> Cancelled =
+      Probe ? std::function<bool()>([&] { return Probe(UserData) != 0; })
+            : std::function<bool()>{};
+  const auto Stopped = [&] {
+    S->setError("function discovery cancelled");
+    return -2;
+  };
   try {
     S->retireStaleDiscovery();
+    if (Cancelled && Cancelled()) {
+      if (S->FunctionDiscovery)
+        (void)takeDiscoveryJob(*S, true, [] { return true; });
+      return Stopped();
+    }
     if (nativeDiscovery(*S) && !S->DiscoveredFunctions) {
-      if (!takeDiscoveryJob(*S, true))
-        publishDiscovery(*S, detectFunctions(S->Img));
+      const auto Job = takeDiscoveryJob(*S, true, Cancelled);
+      if (Job == DiscoveryJobState::Complete)
+        return static_cast<int>(S->Functions.size());
+      if (Job == DiscoveryJobState::Cancelled)
+        return Stopped();
+      auto Functions = detectFunctions(S->Img, Cancelled);
+      if (!Functions)
+        return Stopped();
+      publishDiscovery(*S, std::move(*Functions));
     }
     return static_cast<int>(S->Functions.size());
   } catch (const std::exception &E) {
@@ -1058,25 +1145,37 @@ int neverd_session_discover_functions_step(neverd_session_t Sess) {
     S->retireStaleDiscovery();
     if (!nativeDiscovery(*S) || S->DiscoveredFunctions)
       return 1;
-    if (takeDiscoveryJob(*S, false))
+    if (takeDiscoveryJob(*S, false) == DiscoveryJobState::Complete)
       return 1;
     if (!S->FunctionDiscovery) {
       auto Image = S->Img;
+      auto Cancel = std::make_shared<std::atomic<bool>>(false);
       S->FunctionDiscovery.emplace(Session::FunctionDiscoveryJob{
           S->FunctionListRevision,
-          std::async(std::launch::async, [Image = std::move(Image)]() mutable {
-            Session::FunctionDiscoveryResult Result;
-            auto Work = [&] {
-              Result.Functions = detectFunctions(Image);
-              Result.VerifiedEntries = std::move(Image.VerifiedFunctionEntries);
-              Result.CodeReferences = std::move(Image.CodeRefTargets);
-              // An async callable can outlive its invocation until get(). Do
-              // not retain the image while the owner serves foreground reads.
-              Image = BinaryImage{};
-            };
-            runWithLargeStackThreads(1, Work);
-            return Result;
-          })});
+          std::async(std::launch::async,
+                     [Image = std::move(Image), Cancel]() mutable {
+                       Session::FunctionDiscoveryResult Result;
+                       auto Work = [&] {
+                         auto Functions = detectFunctions(Image, [&] {
+                           return Cancel->load(std::memory_order_relaxed);
+                         });
+                         Result.Cancelled = !Functions;
+                         if (Functions) {
+                           Result.Functions = std::move(*Functions);
+                           Result.VerifiedEntries =
+                               std::move(Image.VerifiedFunctionEntries);
+                           Result.CodeReferences =
+                               std::move(Image.CodeRefTargets);
+                         }
+                         // An async callable can outlive its invocation until
+                         // get(). Do not retain the image while the owner
+                         // serves foreground reads.
+                         Image = BinaryImage{};
+                       };
+                       runWithLargeStackThreads(1, Work);
+                       return Result;
+                     }),
+          Cancel});
     }
     return 0;
   } catch (const std::exception &E) {

@@ -1313,6 +1313,65 @@ TEST(LLVMCValues, WideIntegerConstantsRetainBothHalvesWhenExecuted) {
   compileAndRun(Source + Main);
 }
 
+TEST(LLVMCValues, I386WideCarriersRetainWrappingShiftsAndSignedComparison) {
+#if defined(__linux__) && (defined(__x86_64__) || defined(__i386__))
+  llvm::LLVMContext Context;
+  llvm::Module Module("i386-wide-carriers", Context);
+  Module.setTargetTriple(llvm::Triple("i386-unknown-linux-gnu"));
+  Module.setDataLayout("e-p:32:32-i64:64-n8:16:32-S128");
+  llvm::IRBuilder<llvm::NoFolder> B(Context);
+  auto *Signature = llvm::FunctionType::get(
+      B.getInt64Ty(),
+      {B.getInt64Ty(), B.getInt64Ty(), B.getInt32Ty(), B.getPtrTy()}, false);
+  std::string Main = "int main(void) { uint32_t negative;\n";
+  for (const unsigned Width : {65u, 96u, 128u}) {
+    auto *Wide = B.getIntNTy(Width);
+    const std::string Name = "wide" + std::to_string(Width);
+    auto *F = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+    auto *Value = B.CreateOr(B.CreateZExt(F->getArg(0), Wide),
+                             B.CreateShl(B.CreateZExt(F->getArg(1), Wide),
+                                         llvm::ConstantInt::get(Wide, 64)));
+    Value = B.CreateAdd(Value, llvm::ConstantInt::get(Wide, 7));
+    B.CreateStore(
+        B.CreateZExt(B.CreateICmpSLT(Value, llvm::ConstantInt::get(Wide, 0)),
+                     B.getInt32Ty()),
+        F->getArg(3));
+    B.CreateRet(B.CreateTrunc(
+        B.CreateAShr(Value, B.CreateZExt(F->getArg(2), Wide)), B.getInt64Ty()));
+    for (const uint64_t Low : {uint64_t(0), uint64_t(0xfffffffffffffff9ULL)})
+      for (const uint64_t High :
+           {uint64_t(0), uint64_t(1) << (Width - 65), ~uint64_t(0)})
+        for (const unsigned Shift : {0u, 1u, 31u, 63u, 64u, Width - 1}) {
+          const llvm::APInt Packed =
+              llvm::APInt(Width, Low) | (llvm::APInt(Width, High) << 64);
+          const llvm::APInt Sum = Packed + 7;
+          const auto Expected = Sum.ashr(Shift).trunc(64).getZExtValue();
+          Main += "negative = 99; if (" + Name + "(" + std::to_string(Low) +
+                  "ULL, " + std::to_string(High) + "ULL, " +
+                  std::to_string(Shift) +
+                  ", &negative) != " + std::to_string(Expected) +
+                  "ULL || negative != " + (Sum.isNegative() ? "1" : "0") +
+                  ") return 1;\n";
+        }
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X86;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  for (const char *Optimization : {"-O0", "-O2"})
+    ASSERT_NO_FATAL_FAILURE(
+        compileAndRun(Source + Main, Optimization, {}, true, true));
+#else
+  GTEST_SKIP() << "32-bit scalar C execution requires Linux i386 support";
+#endif
+}
+
 TEST(LLVMCValues, FoldedIntegerViewsAndArithmeticKeepTheirWidths) {
   llvm::LLVMContext Context;
   llvm::Module Module("folded-integer-widths", Context);

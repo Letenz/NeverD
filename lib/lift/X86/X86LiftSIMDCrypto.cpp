@@ -33,8 +33,7 @@ bool validEvexCrypto(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch,
                      uint8_t Map, uint8_t Opcode, bool HasImmediate) {
   CanonicalEvexEncodingInfo Encoding;
   if (!parseCanonicalEvexEncodingInfo(Insn, X86, TargetArch, Encoding) ||
-      (Encoding.P0 & 0x07) != Map ||
-      ((Encoding.P1 | 0x04) & 0x87) != 0x05 ||
+      (Encoding.P0 & 0x07) != Map || ((Encoding.P1 | 0x04) & 0x87) != 0x05 ||
       (Encoding.P2 & 0x97) != 0 || Encoding.Opcode != Opcode ||
       X86.op_count != (HasImmediate ? 4 : 3) ||
       X86.encoding.imm_size != (HasImmediate ? 1 : 0) || X86.avx_sae ||
@@ -51,10 +50,8 @@ bool validEvexCrypto(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch,
   const uint8_t ExpectedLength =
       Dst.size == 16 ? 0 : (Dst.size == 32 ? 0x20 : 0x40);
   if ((Encoding.P2 & 0x60) != ExpectedLength ||
-      decodeEvexVectorRegIndex(Encoding.P0, Encoding.ModRM) !=
-          vectorIndex(Dst) ||
-      decodeEvexVectorVvvvIndex(Encoding.P1, Encoding.P2) !=
-          vectorIndex(Src1) ||
+      Encoding.regIndex() != vectorIndex(Dst) ||
+      Encoding.vvvvIndex() != vectorIndex(Src1) ||
       ((Encoding.ModRM & 0xc0) == 0xc0) != (Src2.type == X86_OP_REG))
     return false;
   for (unsigned Index = 0; Index < X86.op_count; ++Index)
@@ -67,8 +64,7 @@ bool validEvexCrypto(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch,
     if (!validateCanonicalEvexMemoryTail(Insn, X86, Encoding, Src2, Dst.size,
                                          TrailingBytes))
       return false;
-  } else if (decodeEvexVectorRMIndex(Encoding.P0, Encoding.ModRM) !=
-                 vectorIndex(Src2) ||
+  } else if (Encoding.rmIndex() != vectorIndex(Src2) ||
              !validateCanonicalEvexRegisterTail(Insn, X86, Encoding,
                                                 TrailingBytes)) {
     return false;
@@ -76,8 +72,7 @@ bool validEvexCrypto(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch,
   if (!HasImmediate)
     return X86.encoding.imm_offset == 0;
   return X86.encoding.imm_offset == Insn->size - 1 &&
-         X86.operands[3].type == X86_OP_IMM &&
-         X86.operands[3].size == 1 &&
+         X86.operands[3].type == X86_OP_IMM && X86.operands[3].size == 1 &&
          static_cast<uint8_t>(X86.operands[3].imm) ==
              Insn->bytes[Insn->size - 1];
 }
@@ -87,6 +82,11 @@ bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                     const cs_x86 &X86) {
   unsigned InsnId = Insn->id;
   switch (InsnId) {
+
+  case X86_INS_VSHA512MSG1:
+  case X86_INS_VSHA512MSG2:
+  case X86_INS_VSHA512RNDS2:
+    return liftSHA512(L, S, Insn, X86);
 
   // Intel TSX (transactional memory) instructions.
   case X86_INS_XBEGIN:

@@ -4114,6 +4114,129 @@ TEST_F(SessionCAPITest, BinaryFilesDecompileUnderThePlatformTheirCodeShows) {
             -1);
 }
 
+struct SessionLoadStop {
+  std::string Phase;
+  std::string Detail;
+  bool Requested = false;
+  static void progress(void *User, const char *Phase, unsigned long long Done,
+                       unsigned long long, const char *Detail) {
+    auto &State = *static_cast<SessionLoadStop *>(User);
+    if (State.Phase == Phase && Done > 0 &&
+        (State.Detail.empty() || State.Detail == Detail))
+      State.Requested = true;
+  }
+  static int stop(void *User) {
+    return static_cast<SessionLoadStop *>(User)->Requested;
+  }
+};
+
+TEST_F(SessionCAPITest, CancelledLoadingPreservesImageAnalysisAndEdits) {
+  const auto Original = write("original.elf", makeNativeELF(false));
+  auto Other = makeNativeELF(true);
+  Other.resize(3 * 1024 * 1024, '\0');
+  const auto Replacement = write("replacement.elf", Other);
+  constexpr neverd_va_t Entry = 0x400078;
+  ASSERT_EQ(neverd_session_load(Session, Original.c_str()), 1);
+  ASSERT_GT(neverd_session_discover_functions(Session), 0);
+  neverd_annotation_set(Session, Entry, "review in progress");
+  const auto Name = takeString(neverd_func_name(Session, 0));
+  ASSERT_EQ(neverd_rename_func(Session, Name.c_str(), "reviewed_function"), 0);
+  const auto Before = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Before.empty()) << takeString(neverd_last_error(Session));
+  const auto Low = takeString(neverd_ir_low(Session, Entry));
+  const auto Renames = takeString(neverd_renames_json(Session));
+  const auto Digest = takeString(neverd_session_input_sha256(Session));
+  const auto Revision = neverd::sdk::toSession(Session)->FunctionListRevision;
+  auto Clear = llvm::make_scope_exit(
+      [&] { neverd_session_set_load_progress(Session, nullptr, nullptr); });
+  for (const auto *Phase :
+       {"hash", "copy", "parse", "load-discovery", "metadata", "platform",
+        "debug", "debug-apply", "ready"}) {
+    SCOPED_TRACE(Phase);
+    SessionLoadStop Stop{Phase, {}};
+    neverd_session_set_load_progress(Session, SessionLoadStop::progress, &Stop);
+    EXPECT_EQ(neverd_session_load_cancellable(Session, Replacement.c_str(),
+                                              SessionLoadStop::stop, &Stop),
+              -2);
+    EXPECT_TRUE(Stop.Requested);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("cancelled"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 1);
+    EXPECT_EQ(takeString(neverd_session_file_path(Session)), Original);
+    EXPECT_EQ(takeString(neverd_session_input_sha256(Session)), Digest);
+    EXPECT_EQ(takeString(neverd_annotation_get(Session, Entry)),
+              "review in progress");
+    EXPECT_EQ(takeString(neverd_renames_json(Session)), Renames);
+    EXPECT_EQ(neverd::sdk::toSession(Session)->FunctionListRevision, Revision);
+    EXPECT_EQ(neverd::sdk::toSession(Session)->LoadProgressCb.Stop, nullptr);
+    EXPECT_EQ(takeString(neverd_ir_low(Session, Entry)), Low);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Before);
+    neverd_session_set_load_progress(Session, nullptr, nullptr);
+  }
+  // A new architecture and its complete contents publish only on success.
+  ASSERT_EQ(neverd_session_load_cancellable(Session, Replacement.c_str(),
+                                            nullptr, nullptr),
+            1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_file_path(Session)), Replacement);
+  EXPECT_NE(takeString(neverd_session_input_sha256(Session)), Digest);
+  EXPECT_EQ(takeString(neverd_annotations_json(Session)), "[]");
+  EXPECT_EQ(neverd::sdk::toSession(Session)->Img.Arch, neverd::Arch::AArch64);
+  EXPECT_FALSE(takeString(neverd_decompile(Session, Entry)).empty());
+}
+
+TEST_F(SessionCAPITest, CancelledFirstLoadIsDistinctFromFailureAndRetryable) {
+  const auto Path = write("first.elf", makeNativeELF(false));
+  auto Stop = [](void *) { return 1; };
+  EXPECT_EQ(
+      neverd_session_load_cancellable(nullptr, Path.c_str(), Stop, nullptr), 0);
+  EXPECT_EQ(
+      neverd_session_load_cancellable(Session, Path.c_str(), Stop, nullptr),
+      -2);
+  EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  EXPECT_EQ(neverd_func_count(Session), 0);
+  EXPECT_EQ(neverd_session_load_cancellable(Session, nullptr, nullptr, nullptr),
+            0);
+  EXPECT_EQ(
+      neverd_session_load_cancellable(Session, Path.c_str(), nullptr, nullptr),
+      1);
+  EXPECT_EQ(neverd_session_is_loaded(Session), 1);
+  EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
+}
+
+TEST_F(SessionCAPITest, CancelledPDBPublicsLeaveTheOldSessionAndCanRetry) {
+  const auto Original = write("original.evm", "6001600055");
+  ASSERT_EQ(neverd_session_load(Session, Original.c_str()), 1);
+  neverd_annotation_set(Session, 0, "old review");
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  const auto PDB = (Fixtures / "safety_cases_pe_x64.pdb").string();
+  std::ifstream Input(Fixtures / "safety_cases_pe_x64.exe", std::ios::binary);
+  const auto Replacement =
+      write("replacement.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_set_pdb_path(Session, PDB.c_str());
+  SessionLoadStop Stop{"debug", "pdb publics"};
+  neverd_session_set_load_progress(Session, SessionLoadStop::progress, &Stop);
+  auto Clear = llvm::make_scope_exit(
+      [&] { neverd_session_set_load_progress(Session, nullptr, nullptr); });
+  ASSERT_EQ(neverd_session_load_cancellable(Session, Replacement.c_str(),
+                                            SessionLoadStop::stop, &Stop),
+            -2)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(Stop.Requested);
+  EXPECT_EQ(takeString(neverd_session_file_path(Session)), Original);
+  EXPECT_EQ(takeString(neverd_annotation_get(Session, 0)), "old review");
+  Stop.Requested = false;
+  Stop.Phase.clear();
+  ASSERT_EQ(neverd_session_load_cancellable(Session, Replacement.c_str(),
+                                            SessionLoadStop::stop, &Stop),
+            1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_GE(neverd_func_find_by_name(Session, "tainted_stack_overflow"), 0);
+  EXPECT_EQ(takeString(neverd_annotations_json(Session)), "[]");
+}
+
 TEST_F(SessionCAPITest, InputSha256IsTheHashOfTheLoadedFile) {
   const auto Expected = [](const std::string &Bytes) {
     return llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef(Bytes)),
@@ -5929,7 +6052,15 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   // so passes the one it was given on.
   const std::string Owner = takeString(neverd_decompile(Session, 0x180001000));
   EXPECT_NE(Owner.find("Owner(int64_t arg0) {"), std::string::npos) << Owner;
-  EXPECT_NE(Owner.find("IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0)"),
+  // ntifs.h's official public aliases name _KTHREAD/_KPROCESS; the bundled
+  // compatibility headers name _ETHREAD/_EPROCESS. Both are opaque pointers.
+  const std::string ThreadType =
+      takeString(neverd_local_type_json(Session, "PETHREAD", nullptr));
+  const std::string Thread = ThreadType.find("_KTHREAD") != std::string::npos
+                                 ? "_KTHREAD"
+                                 : "_ETHREAD";
+  const std::string Process = Thread == "_KTHREAD" ? "_KPROCESS" : "_EPROCESS";
+  EXPECT_NE(Owner.find("IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0)"),
             std::string::npos)
       << Owner;
   // The calls take what the prototypes declare and return what they
@@ -5938,16 +6069,17 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   ASSERT_GE(Index, 0);
   const std::string Probe =
       takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
-  EXPECT_NE(Probe.find("extern _EPROCESS* IoThreadToProcess(_ETHREAD* "
-                       "Thread);"),
+  EXPECT_NE(Probe.find("extern " + Process + "* IoThreadToProcess(" + Thread +
+                       "* Thread);"),
             std::string::npos)
       << Probe;
   EXPECT_NE(Probe.find("extern void ExFreePoolWithTag(void* P, uint32_t "
                        "Tag);"),
             std::string::npos)
       << Probe;
-  EXPECT_NE(Probe.find(" = IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0);"),
-            std::string::npos)
+  EXPECT_NE(
+      Probe.find(" = IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0);"),
+      std::string::npos)
       << Probe;
   EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
 }
@@ -6053,8 +6185,9 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");
-  EXPECT_NE(Atoms.find("WINBOOL InitAtomTable(DWORD nSize) {"),
-            std::string::npos)
+  // Microsoft spells the Win32 boolean BOOL, mingw-w64 spells it WINBOOL.
+  EXPECT_TRUE(std::regex_search(
+      Atoms, std::regex(R"(\b(BOOL|WINBOOL) InitAtomTable\(DWORD nSize\) \{)")))
       << Atoms;
   // ExitProcess returns to no caller: Finish ends at its call, where it
   // would run on into the trap after it and the function after that.

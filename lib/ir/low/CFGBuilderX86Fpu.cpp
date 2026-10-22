@@ -1089,6 +1089,11 @@ class X87CallEffectIndex {
     // a double in an XMM register and returns it on the x87 stack.
     if (isX86FPStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
       return true;
+    // Bounded system operations do not change the x87 stack on completion.
+    if (isX86SystemStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
+      return x86SystemStateShapeIsValid(
+          static_cast<Intrinsic>(Op.Inputs[0].Offset),
+          x86SystemStateLowShape(Op, Architecture));
     // These VMX/SVM operations leave x87 state unchanged on fallthrough.
     // VMLAUNCH/VMRESUME reach it only on VM-entry failure. VMRUN, whose guest
     // can change unsaved registers and floating state, is not in this family.

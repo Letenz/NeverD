@@ -27,6 +27,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/Debug.h"
@@ -64,8 +65,9 @@ bool isUnconditionalNoReturnCall(const BinaryImage &Img,
   return !IsConditional && libc::isNoReturnTarget(Img, Target);
 }
 
-bool hasBoundedSemanticTerminator(const BinaryImage &Img, Decoder &Dec,
-                                  va_t Addr) {
+bool hasBoundedSemanticTerminator(
+    const BinaryImage &Img, Decoder &Dec, va_t Addr,
+    const func_detect_detail::Cancellation *Control) {
   constexpr int kMaxInsns = limits::kMaxVerifyInsns;
   const Segment *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Img.hasExecutableCodeOwnerAt(Addr))
@@ -78,6 +80,7 @@ bool hasBoundedSemanticTerminator(const BinaryImage &Img, Decoder &Dec,
     va_t Cur = Addr;
     std::optional<InstructionMode> PathMode = Img.instructionModeAt(Addr);
     for (int I = 0; I < kMaxInsns; ++I) {
+      func_detect_detail::checkCancellation(Control);
       if (Cur < Seg->VA)
         return false;
       const size_t Off = static_cast<size_t>(Cur - Seg->VA);
@@ -179,6 +182,27 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   return detectImpl(Img, Dec, false);
 }
 
+std::optional<std::vector<std::pair<va_t, std::string>>>
+FuncDetector::detect(const BinaryImage &Img, Decoder &Dec,
+                     const std::function<bool()> &Cancelled) {
+  func_detect_detail::Cancellation Control{Cancelled};
+  const auto *PreviousControl = Cancellation;
+  const bool PreviousDetail = Dec.detailEnabled(),
+             PreviousText = Dec.textEnabled();
+  Cancellation = &Control;
+  auto Restore = llvm::scope_exit([&] {
+    Cancellation = PreviousControl;
+    Dec.setDetail(PreviousDetail);
+    Dec.setText(PreviousText);
+    Dec.resetX86FpuState();
+  });
+  try {
+    return detectImpl(Img, Dec, false);
+  } catch (const func_detect_detail::DiscoveryCancelled &) {
+    return std::nullopt;
+  }
+}
+
 bool RelocatedFunctionEntryVerifier::accepts(va_t Address) {
   Address = normalizeCodeAddress(Address, Img.Arch, Img.Mode);
   // Chained unwind and cold fragments continue another function's frame.
@@ -214,6 +238,7 @@ bool RelocatedFunctionEntryVerifier::accepts(va_t Address) {
 std::vector<std::pair<va_t, std::string>>
 FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
                          bool RelocationsOnly) {
+  func_detect_detail::checkCancellation(Cancellation);
   Entries.clear();
   UnsymbolizedX86Entries.clear();
   RelocatedCandidates.clear();
@@ -233,6 +258,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   }
 
   for (const auto &Exp : Img.Exports) {
+    func_detect_detail::checkCancellation(Cancellation);
     if (!Img.isFunctionEntryCandidateAt(Exp.Addr))
       continue;
     if (Entries.count(Exp.Addr))
@@ -280,6 +306,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       IndependentEntries.insert(Sym.Addr);
 
   for (const auto &Sym : Img.Symbols) {
+    func_detect_detail::checkCancellation(Cancellation);
     if (!Sym.IsFunc || !Img.isFunctionEntryCandidateAt(Sym.Addr))
       continue;
     if (Sym.Addr == 0) {
@@ -303,6 +330,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   }
 
   for (va_t Addr : ExceptionEntries) {
+    func_detect_detail::checkCancellation(Cancellation);
     if (Entries.count(Addr) || SkipAddrs.count(Addr))
       continue;
     Entries.insert(Addr);
@@ -356,6 +384,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   const uint32_t PointerSize = Img.getPointerSize();
   if (PointerSize != 0)
     for (va_t Slot : Img.CodePtrRelocSlots) {
+      func_detect_detail::checkCancellation(Cancellation);
       const uint8_t *Bytes = Img.readVA(Slot, PointerSize);
       if (!Bytes)
         continue;
@@ -406,6 +435,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       std::vector<std::pair<va_t, va_t>> ByReader;
       ByReader.reserve(CodeNamedByCode.size());
       for (const auto &[Slot, Target] : CodeNamedByCode) {
+        func_detect_detail::checkCancellation(Cancellation);
         const auto Run = runOf(Slot);
         const auto It = Run ? Readers.find(*Run) : Readers.end();
         if (It == Readers.end()) {
@@ -436,7 +466,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
     // with a prologue, so its decode below need only not fail: a function
     // such as main runs far past the verifier's window before it returns.
     if (Img.Format == BinaryFormat::Raw && Img.Arch == Arch::X64) {
-      func_detect_detail::scanCodePointersX64(Img, Dec, CodePointerTargets);
+      func_detect_detail::scanCodePointersX64(Img, Dec, CodePointerTargets,
+                                              Cancellation);
       Entries.insert(CodePointerTargets.begin(), CodePointerTargets.end());
     }
     if (Img.Arch == Arch::ARM)
@@ -506,8 +537,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   if (IsX86LinkedCOFF && Img.Entry != 0) {
     const size_t TableNames = CodeNamedByCode.size();
     if (!RelocationsOnly)
-      func_detect_detail::scanCodeAddressImmediatesX86(Img, Dec,
-                                                       CodeNamedByCode);
+      func_detect_detail::scanCodeAddressImmediatesX86(
+          Img, Dec, CodeNamedByCode, Cancellation);
     const std::vector<va_t> Starts(Entries.begin(), Entries.end());
     // The function an address lies in: the entry before it, and the next.
     auto functionOf = [&](va_t Addr) -> std::optional<std::pair<va_t, va_t>> {
@@ -554,6 +585,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
     };
     std::set<va_t> Labels;
     for (size_t I = 0; I < CodeNamedByCode.size(); ++I) {
+      func_detect_detail::checkCancellation(Cancellation);
       const auto &[Namer, Target] = CodeNamedByCode[I];
       if (NamesOwnLabel(Namer, Target) &&
           (I < TableNames ||
@@ -562,6 +594,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
         Labels.insert(Target);
     }
     for (const auto &Named : CodeNamedByCode) {
+      func_detect_detail::checkCancellation(Cancellation);
       const va_t Target = Named.second;
       // An instruction starts with its opcode, never with a relocated field.
       if (Entries.count(Target) || Labels.count(Target) ||
@@ -601,6 +634,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   for (auto &[A, _] : Results)
     Already.insert(A);
   for (va_t Addr : Entries) {
+    func_detect_detail::checkCancellation(Cancellation);
     if (ExceptionThunks.count(Addr))
       continue;
     if (Already.insert(Addr).second)
@@ -658,6 +692,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
     std::vector<char> Keep(N, 0);
     std::vector<size_t> NeedVerify;
     for (size_t I = 0; I < N; ++I) {
+      func_detect_detail::checkCancellation(Cancellation);
       va_t Addr = Results[I].first;
       if ((RelocationsOnly && !RelocationCodeTargets.count(Addr)) ||
           Img.VerifiedFunctionEntries.count(
@@ -745,8 +780,10 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       // Every target is a new start, so a chain of forwarders ends.
       std::vector<va_t> Forwarders(Starts.begin(), Starts.end());
       while (!Forwarders.empty()) {
+        func_detect_detail::checkCancellation(Cancellation);
         std::vector<va_t> Targets;
         for (va_t Forwarder : Forwarders) {
+          func_detect_detail::checkCancellation(Cancellation);
           Dec.setDetail(true);
           Dec.resetX86FpuState();
           const va_t Target = forwardingJumpTarget(Img, Dec, Forwarder);
@@ -785,6 +822,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
     std::vector<std::pair<va_t, va_t>> SizedRanges;
     std::set<va_t> FunctionSymbolStarts;
     for (const auto &Sym : Img.Symbols) {
+      func_detect_detail::checkCancellation(Cancellation);
       if (Sym.IsFunc)
         FunctionSymbolStarts.insert(Sym.Addr);
       if (!Sym.IsFunc || Sym.Size == 0 || Sym.Size > InvalidVA - Sym.Addr)
@@ -834,6 +872,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       std::vector<std::pair<va_t, std::string>> Filtered;
       Filtered.reserve(Results.size());
       for (auto &R : Results) {
+        func_detect_detail::checkCancellation(Cancellation);
         if (InsideSized(R.first) && !FunctionSymbolStarts.count(R.first) &&
             !IsCoveredMachODirectCallTarget(R.first) &&
             !IsCoveredImportCallTarget(R.first))
@@ -843,6 +882,9 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       Results = std::move(Filtered);
     }
   }
+
+  std::sort(Results.begin(), Results.end());
+  func_detect_detail::checkCancellation(Cancellation);
 
   // Publish only verified candidates that survived every candidate and
   // overlap filter. A transient decoder hit must never become patch-time
@@ -856,7 +898,6 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       Img.VerifiedFunctionEntries.insert(Normalized);
   }
 
-  std::sort(Results.begin(), Results.end());
   return Results;
 }
 
@@ -878,6 +919,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
   std::optional<InstructionMode> PathMode = Img.instructionModeAt(Addr);
   bool SawTerminator = false;
   for (int I = 0; I < kMaxInsns; ++I) {
+    func_detect_detail::checkCancellation(Cancellation);
     size_t Off = static_cast<size_t>(Cur - Seg->VA);
     if (Off >= Seg->Data.size())
       return false;
@@ -910,7 +952,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
     Cur += Sz;
   }
   if (!SawTerminator && !KeepInconclusive &&
-      !hasBoundedSemanticTerminator(Img, Dec, Addr))
+      !hasBoundedSemanticTerminator(Img, Dec, Addr, Cancellation))
     return false;
 
   // A linear walk can encounter RET on one arm while a conditional branch on
@@ -936,10 +978,12 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
     Worklist.push({Addr, Img.instructionModeAt(Addr)});
 
     while (!Worklist.empty()) {
+      func_detect_detail::checkCancellation(Cancellation);
       auto [Cur, PathMode] = Worklist.front();
       Worklist.pop();
 
       while (true) {
+        func_detect_detail::checkCancellation(Cancellation);
         if (const auto Existing = Explored.find(Cur);
             Existing != Explored.end()) {
           if (Img.Arch == Arch::ARM &&
@@ -987,6 +1031,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         bool IsIndirect = false;
         va_t BranchTarget = InvalidVA;
         for (const LowOp &Op : Ops) {
+          func_detect_detail::checkCancellation(Cancellation);
           switch (Op.Opcode) {
           case NdOp::BRANCH:
             IsBranch = true;
@@ -1156,6 +1201,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     size_t ChunkSz = std::max(MinChunk, AlignedLen / ThreadsN);
     ChunkSz = (ChunkSz + 3) & ~static_cast<size_t>(3);
     for (size_t Off = 0; Off < AlignedLen; Off += ChunkSz) {
+      func_detect_detail::checkCancellation(Cancellation);
       const size_t CEnd = std::min(Off + ChunkSz, AlignedLen);
       Chunks.push_back({Seg, AlignedStart + Off, AlignedStart + CEnd});
     }
@@ -1205,7 +1251,8 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
 
   if (Chunks.size() <= 1 && PieceJobs.empty()) {
     for (auto &[Seg, Start, End] : Chunks)
-      func_detect_detail::scanSegmentCalls(Img, Dec, Seg, Start, End, Out);
+      func_detect_detail::scanSegmentCalls(Img, Dec, Seg, Start, End, Out,
+                                           Cancellation);
     Dec.setDetail(PreviousDetail);
     Dec.setText(PreviousText);
     return;
@@ -1225,6 +1272,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     std::vector<ScanChunk> Kept;
     Kept.reserve(Chunks.size());
     for (const ScanChunk &Chunk : Chunks) {
+      func_detect_detail::checkCancellation(Cancellation);
       const auto Range = std::find_if(
           SplitRanges.begin(), SplitRanges.end(), [&](const SplitRange &R) {
             return R.Seg == Chunk.Seg && R.Start <= Chunk.Start &&
@@ -1255,12 +1303,14 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     std::set<va_t> LocalEntries;
 
     while (true) {
+      func_detect_detail::checkCancellation(Cancellation);
       const size_t Job = NextJob.fetch_add(1, std::memory_order_relaxed);
       if (Job < PieceJobs.size()) {
         const PieceJob &Piece = PieceJobs[Job];
         func_detect_detail::CodeInterval Known =
             func_detect_detail::codeIntervalAround(Img, Piece.Start);
         for (va_t Cur = Piece.Start; Cur < Piece.End;) {
+          func_detect_detail::checkCancellation(Cancellation);
           const auto Step = func_detect_detail::stepCallsX86(
               Img, LocalDec, Piece.Seg, Cur, Piece.RangeEnd, Known);
           if (!Step)
@@ -1274,7 +1324,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
         break;
       auto &[Seg, Start, End] = Chunks[Job - PieceJobs.size()];
       func_detect_detail::scanSegmentCalls(Img, LocalDec, Seg, Start, End,
-                                           LocalEntries);
+                                           LocalEntries, Cancellation);
     }
 
     std::lock_guard<std::mutex> Lk(Mtx);
@@ -1284,15 +1334,22 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
   std::vector<std::thread> Ts;
   Ts.reserve(ThreadsN);
   for (unsigned T = 0; T < ThreadsN; ++T)
-    Ts.emplace_back(Worker);
+    Ts.emplace_back([&] {
+      try {
+        Worker();
+      } catch (const func_detect_detail::DiscoveryCancelled &) {
+      }
+    });
   for (auto &T : Ts)
     T.join();
+  func_detect_detail::checkCancellation(Cancellation);
 
   // The targets the joined sweeps find, added to \p Out in order at the end.
   std::vector<va_t> Found;
   std::vector<std::vector<func_detect_detail::CallScanStep>> RangeSteps(
       SplitRanges.size());
   for (size_t RangeIndex = 0; RangeIndex < SplitRanges.size(); ++RangeIndex) {
+    func_detect_detail::checkCancellation(Cancellation);
     const SplitRange &Range = SplitRanges[RangeIndex];
     std::vector<func_detect_detail::CallScanStep> &Taken =
         RangeSteps[RangeIndex];
@@ -1306,6 +1363,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
         func_detect_detail::codeIntervalAround(Img, Pos);
     for (size_t Piece = Range.FirstPiece;
          Piece < Range.FirstPiece + Range.Pieces; ++Piece) {
+      func_detect_detail::checkCancellation(Cancellation);
       const auto &Steps = PieceSteps[Piece];
       auto It =
           std::lower_bound(Steps.begin(), Steps.end(), Pos,
@@ -1314,6 +1372,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
       // Sweep on until this piece's sweep is reached.
       while (Pos < PieceJobs[Piece].End &&
              (It == Steps.end() || It->Addr != Pos)) {
+        func_detect_detail::checkCancellation(Cancellation);
         const auto Step = func_detect_detail::stepCallsX86(
             Img, Dec, Range.Seg, Pos, Range.End, Known);
         if (!Step) {
@@ -1328,6 +1387,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
           ++It;
       }
       for (; It != Steps.end() && It->Addr == Pos; ++It) {
+        func_detect_detail::checkCancellation(Cancellation);
         if (It->Target != InvalidVA)
           Found.push_back(It->Target);
         Taken.push_back(*It);
@@ -1343,6 +1403,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
   const auto ByAddress = [](const func_detect_detail::CallScanStep &Step,
                             va_t Address) { return Step.Addr < Address; };
   for (const Deferred &Item : DeferredChunks) {
+    func_detect_detail::checkCancellation(Cancellation);
     const auto &Taken = RangeSteps[Item.Range];
     const ScanChunk &Chunk = Item.Chunk;
     va_t From = Chunk.Start;
@@ -1358,7 +1419,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
       From = Last->Addr;
     }
     func_detect_detail::scanSegmentCalls(Img, Dec, Chunk.Seg, From, Chunk.End,
-                                         Out);
+                                         Out, Cancellation);
   }
   Dec.setDetail(PreviousDetail);
   Dec.setText(PreviousText);

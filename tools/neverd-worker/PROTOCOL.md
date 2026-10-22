@@ -107,6 +107,136 @@ cancel acknowledgement. `shutdown` cancels queued requests, acknowledges
 `{stopped,requires_restart}`, waits for an active call, and exits. EOF follows the
 same drain policy. A parent can terminate and restart an unresponsive worker.
 
+## Native binary comparison
+
+`comparison_regions` and `comparison_region_page` serve bounded transformation
+hypothesis, anchor and original instruction pages when `options.regions` was
+requested. They preserve the accepted function mapping and expose their own
+analysis state and abstention counts. The same evidence is saved in `.nddiff`.
+`comparison_regions` accepts `all_anchors:true` to inspect unclassified anchors
+from a partial analysis. `comparison_region_page` accepts the global `anchor`
+index, with optional `region_id` to require membership in a hypothesis.
+
+When the linked engine exports the comparison C ABI, `hello.capabilities` includes
+`comparison_start` and the related operations documented in
+[Structural binary comparison](../../docs/binary-diff.md#shared-api-and-worker).
+The worker holds independent comparison inputs and a published snapshot; neither
+start nor mapping edits replace the native project's Session or revision.
+Comparison replies carry `comparison_revision`, and the payload's optional
+`expected_comparison_revision` rejects obsolete reads and edits. Failed starts
+preserve the previous comparison. File stamp changes invalidate interactive reads;
+explicit validation/reopening also re-reads and checks content identity.
+
+`comparison_dataflow` pages retained SSA collections (`side`, `kind` of
+`functions`, `nodes` or `blocks`, `address` for a graph, `offset`, `limit`).
+`comparison_slice` accepts `side`, `address`, `seeds` (node IDs), `direction`
+(`backward`/`forward`), `control`, `timeout_ms`, `offset`, `limit`, and optional
+`refresh`. Both require `dataflow:true` or a bounded settings object at start.
+Unavailable records, graph origins, effect gaps and actual slice stop states are
+retained. Neither operation validates behavior or vulnerability elimination.
+Restart with `restore_path` reuses the saved comparison settings before fresh
+projection. Input load/discovery/filter settings must still match the snapshot.
+
+`comparison_flow_regions` requires `flow_regions:true` or a bounded settings
+object at start (implicitly requests dependency extraction when `dataflow` is
+omitted). Query fields are `offset`, `limit`, optional `kind` relationship filter,
+`region_id` to page that hypothesis's anchors, or `all_anchors:true` for every
+retained anchor. With a global `anchor` index it returns paired nodes and original
+instruction records; `coordinates:"phi_blocks"` pages verified PHI context pairs.
+An optional `region_id` checks anchor membership. Conflicting selectors fail.
+Replies expose scope, abstention/limit counters and open dependency boundaries.
+These finite correspondences neither certify behavior nor hide native deltas.
+
+`comparison_impact` accepts `side`, nonempty address-string `seeds`, `direction`
+(`callers`/`callees`), `kind` (`functions`/`entrypoints`/`sites`/`boundaries`/
+`frontier`/`path`/`effects`), optional `witness` for path rows, `max_depth`,
+`max_functions`, `max_sites`, `max_work`, `timeout_ms`, `offset`, `limit` and
+`refresh`. It independently indexes native admitted call/tail/import relations
+and retains shortest witnesses and global unresolved scope. One exact query
+shares its cached result across page kinds. Input hash, native and comparison
+revisions bind every page. These are possible call paths; data effects, aliases,
+parameter/return binding, external callers and path feasibility remain unmodeled.
+No SSA opt-in is required for paths. Stale input/revision checks still apply.
+The `effects` page has an independent cache recipe and accepts
+`max_effect_records`/`max_effect_work`. It joins each indexed transfer in a
+reached caller to an exact native import and unique SSA call, then uses Safety's
+applicability-checked contract. Missing SSA, unknown/ambiguous calls and unsupported
+signatures remain rows. Contract facets, zero-based argument roles, original
+bytes/node IDs, fallible release and SSA gaps accompany the evidence. This requires
+`dataflow` at comparison start to qualify contracts. `effect_review` records
+inspection state/work/scope and the catalog-resolution assumption independently
+of native traversal coverage. It does not propagate data across calls, prove
+successful release or assess security. Existing cooperative cancellation covers
+fresh native and effect stages under one deadline; refresh retries a stopped query.
+
+`comparison_observations` accepts `side`, accepted function `address`, `context`,
+`max_rows`, `max_observations`, `max_work`, `timeout_ms`, `refresh`, `offset` and
+`limit`. It returns the shared `neverd.bindiff.observations` schema, original
+instruction anchors, local SSA facts, heuristic priorities and explicit scope.
+SSA extraction is optional; missing or ambiguous evidence retains native rows.
+Direct synthetic operands remain labeled synthetic and bind through native
+anchor nodes. Context/page changes reuse one cached calculation; mapping edits
+or restore invalidate it. It reports no security inference or fix assessment.
+
+`comparison_reviews` pages independently recorded analyst history using `case`,
+optional `side`/`address`, `latest`, `offset` and `limit`. It returns newest-first
+records, global `head`, current pair binding and an explicit manual/unvalidated
+source. `comparison_review_record` accepts `primary`, `secondary`, `case`,
+`author`, `note`, optional `reference`, `assessment` and required `expected_head`.
+The current pair must be accepted; stale heads fail atomically. Successful append
+returns the updated summary and advances `comparison_revision`, without changing
+matching or its undo stack. Save/export persists the schema-3 journal. These
+bounded text operations do not claim cooperative cancellation or authentication.
+
+For an active operation in the advertised `comparison_cancellable_operations`,
+including `comparison_observations` and `comparison_scalar_validation`,
+`cancel` returns `requires_restart:false` and
+`stopped:false` while its cooperative request is pending. Only the target's
+terminal reply reports `calculation_stopped:true`. An interrupted comparison has
+`completed_before_cancellation:false`, `partial_result_retained:true` and payload
+`state:"cancelled"`. Cancellation before or during input loading instead fails with
+`error.code:"cancelled"` and no new partial result. The previous comparison and
+its mapping revision remain usable. Current engines forward load stages as
+`primary:load:<stage>` / `secondary:load:<stage>` (including `read`, `hash`,
+`copy`, `parse`, `load-discovery`, `debug`, `ready`); `done`/`total` belong to that
+stage, not to the entire comparison. Older engines without the additive
+cancellable-load entry point finish their synchronous load before stopping. The payload's `job` object
+separates `cancel_requested`, `computation_stopped` and
+`partial_result_retained`. Loading and native discovery cooperate with the stop
+probe; file I/O, allocations and individual metadata/parser helpers can still
+delay acknowledgement. There is no hard wall-clock deadline.
+The preceding legacy cancellation contract still applies to other operations.
+
+`comparison_scalar_validation` accepts `side`, an accepted function `address`,
+optional `max_native_instructions`, `max_work` and `timeout_ms`. It retains no
+proof cache: every request performs fresh selected-function machine-ABI lifting
+and checks the bounded `lifted-scalar-returns-v1` domain. Initial `comparison_start`
+transfers its private input sessions to the C API comparison, which owns them
+until replacement/close. The owned query avoids complete input decoding on each
+request; it reports `input_source_binding:owned_sessions`, `inputs_bound` and
+`inputs_revalidated:false`. Existing source-path change checks still reject stale
+worker requests. Fresh reopen captures the inputs again. `status` is `proved`,
+`unsupported`, `unproved`, `budget_exceeded` or
+`cancelled`; `state` independently distinguishes cancellation, timeout and
+resource limits. `proved` covers only lifted integer returns and defined
+termination for defined input bitvectors at matching GPR locations. It admits
+only absent exception records or complete source-bound canonical unwind-only
+metadata; personality routines, handlers and incomplete records are unsupported.
+This does not establish native unwind behavior. It assumes
+lift correctness and proves neither complete native state nor security;
+`unproved` is not an inequivalence verdict. Reports contain input revisions,
+native entries, lift audits/model hashes, argument bindings and finite limits.
+Saved comparisons never contain a trusted proof. Cancellation/deadline polling
+covers model/proof work; a bounded native pipeline job and
+LLVM copy/verification steps can delay observation of the stop.
+
+Interactive clients use `comparison_summary`, `comparison_functions` and
+`comparison_function_page`; `comparison_export` is subject to transport limits,
+so large results should be written with `comparison_save`. CFG summary/viewport
+operations use the existing layout and bounded spatial indexes, with optional
+node/edge comparison evidence. A `comparison_cfg_focus` request identifies a
+block by its start address and returns its geometry for counterpart navigation.
+
 ## Operations
 
 Manual PDB loading uses `pdb_inspect` with `{path}` first. It returns

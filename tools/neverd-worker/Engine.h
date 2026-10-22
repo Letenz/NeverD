@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace neverd::worker {
+class ComparisonService;
 class ProjectLock;
 class ProjectHistory;
 class Contributions;
@@ -40,6 +41,11 @@ public:
   void setLoadProgressSink(LoadProgressSink Sink) {
     loadProgress_ = std::move(Sink);
   }
+  /// The active request owns this thread-safe cancellation probe.
+  void setCancellationProbe(std::function<bool()> Probe) {
+    cancelled_ = std::move(Probe);
+  }
+  static bool comparesBinaries();
   std::string revision() const { return std::to_string(revision_); }
   std::string projectId() const { return projectId_; }
   bool analyzed() const { return analyzed_; }
@@ -100,6 +106,8 @@ public:
 private:
   Json executeImpl(const std::string &operation, const Json &payload,
                    EncodedPayload *encoded);
+  std::unique_ptr<ComparisonService> comparison_;
+  std::function<bool()> cancelled_;
   neverd_session_t session_ = nullptr;
   std::unique_ptr<ProjectLock> lock_;
   std::unique_ptr<ProjectHistory> history_;

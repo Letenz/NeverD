@@ -1,0 +1,24 @@
+add_neverd_component_library(NeverDDiff
+  CallImpact.cpp
+  CallEffectReview.cpp
+  ChangeObservations.cpp
+  Comparison.cpp
+  ComparisonJSON.cpp
+  Control.cpp
+  DataFlow.cpp
+  DataFlowJSON.cpp
+  FlowEvidence.cpp
+  FlowMatch.cpp
+  FlowRegions.cpp
+  FlowRegionsJSON.cpp
+  Features.cpp
+  FunctionDelta.cpp
+  Names.cpp
+  MedDataFlow.cpp
+  Program.cpp
+  Regions.cpp
+  RegionsJSON.cpp
+  ReviewJournal.cpp
+  ScalarValidation.cpp
+  LINK_COMPONENTS IRMed Safety LLVMInterpreterModel WindowsEHMetadata
+)

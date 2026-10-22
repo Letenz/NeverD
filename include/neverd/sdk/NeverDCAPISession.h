@@ -36,6 +36,11 @@ extern "C" {
 // Session lifecycle
 // ===--------------------------------------------------------------------===//
 
+/// Optional cooperative stop probe. Nonzero requests cancellation. The probe
+/// can run on native scan workers and must be thread-safe, nonblocking and
+/// nonthrowing. Its context must remain alive until the synchronous call ends.
+typedef int (*neverd_cancel_probe_fn)(void *user_data);
+
 NEVERD_API neverd_session_t neverd_session_create(void);
 NEVERD_API void neverd_session_destroy(neverd_session_t Sess);
 /// Returns 1 on success, replacing the image, analysis, and per-image edits.
@@ -44,6 +49,16 @@ NEVERD_API void neverd_session_destroy(neverd_session_t Sess);
 /// neverd_last_error().
 /// Path is UTF-8 on every platform, including Windows.
 NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
+/// Same transactional load with cooperative cancellation: 1 on completion,
+/// 0 on failure, -2 when a preparation checkpoint observes a stop. Cancellation
+/// keeps the previous image, analysis and edits; a later call can retry. The
+/// callbacks are borrowed only for this synchronous call. Progress uses the
+/// session's load-progress callback. I/O and individual parser operations may
+/// delay a checkpoint. A stop after final preparation may complete normally.
+NEVERD_API int neverd_session_load_cancellable(neverd_session_t Sess,
+                                               const char *Path,
+                                               neverd_cancel_probe_fn Cancelled,
+                                               void *UserData);
 /// List the ways neverd_session_load can read the file at \p Path, as a load
 /// dialog shows them, without loading it:
 /// {"rows":[{"loader","text","processor","bits","endian","loadable",
@@ -152,16 +167,25 @@ NEVERD_API int neverd_load_options_save(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 
 /// Add the native function entries the function detector finds in the loaded
-/// image alone -- call targets, prologues and format tables, without lifting
-/// anything -- to the function list.  An added function has an automatic name
-/// and no size, and stays listed until the next load; the full pipeline may
-/// list more.  Idempotent; returns the function count, or -1 with an error.
+/// image alone -- call targets, prologues and format tables, without running
+/// the full analysis pipeline -- to the function list.  An added function has
+/// an automatic name and no size, and stays listed until the next load; the
+/// full pipeline may list more.  Idempotent; returns the function count, or -1
+/// with an error.
 NEVERD_API int neverd_session_discover_functions(neverd_session_t Sess);
+/// Discovery with the same complete-result contract and a stop probe. Returns
+/// the function count on completion, -1 on failure, or -2 on cancellation.
+/// Cancellation joins running discovery workers, keeps the previous inventory
+/// and does not mark partial candidates as discovered. A later call can retry.
+/// This also cooperatively stops an existing discover_functions_step job.
+NEVERD_API int neverd_session_discover_functions_cancellable(
+    neverd_session_t Sess, neverd_cancel_probe_fn Cancelled, void *UserData);
 /// Start/poll native function discovery on an owned image snapshot. Returns
 /// 0 while pending, 1 after publishing the complete result, or -1 with
 /// last_error. Other queries may use the session between polls. A changed
 /// function-list revision discards the old result before starting another
-/// snapshot. At most one job is retained; destroying the session joins it.
+/// snapshot. At most one job is retained; destroying the session requests
+/// cancellation and joins it.
 /// The synchronous discovery entry point keeps its existing completion
 /// contract and can consume the same pending job.
 NEVERD_API int neverd_session_discover_functions_step(neverd_session_t Sess);
@@ -387,9 +411,14 @@ NEVERD_API int neverd_session_set_arm_function_mode(neverd_session_t Sess,
 NEVERD_API neverd_va_t neverd_session_resolve_function_name_before_load(
     neverd_session_t Sess, const char *BinaryPath, const char *Name);
 
-/// Called from `neverd_session_load` on the same thread.  \p phase is a
-/// stable token (`image`, `debug`, `ready`).  \p done/\p total are 0 when
-/// the step is indeterminate.  \p detail may be empty.  Pass NULL to clear.
+/// Called synchronously during session loading, including from joined PDB
+/// workers. Calls are serialized; callbacks must be nonthrowing, nonblocking
+/// and must not reenter the session. The context lives until cleared or the
+/// session is destroyed. Phase tokens include image, identify, read, hash,
+/// copy, parse, load-discovery, metadata, platform, debug, debug-apply and
+/// ready; tolerate new tokens. done/total describe that step, not overall
+/// progress, and are 0 when indeterminate. detail may be empty. Pass NULL to
+/// clear.
 typedef void (*neverd_load_progress_fn)(void *user_data, const char *phase,
                                         unsigned long long done,
                                         unsigned long long total,
