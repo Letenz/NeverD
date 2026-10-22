@@ -91,6 +91,12 @@ class CompleteSourceMeasurement(unittest.TestCase):
         self.assertEqual(result["decompile_ms"], [])
         self.assertEqual(result["decompile_failures"][0]["error"], "empty C source")
 
+    def test_missing_entry_cannot_measure_a_containing_function(self):
+        result, client = self.run_worker({}, functions=(0x3000,))
+        self.assertEqual(result["decompile_ms"], [])
+        self.assertEqual(result["decompile_failures"][0]["entry"], "0x3000")
+        self.assertFalse(any(op == "decompile" for op, _ in client.requests))
+
     def test_warming_is_explicit_and_reported_separately(self):
         result, client = self.run_worker({("0x1000", 0): {"text": "body"}}, warm=True)
         self.assertTrue(client.requests[0][1]["warm"])

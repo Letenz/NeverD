@@ -134,11 +134,14 @@ def measure_neverd(transport, worker, binary, functions, timeout, *, warm=False)
         result["ready_ms"] = (time.perf_counter() - opened) * 1e3
         result["functions"] = len(entries)
         result["entries"] = entries
+        known_entries = set(entries)
         timings, failures, records, first_pages = [], [], [], []
         for entry in functions:
             started = time.perf_counter()
             record = dict(entry=f"0x{entry:x}")
             try:
+                if entry not in known_entries:
+                    raise RuntimeError("not recognized as a function entry")
                 offset, seen, chunks = 0, set(), []
                 while offset is not None:
                     if offset in seen:
@@ -203,6 +206,7 @@ def ida_child(binary, functions_file, output):
     entries = list(idautils.Functions())
     result["functions"] = len(entries)
     result["entries"] = entries
+    known_entries = set(entries)
     timings, failures, records = [], [], []
     functions = json.loads(Path(functions_file).read_text())
     if functions and not ida_hexrays.init_hexrays_plugin():
@@ -211,6 +215,8 @@ def ida_child(binary, functions_file, output):
         started = time.perf_counter()
         record = dict(entry=f"0x{entry:x}")
         try:
+            if entry not in known_entries:
+                raise RuntimeError("not recognized as an IDA function entry")
             function = ida_hexrays.decompile(entry)
             if function is None:
                 raise RuntimeError("decompile returned None")
