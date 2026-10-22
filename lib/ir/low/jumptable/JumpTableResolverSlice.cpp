@@ -10392,6 +10392,9 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
   // entries must perform the declared extension, optional scale, and exactly
   // one target-anchor add before they can reach INDIR_BR.
   bool TransformFixedPoint = false;
+  // Unresolved candidate transforms widen nothing.  Remember them so a later
+  // negative branch proof stays incomplete instead of becoming definitive.
+  bool TransformCandidateIncomplete = false;
   bool RestrictToLexicalTargetRegion =
       RequiredState != TargetRaw && LexicalTransformBegin <= Rec.Addr;
   bool UsedLexicalTargetRegion = false;
@@ -10642,24 +10645,35 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
       if (RestrictToLexicalTargetRegion) {
         Derived.erase(Derived.begin() + InitialDerivedCount, Derived.end());
         RestrictToLexicalTargetRegion = false;
+        TransformCandidateIncomplete = false;
         continue;
       }
       TransformFixedPoint = true;
       break;
     }
     bool TransformQueriesComplete = true;
+    std::vector<bool> QueryCompletion;
     const std::vector<bool> QueryResults = tableValuesMatchAtUses(
-        Queries, &TransformQueriesComplete, nullptr, InvalidVA, nullptr,
-        AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
-        nullptr, nullptr,
+        Queries, &TransformQueriesComplete, &QueryCompletion, InvalidVA,
+        nullptr, AggregateEvidenceBudget,
+        limits::kMaxJumpTableRoleMatchEvidenceWork, nullptr, nullptr,
         RestrictToLexicalTargetRegion
             ? limits::kMaxJumpTableLargeExpressionRoleResolverDepth
             : limits::kMaxJumpTableExpandedResolverDepth,
         CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
-    if (!TransformQueriesComplete || QueryResults.size() != Queries.size()) {
+    // A missing result vector means the batch never ran.  Per-query depth
+    // refusals are different: completed siblings remain evidence, and an
+    // unresolved copy is simply not an occurrence.  The universal proof below
+    // still has to succeed on its own.  While any candidate is unresolved, a
+    // negative result of that proof stays incomplete so a missed occurrence
+    // cannot permanently reject the branch.
+    if (QueryResults.size() != Queries.size() ||
+        QueryCompletion.size() != Queries.size()) {
       Complete = false;
       return false;
     }
+    if (!TransformQueriesComplete)
+      TransformCandidateIncomplete = true;
     bool Changed = false;
     for (const PendingTransform &P : Pending) {
       if (!consumeWork())
@@ -10668,7 +10682,8 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
       for (size_t I : P.QueryIndices) {
         if (!consumeWork())
           return false;
-        if (I >= QueryResults.size() || !QueryResults[I]) {
+        if (I >= QueryResults.size() || I >= QueryCompletion.size() ||
+            !QueryCompletion[I] || !QueryResults[I]) {
           AllQueriesMatched = false;
           break;
         }
@@ -10691,6 +10706,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
       if (RestrictToLexicalTargetRegion) {
         Derived.erase(Derived.begin() + InitialDerivedCount, Derived.end());
         RestrictToLexicalTargetRegion = false;
+        TransformCandidateIncomplete = false;
         continue;
       }
       TransformFixedPoint = true;
@@ -10756,7 +10772,13 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
     Complete = false;
     return false;
   }
-  return !Final.empty() && Final.front();
+  if (!Final.empty() && Final.front())
+    return true;
+  if (TransformCandidateIncomplete) {
+    Complete = false;
+    return false;
+  }
+  return false;
 }
 
 bool CFGBuilder::tableLoadAddressesMatchRole(
