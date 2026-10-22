@@ -50,8 +50,13 @@ bool hasOffsetFactors(const SymContext &Ctx, SymRef Root) {
 
 SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage) {
-  if (!hasOffsetFactors(Ctx, Root) || Budget.exhausted())
+  if (Budget.exhausted())
     return Root;
+  // High-bit wrappers can obscure an otherwise cheap residue proof. Read
+  // their bounded prefixes before a full affine map spends the shared budget.
+  auto Projected = foldProjectedProductResidues(Ctx, Root, Budget, Storage);
+  if (Projected != Root || !hasOffsetFactors(Ctx, Root) || Budget.exhausted())
+    return Projected;
   if (auto Affine = foldAffineProductResidues(Ctx, Root, Budget, Storage))
     return *Affine;
   const unsigned Width = Ctx.width(Root);
@@ -167,8 +172,10 @@ SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     return foldOffsetProduct(Ctx, Root, Budget, Storage);
   const size_t N = Ctx.numOperands(Root);
   if (N > limits::kMaxResidueProductSummands ||
-      !llvm::any_of(Ctx.operands(Root),
-                    [&](SymRef Term) { return hasOffsetFactors(Ctx, Term); }))
+      !llvm::any_of(Ctx.operands(Root), [&](SymRef Term) {
+        return hasOffsetFactors(Ctx, Term) ||
+               hasProjectedResidueFactors(Ctx, Term);
+      }))
     return Root;
   if (N > Storage / (2 * sizeof(SymRef)) || !Budget.consume(2 * N))
     return Root;

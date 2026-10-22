@@ -619,6 +619,13 @@ std::optional<SymRef> foldAffineProductResidues(SymContext &Ctx, SymRef Root,
                                                 WorkBudget &Budget,
                                                 size_t &Storage);
 
+/// Cheap admission only; no equality follows from this structural hint.
+bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root);
+
+/// Prove full-word product zero from complete affine maps of low prefixes.
+SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
+                                    WorkBudget &Budget, size_t &Storage);
+
 /// Only the low product bit survives a highest-bit scale.
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                              size_t &Storage);
