@@ -4223,7 +4223,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
               {"kind", CodeItemKind},
               {"size", at.at("size")},
               {"saved", false}};
-    if (kind == "instruction" &&
+    if (kind == "instruction" && action != "undefine" &&
         at.value("user", std::string()) != CodeItemKind)
       throw Error("invalid_request",
                   "Code belongs to its function; delete the function to "

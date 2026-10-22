@@ -480,7 +480,13 @@ std::optional<std::string> imageStringComment(const BinaryImage *Img,
       Img, Addr, ::neverd::limits::backend::kCTypeFormatStringWindow);
   if (!Bytes)
     return std::nullopt;
-  const auto First = stringAtStart(*Bytes, strings::ScanOptions());
+  strings::ScanOptions Options;
+  // Comments describe the stored bytes without replacing them by a host C
+  // literal. They can therefore show big-endian Unicode on a little-endian
+  // target too; imageCString retains its stricter replacement contract.
+  Options.Encodings |= strings::encodingBit(strings::Encoding::UTF16BE) |
+                       strings::encodingBit(strings::Encoding::UTF32BE);
+  const auto First = stringAtStart(*Bytes, Options);
   if (!First)
     return std::nullopt;
   return quotedStringText(First->Kind, First->Text);

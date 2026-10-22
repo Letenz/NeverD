@@ -1023,7 +1023,14 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         break;
       OS << DestS << " = " << ValS;
     }
-    OS << ";\n";
+    OS << ";";
+    if (Opts.EmitComments && Stmt.Val && Stmt.Val->Kind == ExprKind::Load &&
+        Stmt.Val->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Stmt.Val->Operands.size() == 1 && Stmt.Val->Operands[0])
+      if (const auto Address = constAddress(*Stmt.Val->Operands[0]))
+        if (const auto Text = imageStringComment(Opts.Image, *Address))
+          OS << " /* " << *Text << " */";
+    OS << "\n";
     break;
   }
 

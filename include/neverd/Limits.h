@@ -55,6 +55,11 @@ constexpr uint64_t kMaxObjectExternStatedReach = 0x10000;
 // Jump-table resolution
 //===----------------------------------------------------------------------===//
 
+/// Total scalar-operation and operand-byte work for exact constant branches
+/// in one CFG build, including revalidation after new paths are discovered.
+/// Exhaustion preserves the original indirect transfers.
+constexpr size_t kMaxScalarBranchEvidenceWork = 262144;
+
 /// Hard upper bound on jump-table entries.  Tables exceeding this are
 /// almost certainly false positives.
 constexpr uint32_t kMaxJumpTableEntries = 4096;
