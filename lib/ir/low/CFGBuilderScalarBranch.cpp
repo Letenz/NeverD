@@ -196,13 +196,16 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
     std::vector<va_t> Explore;
     for (const auto &[Addr, Target] : Targets) {
       auto &Rec = Insns.at(Addr);
+      // An exact transfer has the same reachability authority as a decoded
+      // direct branch. A next-entry bound limits speculative address roots,
+      // not discontiguous or backward control flow. explore() still keeps
+      // independent function entries as tail calls and checks code ownership
+      // for every instruction it reaches.
       const bool Valid =
           Target && *Target != InvalidVA &&
           (*Target % getInsnAlignment()) == 0 &&
           Img.hasExecutableCodeOwnerRange(*Target, getInsnAlignment()) &&
-          Img.readVA(*Target, getInsnAlignment()) &&
-          (!CurrentFuncRange || (*Target >= CurrentFuncRange->first &&
-                                 *Target < CurrentFuncRange->second));
+          Img.readVA(*Target, getInsnAlignment());
       if (Rec.ScalarBranchInput) {
         if (!Valid || *Target != Rec.BranchTarget)
           RoundChanged |= Restore(Rec);
