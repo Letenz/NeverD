@@ -62,6 +62,7 @@ public:
     CandidateCleanup,
     MedIR,
     NoReturnVerify,
+    MachineMedIR,
     HighIR,
     LLVMEmission
   };
@@ -88,6 +89,8 @@ private:
       return "med_ir";
     case Stage::NoReturnVerify:
       return "noreturn_verify";
+    case Stage::MachineMedIR:
+      return "machine_med_ir";
     case Stage::HighIR:
       return "high_ir";
     case Stage::LLVMEmission:
@@ -186,6 +189,14 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                              const PipelineOptions &Opts, DebugContext *Dbg) {
   PipelineResult Result;
   Result.SourceImage = &Img;
+  if (Opts.MedAnalysisOnly &&
+      (Opts.PatchMode || Opts.LiftMode || Opts.DeferHighIR || Opts.DeferMedIR ||
+       Opts.DumpHigh || Opts.DumpLlvm || Opts.SourceProjection ||
+       Opts.InterpreterSpecialization || Img.Arch == Arch::EVM ||
+       Img.Arch == Arch::SBF)) {
+    Result.Error = "MedIR analysis requires a native input and no output mode";
+    return Result;
+  }
   // Restricted runs of an image read the same callees for their signatures.
   if (Opts.AnalysisCache &&
       (!Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0)) {
@@ -513,7 +524,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     dumpMedIR(Result.MedFuncs);
 
   if (Result.MedIRVerifierFailures != 0 &&
-      (Opts.PatchMode || Opts.LiftMode || Opts.InterpreterSpecialization)) {
+      (Opts.usesMachineMedIR() || Opts.InterpreterSpecialization)) {
     Result.Error = "MedIR verification failed";
     Result.Success = false;
     Trace.finish(false);
@@ -523,16 +534,18 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // If only dumping intermediate IR (LowIR/MedIR), skip LLVM emission
   // entirely.  The dump flags are handled above; return early to avoid
   // hitting the LLVM PassManager (which may crash on certain LLVM builds).
-  if ((Opts.DumpLow || Opts.DumpMed) && !Opts.DumpHigh && !Opts.PatchMode &&
-      !Opts.LiftMode) {
+  if ((Opts.DumpLow || Opts.DumpMed) && !Opts.DumpHigh &&
+      !Opts.usesMachineMedIR()) {
     Result.Success = true;
     Trace.finish(true);
     return Result;
   }
 
-  // Patch/Lift mode: MedIR -> LLVM IR, skip HighIR.
-  if (Opts.PatchMode || Opts.LiftMode) {
-    Trace.start(NativePipelineTrace::Stage::LLVMEmission);
+  // Machine ABI preparation is shared by analysis and LLVM emission.
+  if (Opts.usesMachineMedIR()) {
+    Trace.start(Opts.MedAnalysisOnly
+                    ? NativePipelineTrace::Stage::MachineMedIR
+                    : NativePipelineTrace::Stage::LLVMEmission);
     Result.Success = runPatchLiftMode(Img, Ctx, Opts, Result, Dbg);
     Trace.finish(Result.Success);
     return Result;

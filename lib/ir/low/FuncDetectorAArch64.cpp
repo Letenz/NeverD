@@ -19,11 +19,13 @@ namespace neverd {
 namespace func_detect_detail {
 
 void scanSegmentCallsAArch64(const BinaryImage &Img, const Segment *Seg,
-                             va_t Start, va_t End, std::set<va_t> &Out) {
+                             va_t Start, va_t End, std::set<va_t> &Out,
+                             const Cancellation *Control) {
   va_t Cur = (Start + 3) & ~static_cast<va_t>(3);
   const uint8_t *Data = Seg->Data.data();
   const size_t DataSize = Seg->Data.size();
   while (Cur <= End && End - Cur >= 4) {
+    func_detect_detail::checkCancellation(Control);
     size_t Off = static_cast<size_t>(Cur - Seg->VA);
     if (Off + 4 > DataSize)
       break;

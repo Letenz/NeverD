@@ -152,16 +152,29 @@ NEVERD_API int neverd_load_options_save(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 
 /// Add the native function entries the function detector finds in the loaded
-/// image alone -- call targets, prologues and format tables, without lifting
-/// anything -- to the function list.  An added function has an automatic name
-/// and no size, and stays listed until the next load; the full pipeline may
-/// list more.  Idempotent; returns the function count, or -1 with an error.
+/// image alone -- call targets, prologues and format tables, without running
+/// the full analysis pipeline -- to the function list.  An added function has
+/// an automatic name and no size, and stays listed until the next load; the
+/// full pipeline may list more.  Idempotent; returns the function count, or -1
+/// with an error.
 NEVERD_API int neverd_session_discover_functions(neverd_session_t Sess);
+/// Optional cooperative stop probe. Nonzero requests cancellation. The probe
+/// can run on native scan workers and must be thread-safe, nonblocking and
+/// nonthrowing. Its context must remain alive until the synchronous call ends.
+typedef int (*neverd_cancel_probe_fn)(void *user_data);
+/// Discovery with the same complete-result contract and a stop probe. Returns
+/// the function count on completion, -1 on failure, or -2 on cancellation.
+/// Cancellation joins running discovery workers, keeps the previous inventory
+/// and does not mark partial candidates as discovered. A later call can retry.
+/// This also cooperatively stops an existing discover_functions_step job.
+NEVERD_API int neverd_session_discover_functions_cancellable(
+    neverd_session_t Sess, neverd_cancel_probe_fn Cancelled, void *UserData);
 /// Start/poll native function discovery on an owned image snapshot. Returns
 /// 0 while pending, 1 after publishing the complete result, or -1 with
 /// last_error. Other queries may use the session between polls. A changed
 /// function-list revision discards the old result before starting another
-/// snapshot. At most one job is retained; destroying the session joins it.
+/// snapshot. At most one job is retained; destroying the session requests
+/// cancellation and joins it.
 /// The synchronous discovery entry point keeps its existing completion
 /// contract and can consume the same pending job.
 NEVERD_API int neverd_session_discover_functions_step(neverd_session_t Sess);

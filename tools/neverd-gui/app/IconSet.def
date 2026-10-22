@@ -61,6 +61,8 @@ NEVERD_ICON_COLOR("#BABABA", "chrome grip, light theme")
 NEVERD_ICON_COLOR("#3B3B3B", "menu check, light theme")
 
 // File.
+NEVERD_ICON("compare", Navigation,
+            "two instruction columns joined by corresponding rows")
 NEVERD_ICON("open", File, "an open folder")
 NEVERD_ICON("folder", File, "a closed folder")
 NEVERD_ICON("folder_new", File, "a folder with a plus")

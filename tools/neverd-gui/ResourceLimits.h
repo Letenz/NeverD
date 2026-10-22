@@ -16,6 +16,7 @@
 #include "../common/symbols/ResourceLimits.h"
 #include "../common/transport/ResourceLimits.h"
 
+#include "neverd/diff/Limits.h"
 #include "neverd/sdk/Limits.h"
 #include "neverd/support/Limits.h"
 
@@ -24,6 +25,40 @@
 #include <cstdint>
 
 namespace neverd::limits::gui {
+
+// Binary comparison views. Rows and request admission stay bounded separately.
+inline constexpr int kComparisonPageSize =
+    ::neverd::limits::diff::kDefaultPageSize;
+inline constexpr int kComparisonCachedPages = 16;
+inline constexpr int kComparisonPendingPages = 4;
+inline constexpr int kComparisonPendingRequests = 64;
+inline constexpr int kComparisonGraphDebounceMs = 40;
+inline constexpr int kComparisonGraphVisibleNodes = 2048;
+inline constexpr int kComparisonGraphVisibleEdges = 8192;
+inline constexpr double kComparisonZoomStep = 1.2;
+inline constexpr int kComparisonInitialWidth = 1280;
+inline constexpr int kComparisonInitialHeight = 800;
+inline constexpr int kComparisonMinimumWidth = 760;
+inline constexpr int kComparisonMinimumHeight = 540;
+inline constexpr int kComparisonReviewInitialWidth = 1100;
+inline constexpr int kComparisonReviewInitialHeight = 800;
+inline constexpr int kComparisonReviewMinimumWidth = 880;
+inline constexpr int kComparisonReviewMinimumHeight = 640;
+inline constexpr int kComparisonValidationInitialWidth = 920;
+inline constexpr int kComparisonValidationInitialHeight = 680;
+inline constexpr int kComparisonValidationMinimumWidth = 760;
+inline constexpr int kComparisonValidationMinimumHeight = 540;
+inline constexpr int kComparisonValidationTimeoutMs = 5000;
+inline constexpr int kComparisonChangesInitialWidth = 1180;
+inline constexpr int kComparisonChangesInitialHeight = 820;
+inline constexpr int kComparisonChangesMinimumWidth = 880;
+inline constexpr int kComparisonChangesMinimumHeight = 620;
+inline constexpr int kComparisonImpactInitialWidth = 1180;
+inline constexpr int kComparisonImpactInitialHeight = 820;
+inline constexpr int kComparisonImpactMinimumWidth = 880;
+inline constexpr int kComparisonImpactMinimumHeight = 620;
+inline constexpr double kComparisonMinimumZoom = 0.05;
+inline constexpr double kComparisonMaximumZoom = 4.0;
 
 // tools/neverd-gui/EngineClient.cpp
 inline constexpr qsizetype kEngineClientMaxFrame = 8 * 1024 * 1024;

@@ -27,6 +27,8 @@ namespace neverd::sdk {
 /// Lines admitted by one C/IR view page, shared with transport adapters.
 inline constexpr int kMaxCodeViewPageLines = 2048;
 inline constexpr int kDecodeBenchmarkMaxRepetitions = 100;
+/// Maximum wait between cancellation probes while joining an owned discovery.
+inline constexpr unsigned kFunctionDiscoveryPollMilliseconds = 5;
 
 // Query paging and decoding.
 

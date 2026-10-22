@@ -146,6 +146,145 @@ GUI refreshes retain loaded context within the per-side query budget and keep a
 prefetch margin, so replacing unchanged rows does not shrink and regrow the
 window used to route branch arrows. Revision and navigation fences still apply.
 
+## Structural comparison ownership
+
+`lib/diff` owns the immutable comparison model, normalization-independent matching,
+block/instruction deltas, correspondence overrides and versioned persistence.
+It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+`DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
+immutable dependency graph. `MedDataFlow` is its read-only adapter from the
+pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
+preserves PHI predecessor labels and instruction origins, and distinguishes
+parameters from call clobbers. This adapter depends on `IRMed`, not SDK sessions.
+Call-argument metadata binds to an exact MedIR block/operation, with duplicate
+or stale owners rejected. Its arguments remain a distinct span of node inputs,
+separate from raw call operands and preserved clobber prefixes. Missing argument
+metadata stays unknown. This v2 observation does not assert ABI formal bindings.
+The comparison adapter requests `PipelineOptions::MedAnalysisOnly`: the existing
+machine ABI preparation, including omitted-callee summaries, ends after final
+MedIR verification and before LLVM emission. `usesMachineMedIR()` keeps source
+presentation hints out of analysis as it does for lifting. Deferred source
+HighIR is a different stage and may not yet contain System V call arguments.
+Data fingerprints report open dependency frontiers. Control slices use
+postdominators of observed exit paths; missing exits, aliases, opaque calls,
+exceptional flow and unknown inputs remain gaps rather than inferred effects.
+`FlowMatch` verifies finite SSA neighborhood candidates with a sparse definition
+bijection and exact operand/PHI edge checks after fingerprint nomination. Tied
+distinct definitions abstain; a matched neighborhood retains open control/data
+frontiers and supplies no unchanged-function or semantic-equivalence conclusion.
+`FlowMatchInput` validates a borrowed immutable graph/fingerprint view once for
+repeated root checks. The collection owns that lifetime. Region candidates do not
+rescan the whole graph for each root; external raw-graph calls still validate.
+`FlowRegions` owns bounded root indexing, exact neighborhood verification and
+overlap grouping. Its node/PHI-block pairs bind to immutable observations;
+coverage unions nodes rather than counting overlapping anchors twice. Native
+and SSA region paths share `regionExplanations` for topology/call/module facts.
+`FlowRegionsJSON` owns strict streaming persistence and bounded previews; restore
+recomputes mappings before publication. Neither frontend may infer equivalence
+from these hypotheses or replace the native function delta with them.
+Saved work counters are bounded historical diagnostics; cache and host sort
+changes must not make identical observed mappings fail evidence binding.
+`CallImpact` indexes admitted native `Instruction::Callee` relations, including
+tail transfers and resolved import slots, and owns bounded breadth-first caller
+or callee witnesses. Global unresolved sites remain visible even without a path
+to the seed. Entry/export traits come from native discovery, never absence of
+callers. Depth/function frontiers, partial indexing and cancellation are separate
+from unknown call effects. This supplies possible call reachability; parameter,
+return and alias propagation and path feasibility are not inferred. The C API
+caches one exact query across page kinds; frontends only select/render records.
+`ChangeObservations` owns bounded review facts over accepted native alignments
+and their exact retained SSA graphs. Unique compatible native-origin families
+anchor local facts and unique direct synthetic arithmetic operands; synthetic
+addresses never supply original-code identities. Unchanged native instructions
+can expose rewritten operand changes, while ambiguous/unsupported associations
+retain native changes. Dependency contexts and priority are explicit heuristics,
+not security effects or fix verdicts. The C API binds one cached query to pair,
+snapshots and SSA recipes and shares cancellation/deadline with delta acquisition.
+Filtering/paging only select retained records; mapping edits and restore retire
+that derived cache. GUI/worker/CLI consume the same evidence and scope.
+`CallEffectReview` joins native CallImpact sites in reached callers to retained
+SSA calls with unique original origins. Only exact bodiless import identities
+and admitted native ABI metadata can ask the shared public
+`safety/CallEffects.h` interface for an applicability-checked contract. The
+existing Safety descriptor/catalog remains the sole owner of semantic families,
+arity/platform constraints, argument roles and fallible-release conditions.
+The diff consumer neither guesses external identity from names nor clears
+SSA effect/alias gaps. Native reachability and effect inspection have separate
+finite allowances, one request deadline and independent completion states.
+Cached pages retain original site/node identities; reopening recomputes them.
+This is call-contract review, not parameter/return/alias propagation or security
+validation. SDK, CLI, worker and Qt share the impact `effects` page.
+`ReviewJournal` owns manual case records independently of computed evidence and
+mapping override history. An append validates fields, current accepted pair,
+expected journal head, per-record/aggregate text budgets and content/analysis
+identity digests. Global and per-case/pair links are deterministic, unauthenticated
+integrity checks. They are never security proofs. History survives mapping edits;
+latest assessment and active pair binding are separate read-time properties.
+Schema 3 persists the journal; schema 2 migrates with an empty journal. Restore
+validates history and function ownership before publishing any result. The C API
+owns serialized append admission, and CLI/worker/Qt share those exact rules.
+`ScalarValidation` owns the optional `lifted-scalar-returns-v1` profile. Native
+admission is shared with the SDK before invoking the pipeline, so call and
+exception frontiers never trigger speculative interprocedural proof work.
+`ComparisonScalarValidation` uses fresh strict machine-ABI lifting with NoOpt
+and scaffold mem2reg, requires complete matching decode/lift audits, and locates
+definitions by original-entry metadata. Diff verifies exact ordered GPR input
+locations and widths, then copies the body while removing only checked native
+provenance packaging and the pointer-null policy. The SDK retains the selected
+MedIR's normalized exception record. Diff reuses `describesUnwindOnly()` and
+`WindowsEHMetadata` canonical encoding, binds the ABI and complete native code
+range, and admits that attachment only for a complete frame-only record. Its
+projection has a separate finite input allowance; language handlers and partial
+records stay unsupported. Unknown contracts remain
+refusals; the Analysis importer still refuses memory and pointer effects.
+The existing scalar prover owns arithmetic, definedness, termination and finite
+control partitions under an explicit defined-bitvector input domain. No other
+layer reimplements these semantics. Results report native/model identities,
+assumptions, budgets and proof scope; they neither certify lifting nor prove
+complete native state or security. Borrowed-session C API queries rebind both
+complete live native revisions, releasing each temporary snapshot before the
+next side. The additive `run_owned` API instead transfers exclusive session
+ownership into the comparison at initial capture, nulling the caller's slots.
+Those sources have no external mutation handle; only complete native capture
+permits the owned scalar query. CLI and worker use this path, preserving the
+loaded image, debug context and analysis settings without a second snapshot
+decode on every query. This is an ownership boundary, not a partial revision or
+path/timestamp cache. Both paths freshly lift and prove the selected pair, and
+reports identify the binding mode. Reopen constructs fresh sources; saved files
+never authorize proof reuse. Failed worker replacement retains the old comparison
+and its sources; destruction/close releases them. Other immutable snapshot
+queries retain their session-independent contract.
+`lib/sdk/capi/BinaryComparison` adapts the native loader and the shared
+`InstructionFlow` traversal; it must not introduce a second sized/unsized or
+exception-chunk traversal. The adapter preserves original bytes/operands and
+binds the snapshot to input content, ABI, settings and normalization revisions.
+Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+`ComparisonDataFlow` runs bounded selected-function native pipeline jobs, then
+projects their verified SSA into immutable `FlowEvidence` collections. It owns
+the session/loader boundary; graph validation, persistence and binding remain in
+`lib/diff`. Collection scope and every unsupported/limited function are explicit.
+Reopen compares saved graphs with fresh pipeline observations. Dependency graph
+pages and slices never supply semantic-equivalence claims or replace native
+function deltas. Pipeline cancellation is currently between functions; graph
+work cooperates with the shared control contract.
+The CFG builder marks virtual external-entry tail stubs with synthetic LowOp
+sequence numbers. Low-to-Med preserves this distinction in `OriginSeq`; consumers
+must not rebind such operations to bytes at the callee's entry. Actual decoded
+tail transfers keep their original instruction provenance.
+
+`NeverDCAPIDiff` owns operation admission, snapshot lifetime, cooperative stop,
+page caches and analyst history. CLI and `ComparisonService` in the Qt-free
+worker share that C ABI. Comparison inputs use separate sessions, and their
+mapping revision is independent of the current project's revision. Existing
+worker graph layout/indexing serves comparison topology as well. The desktop
+owns bounded display caches and navigation generations, not matching decisions.
+Function-detail measurement shares one bounded SDK cache across full, paged and
+CFG views. Its stop state is separate from native body coverage; cancelled or
+timed-out deltas do not acquire unchanged rows or block annotations. The worker
+owns the advertised cooperative-operation list consumed by the GUI. Explicit
+refresh retries a stopped query; paging itself does not restart it.
+See [binary comparison](binary-diff.md) for the current profile and limitations.
+
 ## Checked alignment recovery
 
 `arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.
@@ -1124,6 +1263,17 @@ Explicit synchronous discovery can consume the same job and still returns
 only when discovery is complete. Worker polling waits for requests rather
 than busy-spinning while a snapshot is computing. Older SDKs retain the
 synchronous fallback.
+
+`FuncDetector` owns cooperative discovery stop across its metadata, native
+architecture scanners, candidate verification and overlap walks. Its controlled
+overload joins scan workers and returns no result on cancellation; verified entry
+publication occurs only after all filters and the final stop check. The SDK's
+additive cancellable discovery entry point shares that owner, distinguishes a
+stopped call from failure and preserves the prior inventory. A pending stepped
+job owns an atomic stop token; stale revisions and session destruction request
+stop before retirement or joining. DIFF forwards its cancellation/deadline probe
+to this same discovery path and retains the stopped extraction phase, without
+promoting a partial function list or treating it as a completed empty inventory.
 
 The worker polls stepped function discovery when the engine exports it;
 the client must also opt in through `open.step_discovery`. The default preserves
@@ -5817,6 +5967,16 @@ The shared LLVM model admits canonical scalar `llvm.bswap` at i16, i32 and i64 t
 The LLVM importer turns each reached guest load/store alignment above one into a sticky definedness obligation on its actual 64-bit address. Access widths and memory effects remain unchanged; masks, comparisons and accumulation use the existing construction budgets. Omitted textual alignment uses the parsed ABI alignment; `align 1` emits no guard. This adds no entry assumption or accessible bytes. State-object accesses retain their separate eight-byte alignment contract, and atomic/volatile accesses remain unsupported.
 
 `modelLLVMScalarFunction` reuses this importer for pure `noundef` integer arguments and integer returns (`i1/i8/i16/i32/i64`). The shared model handles funnel-shift endpoints and guarded multiplication with double-width products. `checkLLVMScalarEquivalence` executes both models through `SymExec`, discovers controlling input bits, exhausts their complete combinations and keeps all other bits symbolic. Every return must agree and every executed operation must remain defined; partition, path, node and cumulative work budgets bound the query. `SymContext::constantWindow` exposes cumulative query accounting without relaxing its existing per-query ceilings. Refusal permits no rewrite. This read-only C++ query neither changes default source output nor supplies a persistent native/ABI or compiler certificate.
+
+`LLVMScalarModelOptions` keeps strict `RequireNoUndef` as the default and
+allows an explicit `DefinedBitvectors` input precondition for read-only queries.
+Both model and proof results retain that domain; no input IR annotation changes.
+All source-definedness obligations, unknown-contract refusals and termination
+checks remain. A caller-supplied stop probe is polled during charged construction
+and proof work and before successful publication. Cancellation is separate from
+resource exhaustion; bounded LLVM verification and local algebra queries can
+delay a cooperative stop. Existing state-wrapper and source-recovery defaults
+are unchanged.
 
 `projectLLVMScalarResult` clones an explicitly selected integer return field and bit window through struct/array `insertvalue` packaging. It retains all arguments, control flow, scalar operations, annotations and `assume` calls, removes only dead aggregate packaging, and validates the result through the shared scalar model. Construction and model budgets are separate; unsupported contracts or exhausted limits publish no module and leave the input unchanged. Every required status, value and preserved-state observation still needs a complete proof; selecting a field establishes no entry, frame or native ABI contract.
 
