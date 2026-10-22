@@ -40,6 +40,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -224,12 +225,37 @@ public:
   MedDefSite find(const MedVar &V);
   void invalidate() {
     Sites.clear();
+    StackDeltas.clear();
     Built = false;
   }
 
+  /// A stackPtrDelta answer that no depth cap shaped: the offset, and how
+  /// many levels below the value its walk went.  A query at a depth where
+  /// that walk stays under the cap gets the same answer, so an answer serves
+  /// every query for as long as the definitions do.
+  struct StackDelta {
+    std::optional<int64_t> Delta;
+    int Height = 0;
+  };
+  const StackDelta *stackDelta(const MedVar &V, uint64_t StackPointer) const {
+    const auto It = StackDeltas.find({key(V), StackPointer});
+    return It == StackDeltas.end() ? nullptr : &It->second;
+  }
+  void rememberStackDelta(const MedVar &V, uint64_t StackPointer,
+                          StackDelta Answer) {
+    StackDeltas.try_emplace(StackDeltaKey{key(V), StackPointer}, Answer);
+  }
+
 private:
+  using Identity = std::tuple<int, int, int, uint64_t>;
+  using StackDeltaKey = std::pair<Identity, uint64_t>;
+  static Identity key(const MedVar &V) {
+    return {static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff};
+  }
+
   const MedFunc &Func;
-  llvm::DenseMap<std::tuple<int, int, int, uint64_t>, MedDefSite> Sites;
+  llvm::DenseMap<Identity, MedDefSite> Sites;
+  llvm::DenseMap<StackDeltaKey, StackDelta> StackDeltas;
   bool Built = false;
 };
 

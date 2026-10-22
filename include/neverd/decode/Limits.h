@@ -18,7 +18,7 @@
 
 namespace neverd::limits::decode {
 
-// lib/decode/Decoder.cpp
+/// Closed x86 decoder handles retained for reuse across decoder instances.
 inline constexpr size_t kDecoderMaxSpare = 16;
 
 } // namespace neverd::limits::decode

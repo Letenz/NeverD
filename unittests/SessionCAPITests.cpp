@@ -8308,17 +8308,46 @@ TEST_F(SessionCAPITest,
       EXPECT_NE(State.findLowFunc(Entry + 0x10), nullptr);
     }
     // The CFG API can be the first analysis request without explicit view
-    // preparation, and a later HighIR view must still finish the projection.
+    // preparation. It reads LowIR alone, and a later HighIR view must still
+    // finish the analysis and the projection.
     neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
     EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
-    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedFuncs.empty());
     EXPECT_TRUE(State.PipeResult.HighFuncs.empty());
     const auto *Low = State.findLowFunc(Entry);
     ASSERT_FALSE(takeString(neverd_ir_high(Session, Entry)).empty());
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
     EXPECT_FALSE(State.PipeResult.HighIRDeferred);
     EXPECT_FALSE(State.PipeResult.HighFuncs.empty());
     EXPECT_EQ(State.findLowFunc(Entry), Low);
     EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+
+    // The graph's own view prepares the same LowIR. Every deeper view of
+    // the selection continues that run and reads what a full run gives.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    ASSERT_EQ(neverd_prepare_function_view(Session, Entry, "cfg"), 1);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedFuncs.empty());
+    const auto *Graphed = State.findLowFunc(Entry);
+    ASSERT_NE(Graphed, nullptr);
+    EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_EQ(analysisViews(), AnalysisViews);
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_EQ(State.findLowFunc(Entry), Graphed);
+    EXPECT_EQ(takeString(neverd_ir_llvm(Session, Entry)), IR);
+    EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), LLVM);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    // A source view straight after the graph's continues it to HighIR too.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    ASSERT_EQ(neverd_prepare_function_view(Session, Entry, "cfg"), 1);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    EXPECT_EQ(analysisViews(), AnalysisViews);
   }
 }
 
@@ -8563,6 +8592,104 @@ TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {
   EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
             Facts);
   EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+}
+
+TEST_F(SessionCAPITest, AnalysisCacheRecoversASharedOmittedCalleeOnce) {
+  // Two callers call the routine at +0x40, which returns an argument and
+  // which neither selection emits.  Their calls take their arguments from the
+  // setup the caller writes, so a run recovers that callee's ABI too, on i386
+  // in two regparm passes.  The second selection takes the recovery the first
+  // kept, and decompiles as a fresh session does.
+  struct Case {
+    const char *Name;
+    std::string Image;
+    unsigned CallerBytes, CalleeBytes;
+    size_t SecondPasses;
+  };
+  // AArch64: stp x29, x30, [sp, #-16]!; bl +0x40; ldp x29, x30, [sp], #16;
+  // ret, and a callee mov x0, x1; ret.
+  std::string AArch64(0x48, '\0');
+  const auto Word = [&](size_t At, uint32_t Insn) {
+    for (unsigned I = 0; I != 4; ++I)
+      AArch64[At + I] = static_cast<char>(Insn >> (I * 8));
+  };
+  for (const size_t From : {size_t{0}, size_t{0x10}}) {
+    Word(From, 0xa9bf7bfd);
+    Word(From + 4, 0x94000000 | static_cast<uint32_t>((0x40 - From - 4) >> 2));
+    Word(From + 8, 0xa8c17bfd);
+    Word(From + 12, 0xd65f03c0);
+  }
+  Word(0x40, 0xaa0103e0);
+  Word(0x44, 0xd65f03c0);
+  // i386: push imm8; call +0x40; add esp, 4; ret, and a callee
+  // mov eax, [esp+4]; ret.
+  std::string I386(0x48, '\xcc');
+  for (const size_t From : {size_t{0}, size_t{0x10}}) {
+    const uint32_t Rel = static_cast<uint32_t>(0x40 - (From + 7));
+    const char Caller[] = {'\x6a',
+                           static_cast<char>(5 + From),
+                           '\xe8',
+                           static_cast<char>(Rel),
+                           static_cast<char>(Rel >> 8),
+                           static_cast<char>(Rel >> 16),
+                           static_cast<char>(Rel >> 24),
+                           '\x83',
+                           '\xc4',
+                           '\x04',
+                           '\xc3'};
+    I386.replace(From, sizeof(Caller), Caller, sizeof(Caller));
+  }
+  I386.replace(0x40, 5, "\x8b\x44\x24\x04\xc3", 5);
+  const Case Cases[] = {
+      {"aarch64.elf", makeNativeELF(true, 0x400000, {}, AArch64), 16, 8, 0},
+      {"i386.exe", makePE32(I386, std::string(16, '\0'), {}), 11, 5, 1}};
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Name);
+    const auto Path = write(C.Name, C.Image);
+    const auto Seed = [&](neverd_session_t Target) {
+      auto &State = *neverd::sdk::toSession(Target);
+      const auto Entry = neverd_session_entry_addr(Target);
+      for (const auto &[Offset, Size] : {std::pair{0x0u, C.CallerBytes},
+                                         {0x10u, C.CallerBytes},
+                                         {0x40u, C.CalleeBytes}})
+        State.Img.Symbols.push_back(
+            neverd::Symbol::makeFunc(Entry + Offset, Size));
+      neverd::sdk::SessionTestAccess::resetFunctions(State);
+      return Entry;
+    };
+    neverd_session_t Kept = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Kept, Path.c_str()), 1);
+    const auto Entry = Seed(Kept);
+    auto &State = *neverd::sdk::toSession(Kept);
+    ASSERT_FALSE(takeString(neverd_decompile(Kept, Entry)).empty())
+        << takeString(neverd_last_error(Kept));
+    const auto *Memo =
+        neverd::PipelineTestPeer::calleeSignatures(State.AnalysisCache);
+    ASSERT_NE(Memo, nullptr);
+    // The recoveries and second passes the memo keeps of the shared callee.
+    const auto Recoveries = [&] {
+      std::pair<size_t, size_t> Count;
+      if (const auto Found = Memo->Callees.find(Entry + 0x40);
+          Found != Memo->Callees.end())
+        for (const auto &Conversion : Found->second.Conversions)
+          for (const auto &Recovery : Conversion.Recoveries) {
+            ++Count.first;
+            Count.second += Recovery.Seconds.size();
+          }
+      return Count;
+    };
+    EXPECT_EQ(Recoveries(), std::make_pair(size_t{1}, C.SecondPasses));
+    const auto Second = takeString(neverd_decompile(Kept, Entry + 0x10));
+    ASSERT_FALSE(Second.empty()) << takeString(neverd_last_error(Kept));
+    EXPECT_EQ(Recoveries(), std::make_pair(size_t{1}, C.SecondPasses));
+    neverd_session_destroy(Kept);
+
+    neverd_session_t Fresh = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Fresh, Path.c_str()), 1);
+    ASSERT_EQ(Seed(Fresh), Entry);
+    EXPECT_EQ(takeString(neverd_decompile(Fresh, Entry + 0x10)), Second);
+    neverd_session_destroy(Fresh);
+  }
 }
 
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesSelectingAnEntryNoSymbolStarts) {
