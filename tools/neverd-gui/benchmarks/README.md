@@ -9,6 +9,32 @@ Keep machine-local reports, raw traces and timing summaries in ignored
 `build-bench/` or `results/` directories. Commit reusable harnesses and regression
 tests; do not upload local measurement reports to the repository.
 
+## Deep-link forwarding
+
+`deep_links.py` compares fully analyzed, disposable NeverD and IDA instances
+of the same input on the same display. It alternates tools, discards warmups,
+validates every reply and records raw samples plus median, p95 and p99.
+Use an actual **Copy link** result from IDA and an isolated NeverD configuration:
+
+```sh
+python3 tools/neverd-gui/benchmarks/deep_links.py \
+  --neverd /path/to/neverd-gui --hcli /path/to/hcli \
+  --neverd-endpoint /private/runtime/neverd-instances/PID-1 \
+  --ida-endpoint /tmp/ida_ipc_PID --input /path/to/fixture \
+  --address 0x401110 --address 0x401108 \
+  --copied-uri 'ida:///fixture/functions?rva=0x1110&view=disasm' \
+  --source-revision COMMIT --output build-bench/deep-links.json
+```
+
+The current harness uses Unix domain sockets. It measures direct IPC (fresh
+connection, compact JSON without a newline) and complete CLI processes using
+both normal forwarding and `--no-launch`. It does not install handlers, launch
+missing instances, or time painted frames, cold caches, analysis or decompilation.
+NeverD's `get_info` returns more metadata than IDA's; report that case separately.
+Keep other builds and tests idle during measurement and record display/backend,
+tool versions and host conditions with the local report. Use native platform
+tests separately for Windows named pipes and macOS LaunchServices delivery.
+
 ## Large-function pseudocode latency
 
 Measure fixed function entries in fresh worker processes, retaining the first

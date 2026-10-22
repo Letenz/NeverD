@@ -94,7 +94,15 @@ std::optional<uint64_t> lowScalarConstantResult(
     else {
       const auto Left = ValueOf(Op.Inputs[0]);
       const auto Right = ValueOf(Op.Inputs[1]);
-      if (Left && Right) {
+      const uint64_t WidthMask = Mask(Op.Output.Size);
+      if (Op.Opcode == NdOp::INT_AND && ((Left && (*Left & WidthMask) == 0) ||
+                                         (Right && (*Right & WidthMask) == 0)))
+        Result = 0;
+      else if (Op.Opcode == NdOp::INT_OR &&
+               ((Left && (*Left & WidthMask) == WidthMask) ||
+                (Right && (*Right & WidthMask) == WidthMask)))
+        Result = WidthMask;
+      else if (Left && Right) {
         if (Op.Opcode == NdOp::BOOL_AND || Op.Opcode == NdOp::BOOL_OR ||
             Op.Opcode == NdOp::BOOL_XOR) {
           if (Op.Output.Size != 1)

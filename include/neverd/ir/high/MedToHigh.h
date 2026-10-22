@@ -302,6 +302,10 @@ struct VariadicVectorCallee {
 
 class MedToHighConverter {
 public:
+  /// Reject native call contracts that HighC cannot express, before a batch
+  /// worker's best-effort structural recovery can replace a failed body.
+  static void validateCallContracts(const MedFunc &Med);
+
   /// Convert \p Med.  A frame with only Windows SEH scopes is laid out in
   /// reverse postorder; when that leaves a guarded range unstructured, it is
   /// converted again in address order, which is kept only if it leaves fewer

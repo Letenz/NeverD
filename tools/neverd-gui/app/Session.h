@@ -132,6 +132,8 @@ public:
   /// Background reference-index state from the latest heartbeat.
   const QJsonObject &background() const { return background_; }
   bool indexReady() const;
+  /// Navigation analysis is complete even if reference indexing is unsupported.
+  bool analysisComplete() const;
   /// Changes whenever listing text can change without a revision change.
   QString generation() const { return generation_; }
   /// Requests are queued or the background index is still building.

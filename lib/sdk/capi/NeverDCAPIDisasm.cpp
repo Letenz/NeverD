@@ -526,14 +526,13 @@ const char *neverd_disasm_text(neverd_session_t Sess,
         Sym = S->Img.findSymbolAt(Addr);
     }
   } else {
-    for (const auto &F : S->Functions) {
-      if (F.Name == FN) {
-        Function = F;
-        break;
-      }
-    }
-    if (!Function)
-      Sym = S->Img.findSymbol(FN);
+    const auto Index = S->functionIndexNamed(FN);
+    if (Index && S->Functions[*Index].Name == FN)
+      Function = S->Functions[*Index];
+    // A loader symbol still shows its original text after a user rename.
+    // With neither exact spelling, share export and C-name alias lookup.
+    else if (!(Sym = S->Img.findSymbol(FN)) && Index)
+      Function = S->Functions[*Index];
   }
   if (!Function) {
     if (!Sym)

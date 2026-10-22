@@ -124,6 +124,14 @@
         <translation>現在のアドレスをコピーします</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>リンクをコピー(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>カーソル位置を指す neverd:// リンクをコピーします。NeverD はその場所で開きます</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>名前の変更(&amp;N)...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>ジャンプ先のブックマークを選択します</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>リンクへジャンプ(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>neverd:// または ida:// リンクが示す場所へ移動します</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -1638,6 +1654,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>アドレスが選択される前にテーブルが変更されました。</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>別のアドレス選択に置き換えられました。</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>ワーカープロセスは要求されたアドレスを見つけられませんでした。</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>参照のインデックスを作成しています…</translation>
     </message>
@@ -2863,6 +2891,62 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Pathfinding</source>
         <translation>経路探索</translation>
+    </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>他のプログラムはこのウィンドウでリンクを開けません: %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>リンクをコピーしました: %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>リンクへジャンプ</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>リンク (neverd:// または ida://):</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>たどれるリンクではありません: %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>リンクを開くプログラムが開かれていません。</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>このリンクは入力ファイルの別のビルドを指しています。リンクの SHA-256 は %1 で始まり、%2 のものは %3 で始まります。</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>リンクは %2 ではなく %1 を指しています。ここで開きます。</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>リンクを開く前にプログラムが変わりました。</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>%1 という名前のローカル型はありません。</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>リンクのアドレス %1 は %2 にありません。</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>%1 にブックマークはありません。</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>%1 に関数はありません。</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>別のリンクがこのリンクに代わりました。</translation>
     </message>
 </context>
 <context>
@@ -5077,6 +5161,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Copy</source>
         <translation>コピー</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>リンクは neverd:// または ida:// で始まります。</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>Knowledge Exchange リンクはダウンロードするファイルを指し、プログラム内の場所ではありません。</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>リンクではリソースの前に入力ファイル名を指定します。</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>リンクではリソースを 1 つ指定します。入力ファイル名がある場合はその後に置きます。</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>リンクで指定できるのは functions、addresses、strings、segments、names、imports、exports、types、bookmarks です。"%1" ではありません。</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>リンクで %1 を指定できるのは 1 回だけです。</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 は 10 進数または 0x に続く数値です。"%2" ではありません。</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>リンクにビュー "%1" はありません。</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 は入力ファイルの SHA-256 の 16 進 8～64 桁です。"%1" ではありません。</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>リンクでは rva と ea のどちらか一方を指定します。</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>types リンクではアドレスではなく name= で型を指定します。</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>types リンクでは name= で型を指定します。</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>%1 リンクはアドレスを rva= または ea= で指定します。</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>%1 リンクは型ではなくアドレスを指定します。</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>%1 リンクは %3 ではなく %2 で表示します。</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>実行中の %n 個の NeverD がプログラムを開いていますが、リンクはどれも指していません。入力ファイル名を指定してください。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>%1 を開いている NeverD が応答しませんでした。</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>%1 を開いている NeverD で開きました (プロセス %2)。</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(応答なし)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(プログラムを開いていません)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>解析完了</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>解析中</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD は実行されていません。</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>neverd:// リンクは NeverD で開かなくなりました。</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>レジストリに neverd:// のハンドラーを登録できませんでした。</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>neverd:// リンクは %1 で開くようになりました。</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>macOS では NeverD アプリケーションが neverd:// リンクを宣言します。アプリケーションフォルダーに置くと、リンクはそこで開きます。</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>macOS では NeverD アプリケーションが neverd:// リンクを宣言します。やめるにはアプリケーションを削除してください。</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>%1 を削除できませんでした。</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>%1 を書き込めませんでした。</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>%1 を書き込みましたが、xdg-mime はこれを neverd:// リンクのハンドラーにしませんでした。</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>実行中の NeverD でリンクのプログラムを開いているものはありません。</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>実行中の NeverD でリンクのプログラムを開いているものはなく、最近開いたファイルにも該当するものがありません。ファイルも指定してください: neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>

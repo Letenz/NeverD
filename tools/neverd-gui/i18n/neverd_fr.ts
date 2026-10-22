@@ -124,6 +124,14 @@
         <translation>Copier l&apos;adresse actuelle</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>Copier le &amp;lien</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>Copier un lien neverd:// vers l'endroit sous le curseur, que NeverD ouvre à cet endroit</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>Re&amp;nommer...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>Choisir le signet de destination</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>Aller au &amp;lien...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>Aller à l'endroit que désigne un lien neverd:// ou ida://</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -1638,6 +1654,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>La table a changé avant la sélection de l’adresse.</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>Une autre sélection d’adresse a remplacé celle-ci.</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>Le processus de travail n’a pas trouvé l’adresse demandée.</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>Les références sont encore en cours d&apos;indexation…</translation>
     </message>
@@ -2869,6 +2897,62 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>Pathfinding</source>
         <translation>Recherche de chemins</translation>
+    </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>Les autres programmes ne peuvent pas ouvrir de liens dans cette fenêtre : %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>Lien copié : %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>Aller au lien</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>Lien (neverd:// ou ida://) :</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>Ce n'est pas un lien à suivre : %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>Aucun programme n'est ouvert pour y suivre le lien.</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>Le lien désigne une autre version de l'entrée : son SHA-256 commence par %1, et celui de %2 par %3.</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>Le lien désigne %1, pas %2 ; il est suivi ici.</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>Le programme a changé avant l'ouverture du lien.</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>Aucun type local ne s'appelle %1.</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>L'adresse %1 du lien n'est pas dans %2.</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>Aucun signet à %1.</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>Aucune fonction à %1.</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>Un autre lien a pris la place de celui-ci.</translation>
     </message>
 </context>
 <context>
@@ -5111,6 +5195,147 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>Copy</source>
         <translation>Copier</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>Un lien commence par neverd:// ou ida://.</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>Un lien Knowledge Exchange désigne un fichier à télécharger, pas un endroit dans un programme.</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>Un lien désigne son entrée avant sa ressource.</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>Un lien désigne une seule ressource, après le nom de son entrée s'il en a un.</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>Un lien désigne functions, addresses, strings, segments, names, imports, exports, types ou bookmarks, pas "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>Un lien donne %1 une seule fois.</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 est un nombre, décimal ou après 0x, pas "%2".</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>Un lien n'a pas de vue "%1".</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 est de 8 à 64 chiffres hexadécimaux du SHA-256 de l'entrée, pas "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>Un lien donne rva ou ea, pas les deux.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>Un lien types désigne son type avec name=, pas par une adresse.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>Un lien types désigne son type avec name=.</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>Les liens %1 donnent leur adresse avec rva= ou ea=.</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>Les liens %1 désignent une adresse, pas un type.</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>Les liens %1 s'affichent dans %2, pas dans %3.</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>%n NeverD en cours d'exécution a des programmes ouverts, et le lien n'en désigne aucun ; donnez-lui le nom de l'entrée.</numerusform>
+            <numerusform>%n NeverD en cours d'exécution ont des programmes ouverts, et le lien n'en désigne aucun ; donnez-lui le nom de l'entrée.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>Le NeverD qui a ouvert %1 n'a pas répondu.</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>Ouvert dans le NeverD qui a ouvert %1 (processus %2).</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(ne répond pas)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(aucun programme ouvert)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>analyse terminée</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>analyse en cours</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD n'est pas en cours d'exécution.</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>Les liens neverd:// ne s'ouvrent plus dans NeverD.</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>Le registre n'a pas accepté le gestionnaire neverd://.</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>Les liens neverd:// s'ouvrent désormais dans %1.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>Sous macOS, l'application NeverD déclare les liens neverd:// ; ils s'y ouvrent dès qu'elle est dans Applications.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>Sous macOS, l'application NeverD déclare les liens neverd:// ; supprimez l'application pour y mettre fin.</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>Impossible de supprimer %1.</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>Impossible d'écrire %1.</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>%1 a été écrit, mais xdg-mime n'en a pas fait le gestionnaire des liens neverd://.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>Aucun NeverD en cours d'exécution n'a ouvert le programme du lien.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>Aucun NeverD en cours d'exécution n'a ouvert le programme du lien, et aucun fichier récemment ouvert ne l'est ; indiquez aussi le fichier : neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>

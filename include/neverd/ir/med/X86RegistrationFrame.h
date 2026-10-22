@@ -34,6 +34,12 @@ std::optional<RegistrationFrameCoordinate>
 cxxRegistrationFrameCoordinate(const ExceptionFunction &EH,
                                const RegistrationStateAnalysis *State);
 
+/// Coordinate after binding a shared helper's independently replayed physical
+/// frame to the current MedIR operations. Original source receipts alone still
+/// cannot authorize this projection.
+std::optional<RegistrationFrameCoordinate>
+cxxRegistrationFrameCoordinate(const MedFunc &Function);
+
 /// Coordinate of a source-frame runtime definition. Callback ESP is a
 /// separate invocation's stack and deliberately has no parent coordinate.
 std::optional<RegistrationFrameCoordinate>

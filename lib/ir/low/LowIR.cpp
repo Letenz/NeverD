@@ -2,6 +2,8 @@
 
 #include "neverd/ir/low/LowIR.h"
 
+#include "LowInstructionSlice.h"
+
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
@@ -465,11 +467,10 @@ llvm::Error validateLowInstructionBoundaries(
     if (Boundary.OpCount > NumOps - ExpectedFirstOp)
       return invalid("instruction boundary op slice is out of range");
     const uint64_t OpEnd = ExpectedFirstOp + Boundary.OpCount;
-    for (uint64_t I = ExpectedFirstOp; I < OpEnd; ++I) {
-      const LowOp &Op = Block.Ops[static_cast<size_t>(I)];
-      if (Op.Addr != Boundary.Address)
-        return invalid(
-            "instruction boundary covers an op from another address");
+    const auto Ops = detail::checkedInstructionOperations(Block, Boundary);
+    if (!Ops)
+      return invalid("instruction boundary covers an op from another address");
+    for (const LowOp &Op : *Ops) {
       if (llvm::Error Error = validateMemoryAddressSpace(Op))
         return Error;
     }

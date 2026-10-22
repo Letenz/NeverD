@@ -867,6 +867,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     // rebuilt IR would instead demand a global relocation mirror for slots the
     // same JT deliberately and exclusively owns.  The helper requires exact
     // Addr+OriginSeq+width, storage-role, and all-use certificates.
+    // The same proof covers a compact index read consumed exclusively by the
+    // authenticated target read; its index is already composed into the switch.
     if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         recoveredJumpTableForLoad(Op)) {
       Result = llvm::ConstantInt::get(ValTy, 0);

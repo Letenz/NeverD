@@ -196,6 +196,8 @@ bool Pipeline::resumeHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
 void Pipeline::rebuildHighIR(const BinaryImage &Img,
                              const PipelineOptions &Opts,
                              PipelineResult &Result, DebugContext *Dbg) {
+  for (const MedFunc &Function : Result.MedFuncs)
+    MedToHighConverter::validateCallContracts(Function);
   auto AllFuncNames = buildFuncNameMap(Img, Result);
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {

@@ -21,7 +21,6 @@ registrationCatchBlocks(const MedFunc &Function) {
           ExceptionParseStatus::Complete ||
       !Function.ExceptionMetadata->Cxx ||
       !Function.ExceptionMetadata->Cxx->hasValidStateGraph() ||
-      Function.ExceptionMetadata->Cxx->TryBlocks.empty() ||
       Function.ExceptionMetadata->Cxx->TryBlocks.size() >
           limits::kMaxRegistrationEHRecords ||
       !Function.RegistrationStates || !Function.RegistrationStates->Complete ||

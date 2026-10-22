@@ -82,8 +82,9 @@ public:
   explicit X64MachineExitLookup(
       std::vector<SpecializationX64MachineExit> Entries)
       : Declarations(std::move(Entries)) {
-    std::sort(Declarations.begin(), Declarations.end(),
-              [](const auto &A, const auto &B) { return A.Address < B.Address; });
+    std::sort(
+        Declarations.begin(), Declarations.end(),
+        [](const auto &A, const auto &B) { return A.Address < B.Address; });
   }
 
   bool lookup(va_t Address, uint64_t &Work,
@@ -96,11 +97,11 @@ public:
     if (Cost > Work)
       return false;
     Work -= Cost;
-    const auto At = std::lower_bound(
-        Declarations.begin(), Declarations.end(), Address,
-        [](const auto &Declaration, va_t Value) {
-          return Declaration.Address < Value;
-        });
+    const auto At =
+        std::lower_bound(Declarations.begin(), Declarations.end(), Address,
+                         [](const auto &Declaration, va_t Value) {
+                           return Declaration.Address < Value;
+                         });
     if (At != Declarations.end() && At->Address == Address) {
       Exit.emplace();
       Exit->MachineExit = *At;

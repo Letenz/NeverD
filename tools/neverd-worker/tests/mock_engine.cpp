@@ -1010,6 +1010,10 @@ const char *neverd_warm_functions_json(neverd_session_t s,
 const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
                                   int maxFunctions) {
   session(s)->error.clear();
+  if (session(s)->path.ends_with("source-cache-evm.bin")) {
+    session(s)->error = "Reference indexing is unsupported for EVM";
+    return nullptr;
+  }
   maxFunctions = std::clamp(maxFunctions, 1, 4096);
   Json refs = Json::array();
   int first =
@@ -1046,6 +1050,9 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
            {"function_count", 600}}
           .dump());
 }
+} // extern "C"
+
+// Internal helpers return C++ objects; only the SDK entry points use C linkage.
 namespace {
 /// The call graph of call_paths and call_tree: function_0 calls function_1
 /// and function_3, function_1 to function_3 each call the next, and
@@ -1112,6 +1119,8 @@ std::vector<std::vector<int>> mockPaths(int from, int to, int depth,
   return paths;
 }
 } // namespace
+
+extern "C" {
 const char *neverd_call_paths_json(neverd_session_t s, const char *options) {
   session(s)->error.clear();
   const Json request = Json::parse(options ? options : "{}", nullptr, false);

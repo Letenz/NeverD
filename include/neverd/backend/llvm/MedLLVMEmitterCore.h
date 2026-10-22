@@ -772,6 +772,11 @@ private:
   /// `mirror + (node - runStart)`.
   bool addrInCodePtrMirrorRun(uint64_t VA) const;
 
+  /// The complete pointer mirror owning this data address, if any. Mutable
+  /// runs require every byte of the segment in the same canonical global;
+  /// neither a per-object embedding nor an incomplete image qualifies.
+  std::optional<uint64_t> completePointerMirrorRun(uint64_t VA) const;
+
   /// If \p AddrVar provably indexes a single writable data segment, return that
   /// segment's start VA; std::nullopt otherwise (no writable base, or the
   /// address mixes two distinct data segments).  VA zero is a valid section
@@ -1041,8 +1046,13 @@ private:
   /// Prove a scaled index at its guarded SSA definition. This does not publish
   /// a scalar model for the unconstrained input or for another load occurrence.
   bool valueIsGuardedScalarOffset(const MedVar &V) const;
+  /// An expression of unchanged runtime words and numeric operands. This
+  /// establishes neither an index bound nor a callable slot domain. An address
+  /// consumer additionally needs a complete pointer mirror and one uniform
+  /// symbolized address model before using it as an unbounded offset.
+  bool valueIsOpaqueRuntimeOffset(const MedVar &V) const;
   /// A runtime word read with no frame or relocatable image address dependency.
-  /// Only a separately bounded scalar use may consume this certificate.
+  /// A consumer must separately prove its bound or complete mirror ownership.
   bool isOpaqueRuntimeWordLoad(const MedOp &Op) const;
   /// Every indirect call of this exact SSA value is reached through a complete
   /// predecessor edge that excludes zero; no result is shared with other uses.
@@ -1251,6 +1261,8 @@ private:
   /// proof binds Addr+OriginSeq+width, target storage, and every observable
   /// use; callers may therefore omit the raw target LOAD when its relocation
   /// slots were intentionally suppressed from the independent pointer mirror.
+  /// A compact index LOAD qualifies only through the exact authenticated
+  /// target LOAD, with no other observable consumer of either value.
   const JumpTable *recoveredJumpTableForLoad(const MedOp &Load) const;
 
   /// Return the recovered table that authenticates this exact LOAD address and
@@ -1259,10 +1271,11 @@ private:
   /// permission to replace the LOAD with zero or suppress its slots.
   const JumpTable *authenticatedJumpTableForLoad(const MedOp &Load) const;
   const JumpTable *jumpTableForLoad(const MedOp &Load,
-                                    bool RequireTerminalExclusive) const;
+                                    bool RequireTerminalExclusive,
+                                    uint64_t *SharedEvidence = nullptr) const;
 
   /// Collect, for \p Func, the operations that only form the address of a
-  /// target LOAD recoveredJumpTableForLoad omits: the address's forwarding
+  /// table LOAD recoveredJumpTableForLoad omits: the address's forwarding
   /// copies and extensions, back to the addition of the table's base.  Each
   /// one's value is used nowhere else, so emitOp skips it, and the base is
   /// never materialized: a table placed among the code of a segment too large
@@ -1791,6 +1804,8 @@ private:
                         const ControlValueBindings *Bindings = nullptr,
                         size_t *SharedProofBudget = nullptr) const;
 
+  bool isEntryStackRealignmentRoot(const MedVar &V) const;
+
   /// True when \p V is reloaded from a stack slot that a stack-pointer-derived
   /// value was spilled to (`mov [slot],sp ; ... ; mov reg,[slot]`).  clang
   /// spills the pre-`alloca` SP to the frame and rederives the VLA base from
@@ -1825,6 +1840,10 @@ private:
 
   using AddressProvenanceVarKey =
       std::tuple<int, int, int, int, int, uint16_t, uint64_t, int, uint64_t>;
+  mutable std::optional<
+      std::tuple<const MedFunc *, Arch, BinaryFormat, uint64_t>>
+      EntryStackRealignmentRootsFor;
+  mutable std::set<AddressProvenanceVarKey> EntryStackRealignmentRoots;
   struct FrameReloadCacheKey {
     va_t Addr = InvalidVA;
     int OriginSeq = -1;

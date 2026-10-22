@@ -8,6 +8,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/lift/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -54,6 +55,14 @@ bool callClobbersRegister(const MedOp &Call, uint64_t RegOff, uint16_t Size,
   if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
       Call.PreservesCallerSaved)
     return false;
+  if (Call.X87ArgumentInput && !Call.X87ImportArguments &&
+      TRI.TheArch == Arch::X86) {
+    // The checked consumer closure forbids control-word changes.
+    if (RegOff == x86reg::FPU_CW && Size <= 2)
+      return false;
+    if (TRI.isX87StackReg(RegOff))
+      return (Call.X87ClobberedSlots >> x86reg::stRegIndex(RegOff)) & 1;
+  }
   if (TRI.isFrameOrLinkReg(RegOff) || TRI.isStackPointer(RegOff) ||
       (Call.Output.Kind == MedVar::Reg && Call.Output.RegOff == RegOff))
     return false;

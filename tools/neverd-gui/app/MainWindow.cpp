@@ -276,6 +276,21 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
             }
           });
   connectActions();
+  // Other programs find this window and open links in it, as in IDA 9.4.
+  instances_.setInfo([this] { return instanceInfo(); });
+  instances_.setLinkHandler(
+      [this](const DeepLink &link, std::function<void(const QString &)> done) {
+        if (isMinimized())
+          showNormal();
+        raise();
+        activateWindow();
+        openLink(link, std::move(done));
+      });
+  if (!instances_.start() &&
+      !QSettings().value(settings::InstancesDisabled, false).toBool())
+    output_->append(tr("Other programs cannot open links in this window: %1")
+                        .arg(instances_.errorString()),
+                    1);
   statusTimer_.setInterval(StatusRefreshMs);
   connect(&statusTimer_, &QTimer::timeout, this, &MainWindow::updateStatusBar);
   statusTimer_.start();
@@ -447,6 +462,7 @@ void MainWindow::buildMenusAndToolbars() {
     for (auto *chooser : std::as_const(choosers_))
       chooser->model().addressSpaceChanged();
     navigateInitialAddress();
+    openPendingLink();
   });
   Q_UNUSED(toolbars);
 }
@@ -979,6 +995,7 @@ void MainWindow::connectSession() {
     updateTitle();
     updateActions();
     disassembly_->focusContent();
+    openPendingLink();
     // Scripted command lines run once the opening state has settled.
     if (!pendingCommands_.isEmpty())
       QTimer::singleShot(
@@ -1094,6 +1111,355 @@ std::optional<Address> MainWindow::pathfinderTarget() const {
 PathfinderView *MainWindow::showPathfinder() {
   openDock(dockNamed(QString::fromLatin1(PathfinderDock)), false);
   return pathfinder_;
+}
+
+std::optional<Address> MainWindow::imageBase() const {
+  return addressValue(
+      session_.metadata().value(QStringLiteral("base_address")));
+}
+
+QString MainWindow::inputSha256() const {
+  const QJsonObject &metadata = session_.metadata();
+  if (const QString hash = metadata.value(QStringLiteral("sha256")).toString();
+      !hash.isEmpty())
+    return hash;
+  // A worker before metadata named the hash names it with the project.
+  return metadata.value(QStringLiteral("project"))
+      .toObject()
+      .value(QStringLiteral("input"))
+      .toObject()
+      .value(QStringLiteral("sha256"))
+      .toString();
+}
+
+std::optional<DeepLink> MainWindow::linkHere() const {
+  const auto base = imageBase();
+  if (!session_.loaded() || !base)
+    return std::nullopt;
+  DeepLink link;
+  link.input = session_.fileName();
+  link.sha256 =
+      inputSha256().left(::neverd::limits::gui_config::kCopiedLinkHashDigits);
+  const auto at = [&](LinkResource resource, Address address,
+                      std::optional<LinkView> view =
+                          std::nullopt) -> std::optional<DeepLink> {
+    link.resource = resource;
+    link.rva = address - *base;
+    link.view = view;
+    return link;
+  };
+  if (const CodeView *code = focusedCodeView()) {
+    const auto function = code->text()->function();
+    if (!function)
+      return std::nullopt;
+    if (!CodeView::isSource(code->representation()))
+      return at(LinkResource::Functions, *function);
+    // A line of the pseudocode, where IDA's links name only the function.
+    const auto line = code->text()->currentAddress();
+    return line && *line != *function
+               ? at(LinkResource::Addresses, *line, LinkView::Pseudocode)
+               : at(LinkResource::Functions, *function, LinkView::Pseudocode);
+  }
+  if (ChooserView *chooser = focusedChooser()) {
+    const auto address = chooser->currentAddress();
+    if (!address)
+      return std::nullopt;
+    switch (chooser->model().kind()) {
+    case ChooserKind::Functions:
+      return at(LinkResource::Functions, *address);
+    case ChooserKind::Names:
+      return at(LinkResource::Names, *address);
+    case ChooserKind::Imports:
+      return at(LinkResource::Imports, *address);
+    case ChooserKind::Exports:
+      return at(LinkResource::Exports, *address);
+    case ChooserKind::Segments:
+      return at(LinkResource::Segments, *address);
+    case ChooserKind::Strings:
+      return at(LinkResource::Strings, *address);
+    case ChooserKind::Bookmarks:
+      return at(LinkResource::Bookmarks, *address);
+    default:
+      return at(LinkResource::Addresses, *address);
+    }
+  }
+  for (QWidget *widget = commandFocusWidget(); widget;
+       widget = widget->parentWidget()) {
+    if (widget == localTypes_) {
+      if (localTypes_->currentType().isEmpty())
+        return std::nullopt;
+      link.resource = LinkResource::Types;
+      link.name = localTypes_->currentType();
+      return link;
+    }
+    if (widget == hex_) {
+      if (const auto address = hex_->currentAddress())
+        return at(LinkResource::Addresses, *address, LinkView::Hexdump);
+      return std::nullopt;
+    }
+  }
+  const auto address = currentAddress();
+  if (!address)
+    return std::nullopt;
+  if (disassembly_->graphMode())
+    return at(LinkResource::Addresses, *address, LinkView::Graph);
+  if (currentFunction() == address)
+    return at(LinkResource::Functions, *address, LinkView::Disasm);
+  return at(LinkResource::Addresses, *address);
+}
+
+void MainWindow::copyLink() {
+  const auto link = linkHere();
+  if (!link)
+    return;
+  const QString text = formatDeepLink(*link);
+  QApplication::clipboard()->setText(text);
+  // As IDA echoes the link it copies.
+  output_->append(tr("Copied link: %1").arg(text), 0);
+}
+
+void MainWindow::reportLinkError(const QString &error) {
+  if (!error.isEmpty())
+    output_->append(error, 2);
+}
+
+void MainWindow::jumpToLink() {
+  // A link on the clipboard, as one pasted from a chat, is offered.
+  const QString clipboard = QApplication::clipboard()->text().trimmed();
+  bool accepted = false;
+  const QString text = QInputDialog::getText(
+      this, tr("Jump to link"), tr("Link (neverd:// or ida://):"),
+      QLineEdit::Normal, looksLikeDeepLink(clipboard) ? clipboard : QString(),
+      &accepted);
+  if (!accepted || text.trimmed().isEmpty())
+    return;
+  const ParsedLink parsed = parseDeepLink(text);
+  if (!parsed.link) {
+    output_->append(tr("Not a link to follow: %1").arg(parsed.error), 2);
+    return;
+  }
+  openLink(*parsed.link);
+}
+
+void MainWindow::openPendingLink() {
+  if (!pendingLink_ || !session_.loaded() || space_.empty())
+    return;
+  auto [link, done] = *std::exchange(pendingLink_, std::nullopt);
+  // The link's place, not the project's last one.
+  initialAddress_.reset();
+  restoreGraph_ = false;
+  openLink(link, std::move(done));
+}
+
+void MainWindow::openLink(const DeepLink &link,
+                          std::function<void(const QString &)> done) {
+  // A link that comes while the program opens waits for its addresses.
+  if (session_.loaded() && space_.empty()) {
+    if (pendingLink_ && pendingLink_->second)
+      pendingLink_->second(tr("Another link took this one's place."));
+    pendingLink_ = {link, std::move(done)};
+    return;
+  }
+  const auto finish = [this, done = std::move(done)](const QString &error) {
+    reportLinkError(error);
+    if (done)
+      done(error);
+  };
+  if (!session_.loaded())
+    return finish(tr("No program is open to follow the link in."));
+  const QString hash = inputSha256();
+  if (!link.namesHash(hash))
+    return finish(tr("The link names another build of the input: its "
+                     "SHA-256 starts %1, and that of %2 starts %3.")
+                      .arg(link.sha256, session_.fileName(),
+                           hash.left(link.sha256.size())));
+  // As IDA does, a link that names another file is followed here anyway.
+  if (!link.input.isEmpty() && link.sha256.isEmpty() &&
+      !linkNamesInput(link.input, session_.fileName()))
+    output_->append(tr("The link names %1, not %2; following it here.")
+                        .arg(link.input, session_.fileName()),
+                    1);
+  const quint64 epoch = session_.epoch();
+  const auto serial = ++codeNavigationSerial_;
+  if (link.resource == LinkResource::Types) {
+    session_.read(
+        QStringLiteral("local_type"), {{QStringLiteral("name"), link.name}},
+        this,
+        [this, link, finish, epoch, serial](const QJsonObject &) {
+          if (session_.epoch() != epoch)
+            return finish(tr("The program changed before the link opened."));
+          if (serial != codeNavigationSerial_)
+            return finish(tr("Another link took this one's place."));
+          openDock(dockNamed(QString::fromLatin1(LocalTypesDock)), true);
+          localTypes_->showType(link.name);
+          finish({});
+        },
+        [link, finish](const QString &, const QString &) {
+          finish(tr("No local type is named %1.").arg(link.name));
+        });
+    return;
+  }
+  const auto base = imageBase();
+  const auto address = base ? link.address(*base) : std::nullopt;
+  if (!address || !space_.regionOf(*address))
+    return finish(
+        tr("The link's address %1 is not in %2.")
+            .arg(address ? displayAddress(*address) : QStringLiteral("?"),
+                 session_.fileName()));
+  const LinkView view = link.shownView();
+  if (link.resource == LinkResource::Bookmarks &&
+      std::none_of(bookmarks_.begin(), bookmarks_.end(),
+                   [&](const QJsonValue &row) {
+                     return addressValue(row.toObject().value(
+                                QStringLiteral("address"))) == address;
+                   }))
+    return finish(tr("No bookmark is at %1.").arg(displayAddress(*address)));
+  const auto kind = [&]() -> std::optional<ChooserKind> {
+    switch (link.resource) {
+    case LinkResource::Strings:
+      return ChooserKind::Strings;
+    case LinkResource::Segments:
+      return ChooserKind::Segments;
+    case LinkResource::Names:
+      return ChooserKind::Names;
+    case LinkResource::Imports:
+      return ChooserKind::Imports;
+    case LinkResource::Exports:
+      return ChooserKind::Exports;
+    default:
+      return std::nullopt;
+    }
+  }();
+  if (kind) {
+    chooserDock(*kind);
+    choosers_.value(int(*kind))
+        ->locateAddress(*address, [this, address = *address, view, finish,
+                                   epoch, serial](std::optional<int> row,
+                                                  const QString &error) {
+          if (session_.epoch() != epoch)
+            return finish(tr("The program changed before the link opened."));
+          if (serial != codeNavigationSerial_)
+            return finish(tr("Another link took this one's place."));
+          if (!row)
+            return finish(error);
+          showLinkedAddress(address, view);
+          finish({});
+        });
+    return;
+  }
+  if (link.resource != LinkResource::Functions) {
+    showLinkedAddress(*address, view);
+    return finish({});
+  }
+  if (const auto function =
+          disassembly_->listing()->loadedFunctionAt(*address)) {
+    showLinkedAddress(*function, view);
+    return finish({});
+  }
+  // A function, named by an address in it, shows from its entry.
+  session_.read(
+      QStringLiteral("resolve"),
+      {{QStringLiteral("query"), hexAddress(*address)}}, this,
+      [this, address = *address, view, finish, epoch,
+       serial](const QJsonObject &payload) {
+        if (session_.epoch() != epoch)
+          return finish(tr("The program changed before the link opened."));
+        if (serial != codeNavigationSerial_)
+          return finish(tr("Another link took this one's place."));
+        const auto function =
+            addressValue(payload.value(QStringLiteral("function_address")));
+        if (!function)
+          return finish(
+              tr("No function is at %1.").arg(displayAddress(address)));
+        showLinkedAddress(*function, view);
+        finish({});
+      },
+      [finish](const QString &, const QString &message) { finish(message); });
+}
+
+void MainWindow::showLinkedAddress(Address address, LinkView view) {
+  // A list shows its row beside the disassembly, which goes there too.
+  const auto list = [this, address](ChooserKind kind) {
+    navigate(address);
+    if (kind == ChooserKind::Functions) {
+      docks_.value(FunctionsDock)->open();
+      docks_.value(FunctionsDock)->raise();
+      functions_->revealAddress(address);
+      return;
+    }
+    auto *dock = chooserDock(kind);
+    if (!dock->isOpen())
+      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
+    dock->open();
+    dock->raise();
+    choosers_.value(int(kind))->revealAddress(address);
+  };
+  switch (view) {
+  case LinkView::Disasm:
+    navigate(address);
+    if (disassembly_->graphMode())
+      toggleGraph();
+    return;
+  case LinkView::Graph: {
+    navigate(address);
+    const auto epoch = session_.epoch();
+    QTimer::singleShot(0, this, [this, epoch] {
+      if (session_.loaded() && session_.epoch() == epoch &&
+          !disassembly_->graphMode())
+        toggleGraph();
+    });
+    return;
+  }
+  case LinkView::Pseudocode:
+    navigate(address);
+    showPseudocode(CodeView::pseudocodeRepresentation(), true);
+    return;
+  case LinkView::Hexdump:
+    navigate(address);
+    if (auto *dock = docks_.value(HexDock)) {
+      dock->open();
+      dock->raise();
+    }
+    return;
+  case LinkView::Functions:
+    return list(ChooserKind::Functions);
+  case LinkView::Segments:
+    return list(ChooserKind::Segments);
+  case LinkView::Names:
+    return list(ChooserKind::Names);
+  case LinkView::Imports:
+    return list(ChooserKind::Imports);
+  case LinkView::Exports:
+    return list(ChooserKind::Exports);
+  case LinkView::Strings:
+    return list(ChooserKind::Strings);
+  case LinkView::Bookmarks:
+    return list(ChooserKind::Bookmarks);
+  case LinkView::Types:
+    return;
+  }
+}
+
+QJsonObject MainWindow::instanceInfo() const {
+  QJsonObject info{
+      {QStringLiteral("version"), QCoreApplication::applicationVersion()},
+      {QStringLiteral("loaded"), session_.loaded()}};
+  if (!session_.loaded())
+    return info;
+  info.insert(QStringLiteral("input"), session_.filePath());
+  info.insert(QStringLiteral("input_name"), session_.fileName());
+  info.insert(QStringLiteral("project"), session_.projectPath());
+  info.insert(QStringLiteral("sha256"), inputSha256());
+  info.insert(QStringLiteral("analysis_complete"), session_.analysisComplete());
+  if (const auto address = currentAddress()) {
+    QJsonObject location{{QStringLiteral("address"), hexAddress(*address)}};
+    if (const auto base = imageBase())
+      location.insert(QStringLiteral("rva"), hexAddress(*address - *base));
+    if (const auto function = currentFunction())
+      location.insert(QStringLiteral("function"), hexAddress(*function));
+    info.insert(QStringLiteral("location"), location);
+  }
+  return info;
 }
 
 void MainWindow::activateFunction(Address address) {
@@ -1585,6 +1951,8 @@ void MainWindow::connectActions() {
   });
   on(ActionId::ViewCrossReferences,
      [this] { showCrossReferences(currentAddress(), true); });
+  on(ActionId::EditCopyLink, [this] { copyLink(); });
+  on(ActionId::JumpLink, [this] { jumpToLink(); });
   on(ActionId::ViewPathfinder,
      [this] { showPathfinder()->waypointList()->setFocus(); });
   // The view the command came from keeps the focus, so that more of its
@@ -1817,6 +2185,8 @@ void MainWindow::updateActions() {
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::OptionsAnalyze)
       ->setEnabled(loaded && !session_.metadata().value("analyzed").toBool());
+  actions_.action(ActionId::EditCopyLink)
+      ->setEnabled(loaded && linkHere().has_value());
   const bool callPaths = loaded && session_.findsCallPaths();
   actions_.action(ActionId::ViewPathfinder)->setEnabled(callPaths);
   for (const auto id :
@@ -3511,6 +3881,7 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditCopy));
   menu.addAction(actions_.action(ActionId::EditCopyAddress));
+  menu.addAction(actions_.action(ActionId::EditCopyLink));
   // A code window selects its whole text for Copy, as an editor does.
   if (auto *code = focusedCodeView()) {
     auto *all = menu.addAction(icon(QStringLiteral("select_all")),

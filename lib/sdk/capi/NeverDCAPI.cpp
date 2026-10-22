@@ -43,6 +43,7 @@
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/ObjectFileUtils.h"
 #include "neverd/loader/StaticSymbolTable.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
 #include "neverd/sdk/Limits.h"
@@ -88,15 +89,24 @@ std::optional<size_t> Session::functionIndexNamed(llvm::StringRef Name) {
       Index.Exported[Exp.Name].push_back(Exp.Addr);
     NameIndex = std::move(Index);
   }
-  if (const auto Named = NameIndex->FirstNamed.find(Name.str());
-      Named != NameIndex->FirstNamed.end())
-    return Named->second;
-  if (const auto Exported = NameIndex->Exported.find(Name.str());
-      Exported != NameIndex->Exported.end())
-    for (const va_t Addr : Exported->second)
-      if (const auto At = NameIndex->FirstAt.find(Addr);
-          At != NameIndex->FirstAt.end())
-        return At->second;
+  const auto Lookup = [&](llvm::StringRef Spelling) -> std::optional<size_t> {
+    if (const auto Named = NameIndex->FirstNamed.find(Spelling.str());
+        Named != NameIndex->FirstNamed.end())
+      return Named->second;
+    if (const auto Exported = NameIndex->Exported.find(Spelling.str());
+        Exported != NameIndex->Exported.end())
+      for (const va_t Addr : Exported->second)
+        if (const auto At = NameIndex->FirstAt.find(Addr);
+            At != NameIndex->FirstAt.end())
+          return At->second;
+    return std::nullopt;
+  };
+  if (const auto Exact = Lookup(Name))
+    return Exact;
+  // Keep the image's spelling and exact-name precedence. A Mach-O caller may
+  // also name a function by the C spelling before its one ABI underscore.
+  if (Img.isMachO() && !Name.empty())
+    return Lookup(symbolOfCName(Name, Img.Format, Img.Arch));
   return std::nullopt;
 }
 

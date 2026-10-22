@@ -27,6 +27,9 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationSEHStateStore.cpp
   X86/RegistrationEntry.cpp
   X86/RegistrationRoots.cpp
+  X86/RegistrationPrologue.cpp
+  X86/RegistrationEpilogue.cpp
+  X86/RegistrationPhysicalFrame.cpp
   X86/RegistrationReachability.cpp
   X86/SEHFrame.cpp
   X86/SEHSourceRoots.cpp
@@ -86,6 +89,7 @@ add_neverd_component_library(NeverDIRMed
   pass/MedVerifier.cpp
 
   LINK_COMPONENTS
+  Decode
   IR
   Loader
   Sigs

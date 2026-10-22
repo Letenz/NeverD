@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include <algorithm>
 #include <utility>
@@ -15,6 +16,10 @@
 namespace neverd::registration_state {
 
 void RegistrationStateSolver::initializeCookies() {
+  if (KnownCxx && CxxHandler && !CxxHandler->CookieGuards.empty()) {
+    initializeCxxCookies();
+    return;
+  }
   CompleteCookies =
       EH4 && SecurityCookieVA && SecurityCookieVA <= UINT32_MAX - 3 &&
       Chain.ScopeTableVA <= UINT32_MAX - 16 && Chain.EHCookieOffset < -2;
@@ -25,6 +30,69 @@ void RegistrationStateSolver::initializeCookies() {
     CookieCheckVA = 0;
   CompleteCookies &= EHCookieSlot.has_value() &&
                      (Chain.GSCookieOffset == -2 || GSCookieSlot.has_value());
+}
+
+void RegistrationStateSolver::initializeCxxCookies() {
+  CookieCheckVA = 0;
+  if (!CheckCalls || !CheckCleanups || !SecurityCookieVA ||
+      SecurityCookieVA > UINT32_MAX - 3 ||
+      SecurityCookieVA != CxxHandler->SecurityCookieVA ||
+      CxxHandler->CookieGuards.size() > 2)
+    return;
+  std::vector<RegistrationCxxCookieCondition> Conditions;
+  va_t Checker = 0;
+  for (const auto &Guard : CxxHandler->CookieGuards) {
+    const int64_t Slot =
+        int64_t(*Chain.RegistrationOffset) + Guard.CookieOffset;
+    const int64_t XOR = int64_t(*Chain.RegistrationOffset) + Guard.XOROffset;
+    // A cleanup-only frame need not own SavedESP. A catch frame does, and a
+    // cookie cannot occupy any of that independently used runtime word.
+    const int64_t End = int64_t(*Chain.RegistrationOffset) -
+                        (EH.Cxx->TryBlocks.empty() ? 0 : 4);
+    if (!charge(1) || Slot < -int64_t(limits::kMaxSourceCallBorrowedBytes) ||
+        Slot + 4 > End || XOR < INT32_MIN || XOR > INT32_MAX ||
+        !Guard.CheckVA || Guard.CheckVA > UINT32_MAX ||
+        (Checker && Checker != Guard.CheckVA))
+      return;
+    Checker = Guard.CheckVA;
+    Conditions.push_back({int32_t(Slot), int32_t(XOR)});
+  }
+  CxxCookies = true;
+  CookieCheckVA = Checker;
+  CxxCookieConditions = std::move(Conditions);
+  CompleteCookies = true;
+  auto PreservesCookie = [&](const auto &Contract) {
+    if (!charge(1))
+      return false;
+    for (const auto &Write : Contract.ImageWrites) {
+      if (!charge(1))
+        return false;
+      if (Write.Begin < SecurityCookieVA + 4 && SecurityCookieVA < Write.End)
+        return false;
+    }
+    return true;
+  };
+  for (const auto &Contract : Result.CalleeContracts)
+    CompleteCookies &= PreservesCookie(Contract);
+  for (const auto &Cleanup : Result.CleanupContracts)
+    for (const auto &Call : Cleanup.Calls)
+      CompleteCookies &= PreservesCookie(Call.Leaf);
+}
+
+bool RegistrationStateSolver::cxxCookiesReady(const Domain &State) const {
+  const auto SP = parentStackOffset(State);
+  if (!CxxCookies || State.Unknown || !SP)
+    return false;
+  for (const auto &Condition : CxxCookieConditions) {
+    const auto Value = State.Frame.load(Condition.FrameOffset, 4);
+    if (Condition.FrameOffset < *SP || !Value.SecurityCookie ||
+        Value.CookieFrameOffset != Condition.XORFrameOffset || Value.CookieXOR)
+      return false;
+    for (int32_t Byte = 0; Byte != 4; ++Byte)
+      if (!State.InitializedFrameBytes.count(Condition.FrameOffset + Byte))
+        return false;
+  }
+  return true;
 }
 
 std::optional<int32_t>

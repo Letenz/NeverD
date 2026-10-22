@@ -2,6 +2,7 @@
 // production main window and its views, edits and session transitions.
 #include "ChooserView.h"
 #include "CodeView.h"
+#include "DeepLink.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
 #include "DwarfPromptDialog.h"
@@ -9,6 +10,9 @@
 #include "FunctionEditDialog.h"
 #include "GraphView.h"
 #include "HexView.h"
+#include "InstanceServer.h"
+#include "LinkDispatch.h"
+#include "LinkOpener.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
@@ -19,6 +23,7 @@
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
+#include "ResourceLimits.h"
 #include "Session.h"
 #include "SessionTestAccess.h"
 #include "SetTypeDialog.h"
@@ -47,6 +52,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QFontMetricsF>
 #include <QHeaderView>
 #include <QHelpEvent>
@@ -57,12 +63,15 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProcess>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QScopeGuard>
@@ -6331,6 +6340,643 @@ private slots:
              QJsonArray{QStringLiteral("uefi-x64")});
     QCOMPARE(choice.value(QStringLiteral("removed")).toArray(),
              QJsonArray{QStringLiteral("windows-kernel-x64")});
+  }
+
+  void linksCopyAndOpenTheirPlaces() {
+    // Copy link names the place the disassembly shows, and a link opens its
+    // place in the view it asks for, as IDA's open_ida_link does; another
+    // build, an address the program lacks or a bookmark it lacks is refused.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const QString hash =
+        bench.session.metadata().value(QStringLiteral("sha256")).toString();
+    QCOMPARE(hash.size(), 64);
+    auto *disassembly = bench.window->disassembly();
+    disassembly->navigate(Base + 0x44);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x44));
+    disassembly->focusContent();
+    clearClipboard();
+    QTRY_VERIFY(bench.action(ActionId::EditCopyLink)->isEnabled());
+    bench.action(ActionId::EditCopyLink)->trigger();
+    QCOMPARE(QApplication::clipboard()->text(),
+             QStringLiteral("neverd:///fixture.bin/addresses?rva=0x44"
+                            "&sha256=%1")
+                 .arg(hash.left(16)));
+
+    QString error;
+    const auto open = [&](const QString &text) {
+      error = QStringLiteral("unanswered");
+      const ParsedLink parsed = parseDeepLink(text);
+      if (!parsed.link) {
+        error = parsed.error;
+        return;
+      }
+      bench.window->openLink(*parsed.link,
+                             [&](const QString &result) { error = result; });
+    };
+    // A function by an address inside it, shown from its entry.
+    open(QStringLiteral(
+        "neverd:///fixture.bin/functions?rva=0x48&view=pseudocode"));
+    QTRY_COMPARE_WITH_TIMEOUT(error, QString(), OpenTimeoutMs);
+    QTRY_VERIFY(bench.codeView(QStringLiteral("source")));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        bench.codeView(QStringLiteral("source"))->text()->function(),
+        std::optional<Address>(Base + 0x40), OpenTimeoutMs);
+    open(QStringLiteral("neverd:///addresses?ea=%1&view=graph")
+             .arg(hexAddress(Base + 0x52)));
+    QTRY_COMPARE_WITH_TIMEOUT(error, QString(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(disassembly->graphMode() &&
+                                 disassembly->graph()->loaded(),
+                             OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(Base + 0x50));
+
+    open(QStringLiteral("neverd:///addresses?rva=0x52&view=disasm"));
+    QTRY_COMPARE_WITH_TIMEOUT(error, QString(), OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x52));
+    open(QStringLiteral("neverd:///fixture.bin/functions?rva=0x40&sha256=%1")
+             .arg(hash.startsWith(QLatin1String("00000000"))
+                      ? QStringLiteral("ffffffff")
+                      : QStringLiteral("00000000")));
+    QTRY_VERIFY(error.startsWith(
+        QStringLiteral("The link names another build of the input")));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
+    open(QStringLiteral("neverd:///addresses?rva=0x7fffffff"));
+    QTRY_VERIFY(error.startsWith(QStringLiteral("The link's address")));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
+    open(QStringLiteral("neverd:///bookmarks?rva=0x40"));
+    QTRY_VERIFY(error.startsWith(QStringLiteral("No bookmark is at")));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
+  }
+
+  void otherProgramsFindTheWorkbenchAndOpenLinksInIt() {
+    // As IDA 9.4's IPC server: get_info names the program, and open_link
+    // opens a link in this window; hcli's requests, without a newline, are
+    // answered too.  The server lives where only this user can reach it.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    auto &server = bench.window->instanceServer();
+    QVERIFY2(server.listening(), qPrintable(server.errorString()));
+#ifndef Q_OS_WIN
+    QCOMPARE(QFileInfo(server.serverName()).absolutePath(),
+             InstanceServer::directory());
+    QCOMPARE(QFileInfo(InstanceServer::directory()).permissions() &
+                 (QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup |
+                  QFile::ReadOther | QFile::WriteOther | QFile::ExeOther),
+             QFileDevice::Permissions());
+#endif
+    const auto instances = InstanceServer::discover();
+    QVERIFY(std::any_of(instances.begin(), instances.end(),
+                        [&](const InstanceServer::Instance &instance) {
+                          return instance.server == server.serverName() &&
+                                 instance.pid ==
+                                     QCoreApplication::applicationPid();
+                        }));
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+
+    QLocalSocket socket;
+    socket.connectToServer(server.serverName());
+    QVERIFY(socket.waitForConnected(1000));
+    const auto ask = [&](const QByteArray &request) {
+      socket.write(request);
+      QByteArray reply;
+      QTest::qWaitFor(
+          [&] {
+            reply += socket.readAll();
+            return reply.contains('\n');
+          },
+          OpenTimeoutMs);
+      return QJsonDocument::fromJson(reply.left(reply.indexOf('\n'))).object();
+    };
+    const QJsonObject info = ask("{\"cmd\":\"get_info\"}\n");
+    QCOMPARE(info.value(QStringLiteral("status")).toString(),
+             QStringLiteral("ok"));
+    QVERIFY(info.value(QStringLiteral("loaded")).toBool());
+    QCOMPARE(info.value(QStringLiteral("input_name")).toString(),
+             QStringLiteral("fixture.bin"));
+    QCOMPARE(info.value(QStringLiteral("input")).toString(),
+             bench.session.filePath());
+    QVERIFY(info.value(QStringLiteral("analysis_complete")).isBool());
+    QCOMPARE(
+        info.value(QStringLiteral("sha256")).toString(),
+        bench.session.metadata().value(QStringLiteral("sha256")).toString());
+    QCOMPARE(info.value(QStringLiteral("pid")).toInteger(),
+             QCoreApplication::applicationPid());
+    QCOMPARE(ask("{\"cmd\":\"ping\"}").value(QStringLiteral("status")),
+             QJsonValue(QStringLiteral("ok")));
+    QCOMPARE(ask("{\"cmd\":\"is_analysis_complete\"}\n")
+                 .value(QStringLiteral("status")),
+             QJsonValue(QStringLiteral("ok")));
+    const QJsonObject opened =
+        ask("{\"cmd\":\"open_link\",\"uri\":\"neverd:///fixture.bin/"
+            "addresses?rva=0x52\"}\n");
+    QVERIFY2(opened.value(QStringLiteral("status")).toString() ==
+                 QLatin1String("ok"),
+             qPrintable(QJsonDocument(opened).toJson()));
+    QTRY_COMPARE(bench.window->disassembly()->currentItem(),
+                 std::optional<Address>(Base + 0x52));
+    const QJsonObject location = ask("{\"cmd\":\"get_info\"}\n")
+                                     .value(QStringLiteral("location"))
+                                     .toObject();
+    QCOMPARE(addressValue(location.value(QStringLiteral("address"))),
+             std::optional<Address>(Base + 0x52));
+    QCOMPARE(addressValue(location.value(QStringLiteral("rva"))),
+             std::optional<Address>(0x52));
+    QCOMPARE(ask("{\"cmd\":\"open_link\",\"uri\":\"neverd:///types\"}\n")
+                 .value(QStringLiteral("message"))
+                 .toString(),
+             QStringLiteral("A types link names its type with name=."));
+    QCOMPARE(ask("{\"cmd\":\"rename\"}\n")
+                 .value(QStringLiteral("message"))
+                 .toString(),
+             QStringLiteral("Unknown command: rename"));
+    QCOMPARE(ask("[1]\n").value(QStringLiteral("message")).toString(),
+             QStringLiteral("Expected a JSON object"));
+  }
+
+  void instanceRequestsRespectTheirByteLimit_data() {
+    QTest::addColumn<int>("extraBytes");
+    QTest::addColumn<bool>("newline");
+    QTest::addColumn<bool>("complete");
+    QTest::addColumn<int>("requests");
+    QTest::newRow("limit-newline") << 0 << true << true << 1;
+    QTest::newRow("limit-no-newline") << 0 << false << true << 1;
+    QTest::newRow("oversized-newline") << 1 << true << true << 1;
+    QTest::newRow("oversized-no-newline") << 1 << false << true << 1;
+    QTest::newRow("oversized-incomplete") << 1 << false << false << 1;
+    QTest::newRow("limit-per-message") << 0 << true << true << 2;
+  }
+
+  void instanceRequestsRespectTheirByteLimit() {
+    QFETCH(int, extraBytes);
+    QFETCH(bool, newline);
+    QFETCH(bool, complete);
+    QFETCH(int, requests);
+    InstanceServer server;
+    int opened = 0;
+    server.setLinkHandler([&](const DeepLink &, auto done) {
+      ++opened;
+      done({});
+    });
+    QVERIFY2(server.start(), qPrintable(server.errorString()));
+    QLocalSocket socket;
+    socket.connectToServer(server.serverName());
+    QVERIFY(socket.waitForConnected(
+        ::neverd::limits::gui::kInstanceServerRequestTimeoutMs));
+    // The same valid link at the boundary must open, while a larger JSON
+    // object must be refused before the handler sees it, with or without
+    // a newline. Multiple bounded requests may share a connection.
+    QByteArray request = "{\"cmd\":\"open_link\",\"uri\":\"neverd:///"
+                         "addresses?ea=1\",\"padding\":\"";
+    const QByteArray suffix = complete ? "\"}" : "\" ";
+    const int limit = ::neverd::limits::gui::kInstanceServerMaxRequestBytes;
+    request +=
+        QByteArray(limit + extraBytes - request.size() - suffix.size(), 'x');
+    request += suffix;
+    if (newline)
+      request += '\n';
+    const QByteArray wire = request.repeated(requests);
+    QCOMPARE(socket.write(wire), qint64(wire.size()));
+    QByteArray replies;
+    QVERIFY(QTest::qWaitFor(
+        [&] {
+          replies += socket.readAll();
+          return replies.count('\n') == requests;
+        },
+        OpenTimeoutMs));
+    const bool accepted = extraBytes == 0;
+    QCOMPARE(opened, accepted ? requests : 0);
+    for (const QByteArray &line : replies.trimmed().split('\n')) {
+      const QJsonObject reply = QJsonDocument::fromJson(line).object();
+      QCOMPARE(reply.value(QStringLiteral("status")).toString(),
+               accepted ? QStringLiteral("ok") : QStringLiteral("error"));
+      if (!accepted)
+        QCOMPARE(reply.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("Request exceeds %1 bytes").arg(limit));
+    }
+    if (!accepted)
+      QTRY_COMPARE(socket.state(), QLocalSocket::UnconnectedState);
+  }
+
+  void instanceServingCanBeDisabled() {
+    const auto restore =
+        qScopeGuard([] { QSettings().remove(settings::InstancesDisabled); });
+    QSettings().setValue(settings::InstancesDisabled, true);
+    InstanceServer server;
+    QVERIFY(!server.start());
+    QVERIFY(!server.listening());
+    QVERIFY(!server.errorString().isEmpty());
+    QSettings().setValue(settings::InstancesDisabled, false);
+    QVERIFY2(server.start(), qPrintable(server.errorString()));
+    QVERIFY(server.listening());
+  }
+
+  void analysisCompletionDoesNotRequireAnUnsupportedReferenceIndex() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("source-cache-evm.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        bench.session.background().value("state").toString(),
+        QStringLiteral("unavailable"), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.queries().analysisComplete(),
+                             OpenTimeoutMs);
+    QVERIFY(!bench.session.indexReady());
+    QVERIFY(bench.session.analysisComplete());
+    const auto replies = InstanceServer::requestMany(
+        {bench.window->instanceServer().serverName()},
+        {{"cmd", "is_analysis_complete"}});
+    QVERIFY(replies[0]);
+    QVERIFY(replies[0]->value("analysis_complete").toBool());
+  }
+
+  void recentLinksFindRenamedInputsByHash() {
+    QTemporaryDir directory;
+    const QString renamed = writeFixture(directory, QStringLiteral("new.bin"));
+    const auto original = QSettings().value(settings::RecentFiles);
+    const auto restore = qScopeGuard([&] {
+      if (original.isValid())
+        QSettings().setValue(settings::RecentFiles, original);
+      else
+        QSettings().remove(settings::RecentFiles);
+    });
+    QSettings().setValue(settings::RecentFiles, QStringList{renamed});
+    const QString hash =
+        QString::fromLatin1(QCryptographicHash::hash(QByteArray("fixture"),
+                                                     QCryptographicHash::Sha256)
+                                .toHex());
+    const auto parsed = parseDeepLink(
+        QStringLiteral("neverd:///old.bin/addresses?rva=0&sha256=") +
+        hash.left(16));
+    QVERIFY(parsed.link);
+    QCOMPARE(recentFileFor(*parsed.link), std::optional<QString>(renamed));
+    DeepLink wrong = *parsed.link;
+    wrong.input = QStringLiteral("new.bin");
+    wrong.sha256 = QString(16, QLatin1Char('0'));
+    QVERIFY(!recentFileFor(wrong));
+    wrong.sha256.clear();
+    QCOMPARE(recentFileFor(wrong), std::optional<QString>(renamed));
+    wrong.input = QStringLiteral("old.bin");
+    QVERIFY(!recentFileFor(wrong));
+  }
+
+  void recentLinksFindTheProgramStoredInADatabase() {
+    QTemporaryDir directory;
+    const QString binary =
+        writeFixture(directory, QStringLiteral("sample.exe"));
+    const QString database = directory.filePath(QStringLiteral("renamed.nddb"));
+    QCOMPARE(
+        ProjectDatabase::save(database, binary,
+                              {{QStringLiteral("marker"), QByteArray("kept")}}),
+        QString());
+    const auto identity = ProjectDatabase::read(
+        database, nullptr, ProjectDatabase::ReadScope::InputIdentity);
+    QVERIFY(identity);
+    QCOMPARE(identity->inputName, QStringLiteral("sample.exe"));
+    QVERIFY(identity->state.isEmpty());
+    const auto full = ProjectDatabase::read(database);
+    QVERIFY(full);
+    QCOMPARE(full->state.value(QStringLiteral("marker")), QByteArray("kept"));
+    const auto original = QSettings().value(settings::RecentFiles);
+    const auto restore = qScopeGuard([&] {
+      if (original.isValid())
+        QSettings().setValue(settings::RecentFiles, original);
+      else
+        QSettings().remove(settings::RecentFiles);
+    });
+    QSettings().setValue(settings::RecentFiles, QStringList{database});
+    DeepLink link;
+    link.input = QStringLiteral("sample.exe");
+    link.rva = 0;
+    link.sha256 = identity->inputSha256.left(16);
+    QCOMPARE(recentFileFor(link), std::optional<QString>(database));
+    link.input = QStringLiteral("older-name.exe");
+    QCOMPARE(recentFileFor(link), std::optional<QString>(database));
+    link.sha256.clear();
+    link.input = QStringLiteral("sample.exe.i64");
+    QCOMPARE(recentFileFor(link), std::optional<QString>(database));
+    link.sha256 = QString(16, QLatin1Char('0'));
+    QVERIFY(!recentFileFor(link));
+  }
+
+  void resourceLinksRequireTheNamedItemAndPreserveTheCursor() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-import.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    disassembly->navigate(Base + 0x44);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x44));
+    QString result;
+    const auto open = [&](const QString &resource, Address address) {
+      result = QStringLiteral("pending");
+      const auto parsed =
+          parseDeepLink(QStringLiteral("ida:///%1?ea=%2&view=disasm")
+                            .arg(resource, hexAddress(address)));
+      QVERIFY(parsed.link);
+      bench.window->openLink(*parsed.link,
+                             [&](const QString &error) { result = error; });
+    };
+    for (const QString &resource :
+         {QStringLiteral("strings"), QStringLiteral("imports"),
+          QStringLiteral("exports")}) {
+      open(resource, Base + 0x44);
+      QTRY_VERIFY_WITH_TIMEOUT(result != QLatin1String("pending"),
+                               OpenTimeoutMs);
+      QVERIFY2(!result.isEmpty(), qPrintable(resource));
+      QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x44));
+    }
+    open(QStringLiteral("strings"), Base + 0x3100);
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x3100));
+    open(QStringLiteral("imports"), Base + 0x160);
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x160));
+    open(QStringLiteral("exports"), Base);
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(Base));
+    open(QStringLiteral("segments"), Base + 0x44);
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x44));
+    const auto segment = parseDeepLink(QStringLiteral("ida:///segments?ea=") +
+                                       hexAddress(Base + 0x44));
+    QVERIFY(segment.link);
+    result = QStringLiteral("pending");
+    bench.window->openLink(*segment.link,
+                           [&](const QString &error) { result = error; });
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    ChooserView *segments = nullptr;
+    for (auto *chooser : bench.window->findChildren<ChooserView *>())
+      if (chooser->model().kind() == ChooserKind::Segments)
+        segments = chooser;
+    QVERIFY(segments);
+    QTRY_COMPARE_WITH_TIMEOUT(segments->currentAddress(),
+                              std::optional<Address>(Base), OpenTimeoutMs);
+  }
+
+  void repeatedFunctionLinksReuseOnlyTheCurrentListingRevision() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *listing = assembly->listing();
+    const Address address = Base + 0x140;
+    assembly->navigate(address);
+    QTRY_COMPARE(listing->currentItem(), std::optional<Address>(address));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    QCOMPARE(listing->loadedFunctionAt(address),
+             std::optional<Address>(address));
+    const auto link =
+        parseDeepLink(QStringLiteral("ida:///functions?ea=") +
+                      hexAddress(address) + QStringLiteral("&view=disasm"));
+    QVERIFY(link.link);
+    QString result = QStringLiteral("pending");
+    bool reloaded = true;
+    bench.window->openLink(*link.link, [&](const QString &error) {
+      reloaded = listing->jumpPending();
+      result = error;
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QVERIFY(!reloaded);
+    QCOMPARE(listing->currentItem(), std::optional<Address>(address));
+    bool edited = false, refreshed = false, invalidated = false;
+    connect(
+        &bench.session, &Session::commented, this,
+        [&](Address, const QString &) {
+          invalidated = !listing->loadedFunctionAt(address);
+          assembly->navigate(address);
+          refreshed = listing->jumpPending();
+          edited = true;
+        },
+        Qt::SingleShotConnection);
+    bench.session.setComment(address, QStringLiteral("fresh listing"));
+    QTRY_VERIFY_WITH_TIMEOUT(edited, OpenTimeoutMs);
+    QVERIFY(refreshed);
+    QVERIFY(invalidated);
+    QTRY_VERIFY_WITH_TIMEOUT(!listing->jumpPending(), OpenTimeoutMs);
+    QCOMPARE(listing->currentItem(), std::optional<Address>(address));
+    QCOMPARE(listing->loadedFunctionAt(address),
+             std::optional<Address>(address));
+  }
+
+  void functionLinksSelectRowsBeyondTheLoadedPages() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("many-functions.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *functions = bench.functions();
+    QTRY_COMPARE_WITH_TIMEOUT(functions->model().total(), 20000, OpenTimeoutMs);
+    functions->model().sort(0, Qt::DescendingOrder);
+    functions->setFilterText(QStringLiteral("function_1"));
+    const Address target = Base + 599 * 16;
+    const auto parsed = parseDeepLink(QStringLiteral("ida:///functions?ea=") +
+                                      hexAddress(target));
+    QVERIFY(parsed.link);
+    QString result = QStringLiteral("pending");
+    bench.window->openLink(*parsed.link,
+                           [&](const QString &error) { result = error; });
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(functions->currentAddress(),
+                              std::optional<Address>(target), OpenTimeoutMs);
+    QCOMPARE(functions->model().filter(), QString());
+  }
+
+  void nativeUrlEventsReachTheWindowThatOwnsTheirProgram() {
+    QTemporaryDir directory;
+    Workbench receiver;
+    LoadDialogAcceptor loadDialogs;
+    receiver.window->openFile(
+        writeFixture(directory, QStringLiteral("receiver.bin")));
+    QProcess target;
+    target.start(QString::fromLocal8Bit(TEST_GUI),
+                 {QStringLiteral("--worker"),
+                  QString::fromLocal8Bit(TEST_WORKER),
+                  QStringLiteral("--smoke-test"), QStringLiteral("--capture"),
+                  directory.filePath(QStringLiteral("unused.png")),
+                  QStringLiteral("--capture-delay"), QStringLiteral("60000"),
+                  writeFixture(directory, QStringLiteral("target.bin"))});
+    const auto closeTarget = qScopeGuard([&] {
+      target.terminate();
+      if (!target.waitForFinished(OpenTimeoutMs)) {
+        target.kill();
+        target.waitForFinished(OpenTimeoutMs);
+      }
+    });
+    QVERIFY(target.waitForStarted(OpenTimeoutMs));
+    QString endpoint;
+    const auto targetInfo = [&]() -> QJsonObject {
+      if (endpoint.isEmpty())
+        for (const auto &instance : InstanceServer::discover())
+          if (instance.pid == target.processId())
+            endpoint = instance.server;
+      return endpoint.isEmpty()
+                 ? QJsonObject()
+                 : InstanceServer::request(
+                       endpoint, {{QStringLiteral("cmd"), "get_info"}})
+                       .value_or(QJsonObject());
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(receiver.session.loaded() &&
+                                 targetInfo().value("loaded").toBool(),
+                             OpenTimeoutMs);
+    receiver.window->disassembly()->navigate(Base + 0x44);
+    QTRY_COMPARE(receiver.window->disassembly()->currentItem(),
+                 std::optional<Address>(Base + 0x44));
+    LinkOpener opener(*receiver.window, receiver.session);
+    qApp->installEventFilter(&opener);
+    QFileOpenEvent event(
+        QUrl(QStringLiteral("ida:///target.bin/addresses?ea=") +
+             hexAddress(Base + 0x52)));
+    QCoreApplication::sendEvent(qApp, &event);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        addressValue(
+            targetInfo().value("location").toObject().value("address")),
+        std::optional<Address>(Base + 0x52), OpenTimeoutMs);
+    QCOMPARE(receiver.window->disassembly()->currentItem(),
+             std::optional<Address>(Base + 0x44));
+    QFileOpenEvent own(
+        QUrl(QStringLiteral("neverd:///receiver.bin/addresses?ea=") +
+             hexAddress(Base + 0x42)));
+    QCoreApplication::sendEvent(qApp, &own);
+    QTRY_COMPARE_WITH_TIMEOUT(receiver.window->disassembly()->currentItem(),
+                              std::optional<Address>(Base + 0x42),
+                              OpenTimeoutMs);
+  }
+
+  void instanceProbesStopAtAResponsiveMatchAndShareTheirDeadline() {
+    QTemporaryDir directory;
+    QLocalServer stalled, untouched;
+    stalled.setMaxPendingConnections(
+        ::neverd::limits::gui::kInstanceProbeConcurrency + 1);
+    stalled.setSocketOptions(QLocalServer::UserAccessOption);
+    untouched.setSocketOptions(QLocalServer::UserAccessOption);
+#ifdef Q_OS_WIN
+    const QString prefix = QFileInfo(directory.path()).fileName();
+#else
+    const QString prefix = directory.path() + QLatin1Char('/');
+#endif
+    QVERIFY(stalled.listen(prefix + QStringLiteral("stalled")));
+    QVERIFY(untouched.listen(prefix + QStringLiteral("untouched")));
+    InstanceServer responder;
+    responder.setInfo([] {
+      return QJsonObject{{"loaded", true}, {"input_name", "target.bin"}};
+    });
+    QVERIFY(responder.start());
+    QStringList servers{responder.serverName()};
+    for (int index = 1;
+         index < ::neverd::limits::gui::kInstanceProbeConcurrency; ++index)
+      servers << stalled.fullServerName();
+    servers << untouched.fullServerName();
+    bool matched = false;
+    auto replies = InstanceServer::requestMany(
+        servers, {{"cmd", "get_info"}},
+        ::neverd::limits::gui::kInstanceServerRequestTimeoutMs,
+        [&](int index, const QJsonObject &info) {
+          matched = index == 0 && info.value("input_name") == "target.bin";
+          return matched;
+        });
+    QVERIFY(matched);
+    QVERIFY(replies[0]);
+    QVERIFY(!replies.back());
+    QVERIFY(!untouched.hasPendingConnections());
+    // A stalled earlier endpoint must not consume the later endpoint's
+    // opportunity to answer within the same request budget.
+    replies = InstanceServer::requestMany(
+        {stalled.fullServerName(), responder.serverName()},
+        {{"cmd", "get_info"}});
+    QVERIFY(!replies[0]);
+    QVERIFY(replies[1]);
+    QCOMPARE(replies[1]->value("input_name"), QJsonValue("target.bin"));
+    servers.clear();
+    for (int index = 0;
+         index < ::neverd::limits::gui::kInstanceProbeConcurrency; ++index)
+      servers << stalled.fullServerName();
+    servers << responder.serverName();
+    replies = InstanceServer::requestMany(servers, {{"cmd", "get_info"}});
+    QVERIFY(replies.back());
+    QCOMPARE(replies.back()->value("input_name"), QJsonValue("target.bin"));
+    QLocalServer malformed;
+    malformed.setSocketOptions(QLocalServer::UserAccessOption);
+    QVERIFY(malformed.listen(prefix + QStringLiteral("malformed")));
+    connect(&malformed, &QLocalServer::newConnection, this, [&] {
+      while (auto *socket = malformed.nextPendingConnection()) {
+        connect(socket, &QLocalSocket::disconnected, socket,
+                &QObject::deleteLater);
+        socket->write("{\"loaded\":true,\"input_name\":\"target.bin\"}\n");
+        socket->flush();
+      }
+    });
+    const auto invalid = InstanceServer::requestMany(
+        {malformed.fullServerName()}, {{"cmd", "get_info"}});
+    QVERIFY(!invalid[0]);
+  }
+
+  void instanceRequestsSurviveQuotedFragmentBoundaries() {
+    InstanceServer server;
+    QVERIFY(server.start());
+    const QString text = QStringLiteral("quoted } ") + QLatin1Char('\\') +
+                         QLatin1Char('"') + QStringLiteral(" { 中文");
+    const QByteArray wire =
+        QJsonDocument(QJsonObject{{"cmd", "ping"}, {"padding", text}})
+            .toJson(QJsonDocument::Compact);
+    const QList<qsizetype> splits{wire.indexOf('}') + 1, wire.indexOf('\\') + 1,
+                                  wire.indexOf(QStringLiteral("中").toUtf8()) +
+                                      1};
+    const auto connected = [&](QLocalSocket &socket) {
+      socket.connectToServer(server.serverName());
+      return socket.waitForConnected(
+          ::neverd::limits::gui::kInstanceServerRequestTimeoutMs);
+    };
+    const auto reply = [&](QLocalSocket &socket) {
+      QByteArray bytes;
+      const bool received = QTest::qWaitFor(
+          [&] {
+            bytes += socket.readAll();
+            return bytes.contains('\n');
+          },
+          OpenTimeoutMs);
+      return received ? QJsonDocument::fromJson(bytes).object() : QJsonObject();
+    };
+    for (const auto split : splits) {
+      QVERIFY(split > 0 && split < wire.size());
+      QLocalSocket socket, barrier;
+      QVERIFY(connected(socket));
+      socket.write(wire.left(split));
+      QVERIFY(connected(barrier));
+      barrier.write("{\"cmd\":\"ping\"}");
+      QCOMPARE(reply(barrier).value("status"), QJsonValue("ok"));
+      QVERIFY(socket.readAll().isEmpty());
+      socket.write(wire.mid(split));
+      QCOMPARE(reply(socket).value("status"), QJsonValue("ok"));
+    }
+    QLocalSocket malformed;
+    QVERIFY(connected(malformed));
+    malformed.write("{\"cmd\":}");
+    const auto refused = reply(malformed);
+    QCOMPARE(refused.value("status"), QJsonValue("error"));
+    QVERIFY(!refused.value("message").toString().isEmpty());
   }
 
   void pathfinderListsTheCallPathsBetweenWaypoints() {

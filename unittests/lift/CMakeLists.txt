@@ -77,6 +77,10 @@ target_compile_definitions(NeverDX87CallGraphTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 
+add_neverd_unittest(NeverDX86FunctionDiscoveryTests
+  x86_32/X86_32_FunctionDiscoveryTests.cpp
+  LINK_COMPONENTS Pipeline)
+
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp
   LINK_COMPONENTS Loader
@@ -407,6 +411,7 @@ add_neverd_unittest(NeverDLiftTests
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
+  core/JumpTableTwoLevelI386Tests.cpp
   core/JumpTableLinkedI386GOTTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/ModuleJumpTableBudgetTests.cpp
@@ -1204,6 +1209,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
+  core/JumpTableTwoLevelI386Tests.cpp
   core/JumpTableLinkedI386GOTTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/ModuleJumpTableBudgetTests.cpp
@@ -1489,6 +1495,7 @@ add_neverd_unittest(NeverDNoReturnTests
 
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
+  eh/RegistrationCxxCookieStateTests.cpp
   eh/RegistrationDispatchTests.cpp
   eh/RegistrationOrdinaryFinallyTests.cpp
   eh/RegistrationSEHInvocationTests.cpp
@@ -1525,6 +1532,12 @@ add_neverd_unittest(NeverDRegistrationStateTests
 
   LINK_COMPONENTS
   IRRegistrationState
+)
+
+add_neverd_unittest(NeverDExceptionEdgeTests
+  eh/ExceptionCFGSeedTests.cpp
+  eh/RegistrationEdgeTests.cpp
+  LINK_COMPONENTS IRLow
 )
 
 add_neverd_unittest(NeverDRegistrationEHTests
@@ -1590,6 +1603,7 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/WindowsRegistrationCleanupOnlyTests.cpp
   eh/RegistrationLocalUnwindBridgeTests.cpp
   eh/RegistrationLocalUnwindNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp

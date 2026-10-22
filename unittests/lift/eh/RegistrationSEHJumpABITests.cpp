@@ -217,7 +217,7 @@ TEST(RegistrationSEHJumpABI, SelectedHandlersDoNotInventCaptureResumption) {
         State.CallbackOnly = true;
         break;
       case 10:
-        State.Levels = {0};
+        State.ExplicitLevels = {0};
         break;
       case 11:
         Resume.StateRestores = {{0, 0, 0}};
@@ -464,7 +464,7 @@ TEST(RegistrationSEHJumpABI, CapturedBoundsDisambiguateTheSameVisibleState) {
     auto &States = *F.Function.RegistrationStates;
     auto &Capture = States.SEHJumpCaptures.front();
     auto &Resume = States.SEHJumpResumptions.front();
-    Capture.Levels = States.Blocks.front().Levels = {-1, 0};
+    Capture.Levels = States.Blocks.front().ExplicitLevels = {-1, 0};
     Resume.ResumedLevels = {-1, 0};
     Resume.StateRestores = {{0, -1, -1}, {0, 0, 0}};
     if (Mutation == 1)
@@ -474,7 +474,7 @@ TEST(RegistrationSEHJumpABI, CapturedBoundsDisambiguateTheSameVisibleState) {
     if (Mutation == 3)
       Capture.Levels.push_back(0);
     if (Mutation == 4)
-      States.Blocks.front().Levels = {0};
+      States.Blocks.front().ExplicitLevels = {0};
     if (Mutation == 5)
       Resume.StateRestores.front().CaptureLevel = -2;
     if (Mutation == 6)
@@ -524,7 +524,7 @@ TEST(RegistrationSEHJumpABI, BindsNestedNonlocalCallsToTheirInvocation) {
     RegistrationBlockState CallbackState;
     CallbackState.BlockId = 2;
     CallbackState.Range = {0x1800, 0x1825};
-    CallbackState.Levels = {0};
+    CallbackState.ExplicitLevels = {0};
     CallbackState.CallbackOnly = CallbackState.Reached = true;
     States.Blocks.push_back(CallbackState);
     auto &Resume = States.SEHJumpResumptions.front();
@@ -618,7 +618,7 @@ TEST(RegistrationSEHJumpABI, ReplacementsBindTheActualCallbackAndCapture) {
       RegistrationBlockState State;
       State.BlockId = Block.Id;
       State.Range = {Block.StartAddr, Block.EndAddr};
-      State.Levels = {0};
+      State.ExplicitLevels = {0};
       State.Reached = true;
       State.CallbackOnly = Block.Id == 3;
       States.Blocks.push_back(std::move(State));

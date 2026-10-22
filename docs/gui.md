@@ -546,6 +546,65 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 `hex`, `strref`, `analyze` and `save`; `help` lists them. **Options → Show command palette**
 (Ctrl+Shift+P) searches every command.
 
+## Links
+
+**Edit → Copy link** copies a `neverd://` link to the place the focused view
+shows: the disassembly's address (in the graph when it shows the graph), a
+function or a line of the pseudocode, a row of Functions, Names, Imports,
+Exports, Segments, Strings or Bookmarks, a local type, or the hex view's
+address; the output window shows it too. A link takes the form of IDA's,
+`neverd:///<input>/<resource>?rva=0x1240&view=pseudocode`, with IDA's
+resources (`functions`, `addresses`, `strings`, `segments`, `names`,
+`imports`, `exports`, `types`, `bookmarks`) and views (`disasm`, `graph`,
+`pseudocode`, `hexdump` and the lists), and the address relative to the image
+base, so that it holds after rebasing. Beyond IDA's, copied links carry sixteen
+hexadecimal digits of the input's SHA-256 in `sha256=`; parsing accepts 8–64
+hexadecimal digits. This identifies the input after it has been renamed or
+moved and lets NeverD refuse links to another build. An address shows in the
+graph or at its line of the pseudocode, where IDA's links name only
+functions there. **Jump → Jump to link…** follows a link, `neverd://` or
+IDA's `ida://`, offering the one on the clipboard. A function link opens the
+function that holds its address, and a link that names another file is
+followed with a warning, as in IDA; a malformed link, another build, or an
+address, type or bookmark the program lacks is refused in the output window.
+String, import, export and name links require an actual row of that kind;
+segment links accept an address inside a mapped region and select that region.
+Numeric addresses reject embedded whitespace and overflowing relative addresses.
+Table links clear a filter hiding their destination and select the row even
+when its page has not been loaded yet, preserving the current sort order.
+
+Each workbench answers other programs, as IDA 9.4's IPC server answers hcli.
+`neverd-gui --list-instances` lists the running workbenches and their
+programs, and `neverd-gui neverd://…` (or `--link URL`) sends the link to the
+workbench that has its program, matching the SHA-256 when supplied, otherwise
+the input's name, or the only workbench with a program open when neither is
+supplied. A mismatched hash does not fall back to a matching name. The selected
+workbench comes to the front.
+When none has it, a recently opened file the link names opens in a new
+workbench at the link, `neverd-gui FILE LINK` names the file, and
+`--no-launch` only sends. `neverd-gui --register-link-handler` makes a
+`neverd://` link clicked anywhere open this way (a desktop entry and
+`xdg-mime` on Linux, the user's registry on Windows; the macOS application
+declares the scheme), and `--unregister-link-handler` undoes it. The servers
+live in the user's runtime directory, which only the user can enter, and
+refuse another user's connections, where IDA's sockets lie in `/tmp`; the
+`instances/disabled` setting keeps a workbench from serving. A server
+answers one JSON object a line: `ping`; `get_info`, the program's path, name
+and SHA-256, its analysis state and the cursor; `open_link` with `uri`; and
+`is_analysis_complete`. Running instances share places this way, not edits,
+in IDA as in NeverD: a team shares a project's edits through git (see
+*Working in a team through git*).
+
+A supplied hash also finds a renamed recent input. For a recent `.nddb`, the
+lookup uses the stored program's name and hash; unpacking still verifies its
+bytes before the link can open. Instance listing and `--no-launch` forwarding
+work without a display service. Instance probes run concurrently with one
+bounded deadline, and a named link stops probing once a matching window answers.
+Native operating-system URL events use the same routing while the receiving
+window continues serving requests, including requests routed back to itself.
+NeverD accepts IDA location links; it does not read IDA databases or download
+Knowledge Exchange assets, and it registers only the `neverd://` scheme.
+
 ## Keyboard
 
 | Key | Action |
@@ -601,8 +660,8 @@ window Ctrl+F finds text, where IDA's disassembly goes to the next error.
 
 `scripts/compare_gui_with_ida.py --ida <installation>` checks the table against
 an IDA installation and reports, menu by menu, which of IDA's commands the
-workbench has, plans and lacks. Against IDA 9.5 on 2026-10-21, all 116 rows
-matched IDA's configuration, and the workbench had 103 of the 255 commands in
+workbench has, plans and lacks. Against IDA 9.5 on 2026-10-21, all 117 rows
+matched IDA's configuration, and the workbench had 104 of the 255 commands in
 IDA's main menus, with 38 more planned. IDA 9.5 calls the commands of the
 workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
 `hx:BatchDecompile`, where 9.4 called them `EditCopy` and `hx:CreateCFile`.

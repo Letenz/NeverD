@@ -48,6 +48,10 @@ NEVERD_API const char *neverd_func_name(neverd_session_t Sess, int Idx);
 // Function lookup helpers
 // ===--------------------------------------------------------------------===//
 
+/// Find a listed name or an export alias, preferring the listed name. On
+/// Mach-O, also accept the C spelling without its one ABI underscore when
+/// neither exact spelling matches. The function list keeps its original names.
+/// Return -1 when no listed function matches.
 NEVERD_API int neverd_func_find_by_name(neverd_session_t Sess,
                                         const char *Name);
 NEVERD_API int neverd_func_find_by_addr(neverd_session_t Sess,

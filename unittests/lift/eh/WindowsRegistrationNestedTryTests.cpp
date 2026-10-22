@@ -108,7 +108,8 @@ void reconstructNestedSearch(bool Secondary, bool Rethrow = false,
                              [&](const auto &Edge) {
                                return Edge.Kind ==
                                           ExceptionalEdgeKind::CxxCatch &&
-                                      Edge.RegionIndex == 1;
+                                      Edge.singleContext() &&
+                                      Edge.singleContext()->RegionIndex == 1;
                              }),
               2u);
   }

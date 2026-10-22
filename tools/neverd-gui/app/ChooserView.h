@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
+#include <functional>
 #include <list>
 #include <optional>
 
@@ -37,6 +38,7 @@ enum class ChooserCommand {
 class ChooserModel final : public QAbstractTableModel {
   Q_OBJECT
 public:
+  using Located = std::function<void(std::optional<int>, const QString &)>;
   /// How a column shows its field (ChooserFormats.def).
   enum class Format {
 #define NEVERD_CHOOSER_FORMAT(Id, Columns) Id,
@@ -73,6 +75,8 @@ public:
   /// The item a row stands for when its cross references are listed: a
   /// string reference's string, otherwise the row's address.
   std::optional<Address> referenceAddressAt(int row) const;
+  /// Fetch the row at an address, or its containing segment, in table order.
+  void locateAddress(Address address, Located done);
 
   int rowCount(const QModelIndex &parent = {}) const override;
   int columnCount(const QModelIndex &parent = {}) const override;
@@ -86,6 +90,9 @@ signals:
   void failed(const QString &message);
 
 private:
+  std::optional<Address> itemAddress(const QJsonObject &object) const;
+  QJsonObject pagePayload(int page) const;
+  void finishLocation(std::optional<int> row, const QString &error = {});
   void requestPage(int page) const;
   void accept(int page, quint64 serial, const QJsonObject &payload);
   QString display(const QJsonObject &row, const Column &column) const;
@@ -105,6 +112,8 @@ private:
   bool localRows_ = false;
   int total_ = 0;
   quint64 serial_ = 0;
+  quint64 locationSerial_ = 0;
+  Located locationDone_;
 };
 
 /// A list window: table, IDA-style "Line N of M" status and a quick filter.
@@ -123,6 +132,8 @@ public:
   void setFilterText(const QString &text);
   /// Select the row whose address equals \p address among loaded rows.
   void revealAddress(Address address);
+  /// Locate a link target, clearing a filter that could hide it.
+  void locateAddress(Address address, ChooserModel::Located done);
   /// The selected rows, or else the current one, as text: a line a row in
   /// table order, its shown columns in header order separated by tabs.
   QString selectedText() const;

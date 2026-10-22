@@ -18,6 +18,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 
 #include <cstdint>
 #include <set>
@@ -211,6 +212,120 @@ TEST(FunctionAdmission, UnwindlessEntriesStillRequireCompleteDecoding) {
   EXPECT_EQ(Audit.DecodeFailures, std::vector<va_t>{Broken + 1});
   EXPECT_TRUE(Result.LowFuncs.empty());
   EXPECT_TRUE(Result.HighFuncs.empty());
+}
+
+TEST(FunctionAdmission, NativeOutputRequiresEverySelectedEntry) {
+  constexpr va_t Primary = 0x140001000;
+  constexpr va_t Broken = Primary + 0x10;
+  constexpr va_t Unmapped = Primary + 0x100;
+  std::vector<uint8_t> Code = {0xb8, 7, 0, 0, 0, 0xc3};
+  Code.resize(0x10, 0xcc);
+  Code.insert(Code.end(), {0x53, 0x0f});
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Patch : {false, true})
+      for (bool Cached : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << unsigned(Format) << ' ' << Patch << ' ' << Cached);
+        const auto Image = [&] {
+          auto Img = makeCodeFixture(Primary, Code);
+          Img.Format = Format;
+          return Img;
+        }();
+        PipelineAnalysisCache Cache;
+        for (va_t Extra : {Primary, Broken, Unmapped, Primary}) {
+          SCOPED_TRACE(Extra);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.NoOpt = true;
+          Options.PatchMode = Patch;
+          Options.LiftMode = !Patch;
+          Options.OnlyFunctionEntries = {Primary, Extra};
+          if (Cached)
+            Options.AnalysisCache = &Cache;
+          auto Result = Pipeline().run(Image, Context, Options);
+          if (Extra == Primary) {
+            EXPECT_TRUE(Result.Success) << Result.Error;
+            EXPECT_TRUE(Result.Error.empty());
+            ASSERT_TRUE(Result.LlvmModule);
+          } else {
+            EXPECT_FALSE(Result.Success);
+            EXPECT_FALSE(Result.Error.empty());
+            EXPECT_FALSE(Result.LlvmModule);
+            EXPECT_NE(Result.Error.find("selected"), std::string::npos);
+            if (Extra == Broken)
+              EXPECT_NE(Result.Error.find("rejected-incomplete"),
+                        std::string::npos);
+          }
+        }
+      }
+}
+
+TEST(FunctionAdmission, ASelectedRejectedParentCannotExportOnlyItsCleanup) {
+  constexpr va_t Cleanup = 0x401000, Parent = Cleanup + 0x10;
+  std::vector<uint8_t> Code = {0xb8, 7, 0, 0, 0, 0xc3};
+  Code.resize(0x10, 0xcc);
+  Code.insert(Code.end(), {0x53, 0x0f});
+  auto Image = makeCodeFixture(Cleanup, Code);
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Base = 0x400000;
+  ExceptionFunction EH;
+  EH.Kind = RuntimeFunctionKind::Primary;
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.CodeRange = {Parent, Parent + 2};
+  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+  EH.Cxx.emplace().MaxState = 1;
+  EH.Cxx->UnwindMap.push_back({-1, Cleanup});
+  Image.ExceptionMetadata.Functions.push_back(std::move(EH));
+  Image.ExceptionMetadata.rebuildIndex();
+  for (bool Lift : {false, true}) {
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.NoOpt = true;
+    Options.LiftMode = Lift;
+    Options.OnlyFunctionEntries = {Parent};
+    auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(llvm::any_of(
+        Result.MedFuncs, [&](const MedFunc &F) { return F.Entry == Cleanup; }));
+    EXPECT_FALSE(llvm::any_of(
+        Result.MedFuncs, [&](const MedFunc &F) { return F.Entry == Parent; }));
+    EXPECT_EQ(Result.Success, !Lift) << Result.Error;
+    if (Lift) {
+      EXPECT_FALSE(Result.LlvmModule);
+      EXPECT_NE(Result.Error.find("401010"), std::string::npos);
+      EXPECT_NE(Result.Error.find("401011"), std::string::npos);
+      EXPECT_NE(Result.Error.find("rejected-incomplete"), std::string::npos);
+    }
+  }
+}
+
+TEST(FunctionAdmission, SelectedLiftReportsUnsupportedInstructionSemantics) {
+  constexpr va_t Entry = 0x401000;
+  // FCHS reads an incoming x87 payload/tag that the typed PE32 projection
+  // cannot prove. Complete decoding alone must not admit its instruction.
+  auto Image = makeCodeFixture(Entry, {0xd9, 0xe0, 0xc3});
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Base = 0x400000;
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.NoOpt = true;
+  Options.LiftMode = true;
+  Options.OnlyFunctionEntries = {Entry};
+  auto Result = Pipeline().run(Image, Context, Options);
+  ASSERT_EQ(Result.FunctionAudits.size(), 1u);
+  const auto &Audit = Result.FunctionAudits.front();
+  EXPECT_EQ(Audit.DecodedInstructions, Audit.LiftedInstructions);
+  EXPECT_TRUE(Audit.DecodeFailures.empty());
+  EXPECT_EQ(Audit.UnsupportedInstructions, std::vector<va_t>{Entry});
+  EXPECT_FALSE(Result.Success);
+  EXPECT_FALSE(Result.LlvmModule);
+  EXPECT_NE(Result.Error.find("unsupported instruction at 0x401000"),
+            std::string::npos);
 }
 
 } // namespace
