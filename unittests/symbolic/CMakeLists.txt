@@ -40,6 +40,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBACubicTests.cpp
   SymMBAHigherProductTests.cpp
   SymMBAResidualBudgetTests.cpp
+  SymMBAResidueTests.cpp
   SymMBAComplementBoundaryTests.cpp
   SymMBAConstantRegionTests.cpp
   SymMBAMeasureTests.cpp
@@ -108,6 +109,7 @@ add_neverd_unittest(NeverDSymMBAQuadraticTests
   SymMBACubicTests.cpp
   SymMBAHigherProductTests.cpp
   SymMBAResidualBudgetTests.cpp
+  SymMBAResidueTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
 

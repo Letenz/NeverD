@@ -170,6 +170,21 @@ def cubic_elf(degree=3, perturbed=False, missing=False):
     return elf(code)
 
 
+def residue_elf(degree):
+    # r8d = x+y. Keep the product of degree consecutive offsets in original
+    # machine instructions. Its valuation is at least v2(degree!), so shifting
+    # it by the remaining bits makes the entire product zero modulo 2^32.
+    # Keep x+y+z as an independent tail and retain all three ABI inputs.
+    code = bytearray.fromhex("448d0437 4489c0")
+    for offset in range(1, degree):
+        code += bytes.fromhex("418d48") + bytes((offset,))
+        code += bytes.fromhex("0fafc1")
+    shift = 32 - (degree - degree.bit_count())
+    code += bytes.fromhex("c1e0") + bytes((shift,))
+    code += bytes.fromhex("01f8 01f0 01d0 c3")
+    return elf(code)
+
+
 def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
@@ -244,7 +259,10 @@ def execute_source(root, name, text, compiler, expected):
 
 def run_fixture(worker, cli, compiler, kind, image, expected):
     def enhanced_shape(text):
-        if kind == "masked":
+        if kind.startswith("residue-"):
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert "*" not in code and "<<" not in code, text
+        elif kind == "masked":
             assert text.count("^") <= 2, text
         elif kind == "frame":
             assert all(op not in text for op in ("|", "^", "&")), text
@@ -297,7 +315,11 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind == "masked":
+                    if kind.startswith("residue-"):
+                        code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
+                                      flags=re.S)
+                        assert "*" in code, ordinary
+                    elif kind == "masked":
                         assert ordinary.count("^") >= 3, ordinary
                     elif kind == "frame":
                         assert "|" in ordinary, ordinary
@@ -352,6 +374,8 @@ if __name__ == "__main__":
     options = parser.parse_args()
     try:
         for kind, image, expected in (
+            ("residue-quartic", residue_elf(4), "x+y+z"),
+            ("residue-octic", residue_elf(8), "x+y+z"),
             ("affine", affine_elf(), "182U*x + 73U*y + 211U*z + 37U"),
             ("quadratic", quadratic_elf(), "11U*x*x + 73U*x*y + 182U*y + 211U*z + 37U"),
             ("masked", masked_elf(), "(37U*((x ^ ~0x39U)&(y ^ 0x6dU))|0x55U)+z"),
