@@ -393,6 +393,7 @@ extern llvm::cl::opt<bool> TypesDecimalOffsets;
 extern llvm::cl::opt<bool> TypesNoOffsets;
 extern llvm::cl::list<std::string> TypesDeclare;
 extern llvm::cl::opt<bool> TypesMergePrototypes;
+extern llvm::cl::list<std::string> TypesImportPrototypes;
 extern llvm::cl::opt<bool> TypesSave;
 extern llvm::cl::opt<bool> TypesSaveDeclarations;
 extern llvm::cl::opt<std::string> TypesInput;

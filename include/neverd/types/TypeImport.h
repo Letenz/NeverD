@@ -15,8 +15,10 @@
 
 #include "neverd/types/LocalTypes.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Error.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,10 +40,12 @@ struct PrototypeImport {
 /// types and affected existing dependents names beginning with \p Prefix.
 /// Equality includes pointee types, qualifiers, conventions and enum values,
 /// not just sizes. Existing prototypes and types retain their definitions.
+/// If Names is present, import only those exact provider prototypes (an empty
+/// selection imports nothing). Every selected name must exist in Provider.
 /// The data model and record ABI must agree. Errors leave Library unchanged.
-llvm::Expected<PrototypeImport> importPrototypes(TypeLibrary &Library,
-                                                 const TypeLibrary &Provider,
-                                                 llvm::StringRef Prefix);
+llvm::Expected<PrototypeImport> importPrototypes(
+    TypeLibrary &Library, const TypeLibrary &Provider, llvm::StringRef Prefix,
+    std::optional<llvm::ArrayRef<llvm::StringRef>> Names = std::nullopt);
 
 } // namespace neverd::types
 

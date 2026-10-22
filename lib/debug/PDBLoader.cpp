@@ -18,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/types/CodeViewCallingConvention.h"
 
 #define DEBUG_TYPE "neverd-pdb-loader"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -1370,7 +1371,9 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
         }
       }
     }
-    return NdType::makeFunc(Return, std::move(Params));
+    return NdType::makeFunc(
+        Return, std::move(Params),
+        types::codeViewCallingConvention(Rec.CallConv, PtrSize));
   }
   case LK::LF_MFUNCTION: {
     llvm::codeview::MemberFunctionRecord Rec;
@@ -1412,7 +1415,9 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
         }
       }
     }
-    return NdType::makeFunc(Return, std::move(Params));
+    return NdType::makeFunc(
+        Return, std::move(Params),
+        types::codeViewCallingConvention(Rec.CallConv, PtrSize));
   }
   case LK::LF_BITFIELD: {
     llvm::codeview::BitFieldRecord Rec;

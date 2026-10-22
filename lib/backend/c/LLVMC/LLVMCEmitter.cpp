@@ -1776,9 +1776,12 @@ std::string LLVMCWriter::sourceImportDeclaration(const FunctionSym &Function,
       Opts.TheArch == Arch::X86 && Function.CallConv == DebugCallConv::Stdcall
           ? "__attribute__((stdcall)) "
           : "";
-  return declarationToC(cDisplayType(Function.ReturnType),
-                        Convention + Name.str() + "(" +
-                            (Params.empty() ? "void" : Params) + ")");
+  // This convention belongs to the imported function. Keeping it inside
+  // the return declarator would attach it to a returned callback instead.
+  return Convention +
+         declarationToC(cDisplayType(Function.ReturnType),
+                        Name.str() + "(" + (Params.empty() ? "void" : Params) +
+                            ")");
 }
 
 LLVMCWriter::LibraryCallee
