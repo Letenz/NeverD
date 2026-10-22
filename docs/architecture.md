@@ -254,6 +254,20 @@ reports identify the binding mode. Reopen constructs fresh sources; saved files
 never authorize proof reuse. Failed worker replacement retains the old comparison
 and its sources; destruction/close releases them. Other immutable snapshot
 queries retain their session-independent contract.
+`LoadProgress` in support owns borrowed loading progress and stop checkpoints.
+It carries no session state and is never retained in a `BinaryImage`.
+Controlled loader calls restore the previous control on every exit and translate
+stops to `operation_canceled`; legacy calls retain their existing contracts.
+Hashing keeps the shared hardware-accelerated SHA-256 implementation and polls
+between bounded byte batches, as does raw-byte copying. Native parsers and
+load-time discovery poll at phase/loop boundaries; PDB work shares its existing
+progress checkpoints. The SDK latches stop requests only for the synchronous
+load and returns -2 before publishing any replacement. Its final preparation
+checkpoint precedes decoder initialization and session publication; once
+publication starts, completion wins. File I/O, allocations, individual metadata
+helpers and post-publication sidecar reads remain indivisible. These checkpoints
+set no input-size ceiling or hard latency guarantee. Worker input loading
+forwards actual per-side stages and preserves the old comparison on stop.
 `lib/sdk/capi/BinaryComparison` adapts the native loader and the shared
 `InstructionFlow` traversal; it must not introduce a second sized/unsized or
 exception-chunk traversal. The adapter preserves original bytes/operands and

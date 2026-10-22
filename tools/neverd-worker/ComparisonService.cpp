@@ -16,11 +16,14 @@
 
 #include "neverd/diff/Limits.h"
 #include "neverd/sdk/NeverDCAPIDiff.h"
+#include "neverd/sdk/NeverDCAPISession.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <fstream>
+#include <mutex>
 #include <thread>
 
 namespace neverd::worker {
@@ -29,6 +32,9 @@ namespace limits = ::neverd::limits::diff;
 namespace fs = std::filesystem;
 
 struct API {
+  decltype(&neverd_session_load_cancellable) LoadCancellable =
+      engineSymbol<decltype(LoadCancellable)>(
+          "neverd_session_load_cancellable");
 #define ENTRY(Name)                                                            \
   decltype(&neverd_comparison_##Name) Name =                                   \
       engineSymbol<decltype(Name)>("neverd_comparison_" #Name)
@@ -156,7 +162,54 @@ Session load(const Json &Input, const char *Side,
   const std::string Phase = std::string(Side) + ":load";
   if (Notify)
     Notify(Phase.c_str(), 0, 1, Name.c_str());
-  if (!neverd_session_load(S.get(), Name.c_str()))
+  struct LoadContext {
+    const ComparisonService::Progress &Notify;
+    const ComparisonService::Cancellation &Cancelled;
+    const std::string &Phase;
+    std::exception_ptr Failure;
+    std::mutex FailureMutex;
+    void rememberFailure() {
+      std::lock_guard Lock(FailureMutex);
+      if (!Failure)
+        Failure = std::current_exception();
+    }
+    bool failed() {
+      std::lock_guard Lock(FailureMutex);
+      return bool(Failure);
+    }
+    static void progress(void *User, const char *Step, unsigned long long Done,
+                         unsigned long long Total,
+                         const char *Detail) noexcept {
+      auto &Context = *static_cast<LoadContext *>(User);
+      try {
+        if (Context.Notify)
+          Context.Notify((Context.Phase + ":" + Step).c_str(), Done, Total,
+                         Detail);
+      } catch (...) {
+        Context.rememberFailure();
+      }
+    }
+    static int stop(void *User) noexcept {
+      auto &Context = *static_cast<LoadContext *>(User);
+      try {
+        return Context.failed() || (Context.Cancelled && Context.Cancelled());
+      } catch (...) {
+        Context.rememberFailure();
+        return 1;
+      }
+    }
+  } Context{Notify, Cancelled, Phase, {}, {}};
+  neverd_session_set_load_progress(S.get(), LoadContext::progress, &Context);
+  const int Loaded = api().LoadCancellable
+                         ? api().LoadCancellable(S.get(), Name.c_str(),
+                                                 LoadContext::stop, &Context)
+                         : neverd_session_load(S.get(), Name.c_str());
+  neverd_session_set_load_progress(S.get(), nullptr, nullptr);
+  if (Context.Failure)
+    std::rethrow_exception(Context.Failure);
+  if (Loaded == -2 || (Cancelled && Cancelled()))
+    throw Error("cancelled", std::string(Side) + ": input loading stopped");
+  if (Loaded != 1)
     throw Error("comparison_load_failed",
                 std::string(Side) + ": " + take(neverd_last_error(S.get())));
   if (Notify)

@@ -194,10 +194,17 @@ including `comparison_observations` and `comparison_scalar_validation`,
 `stopped:false` while its cooperative request is pending. Only the target's
 terminal reply reports `calculation_stopped:true`. An interrupted comparison has
 `completed_before_cancellation:false`, `partial_result_retained:true` and payload
-`state:"cancelled"`. Cancellation before input loading can instead fail with
-`error.code:"cancelled"` and no new partial result. The payload's `job` object
+`state:"cancelled"`. Cancellation before or during input loading instead fails with
+`error.code:"cancelled"` and no new partial result. The previous comparison and
+its mapping revision remain usable. Current engines forward load stages as
+`primary:load:<stage>` / `secondary:load:<stage>` (including `read`, `hash`,
+`copy`, `parse`, `load-discovery`, `debug`, `ready`); `done`/`total` belong to that
+stage, not to the entire comparison. Older engines without the additive
+cancellable-load entry point finish their synchronous load before stopping. The payload's `job` object
 separates `cancel_requested`, `computation_stopped` and
-`partial_result_retained`. Loading and synchronous discovery can delay the stop.
+`partial_result_retained`. Loading and native discovery cooperate with the stop
+probe; file I/O, allocations and individual metadata/parser helpers can still
+delay acknowledgement. There is no hard wall-clock deadline.
 The preceding legacy cancellation contract still applies to other operations.
 
 `comparison_scalar_validation` accepts `side`, an accepted function `address`,

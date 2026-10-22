@@ -178,6 +178,37 @@ def main():
             assert ok(client, "comparison_observations", detail_query) == expired_changes
             fresh_changes = ok(client, "comparison_observations", {"address": "0x1000", "refresh": True})
             assert fresh_changes["state"] == "complete" and fresh_changes["visited_native_rows"] == 60001
+            # A replacement stopped during either input load never replaces
+            # the existing comparison, its mapping revision or its query state.
+            loading = root / "loading.bin"
+            with loading.open("wb") as stream:
+                stream.truncate(64 * 1024 * 1024)
+            loading_input = {"path": str(loading), "load_options": {
+                "loader": "binary", "processor": "x86_64", "base": "0x1000",
+                "platform": "sysv"}}
+            retained_summary = ok(client, "comparison_summary")
+            retained_rows = ok(client, "comparison_functions")
+            for side in ("primary", "secondary"):
+                replacement = {"primary": start["primary"], "secondary": start["secondary"]}
+                replacement[side] = loading_input
+                request = client.send("comparison_start", replacement)
+                progress = client.next(
+                    lambda m: m.get("request_id") == request and m.get("status") == "progress"
+                    and m.get("payload", {}).get("phase") == f"{side}:load:hash"
+                    and m["payload"].get("done", 0) > 0, timeout=30)
+                assert progress["payload"]["done"] < progress["payload"]["total"], progress
+                load_stop_began = time.monotonic()
+                acknowledged = ok(client, "cancel", {"request_id": request})
+                assert acknowledged["accepted"] and not acknowledged["requires_restart"], acknowledged
+                stopped_load = client.response(request)
+                assert stopped_load["status"] == "error" and stopped_load["error"]["code"] == "cancelled", stopped_load
+                assert stopped_load["calculation_stopped"] and not stopped_load["completed_before_cancellation"], stopped_load
+                assert not stopped_load["partial_result_retained"], stopped_load
+                assert ok(client, "comparison_summary") == retained_summary
+                assert ok(client, "comparison_functions") == retained_rows
+                print(f"{side} input loading stop and retained comparison: {time.monotonic() - load_stop_began:.3f}s")
+            retried = ok(client, "comparison_start", start)
+            assert retried["state"] == "complete", retried
             # Actual cooperative cancellation: acknowledge request while work is running;
             # publish 'stopped' and retained partial state only in the terminal response.
             large = root / "large.bin"

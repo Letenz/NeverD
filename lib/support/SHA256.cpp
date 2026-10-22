@@ -6,6 +6,9 @@
 
 #include "neverd/support/SHA256.h"
 
+#include "neverd/support/Limits.h"
+#include "neverd/support/LoadProgress.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -15,6 +18,7 @@
 #include "llvm/Support/SHA256.h"
 #include "llvm/TargetParser/Host.h"
 
+#include <algorithm>
 #include <climits>
 #include <cstring>
 #include <iterator>
@@ -163,11 +167,24 @@ constexpr size_t tailBlocks(size_t Rest) {
   return llvm::divideCeil(Rest + sizeof(MessageEnd) + LengthBytes, BlockBytes);
 }
 
-std::array<uint8_t, 32> sha256WithExtensions(llvm::ArrayRef<uint8_t> Data) {
+std::array<uint8_t, 32> sha256WithExtensions(llvm::ArrayRef<uint8_t> Data,
+                                             const LoadProgress &Progress) {
   uint32_t State[StateWords];
   llvm::copy(InitialState, State);
   const size_t Blocks = Data.size() / BlockBytes;
-  compress(State, Data.data(), Blocks);
+  if (!Progress) {
+    compress(State, Data.data(), Blocks);
+  } else {
+    static_assert(limits::support::kLoadByteCheckpointBytes % BlockBytes == 0);
+    constexpr size_t ChunkBlocks =
+        limits::support::kLoadByteCheckpointBytes / BlockBytes;
+    for (size_t Done = 0; Done < Blocks;) {
+      const size_t Count = std::min(ChunkBlocks, Blocks - Done);
+      compress(State, Data.data() + Done * BlockBytes, Count);
+      Done += Count;
+      Progress.report("hash", Done * BlockBytes, Data.size());
+    }
+  }
 
   uint8_t Tail[tailBlocks(BlockBytes - 1) * BlockBytes] = {};
   const size_t Rest = Data.size() % BlockBytes;
@@ -185,6 +202,7 @@ std::array<uint8_t, 32> sha256WithExtensions(llvm::ArrayRef<uint8_t> Data) {
                 "the digest is the final state, big-endian");
   for (size_t I = 0; I != StateWords; ++I)
     llvm::support::endian::write32be(Digest.data() + I * WordBytes, State[I]);
+  Progress.report("hash", Data.size(), Data.size());
   return Digest;
 }
 
@@ -192,12 +210,30 @@ std::array<uint8_t, 32> sha256WithExtensions(llvm::ArrayRef<uint8_t> Data) {
 #endif
 
 std::array<uint8_t, 32> sha256(llvm::ArrayRef<uint8_t> Data) {
+  return sha256(Data, {});
+}
+
+std::array<uint8_t, 32> sha256(llvm::ArrayRef<uint8_t> Data,
+                               const LoadProgress &Progress) {
+  Progress.report("hash", 0, Data.size());
 #ifdef NEVERD_SHA_EXTENSIONS
   static const bool HasTargetFeatures = hasTargetFeatures();
   if (HasTargetFeatures)
-    return sha256WithExtensions(Data);
+    return sha256WithExtensions(Data, Progress);
 #endif
-  return llvm::SHA256::hash(Data);
+  if (!Progress)
+    return llvm::SHA256::hash(Data);
+  llvm::SHA256 Hash;
+  for (size_t Done = 0; Done < Data.size();) {
+    const size_t Count =
+        std::min(limits::support::kLoadByteCheckpointBytes, Data.size() - Done);
+    Hash.update(Data.slice(Done, Count));
+    Done += Count;
+    Progress.report("hash", Done, Data.size());
+  }
+  const auto Digest = Hash.final();
+  Progress.report("hash", Data.size(), Data.size());
+  return Digest;
 }
 
 } // namespace neverd

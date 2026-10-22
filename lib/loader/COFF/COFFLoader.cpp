@@ -93,7 +93,7 @@ std::string machineName(uint16_t Machine) {
 
 llvm::Expected<BinaryImage>
 COFFLoader::load(const std::filesystem::path &Path) {
-  auto BufOrErr = readFileBuffer(Path, BinaryFormat::COFF);
+  auto BufOrErr = readFileBuffer(Path, BinaryFormat::COFF, Progress);
   if (!BufOrErr)
     return BufOrErr.takeError();
   return loadBuffer((*BufOrErr)->getMemBufferRef());
@@ -103,9 +103,10 @@ llvm::Expected<BinaryImage>
 COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   BinaryImage Img;
   initializeImage(Buffer, Img, BinaryFormat::COFF,
-                  /*CopyRaw=*/RestrictFunctionEntries.empty());
+                  /*CopyRaw=*/RestrictFunctionEntries.empty(), Progress);
   Img.ReadsStaticSymbols = ReadsStaticSymbols;
 
+  Progress.report("parse", 0, 1, "PE/COFF tables");
   auto ObjOrErr = coff_loader::COFFObjectView::create(Buffer);
   if (!ObjOrErr)
     return ObjOrErr.takeError();
@@ -173,12 +174,14 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   std::vector<uint64_t> SectionSizes(Obj.getNumberOfSections() + 1, 0);
   va_t NextRelocatableVA = 0x1000;
   for (const SectionRef &SecRef : Obj.sections()) {
+    Progress.check();
     const unsigned SectionID = Obj.getSectionID(SecRef);
     if (SectionID < SectionSizes.size())
       SectionSizes[SectionID] = Obj.getSectionSize(Obj.getCOFFSection(SecRef));
   }
   if (IsRelocatable)
     for (const SymbolRef &SymRef : Obj.symbols()) {
+      Progress.check();
       COFFSymbolRef Sym = Obj.getCOFFSymbol(SymRef);
       if (Sym.getSectionNumber() <= 0)
         continue;
@@ -190,8 +193,10 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
             std::max<uint64_t>(SectionSizes[SectionID], Definition->Length);
     }
 
+  Progress.check();
   // --- Sections ---
   for (const SectionRef &SecRef : Obj.sections()) {
+    Progress.check();
     const coff_section *CoffSec = Obj.getCOFFSection(SecRef);
     const unsigned SectionID = Obj.getSectionID(SecRef);
     if (SectionID >= SectionVAs.size())
@@ -304,12 +309,15 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     coff_loader::addObjectExterns(Externs, Img.Arch, Img);
   }
 
+  Progress.check();
   // --- COFF Relocations ---
   for (const SectionRef &SecRef : Obj.sections()) {
+    Progress.check();
     const unsigned SectionID = Obj.getSectionID(SecRef);
     if (SectionID >= SectionVAs.size() || SectionVAs[SectionID] == InvalidVA)
       continue;
     for (const auto &Reloc : SecRef.relocations()) {
+      Progress.check();
       RelocationEntry RE;
       if (Reloc.getOffset() > InvalidVA - SectionVAs[SectionID])
         continue;
@@ -331,6 +339,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     }
   }
 
+  Progress.check();
   // --- Apply relocations for .obj files ---
   if (IsRelocatable) {
     // An undefined symbol resolves to its extern address: a common one to its
@@ -353,6 +362,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
                                               CoffSym.getValue() != 0, Branch);
     };
     for (const SectionRef &SecRef : Obj.sections()) {
+      Progress.check();
       const coff_section *ApplySec = Obj.getCOFFSection(SecRef);
       if (!ApplySec)
         continue;
@@ -363,6 +373,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
       va_t ApplyVA = SectionVAs[ApplySectionID];
       Segment *ApplySeg = nullptr;
       for (auto &Seg : Img.Segments) {
+        Progress.check();
         if (Seg.VA == ApplyVA && !Seg.Data.empty()) {
           ApplySeg = &Seg;
           break;
@@ -372,6 +383,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
         continue;
 
       for (const auto &Reloc : SecRef.relocations()) {
+        Progress.check();
         uint64_t RAddr = Reloc.getOffset();
         uint32_t RType = Reloc.getType();
         const bool ThumbBranch =
@@ -954,6 +966,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     }
   }
 
+  Progress.check();
   // --- Imports ---
   coff_loader::parseImports(Obj, Img);
 
@@ -966,6 +979,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     Img.Entry = 0;
   }
 
+  Progress.check();
   // --- Exports ---
   for (auto I = Obj.export_directory_begin(), E = Obj.export_directory_end();
        I != E; ++I) {
@@ -1000,13 +1014,16 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     Img.Exports.push_back(std::move(Exp));
   }
 
+  Progress.check();
   // --- Delay Imports ---
   coff_loader::parseDelayImports(Obj, Img);
 
+  Progress.check();
   // --- Base Relocation Table (.reloc) ---
   if (auto Error = coff_loader::parseBaseRelocations(Obj, Img, ImageBase))
     return std::move(Error);
 
+  Progress.check();
   // --- Debug Directory (PDB path) ---
   coff_loader::parseDebugDirectory(
       Obj, Img, llvm::arrayRefFromStringRef(Buffer.getBuffer()));
@@ -1018,12 +1035,15 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   if (Img.IsRelocatable || Img.ReadsStaticSymbols)
     coff_loader::parseSymbolTable(Obj, Img, ImageBase, SectionVAs);
 
+  Progress.check();
   // --- Exceptions (.pdata) ---
   coff_loader::parseExceptions(Obj, Img, ImageBase);
 
+  Progress.check();
   // --- TLS callbacks ---
   coff_loader::parseTLSDirectory(Obj, Img, ImageBase);
 
+  Progress.check();
   // --- Load Configuration (security cookie, CF Guard) ---
   coff_loader::parseLoadConfiguration(Obj, Img, ImageBase);
 
@@ -1040,9 +1060,11 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // Personality resolution still follows import-veneer discovery below.
   dwarf_eh::recordFrameExtents(Img);
   runPostLoadDiscovery(
-      Img, "coff: loaded " + pathToUTF8(std::filesystem::u8path(
-                                            Buffer.getBufferIdentifier().str())
-                                            .filename()));
+      Img,
+      "coff: loaded " +
+          pathToUTF8(std::filesystem::u8path(Buffer.getBufferIdentifier().str())
+                         .filename()),
+      Progress);
   coff_loader::recordSymbolTableDataInCode(Img);
   coff_loader::recordRelocatedPointerRunsInCode(Img);
   coff_loader::recordConstantCodeSlots(Img);
@@ -1056,28 +1078,36 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // by the pclntab instead.  Reading it first is what names the one routine Go
   // installs as a personality, which lives in the pclntab and in no PE symbol
   // table, and would otherwise leave that record permanently unclassified.
+  Progress.check();
   go_loader::parseGoExceptions(Img);
   // Handler names may sit behind executable import veneers found during
   // post-load discovery.  Decode language tables only after those mappings and
   // the COFF symbol table are both available.
+  Progress.check();
   coff_loader::resolveExceptionHandlers(Img);
   // x86-32 has no exception directory; its tables are reachable only from the
   // prologue that installs the FS:[0] registration record, so recovery needs
   // the discovered function bodies that scan runs over.  Delphi shares that
   // mechanism but nothing else, and its descriptors would read as unclassified
   // SEH handlers, so its frames are claimed first.
+  Progress.check();
   coff_loader::parseDelphiExceptions(Img);
+  Progress.check();
   coff_loader::parseX86RegistrationExceptions(Img);
   // A MinGW or `*-pc-windows-gnu` image carries both table families: the PE
   // exception directory Windows itself unwinds through, and a `.eh_frame` with
   // the Itanium LSDAs GCC's personality reads.  Decoding only the first would
   // report every C++ frame in such an image as having no handler at all.
+  Progress.check();
   dwarf_eh::parseItaniumExceptions(Img);
   // Rust and Objective-C share whichever of those two table families their
   // target uses, so their readings of them run last, over records that are
   // already normalized.
+  Progress.check();
   rust_eh::parseRustExceptions(Img);
+  Progress.check();
   objc_eh::parseObjCExceptions(Img);
+  Progress.report("parse", 1, 1);
   return Img;
 }
 

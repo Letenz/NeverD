@@ -25,6 +25,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -36,6 +37,7 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
@@ -47,10 +49,66 @@
 #include <QTableView>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace neverd::gui {
 namespace {
 namespace limits = ::neverd::limits::gui;
+QString progressLabel(const QString &Phase) {
+  const auto Step = Phase.section(':', -1);
+  const std::pair<const char *, const char *> Labels[] = {
+      {"load", QT_TRANSLATE_NOOP("ComparisonDialog", "Loading input")},
+      {"image", QT_TRANSLATE_NOOP("ComparisonDialog", "Loading input")},
+      {"identify",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Identifying file format")},
+      {"read", QT_TRANSLATE_NOOP("ComparisonDialog", "Reading file")},
+      {"hash", QT_TRANSLATE_NOOP("ComparisonDialog", "Checking file identity")},
+      {"copy", QT_TRANSLATE_NOOP("ComparisonDialog", "Preparing input bytes")},
+      {"parse",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Reading format metadata")},
+      {"load-discovery",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Finding function entries")},
+      {"metadata",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Preparing image metadata")},
+      {"platform",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Resolving calling convention")},
+      {"debug", QT_TRANSLATE_NOOP("ComparisonDialog", "Reading debug symbols")},
+      {"debug-apply",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Applying debug symbols")},
+      {"ready", QT_TRANSLATE_NOOP("ComparisonDialog", "Input ready")},
+      {"discovery",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Discovering functions")},
+      {"decode", QT_TRANSLATE_NOOP("ComparisonDialog", "Reading instructions")},
+      {"features",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Comparing function features")},
+      {"exact",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Matching exact features")},
+      {"context",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Comparing function context")},
+      {"approximate",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Finding similar functions")},
+      {"ambiguities",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Checking ambiguous matches")},
+      {"measure",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Measuring function changes")}};
+  const auto Translate = [](const char *Text) {
+    return QCoreApplication::translate("ComparisonDialog", Text);
+  };
+  QString Text =
+      Translate(QT_TRANSLATE_NOOP("ComparisonDialog", "Comparing binaries"));
+  for (const auto &[Token, Description] : Labels)
+    if (Step == QLatin1String(Token)) {
+      Text = Translate(Description);
+      break;
+    }
+  if (Phase.startsWith("primary:"))
+    return Translate(QT_TRANSLATE_NOOP("ComparisonDialog", "Primary: %1"))
+        .arg(Text);
+  if (Phase.startsWith("secondary:"))
+    return Translate(QT_TRANSLATE_NOOP("ComparisonDialog", "Secondary: %1"))
+        .arg(Text);
+  return Text;
+}
 QLabel *label(QWidget *Parent, const QString &Text = {}) {
   auto *L = new QLabel(Text, Parent);
   L->setTextFormat(Qt::PlainText);
@@ -567,11 +625,18 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   connect(&Session, &ComparisonSession::progress, this, [this](const auto &P) {
     if (Session.cancelRequested())
       return;
-    Status->setText(tr("%1  %2 / %3")
-                        .arg(P["phase"].toString())
-                        .arg(P["done"].toDouble())
-                        .arg(P["total"].toDouble()));
+    const auto Phase = P["phase"].toString();
+    const auto Done = P["done"].toDouble();
     const auto Total = P["total"].toDouble();
+    const bool Bytes = Phase.endsWith(":hash") || Phase.endsWith(":copy");
+    const auto Amount = [&](double Value) {
+      return Bytes ? locale().formattedDataSize(qint64(Value))
+                   : locale().toString(qulonglong(Value));
+    };
+    Status->setText(
+        Total > 1 ? tr("%1  %2 / %3")
+                        .arg(progressLabel(Phase), Amount(Done), Amount(Total))
+                  : progressLabel(Phase));
     Progress->setRange(0, Total ? 1000 : 0);
     if (Total)
       Progress->setValue(int(P["done"].toDouble() * 1000 / Total));
@@ -679,6 +744,8 @@ void ComparisonDialog::update() {
     Status->setText(Text);
   } else if (Idle)
     Status->setText(tr("Ready to compare two native binaries."));
+  if (Idle && !Session.operationMessage().isEmpty())
+    Status->setText(Session.operationMessage());
 }
 void ComparisonDialog::inventory() {
   Functions->setQuery({{"side", Side->currentData().toString()},

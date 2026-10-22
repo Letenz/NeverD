@@ -107,7 +107,7 @@ void judge(const llvm::object::MachOObjectFile &Obj, LoadCandidate &Row) {
 
 llvm::Expected<BinaryImage>
 MachOLoader::load(const std::filesystem::path &Path) {
-  auto Buffer = readFileBuffer(Path, BinaryFormat::MachO);
+  auto Buffer = readFileBuffer(Path, BinaryFormat::MachO, Progress);
   if (!Buffer)
     return Buffer.takeError();
   return loadBuffer((*Buffer)->getMemBufferRef());
@@ -115,6 +115,7 @@ MachOLoader::load(const std::filesystem::path &Path) {
 
 llvm::Expected<BinaryImage>
 MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
+  Progress.report("parse", 0, 1, "Mach-O tables");
   auto OpenOr = macho_loader::openMachOBuffer(Buffer);
   if (!OpenOr)
     return OpenOr.takeError();
@@ -129,7 +130,8 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
         "macho: big-endian not supported", llvm::inconvertibleErrorCode());
 
   BinaryImage Img;
-  initializeImage(Buffer, Img, BinaryFormat::MachO, /*CopyRaw=*/false);
+  initializeImage(Buffer, Img, BinaryFormat::MachO, /*CopyRaw=*/false,
+                  Progress);
   Img.IsRelocatable = Obj.getHeader().filetype == MH_OBJECT;
   Img.ReadsStaticSymbols = ReadsStaticSymbols;
   Img.MachOIsDylib = Obj.getHeader().filetype == MH_DYLIB;
@@ -137,9 +139,7 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   Img.LoadsAtLinkAddress = Obj.getHeader().filetype == MH_EXECUTE &&
                            !(Obj.getHeader().flags & MH_PIE);
   llvm::StringRef ObjBytes = Obj.getData();
-  Img.Raw.assign(reinterpret_cast<const uint8_t *>(ObjBytes.data()),
-                 reinterpret_cast<const uint8_t *>(ObjBytes.data()) +
-                     ObjBytes.size());
+  copyImageBytes(llvm::arrayRefFromStringRef(ObjBytes), Img.Raw, Progress);
 
   uint32_t CpuType = Is64 ? Obj.getHeader64().cputype : Obj.getHeader().cputype;
   Img.Arch = cpuTypeToArch(CpuType, Is64);
@@ -242,6 +242,7 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
       Seg.Flags = ImgSec.Flags;
       Seg.Data = ImgSec.Data;
       for (const Segment &Existing : Img.Segments) {
+        Progress.check();
         if (Seg.VA < Existing.VA + Existing.Size &&
             Existing.VA < Seg.VA + Seg.Size) {
           OverlappingObjectSections = true;
@@ -301,11 +302,13 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   };
 
   for (const auto &LC : Obj.load_commands()) {
+    Progress.check();
     if (LC.C.cmd == LC_SEGMENT_64 && Is64) {
       auto SegCmd = Obj.getSegment64LoadCommand(LC);
       AddSegment(SegCmd.segname, SegCmd.vmaddr, SegCmd.vmsize, SegCmd.fileoff,
                  SegCmd.filesize, SegCmd.initprot, SegCmd.flags);
       for (uint32_t SI = 0; SI < SegCmd.nsects; ++SI) {
+        Progress.check();
         auto S = Obj.getSection64(LC, SI);
         AddSection(S.sectname, S.segname, S.addr, S.size, S.offset, S.align,
                    S.flags, S.reserved1, S.reserved2, SegCmd.initprot);
@@ -317,6 +320,7 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
       AddSegment(SegCmd.segname, SegCmd.vmaddr, SegCmd.vmsize, SegCmd.fileoff,
                  SegCmd.filesize, SegCmd.initprot, SegCmd.flags);
       for (uint32_t SI = 0; SI < SegCmd.nsects; ++SI) {
+        Progress.check();
         auto S = Obj.getSection(LC, SI);
         AddSection(S.sectname, S.segname, S.addr, S.size, S.offset, S.align,
                    S.flags, S.reserved1, S.reserved2, SegCmd.initprot);
@@ -398,8 +402,10 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
         Sec.Name == section_names::macho::StubHelper)
       Img.recordImportStubRange(Sec.Addr, Sec.Size);
 
+  Progress.check();
   // --- Symbol table ---
   for (auto SI = Obj.symbol_begin(), SE = Obj.symbol_end(); SI != SE; ++SI) {
+    Progress.check();
     llvm::object::DataRefImpl DRI = SI->getRawDataRefImpl();
     uint64_t SymAddr;
     uint8_t NType, NSect;
@@ -484,6 +490,7 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // Do not extrapolate through a mixed code/data section.
   if (Obj.getHeader().filetype == MH_OBJECT) {
     for (const Section &Sec : Img.Sections) {
+      Progress.check();
       if ((Sec.Type & S_ATTR_PURE_INSTRUCTIONS) == 0 || Sec.Size == 0 ||
           Sec.Size > InvalidVA - Sec.VA)
         continue;
@@ -496,6 +503,7 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
       });
       const va_t SectionEnd = Sec.VA + Sec.Size;
       for (size_t I = 0; I < Functions.size(); ++I) {
+        Progress.check();
         Symbol &Sym = Img.Symbols[Functions[I]];
         va_t End = SectionEnd;
         for (size_t J = I + 1; J < Functions.size(); ++J)
@@ -508,15 +516,18 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     }
   }
 
+  Progress.check();
   // --- Apply relocations for .o files ---
   if (Obj.getHeader().filetype == MH_OBJECT) {
     if (llvm::Error Err = macho_loader::applyObjectRelocations(Obj, Img))
       return std::move(Err);
   }
 
+  Progress.check();
   // --- Stub-to-import mapping via indirect symbol table ---
   macho_loader::parseStubImports(Obj, Sections, BasePtr, FileSize, Is64, Img);
 
+  Progress.check();
   // --- Pointer-slot (__got / __la_symbol_ptr) -> import mapping.  Names the
   // GOT-indirect stack-probe call (____chkstk_darwin) the rewriter elides. ---
   macho_loader::parseNonLazyPtrImports(Obj, Sections, BasePtr, FileSize, Is64,
@@ -548,22 +559,29 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     return std::move(Err);
 
   runPostLoadDiscovery(
-      Img, "macho: loaded " + pathToUTF8(std::filesystem::u8path(
-                                             Buffer.getBufferIdentifier().str())
-                                             .filename()));
+      Img,
+      "macho: loaded " +
+          pathToUTF8(std::filesystem::u8path(Buffer.getBufferIdentifier().str())
+                         .filename()),
+      Progress);
   // Classified before any table is read: a compact-unwind entry names a
   // personality slot, not a language, so what its LSDA means is settled by the
   // image's symbols and sections rather than by the entry.
   Img.ExceptionMetadata.Runtime = detectLanguageRuntime(Img);
   // Personality routines are reached through __got slots bound at load time,
   // so language-table decoding waits until stubs and bindings are known.
+  Progress.check();
   macho_unwind::parseDarwinExceptions(Img);
+  Progress.check();
   go_loader::parseGoExceptions(Img);
   // Rust and Objective-C share the Itanium tables above rather than emitting
   // their own, so their readings of them run last, over records that are
   // already normalized.
+  Progress.check();
   rust_eh::parseRustExceptions(Img);
+  Progress.check();
   objc_eh::parseObjCExceptions(Img);
+  Progress.report("parse", 1, 1);
   return Img;
 }
 

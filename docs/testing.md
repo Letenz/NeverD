@@ -1075,6 +1075,16 @@ close an active job. SDK and real-worker comparison checks retain the discovery
 stop phase and incomplete coverage; stopped snapshots never authorize scalar
 validation. Run the image-boundary, session-discovery and comparison suites when
 changing these shared cancellation boundaries. No input instructions execute.
+`NativeLoadCancellation.*` and controlled `InputDigest.*` cases in
+`NeverDNativeBufferTests` check ELF/x64, ELF/AArch64, PE and Mach-O cancellation,
+retry byte/digest parity with LLVM, chunk/padding edges, and loader callback
+lifetime. `SessionCAPITest.Cancelled*Load*`/`CancelledPDBPublics*` check stopped
+hash/copy/parse/debug/final-preparation stages, preserved image/analysis/edits,
+first-load retry, cross-architecture replacement and real PDB publics. Worker
+comparison checks stop during both inputs' hashing and retain the old comparison
+and mapping revision, then retry. These fixtures do not execute loaded code or
+qualify every parser helper's latency; include native loader, session, worker
+and GUI checks when changing these ownership boundaries.
 Dependency integration covers graph/page/slice ownership after sessions close,
 saved SSA fact tampering, native and retained-node admission limits, and the
 CLI/worker/Qt review path. The Qt check switches input sides and disables a new
