@@ -148,6 +148,7 @@ void ListingView::clear() {
   QToolTip::hideText();
   viewport()->setCursor(Qt::IBeamCursor);
   viewport()->update();
+  emit searchDocumentChanged();
 }
 
 void ListingView::jumpTo(Address address) {
@@ -155,6 +156,7 @@ void ListingView::jumpTo(Address address) {
   pendingJump_ = address;
   request(Fetch::Jump, address, 0, JumpContextBefore,
           ::neverd::limits::gui::kListingViewPageLines);
+  emit searchDocumentChanged();
 }
 
 bool ListingView::rowsCurrent() const {
@@ -399,6 +401,7 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
   // end of its first page.
   ensureLoaded();
   emitLocation();
+  emit searchDocumentChanged();
   if (settledJump)
     emit jumpSettled();
 }
@@ -739,6 +742,7 @@ void ListingView::ensureCursorVisible() {
 }
 
 void ListingView::emitLocation() {
+  emit cursorChanged();
   const auto address = currentAddress();
   const auto function = currentFunction();
   if (!address || (address == lastEmitted_ && function == lastFunction_))
@@ -755,6 +759,7 @@ void ListingView::setShowPrefixes(bool show) {
   anchor_.reset();
   cursorColumn_ = std::max(0, cursorColumn_);
   viewport()->update();
+  emit searchDocumentChanged();
 }
 
 void ListingView::setOpcodeBytes(int count) {
@@ -781,6 +786,83 @@ bool ListingView::findInLoaded(const QString &text, bool forward) {
     }
   }
   return false;
+}
+
+QString ListingView::searchText() const {
+  QString text;
+  bool first = true;
+  for (const auto &line : lines_) {
+    if (!first)
+      text += u'\n';
+    first = false;
+    if (showPrefixes_)
+      text += line.prefix + u' ';
+    text += line.styled.text;
+  }
+  return text;
+}
+
+std::pair<int, int> ListingView::searchSelection() const {
+  const auto position = [this](int row, int column) {
+    int at = 0;
+    for (int i = 0; i < row && i < int(lines_.size()); ++i)
+      at += lines_[i].styled.text.size() - firstColumn(lines_[i]) + 1;
+    return row >= 0 && row < int(lines_.size())
+               ? at + column - firstColumn(lines_[row])
+               : at;
+  };
+  const int cursor = position(cursorLine_, cursorColumn_);
+  const int anchor =
+      anchor_ ? position(anchor_->first, anchor_->second) : cursor;
+  return {std::min(cursor, anchor), std::max(cursor, anchor)};
+}
+
+QString ListingView::searchSeed() const {
+  const auto cursor = std::pair{cursorLine_, cursorColumn_};
+  const QString selected =
+      anchor_ && *anchor_ != cursor ? selectedText() : QString();
+  return !selected.isEmpty() && !selected.contains(u'\n') ? selected
+                                                          : currentToken();
+}
+
+void ListingView::setSearchHighlight(const ViewSearchQuery &query) {
+  SearchHighlight = query;
+  viewport()->update();
+}
+
+bool ListingView::selectSearchRange(int begin, int length) {
+  if (!rowsCurrent() || lines_.empty() || begin < 0 || length <= 0)
+    return false;
+  const auto place = [this](int at) -> std::optional<std::pair<int, int>> {
+    for (int i = 0; i < int(lines_.size()); ++i) {
+      const int size = lines_[i].styled.text.size() - firstColumn(lines_[i]);
+      if (at <= size)
+        return std::pair{i, at + firstColumn(lines_[i])};
+      at -= size + 1;
+    }
+    return std::nullopt;
+  };
+  const auto first = place(begin);
+  const auto last = place(begin + length);
+  if (!first || !last)
+    return false;
+  anchor_ = *first;
+  cursorLine_ = last->first;
+  cursorColumn_ = last->second;
+  ensureCursorVisible();
+  const qreal left = columnX(lines_[first->first], first->second);
+  const qreal right = columnX(lines_[last->first], last->second);
+  const qreal gutter =
+      arrowsWidth_ + ::neverd::limits::gui_config::kListingViewTextMargin;
+  if (left < gutter || right - left > viewport()->width() - gutter)
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() +
+                                    int(left - gutter));
+  else if (right > viewport()->width())
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() +
+                                    int(right - viewport()->width()));
+  emitLocation();
+  viewport()->update();
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -823,6 +905,17 @@ void ListingView::paintEvent(QPaintEvent *) {
     const QRect row(arrowsWidth_, y, area.width() - arrowsWidth_, lineHeight_);
     if (i == cursorLine_)
       painter.fillRect(row, theme.color(ColorRole::ListingCurrentLine));
+    if (!SearchHighlight.Text.isEmpty()) {
+      const QString text =
+          (showPrefixes_ ? line.prefix + u' ' : QString()) + line.styled.text;
+      for (const int at : SearchHighlight.matches(text)) {
+        const qreal x0 = columnX(line, at + firstColumn(line));
+        const qreal x1 =
+            columnX(line, at + SearchHighlight.Text.size() + firstColumn(line));
+        painter.fillRect(QRectF(x0, y, x1 - x0, lineHeight_),
+                         theme.color(ColorRole::ListingHighlight));
+      }
+    }
     const bool selected = anchor_ && selectionFirst != selectionLast &&
                           i >= selectionFirst.first && i <= selectionLast.first;
     const int begin = selected && i == selectionFirst.first
@@ -842,7 +935,8 @@ void ListingView::paintEvent(QPaintEvent *) {
       painter.drawText(QPointF(prefixLeft, y + ascent_), line.prefix);
     }
     auto &layout = line.styled.layout(font, styleStamp_, colorOf);
-    if (!highlight_.isEmpty() && layout.lineCount()) {
+    if (SearchHighlight.Text.isEmpty() && !highlight_.isEmpty() &&
+        layout.lineCount()) {
       const QTextLine textLine = layout.lineAt(0);
       for (const int at : tokenOccurrences(line.styled.text, highlight_)) {
         const qreal x0 = textLine.cursorToX(at);

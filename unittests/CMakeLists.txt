@@ -155,6 +155,7 @@ add_neverd_unittest(NeverDItaniumHandlerTests
   LINK_COMPONENTS BackendC
 )
 add_neverd_unittest(NeverDSourceAnchorTests
+  lift/core/HighIRSourceMapTests.cpp
   lift/core/CSourceAnchorTests.cpp
   lift/core/CSourceDefinitionTests.cpp
   LINK_COMPONENTS Pipeline BackendC

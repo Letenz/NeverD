@@ -105,6 +105,14 @@ sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
 
+Find in view is a GUI text operation. Its modeless dialog captures the originating
+pane before taking keyboard focus; pseudocode/IR supplies its complete source
+and fold projection, while assembly supplies its bounded loaded rows and visible
+address prefixes. Both renderers and the dialog share literal case/word matching.
+Selecting a source match expands its enclosing folds without navigating another
+pane or asking the worker to analyze the function again. Function replacement,
+project closure and target destruction retire the old search snapshot.
+
 Binary search matching and cursor semantics are owned by the SDK's shared
 matcher (`neverd_search_page`, also used by the legacy search entry points).
 The worker adapts those pages to the transport. The GUI owns wraparound and
@@ -1235,6 +1243,9 @@ it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Background function discovery similarly stages cached chooser pages before
 replacing them, remapping persistent indexes by image address when rows move.
+Selected addresses that move beyond those pages use bounded address lookups
+before publication. Additional pages stay within the chooser cache allowance;
+an incomplete refresh preserves the previous inventory and selection.
 Explicit filters, sorts, semantic edits and session changes still retire those
 reads through their normal invalidation paths.
 Documents own text, rows and edit anchors, and project or presentation changes
@@ -1242,9 +1253,15 @@ invalidate their decorated pages. A confirmed local display-name edit retains
 the original source document within that same byte allowance and redecorates it
 without rerunning analysis or rebuilding the listing. Types, variable
 associations, stack corrections, image names and other edits keep their existing
-invalidation rules. An idle replica can consume `analysis_update_names` only
+invalidation rules. The original is retained as serialized JSON and parsed only
+when redecorating; its string capacity counts toward the same byte allowance.
+Paging keeps one parsed display tree, so duplicate row allocations cannot force
+an otherwise fitting document to regenerate on every page.
+An idle replica can consume `analysis_update_names` only
 when every snapshot input and non-name edit is unchanged and the committed
-code sidecar still matches; otherwise the GUI restores a fresh replica. Busy
+user tables still match, with no pending recovery transaction; otherwise the
+GUI restores a fresh replica. Committed-table parsing and validation remain
+owned by `ProjectHistory`, without loading its command log on each rename. Busy
 replicas retain the normal cancellation and retirement path. The optional
 `code_edit_prepare` read validates the owner's local target while the name
 dialog is open, without saving or changing revision. A GUI name refresh buffers
@@ -1609,6 +1626,15 @@ edits from silently attaching to regenerated text. The GUI selects precise
 occurrences through the existing folded-source projection; image names and
 mapped comments continue to use engine address edits. Local presentation names
 do not establish variable, type or instruction semantics.
+
+Native HighIR pages and C navigation share `HighStatementSourceIndex`.
+Lowering records weak expression identity for assignments and calls, including
+multi-output intrinsics. Dropping an unused call result retains the call's
+anchor; a replacement, changed expression kind, ambiguous occurrence or PHI copy
+cannot borrow it. Other statements keep the unique address/kind contract.
+`HighIRPrint` streams individual structured rows for CLI text and SDK pages;
+structural delimiters do not inherit an enclosing instruction. The HighIR call
+printer includes every intrinsic output binding.
 
 Pseudocode navigation uses instruction anchors recorded during source emission.
 HighIR statement observations retain function, address, sequence and statement
@@ -4864,6 +4890,36 @@ The loader validates bounded, acyclic graphs of Darwin constant strings, integer
 For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 
 ## IR representations and routes
+
+`X86Virtualization.def` owns the implemented VMX/SVM operation inventory and
+operand roles. LowIR, MedIR verification, LLVM and both C routes consume its
+checked shape. The supported set is VMREAD/VMWRITE (register and memory),
+VMXON/OFF, VMCLEAR, VMPTRLD/ST, INVEPT, INVVPID, VMLAUNCH/RESUME, VMFUNC,
+VMLOAD/SAVE, STGI/CLGI and INVLPGA. Existing VMCALL/VMMCALL retain their separate
+hypercall contract. This inventory does not imply coverage of every newer
+SEV/SNP instruction.
+
+VMX completion carries CF/ZF and clears OF/SF/AF/PF. Failed register VMREAD
+preserves its destination; memory VMREAD/VMWRITE retain their address inside
+the instruction so access and fault ordering are not replaced by ordinary
+loads/stores. SVM operands retain address width and INVLPGA's ASID. These are
+opaque processor-state effects, never assumed-success values. Generated code
+emits the actual instruction with its compiler memory/flag constraints; host
+execution still requires its architectural privilege and machine state.
+VMLAUNCH/VMRESUME model the ordinary fallthrough on failed entry. VMRUN and
+SKINIT remain explicitly rejected: the former requires unsaved guest GPR/FPU
+state ownership and the latter nonlocal machine reinitialization. The strict
+scalar emulator refuses the new virtualization effects without a state provider.
+The reference contracts are Intel's
+[SDM](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+and AMD's [AMD64 architecture manuals](https://www.amd.com/en/search/documentation/hub.html).
+
+CPUID retains EAX/ECX input values and all four 32-bit output bindings through
+HighIR and LLVM. The Windows C spelling uses `__cpuidex` when the subleaf is
+known, zero-extends signed intrinsic output cells, and retains compiler ordering
+around the query. Microsoft's
+[intrinsic documentation](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex)
+distinguishes this from `__cpuid`, which clears ECX.
 
 `IntrinsicValueEffects` defines positive, shape-validated contracts for operations
 whose effects are entirely explicit values. `LowIntrinsicEffects` additionally

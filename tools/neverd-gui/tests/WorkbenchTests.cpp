@@ -1,5 +1,6 @@
 // Workbench controller tests against the fixture worker: the session, the
 // production main window and its views, edits and session transitions.
+#include "AddressSpace.h"
 #include "ChooserView.h"
 #include "CodeView.h"
 #include "DeepLink.h"
@@ -7,6 +8,7 @@
 #include "Docking.h"
 #include "DwarfPromptDialog.h"
 #include "ExtensionsView.h"
+#include "FindInViewDialog.h"
 #include "FunctionEditDialog.h"
 #include "GraphView.h"
 #include "HexView.h"
@@ -75,6 +77,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QScrollBar>
@@ -290,6 +293,371 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void viewSearchLiteralMatchingHasSharedCaseAndWordRules() {
+    ViewSearchQuery query{QStringLiteral("v7")};
+    QCOMPARE(query.matches(u"v7 + v7 + v70 + V7"),
+             QVector<int>({0, 5, 10, 16}));
+    query.WholeWords = true;
+    QCOMPARE(query.matches(u"v7 + v7 + v70 + V7"), QVector<int>({0, 5, 16}));
+    query.Case = Qt::CaseSensitive;
+    QCOMPARE(query.matches(u"v7 + v7 + v70 + V7"), QVector<int>({0, 5}));
+    query.Text = QStringLiteral("if (");
+    query.WholeWords = false;
+    QCOMPARE(query.matches(u"if (a) { if (b) {} }"), QVector<int>({0, 9}));
+    query.Text.clear();
+    QVERIFY(query.matches(u"anything").isEmpty());
+    query.Text = QString::fromUtf8("\xe4\xb8\xad\xe6\x96\x87");
+    QCOMPARE(query.matches(u"// \u4e2d\u6587 + \u4e2d\u6587"),
+             QVector<int>({3, 8}));
+  }
+
+  void viewSearchWholeWordsRecognizesSupplementaryCharacters() {
+    const ViewSearchQuery query{QStringLiteral("v7"), Qt::CaseSensitive, true};
+    // Supplementary letters and combining marks remain part of a word on
+    // either side of a match. Emoji still delimit words.
+    QCOMPARE(query.matches(u"\U00010400v7 v7\U00010400 v7"),
+             QVector<int>({10}));
+    QCOMPARE(query.matches(u"\U0001D165v7 v7\U0001D165 v7"),
+             QVector<int>({10}));
+    QCOMPARE(query.matches(u"\U0001F600v7 v7\U0001F600 v7"),
+             QVector<int>({2, 5, 10}));
+  }
+
+  void findInViewSearchesPseudocode_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::newRow("pseudocode") << QStringLiteral("source");
+    QTest::newRow("llvm-c") << QStringLiteral("llvmc");
+  }
+
+  void findInViewSearchesPseudocode() {
+    QFETCH(QString, representation);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "local-references.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench
+        .action(representation == "llvmc" ? ActionId::ViewLLVMC
+                                          : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(representation);
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(code->complete());
+    const QString original = code->allText();
+    const int first = original.indexOf("return v7 + v7") + 7;
+    QVERIFY(first > 7);
+    code->setCursorLine(code->lineCount() - 2);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const auto address = assembly->currentAddress();
+    const auto version = code->documentVersion();
+    QSignalSpy locations(code, &CodeText::locationChanged);
+    // Exercise the real shortcut and origin capture, not a direct search call.
+    QTest::keyClick(code, Qt::Key_F, Qt::ControlModifier);
+    auto *dialog = bench.window->findChild<FindInViewDialog *>();
+    QVERIFY(dialog);
+    auto *input = dialog->findChild<QLineEdit *>("findInViewText");
+    auto *status = dialog->findChild<QLabel *>("findInViewStatus");
+    QTRY_VERIFY(input->hasFocus());
+    input->setText("v7");
+    QTRY_COMPARE(code->searchSelection().first, first);
+    QCOMPARE(code->selectedText(), QStringLiteral("v7"));
+    const auto firstStatus = status->text();
+    QVERIFY(firstStatus.contains(" of "));
+    // Two matches on the same current row, then wrap around to the prelude.
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(code->searchSelection().first, first + 5);
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(code->searchSelection().first, int(original.indexOf("v7")));
+    QTest::keyClick(input, Qt::Key_Return, Qt::ShiftModifier);
+    QCOMPARE(code->searchSelection().first, first + 5);
+    QTest::keyClick(input, Qt::Key_F3, Qt::ShiftModifier);
+    QCOMPARE(code->searchSelection().first, first);
+    QTest::keyClick(input, Qt::Key_F3);
+    QCOMPARE(code->searchSelection().first, first + 5);
+    // The same keys work after returning focus to the originating pane,
+    // overriding the workbench's Shift+F3 chooser shortcut only during Find.
+    bench.window->activateWindow();
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QTest::keyClick(code, Qt::Key_F3, Qt::ShiftModifier);
+    QCOMPARE(code->searchSelection().first, first);
+    QTest::keyClick(code, Qt::Key_F3);
+    QCOMPARE(code->searchSelection().first, first + 5);
+    dialog->activateWindow();
+    input->setFocus();
+    QTRY_VERIFY(input->hasFocus());
+    QTest::keyClick(input, Qt::Key_F, Qt::ControlModifier);
+    QCOMPARE(input->selectedText(), input->text());
+    // Live Unicode matching searches comments too, and selects exact text.
+    input->setText(QString::fromUtf8("\xe4\xb8\xad\xe6\x96\x87"));
+    QTRY_COMPARE(status->text(), QStringLiteral("1 of 2"));
+    QCOMPARE(code->selectedText(), input->text());
+    input->clear();
+    QTRY_COMPARE(status->text(), QStringLiteral("Enter text to find"));
+    input->setText("not_present_in_this_function");
+    QTRY_COMPARE(status->text(), QStringLiteral("No matches"));
+    QCOMPARE(code->documentVersion(), version);
+    QCOMPARE(assembly->currentAddress(), address);
+    QVERIFY(locations.isEmpty());
+    QPointer<FindInViewDialog> retired = dialog;
+    QTest::keyClick(input, Qt::Key_Escape);
+    QTRY_VERIFY(!retired);
+    QVERIFY(!bench.window->findChild<FindInViewDialog *>());
+  }
+
+  void findInViewUnfoldsHiddenMatchesAndHonorsOptions() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "code-folding.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *code = bench.codeView("source")->text();
+    QTRY_VERIFY(code->complete());
+    code->setCursorLine(1);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    QCOMPARE(code->lineCount(), 3);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    bench.action(ActionId::SearchInView)->trigger();
+    auto *dialog = bench.window->findChild<FindInViewDialog *>();
+    QVERIFY(dialog);
+    auto *input = dialog->findChild<QLineEdit *>("findInViewText");
+    auto *status = dialog->findChild<QLabel *>("findInViewStatus");
+    auto *caseSensitive = dialog->findChild<QCheckBox *>("findInViewCase");
+    auto *words = dialog->findChild<QCheckBox *>("findInViewWords");
+    auto *wrap = dialog->findChild<QCheckBox *>("findInViewWrap");
+    input->setText("--v7");
+    QTRY_COMPARE(status->text(), QStringLiteral("1 of 1"));
+    QCOMPARE(code->lineCount(), 19);
+    QCOMPARE(code->selectedText(), QStringLiteral("--v7"));
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
+    wrap->setChecked(false);
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(status->text(), QStringLiteral("End of search range"));
+    QTest::keyClick(input, Qt::Key_Return, Qt::ShiftModifier);
+    QCOMPARE(status->text(), QStringLiteral("Start of search range"));
+    wrap->setChecked(true);
+    input->setText("V7");
+    QTRY_VERIFY(status->text().contains(" of "));
+    caseSensitive->setChecked(true);
+    QCOMPARE(status->text(), QStringLiteral("No matches"));
+    input->setText("int32");
+    QTRY_VERIFY(status->text().contains(" of "));
+    words->setChecked(true);
+    QCOMPARE(status->text(), QStringLiteral("No matches"));
+    // Metacharacters are literals, not regular expressions.
+    words->setChecked(false);
+    input->setText("if (");
+    QTRY_COMPARE(status->text(), QStringLiteral("1 of 1"));
+    QCOMPARE(code->selectedText(), QStringLiteral("if ("));
+    dialog->reject();
+  }
+
+  void findInViewFollowsOnlyItsOwnSourceDocument() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "tab-sync-paged.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    auto *code = view->text();
+    QTRY_VERIFY(code->complete());
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    bench.action(ActionId::SearchInView)->trigger();
+    auto *dialog = bench.window->findChild<FindInViewDialog *>();
+    QVERIFY(dialog);
+    auto *input = dialog->findChild<QLineEdit *>("findInViewText");
+    auto *status = dialog->findChild<QLabel *>("findInViewStatus");
+    // The hit is on the third page, beyond the first loaded source batch.
+    input->setText("code line 550");
+    QTRY_COMPARE(status->text(), QStringLiteral("1 of 1"));
+    QCOMPARE(code->selectedText(), input->text());
+    const auto assemblyAddress = bench.window->disassembly()->currentAddress();
+    // An independent pane loading a different function cannot retarget Find.
+    CodeView other(bench.session, "source");
+    other.show();
+    other.showFunction(Base);
+    QTRY_VERIFY(other.text()->complete());
+    const auto otherSelection = other.text()->searchSelection();
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(other.text()->searchSelection(), otherSelection);
+    QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+    // Retire the old complete snapshot immediately when this pane reloads.
+    view->showFunction(Base + 0x180);
+    QVERIFY(code->loading());
+    QCOMPARE(status->text(), QStringLiteral("Waiting for source…"));
+    QVERIFY(!dialog->findChild<QPushButton *>("findInViewNext")->isEnabled());
+    input->setText("code line 551");
+    QTRY_VERIFY(code->complete());
+    QTRY_COMPARE(status->text(), QStringLiteral("1 of 1"));
+    QCOMPARE(code->selectedText(), input->text());
+    QCOMPARE(code->function(), std::optional<Address>(Base + 0x180));
+    QCOMPARE(bench.window->disassembly()->currentAddress(), assemblyAddress);
+    dialog->reject();
+  }
+
+  void findInViewSearchesLargeSourceWithoutReanalysis() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "pseudocode-large.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY(bench.window->disassembly()->currentFunction().has_value());
+    bench.action(ActionId::ViewLLVMC)->trigger();
+    auto *code = bench.codeView("llvmc")->text();
+    // Loading is outside the search measurement; allow the complete fixture
+    // to arrive even when other native tests are using the same machine.
+    QTRY_VERIFY_WITH_TIMEOUT(code->complete(), NativeOpenTimeoutMs);
+    QVERIFY(code->allText().contains("code line 19999"));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const auto version = code->documentVersion();
+    bench.action(ActionId::SearchInView)->trigger();
+    auto *dialog = bench.window->findChild<FindInViewDialog *>();
+    QVERIFY(dialog);
+    auto *input = dialog->findChild<QLineEdit *>("findInViewText");
+    auto *status = dialog->findChild<QLabel *>("findInViewStatus");
+    QElapsedTimer latency;
+    latency.start();
+    input->setText("code line");
+    QTRY_VERIFY(status->text().endsWith(" of 20000"));
+    qInfo() << "20,000-match search including input debounce ms:"
+            << latency.elapsed();
+    input->setText("code line 19999");
+    // Enter flushes the debounce, selecting a new query's first hit once.
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(status->text(), QStringLiteral("1 of 1"));
+    QCOMPARE(code->selectedText(), input->text());
+    QCOMPARE(code->documentVersion(), version);
+    dialog->reject();
+  }
+
+  void findInViewOnOptionalNativeInput() {
+    const auto worker = qEnvironmentVariable("NEVERD_FIND_WORKER");
+    const auto input = qEnvironmentVariable("NEVERD_FIND_INPUT");
+    const auto name = qEnvironmentVariable("NEVERD_FIND_TARGET");
+    if (worker.isEmpty() || input.isEmpty() || name.isEmpty())
+      QSKIP("Set NEVERD_FIND_WORKER, NEVERD_FIND_INPUT and NEVERD_FIND_TARGET");
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QFileInfo(input).fileName());
+    QVERIFY(QFile::copy(input, path));
+    const auto pdb = qEnvironmentVariable("NEVERD_FIND_PDB");
+    if (!pdb.isEmpty())
+      QVERIFY(QFile::copy(pdb, directory.filePath(QFileInfo(pdb).fileName())));
+    Session session(worker);
+    LoadOptions options;
+    options.analysis = false;
+    session.open(path, options);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), NativeOpenTimeoutMs);
+    std::optional<Address> function;
+    session.read("resolve", {{"query", name}}, this,
+                 [&](const QJsonObject &reply) {
+                   function = addressValue(reply.value("address"));
+                 });
+    QTRY_VERIFY_WITH_TIMEOUT(function.has_value(), NativeOpenTimeoutMs);
+    CodeView view(session, "source");
+    view.resize(1000, 800);
+    view.show();
+    view.showFunction(*function);
+    auto *code = view.text();
+    QTRY_VERIFY_WITH_TIMEOUT(code->complete(), NativeOpenTimeoutMs);
+    const QString term =
+        qEnvironmentVariable("NEVERD_FIND_TEXT", "__readgsqword");
+    QVERIFY(code->allText().contains(term));
+    const auto version = code->documentVersion();
+    QSignalSpy locations(code, &CodeText::locationChanged);
+    FindInViewDialog dialog(&view);
+    dialog.setAttribute(Qt::WA_DeleteOnClose, false);
+    dialog.search(code, nullptr);
+    auto *edit = dialog.findChild<QLineEdit *>("findInViewText");
+    auto *status = dialog.findChild<QLabel *>("findInViewStatus");
+    QElapsedTimer latency;
+    latency.start();
+    edit->setText(term);
+    QTRY_VERIFY(status->text().contains(" of "));
+    qInfo() << "Native source search including input debounce ms:"
+            << latency.elapsed();
+    QCOMPARE(code->selectedText(), term);
+    QTest::keyClick(edit, Qt::Key_F3);
+    QCOMPARE(code->selectedText(), term);
+    QCOMPARE(code->documentVersion(), version);
+    QVERIFY(locations.isEmpty());
+    const auto capture = qEnvironmentVariable("NEVERD_FIND_CAPTURE");
+    if (!capture.isEmpty()) {
+      QVERIFY(view.grab().save(capture + "/source.png"));
+      QVERIFY(dialog.grab().save(capture + "/find-dialog.png"));
+    }
+    dialog.reject();
+  }
+
+  void findInViewSearchesAssemblyAddressesAndRetargets() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "code-folding.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *code = bench.codeView("source")->text();
+    QTRY_VERIFY(code->complete());
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    bench.action(ActionId::SearchInView)->trigger();
+    auto *dialog = bench.window->findChild<FindInViewDialog *>();
+    QVERIFY(dialog);
+    auto *input = dialog->findChild<QLineEdit *>("findInViewText");
+    input->setText("--v7");
+    QTRY_COMPARE(code->selectedText(), QStringLiteral("--v7"));
+    const auto sourceSelection = code->searchSelection();
+    const auto version = code->documentVersion();
+    bench.window->activateWindow();
+    auto *listing = assembly->listing();
+    listing->setFocus();
+    QTRY_VERIFY(listing->hasFocus());
+    QTRY_VERIFY(listing->searchReady());
+    QTest::keyClick(listing, Qt::Key_F, Qt::ControlModifier);
+    QCOMPARE(bench.window->findChildren<FindInViewDialog *>().size(), 1);
+    QVERIFY(dialog->findChild<QLabel *>("findInViewScope")
+                ->text()
+                .startsWith("Disassembly:"));
+    const QString text = listing->searchText();
+    const int firstColon = text.indexOf(':');
+    QVERIFY(firstColon >= 0);
+    const QString address = text.mid(firstColon + 1, 16);
+    QVERIFY(address.contains(QRegularExpression("^[0-9A-Fa-f]{16}$")));
+    input->setText(address);
+    auto *status = dialog->findChild<QLabel *>("findInViewStatus");
+    QTRY_VERIFY(status->text().contains(" of "));
+    QCOMPARE(listing->selectedText(), address);
+    const auto first = listing->searchSelection();
+    QTest::keyClick(input, Qt::Key_Return);
+    QVERIFY(listing->searchSelection() != first || text.count(address) == 1);
+    QCOMPARE(code->searchSelection(), sourceSelection);
+    QCOMPARE(code->documentVersion(), version);
+    QPointer<FindInViewDialog> retired = dialog;
+    bench.action(ActionId::FileClose)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY(!retired);
+  }
+
   void sourceExportWaitsForItsOwnCompleteDocument_data() {
     QTest::addColumn<QString>("fixture");
     QTest::addColumn<bool>("failure");
@@ -1285,6 +1653,7 @@ private slots:
     QTest::newRow("pseudocode") << QStringLiteral("source") << false << false;
     QTest::newRow("llvm-c") << QStringLiteral("llvmc") << false << false;
     QTest::newRow("low-ir") << QStringLiteral("low") << false << false;
+    QTest::newRow("high-ir") << QStringLiteral("high") << false << false;
     QTest::newRow("pseudocode-graph")
         << QStringLiteral("source") << false << true;
     if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
@@ -1293,6 +1662,8 @@ private slots:
           << QStringLiteral("source") << true << false;
       QTest::newRow("native-llvm-c")
           << QStringLiteral("llvmc") << true << false;
+      QTest::newRow("native-high-ir")
+          << QStringLiteral("high") << true << false;
       QTest::newRow("native-pseudocode-graph")
           << QStringLiteral("source") << true << true;
     }
@@ -1309,8 +1680,13 @@ private slots:
         native
             ? qEnvironmentVariable("NEVERD_CODE_NAV_FILE")
             : writeFixture(directory, QStringLiteral("code-edits-mapped.bin"));
+    if (native)
+      bench.window->setAsksForDebugInfo(false);
+    LoadDialogAcceptor acceptLoad;
     bench.window->openFile(path);
-    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY2_WITH_TIMEOUT(bench.session.loaded(),
+                              qPrintable(bench.session.lastError()),
+                              native ? NativeOpenTimeoutMs : OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     auto *functions = bench.functions();
     QTRY_VERIFY(functions && functions->model().total() >= 2);
@@ -1324,7 +1700,8 @@ private slots:
       QTRY_VERIFY(assembly->graphMode() && assembly->graph()->loaded());
     }
     bench
-        .action(representation == QLatin1String("low") ? ActionId::ViewLowIR
+        .action(representation == QLatin1String("low")    ? ActionId::ViewLowIR
+                : representation == QLatin1String("high") ? ActionId::ViewHighIR
                 : representation == QLatin1String("llvmc")
                     ? ActionId::ViewLLVMC
                     : ActionId::ViewPseudocode)
@@ -1334,9 +1711,14 @@ private slots:
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() > 2);
     code->setPreludeFolded(false);
+    bool queryRow = false;
     if (native) {
       code->setCursorLine(0);
-      QVERIFY(code->findText(QStringLiteral("return ("), true));
+      queryRow = code->findText(representation == QLatin1String("llvmc")
+                                    ? QStringLiteral("\"cpuid\"")
+                                    : QStringLiteral("__cpuid"),
+                                true);
+      QVERIFY(queryRow || code->findText(QStringLiteral("return "), true));
     } else
       code->setCursorLine(2);
     const auto target = code->currentAddress();
@@ -1351,6 +1733,9 @@ private slots:
             decoded = !rows.isEmpty() &&
                       addressValue(rows.first().toObject().value("address")) ==
                           target;
+            if (queryRow)
+              decoded = decoded && rows.first().toObject().value("mnemonic") ==
+                                       QLatin1String("cpuid");
           });
       QTRY_VERIFY(decoded);
     } else
@@ -2689,11 +3074,17 @@ private slots:
     functions->table()->setCurrentIndex(functions->model().index(20, 0));
     const auto selectedFunction = functions->currentAddress();
     auto *listing = bench.window->disassembly()->listing();
-    QSignalSpy listResets(&functions->model(), &QAbstractItemModel::modelReset);
-    QSignalSpy listingMoves(listing, &ListingView::jumpSettled);
     GraphView graph(bench.session);
     graph.showFunction(Base);
     QTRY_VERIFY_WITH_TIMEOUT(graph.loaded(), OpenTimeoutMs);
+    // Count only changes caused by the rename. The initial listing can still
+    // settle after the function model and graph have answered.
+    QTRY_VERIFY_WITH_TIMEOUT(listing->currentItem().has_value() &&
+                                 !listing->jumpPending() &&
+                                 !bench.session.queries().hasPending(),
+                             OpenTimeoutMs);
+    QSignalSpy listResets(&functions->model(), &QAbstractItemModel::modelReset);
+    QSignalSpy listingMoves(listing, &ListingView::jumpSettled);
     QSignalSpy graphChanges(&graph, &GraphView::viewChanged);
     for (const auto &name :
          {QStringLiteral("current_thread"), QStringLiteral("thread_state")}) {
@@ -2752,6 +3143,77 @@ private slots:
     QTest::addColumn<bool>("sorted");
     QTest::newRow("address-order") << false;
     QTest::newRow("sorted-filtered") << true;
+  }
+
+  void backgroundDiscoveryKeepsSelectionBeyondCachedPages_data() {
+    QTest::addColumn<bool>("sorted");
+    QTest::addColumn<bool>("retire");
+    QTest::newRow("address-order") << false << false;
+    QTest::newRow("sorted-filtered") << true << false;
+    QTest::newRow("filter-retires-address-refresh") << false << true;
+  }
+
+  void backgroundDiscoveryKeepsSelectionBeyondCachedPages() {
+    QFETCH(bool, sorted);
+    QFETCH(bool, retire);
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    LoadOptions options;
+    options.analysis = false;
+    session.open(writeFixture(directory, "chooser-refresh.bin"), options);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AddressSpace space;
+    ChooserModel model(session, space, ChooserKind::Functions);
+    model.reload();
+    QTRY_COMPARE(model.total(), 600);
+    QTRY_VERIFY(!model.loading());
+    if (sorted) {
+      model.setFilter("function_");
+      model.sort(0, Qt::DescendingOrder);
+      QTRY_COMPARE(model.total(), 600);
+      QTRY_VERIFY(!model.loading());
+    }
+    // Only page zero is loaded. Discovery moves its final row onto page one.
+    QPersistentModelIndex selected(model.index(255, 0));
+    QItemSelectionModel selection(&model);
+    selection.setCurrentIndex(model.index(5, 0), QItemSelectionModel::Select);
+    selection.select(model.index(255, 0), QItemSelectionModel::Select);
+    const auto address = model.addressAt(selected.row());
+    QVERIFY(address);
+    QVERIFY(model.rowObject(256).isEmpty());
+    QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+    bool retired = false;
+    if (retire)
+      connect(&model, &QAbstractItemModel::layoutChanged, this, [&] {
+        if (!retired) {
+          retired = true;
+          model.setFilter("function_599");
+        }
+      });
+    QVERIFY(!writeFixture(directory, "chooser-refresh.bin.discover").isEmpty());
+    auto background = session.background();
+    background["functions"] = 601;
+    SessionTestAccess::receive(session,
+                               {{"type", "heartbeat"},
+                                {"project_id", session.queries().projectId()},
+                                {"background", background}});
+    if (retire) {
+      QTRY_VERIFY(retired);
+      QTRY_COMPARE(model.total(), 1);
+      QTRY_VERIFY(!model.loading());
+      QCOMPARE(model.addressAt(0), std::optional<Address>(Base + 599 * 16));
+      return;
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), 601, OpenTimeoutMs);
+    QTRY_VERIFY(!model.loading());
+    QVERIFY(selected.isValid());
+    QCOMPARE(selected.row(), 256);
+    QCOMPARE(model.addressAt(selected.row()), address);
+    QCOMPARE(selection.currentIndex().row(), 6);
+    QVERIFY(selection.isSelected(model.index(6, 0)));
+    QVERIFY(selection.isSelected(model.index(256, 0)));
+    QCOMPARE(selection.selectedIndexes().size(), 2);
+    QCOMPARE(resets.count(), 0);
   }
 
   void backgroundFunctionDiscoveryKeepsSelection() {

@@ -9,6 +9,7 @@
 #include "Docking.h"
 #include "DwarfPromptDialog.h"
 #include "ExtensionsView.h"
+#include "FindInViewDialog.h"
 #include "FunctionEditDialog.h"
 #include "GnomeWindowEdges.h"
 #include "GraphView.h"
@@ -1889,20 +1890,12 @@ void MainWindow::connectActions() {
   on(ActionId::SearchHighlightUp, [this] { searchHighlight(false); });
   on(ActionId::SearchHighlightDown, [this] { searchHighlight(true); });
   on(ActionId::SearchInView, [this] {
-    bool ok = false;
-    const auto text = QInputDialog::getText(this, tr("Find in view"),
-                                            tr("Text:"), QLineEdit::Normal,
-                                            disassembly_->currentToken(), &ok);
-    if (!ok || text.isEmpty())
-      return;
-    bool found = false;
-    if (auto *code = focusedCodeView())
-      found = code->text()->findText(text, searchDown_);
-    else
-      found = disassembly_->listing()->findInLoaded(text, searchDown_);
-    if (!found)
-      output_->append(tr("'%1' was not found among the loaded lines").arg(text),
-                      1);
+    auto *code = focusedCodeView();
+    if (!FindDialog) {
+      FindDialog = new FindInViewDialog(this);
+      connect(&session_, &Session::unloaded, FindDialog, &QDialog::reject);
+    }
+    FindDialog->search(code ? code->text() : nullptr, disassembly_->listing());
   });
 
   on(ActionId::ViewQuickView, [this] { showCommandPalette(); });

@@ -390,7 +390,8 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
           SourceRegions.push_back(&R);
       auto Append = [&](sigs::LibraryOccurrence Occurrence, const ExprPtr &Expr,
                         HighSourceKind Kind = HighSourceKind::Expression,
-                        std::optional<StmtKind> StatementKind = std::nullopt) {
+                        std::optional<StmtKind> StatementKind = std::nullopt,
+                        std::optional<uint8_t> ExpressionKind = std::nullopt) {
         if (SourceOverflow)
           return;
         if (Sources[FI].size() >=
@@ -401,10 +402,10 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
           SourceOverflow = true;
           return;
         }
-        if (Expr)
+        if (Expr && Kind == HighSourceKind::Expression)
           SourceIndex[Expr.get()].push_back(Sources[FI].size());
         Sources[FI].push_back(
-            {MF.Entry, Occurrence, Expr, Kind, StatementKind});
+            {MF.Entry, Occurrence, Expr, Kind, StatementKind, ExpressionKind});
       };
       auto Observe = [&](sigs::LibraryOccurrence Occurrence,
                          const ExprPtr &Expr) {
@@ -450,10 +451,13 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
         }
       };
       Local.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
-        Append({Op.Addr, Op.OriginSeq}, {},
-               S.Kind == StmtKind::Store ? HighSourceKind::Store
-                                         : HighSourceKind::Statement,
-               S.Kind);
+        const auto Source =
+            observeHighStatement(MF.Entry, {Op.Addr, Op.OriginSeq}, S);
+        const ExprPtr Call = S.Kind == StmtKind::Assign ? S.Val : S.CallExpr;
+        Append(Source.Occurrence,
+               Source.Kind == HighSourceKind::StatementExpression ? Call
+                                                                  : ExprPtr(),
+               Source.Kind, Source.StatementKind, Source.ExpressionKind);
       });
       Local.setObservationReset([&] {
         Sources[FI].clear();

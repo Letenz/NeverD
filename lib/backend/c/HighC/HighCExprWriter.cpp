@@ -14,6 +14,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -2147,6 +2148,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // Operands added for the intrinsic's spelling have no width.
     if (OpBytes.size() != OpStrs.size())
       OpBytes.clear();
+    if (isX86VirtualizationIntrinsic(E.IntrinsicId))
+      return renderX86VirtualizationExpression(Opts.TheArch, E, OpStrs);
     auto Rendered = renderIntrinsicCall(
         E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
         HasCIntrinsics, Opts.Format != BinaryFormat::COFF, OpBytes);

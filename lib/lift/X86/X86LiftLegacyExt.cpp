@@ -829,8 +829,7 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     S.emitIntrinsic(Intrinsic::Cldemote, NdVar());
     break;
   case X86_INS_INVLPGA:
-    S.emitIntrinsic(Intrinsic::Invlpga, NdVar());
-    break;
+    return liftVirtualization(L, S, Insn, X86);
   case X86_INS_PCONFIG:
     S.emitIntrinsic(Intrinsic::Pconfig);
     break;
