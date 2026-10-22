@@ -115,20 +115,24 @@ bool isPostLinkRewrittenSection(llvm::StringRef Name) {
 
 bool pdb_loader_detail::recordedSectionsMatch(
     const BinaryImage &Image, llvm::ArrayRef<RecordedSection> Recorded) {
-  if (Recorded.size() != Image.Sections.size())
+  llvm::ArrayRef<Section> Sections = Image.Sections;
+  if (!Sections.empty() && Sections.back().IsImageHeader)
+    Sections = Sections.drop_back();
+  if (Recorded.size() != Sections.size())
     return false;
   // Sections from FirstMovable on may be re-laid out; see the declaration.
-  size_t FirstMovable = Image.Sections.size();
+  size_t FirstMovable = Sections.size();
   while (FirstMovable > 0 &&
-         isPostLinkRewrittenSection(Image.Sections[FirstMovable - 1].Name))
+         isPostLinkRewrittenSection(Sections[FirstMovable - 1].Name))
     --FirstMovable;
   constexpr uint64_t MaxCOFFField = std::numeric_limits<uint32_t>::max();
-  for (size_t I = 0; I < Image.Sections.size(); ++I) {
-    const Section &Loaded = Image.Sections[I];
+  for (size_t I = 0; I < Sections.size(); ++I) {
+    const Section &Loaded = Sections[I];
     const RecordedSection &Header = Recorded[I];
-    if (Loaded.VA < Image.Base || Loaded.Size > MaxCOFFField ||
-        Loaded.FileOff > MaxCOFFField || Loaded.FileSz > MaxCOFFField ||
-        Header.Name != Loaded.Name || Header.Characteristics != Loaded.Type)
+    if (Loaded.IsImageHeader || Loaded.VA < Image.Base ||
+        Loaded.Size > MaxCOFFField || Loaded.FileOff > MaxCOFFField ||
+        Loaded.FileSz > MaxCOFFField || Header.Name != Loaded.Name ||
+        Header.Characteristics != Loaded.Type)
       return false;
     if (I >= FirstMovable)
       continue;
@@ -1836,7 +1840,8 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   Ctx->PImpl->CPU = cpuTypeFromMachine(DBI.getMachineType());
   Ctx->PImpl->PtrSize =
       (Image.Arch == Arch::X64 || Image.Arch == Arch::AArch64) ? 8 : 4;
-  Ctx->PImpl->Sections = Image.Sections;
+  Ctx->PImpl->Sections.assign(Image.Sections.begin(),
+                              Image.Sections.begin() + SecHeaders.size());
   {
     class Visitor : public llvm::pdb::ISectionContribVisitor {
     public:
@@ -1868,7 +1873,7 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   // enter LLVM's SymbolCache lazy type graph.
 
   auto ResolveVA = [&](uint16_t Seg, uint32_t Off) -> va_t {
-    if (Seg == 0 || Seg > Image.Sections.size())
+    if (Seg == 0 || Seg > SecHeaders.size())
       return 0;
     const Section &Owner = Image.Sections[Seg - 1];
     if (Off >= Owner.Size || Off > InvalidVA - Owner.VA)
