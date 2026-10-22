@@ -117,10 +117,11 @@ def main():
         record("ipc_" + command, args.ipc_samples, 20,
                {name: lambda index, endpoint=endpoint: request(endpoint, {"cmd": command})
                 for name, endpoint in endpoints.items()})
-    for name, copied in (("addresses", False), ("copied_functions", True)):
+    for name in ("addresses", "copied_functions", "alternating_functions"):
         def payload(tool, index):
-            uri = args.copied_uri if copied else (
-                f"ida:///addresses?ea={hex(args.address[index % len(args.address)])}&view=disasm")
+            resource = "functions" if name == "alternating_functions" else "addresses"
+            uri = args.copied_uri if name == "copied_functions" else (
+                f"ida:///{resource}?ea={hex(args.address[index % len(args.address)])}&view=disasm")
             return {"cmd": "open_ida_link" if tool == "ida" else "open_link", "uri": uri}
         record("ipc_open_" + name, args.ipc_samples, 20,
                {tool: lambda index, tool=tool: request(endpoints[tool], payload(tool, index))

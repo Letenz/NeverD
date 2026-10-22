@@ -6731,6 +6731,55 @@ private slots:
                               std::optional<Address>(Base), OpenTimeoutMs);
   }
 
+  void repeatedFunctionLinksReuseOnlyTheCurrentListingRevision() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *listing = assembly->listing();
+    const Address address = Base + 0x140;
+    assembly->navigate(address);
+    QTRY_COMPARE(listing->currentItem(), std::optional<Address>(address));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    QCOMPARE(listing->loadedFunctionAt(address),
+             std::optional<Address>(address));
+    const auto link =
+        parseDeepLink(QStringLiteral("ida:///functions?ea=") +
+                      hexAddress(address) + QStringLiteral("&view=disasm"));
+    QVERIFY(link.link);
+    QString result = QStringLiteral("pending");
+    bool reloaded = true;
+    bench.window->openLink(*link.link, [&](const QString &error) {
+      reloaded = listing->jumpPending();
+      result = error;
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QVERIFY(!reloaded);
+    QCOMPARE(listing->currentItem(), std::optional<Address>(address));
+    bool edited = false, refreshed = false, invalidated = false;
+    connect(
+        &bench.session, &Session::commented, this,
+        [&](Address, const QString &) {
+          invalidated = !listing->loadedFunctionAt(address);
+          assembly->navigate(address);
+          refreshed = listing->jumpPending();
+          edited = true;
+        },
+        Qt::SingleShotConnection);
+    bench.session.setComment(address, QStringLiteral("fresh listing"));
+    QTRY_VERIFY_WITH_TIMEOUT(edited, OpenTimeoutMs);
+    QVERIFY(refreshed);
+    QVERIFY(invalidated);
+    QTRY_VERIFY_WITH_TIMEOUT(!listing->jumpPending(), OpenTimeoutMs);
+    QCOMPARE(listing->currentItem(), std::optional<Address>(address));
+    QCOMPARE(listing->loadedFunctionAt(address),
+             std::optional<Address>(address));
+  }
+
   void functionLinksSelectRowsBeyondTheLoadedPages() {
     QTemporaryDir directory;
     Workbench bench;

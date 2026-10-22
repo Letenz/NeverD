@@ -81,6 +81,12 @@ page, global row index and canonical row address. Segment and region queries
 match containing ranges; other tables match exact addresses. The GUI validates
 and caches that page rather than fetching every intervening row or independently
 sorting it. Navigation callbacks retire on session or navigation changes.
+The listing may reveal an item from already fetched rows only when
+their request serial, project revision and listing generation still match.
+Cached and fetched jumps share cursor-placement rules; pending refreshes and
+partial item prefixes require a worker query.
+Function links can reuse a loaded item's worker-supplied function identity
+under the same context check; other addresses still resolve through the worker.
 
 ## Checked alignment recovery
 

@@ -803,6 +803,9 @@ directions and exercise the distinct segment and region row schemas.
 `analysisCompletionDoesNotRequireAnUnsupportedReferenceIndex` checks the IPC
 completion flag against confirmed VM analysis while reference indexing remains
 explicitly unavailable.
+`repeatedFunctionLinksReuseOnlyTheCurrentListingRevision` checks that repeated
+links retain the current listing without a reload and that an edit invalidates
+that reuse before the refreshed rows arrive.
 See the [deep-link benchmark](../tools/neverd-gui/benchmarks/README.md#deep-link-forwarding)
 for a paired comparison with actual IDA instances; acknowledgements do not measure
 painted frames or decompilation throughput.

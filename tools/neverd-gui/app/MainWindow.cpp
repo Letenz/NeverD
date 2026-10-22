@@ -1351,6 +1351,11 @@ void MainWindow::openLink(const DeepLink &link,
     showLinkedAddress(*address, view);
     return finish({});
   }
+  if (const auto function =
+          disassembly_->listing()->loadedFunctionAt(*address)) {
+    showLinkedAddress(*function, view);
+    return finish({});
+  }
   // A function, named by an address in it, shows from its entry.
   session_.read(
       QStringLiteral("resolve"),
