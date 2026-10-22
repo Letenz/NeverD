@@ -140,6 +140,10 @@ struct RawByteOracle {
         case NdOp::BOOL_NOT:
           write(Op.Output, read(Op.Inputs[0]) == 0);
           break;
+        case NdOp::SELECT:
+          write(Op.Output,
+                read(Op.Inputs[0]) ? read(Op.Inputs[1]) : read(Op.Inputs[2]));
+          break;
         case NdOp::INT_EQUAL:
         case NdOp::INT_NOTEQUAL:
           write(Op.Output, (read(Op.Inputs[0]) == read(Op.Inputs[1])) ==
