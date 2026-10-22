@@ -121,6 +121,9 @@ llvm::Expected<va_t> legacyTarget(llvm::StringRef Name,
 } // namespace
 
 llvm::Expected<std::string> sourcePatchTargetTriple(const BinaryImage &Image) {
+  if (Image.isArm64e())
+    return patchError(
+        "arm64e source replacement requires ABI-aware signing and fixups");
   const char *Default = llvmCodegenTriple(Image.Arch, Image.Format);
   if (!Default)
     return patchError("unsupported native target");

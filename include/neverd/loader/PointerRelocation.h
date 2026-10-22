@@ -156,6 +156,7 @@ decideAbsolutePointerRelocation(const BinaryImage &Img, va_t SlotVA,
   Effect.SlotVA = SlotVA;
   Effect.TargetVA = TargetVA;
   if (Img.ImportStorageSlots.count(SlotVA) ||
+      Img.MachOAuthenticatedPointers.count(SlotVA) ||
       Img.ConflictingImportStorageSlots.count(SlotVA) ||
       Img.ImportPtrSlots.count(SlotVA) || Img.DyldBindSlots.count(SlotVA))
     return Effect;

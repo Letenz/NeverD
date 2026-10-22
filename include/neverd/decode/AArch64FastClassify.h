@@ -54,13 +54,13 @@ inline va_t directCallTarget(uint32_t Word, va_t Addr) {
 
 /// Whether \p Word ends a function's straight-line decode, bit-exact to
 /// AArch64Lifter::isFunctionTerminator applied to a Capstone decode of the same
-/// word.  The Capstone-id terminator set is { RET, BR, ERET, B, BRK, HLT, UDF
-/// }, where:
+/// word. The set includes RET/BR and their baseline authenticated variants,
+/// ERET, B, BRK, HLT and UDF, where:
 ///
-///   * RET  — 0xD65F0000 | (Rn<<5); the PAC forms RETAA/RETAB (ids 888/890)
-///            have bits[11:10] set and are excluded (not in the set).
-///   * BR   — 0xD61F0000 | (Rn<<5); BRAA/BRAB set bit 11 and Capstone rejects
-///            the bare-Xn masked form, so they are excluded.
+///   * RET  — 0xD65F0000 | (Rn<<5); RETAA/RETAB have fixed LR/SP operands.
+///   * BR   — 0xD61F0000 | (Rn<<5); BRAA/BRAB use two registers while
+///            BRAAZ/BRABZ encode a zero modifier. Authenticated calls remain
+///            non-terminating, just like BLR.
 ///   * ERET — the single encoding 0xD69F03E0; ERETAA/ERETAB (315/316) differ.
 ///   * B (id 51) — BOTH unconditional `b` (bits[31:26]==0b000101) AND
 ///            conditional `b.cond` (bits[31:24]==0x54 with bit4==0).  The
@@ -74,6 +74,11 @@ inline bool isTerminatorWord(uint32_t Word) {
   if ((Word & 0xFFFFFC1Fu) == 0xD65F0000u) // RET {Xn}
     return true;
   if ((Word & 0xFFFFFC1Fu) == 0xD61F0000u) // BR Xn
+    return true;
+  if (Word == 0xD65F0BFFu || Word == 0xD65F0FFFu) // RETAA / RETAB
+    return true;
+  if ((Word & 0xFFFFF800u) == 0xD71F0800u || // BRAA / BRAB Xn, Xm|SP
+      (Word & 0xFFFFF81Fu) == 0xD61F081Fu)   // BRAAZ / BRABZ Xn
     return true;
   if (Word == 0xD69F03E0u) // ERET
     return true;

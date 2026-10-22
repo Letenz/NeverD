@@ -33,6 +33,7 @@ add_neverd_component_library(NeverDLift
   AArch64/AArch64LiftNEONWiden.cpp
   AArch64/AArch64LiftNarrowShift.cpp
   AArch64/AArch64LiftPacFlags.cpp
+  AArch64/AArch64LiftPAuth.cpp
   AArch64/AArch64LiftRotate.cpp
   AArch64/AArch64LiftSIMD.cpp
   AArch64/AArch64LiftSIMDExt.cpp

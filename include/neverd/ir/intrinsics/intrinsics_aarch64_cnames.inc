@@ -179,6 +179,7 @@ C(Intrinsic::Autdb, "__autdb");
 C(Intrinsic::Xpaci, "__xpaci");
 C(Intrinsic::Xpacd, "__xpacd");
 C(Intrinsic::A64_Pacga, "__builtin_arm_pacga");
+C(Intrinsic::A64_AuthBranch, "__builtin_ptrauth_auth");
 C(Intrinsic::A64_SveCntb, "svcntb");
 C(Intrinsic::A64_SveCnth, "svcnth");
 C(Intrinsic::A64_SveCntw, "svcntw");

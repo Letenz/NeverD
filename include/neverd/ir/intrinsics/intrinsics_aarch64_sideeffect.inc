@@ -92,3 +92,9 @@ SIDEEFFECT(Intrinsic::A64_AtomicSmin);
 SIDEEFFECT(Intrinsic::A64_AtomicUmax);
 SIDEEFFECT(Intrinsic::A64_AtomicUmin);
 SIDEEFFECT(Intrinsic::A64LinuxSyscall);
+// Authentication may fault even when no data-flow consumer uses its result.
+SIDEEFFECT(Intrinsic::Autia);
+SIDEEFFECT(Intrinsic::Autib);
+SIDEEFFECT(Intrinsic::Autda);
+SIDEEFFECT(Intrinsic::Autdb);
+SIDEEFFECT(Intrinsic::A64_AuthBranch);

@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Prove restoration of the native stack and link before an indirect tail call.
+//===----------------------------------------------------------------------===//
 
 #include "IndirectTailFrame.h"
 
@@ -20,7 +23,7 @@ namespace neverd {
 namespace {
 
 struct FrameWord {
-  enum Kind { Unknown, Stack, Link } K = Unknown;
+  enum Kind { Unknown, Stack, Link, SignedLink } K = Unknown;
   int64_t Offset = 0;
   // Keep derived-frame taint when arithmetic or a join loses the exact offset.
   // Losing an exact address must not make a later escape appear harmless.
@@ -29,6 +32,9 @@ struct FrameWord {
   // switch's case table): a branch there is a computed jump within the
   // function, not a tail call.
   bool MayBeLocalCode = false;
+  // For SignedLink, Offset is the signing modifier's entry-SP offset.
+  unsigned AuthenticationKey = 0;
+  bool ZeroModifier = false;
   bool operator==(const FrameWord &) const = default;
 };
 
@@ -219,6 +225,7 @@ class TailFrameGuard {
             SP.K == FrameWord::Stack && SP.Offset == 0 &&
             LR.K == FrameWord::Link && !Inputs[0].MayBeStack &&
             !Inputs[0].MayBeLocalCode && Inputs[0].K != FrameWord::Link &&
+            Inputs[0].K != FrameWord::SignedLink &&
             (!Unwind || exceptionForwardsUnwindAt(*Unwind, Op.Addr)))
           Candidates->insert(Op.Addr);
       }
@@ -348,6 +355,33 @@ class TailFrameGuard {
       case NdOp::ATOMIC_ADD:
       case NdOp::ATOMIC_CMPXCHG:
       case NdOp::INTRINSIC: {
+        if (lowAArch64PAuthShapeIsValid(Op)) {
+          // A modifier's stack address is not the authenticated target.
+          // A saved link is restored only by its matching key and modifier.
+          Result = Inputs[1];
+          const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+          if (const auto Auth = aarch64PAuthOperation(Id)) {
+            Result.K = FrameWord::Unknown;
+            const bool Zero = Op.NumInputs == 3 && Op.Inputs[2].isConst() &&
+                              Op.Inputs[2].Offset == 0;
+            const bool KnownModifier = Zero || Inputs[2].K == FrameWord::Stack;
+            const int64_t Modifier = Zero ? 0 : Inputs[2].Offset;
+            if (!Auth->Strip && !Auth->Authenticate && KnownModifier &&
+                Inputs[1].K == FrameWord::Link) {
+              Result.K = FrameWord::SignedLink;
+              Result.Offset = Modifier;
+              Result.AuthenticationKey = Auth->Key;
+              Result.ZeroModifier = Zero;
+            } else if (Auth->Authenticate && KnownModifier &&
+                       Inputs[1].K == FrameWord::SignedLink &&
+                       Inputs[1].AuthenticationKey == Auth->Key &&
+                       Inputs[1].ZeroModifier == Zero &&
+                       Inputs[1].Offset == Modifier) {
+              Result = {FrameWord::Link};
+            }
+          }
+          break;
+        }
         // A value-only intrinsic is an ordinary value, and a trap ends its
         // path, so nothing after it is reached.
         if (lowIntrinsicHasOnlyValueEffects(Op) ||
@@ -395,7 +429,9 @@ class TailFrameGuard {
     const auto Merge = [](FrameWord A, FrameWord B) {
       const bool May = A.MayBeStack || B.MayBeStack;
       const bool LocalCode = A.MayBeLocalCode || B.MayBeLocalCode;
-      if (A.K != B.K || A.Offset != B.Offset)
+      if (A.K != B.K || A.Offset != B.Offset ||
+          A.AuthenticationKey != B.AuthenticationKey ||
+          A.ZeroModifier != B.ZeroModifier)
         A = {};
       A.MayBeStack = May;
       A.MayBeLocalCode = LocalCode;

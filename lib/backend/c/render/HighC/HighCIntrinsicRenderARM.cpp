@@ -13,6 +13,7 @@
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/support/IntegerLiterals.h"
 
@@ -768,6 +769,26 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
                                    uint16_t ResultBytes, bool &HasCIntrinsics) {
   using I = Intrinsic;
+  if (const auto Auth = aarch64PAuthOperation(Id)) {
+    if (ResultBytes != 8 || Ops.size() != (Auth->Strip ? 1 : 2))
+      throw std::invalid_argument("malformed AArch64 pointer authentication");
+    return "({ uint64_t __pointer = (uint64_t)(" + Ops[0] +
+           "); __asm__ volatile(\"" + Auth->Mnemonic +
+           (Auth->Strip ? " %0" : " %0, %1") + "\" : \"+r\"(__pointer)" +
+           (Auth->Strip ? std::string()
+                        : " : \"r\"((uint64_t)(" + Ops[1] + "))") +
+           "); __pointer; })";
+  }
+  if (Id == I::A64_AuthBranch) {
+    if (ResultBytes != 8 || Ops.size() != 3 || !constantOperand(Ops[1]) ||
+        *constantOperand(Ops[1]) > 1)
+      throw std::invalid_argument("malformed AArch64 authenticated branch");
+    return "({ uint64_t __target = (uint64_t)__builtin_ptrauth_auth((void "
+           "*)(uintptr_t)(" +
+           Ops[0] + "), " + Ops[1] + ", (uintptr_t)(" + Ops[2] +
+           ")); __asm__ volatile(\"" + kAArch64AuthenticatedTargetUseAsm +
+           "\" : : \"r\"(__target)); __target; })";
+  }
   switch (Id) {
   case I::A64_Rbit: {
     if (Ops.size() != 1)

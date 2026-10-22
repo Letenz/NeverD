@@ -63,6 +63,52 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Apple arm64e analysis
+
+The Mach-O loader retains the CPU subtype, including its ABI capability bits,
+and identifies `CPU_SUBTYPE_ARM64E` separately from ordinary arm64. Both use
+the AArch64 decoder. `AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
+implicit LR/SP and X17/X16 HINT aliases, and authenticated branch/call/return
+semantics. Authenticated calls read the old operands before overwriting LR.
+Validated pointer-authentication operations preserve argument setup across
+both ABI recovery and C lowering. Tail-transfer proofs retain target taint
+separately from the signing modifier and restore a saved signed link only
+after authentication with the matching key and entry-SP offset (or zero).
+Clang's explicit authentication-failure branch retains the setup of its sole
+continuing authenticated tail. Source C names an unassigned entry LR using
+`__builtin_return_address(0)`, as the LLVM projection already does.
+LDRAA/LDRAB authenticate the base before adding the offset, loading, and
+applying writeback. An unsupported exception return or FEAT_PAuth_LR form
+fails lifting instead of losing authentication.
+
+Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
+the architecture may poison a pointer without trapping immediately. The
+separate `A64_AuthBranch` operation requires a valid control-flow target and
+uses `llvm.ptrauth.auth` / Clang's authentication builtin. Its effect survives
+dead-result elimination. These are analysis projections, not a guarantee that
+rebuilt code preserves the original authenticated call's resistance to spills.
+Code-identity recovery keeps the authenticated runtime value; it cannot treat
+its key or modifier as a code pointer or bypass authentication to name a callee.
+
+The loader decodes arm64e chained pointer formats 1, 7, 9, 10 and 12, including
+their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
+`ARM64_RELOC_AUTHENTICATED_POINTER` uses the same
+`MachOAuthenticatedPointer` model: target or symbol, key, diversity, address
+diversity and addend. Original authenticated slot bytes remain on-disk recipes;
+they are neither process-signed values nor ordinary raw-pointer/import proofs.
+Immutable readers reject every overlapping byte. Source projections keep
+storage containing recipes external rather than inventing global initializers.
+The formats follow Apple's [dyld definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)
+and LLVM's [pointer-authentication contract](https://llvm.org/docs/PointerAuth.html).
+
+This support covers static loading, lifting and C/LLVM inspection. Native
+rebuilding and source replacement of an arm64e image fail explicitly until
+ABI-aware signing and fixup emission are implemented; the emitted module
+retains that requirement. Checked emulation's existing disabled-key profile
+does not become an arm64e execution environment. Shared-cache-specific and
+segmented chained layouts, exception-level authentication, FEAT_PAuth_LR and
+arm64e.x1/CPA2 are not claimed as supported.
+
 ## GUI project and search ownership
 
 `CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct

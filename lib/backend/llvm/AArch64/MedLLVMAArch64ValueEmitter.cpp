@@ -15,8 +15,10 @@
 #include "neverd/lift/AArch64Regs.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-value"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Constants.h"
@@ -35,6 +37,52 @@ llvm::Value *
 MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                           llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
+
+  if (const auto Auth = aarch64PAuthOperation(IC)) {
+    if (!aarch64PAuthMedShapeIsValid(Op))
+      llvm::report_fatal_error("malformed AArch64 pointer authentication");
+    llvm::SmallVector<llvm::Value *, 2> Args;
+    llvm::SmallVector<llvm::Type *, 2> Types;
+    for (unsigned I = 1; I < Op.NumInputs; ++I) {
+      llvm::Value *V = getVar(Op.Inputs[I], Builder);
+      if (V->getType()->isPointerTy())
+        V = Builder.CreatePtrToInt(V, Builder.getInt64Ty());
+      Args.push_back(V);
+      Types.push_back(Builder.getInt64Ty());
+    }
+    // The tied output is the original pointer. In particular, AUT's poisoned
+    // result on failure is observable, unlike llvm.ptrauth.auth's trap
+    // contract.
+    const std::string Asm =
+        std::string(Auth->Mnemonic) + (Auth->Strip ? " $0" : " $0, $2");
+    auto *IA = llvm::InlineAsm::get(
+        llvm::FunctionType::get(Builder.getInt64Ty(), Types, false), Asm,
+        Auth->Strip ? "=r,0" : "=r,0,r", /*hasSideEffects=*/true);
+    return Builder.CreateCall(IA, Args, "pauth");
+  }
+  if (IC == I::A64_AuthBranch) {
+    if (!aarch64PAuthMedShapeIsValid(Op))
+      llvm::report_fatal_error("malformed AArch64 authenticated branch");
+    auto integer = [&](const MedVar &V) {
+      llvm::Value *Value = getVar(V, Builder);
+      return Value->getType()->isPointerTy()
+                 ? Builder.CreatePtrToInt(Value, Builder.getInt64Ty())
+                 : Value;
+    };
+    auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
+        Mod, llvm::Intrinsic::ptrauth_auth);
+    auto *Authenticated = Builder.CreateCall(
+        Fn,
+        {integer(Op.Inputs[1]), Builder.getInt32(Op.Inputs[2].ConstVal),
+         integer(Op.Inputs[3])},
+        "authenticated.target");
+    auto *Use = llvm::InlineAsm::get(
+        llvm::FunctionType::get(Builder.getVoidTy(), {Builder.getInt64Ty()},
+                                false),
+        kAArch64AuthenticatedTargetUseAsm, "r", true);
+    Builder.CreateCall(Use, {Authenticated});
+    return Authenticated;
+  }
 
   auto getObservableValue = [&](uint8_t InputIndex) -> llvm::Value * {
     if (InputIndex >= Op.NumInputs)

@@ -146,6 +146,7 @@ bool hasConflictingFixups(const BinaryImage &Image, va_t Address,
   auto Set = [](va_t Slot) { return Slot; };
   auto Map = [](const auto &Slot) { return Slot.first; };
   if (Touches(Image.CodePtrRelocSlots, Set, CodePointer) ||
+      Touches(Image.MachOAuthenticatedPointers, Map) ||
       Touches(Image.DataPtrRelocSlots, Set, Pointer) ||
       Touches(Image.DataPtrRelocTargetOwners, Map, Pointer) ||
       Touches(Image.RelCodeRelocSlots, Set) ||

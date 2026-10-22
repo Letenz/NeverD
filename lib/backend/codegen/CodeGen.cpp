@@ -18,6 +18,7 @@
 #define DEBUG_TYPE "neverd-codegen"
 #include "neverd/ArchSupport.h"
 #include "neverd/backend/llvm/LLVMX86StackEffects.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -303,6 +304,11 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
                                llvm::StringRef TargetTriple) {
   CodegenResult Result;
   ensureTargets();
+  if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
+    llvm::WithColor::error() << "codegen: arm64e image rebuilding requires "
+                                "ABI-aware signing and fixups\n";
+    return Result;
+  }
 
   if (!archCodegenSupported(TargetArch)) {
     llvm::WithColor::error()
@@ -517,6 +523,12 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
     llvm::StringRef TargetTriple, RewriteInputKind InputKind) {
   llvm::mc_rewrite::RewriteResult Result;
   ensureTargets();
+  if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
+    llvm::WithColor::error() << "codegen: arm64e image rebuilding requires "
+                                "ABI-aware signing and fixups\n";
+    Result.ImageValid = false;
+    return Result;
+  }
 
   if (!archCodegenSupported(TargetArch)) {
     llvm::WithColor::error()

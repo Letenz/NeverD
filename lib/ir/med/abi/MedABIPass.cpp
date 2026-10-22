@@ -17,8 +17,10 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/IndirectCallSlot.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedCallClobber.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
@@ -46,6 +48,50 @@ namespace neverd {
 
 namespace {
 using EntrySpKey = std::tuple<uint8_t, int, int, uint64_t, uint16_t>;
+
+// Clang's AUT/poison check splits an authenticated tail's argument setup:
+// its other successor traps, while the only continuing edge retains the
+// preceding register definitions. Keep that setup across the check.
+const MedBlock *authenticatedTailSetup(const MedBlock &Block, const MedOp &Call,
+                                       const MedBlockIdIndex &Blocks) {
+  if (!Blocks.unique() || Block.Preds.size() != 1 ||
+      !Block.ExceptionalPreds.empty() || Call.Opcode != NdOp::INDIR_CALL ||
+      Call.NumInputs != 1 || Block.Ops.size() != 3 || &Block.Ops[1] != &Call ||
+      Block.Ops[2].Opcode != NdOp::RETURN)
+    return nullptr;
+  const auto &Auth = Block.Ops.front();
+  const bool AuthenticatedTarget =
+      Auth.Output == Call.Inputs[0] && aarch64PAuthMedShapeIsValid(Auth) &&
+      Auth.Inputs[0].ConstVal ==
+          static_cast<uint64_t>(Intrinsic::A64_AuthBranch);
+  const MedBlock *Pred = Blocks.first(Block.Preds.front());
+  if (!AuthenticatedTarget || !Pred || Pred->Succs.size() != 2 ||
+      !Pred->ExceptionalSuccs.empty() || Pred->Ops.empty() ||
+      Pred->Ops.back().Opcode != NdOp::COND_BR ||
+      std::count(Pred->Succs.begin(), Pred->Succs.end(), Block.Id) != 1)
+    return nullptr;
+  if (!llvm::any_of(Pred->Ops, [](const MedOp &Op) {
+        if (!aarch64PAuthMedShapeIsValid(Op))
+          return false;
+        const auto Auth = aarch64PAuthOperation(
+            static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
+        return Auth && Auth->Authenticate;
+      }))
+    return nullptr;
+  const int Other = Pred->Succs[Pred->Succs.front() == Block.Id ? 1 : 0];
+  const MedBlock *Fault = Blocks.first(Other);
+  if (!Fault || !Fault->Succs.empty() || !Fault->ExceptionalSuccs.empty() ||
+      Fault->Ops.size() != 1 || !hasValidMedIntrinsicId(Fault->Ops.front()))
+    return nullptr;
+  const auto &Trap = Fault->Ops.front();
+  if (Trap.NumInputs != 2 || !Trap.Inputs[1].isConst() ||
+      Trap.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count))
+    return nullptr;
+  return intrinsicNeverReturns(static_cast<Intrinsic>(Trap.Inputs[0].ConstVal),
+                               Trap.Inputs[1].ConstVal)
+             ? Pred
+             : nullptr;
+}
 
 EntrySpKey entrySpKey(const MedVar &V) {
   return {static_cast<uint8_t>(V.Kind), V.Id, V.SSAVer,
@@ -1335,6 +1381,21 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       for (const auto &Promoted : PromoteParams)
         PromotedBefore.insert(Promoted.first);
       bool Arg0FromInBlock = FoundMask[0];
+      if (IntRegArgsApply)
+        if (const auto *Setup = authenticatedTailSetup(Blk, Op, BlockIds))
+          for (int J = static_cast<int>(Setup->Ops.size()) - 1; J >= 0; --J) {
+            const auto &Prev = Setup->Ops[J];
+            if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size) {
+              const int K = regToIntArgIdx(Prev.Output.RegOff);
+              if (K >= 0 && K < MaxArgs && !FoundMask[K]) {
+                Found[K] =
+                    argRegSourceValueInBlock(*Setup, J, TRI, IntegerLayout);
+                FoundMask[K] = true;
+              }
+            }
+            if (isAbiRecoveryBarrier(Prev))
+              break;
+          }
       if ((!CI.IsIndirect || UseExternalArity || UseVariableArity) &&
           IntRegArgsApply)
         for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {

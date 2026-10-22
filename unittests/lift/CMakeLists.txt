@@ -1822,6 +1822,17 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
 
+add_neverd_unittest(NeverDArm64eAnalysisTests
+  aarch64/AArch64PAuthSemanticTests.cpp
+  aarch64/AArch64_FastClassifyParityTests.cpp
+  format/MachOArm64eTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode Lift Loader
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
 add_neverd_unittest(NeverDAArch64DivisionSemanticTests
   aarch64/AArch64DivisionSemanticTests.cpp
   LINK_COMPONENTS Decode IRLow Support

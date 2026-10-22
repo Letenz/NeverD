@@ -4,6 +4,29 @@
 
 # Testing NeverD
 
+`NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
+of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
+decoder routes for PAC/AUT/XPAC, implicit HINT operands, authenticated
+branches/calls/returns and LDRAA writeback; verifies emitted LLVM; compiles
+both C projections for arm64e at `-O0` and `-O2`; and verifies a compiler-style
+signed return preserves X0. Clang source checks require the arm64e target;
+they do not require a signing identity or an arm64e execution host.
+Compiler-generated arm64e objects at both optimization levels must preserve
+the explicit argument of an authenticated indirect call through LLVM O2 and
+recognize leaf/non-leaf authenticated tails. Negative frame tests retain
+branches with live frames, local/stack targets, a signed link or a mismatched
+authentication key/modifier. `NEVERD_PARITY_BIN=/path/to/thin/arm64e` also
+checks the fast terminator classifier against Capstone on a real binary.
+
+The same target checks public Mach-O loading, CPU subtype capability bits,
+arm64e chained formats 1/7/9/10/12, signing metadata, signed import addends,
+multi-start pages, tagged pointers, malformed chains and unsupported layouts.
+Signed storage must remain external in C/LLVM, immutable reads must reject it,
+and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
+also covers authenticated object relocations, keys, diversity and reserved
+bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
+when changing the shared pointer model.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.
