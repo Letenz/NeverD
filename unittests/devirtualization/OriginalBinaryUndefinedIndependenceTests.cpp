@@ -1142,15 +1142,12 @@ TEST(OriginalBinaryUndefinedIndependence,
      UnreachableTrapRetainsBytesAndMissingEffects) {
   // xor eax,eax; jne trap; ret; trap. No bytes follow the trap, so inventing
   // a resumption edge would fail even though the original branch is untaken.
-  for (bool InvalidOpcode : {false, true}) {
-    SCOPED_TRACE(InvalidOpcode);
-    Program P({0x31, 0xc0, 0x75, 1, 0xc3, 0xcc});
-    if (InvalidOpcode) {
-      P.Image.Segments[0].Data.back() = 0x0f;
-      P.Image.Segments[0].Data.push_back(0x0b);
-      ++P.Image.Segments[0].Size;
-      ++P.Image.Segments[0].FileSz;
-    }
+  const std::initializer_list<uint8_t> Encodings[] = {
+      {0xcc}, {0xf1}, {0xcd, 0x03}, {0x0f, 0x0b}};
+  for (const auto Bytes : Encodings) {
+    SCOPED_TRACE(unsigned(*Bytes.begin()));
+    Program P({0x31, 0xc0, 0x75, 1, 0xc3});
+    P.append(Bytes);
     const auto R = P.recover();
     ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
     EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
@@ -1160,9 +1157,11 @@ TEST(OriginalBinaryUndefinedIndependence,
     });
     ASSERT_NE(It, Insns.end());
     EXPECT_EQ(It->Origin.Address, Entry + 5);
-    EXPECT_EQ(It->NativeBytes, InvalidOpcode
-                                   ? (std::vector<uint8_t>{0x0f, 0x0b})
-                                   : (std::vector<uint8_t>{0xcc}));
+    EXPECT_EQ(It->NativeBytes, std::vector<uint8_t>(Bytes));
+    EXPECT_EQ(
+        hasLowInstructionControlFlag(It->Origin.ControlFlags,
+                                     LowInstructionControlFlag::Resumable),
+        *Bytes.begin() != 0x0f);
     EXPECT_EQ(It->UndefinedEffects.Coverage, LowUndefinedCoverage::Missing);
     EXPECT_EQ(It->UndefinedEffects.OperationDigest,
               lowUndefinedOperationDigest(It->Ops));
@@ -1190,12 +1189,20 @@ TEST(OriginalBinaryUndefinedIndependence,
      FeasibleTrapCannotPublishAnyCompletedSibling) {
   // jc trap; ret; int3. An ordinary input can select either path. A completed
   // return cannot authorize the sibling exception path under this contract.
-  Program Branch({0x72, 1, 0xc3, 0xcc});
-  expectRefusal(Branch, Status::ContractViolation);
-  Program Direct({0xcc});
-  expectRefusal(Direct, Status::ContractViolation);
-  Program InvalidOpcode({0x0f, 0x0b});
-  expectRefusal(InvalidOpcode, Status::ContractViolation);
+  const std::initializer_list<uint8_t> Encodings[] = {
+      {0xcc}, {0xf1}, {0xcd, 0x03}, {0x0f, 0x0b}};
+  for (const auto Bytes : Encodings) {
+    SCOPED_TRACE(unsigned(*Bytes.begin()));
+    Program Branch({0x72, 1, 0xc3});
+    Branch.append(Bytes);
+    expectRefusal(Branch, Status::ContractViolation);
+    Program Direct(Bytes);
+    expectRefusal(Direct, Status::ContractViolation);
+    const auto OrdinaryTrap =
+        specializeBinaryInterpreter(Direct.Image, Entry, Direct.Options);
+    EXPECT_FALSE(OrdinaryTrap.complete());
+    EXPECT_EQ(OrdinaryTrap.Status, SpecializationStatus::Unsupported);
+  }
   // call helper; int3; helper: ret. The actual continuation is reached.
   Program Call({0xe8, 1, 0, 0, 0, 0xcc, 0xc3});
   expectRefusal(Call, Status::ContractViolation);
@@ -1204,10 +1211,6 @@ TEST(OriginalBinaryUndefinedIndependence,
   Program Indirect(
       {0x83, 0xe0, 1, 0x48, 5, 0x0b, 0x10, 0, 0, 0xff, 0xe0, 0xc3, 0xcc});
   expectRefusal(Indirect, Status::ContractViolation);
-  const auto OrdinaryTrap =
-      specializeBinaryInterpreter(Direct.Image, Entry, Direct.Options);
-  EXPECT_FALSE(OrdinaryTrap.complete());
-  EXPECT_EQ(OrdinaryTrap.Status, SpecializationStatus::Unsupported);
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
