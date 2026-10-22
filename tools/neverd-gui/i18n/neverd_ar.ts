@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>أسفل</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>تغيّرت الدوال أثناء تحديث الجدول.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>الدوال المحددة تتجاوز الحد الأقصى لصفحات الجدول.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>تغيّر التحديد مرات كثيرة أثناء تحديث الجدول.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1829,6 +1841,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>يحتاج تعريف موقع الاستدعاء المحفوظ إلى مراجعة: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>تعذّر تحديث الشيفرة المصدرية: %1</translation>
     </message>
 </context>
 <context>
@@ -2235,18 +2251,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>الوصف:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>البحث في العرض</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>النص:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>لم يتم العثور على «%1» بين الأسطر المحمّلة</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3746,6 +3750,100 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>تعذّر حفظ ملف الرموز في %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>البحث في العرض</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>نص البحث</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>مطابقة حالة الأحرف</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>كلمات كاملة</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>متابعة البحث من البداية</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>السابق</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>التالي</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>التطابق السابق (Shift+Enter أو Shift+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>التطابق التالي (Enter أو F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;النص:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>إغلاق</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: الدالة الحالية، بما في ذلك الشيفرة المطوية</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>التفكيك: الأسطر المحمّلة، بما في ذلك العناوين الظاهرة</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>نهاية نطاق البحث</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>بداية نطاق البحث</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>بانتظار الشيفرة المصدرية…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>لا يتوفر نص قابل للبحث</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>أدخل النص المراد البحث عنه</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>لا توجد تطابقات</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 من %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n تطابق</numerusform>
+            <numerusform>%n تطابق</numerusform>
+            <numerusform>%n تطابقان</numerusform>
+            <numerusform>%n تطابقات</numerusform>
+            <numerusform>%n تطابقًا</numerusform>
+            <numerusform>%n تطابق</numerusform>
+        </translation>
     </message>
 </context>
 <context>

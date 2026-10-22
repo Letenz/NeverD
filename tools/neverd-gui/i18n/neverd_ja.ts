@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>下</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>テーブルの更新中に関数が変更されました。</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>選択した関数がテーブルのページ数の上限を超えています。</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>テーブルの更新中に選択が変更された回数が多すぎます。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1804,6 +1816,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>保存された呼び出し箇所の宣言を確認してください: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>ソースコードを更新できませんでした: %1</translation>
     </message>
 </context>
 <context>
@@ -2205,18 +2221,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>説明：</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>ビュー内を検索</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>テキスト：</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>読み込み済みの行に &apos;%1&apos; が見つかりません</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3711,6 +3715,95 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>シンボルファイルを %1 に保存できません：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>ビュー内を検索</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>検索テキスト</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>大文字と小文字を区別</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>単語全体を一致</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>末尾から先頭に戻る</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>前へ</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>次へ</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>前の一致（Shift+Enter または Shift+F3）</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>次の一致（Enter または F3）</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>テキスト(&amp;T):</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>閉じる</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: 現在の関数（折りたたまれたコードを含む）</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>逆アセンブリ: 読み込み済みの行（表示中のアドレスを含む）</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>検索範囲の末尾です</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>検索範囲の先頭です</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>ソースコードを待機中…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>検索可能なテキストがありません</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>検索するテキストを入力</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>一致なし</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n 件の一致</numerusform>
+        </translation>
     </message>
 </context>
 <context>

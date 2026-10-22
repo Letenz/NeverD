@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>Giù</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>Le funzioni sono cambiate durante l’aggiornamento della tabella.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>Le funzioni selezionate superano il limite di pagine della tabella.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>Troppi cambiamenti di selezione durante l’aggiornamento della tabella.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1809,6 +1821,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>La dichiarazione salvata del sito di chiamata richiede una verifica: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>Impossibile aggiornare il codice sorgente: %1</translation>
     </message>
 </context>
 <context>
@@ -2211,18 +2227,6 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Description:</source>
         <translation>Descrizione:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>Trova nella vista</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>Testo:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>Impossibile trovare &apos;%1&apos; tra le righe caricate</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3718,6 +3722,96 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Impossibile salvare il file dei simboli in %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>Trova nella vista</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>Testo da cercare</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>Distingui maiuscole e minuscole</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>Parole intere</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>Ricomincia dall’inizio</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Precedente</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Successivo</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>Corrispondenza precedente (Maiusc+Invio o Maiusc+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>Corrispondenza successiva (Invio o F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;Testo:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Chiudi</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: funzione corrente, incluso il codice compresso</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>Disassemblato: righe caricate, inclusi gli indirizzi visibili</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>Fine dell’intervallo di ricerca</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>Inizio dell’intervallo di ricerca</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>In attesa del codice sorgente…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>Nessun testo disponibile per la ricerca</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>Inserire il testo da cercare</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>Nessuna corrispondenza</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 di %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n corrispondenza</numerusform>
+            <numerusform>%n corrispondenze</numerusform>
+        </translation>
     </message>
 </context>
 <context>
