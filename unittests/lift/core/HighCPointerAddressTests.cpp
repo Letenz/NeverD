@@ -48844,6 +48844,7 @@ TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
   public:
     bool LiveVoid = false;
     bool WrongArity = false;
+    unsigned PointerBytes = 8;
     std::optional<FunctionSym>
     resolvePrototype(llvm::StringRef Name) const override {
       if (Name != "SdkAcquire" && Name != "SdkCode" && Name != "SdkClose")
@@ -48852,24 +48853,30 @@ TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
       F.Name = Name.str();
       F.PrototypeLibrary = "windows-kernel-arm64";
       F.Params = {{"Object", NdType::makePtr()}};
+      F.Params[0].second->Size = PointerBytes;
       F.ReturnType = Name == "SdkAcquire" ? NdType::makePtr()
                      : Name == "SdkClose" || LiveVoid
                          ? NdType::makeVoid()
                          : NdType::makeInt(4, true);
+      if (F.ReturnType->Kind == NdTypeKind::Ptr)
+        F.ReturnType->Size = PointerBytes;
+      if (PointerBytes == 4)
+        F.CallConv = DebugCallConv::Stdcall;
       if (WrongArity && Name == "SdkCode")
         F.Params.emplace_back("Extra", NdType::makeInt(4));
       return F;
     }
   } Debug;
-  for (const auto Arch : {Arch::X64, Arch::AArch64})
+  for (const auto Arch : {Arch::X64, Arch::AArch64, Arch::X86})
     for (unsigned Mode = 0; Mode < 5; ++Mode) {
       SCOPED_TRACE(Mode);
       Debug.LiveVoid = Mode == 1;
       Debug.WrongArity = Mode == 2;
+      Debug.PointerBytes = Arch == Arch::X86 ? 4 : 8;
       llvm::LLVMContext Context;
       llvm::Module Module("header-imports", Context);
-      Module.setDataLayout("e-p:64:64");
-      auto *Word = llvm::Type::getInt64Ty(Context);
+      Module.setDataLayout(Arch == Arch::X86 ? "e-p:32:32" : "e-p:64:64");
+      auto *Word = llvm::Type::getIntNTy(Context, Debug.PointerBytes * 8);
       auto *Type = llvm::FunctionType::get(Word, {Word}, false);
       const auto Function = [&](const char *Name) {
         auto *Signature = Mode == 4 && llvm::StringRef(Name) == "SdkCode"
@@ -48886,7 +48893,8 @@ TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
       auto *Handle = B.CreateCall(Acquire, {Caller->getArg(0)}, "handle");
       auto *Status = B.CreateCall(Code, {Handle}, "status");
       if (Mode == 4)
-        B.CreateCall(Code, {Handle, B.getInt64(3)}, "conflicting");
+        B.CreateCall(Code, {Handle, llvm::ConstantInt::get(Word, 3)},
+                     "conflicting");
       B.CreateCall(Close, {Handle}, "unused");
       B.CreateRet(Status);
       ASSERT_FALSE(llvm::verifyModule(Module));
@@ -48899,21 +48907,33 @@ TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
       ASSERT_TRUE(
           LLVMCEmitter().emit(Module, Out, Options, &Debug, nullptr, Caller));
       Out.flush();
+      const std::string Convention =
+          Arch == Arch::X86 ? "__attribute__((stdcall)) " : "";
       if (Mode) {
-        EXPECT_EQ(Source.find("int32_t SdkCode("), std::string::npos) << Source;
-        EXPECT_EQ(Source.find("void SdkCode("), std::string::npos) << Source;
+        EXPECT_EQ(Source.find("int32_t " + Convention + "SdkCode("),
+                  std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("void " + Convention + "SdkCode("),
+                  std::string::npos)
+            << Source;
         if (Mode == 3)
           EXPECT_EQ(Source.find("void SdkClose("), std::string::npos) << Source;
         continue;
       }
-      EXPECT_NE(Source.find("void* SdkAcquire(void* Object)"),
+      EXPECT_NE(Source.find("void* " + Convention + "SdkAcquire(void* Object)"),
                 std::string::npos)
           << Source;
-      EXPECT_NE(Source.find("int32_t SdkCode(void* Object)"), std::string::npos)
+      EXPECT_NE(Source.find("int32_t " + Convention + "SdkCode(void* Object)"),
+                std::string::npos)
           << Source;
-      EXPECT_NE(Source.find("void SdkClose(void* Object)"), std::string::npos)
+      EXPECT_NE(Source.find("void " + Convention + "SdkClose(void* Object)"),
+                std::string::npos)
           << Source;
       EXPECT_EQ(Source.find(" = SdkClose("), std::string::npos) << Source;
+      if (Arch == Arch::X86) {
+        expectCSyntax(Source);
+        continue;
+      }
       // Independently typed providers observe the original pointer, exact
       // ordering, one close effect, and the low 32 result bits at O0/O2.
       compileAndRunCallOrdering(Source + R"c(
