@@ -45,6 +45,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/I386PicAddress.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/libc/LibCNames.h"
@@ -617,6 +618,20 @@ private:
                                : Intrinsic::None;
       if (intrinsicReturnsSystemCallResult(Id)) {
         Paths.push_back(ReturnedValue::SystemCallResult);
+        return;
+      }
+      // A real system-instruction completion remains a value even when the
+      // instruction also owns memory or processor effects. Use the same
+      // shape contracts as lowering; an invented output on a void effect
+      // must not acquire a return value here.
+      if (Op.Output.Size &&
+          (x86SystemStateShapeIsValid(Id,
+                                      x86SystemStateMedShape(Op, Img.Arch)) ||
+           x86VirtualizationShapeIsValid(
+               Id, x86VirtualizationMedShape(Op, Img.Arch)) ||
+           (Img.Arch == Arch::X64 &&
+            intrinsicX86MsrAccessShapeIsValid(Id, x86MsrAccessMedShape(Op))))) {
+        Paths.push_back(ReturnedValue::Other);
         return;
       }
       Paths.push_back(Id != Intrinsic::None && Id != Intrinsic::DebugService &&

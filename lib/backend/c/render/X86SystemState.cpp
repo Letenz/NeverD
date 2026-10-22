@@ -33,8 +33,14 @@ std::string gnuConstraint(const std::string &Text) {
     return "=a";
   if (Text == "{cx}")
     return "c";
+  if (Text == "={cx}")
+    return "=c";
   if (Text == "{dx}")
     return "d";
+  if (Text == "{si}")
+    return "S";
+  if (Text == "{di}")
+    return "D";
   return Text;
 }
 
@@ -217,6 +223,8 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
   Shape.TargetArch = TargetArch;
   Shape.ValidId = Expression.Kind == ExprKind::Call &&
                   Expression.IntrinsicOutputs.empty() &&
+                  !Expression.IsIndirectCall && !Expression.IndirectTarget &&
+                  !Expression.SourceCallHint && !Expression.DoesNotReturn &&
                   Expression.Operands.size() == Arguments.size();
   Shape.WritableOutput = true;
   Shape.OutputSize = Expression.Type ? Expression.Type->Size : 0;
@@ -305,7 +313,8 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
             !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
             Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
             Call.getNumOperandBundles() || Call.onlyReadsMemory() ||
-            Call.onlyWritesMemory() ||
+            Call.onlyWritesMemory() || Call.doesNotReturn() ||
+            Call.getFunctionType()->isVarArg() ||
             Call.arg_size() != P->InputBytes.size() ||
             Arguments.size() != Call.arg_size() || !matchesReturn(Call, *P))
           continue;

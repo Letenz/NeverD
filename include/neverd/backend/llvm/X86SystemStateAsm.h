@@ -37,7 +37,8 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   const auto L = x86SystemStateLayout(Id, TargetArch, Width);
   if (!L || (TargetArch != Arch::X86 && TargetArch != Arch::X64) ||
       !isKnownMemoryAddressSpace(Space) ||
-      (C.MemoryArgument < 0 && Space != NdMemoryAddressSpace::Default))
+      ((C.MemoryArgument < 0 || C.Kind == X86SystemStateKind::MsrList) &&
+       Space != NdMemoryAddressSpace::Default))
     return std::nullopt;
   X86SystemStateAsm P;
   P.Id = Id;
@@ -108,6 +109,13 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
     break;
   case K::DirectStore64B:
     P.Text += " " + Memory(0) + ", " + Input(1);
+    break;
+  case K::WriteMsr:
+    P.InputConstraints = {"{cx}", "{ax}", "{dx}"};
+    break;
+  case K::MsrList:
+    P.OutputConstraints = {"={cx}"};
+    P.InputConstraints = {"{si}", "{di}", "0"};
     break;
   }
   auto Constraint = [&](const std::string &Text) {

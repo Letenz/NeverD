@@ -12,9 +12,63 @@
 
 #include "neverd/ir/intrinsics/X86SystemState.h"
 #include "neverd/lift/X86Lifter.h"
+#include "neverd/support/ISAEncoding.h"
 
 namespace neverd {
 namespace {
+
+bool implicitMsrEncoding(const cs_insn *Insn, const cs_x86 &X, bool Mode64) {
+  if (!Insn->detail || Insn->size < 3 || Insn->size > x86::kMaxInstructionLen ||
+      X.op_count || X.eflags || X.encoding.imm_size || X.encoding.disp_size ||
+      X.encoding.imm_offset || X.encoding.disp_offset || X.opcode[2] ||
+      X.opcode[3] || Insn->detail->groups_count != 1 ||
+      Insn->detail->groups[0] != X86_GRP_PRIVILEGE)
+    return false;
+  uint8_t Mandatory = 0;
+  uint8_t Segment = 0, Rex = 0;
+  bool OperandSize = false, AddressOverride = false;
+  const auto OpcodeOffset = Insn->size - 3;
+  for (unsigned I = 0; I < OpcodeOffset; ++I) {
+    const uint8_t Byte = Insn->bytes[I];
+    if (Mode64 && Byte >= 0x40 && Byte <= 0x4f) {
+      Rex = Byte;
+      continue;
+    }
+    Rex = 0;
+    if (Byte == 0xf2 || Byte == 0xf3)
+      Mandatory = Byte;
+    else if (Byte == 0x66)
+      OperandSize = true;
+    else if (Byte == 0x67)
+      AddressOverride = true;
+    else if (Byte == 0x26 || Byte == 0x2e || Byte == 0x36 || Byte == 0x3e ||
+             Byte == 0x64 || Byte == 0x65)
+      Segment = Byte;
+    else
+      return false;
+  }
+  const auto Id = Mandatory == 0xf2   ? X86_INS_RDMSRLIST
+                  : Mandatory == 0xf3 ? X86_INS_WRMSRLIST
+                                      : X86_INS_WRMSRNS;
+  const auto &Detail = *Insn->detail;
+  return (Mandatory ? Mode64 : !OperandSize) && Insn->id == Id &&
+         X.prefix[0] == Mandatory && X.prefix[1] == Segment &&
+         X.prefix[2] == (OperandSize ? 0x66 : 0) &&
+         X.prefix[3] == (AddressOverride ? 0x67 : 0) && X.rex == Rex &&
+         X.addr_size ==
+             (Mode64 ? (AddressOverride ? 4 : 8) : (AddressOverride ? 2 : 4)) &&
+         Detail.regs_read_count == 3 &&
+         Detail.regs_read[0] == (Mandatory ? X86_REG_RSI : X86_REG_EAX) &&
+         Detail.regs_read[1] == (Mandatory ? X86_REG_RDI : X86_REG_EDX) &&
+         Detail.regs_read[2] == (Mandatory ? X86_REG_RCX : X86_REG_ECX) &&
+         Detail.regs_write_count == (Mandatory ? 1 : 0) &&
+         (!Mandatory || Detail.regs_write[0] == X86_REG_RCX) &&
+         Insn->bytes[OpcodeOffset] == 0x0f &&
+         Insn->bytes[OpcodeOffset + 1] == 0x01 &&
+         Insn->bytes[OpcodeOffset + 2] == 0xc6 && X.opcode[0] == 0x0f &&
+         X.opcode[1] == 0x01 && X.modrm == 0xc6 &&
+         X.encoding.modrm_offset == OpcodeOffset + 2;
+}
 
 bool generalRegister(const cs_x86_op &Operand, uint16_t Width) {
   if (Operand.type != X86_OP_REG || Operand.size != Width)
@@ -35,6 +89,25 @@ bool liftSystemState(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   const bool Mode64 = L.targetArch() == Arch::X64;
   const uint16_t Word = Mode64 ? 8 : 4;
   switch (Insn->id) {
+  case X86_INS_WRMSRNS:
+    if (!implicitMsrEncoding(Insn, X86, Mode64))
+      return false;
+    S.emitIntrinsic(Intrinsic::X86WriteMsrNonSerializing, {},
+                    {NdVar::reg(x86reg::RCX, 4), NdVar::reg(x86reg::RAX, 4),
+                     NdVar::reg(x86reg::RDX, 4)});
+    return true;
+  case X86_INS_RDMSRLIST:
+  case X86_INS_WRMSRLIST:
+    if (!implicitMsrEncoding(Insn, X86, Mode64))
+      return false;
+    // These are linear addresses even with 67 or a segment prefix. RCX is
+    // bound read/write by the native executor, including fault/restart state.
+    S.emitIntrinsic(Insn->id == X86_INS_RDMSRLIST ? Intrinsic::X86ReadMsrList
+                                                  : Intrinsic::X86WriteMsrList,
+                    NdVar::reg(x86reg::RCX, 8),
+                    {NdVar::reg(x86reg::RSI, 8), NdVar::reg(x86reg::RDI, 8),
+                     NdVar::reg(x86reg::RCX, 8)});
+    return true;
   case X86_INS_RDPID:
     if (X86.op_count != 1 || !generalRegister(X86.operands[0], Word))
       return false;

@@ -98,6 +98,7 @@ inline std::vector<SystemEncoding> systemMemoryEncodings(Arch A) {
 
 inline std::vector<SystemEncoding> systemEncodings(Arch A) {
   std::vector<SystemEncoding> E = {
+      {{0x0f, 0x01, 0xc6}, Intrinsic::X86WriteMsrNonSerializing, "wrmsrns"},
       {{0xf3, 0x0f, 0xc7, 0xf8}, Intrinsic::X86ReadPid, "rdpid"},
       {{0x0f, 0x06}, Intrinsic::X86ClearTaskSwitched, "clts"},
       {{0xf3, 0x0f, 0xae, 0xf0}, Intrinsic::X86UserMonitor, "umonitor"},
@@ -118,6 +119,10 @@ inline std::vector<SystemEncoding> systemEncodings(Arch A) {
     E.push_back(
         {{0x64, 0x63, 0x0c, 0x24}, Intrinsic::X86AdjustRplMemory, "arpl"});
   } else {
+    E.push_back(
+        {{0xf2, 0x0f, 0x01, 0xc6}, Intrinsic::X86ReadMsrList, "rdmsrlist"});
+    E.push_back(
+        {{0xf3, 0x0f, 0x01, 0xc6}, Intrinsic::X86WriteMsrList, "wrmsrlist"});
     for (const bool Wide : {false, true})
       for (const unsigned Op : {0u, 1u, 2u, 3u}) {
         std::vector<uint8_t> Bytes{0xf3};

@@ -611,6 +611,9 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     }
     [[fallthrough]];
   case X86_INS_WRMSRNS:
+    if (InsnId == X86_INS_WRMSRNS && X86.op_count == 0)
+      return liftSystemState(*this, S, Insn, X86);
+    [[fallthrough]];
   case X86_INS_URDMSR:
   case X86_INS_UWRMSR: {
     const std::optional<X86MsrAccessKind> Kind =
@@ -782,6 +785,8 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   }
 
   case X86_INS_RDPID:
+  case X86_INS_RDMSRLIST:
+  case X86_INS_WRMSRLIST:
   case X86_INS_RDFSBASE:
   case X86_INS_RDGSBASE:
   case X86_INS_WRFSBASE:

@@ -87,7 +87,8 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                   llvm::StringRef HighMnemonic = {},
                   llvm::StringRef LLVMMnemonic = {},
                   std::string *NativeOutput = nullptr,
-                  std::vector<uint8_t> *NativeObject = nullptr) {
+                  std::vector<uint8_t> *NativeObject = nullptr,
+                  uint16_t RequiredReturnBytes = 0) {
   if (HighMnemonic.empty())
     HighMnemonic = Mnemonic;
   if (LLVMMnemonic.empty())
@@ -101,6 +102,12 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   ASSERT_TRUE(R.Success) << R.Error;
   ASSERT_EQ(R.HighFuncs.size(), 1u);
   ASSERT_EQ(R.MedFuncs.size(), 1u);
+  if (RequiredReturnBytes) {
+    ASSERT_FALSE(R.MedFuncs.front().ReturnsNoValue);
+    ASSERT_FALSE(R.HighFuncs.front().ReturnsNoValue);
+    ASSERT_TRUE(R.HighFuncs.front().ReturnType);
+    EXPECT_EQ(R.HighFuncs.front().ReturnType->Size, RequiredReturnBytes);
+  }
   CEmitterOptions Options;
   Options.TheArch = Image.Arch;
   Options.Format = Image.Format;
@@ -124,6 +131,12 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   auto Module = Emitter.emit(R.MedFuncs, Context, "virtualization", Image.Arch,
                              {}, &Image, Image.Format);
   ASSERT_NE(Module, nullptr);
+  if (RequiredReturnBytes) {
+    const auto *Function = Module->getFunction("virtualization_test");
+    ASSERT_NE(Function, nullptr);
+    EXPECT_TRUE(
+        Function->getReturnType()->isIntegerTy(8 * RequiredReturnBytes));
+  }
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
   if (NoOpt)
     Pipeline::promoteScaffoldingAllocas(*Module);
@@ -481,7 +494,8 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                    std::optional<uint64_t> Expected = std::nullopt,
                    bool OriginalBytes = false, bool CompareFaults = false,
                    llvm::StringRef CustomDriver = {},
-                   llvm::ArrayRef<uint8_t> ExpectedInstruction = {}) {
+                   llvm::ArrayRef<uint8_t> ExpectedInstruction = {},
+                   uint16_t RequiredReturnBytes = 0) {
   const bool Execute = Expected || CompareFaults || !CustomDriver.empty();
 #if !defined(__linux__) || !defined(__x86_64__)
   if (Execute)
@@ -507,7 +521,7 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   std::string High, LLVM, Native;
   std::vector<uint8_t> NativeObject;
   sourceRoutes(Image, NoOpt, Address, Mnemonic, &High, &LLVM, {}, {}, &Native,
-               &NativeObject);
+               &NativeObject, RequiredReturnBytes);
   if (::testing::Test::HasFailure())
     return;
   if (!ExpectedInstruction.empty())
@@ -866,7 +880,7 @@ TEST(X86MsrAccessSource, EveryEncodingRetainsItsNativeOperandsAndEffects) {
           std::string High, LLVM;
           std::vector<uint8_t> Object;
           sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, &High, &LLVM,
-                       {}, {}, nullptr, &Object);
+                       {}, {}, nullptr, &Object, Dead ? 0 : 8);
           for (const auto *Source : {&High, &LLVM}) {
             EXPECT_NE(Source->find("__asm__ volatile"), std::string::npos);
             EXPECT_NE(Source->find("\"memory\""), std::string::npos);
@@ -892,7 +906,8 @@ TEST(X86MsrAccessSource, FaultsAndRegisterTransportMatchAcrossEveryRoute) {
         auto Image =
             image(Arch::X64, BinaryFormat::ELF, msrFunction(E, Dead, Offset));
         compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
-                      false, false, msrFaultDriver(Image, E, Dead), E.Bytes);
+                      false, false, msrFaultDriver(Image, E, Dead), E.Bytes,
+                      Dead ? 0 : 8);
         if (::testing::Test::HasFailure())
           return;
       }
@@ -1022,6 +1037,247 @@ TEST(X86SystemStateSource, GeneratedAssemblyCompilesForBothWordSizesAtO0AndO2) {
       if (::testing::Test::HasFailure())
         return;
     }
+}
+
+namespace {
+std::vector<uint8_t> implicitMsrFunction(const SystemEncoding &E, bool Dead,
+                                         bool EmptyMask, size_t &Offset) {
+  std::vector<uint8_t> Bytes;
+  auto Move = [&](uint8_t Opcode, uint64_t Value) {
+    Bytes.insert(Bytes.end(), {0x48, Opcode});
+    for (unsigned I = 0; I < 8; ++I)
+      Bytes.push_back(Value >> (8 * I));
+  };
+  if (E.Id == Intrinsic::X86WriteMsrNonSerializing) {
+    Move(0xb8, UINT64_C(0x1122334455667788));
+    Move(0xb9, UINT64_C(0x88776655ffffffff));
+    Move(0xba, UINT64_C(0xfedcba98cafebabe));
+  } else {
+    // Invalid full-width addresses expose accidental preloads and truncation.
+    Move(0xbe, UINT64_C(0x1122334455667788));
+    Move(0xbf, UINT64_C(0x8877665544332211));
+    Move(0xb9, EmptyMask ? 0 : UINT64_C(0x8000000000000003));
+  }
+  Offset = Bytes.size();
+  Bytes.insert(Bytes.end(), E.Bytes.begin(), E.Bytes.end());
+  if (Dead)
+    Bytes.insert(Bytes.end(), {0x31, 0xc0});
+  else if (E.Id == Intrinsic::X86WriteMsrNonSerializing)
+    Bytes.insert(Bytes.end(), {0x48, 0x31, 0xd0, 0x48, 0x31, 0xc8});
+  else
+    Bytes.insert(Bytes.end(), {0x48, 0x89, 0xc8});
+  Bytes.push_back(0xc3);
+  return Bytes;
+}
+
+std::string implicitMsrDriver(const BinaryImage &Image, const SystemEncoding &E,
+                              bool Dead, bool EmptyMask) {
+  std::string Driver = faultDriver(Image);
+  for (const auto Name : {"virtualization_test", "neverd_original"}) {
+    const auto Declaration = "extern void " + std::string(Name);
+    Driver.replace(Driver.find(Declaration), Declaration.size(),
+                   "extern unsigned long long " + std::string(Name));
+  }
+  const std::string FunctionPointer = "void (*fn)(void)";
+  Driver.replace(Driver.find(FunctionPointer), FunctionPointer.size(),
+                 "unsigned long long (*fn)(void)");
+  const std::string Main = "int main(void)";
+  Driver.replace(Driver.find(Main), Main.size(),
+                 "static int compare_faults(void)");
+  Driver = "#define _GNU_SOURCE\n#include <stdint.h>\n#include <ucontext.h>\n" +
+           Driver;
+  llvm::raw_string_ostream OS(Driver);
+  OS << "\nstatic const unsigned char instruction[] = {";
+  for (auto Byte : E.Bytes)
+    OS << unsigned(Byte) << ',';
+  OS << "};\nstatic const int list = "
+     << (E.Id != Intrinsic::X86WriteMsrNonSerializing)
+     << ";\nstatic const int dead = " << Dead
+     << ";\nstatic const uint64_t initial_mask = "
+     << (EmptyMask ? "0" : "UINT64_C(0x8000000000000003)") << ";\n";
+  // The real fault comparison is independent of this completion oracle. The
+  // oracle checks register transport and sigreturn at the same instruction,
+  // not successful privileged accesses or a software model of the MSR list.
+  OS << R"C(
+static volatile sig_atomic_t events, restart;
+static uintptr_t restart_ip;
+static void complete(int signal, siginfo_t *info, void *context) {
+  ucontext_t *uc = context;
+  greg_t *g = uc->uc_mcontext.gregs;
+  const unsigned char *ip = (const unsigned char *)(uintptr_t)g[REG_RIP];
+  (void)signal; (void)info;
+  for (unsigned i = 0; i < sizeof(instruction); ++i)
+    if (ip[i] != instruction[i]) _exit(21);
+  if (list) {
+    uint64_t mask = events ? initial_mask & ~UINT64_C(1) : initial_mask;
+    if ((uint64_t)g[REG_RSI] != UINT64_C(0x1122334455667788) ||
+        (uint64_t)g[REG_RDI] != UINT64_C(0x8877665544332211) ||
+        (uint64_t)g[REG_RCX] != mask) _exit(22);
+    if (restart && !events) {
+      restart_ip = (uintptr_t)ip;
+      g[REG_RCX] = (greg_t)(mask & ~UINT64_C(1));
+      ++events;
+      return;
+    }
+    if (restart && restart_ip != (uintptr_t)ip) _exit(23);
+    // A distinctive completion detects replacing the returned RCX with zero.
+    g[REG_RCX] = restart ? 0 : (greg_t)UINT64_C(0xfedcba9876543210);
+  } else if ((uint32_t)g[REG_RAX] != UINT32_C(0x55667788) ||
+             (uint32_t)g[REG_RDX] != UINT32_C(0xcafebabe) ||
+             (uint32_t)g[REG_RCX] != UINT32_MAX) {
+    _exit(24);
+  }
+  g[REG_RIP] += sizeof(instruction);
+  ++events;
+}
+int main(void) {
+  if (compare_faults()) return 10;
+  struct sigaction action = {0};
+  action.sa_sigaction = complete;
+  action.sa_flags = SA_SIGINFO;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGILL, &action, 0) || sigaction(SIGSEGV, &action, 0)) return 11;
+  for (restart = 0; restart <= (list && initial_mask != 0); ++restart) {
+    uint64_t expected = dead ? 0 : list ? (restart ? 0 : UINT64_C(0xfedcba9876543210)) :
+      UINT64_C(0x1122334455667788) ^ UINT64_C(0x88776655ffffffff) ^ UINT64_C(0xfedcba98cafebabe);
+    unsigned count = restart ? 2 : 1;
+    events = 0;
+    if (neverd_original() != expected || events != count) return 12;
+    events = 0;
+    if (virtualization_test() != expected || events != count) return 13;
+  }
+  return 0;
+}
+)C";
+  return Driver;
+}
+} // namespace
+
+TEST(X86ImplicitMsrSource, FaultsRegisterTransportAndRestartMatchEveryRoute) {
+  for (const auto &E : systemEncodings(Arch::X64)) {
+    const auto Kind = x86SystemStateContract(E.Id).Kind;
+    if (Kind != X86SystemStateKind::MsrList &&
+        Kind != X86SystemStateKind::WriteMsr)
+      continue;
+    for (bool NoOpt : {false, true})
+      for (bool Dead : {false, true})
+        for (bool EmptyMask : {false, true}) {
+          if (EmptyMask && (Kind == X86SystemStateKind::WriteMsr || Dead))
+            continue;
+          SCOPED_TRACE(E.Mnemonic);
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(Dead);
+          SCOPED_TRACE(EmptyMask);
+          size_t Offset;
+          auto Image = image(Arch::X64, BinaryFormat::ELF,
+                             implicitMsrFunction(E, Dead, EmptyMask, Offset));
+          compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                        false, false,
+                        implicitMsrDriver(Image, E, Dead, EmptyMask), E.Bytes,
+                        Dead ? 0 : 8);
+          if (::testing::Test::HasFailure())
+            return;
+        }
+  }
+}
+
+TEST(X86ImplicitMsrSource, CompletionSurvivesEveryNativeObjectFormat) {
+  for (const auto &E : systemEncodings(Arch::X64)) {
+    const auto Kind = x86SystemStateContract(E.Id).Kind;
+    if (Kind != X86SystemStateKind::MsrList &&
+        Kind != X86SystemStateKind::WriteMsr)
+      continue;
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true})
+        for (bool Dead : {false, true}) {
+          SCOPED_TRACE(E.Mnemonic);
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(Dead);
+          size_t Offset;
+          auto Image = image(Arch::X64, Format,
+                             implicitMsrFunction(E, Dead, false, Offset));
+          std::vector<uint8_t> Object;
+          sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, nullptr,
+                       nullptr, {}, {}, nullptr, &Object, Dead ? 0 : 8);
+          EXPECT_NE(std::search(Object.begin(), Object.end(), E.Bytes.begin(),
+                                E.Bytes.end()),
+                    Object.end());
+          if (::testing::Test::HasFailure())
+            return;
+        }
+  }
+}
+
+TEST(X86ImplicitMsrSource, MalformedNativeContractsAreRejected) {
+  for (auto Id : {Intrinsic::X86WriteMsrNonSerializing,
+                  Intrinsic::X86ReadMsrList, Intrinsic::X86WriteMsrList})
+    for (auto A : {Arch::X86, Arch::X64})
+      for (unsigned Mutation = 0; Mutation < 13; ++Mutation) {
+        const bool List = Id != Intrinsic::X86WriteMsrNonSerializing;
+        SCOPED_TRACE(static_cast<unsigned>(Id));
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(Mutation);
+        const auto P = x86SystemStateAsm(Id, Arch::X64, List ? 8 : 0,
+                                         NdMemoryAddressSpace::Default);
+        ASSERT_TRUE(P);
+        llvm::LLVMContext Context;
+        llvm::Module Module("implicit-msr-contract", Context);
+        Module.setDataLayout(A == Arch::X64 ? "e-p:64:64" : "e-p:32:32");
+        llvm::IRBuilder<> B(Context);
+        std::vector<llvm::Type *> Types;
+        for (unsigned I = 0; I < P->InputBytes.size(); ++I)
+          Types.push_back(List && I < 2
+                              ? static_cast<llvm::Type *>(B.getPtrTy())
+                              : B.getIntNTy(8 * P->InputBytes[I]));
+        if (Mutation == 4)
+          Types[0] = B.getInt16Ty();
+        if (Mutation == 11 && List)
+          Types[1] = B.getPtrTy(256);
+        llvm::Type *Return = List ? B.getInt64Ty() : B.getVoidTy();
+        if (Mutation == 9)
+          Return = List ? B.getVoidTy() : B.getInt64Ty();
+        auto *Signature = llvm::FunctionType::get(Return, Types, false);
+        auto *Function = llvm::Function::Create(
+            Signature, llvm::GlobalValue::ExternalLinkage, "effect", Module);
+        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+        std::vector<llvm::Value *> Values;
+        for (auto &Arg : Function->args())
+          Values.push_back(&Arg);
+        std::string Constraints = P->Constraints;
+        if (Mutation == 1)
+          Constraints.erase(Constraints.find(",~{memory}"));
+        if (Mutation == 10)
+          Constraints.replace(Constraints.find("{cx}"), 4, "{ax}");
+        auto *Asm = llvm::InlineAsm::get(
+            Signature, P->Text + (Mutation == 3 ? "\n\tnop" : ""), Constraints,
+            Mutation != 2, Mutation == 12,
+            Mutation == 7 ? llvm::InlineAsm::AD_Intel
+                          : llvm::InlineAsm::AD_ATT);
+        auto *Call = B.CreateCall(Asm, Values);
+        if (Mutation == 5)
+          Call->setOnlyReadsMemory();
+        if (Mutation == 6)
+          Call->setOnlyWritesMemory();
+        if (Mutation == 8)
+          Call->setDoesNotReturn();
+        if (Return->isVoidTy())
+          B.CreateRetVoid();
+        else
+          B.CreateRet(Call);
+        CEmitterOptions Options;
+        Options.TheArch = A;
+        Options.EmitIncludes = false;
+        std::string Text;
+        llvm::raw_string_ostream OS(Text);
+        if ((Mutation == 0 || (Mutation == 11 && !List)) &&
+            !(A == Arch::X86 && List))
+          EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options)) << Text;
+        else
+          EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                       std::invalid_argument);
+      }
 }
 
 TEST(X86SystemMemorySource, BothSourceRoutesRetainEffectsAcrossAllFormats) {

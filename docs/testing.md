@@ -53,7 +53,25 @@ register constraints, wrong modes and forged assembly/effects have separate
 checks. These tests do not qualify successful CPL0 or USER_MSR-enabled accesses.
 The APX existing-GPR suite checks the same LowIR shape and emulator refusal;
 the Capstone `x86_apx_evex_msr` unit checks decode, access, groups and reserved
-fields. Operand-free WRMSRNS remains outside this explicit-operand matrix.
+fields.
+
+`X86ImplicitMsr.*` and `X86ImplicitMsrSource.*` extend the system-state/source
+targets with operand-free WRMSRNS and long-mode RDMSRLIST/WRMSRLIST. They
+check strict encoding/detail agreement, fixed input widths, linear addresses,
+RCX completion and malformed IR/assembly rejection. The common source matrix
+covers ELF/COFF/Mach-O and both word sizes where valid. Linux x64 probes
+compare real CPL3 faults with original bytes, then use a separate controlled
+signal handler to inspect fixed registers, supply a distinctive mask result,
+and resume the same instruction after clearing one mask bit. Sparse/empty
+masks and live/dead results expose eager table accesses or invented completion.
+These are register-transport and restart checks, not successful CPL0 MSR reads
+or writes; actual MSR validation, ordering and partial progress still need a
+privileged execution environment. Generated i386 WRMSRNS has compile-only
+native coverage. The scalar emulator must refuse without an MSR environment.
+`NeverDReturnContractTests` checks that validated system, VMX and explicit-MSR
+results survive return inference, while malformed outputs do not. The MSR
+source fixtures also assert non-void return types in HighIR and LLVM, so an
+incidental physical RAX value from a C `void` function cannot pass the oracle.
 
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 

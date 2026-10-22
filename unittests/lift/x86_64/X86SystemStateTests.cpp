@@ -105,6 +105,150 @@ TEST(X86SystemState, WaitReadsControlAndBothDeadlineHalvesAndClearsOtherFlags) {
   }
 }
 
+TEST(X86ImplicitMsr, OperandsRetainTheirArchitecturalWidthsAndLinearAddresses) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : test::systemEncodings(A)) {
+      const auto Kind = x86SystemStateContract(E.Id).Kind;
+      const bool List = Kind == X86SystemStateKind::MsrList;
+      if (!List && Kind != X86SystemStateKind::WriteMsr)
+        continue;
+      for (uint8_t Prefix : {0, 0x67, 0x64, 0x65, 0x4f, 0x66}) {
+        if ((Prefix == 0x4f && A == Arch::X86) || (Prefix == 0x66 && !List))
+          continue;
+        auto Bytes = E.Bytes;
+        if (Prefix)
+          Bytes.insert(Bytes.begin(), Prefix);
+        SCOPED_TRACE(E.Mnemonic);
+        SCOPED_TRACE(Prefix);
+        const auto Ops = lift(A, Bytes);
+        ASSERT_EQ(Ops.size(), 1u);
+        const auto &Op = Ops.front();
+        ASSERT_EQ(Op.Opcode, NdOp::INTRINSIC);
+        ASSERT_EQ(Op.NumInputs, 4);
+        EXPECT_EQ(Op.Inputs[0].Offset, static_cast<uint64_t>(E.Id));
+        EXPECT_EQ(Op.Output, List ? NdVar::reg(x86reg::RCX, 8) : NdVar());
+        EXPECT_EQ(Op.Inputs[1], List ? NdVar::reg(x86reg::RSI, 8)
+                                     : NdVar::reg(x86reg::RCX, 4));
+        EXPECT_EQ(Op.Inputs[2], List ? NdVar::reg(x86reg::RDI, 8)
+                                     : NdVar::reg(x86reg::RAX, 4));
+        EXPECT_EQ(Op.Inputs[3], List ? NdVar::reg(x86reg::RCX, 8)
+                                     : NdVar::reg(x86reg::RDX, 4));
+        EXPECT_EQ(Op.MemoryAddressSpace, NdMemoryAddressSpace::Default);
+        const auto Shape = x86SystemStateLowShape(Op, A);
+        ASSERT_TRUE(x86SystemStateShapeIsValid(E.Id, Shape));
+        for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+          auto Bad = Shape;
+          switch (Mutation) {
+          case 0:
+            Bad.OutputSize = List ? 0 : 4;
+            break;
+          case 1:
+            Bad.InputSizes[0] = List ? 4 : 8;
+            break;
+          case 2:
+            Bad.InputSizes[1] = List ? 4 : 8;
+            break;
+          case 3:
+            Bad.InputSizes[2] = List ? 4 : 8;
+            break;
+          case 4:
+            Bad.ScalarInputs[0] = false;
+            break;
+          case 5:
+            Bad.Arguments = 2;
+            break;
+          case 6:
+            Bad.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+            break;
+          case 7:
+            Bad.MemoryOrdering = NdMemoryOrdering::Relaxed;
+            break;
+          case 8:
+            Bad.TargetArch = List ? Arch::X86 : Arch::AArch64;
+            break;
+          }
+          EXPECT_FALSE(x86SystemStateShapeIsValid(E.Id, Bad));
+        }
+      }
+    }
+}
+
+TEST(X86ImplicitMsr, ForgedEncodingAndDetailsRefuseBeforeEmission) {
+  Decoder D;
+  ASSERT_TRUE(D.init(Arch::X64));
+  for (const auto &E : test::systemEncodings(Arch::X64)) {
+    const auto Kind = x86SystemStateContract(E.Id).Kind;
+    if (Kind != X86SystemStateKind::MsrList &&
+        Kind != X86SystemStateKind::WriteMsr)
+      continue;
+    DecodedInsn I{};
+    ASSERT_EQ(D.decodeOneForLift(E.Bytes.data(), E.Bytes.size(), 0x1000, I),
+              E.Bytes.size());
+    for (unsigned Mutation = 0; Mutation < 11; ++Mutation) {
+      cs_insn Raw = *I.Raw;
+      cs_detail Detail = *Raw.detail;
+      Raw.detail = &Detail;
+      switch (Mutation) {
+      case 0:
+        Detail.x86.op_count = 1;
+        break;
+      case 1:
+        Raw.bytes[Raw.size - 1] = 0xc7;
+        break;
+      case 2:
+        Raw.id =
+            Raw.id == X86_INS_RDMSRLIST ? X86_INS_WRMSRLIST : X86_INS_RDMSRLIST;
+        break;
+      case 3:
+        Raw.bytes[0] = 0xf0;
+        break;
+      case 4:
+        Detail.x86.eflags = X86_EFLAGS_MODIFY_CF;
+        break;
+      case 5:
+        Detail.x86.encoding.imm_size = 4;
+        break;
+      case 6:
+        Detail.groups_count = 0;
+        break;
+      case 7:
+        Detail.x86.encoding.modrm_offset = 0;
+        break;
+      case 8:
+        Detail.x86.prefix[0] = 0xf0;
+        break;
+      case 9:
+        Detail.regs_read_count = 0;
+        break;
+      case 10:
+        Detail.x86.addr_size = 2;
+        break;
+      }
+      X86Lifter L(Arch::X64);
+      L.setStrict(true);
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(L.lift(&Raw, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+    }
+  }
+}
+
+TEST(X86SystemState, UnmodeledRefiningPrefixesCannotBecomeLegacyInstructions) {
+  const std::vector<std::vector<uint8_t>> Encodings = {
+      {0xf2, 0x0f, 0x01, 0xca},
+      {0xf3, 0x0f, 0x01, 0xca},
+      {0xf3, 0x0f, 0x01, 0xee},
+      {0xf3, 0x0f, 0x01, 0xef}};
+  for (auto A : {Arch::X86, Arch::X64}) {
+    Decoder D;
+    ASSERT_TRUE(D.init(A));
+    for (const auto &Bytes : Encodings) {
+      DecodedInsn I{};
+      EXPECT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I), 0);
+    }
+  }
+}
+
 TEST(X86SystemState, LarFailurePreservesTheCompleteDestination) {
   const auto Ops = lift(Arch::X64, {0x0f, 0x02, 0xc1});
   ASSERT_FALSE(Ops.empty());

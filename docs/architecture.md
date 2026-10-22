@@ -5224,6 +5224,20 @@ continues to refuse the effect. LLVM-to-C admits only the complete owned
 assembly/signature/constraint/effect contract, including constant immediate
 selectors. No declaration-only helper or legacy serializing MSR substitution
 implements these forms.
+Operand-free WRMSRNS instead uses `X86WriteMsrNonSerializing` with three
+32-bit inputs (ECX, EAX, EDX) on x86 and x64. The system inventory also owns
+long-mode `X86ReadMsrList` and `X86WriteMsrList`: two linear table addresses
+and a 64-bit mask produce the real remaining mask. Their assembly binds RSI,
+RDI and read/write RCX without adding segment bases or preloading table entries.
+Native hardware retains privilege, alignment, MSR validation, load-ahead,
+ordering and partial-completion behavior. Restart at the faulting instruction
+uses the updated RCX in the machine exception frame. The scalar emulator has
+no MSR environment and refuses these effects, including an empty list mask.
+This bounded native contract does not emulate privileged MSR execution.
+Return-contract analysis also consumes the validated system, virtualization
+and explicit-MSR output shapes. Side effects do not make an explicit result
+undefined; a function returning RCX after MSRLIST must retain a scalar return
+in both C routes. Invalid outputs on a void operation receive no such evidence.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.

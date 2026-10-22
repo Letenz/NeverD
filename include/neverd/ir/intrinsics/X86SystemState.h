@@ -100,6 +100,15 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width) {
     if (TargetArch == Arch::X86)
       return std::nullopt;
     return X86SystemStateLayout{0, 2, {8, 8}};
+  case K::WriteMsr:
+    // ECX selects the MSR; EAX and EDX supply its low and high halves.
+    return X86SystemStateLayout{0, 3, {4, 4, 4}};
+  case K::MsrList:
+    if (TargetArch == Arch::X86)
+      return std::nullopt;
+    // Two linear table addresses and a read/write mask. The instruction owns
+    // every table access and restartable partial completion in RCX.
+    return X86SystemStateLayout{8, 3, {8, 8, 8}, 8};
   }
   return std::nullopt;
 }
@@ -129,6 +138,10 @@ inline uint16_t x86SystemStateMemoryBytes(Intrinsic Id, uint16_t Width) {
   case X86SystemStateKind::Enqueue:
   case X86SystemStateKind::DirectStore64B:
     return 64;
+  case X86SystemStateKind::MsrList:
+    // A table entry, not an unconditional access to the whole table. Sparse
+    // and empty masks must not cause eager loads or page/alignment checks.
+    return 8;
   default:
     return 2;
   }
@@ -141,7 +154,7 @@ inline bool x86SystemStateShapeIsValid(Intrinsic Id,
                                       x86SystemStateWidth(Id, Shape));
   if (!L || !Shape.ValidId || Shape.MemoryOrdering != NdMemoryOrdering::None ||
       !isKnownMemoryAddressSpace(Shape.MemoryAddressSpace) ||
-      (C.MemoryArgument < 0 &&
+      ((C.MemoryArgument < 0 || C.Kind == X86SystemStateKind::MsrList) &&
        Shape.MemoryAddressSpace != NdMemoryAddressSpace::Default) ||
       Shape.OutputSize != L->OutputSize ||
       (Shape.OutputSize && !Shape.WritableOutput) ||

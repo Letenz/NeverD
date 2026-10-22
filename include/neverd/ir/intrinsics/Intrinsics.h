@@ -403,7 +403,9 @@ enum class X86SystemStateKind : uint8_t {
   ShadowWrite,
   Enqueue,
   DirectStore,
-  DirectStore64B
+  DirectStore64B,
+  WriteMsr,
+  MsrList
 };
 
 struct X86SystemStateContract {
@@ -430,14 +432,14 @@ constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
   return x86SystemStateContract(Id).Mnemonic != nullptr;
 }
 
-/// The enqueue portal and block direct-store destination are second addresses.
-/// Their implicit ES segment is flat in long mode and never inherits the
-/// source operand's FS/GS override.
+/// Enqueue, block direct stores and MSR lists take a second address. Only the
+/// first address may have a segment override; MSR lists use linear addresses.
 constexpr bool isX86SystemStateAddressArgument(Intrinsic Id, unsigned Index) {
   const auto C = x86SystemStateContract(Id);
   return (C.MemoryArgument >= 0 && Index == unsigned(C.MemoryArgument)) ||
          ((C.Kind == X86SystemStateKind::Enqueue ||
-           C.Kind == X86SystemStateKind::DirectStore64B) &&
+           C.Kind == X86SystemStateKind::DirectStore64B ||
+           C.Kind == X86SystemStateKind::MsrList) &&
           Index == 1);
 }
 
