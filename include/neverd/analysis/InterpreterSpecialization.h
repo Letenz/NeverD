@@ -51,11 +51,20 @@ struct SpecializationTerminalImport {
   bool operator==(const SpecializationTerminalImport &) const = default;
 };
 
-enum class SpecializationX64MachineExitKind : uint8_t { Call, Jump, Return };
+enum class SpecializationX64MachineExitKind : uint8_t {
+  Call,
+  Jump,
+  Return,
+  Trap
+};
 
 /// An explicit end of a machine region, after this exact native transfer.
 /// The residual retains its real target and physical stack effects. No callee,
 /// continuation, ordinary return ABI or whole-function coverage is implied.
+/// A Trap exit ends the region at a declared resumable trap (INT3/INT1): the
+/// trap effect is retained and control leaves the region to an unmodeled
+/// external continuation (the native exception mechanism). No target, callee,
+/// return ABI or continuation is implied.
 struct SpecializationX64MachineExit {
   uint32_t Version = 1;
   va_t Address = 0;
