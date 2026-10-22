@@ -547,6 +547,23 @@ rewrite/safety admission keep their original analysis.
 
 ## IR and C source mapping
 
+`code_edit_prepare` is an optional read with the same fields as a local-name
+`code_edit`. It prepares and validates the target without saving, incrementing
+revision or writing history; the GUI can run it while the name dialog is open.
+A successful local-name commit adds `local_names_only:true` to its response.
+Other code edits continue through full invalidation.
+
+`analysis_update_names` accepts an owner `analysis_snapshot` only in an existing
+readonly replica created by `analysis_restore`. Every input, option and
+non-name state must match the restored snapshot. The worker also checks input
+stamps and the committed code sidecar before replacing display-name state.
+Success returns `{updated:true}` and advances the replica's local revision;
+retained source is redecorated without rerunning the pipeline. This operation
+never writes sidecars or history. A changed snapshot or racing sidecar is
+`stale_snapshot`; a changed input is `input_changed`. The GUI uses the capability
+only for an idle replica after a confirmed local-name commit and otherwise
+keeps the existing fresh-process restore path.
+
 Source pages with edit metadata carry `code_names`, half-open UTF-8 spans in
 the complete displayed document. An address target has `kind:"address"`,
 `address` and `original`; a local target has `kind:"local"`, `original` and

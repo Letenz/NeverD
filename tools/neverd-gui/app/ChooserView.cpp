@@ -101,7 +101,11 @@ ChooserModel::ChooserModel(Session &session, const AddressSpace &space,
       kind_(kind),
       operation_(QString::fromLatin1(Specs[static_cast<int>(kind)].operation)),
       columns_(columnsOf(kind)) {
-  connect(&session_, &Session::revisionChanged, this, &ChooserModel::reload);
+  connect(&session_, &Session::revisionChanged, this, [this] {
+    // A local display name changes neither the table's rows nor their order.
+    if (!session_.queries().localNamesOnly())
+      reload();
+  });
   connect(&session_, &Session::unloaded, this, &ChooserModel::reload);
   if (kind_ == ChooserKind::Functions || kind_ == ChooserKind::Names)
     connect(&session_, &Session::functionsChanged, this, &ChooserModel::reload);

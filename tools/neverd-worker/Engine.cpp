@@ -930,6 +930,15 @@ void Engine::forgetNamedViews() {
   encodedPageBytes_ = 0;
 }
 
+void Engine::localNamesChanged() {
+  // Local display names do not change instructions, functions or the prepared
+  // pipeline. Keep original documents for checked, lazy redecoration; encoded
+  // pages and already decorated documents still belong to their old revision.
+  ++revision_;
+  namedViewsRevision_ = revision_;
+  forgetEncodedPages();
+}
+
 void Engine::forgetEncodedPages() {
   for (const auto &document : namedViews_) {
     document->pages.clear();
@@ -1065,9 +1074,19 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       namedViews_.splice(namedViews_.begin(), namedViews_, it);
       return namedViews_.front();
     }
+  const auto sourceKey = hexAddress(address) + ":" + representation + ":" +
+                         std::to_string(listing().generation()) + ":" +
+                         optionText;
+  Json original;
+  for (const auto &cached : namedViews_)
+    if (cached->sourceKey == sourceKey && !cached->original.is_null()) {
+      original = cached->original;
+      break;
+    }
   // A hit answers from its finished document without pretending the mutable
   // Session still holds this function. Graph/IR requests prepare it normally.
-  prepareFunction(address, representation);
+  if (original.is_null())
+    prepareFunction(address, representation);
   // Whole-program VM preparation can analyze(), invalidating the listing and
   // advancing the revision. Rebuild aliases and stamp the prepared context;
   // never keep an alias reference across that invalidation.
@@ -1081,9 +1100,10 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
   {
     // The whole function, from as many engine pages as it fills: the engine
     // emits it once and pages it from there.
-    Json full;
+    Json full = std::move(original);
     auto backendRepresentation = representation;
-    for (std::size_t next = 0;;) {
+    for (std::size_t next = 0;
+         full.is_null() || !full.value("complete", false);) {
       auto page = backendJson(
           sourceView && extended && !engineOptions.empty()
               ? extended(session_, address, backendRepresentation.c_str(), next,
@@ -1137,13 +1157,15 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       next = following.get<std::size_t>();
     }
     full["complete"] = true;
-    for (const auto &reason : staleVariableTypes)
-      full["stale_variable_types"].push_back(reason);
     full["next_offset"] = nullptr;
     full["representation"] = representation;
     full["source_options"] = options;
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
+    if (sourceView)
+      document->original = full;
+    for (const auto &reason : staleVariableTypes)
+      full["stale_variable_types"].push_back(reason);
     if (sourceView)
       CodeEdits::spellIdentifierSymbols(full);
     // The resolver below runs other operations, so the decoration names
@@ -1260,13 +1282,16 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                    document->orderedCodeNames);
     document->value = std::move(full);
     document->key = key;
+    document->sourceKey = sourceKey;
     // If resolving source names changed the listing while decorating this
     // document, it remains usable for this response but is not reusable yet.
     if (cacheKey() != key)
       return document;
-    const auto jsonBytes = namedViewJsonBytes(document->value);
-    auto overhead =
-        sizeof(NamedView) + 8 * sizeof(void *) + document->key.capacity() + 1;
+    const auto jsonBytes = namedViewJsonBytes(document->value) +
+                           namedViewJsonBytes(document->original);
+    auto overhead = sizeof(NamedView) + 8 * sizeof(void *) +
+                    document->key.capacity() + 1 +
+                    document->sourceKey.capacity() + 1;
     for (const auto *bounds :
          {&document->rowBounds, &document->referenceBounds,
           &document->sourceNameBounds, &document->codeNameBounds}) {
@@ -1287,6 +1312,14 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                 sizeof(std::size_t)) {
       document->bytes = jsonBytes + overhead +
                         document->lines.capacity() * sizeof(std::size_t);
+      for (auto it = namedViews_.begin(); it != namedViews_.end();) {
+        if ((*it)->sourceKey == sourceKey) {
+          namedViewBytes_ -= (*it)->bytes;
+          encodedPageBytes_ -= (*it)->pageBytes;
+          it = namedViews_.erase(it);
+        } else
+          ++it;
+      }
       while (!namedViews_.empty() &&
              (namedViews_.size() >=
                   ::neverd::limits::worker::kEngineMaxNamedViews ||
@@ -1323,7 +1356,15 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   const auto &text = namedView_["text"].get_ref<const std::string &>();
   const std::size_t total = text.empty() ? 0 : namedViewLines_.size();
   const auto start = std::min(offset, total);
-  const auto end = start + std::min(limit, total - start);
+  auto end = start + std::min(limit, total - start);
+  const auto byteAt = [&](std::size_t line) {
+    return line < namedViewLines_.size() ? namedViewLines_[line] : text.size();
+  };
+  while (end > start && byteAt(end) - byteAt(start) >
+                            ::neverd::limits::worker::kEngineMaxCodePageBytes)
+    --end;
+  if (end == start && start < total)
+    throw Error("budget_exceeded", "A code line exceeds the page byte budget");
   if (encoded)
     for (auto it = document->pages.begin(); it != document->pages.end(); ++it)
       if (it->start == start && it->end == end) {
@@ -1949,7 +1990,57 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
                   "Signatures changed during analysis restore");
   }
   execute("string_options", snapshot.at("string_options"));
+  // Automatic companions are also inputs, even when the owner did not choose
+  // them through pdb_load/dwarf_load. Keep their loaded-file stamps too.
+  restoredDebugInputs_ = Json::array();
+  if (headersFunction())
+    for (const auto &file : backendJson(headersFunction()(session_))
+                                .value("debug_info", Json::object())
+                                .value("files", Json::array()))
+      if (file.contains("path") && file.at("path").is_string() &&
+          !file.at("path").get_ref<const std::string &>().empty()) {
+        const auto path = file.at("path").get<std::string>();
+        restoredDebugInputs_.push_back(
+            {{"path", path}, {"stamp", signatureStamp(utf8Path(path))}});
+      }
+  restoredSnapshot_ = snapshot;
   return metadata();
+}
+
+Json Engine::updateAnalysisNames(const Json &snapshot) {
+  requireLoaded();
+  if (!readOnly_ || restoredSnapshot_.is_null())
+    throw Error("invalid_request",
+                "Only a restored analysis replica can update names");
+  auto before = restoredSnapshot_;
+  auto after = snapshot;
+  for (auto *value : {&before, &after}) {
+    auto &state = value->at("state");
+    state["code_edits"] =
+        CodeEdits::analysisState(state.value("code_edits", Json::array()));
+  }
+  if (before != after)
+    throw Error("stale_snapshot", "Analysis changed; restore a fresh replica");
+  // Check the retained inputs as well as the new writer-owned sidecar before
+  // changing anything. This operation never writes owner files or history.
+  (void)analysisSnapshot();
+  for (const auto &input : restoredDebugInputs_)
+    if (signatureStamp(utf8Path(input.at("path").get<std::string>())) !=
+        input.at("stamp"))
+      throw Error("input_changed",
+                  "A loaded debug file changed; restore analysis again");
+  const auto path = ownedString(neverd_session_file_path(session_));
+  if (fs::file_size(utf8Path(path)) != loadedSize_ ||
+      fs::last_write_time(utf8Path(path)) != loadedTime_)
+    throw Error("input_changed", "The analysis input changed; reopen it");
+  const auto rows = readCodeEdits(path);
+  if (rows != snapshot.at("state").value("code_edits", Json::array()))
+    throw Error("stale_snapshot",
+                "Project edits changed while updating analysis");
+  codeEdits_ = rows;
+  restoredSnapshot_ = snapshot;
+  localNamesChanged();
+  return {{"updated", true}};
 }
 
 Json Engine::execute(const std::string &operation, const Json &p) {
@@ -2000,6 +2091,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return analysisSnapshot();
   if (operation == "analysis_restore")
     return restoreAnalysis(p);
+  if (operation == "analysis_update_names")
+    return updateAnalysisNames(p);
   if (operation == "identify") {
     // How each loader would read a file, before it is opened.
     const auto identify = identifyFunction();
@@ -2407,6 +2500,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     invalidate();
     ++revision_;
     projectId_ = "project-" + std::to_string(revision_);
+    restoredSnapshot_ = nullptr;
+    restoredDebugInputs_ = Json::array();
     Json warnings = Json::array();
     if (ProjectHistory::recoveryPending(path)) {
       try {
@@ -3581,6 +3676,19 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     return result;
   }
+  if (operation == "code_edit_prepare") {
+    requireLoaded();
+    if (p.value("kind", std::string()) != "name")
+      throw Error("invalid_request", "Only a local name can be prepared");
+    const auto document = namedView(parseAddress(stringField(p, "address")),
+                                    stringField(p, "representation"),
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported",
+                  "The engine does not expose editable source targets");
+    CodeEdits::validateChange(document->value, p);
+    return {{"ready", true}};
+  }
   if (operation == "code_edit") {
     requireWriter();
     if (dirty_)
@@ -3824,9 +3932,16 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       throw;
     }
     codeEdits_ = std::move(rows);
-    invalidate();
-    ++revision_;
-    return {{"saved", true}, {"address", hexAddress(address)}};
+    const bool localName = p.value("kind", std::string()) == "name";
+    if (localName)
+      localNamesChanged();
+    else {
+      invalidate();
+      ++revision_;
+    }
+    return {{"saved", true},
+            {"address", hexAddress(address)},
+            {"local_names_only", localName}};
   }
   if (operation == "save") {
     requireWriter();

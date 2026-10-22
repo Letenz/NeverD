@@ -1306,6 +1306,14 @@ void Session::rename(Address function, const QString &name,
           });
 }
 
+void Session::prepareCodeName(const QJsonObject &edit, quint64 epoch) {
+  if (!acceptsEdit(epoch) ||
+      !capabilities_.contains(QStringLiteral("code_edit_prepare")))
+    return;
+  read(QStringLiteral("code_edit_prepare"), edit, this, {},
+       [](const QString &, const QString &) {});
+}
+
 void Session::editCode(const QJsonObject &edit, quint64 epoch) {
   if (!acceptsEdit(epoch))
     return;

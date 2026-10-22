@@ -1212,7 +1212,24 @@ document. A hit can answer before preparing the mutable single-function Session;
 it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Documents own text, rows and edit anchors, and project or presentation changes
-invalidate them. After decoration, a document checks whether its row numbers
+invalidate their decorated pages. A confirmed local display-name edit retains
+the original source document within that same byte allowance and redecorates it
+without rerunning analysis or rebuilding the listing. Types, variable
+associations, stack corrections, image names and other edits keep their existing
+invalidation rules. An idle replica can consume `analysis_update_names` only
+when every snapshot input and non-name edit is unchanged and the committed
+code sidecar still matches; otherwise the GUI restores a fresh replica. Busy
+replicas retain the normal cancellation and retirement path. The optional
+`code_edit_prepare` read validates the owner's local target while the name
+dialog is open, without saving or changing revision. A GUI name refresh buffers
+all replacement pages before publishing them. The
+painted document remains intact during the read, and occurrence metadata maps
+the cursor and selection across changed spelling lengths. Folding and scroll
+positions survive publication. Cancellation, navigation and unload discard the
+buffer; a failed refresh keeps the old text readable but unavailable for edits
+or export. Settled assembly/list and graph views do not reload for a local name.
+After decoration, a
+document checks whether its row numbers
 and both ends of its name spans are monotone. Pages seek directly through those
 arrays when they are ordered; other producer orders and nested spans keep their
 original filtering order. Oversized documents remain readable without being
