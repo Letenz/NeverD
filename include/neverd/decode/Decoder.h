@@ -269,6 +269,24 @@ public:
   std::optional<I386GetPcOccurrence> getX86GetPcOccurrence() const;
 
 private:
+  /// Apply the active architecture's fallback when Capstone rejects bytes.
+  bool decodeArchitectureFallback(const uint8_t *Bytes, size_t Len, va_t Addr);
+
+  /// Use the AArch64 native decoder, returning zero when it declines.
+  int decodeAArch64ForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
+                           DecodedInsn &Out);
+
+  /// Select an authenticated initial mode for a mixed ARM/Thumb image.
+  bool initARMImageMode(const BinaryImage &Img);
+
+  /// Configure the x86 platform ABI and x87 ownership, when active.
+  void configureX86For(const BinaryImage &Img);
+
+  void liftAArch64ToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
+                        llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs);
+  void liftARMToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
+                    llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs);
+
   /// Decode an x86 fence carrying otherwise redundant operand-size prefixes.
   /// Capstone rejects these encodings even though LLVM and real x86-64
   /// binaries accept them.  Returns true after populating InsnBuf.
@@ -280,9 +298,11 @@ private:
   bool decodeUnprefixedX86MpxRegisterNop(const uint8_t *Bytes, size_t Len,
                                          va_t Addr);
 
-  /// Apply instruction-id normalization that does not require operand detail.
-  /// Both full and lightweight decode paths use this semantic profile.
-  void fixupDecodedInsnId(cs_insn *I) const;
+  /// Both full and lightweight decodes use the same x86 metadata profile.
+  void fixupX86DecodeMetadata(cs_insn *I) const;
+
+  /// Apply x86 instruction-id normalization without requiring operand detail.
+  void fixupX86DecodedInsnId(cs_insn *I) const;
 
   /// Correct a known long-mode disp32 width misreport only when the complete
   /// encoded field agrees with the decoded displacement and memory operands.

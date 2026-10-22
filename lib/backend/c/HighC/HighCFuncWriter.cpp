@@ -4687,12 +4687,23 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
   ParamDebugNames.assign(Func.Params.size(), {});
   ParamsPlaced = false;
   EmittedParamTypes.clear();
+  const auto MayBeRecord = [](const TypeRef &Type) {
+    return Type && (Type->Kind == NdTypeKind::Struct ||
+                    (Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+                     Type->Pointee->Kind == NdTypeKind::Struct));
+  };
+  HasRecordParamTypes = false;
   for (const HighParam &Param : Func.Params)
     EmittedParamTypes.push_back(Param.Type);
+  for (const HighParam &Param : Func.Params)
+    HasRecordParamTypes |= MayBeRecord(Param.Type);
   // A bound source ABI spells its own parameters (sourceParameterType).  A
   // function of a language with conventions of its own, such as Go, has no
   // rules that say where its parameters arrive.
   const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (DebugFn)
+    for (const auto &Param : DebugFn->Params)
+      HasRecordParamTypes |= MayBeRecord(Param.second);
   if (!DebugFn || Func.SourceTypeHint || !DebugFn->PlatformConvention)
     return;
   const size_t Count = DebugFn->Params.size();

@@ -600,17 +600,25 @@ TEST(PipelineOutcome, SelectionsOutsideTheSymbolInventoryKeepTheirOwnFacts) {
   Cache.reset();
   EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), nullptr);
   EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), nullptr);
-  // Without a cache, or on another architecture, nothing is kept to warm.
-  EXPECT_FALSE(Pipeline().warmAnalysisCache(Image, PipelineOptions(), nullptr,
-                                            {0x1000}));
+  // i386 runs share the symbol inventory's facts too, which warming builds.
   BinaryImage Narrow = selectionCacheImage(false);
   Narrow.Arch = Arch::X86;
   Narrow.Bits = Bitness::Bits32;
   PipelineAnalysisCache NarrowCache;
   Options.AnalysisCache = &NarrowCache;
+  EXPECT_TRUE(Pipeline().warmAnalysisCache(Narrow, Options, nullptr, {0x1000}));
+  EXPECT_NE(PipelineTestPeer::analysisFacts(NarrowCache), nullptr);
+  // Without a cache, or on an architecture whose runs share none, nothing is
+  // kept to warm.
+  EXPECT_FALSE(Pipeline().warmAnalysisCache(Image, PipelineOptions(), nullptr,
+                                            {0x1000}));
+  BinaryImage Bytecode = selectionCacheImage(false);
+  Bytecode.Arch = Arch::EVM;
+  PipelineAnalysisCache BytecodeCache;
+  Options.AnalysisCache = &BytecodeCache;
   EXPECT_FALSE(
-      Pipeline().warmAnalysisCache(Narrow, Options, nullptr, {0x1000}));
-  EXPECT_EQ(PipelineTestPeer::analysisFacts(NarrowCache), nullptr);
+      Pipeline().warmAnalysisCache(Bytecode, Options, nullptr, {0x1000}));
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(BytecodeCache), nullptr);
 }
 
 TEST(PipelineOutcome, WarmingStopsAtTheCacheBoundWithoutEvicting) {

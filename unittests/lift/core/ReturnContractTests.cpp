@@ -325,7 +325,8 @@ TEST(ReturnContracts, MissingOrdinaryReturnsDoNotEraseExceptionalResults) {
   MedFunc Parent = function(CalleeEntry, {block({seed(), Throw})});
   // The catch body and its parent continuation are not ordinary blocks in
   // this snapshot. Its physical no-return call can still dispatch to them.
-  Parent.Blocks.front().ExceptionalSuccs.push_back({-1});
+  Parent.Blocks.front().ExceptionalSuccs.push_back(
+      {-1, 0x4000, ExceptionalEdgeKind::CxxCatch});
   EXPECT_EQ(settle({Parent}, BinaryFormat::COFF), std::vector<bool>{false});
 
   MedFunc Unresolved = function(CalleeEntry, {block({seed()})});

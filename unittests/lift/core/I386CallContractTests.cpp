@@ -13,6 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/pipeline/PipelineCallAbiDetail.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -89,6 +90,70 @@ BinaryImage makeImage(std::vector<uint8_t> Code,
   Function.Name = "_wrap";
   Img.Symbols.push_back(std::move(Function));
   return Img;
+}
+
+TEST(I386CallContract, OmittedImportStackFactsDoNotDependOnTheSelection) {
+  constexpr va_t Other = Text + 0x40;
+  constexpr va_t Child = Text + 0x80;
+  std::vector<uint8_t> Code(0x100, 0xCC);
+  auto CallChild = [&](std::vector<uint8_t> &Body, va_t Entry) {
+    const uint32_t Displacement =
+        static_cast<uint32_t>(Child - (Entry + Body.size() + 5));
+    Body.push_back(0xE8);
+    for (unsigned Byte = 0; Byte != 4; ++Byte)
+      Body.push_back(static_cast<uint8_t>(Displacement >> (8 * Byte)));
+  };
+  // caller_a(p): child(p). caller_b(p): memcpy(p,p,0); child(p).
+  std::vector<uint8_t> First = {0x8B, 0x44, 0x24, 4, 0x50};
+  CallChild(First, Text);
+  First.insert(First.end(), {0x83, 0xC4, 4, 0xC3});
+  std::copy(First.begin(), First.end(), Code.begin());
+  std::vector<uint8_t> Second = {0x8B, 0x44, 0x24, 4, 0x6A, 0, 0x50, 0x50};
+  const auto ImportCall = callThroughSlot(Iat);
+  Second.insert(Second.end(), ImportCall.begin(), ImportCall.end());
+  Second.insert(Second.end(), {0x83, 0xC4, 12, 0x8B, 0x44, 0x24, 4, 0x50});
+  CallChild(Second, Other);
+  Second.insert(Second.end(), {0x83, 0xC4, 4, 0xC3});
+  std::copy(Second.begin(), Second.end(), Code.begin() + 0x40);
+  // child(p): memcpy(p+4,p,4). Its import is absent from caller_a's body.
+  std::vector<uint8_t> Body = {0x8B, 0x44, 0x24, 4,    0x8D, 0x50,
+                               4,    0x6A, 4,    0x50, 0x52};
+  Body.insert(Body.end(), ImportCall.begin(), ImportCall.end());
+  Body.insert(Body.end(), {0x83, 0xC4, 12, 0xC3});
+  std::copy(Body.begin(), Body.end(), Code.begin() + 0x80);
+  for (const BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (const bool Warm : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      SCOPED_TRACE(Warm);
+      BinaryImage Image = makeImage(Code, {"memcpy"});
+      Image.Format = Format;
+      for (const auto &[Entry, Name] :
+           {std::pair{Other, "caller_b"}, {Child, "child"}}) {
+        auto Function = Symbol::makeFunc(Entry);
+        Function.Name = Name;
+        Image.Symbols.push_back(std::move(Function));
+      }
+      PipelineAnalysisCache Cache;
+      PipelineOptions Options;
+      Options.AnalysisCache = &Cache;
+      Options.EmitDumpOutput = false;
+      if (Warm)
+        ASSERT_TRUE(
+            Pipeline().warmAnalysisCache(Image, Options, nullptr, {Child}));
+      llvm::LLVMContext Context;
+      for (const va_t Entry : {Text, Other, Text}) {
+        Options.OnlyFunctionEntries = {Entry};
+        const auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        ASSERT_TRUE(Result.CalleeSignatureMemo);
+        const auto *Read = Result.CalleeSignatureMemo->find(Child);
+        ASSERT_TRUE(Read);
+        ASSERT_EQ(Read->Conversions.size(), 1u);
+        ASSERT_TRUE(Read->Conversions.front().Body);
+        EXPECT_EQ(Read->Conversions.front().Body->Params.size(), 1u);
+      }
+    }
 }
 
 /// The call of \p Callee in the HighC of `wrap` in \p Img: the rest of its

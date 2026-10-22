@@ -1,10 +1,15 @@
-//===- InstructionRelocationsARM.cpp - ARM relocation fields -------------===//
+//===- ARMInstructionRelocations.cpp - ARM relocation fields -------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Instruction relocation fields for ARM.
+///
+//===----------------------------------------------------------------------===//
 
-#include "InstructionRelocationsDetail.h"
+#include "../InstructionRelocationsDetail.h"
 
 #include "neverd/loader/BinaryImage.h"
 

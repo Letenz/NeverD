@@ -667,6 +667,10 @@ public:
   /// instruction: debug information gives the caller there.
   std::optional<FunctionSym> debugFunctionCalled(const HighExpr &E) const;
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
+  /// The debug information's function at \p Entry, resolved once per
+  /// output: the statement tests ask for the current function's on every
+  /// line, and resolving it reads names, declarations and prototypes.
+  const std::optional<FunctionSym> &resolvedFunction(va_t Entry) const;
   /// The pointer type a local is declared with where a typed call's pointer
   /// result declares it (collectCallResultNames, emitLocalDecls), whatever
   /// the type of its machine value; null for any other value or name.
@@ -1121,6 +1125,8 @@ public:
   /// The identifiers functionIdentifier() spelled for functions no map
   /// names, and the symbols they stand for (recordSourceNames()).
   mutable std::map<std::string, std::string> ReferencedFunctionSymbols;
+  /// resolvedFunction()'s answers.
+  mutable std::map<va_t, std::optional<FunctionSym>> ResolvedFunctions;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;
@@ -1243,6 +1249,9 @@ public:
   mutable std::vector<DebugParamBinding> ParamBindings;
   mutable std::vector<TypeRef> EmittedParamTypes;
   mutable std::vector<std::string> ParamDebugNames;
+  /// Whether an original or debug parameter can supply a record declaration.
+  /// Completion fills record fields, so unnamed/incomplete records count too.
+  mutable bool HasRecordParamTypes = false;
   /// The convention's rules placed the cached function's debug parameters
   /// by where they arrive, rather than by position.
   mutable bool ParamsPlaced = false;

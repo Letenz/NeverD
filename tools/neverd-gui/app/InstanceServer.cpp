@@ -75,7 +75,7 @@ int nextSerial() {
 
 #ifdef Q_OS_WIN
 QString pipeName(const QString &name) {
-  return QStringLiteral("neverd-instance-") + name;
+  return QStringLiteral("\\\\.\\pipe\\neverd-instance-") + name;
 }
 #endif
 
