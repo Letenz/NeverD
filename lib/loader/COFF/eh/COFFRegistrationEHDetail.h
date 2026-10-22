@@ -51,12 +51,15 @@ std::optional<va_t> addSignedOffset(va_t Base, int64_t Displacement);
 
 /// Disprove a heuristic boundary using decoded callback instructions.
 /// A separately checked physical entry call returns to its own fallthrough.
-/// After other control transfers, only instruction-interior guesses can go.
-/// Independent entries, ambiguous decoding and exhausted budgets retain them.
-bool disprovesCallbackBoundary(const BinaryImage &Img, va_t Entry,
-                               va_t Boundary, size_t &Work,
-                               std::optional<va_t> ReturningEntryCall =
-                                   std::nullopt);
+/// After other control transfers, only instruction-interior guesses can go,
+/// plus a guess created from an operand whose last byte is trap padding.
+/// A bounded absolute jump table is followed like a direct jump: a slot that
+/// names the boundary keeps it, and an in-range case can show that a later
+/// guess sits inside an instruction. Independent entries, ambiguous decoding
+/// and exhausted budgets retain the boundary.
+bool disprovesCallbackBoundary(
+    const BinaryImage &Img, va_t Entry, va_t Boundary, size_t &Work,
+    std::optional<va_t> ReturningEntryCall = std::nullopt);
 
 /// Extend an exact padding guess only through a closed, unambiguous callback
 /// graph with a prior ordinary branch and no independent callee in the range.
