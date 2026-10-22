@@ -35,6 +35,40 @@ Keep other builds and tests idle during measurement and record display/backend,
 tool versions and host conditions with the local report. Use native platform
 tests separately for Windows named pipes and macOS LaunchServices delivery.
 
+To include the production GUI's disassembly painting, use the Linux/Xvfb runner:
+
+```sh
+python3 tools/neverd-gui/benchmarks/gui_links.py \
+  --gui /path/to/neverd-gui --worker /path/to/neverd-worker \
+  --engine /path/to/actual/libneverd.so --ida /path/to/ida \
+  --input /path/to/fixture --source-revision COMMIT --samples 3 \
+  --output build-bench/gui-links.json
+```
+
+Use the actual library selected by the worker's dynamic loader for `--engine`;
+this records identity and does not select a library. The runner needs Xvfb and
+an activated IDA with IDAPython/PySide6. Each pair opens fresh copies of the same
+input with temporary settings on one private xcb display. IDA uses a temporary
+`IDAUSR` with a copy of its existing license/configuration, removed afterward.
+The installed desktop handlers and user databases are untouched.
+
+Interaction report schema 2 adds `link_addresses` and `link_functions`: eight
+passes over up to 24 functions already visited by the jump phases. Both tools
+run the same address and URI sequence. NeverD measures parsing and its normal
+`MainWindow::openLink`; IDA measures `open_ida_link` through IDAPython. Each sample
+checks the destination cursor and ends on the event-loop turn after the actual
+disassembly viewport paints. Both request a viewport update even if the target
+is already displayed. IDA's observer uses Python/PySide6; NeverD's uses C++.
+The runner rejects missed targets, active background analysis, changed inputs
+or build artifacts, and retains the raw per-process reports and logs.
+
+These are warmed navigation API and Qt painting measurements. They exclude
+typing, dialog interaction, CLI startup, IPC forwarding, hardware presentation
+and cold analysis/decompilation. Xvfb results do not qualify native display
+performance on Linux, Windows or macOS. Record Qt versions and viewport sizes
+alongside the result; repeat with representative inputs before making broader
+claims.
+
 ## Large-function pseudocode latency
 
 Measure fixed function entries in fresh worker processes, retaining the first
@@ -197,6 +231,8 @@ over content the worker has not served yet and then once more:
   without a frame before the next one counts as missed);
 - jumps to up to 24 functions spread over the function list, until the
   listing has painted the jump's lines;
+- address and function deep links over the same functions, eight passes each,
+  including URL parsing and the target listing's painted frame;
 - control-flow graphs of the same functions, until the complete graph painted;
 - pseudocode of the same functions, until the decompiled text painted.
 

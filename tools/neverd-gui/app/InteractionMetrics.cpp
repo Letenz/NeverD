@@ -23,7 +23,7 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int ReportSchema = 1;
+constexpr int ReportSchema = 2;
 /// Scroll ticks in one pass, one per 60 Hz frame.
 constexpr int ScrollTicks = 300;
 constexpr int FrameMs = 16;
@@ -104,6 +104,8 @@ void InteractionMetrics::begin() {
           // follow every graph's function.
           runSteps({scrollStep("scroll_cold", 1), scrollStep("scroll_warm", -1),
                     jumpStep("jump_cold"), jumpStep("jump_warm"),
+                    jumpStep("link_addresses", LinkResource::Addresses),
+                    jumpStep("link_functions", LinkResource::Functions),
                     graphStep("graph_cold"), graphStep("graph_warm"),
                     pseudocodeStep("pseudocode_cold"),
                     pseudocodeStep("pseudocode_warm")});
@@ -175,18 +177,34 @@ InteractionMetrics::Step InteractionMetrics::scrollStep(const char *name,
   };
 }
 
-InteractionMetrics::Step InteractionMetrics::jumpStep(const char *name) {
-  return [this, name](Done done) {
+InteractionMetrics::Step
+InteractionMetrics::jumpStep(const char *name,
+                             std::optional<LinkResource> resource) {
+  return [this, name, resource](Done done) {
     auto *disassembly = window_.disassembly();
     disassembly->setGraphMode(false);
     auto *listing = disassembly->listing();
     auto series = std::make_shared<Series>();
+    const int count =
+        int(samples_.size()) *
+        (resource ? ::neverd::limits::gui::kInteractionMetricsLinkPasses : 1);
     auto next = std::make_shared<std::function<void(int)>>();
     *next = [=, this](int index) {
-      if (index == samples_.size()) {
+      if (index == count) {
         record(name, *series);
         done();
         return;
+      }
+      const Address address = samples_[index % samples_.size()];
+      QString uri;
+      if (resource) {
+        DeepLink link;
+        link.scheme = QStringLiteral("ida");
+        link.input = session_.fileName();
+        link.resource = *resource;
+        link.ea = address;
+        link.view = LinkView::Disasm;
+        uri = formatDeepLink(link);
       }
       const qint64 start = clock_.nsecsElapsed();
       auto over = std::make_shared<bool>(false);
@@ -200,7 +218,9 @@ InteractionMetrics::Step InteractionMetrics::jumpStep(const char *name) {
         disconnect(*settled);
         limit->stop();
         limit->deleteLater();
-        QJsonObject sample{{"address", hexAddress(samples_[index])}};
+        QJsonObject sample{{"address", hexAddress(address)}};
+        if (!uri.isEmpty())
+          sample["uri"] = uri;
         if (failure.isEmpty()) {
           const double ms = (clock_.nsecsElapsed() - start) / 1.0e6;
           series->ms.append(ms);
@@ -214,14 +234,30 @@ InteractionMetrics::Step InteractionMetrics::jumpStep(const char *name) {
       };
       *settled = connect(listing, &ListingView::jumpSettled, this, [=, this] {
         disconnect(*settled);
-        afterPaint(listing->viewport(), [complete] { complete({}); });
+        afterPaint(listing->viewport(), [=] {
+          complete(!listing->jumpPending() && listing->currentItem() == address
+                       ? QString()
+                       : QStringLiteral("listing did not reach the target"));
+        });
       });
       connect(limit, &QTimer::timeout, this,
               [complete] { complete(QStringLiteral("timeout")); });
       limit->start(::neverd::limits::gui::kInteractionMetricsSampleTimeoutMs);
       // What a jump does: navigate the disassembly, which the other views
       // follow.
-      window_.disassembly()->navigate(samples_[index]);
+      if (resource) {
+        const auto parsed = parseDeepLink(uri);
+        if (!parsed.link) {
+          complete(parsed.error);
+          return;
+        }
+        window_.openLink(*parsed.link, [complete](const QString &error) {
+          if (!error.isEmpty())
+            complete(error);
+        });
+      } else {
+        disassembly->navigate(address);
+      }
     };
     (*next)(0);
   };
@@ -384,6 +420,9 @@ bool InteractionMetrics::eventFilter(QObject *object, QEvent *event) {
 
 void InteractionMetrics::record(const char *name, const Series &series) {
   auto phase = summary(series.ms, series.missed);
+  phase["analysis_complete"] = session_.analysisComplete();
+  const auto *viewport = window_.disassembly()->listing()->viewport();
+  phase["listing_viewport"] = QJsonArray{viewport->width(), viewport->height()};
   if (!series.detail.isEmpty())
     phase["detail"] = series.detail;
   phases_.insert(QLatin1String(name), phase);
@@ -401,11 +440,14 @@ void InteractionMetrics::finish(bool success, const QString &reason) {
       {"success", success},
       {"failure_reason", reason},
       {"timeout_ms", timeoutMs_},
+      {"sample_timeout_ms",
+       ::neverd::limits::gui::kInteractionMetricsSampleTimeoutMs},
       {"qt_version", qVersion()},
       {"platform_plugin", QApplication::platformName()},
       {"os", QSysInfo::prettyProductName()},
       {"architecture", QSysInfo::currentCpuArchitecture()},
       {"file", session_.metadata().value("path")},
+      {"input_sha256", session_.metadata().value("sha256")},
       {"function_count", session_.metadata().value("function_count")},
       {"samples", samples},
       {"phases", phases_},
