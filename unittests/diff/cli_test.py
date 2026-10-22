@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Public CLI/C ABI parity over compiled, owned native code; no execution."""
+import argparse
+import ctypes
+import json
+import pathlib
+import subprocess
+import tempfile
+
+
+def run(args, expected):
+    result = subprocess.run(args, text=True, capture_output=True, timeout=60)
+    assert result.returncode in expected, (args, result.returncode, result.stdout, result.stderr)
+    return result
+
+
+def stable(document):
+    document.pop("timings", None)
+    return document
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--neverd", required=True)
+    parser.add_argument("--library", required=True)
+    parser.add_argument("--compiler", required=True)
+    parser.add_argument("--fixture", required=True)
+    args = parser.parse_args()
+    lib = ctypes.CDLL(args.library)
+    pointer = ctypes.c_void_p
+    lib.neverd_session_create.restype = pointer
+    lib.neverd_session_load.argtypes = [pointer, ctypes.c_char_p]
+    lib.neverd_session_destroy.argtypes = [pointer]
+    lib.neverd_comparison_create.restype = pointer
+    lib.neverd_comparison_run.argtypes = [pointer, pointer, pointer, ctypes.c_char_p, pointer, pointer]
+    lib.neverd_comparison_export_json.argtypes = [pointer]
+    lib.neverd_comparison_export_json.restype = pointer
+    lib.neverd_comparison_impact_json.argtypes = [pointer, ctypes.c_char_p]
+    lib.neverd_comparison_impact_json.restype = pointer
+    lib.neverd_comparison_destroy.argtypes = [pointer]
+    lib.neverd_free_string.argtypes = [pointer]
+    with tempfile.TemporaryDirectory(prefix="neverd-diff-cli-") as folder:
+        root = pathlib.Path(folder)
+        for limit in (17, 9):
+            run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",
+                 f"-DPATCH_LIMIT={limit}", args.fixture, "-o", str(root / f"{limit}.o")], {0})
+        a, b = str(root / "17.o"), str(root / "9.o")
+        base = [args.neverd, "diff", "--structural", "-a", a, "-b", b]
+        saved = root / "review.nddiff"
+        result = run(base + ["--json", "--save", str(saved)], {2, 3})
+        doc = json.loads(result.stdout)
+        assert doc["schema"] == "neverd.bindiff"
+        assert doc["state"] == "complete"
+        assert doc["matches"]
+        assert any("constants" in row["changes"] for row in doc["matches"])
+        assert json.loads(saved.read_text()) == doc
+        assert "diff:" in result.stderr
+        reopen = json.loads(run(base + ["--json", "--reopen", str(saved)], {2, 3}).stdout)
+        assert reopen == doc
+        functions = json.loads(run(base + ["--list", "all", "--limit", "1"], {2, 3}).stdout)
+        assert len(functions["items"]) == 1 and functions["next_offset"] == 1
+        next_page = json.loads(run(base + ["--list", "all", "--offset", "1", "--limit", "1"], {2, 3}).stdout)
+        assert next_page["items"][0]["address"] != functions["items"][0]["address"]
+        detail = json.loads(run(base + ["--func", "checked", "--json"], {2, 3}).stdout)
+        assert detail["primary"]["function"]["name"] == "checked"
+        assert any(row["kind"] == "constant" for row in detail["rows"])
+        checked = detail["primary"]["function"]["address"]
+        assert json.loads(run(base + ["--func", checked, "--json"], {2, 3}).stdout) == detail
+        assert "primary function not found" in run(base + ["--func", "check", "--json"], {1}).stderr
+        changes_args = ["--changes-function", checked]
+        native_changes = json.loads(run(base + changes_args, {2, 3}).stdout)
+        assert native_changes["state"] == "complete" and native_changes["rows"]
+        assert native_changes["primary_ssa"]["availability"] == "not_requested"
+        changes = json.loads(run(base + changes_args + ["--dataflow"], {2, 3}).stdout)
+        assert changes["rows"] and changes["primary_ssa"]["availability"] == "available"
+        assert changes["fix_presence"] == "not_assessed" and changes["semantic_validation"] == "not_performed"
+        assert any("constant" in row["kinds"] for row in changes["rows"])
+        limited = json.loads(run(base + changes_args + ["--changes-max-work", "1"], {3}).stdout)
+        assert limited["state"] == "resource_limited" and not limited["rows"]
+        run(base + ["--changes-max-rows", "1"], {1})
+        run(base + changes_args + ["--list", "all"], {1})
+        run(base + changes_args + ["--changes-context", "authorization"], {1})
+        journal_saved, record_path = root / "cases.nddiff", root / "record.json"
+        record = {"primary": checked, "secondary": detail["secondary"]["function"]["address"],
+                  "case": "owned-cli-case", "author": "CLI fixture analyst",
+                  "note": "Manual fixture assessment, no engine proof.", "reference": "owned-test:cli",
+                  "assessment": "candidate_fix", "expected_head": ""}
+        record_path.write_text(json.dumps(record))
+        history = json.loads(run(base + ["--review-record", str(record_path), "--save", str(journal_saved), "--list", "reviews"], {2, 3}).stdout)
+        assert history["total"] == 1 and history["rows"][0]["source"] == "analyst"
+        assert history["rows"][0]["semantic_validation"] == "not_performed"
+        reopened = json.loads(run(base + ["--reopen", str(journal_saved), "--list", "reviews"], {2, 3}).stdout)
+        assert reopened == history
+        run(base + ["--review-record", str(record_path)], {1})
+        run(base + ["--reopen", str(journal_saved), "--review-record", str(record_path), "--save", str(journal_saved)], {1})
+        record["expected_head"], record["assessment"] = history["head"], "patch_present"
+        record_path.write_text(json.dumps(record))
+        latest = json.loads(run(base + ["--reopen", str(journal_saved), "--review-record", str(record_path),
+                                       "--save", str(journal_saved), "--list", "reviews", "--review-latest"], {2, 3}).stdout)
+        assert latest["record_count"] == 2 and latest["total"] == 1
+        assert latest["rows"][0]["supersedes"] == history["head"]
+        run(base + ["--review-case", "owned-cli-case"], {1})
+        impact_args = ["--impact-function", checked]
+        impact = json.loads(run(base + impact_args, {2, 3}).stdout)
+        assert impact["state"] == "complete" and impact["function_count"] >= 2, impact
+        assert any(row["name"] == "entry" and row["depth"] == 1 for row in impact["rows"]), impact
+        assert impact["assessment"] == "possible_call_reachability"
+        assert impact["parameter_return_binding"] == "not_modeled"
+        call_sites = json.loads(run(base + impact_args + ["--impact-kind", "sites"], {2, 3}).stdout)
+        assert call_sites["rows"] and all(row["instruction"]["bytes"] for row in call_sites["rows"])
+        entry_row = next(row["row"] for row in impact["rows"] if row["name"] == "entry")
+        path = json.loads(run(base + impact_args + ["--impact-kind", "path", "--impact-witness", str(entry_row)], {2, 3}).stdout)
+        assert path["total"] == 1 and path["rows"][0]["caller"]["name"] == "entry"
+        frontier = json.loads(run(base + impact_args + ["--impact-depth", "0", "--impact-kind", "frontier"], {3}).stdout)
+        assert frontier["state"] == "resource_limited" and frontier["total"] > 0
+        assert json.loads(run(base + impact_args + ["--reopen", str(saved)], {2, 3}).stdout) == impact
+        run(base + ["--impact-depth", "0"], {1})
+        run(base + impact_args + ["--impact-kind", "path"], {1})
+        run(base + impact_args + ["--list", "all"], {1})
+        same = json.loads(run([args.neverd, "diff", "--structural", "-a", a, "-b", a, "--json"], {0, 3}).stdout)
+        assert all(not row["changes"] for row in same["matches"])
+        legacy = json.loads(run([args.neverd, "diff", "-a", a, "-b", b, "--json"], {0}).stdout)
+        assert "schema" not in legacy and "matched" in legacy
+        run(base + ["--profile", "unsupported", "--json"], {1})
+        options = root / "options.json"
+        options.write_text(json.dumps({"max_instructions": 1}))
+        limited = json.loads(run(base + ["--options", str(options), "--json"], {3}).stdout)
+        assert limited["state"] == "resource_limited"
+        # A saved result refuses the other direction; the old saved file survives.
+        run([args.neverd, "diff", "--structural", "-a", b, "-b", a,
+             "--reopen", str(saved), "--save", str(saved), "--json"], {1})
+        assert json.loads(saved.read_text()) == doc
+        # The exact same C API is the authority for CLI output.
+        sa, sb, comparison = lib.neverd_session_create(), lib.neverd_session_create(), lib.neverd_comparison_create()
+        try:
+            assert lib.neverd_session_load(sa, a.encode()) == 1
+            assert lib.neverd_session_load(sb, b.encode()) == 1
+            assert lib.neverd_comparison_run(comparison, sa, sb, b"{}", None, None) == 1
+            text = lib.neverd_comparison_export_json(comparison)
+            try:
+                api = json.loads(ctypes.string_at(text))
+            finally:
+                lib.neverd_free_string(text)
+            assert stable(api) == stable(doc)
+            text = lib.neverd_comparison_impact_json(comparison, json.dumps({"seeds": [checked]}).encode())
+            assert text
+            try:
+                assert json.loads(ctypes.string_at(text)) == impact
+            finally:
+                lib.neverd_free_string(text)
+        finally:
+            lib.neverd_comparison_destroy(comparison)
+            lib.neverd_session_destroy(sa)
+            lib.neverd_session_destroy(sb)
+        # Owned assembly gives exact split boundaries independent of compiler heuristics.
+        region_fixture = pathlib.Path(args.fixture).with_name("region_fixture.S")
+        for label, flags in (("whole", []), ("split", ["-DREGION_SPLIT=1"])):
+            run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", *flags, str(region_fixture), "-o", str(root / f"{label}.o")], {0})
+        regions_base = [args.neverd, "diff", "--structural", "-a", str(root / "whole.o"), "-b", str(root / "split.o")]
+        regions_saved = root / "regions.nddiff"
+        regions = json.loads(run(regions_base + ["--regions", "--json", "--save", str(regions_saved)], {2, 3}).stdout)
+        assert regions["regions"]["state"] == "complete"
+        page = json.loads(run(regions_base + ["--list", "regions", "--region-kind", "split", "--limit", "1"], {2, 3}).stdout)
+        assert page["total"] == 1, page
+        candidate = page["items"][0]
+        assert candidate["primary_function_count"] == 1 and candidate["secondary_function_count"] == 2
+        anchors = json.loads(run(regions_base + ["--region", candidate["id"], "--limit", "1"], {2, 3}).stdout)
+        assert anchors["total"] == 2 and anchors["next_offset"] == 1
+        rows = json.loads(run(regions_base + ["--region", candidate["id"], "--region-anchor", str(anchors["items"][0]["anchor"]), "--limit", "2"], {2, 3}).stdout)
+        assert rows["total"] == 5 and len(rows["rows"]) == 2
+        assert json.loads(run(regions_base + ["--reopen", str(regions_saved), "--json"], {2, 3}).stdout) == regions
+        run(regions_base + ["--region", "missing"], {1})
+        options.write_text(json.dumps({"regions": {"max_anchors": 1}}))
+        partial_saved = root / "regions-partial.nddiff"
+        partial = json.loads(run(regions_base + ["--options", str(options), "--json", "--save", str(partial_saved)], {3}).stdout)
+        assert partial["regions"]["anchor_count"] == 1 and not partial["regions"]["hypothesis_count"]
+        ungrouped = json.loads(run(regions_base + ["--reopen", str(partial_saved), "--list", "region-anchors"], {3}).stdout)
+        assert ungrouped["total"] == 1 and ungrouped["hypothesis"] is None
+        original_rows = json.loads(run(regions_base + ["--reopen", str(partial_saved), "--region-anchor", "0", "--limit", "1"], {3}).stdout)
+        assert original_rows["total"] == 5 and len(original_rows["rows"]) == 1
+        flow_saved = root / "dependencies.nddiff"
+        flow = json.loads(run(base + ["--dataflow", "--json", "--save", str(flow_saved)], {2, 3}).stdout)
+        entries = flow["dataflow"]["primary"]["entries"]
+        call_arguments = [node for row in entries if row["availability"] == "available"
+                          for node in row["graph"]["nodes"]
+                          if node["opcode"] in ("CALL", "INDIR_CALL") and node["call_argument_count"] > 0]
+        assert call_arguments, [(row["function"], row["availability"], row.get("reason")) for row in entries]
+        assert all(node["call_argument_begin"] >= 0 for node in call_arguments)
+        available = next(row for row in entries if row["availability"] == "available")
+        function = available["function"]
+        node = next(index for index, row in enumerate(available["graph"]["nodes"]) if row["opcode"] == "INT_MULT")
+        inventory = json.loads(run(base + ["--list", "dataflow", "--limit", "1"], {2, 3}).stdout)
+        assert len(inventory["rows"]) == 1 and inventory["total"] == len(entries)
+        nodes = json.loads(run(base + ["--flow-function", function, "--limit", "2"], {2, 3}).stdout)
+        assert len(nodes["rows"]) == 2 and nodes["availability"] == "available"
+        sliced = json.loads(run(base + ["--flow-function", function, "--slice-node", str(node), "--limit", "1"], {2, 3}).stdout)
+        assert sliced["state"] == "complete" and len(sliced["rows"]) == 1
+        assert sliced["semantic_validation"] == "not_performed"
+        assert json.loads(run(base + ["--reopen", str(flow_saved), "--json"], {2, 3}).stdout) == flow
+        run(base + ["--slice-node", "0"], {1})
+        ssa_options = root / "ssa-region-options.json"
+        ssa_options.write_text(json.dumps({"flow_regions": {"min_nodes": 2}}))
+        ssa_saved = root / "ssa-regions.nddiff"
+        ssa = json.loads(run(base + ["--flow-regions", "--options", str(ssa_options), "--json", "--save", str(ssa_saved)], {2, 3}).stdout)
+        assert ssa["flow_regions"]["state"] == "complete", ssa["flow_regions"]
+        ssa_base = base + ["--reopen", str(ssa_saved)]
+        ssa_page = json.loads(run(ssa_base + ["--list", "flow-regions", "--limit", "1"], {2, 3}).stdout)
+        assert ssa_page["total"] > 0 and len(ssa_page["items"]) == 1, ssa_page
+        ssa_id = ssa_page["items"][0]["id"]
+        ssa_anchors = json.loads(run(ssa_base + ["--flow-region", ssa_id, "--limit", "1"], {2, 3}).stdout)
+        ssa_anchor = ssa_anchors["items"][0]["anchor"]
+        ssa_nodes = json.loads(run(ssa_base + ["--flow-region-anchor", str(ssa_anchor), "--limit", "1"], {2, 3}).stdout)
+        assert len(ssa_nodes["rows"]) == 1 and ssa_nodes["view"] == "nodes"
+        assert ssa_nodes["analysis"]["semantic_validation"] == "not_performed"
+        ssa_blocks = json.loads(run(ssa_base + ["--flow-region-anchor", str(ssa_anchor), "--flow-region-coordinates", "phi_blocks"], {2, 3}).stdout)
+        assert ssa_blocks["view"] == "phi_blocks"
+        assert json.loads(run(ssa_base + ["--json"], {2, 3}).stdout) == ssa
+        run(base + ["--flow-region", "absent"], {1})
+        run(base + ["--flow-region-coordinates", "phi_blocks"], {1})
+        print("compiled ELF comparison, CLI/C API parity, paging, deltas, persistence, failure and budget checks passed")
+
+
+if __name__ == "__main__":
+    main()

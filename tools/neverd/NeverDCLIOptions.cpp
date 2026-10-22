@@ -17,6 +17,7 @@
 #include "ResourceLimits.h"
 
 #include "neverd/dalvik/Budget.h"
+#include "neverd/diff/Limits.h"
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/ExecutionBackend.h"
 #include "neverd/emulation/ExecutionCLIStrings.h"
@@ -1143,6 +1144,12 @@ cl::list<std::string> TypesDeclare(
     cl::desc("Add the types this file declares first: C (.h, .c), C++ (.hpp, "
              ".cpp), Rust (.rs) or Go (.go); repeat for more"),
     cl::value_desc("file"), cl::sub(TypesCmd));
+cl::opt<bool> TypesMergePrototypes(
+    "merge-prototypes",
+    cl::desc("Convert independent --declare providers: import only missing "
+             "prototypes from later files and prefix conflicting types with "
+             "their file stems; requires --data-model without a binary"),
+    cl::sub(TypesCmd));
 cl::opt<bool>
     TypesSave("save",
               cl::desc("Persist --declare types in the binary's project for "
@@ -1457,6 +1464,216 @@ cl::opt<std::string> DiffFunc("func",
                               cl::init(""), cl::sub(DiffCmd));
 
 cl::opt<bool> DiffJson("json", cl::desc("Output as JSON"), cl::sub(DiffCmd));
+
+cl::opt<bool>
+    DiffStructural("structural",
+                   cl::desc("Compare decoded instructions and control flow"),
+                   cl::sub(DiffCmd));
+cl::opt<std::string> DiffProfile("profile",
+                                 cl::desc("Structural comparison profile"),
+                                 cl::init("native-x86-v1"), cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffOptions("options", cl::desc("Structural comparison options JSON file"),
+                cl::sub(DiffCmd));
+cl::opt<std::string> DiffSave("save",
+                              cl::desc("Save versioned .nddiff comparison"),
+                              cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffReopen("reopen",
+               cl::desc("Restore .nddiff against both current inputs"),
+               cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffOverrides("overrides",
+                  cl::desc("Apply JSON array of match/unmatch/confirm edits"),
+                  cl::sub(DiffCmd));
+cl::opt<bool> DiffIgnoreNames("ignore-names",
+                              cl::desc("Do not use symbol names to match"),
+                              cl::sub(DiffCmd));
+cl::opt<bool> DiffRegions(
+    "regions",
+    cl::desc("Analyze overlapping native region and transformation hypotheses"),
+    cl::sub(DiffCmd));
+cl::opt<bool>
+    DiffDataFlow("dataflow",
+                 cl::desc("Capture bounded native SSA dependency evidence"),
+                 cl::sub(DiffCmd));
+cl::opt<bool>
+    DiffFlowRegions("flow-regions",
+                    cl::desc("Analyze verified finite SSA region hypotheses"),
+                    cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffFlowRegion("flow-region",
+                   cl::desc("Page anchors of an SSA region hypothesis ID"),
+                   cl::sub(DiffCmd));
+cl::opt<unsigned> DiffFlowRegionAnchor(
+    "flow-region-anchor",
+    cl::desc("Page paired SSA nodes of a global anchor index"),
+    cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffFlowRegionCoordinates("flow-region-coordinates",
+                              cl::desc("SSA anchor page: nodes or phi_blocks"),
+                              cl::init("nodes"), cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffFlowFunction("flow-function",
+                     cl::desc("Page SSA evidence at a function entry address"),
+                     cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffFlowSide("flow-side",
+                 cl::desc("SSA evidence side: primary or secondary"),
+                 cl::init("primary"), cl::sub(DiffCmd));
+cl::opt<std::string> DiffFlowKind("flow-kind",
+                                  cl::desc("SSA page kind: nodes or blocks"),
+                                  cl::init("nodes"), cl::sub(DiffCmd));
+cl::opt<unsigned>
+    DiffSliceNode("slice-node",
+                  cl::desc("Slice dependencies of a node in --flow-function"),
+                  cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffSliceDirection("slice-direction",
+                       cl::desc("Dependency slice: backward or forward"),
+                       cl::init("backward"), cl::sub(DiffCmd));
+cl::opt<bool> DiffSliceDataOnly(
+    "slice-data-only",
+    cl::desc("Exclude control dependencies from the SSA slice"),
+    cl::sub(DiffCmd));
+cl::opt<std::string> DiffReviewRecord(
+    "review-record",
+    cl::desc("Append an explicit analyst record from JSON; requires --save"),
+    cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffReviewCase("review-case",
+                   cl::desc("Filter --list reviews by exact case identifier"),
+                   cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffReviewFunction("review-function",
+                       cl::desc("Filter --list reviews by function entry"),
+                       cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffReviewSide("review-side",
+                   cl::desc("Review function input: primary or secondary"),
+                   cl::init("primary"), cl::sub(DiffCmd));
+cl::opt<bool> DiffReviewLatest(
+    "review-latest",
+    cl::desc("Show latest analyst assessment per case/function pair"),
+    cl::sub(DiffCmd));
+cl::opt<std::string> DiffValidationFunction(
+    "validate-function",
+    cl::desc("Check bounded lifted scalar returns of an accepted pair"),
+    cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffValidationSide("validation-side",
+                       cl::desc("Validation input: primary or secondary"),
+                       cl::init("primary"), cl::sub(DiffCmd));
+cl::opt<unsigned> DiffValidationInstructions(
+    "validation-max-instructions",
+    cl::desc("Native admission limit per validated function"),
+    cl::init(::neverd::limits::diff::kDefaultValidationNativeInstructions),
+    cl::sub(DiffCmd));
+cl::opt<unsigned long long>
+    DiffValidationWork("validation-max-work",
+                       cl::desc("Maximum scalar proof work"), cl::sub(DiffCmd));
+cl::opt<std::string> DiffChangesFunction(
+    "changes-function",
+    cl::desc(
+        "Review local changes in an accepted function pair by entry address"),
+    cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffChangesSide("changes-side",
+                    cl::desc("Change review input: primary or secondary"),
+                    cl::init("primary"), cl::sub(DiffCmd));
+cl::opt<std::string> DiffChangesContext(
+    "changes-context",
+    cl::desc("Filter review: all, predicate_dependency, return_dependency, "
+             "call_argument_dependency or memory_write_dependency"),
+    cl::init("all"), cl::sub(DiffCmd));
+cl::opt<unsigned>
+    DiffChangesRows("changes-max-rows",
+                    cl::desc("Maximum inspected native alignment rows"),
+                    cl::init(::neverd::limits::diff::kDefaultObservationRows),
+                    cl::sub(DiffCmd));
+cl::opt<unsigned>
+    DiffChangesCount("changes-max-observations",
+                     cl::desc("Maximum retained local change observations"),
+                     cl::init(::neverd::limits::diff::kDefaultObservations),
+                     cl::sub(DiffCmd));
+cl::opt<unsigned long long>
+    DiffChangesWork("changes-max-work",
+                    cl::desc("Maximum change review graph and row work"),
+                    cl::init(::neverd::limits::diff::kDefaultObservationWork),
+                    cl::sub(DiffCmd));
+cl::opt<std::string> DiffImpactFunction(
+    "impact-function",
+    cl::desc("Trace native call paths from comma-separated function entries"),
+    cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffImpactSide("impact-side",
+                   cl::desc("Call path input: primary or secondary"),
+                   cl::init("primary"), cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffImpactDirection("impact-direction",
+                        cl::desc("Call path direction: callers or callees"),
+                        cl::init("callers"), cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffImpactKind("impact-kind",
+                   cl::desc("Call path page: functions, entrypoints, sites, "
+                            "boundaries, frontier, path or effects"),
+                   cl::init("functions"), cl::sub(DiffCmd));
+cl::opt<unsigned>
+    DiffImpactWitness("impact-witness",
+                      cl::desc("Retained function row for --impact-kind path"),
+                      cl::sub(DiffCmd));
+cl::opt<unsigned> DiffImpactDepth(
+    "impact-depth", cl::desc("Maximum call path depth (0: seeds only)"),
+    cl::init(::neverd::limits::diff::kDefaultImpactDepth), cl::sub(DiffCmd));
+cl::opt<unsigned> DiffImpactFunctions(
+    "impact-max-functions", cl::desc("Maximum retained call path functions"),
+    cl::init(::neverd::limits::diff::kDefaultImpactFunctions),
+    cl::sub(DiffCmd));
+cl::opt<unsigned> DiffImpactSites(
+    "impact-max-sites", cl::desc("Maximum indexed call and boundary sites"),
+    cl::init(::neverd::limits::diff::kDefaultImpactSites), cl::sub(DiffCmd));
+cl::opt<unsigned long long>
+    DiffImpactWork("impact-max-work",
+                   cl::desc("Maximum call path indexing and traversal work"),
+                   cl::init(::neverd::limits::diff::kDefaultImpactWork),
+                   cl::sub(DiffCmd));
+cl::opt<unsigned> DiffEffectRecords(
+    "effect-max-records", cl::desc("Maximum --impact-kind effects records"),
+    cl::init(::neverd::limits::diff::kDefaultEffectRecords), cl::sub(DiffCmd));
+cl::opt<unsigned long long> DiffEffectWork(
+    "effect-max-work", cl::desc("Maximum import-call contract review work"),
+    cl::init(::neverd::limits::diff::kDefaultEffectWork), cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffRegion("region", cl::desc("Page anchors of a region hypothesis ID"),
+               cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffRegionKind("region-kind",
+                   cl::desc("Filter region hypotheses by explanation"),
+                   cl::init("all"), cl::sub(DiffCmd));
+cl::opt<unsigned> DiffRegionAnchor(
+    "region-anchor",
+    cl::desc("Page original instructions of a global region anchor index"),
+    cl::sub(DiffCmd));
+cl::opt<double> DiffMinSimilarity(
+    "min-similarity", cl::desc("Minimum heuristic similarity"),
+    cl::init(::neverd::limits::diff::kDefaultMinimumSimilarity),
+    cl::sub(DiffCmd));
+cl::opt<unsigned long long>
+    DiffTimeout("timeout-ms",
+                cl::desc("Comparison timeout in milliseconds (0: no deadline)"),
+                cl::init(0), cl::sub(DiffCmd));
+cl::opt<std::string> DiffList(
+    "list",
+    cl::desc(
+        "Page all/matched/changed/ambiguous/unmatched functions, regions or "
+        "region-anchors, dataflow, flow-regions, flow-region-anchors or "
+        "reviews"),
+    cl::sub(DiffCmd));
+cl::opt<unsigned> DiffOffset("offset", cl::desc("Inventory page offset"),
+                             cl::init(0), cl::sub(DiffCmd));
+cl::opt<unsigned> DiffLimit("limit", cl::desc("Inventory page size"),
+                            cl::init(::neverd::limits::diff::kDefaultPageSize),
+                            cl::sub(DiffCmd));
 
 //===----------------------------------------------------------------------===//
 // Annotate-specific options

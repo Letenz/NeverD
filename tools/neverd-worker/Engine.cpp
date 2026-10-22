@@ -1,6 +1,7 @@
 #include "Engine.h"
 
 #include "CodeEdits.h"
+#include "ComparisonService.h"
 #include "Contributions.h"
 #include "EngineSymbols.h"
 #include "GraphSnapshot.h"
@@ -2006,6 +2007,8 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   return metadata();
 }
 
+bool Engine::comparesBinaries() { return ComparisonService::supported(); }
+
 Json Engine::updateAnalysisNames(const Json &snapshot) {
   requireLoaded();
   if (!readOnly_ || restoredSnapshot_.is_null())
@@ -2099,6 +2102,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                          EncodedPayload *encoded) {
   if (encoded)
     encoded->reset();
+  if (operation.starts_with("comparison_")) {
+    if (!comparison_)
+      comparison_ = std::make_unique<ComparisonService>(atomicWrite);
+    return comparison_->execute(operation, p, loadProgress_, cancelled_);
+  }
   if (operation == "analysis_snapshot")
     return analysisSnapshot();
   if (operation == "analysis_restore")
@@ -4864,28 +4872,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   if (operation == "cfg_summary") {
     const auto key = hexAddress(address);
     // Client text metrics size each node to its formatted listing rows.
-    GraphMetrics metrics;
-    if (const auto it = p.find("metrics"); it != p.end() && it->is_object()) {
-      const auto number = [&](const char *field) {
-        const auto value = it->find(field);
-        if (value == it->end())
-          return 0.0;
-        if (!value->is_number() || !std::isfinite(value->get<double>()) ||
-            value->get<double>() < 0 ||
-            value->get<double>() > ::neverd::limits::worker::kMaxGraphMetric)
-          throw Error("invalid_request",
-                      std::string("metrics.") + field + " is out of range");
-        return value->get<double>();
-      };
-      metrics.charWidth = number("char_width");
-      metrics.lineHeight = number("line_height");
-      metrics.padding = number("padding");
-      metrics.titleHeight = number("title_height");
-    }
-    const auto metricsKey = std::to_string(metrics.charWidth) + "/" +
-                            std::to_string(metrics.lineHeight) + "/" +
-                            std::to_string(metrics.padding) + "/" +
-                            std::to_string(metrics.titleHeight);
+    const auto metrics = GraphMetrics::fromRequest(p);
+    const auto metricsKey = metrics.key();
     for (auto it = graphs_.begin(); it != graphs_.end(); ++it)
       if (it->address == key && it->metrics == metricsKey) {
         graphs_.splice(graphs_.begin(), graphs_, it);

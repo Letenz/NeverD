@@ -2018,7 +2018,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     std::vector<std::string> Arguments;
     for (const auto &Operand : E.Operands)
       Arguments.push_back(Operand ? exprStr(*Operand) : "");
-    return renderX86SystemStateExpression(Opts.TheArch, E, Arguments);
+    return renderX86SystemStateExpression(Opts.TheArch, E, Arguments,
+                                          Opts.Format == BinaryFormat::COFF,
+                                          HasCIntrinsics);
   }
   if (E.SourceCallHint)
     return renderSourceCallExpr(E);

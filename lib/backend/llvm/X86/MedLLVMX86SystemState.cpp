@@ -34,13 +34,14 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
   for (size_t I = 0; I < P->InputBytes.size(); ++I) {
     auto *T = sizeToType(P->InputBytes[I]);
     llvm::Value *V;
-    if (I == C.MemoryArgument) {
+    if (isX86SystemStateAddressArgument(Id, I)) {
+      const auto Space = I == C.MemoryArgument ? Op.MemoryAddressSpace
+                                               : NdMemoryAddressSpace::Default;
       const uint16_t AccessBytes =
-          C.Kind == X86SystemStateKind::Monitor ? 1 : 2;
+          x86SystemStateMemoryBytes(Id, x86SystemStateWidth(Id, Shape));
       V = resolveAtomicMemoryPtr(Op.Inputs[I + 1], AccessBytes,
-                                 sizeToType(AccessBytes), Builder,
-                                 Op.MemoryAddressSpace);
-      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+                                 sizeToType(AccessBytes), Builder, Space);
+      if (Space == NdMemoryAddressSpace::Default)
         T = V->getType();
     } else
       V = getVar(Op.Inputs[I + 1], Builder);

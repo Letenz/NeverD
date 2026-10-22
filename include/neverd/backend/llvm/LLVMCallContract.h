@@ -9,6 +9,7 @@
 #define NEVERD_BACKEND_LLVM_LLVMCALLCONTRACT_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
 #include <optional>
@@ -23,6 +24,8 @@ class Value;
 } // namespace llvm
 
 namespace neverd {
+inline constexpr llvm::StringLiteral
+    LLVMArgumentBanksAttribute("neverd.argument-banks");
 class LLVMSourceMap;
 /// Record independent register banks before argument values lose their
 /// physical register identities to propagation or LLVM optimization.

@@ -25,6 +25,10 @@ inline constexpr size_t BytecodeInstructionByteLimit = 4096;
 
 namespace neverd::limits::analysis {
 
+// Read-only scalar model construction and equivalence queries.
+inline constexpr uint64_t kLLVMScalarStopPollWork = 1024;
+inline constexpr uint64_t kLLVMScalarEquivalenceDefaultWork = 16777216;
+
 // include/neverd/analysis/BytecodeSource.h
 inline constexpr uint64_t kBytecodeSourceMaxOperations = 10000000;
 

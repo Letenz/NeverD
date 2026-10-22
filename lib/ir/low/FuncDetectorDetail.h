@@ -17,11 +17,34 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include <atomic>
+#include <functional>
 #include <optional>
 #include <set>
 
 namespace neverd {
 namespace func_detect_detail {
+
+/// Internal unwind marker; the public controlled detector translates it to
+/// nullopt only after every scan worker has joined.
+struct DiscoveryCancelled {};
+
+struct Cancellation {
+  const std::function<bool()> &Probe;
+  mutable std::atomic<bool> Requested{false};
+
+  void check() const {
+    if (Requested.load(std::memory_order_relaxed) || (Probe && Probe())) {
+      Requested.store(true, std::memory_order_relaxed);
+      throw DiscoveryCancelled{};
+    }
+  }
+};
+
+inline void checkCancellation(const Cancellation *Control) {
+  if (Control)
+    Control->check();
+}
 
 /// One step of the x86 call-target sweep: the instruction (or the byte that
 /// does not decode) at \p Addr, where the sweep goes next, and the direct
@@ -57,7 +80,8 @@ std::optional<CallScanStep> stepCallsX86(const BinaryImage &Img, Decoder &Dec,
 /// prologue, for the bounded decoder to verify.  For images with no other
 /// function metadata, binary files.
 void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
-                         std::set<va_t> &Out);
+                         std::set<va_t> &Out,
+                         const Cancellation *Control = nullptr);
 
 /// The code an i386 instruction names through a relocated four-byte
 /// immediate, such as `push offset handler` or `mov [esi+10h], offset
@@ -65,7 +89,8 @@ void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
 /// displacement names memory the instruction reads or writes, not code to
 /// run, and is left out.
 void scanCodeAddressImmediatesX86(const BinaryImage &Img, Decoder &Dec,
-                                  std::vector<std::pair<va_t, va_t>> &Out);
+                                  std::vector<std::pair<va_t, va_t>> &Out,
+                                  const Cancellation *Control = nullptr);
 
 /// Whether the x86 instruction at \p Insn lets the code address its
 /// immediate names escape: `push imm32` passes it as an argument and
@@ -75,29 +100,33 @@ bool isX86EscapingCodeImmediate(const BinaryImage &Img, va_t Insn);
 
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
-                         std::set<va_t> &Out);
+                         std::set<va_t> &Out,
+                         const Cancellation *Control = nullptr);
 void scanSegmentCallsARM(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
-                         std::set<va_t> &Out);
+                         std::set<va_t> &Out,
+                         const Cancellation *Control = nullptr);
 void scanSegmentCallsAArch64(const BinaryImage &Img, const Segment *Seg,
-                             va_t Start, va_t End, std::set<va_t> &Out);
+                             va_t Start, va_t End, std::set<va_t> &Out,
+                             const Cancellation *Control = nullptr);
 
 inline void scanSegmentCalls(const BinaryImage &Img, Decoder &Dec,
                              const Segment *Seg, va_t Start, va_t End,
-                             std::set<va_t> &Out) {
+                             std::set<va_t> &Out,
+                             const Cancellation *Control = nullptr) {
   switch (Img.Arch) {
   case Arch::AArch64:
-    scanSegmentCallsAArch64(Img, Seg, Start, End, Out);
+    scanSegmentCallsAArch64(Img, Seg, Start, End, Out, Control);
     return;
   case Arch::ARM:
-    scanSegmentCallsARM(Img, Dec, Seg, Start, End, Out);
+    scanSegmentCallsARM(Img, Dec, Seg, Start, End, Out, Control);
     return;
   case Arch::X86:
   case Arch::X64:
-    scanSegmentCallsX86(Img, Dec, Seg, Start, End, Out);
+    scanSegmentCallsX86(Img, Dec, Seg, Start, End, Out, Control);
     return;
   default:
-    scanSegmentCallsX86(Img, Dec, Seg, Start, End, Out);
+    scanSegmentCallsX86(Img, Dec, Seg, Start, End, Out, Control);
     return;
   }
 }

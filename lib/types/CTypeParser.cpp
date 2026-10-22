@@ -57,6 +57,8 @@ uint64_t packToken(PackAction Action, uint64_t Value) {
 
 /// The value of a #pragma neverd_header token, whose text is the header.
 constexpr uint64_t HeaderPragma = uint64_t(0xFF) << 32;
+/// A source unit's unannotated function types use the convention in Text.
+constexpr uint64_t DefaultConventionPragma = uint64_t(0xFE) << 32;
 
 /// Whether \p A and \p B lay their members out alike.
 bool sameLayout(const RecordDef &A, const RecordDef &B) {
@@ -316,6 +318,29 @@ private:
     const llvm::StringRef Name =
         Rest.take_while([](char C) { return llvm::isAlnum(C) || C == '_'; });
     Rest = Rest.drop_front(Name.size()).ltrim();
+    // Preprocessing does not preserve compiler defaults such as the WDK's
+    // x86 /Gz. A generated source unit supplies that default explicitly;
+    // rendered function declarations carry the convention themselves.
+    constexpr llvm::StringLiteral DefaultConventionDirective =
+        "neverd_default_calling_convention";
+    if (Name == "pragma" && Rest.starts_with(DefaultConventionDirective)) {
+      llvm::StringRef Arguments =
+          Rest.drop_front(DefaultConventionDirective.size()).trim();
+      if (!Arguments.consume_front("(") || !Arguments.consume_back(")")) {
+        problem(L, Col,
+                "#pragma neverd_default_calling_convention takes a "
+                "convention in parentheses");
+        return;
+      }
+      Token Pragma;
+      Pragma.Kind = TokenKind::Pragma;
+      Pragma.Text = Arguments.trim().str();
+      Pragma.Value = DefaultConventionPragma;
+      Pragma.Line = L;
+      Pragma.Column = Col;
+      Tokens.push_back(std::move(Pragma));
+      return;
+    }
     // The system header the declarations after it come from, as NeverD's
     // libraries of a system's headers name it: neverd_header("stdio.h"),
     // or neverd_header() for none.
@@ -766,6 +791,13 @@ private:
   void pragma(const Token &Pragma) {
     if (Pragma.Value == HeaderPragma) {
       Header = Pragma.Text;
+      return;
+    }
+    if (Pragma.Value == DefaultConventionPragma) {
+      DefaultConvention = conventionWord(Pragma.Text);
+      if (!Pragma.Text.empty() && !DefaultConvention)
+        fail(Pragma,
+             "unknown default calling convention '" + Pragma.Text + "'");
       return;
     }
     const auto Action = PackAction(Pragma.Value >> 32);
@@ -1649,14 +1681,13 @@ private:
         // An anonymous record, including Microsoft's named C extensions.
         if (Spec.Type->Kind == TypeExprKind::Record)
           Draft.Members.push_back({"", Spec.Type, false, 0, ""});
-        else if (!Cpp && !Spec.Typedef && (Spec.Defines || Spec.TypeName) &&
+        else if (!Cpp && !Spec.Typedef &&
                  libraryRecordABIOf(Library.recordABI()) ==
                      RecordABI::Microsoft &&
                  Spec.Type->Kind == TypeExprKind::Named) {
-          // Microsoft's C also admits an anonymous member defined with a
-          // tag or named by a typedef. Preserve its storage and promoted
-          // members, rather than treating it as a tag-only declaration such as
-          // struct S;.
+          // Microsoft's C admits both typedef and tagged anonymous members,
+          // including a reference to an existing tag: struct S;. This embeds
+          // the record, and an incomplete tag is an incomplete field error.
           if (const LocalType *Named = Library.resolve(Spec.Type->Name)) {
             if (Named->Record) {
               if (!Named->Record->Defined) {
@@ -2014,12 +2045,14 @@ private:
     const Attributes Outer = Declared;
     auto Restore = llvm::make_scope_exit([&] { Declared = Outer; });
     auto Function = std::make_shared<FunctionDef>();
-    if (PendingConvention) {
+    const auto Convention =
+        PendingConvention ? PendingConvention : DefaultConvention;
+    PendingConvention.reset();
+    if (Convention) {
       // A convention the target ignores, as 64-bit x86 does __stdcall, is
       // no convention of the function's.
-      if (pointerSize() < 8 || keptWide(*PendingConvention))
-        Function->Convention = *PendingConvention;
-      PendingConvention.reset();
+      if (pointerSize() < 8 || keptWide(*Convention))
+        Function->Convention = *Convention;
     }
     take(); // (
     if (accept(")"))
@@ -2440,6 +2473,7 @@ private:
   bool Failed = false;
   /// Open extern "C" and namespace blocks.
   unsigned Blocks = 0;
+  std::optional<CallingConvention> DefaultConvention;
   std::optional<CallingConvention> PendingConvention;
   /// What the attributes of the declarator being read say.
   Attributes Declared;

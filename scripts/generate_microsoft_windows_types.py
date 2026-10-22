@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate local Windows ARM64 type libraries from Microsoft's SDK/WDK.
+"""Generate local Windows type libraries from Microsoft's SDK/WDK.
 
 Microsoft's original headers, licenses and the generated declarations stay in
 the selected local directory. The SDK/WDK is a build-time input only. Configure
@@ -13,8 +13,10 @@ import argparse
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 
 import build_wdk_driver_fixtures as wdk
 
@@ -37,12 +39,26 @@ USER_HEADERS = (
     "fwpmu", "fltuser",
 )
 LIBRARIES = {
-    "WindowsKernelARM64": (KERNEL_HEADERS, ["km", "shared", "km/crt", "um"],
+    "WindowsKernel": (KERNEL_HEADERS, ["km", "shared", "km/crt", "um"],
                            ["-D_KERNEL_MODE=1", "-DNDIS680"]),
     # WDK's CRT supplies the Microsoft C runtime declarations required by the
     # SDK. It is the same pinned Microsoft package, never a host CRT or MinGW.
-    "WindowsUserARM64": (USER_HEADERS, ["um", "shared", "km/crt"],
+    "WindowsUser": (USER_HEADERS, ["um", "shared", "km/crt"],
                          ["-DSECURITY_WIN32=1"]),
+}
+# These official headers have incompatible same-named types (for example,
+# WinHTTP's UTF-16 URL_COMPONENTS versus WinINet's ANSI default). Parse each
+# provider on its own and import only the missing prototypes and their types.
+ISOLATED_PROVIDERS = {
+    "WindowsUser": (
+        ("WinHTTP", ("winsock2", "winhttp")),
+        ("HTTPServer", ("winsock2", "windows", "http")),
+    ),
+}
+TARGETS = {
+    "x64": ("X64", "x86_64-pc-windows-msvc", "LLP64", "_AMD64_"),
+    "x86": ("X86", "i686-pc-windows-msvc", "ILP32", "_X86_"),
+    "arm64": ("ARM64", "aarch64-pc-windows-msvc", "LLP64", "_ARM64_"),
 }
 
 
@@ -57,8 +73,9 @@ def run(command: list[str], log: Path, output: Path | None = None) -> str:
     return result.stdout
 
 
-def checked_types(neverd: str, source: Path, log: Path) -> dict:
-    result = json.loads(run([neverd, "types", "--data-model", "LLP64",
+def checked_types(neverd: str, source: Path, log: Path,
+                  model: str = "LLP64") -> dict:
+    result = json.loads(run([neverd, "types", "--data-model", model,
                              "--record-abi", "microsoft", "--declare",
                              str(source), "--keep-going", "--json"], log))
     if result["problems"]:
@@ -90,18 +107,97 @@ def record_layouts(text: str) -> dict:
     return {name: record for name, record in records.items() if "size" in record}
 
 
-def verify_layouts(original: str, generated: str) -> int:
+def verify_layouts(original: str, generated: str,
+                   renamed: dict[str, str] | None = None,
+                   required: list[str] | None = None) -> int:
     source, rendered = record_layouts(original), record_layouts(generated)
-    shared = source.keys() & rendered.keys()
-    if not shared:
+    renamed = renamed or {}
+    selected = (source.keys() & set(required) if required is not None
+                else source.keys() & rendered.keys())
+    if not selected and required is None:
         raise ValueError("Clang produced no shared named record layouts")
-    for name in sorted(shared):
-        a, b = source[name], rendered[name]
-        fields = a["fields"].keys() & b["fields"].keys()
+    for name in sorted(selected):
+        imported = renamed.get(name, name)
+        if imported not in rendered:
+            raise ValueError(f"imported record layout is missing: {name} -> {imported}")
+        a, b = source[name], rendered[imported]
         if (a["size"] != b["size"] or a["alignment"] != b["alignment"] or
-                any(a["fields"][field] != b["fields"][field] for field in fields)):
+                any(offset != b["fields"].get(field)
+                    for field, offset in a["fields"].items())):
             raise ValueError(f"official record layout changed: {name}: {a} != {b}")
-    return len(shared)
+    return len(selected)
+
+
+def merge_providers(base: str, primary: Path, output: Path,
+                    arguments: list[str], common: list[str], neverd: str,
+                    model: str, primary_layouts: str) -> list[dict]:
+    providers = ISOLATED_PROVIDERS.get(base, ())
+    if not providers:
+        return []
+    directory = output / (base + "-providers")
+    directory.mkdir(exist_ok=True)
+    units = []
+    dump = ["-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete"]
+    for name, headers in providers:
+        source = directory / (name + ".c")
+        source.write_text(include_headers(headers), encoding="utf-8")
+        # The CLI uses this file's stem as the provider prefix.
+        preprocessed = directory / (name + ".h")
+        command = arguments + ["-E", str(source)]
+        run(command, directory / (name + ".pre.log"), preprocessed)
+        parsed = checked_types(neverd, preprocessed, directory / (name + ".parse.log"), model)
+        layouts = run(arguments + dump + [str(source)],
+                      directory / (name + ".official-clang.log"),
+                      directory / (name + ".official-layouts.log"))
+        units.append({"name": name, "source": preprocessed, "headers": headers,
+                      "layouts": layouts, "parsed": parsed, "command": command})
+    command = [neverd, "types", "--data-model", model, "--record-abi", "microsoft",
+               "--declare", str(primary), "--merge-prototypes", "--all",
+               "--prototypes", "--spelling", "windows", "--no-offsets", "--json"]
+    for unit in units:
+        command += ["--declare", str(unit["source"])]
+    result = json.loads(run(command, directory / "merge.log", directory / "merge.json"))
+    if result.get("error") or result.get("problems"):
+        raise ValueError(f"official provider merge was refused; see {directory / 'merge.json'}")
+    imported = result.get("imports", [])
+    if len(imported) != len(units):
+        raise ValueError("official provider merge did not report every input")
+    with tempfile.TemporaryDirectory(dir=directory, prefix="merged-") as scratch:
+        temporary = Path(scratch) / primary.name
+        temporary.write_text(result["source"], encoding="utf-8")
+        reread = checked_types(neverd, temporary, directory / "roundtrip.log", model)
+        if (set(result["types"]) - set(reread["types"]) or
+                set(result["prototypes"]) - set(reread["prototypes"])):
+            raise ValueError("official provider declarations disappeared on round trip")
+        layouts = directory / "merged.layouts.h"
+        run([neverd, "types", "--data-model", model, "--record-abi", "microsoft",
+             "--declare", str(temporary), "--all", "--asserts", "--spelling",
+             "windows", "--no-offsets", "-o", str(layouts)], directory / "layouts-render.log")
+        generated_layouts = run(common + dump + ["-x", "c", str(layouts)],
+                                directory / "generated-clang.log",
+                                directory / "generated-layouts.log")
+        verify_layouts(primary_layouts, generated_layouts)
+        records = []
+        for index, (unit, report) in enumerate(zip(units, imported), 1):
+            if report["declaration"] != index or report["prefix"] != unit["name"]:
+                raise ValueError("official provider provenance does not match its input")
+            renamed = {entry["original"]: entry["name"] for entry in report["renamed"]}
+            count = verify_layouts(unit["layouts"], generated_layouts,
+                                   renamed, report["dependencies"])
+            records.append({"name": unit["name"], "headers": unit["headers"],
+                            "input_sha256": wdk.digest(unit["source"]),
+                            "parsed_prototypes": len(unit["parsed"]["prototypes"]),
+                            "verified_records": count, "import": report,
+                            "commands": [unit["command"], command]})
+        # Replace the primary only after the complete merge and compiler
+        # checks pass. The manifest remains absent until both libraries pass.
+        temporary.write_text(
+            "// Local declarations generated from Microsoft SDK/WDK.\n"
+            "// Source packages, commands and hashes: manifest.json.\n"
+            "// Original Microsoft notices: licenses/.\n" + result["source"],
+            encoding="utf-8")
+        temporary.replace(primary)
+    return records
 
 
 def include_headers(headers: tuple[str, ...]) -> str:
@@ -118,7 +214,80 @@ def include_headers(headers: tuple[str, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def generate(output: Path, cache: Path, neverd: str, clang: str) -> None:
+def compiler_defaults(kit: Path, architecture: str, library: str) -> tuple[list[str], str]:
+    """Keep the WDK's compiler default, which preprocessing alone discards."""
+    if architecture != "x86" or library != "WindowsKernel":
+        return [], ""
+    source = kit / f"c/build/{VERSION}/WindowsDriver.Common.props"
+    properties = ET.parse(source).getroot()
+    conventions = [item.text for item in properties.findall(
+        "./{*}ItemDefinitionGroup/{*}ClCompile/{*}CallingConvention")]
+    if conventions != ["StdCall"]:
+        raise ValueError(f"unrecognized WDK default calling convention in {source}")
+    return ["-Xclang", "-fdefault-calling-conv=stdcall"], "__stdcall"
+
+
+def combine_targets(output: Path, directories: list[Path]) -> None:
+    """Publish all target libraries only after every input has been verified."""
+    output.mkdir(parents=True, exist_ok=True)
+    manifest = output / "manifest.json"
+    manifest.unlink(missing_ok=True)
+    targets, libraries, seen = [], [], set()
+    common = None
+    for directory in directories:
+        target = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        arch = target.get("architecture")
+        if (target.get("schema") != 1 or target.get("provider") != "Microsoft SDK/WDK"
+                or arch not in TARGETS or arch in seen):
+            raise ValueError("invalid or duplicate Microsoft target manifest")
+        seen.add(arch)
+        expected = {base + TARGETS[arch][0] for base in LIBRARIES}
+        actual = [library["name"] for library in target["libraries"]]
+        if len(actual) != len(expected) or set(actual) != expected:
+            raise ValueError(f"incomplete Microsoft target libraries: {arch}")
+        identity = {key: target[key] for key in ["compiler", "packages", "licenses"]}
+        if common is not None and identity != common:
+            raise ValueError("Microsoft targets use different compilers, packages or licenses")
+        common = identity
+        for library in target["libraries"]:
+            header = directory / (library["name"] + ".h")
+            if wdk.digest(header) != library["sha256"]:
+                raise ValueError(f"changed Microsoft target header: {header}")
+            libraries.append(dict(library, architecture=arch))
+        for notice in target["licenses"]:
+            name = notice["file"]
+            if Path(name).name != name or wdk.digest(directory / "licenses" / name) != notice["sha256"]:
+                raise ValueError("changed Microsoft target license")
+        targets.append((directory, target))
+    if seen != set(TARGETS):
+        raise ValueError("all x86, x64 and ARM64 Microsoft target libraries are required")
+    for directory, target in targets:
+        for library in target["libraries"]:
+            name = library["name"] + ".h"
+            shutil.copy2(directory / name, output / name)
+    (output / "licenses").mkdir(exist_ok=True)
+    for notice in common["licenses"]:
+        shutil.copy2(targets[0][0] / "licenses" / notice["file"],
+                     output / "licenses" / notice["file"])
+    record = dict(common, provider="Microsoft SDK/WDK", schema=1,
+                  architecture="all", libraries=libraries,
+                  targets=[target for _, target in targets])
+    manifest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def generate(output: Path, cache: Path, neverd: str, clang: str,
+             architecture: str = "arm64") -> None:
+    if architecture == "all":
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "manifest.json").unlink(missing_ok=True)
+        directories = []
+        for arch in TARGETS:
+            directory = output / arch
+            generate(directory, cache, neverd, clang, arch)
+            directories.append(directory)
+        combine_targets(output, directories)
+        return
+    suffix, triple, model, macro = TARGETS[architecture]
     output.mkdir(parents=True, exist_ok=True)
     cache.mkdir(parents=True, exist_ok=True)
     manifest = output / "manifest.json"
@@ -130,7 +299,8 @@ def generate(output: Path, cache: Path, neverd: str, clang: str) -> None:
     selected = [f"c/Include/{VERSION}/{part}/"
                 for part in ("km", "shared", "um")]
     selected += ["LICENSE.txt", "Microsoft.Windows.WDK.x64.nuspec",
-                 "Microsoft.Windows.SDK.CPP.nuspec"]
+                 "Microsoft.Windows.SDK.CPP.nuspec",
+                 f"c/build/{VERSION}/WindowsDriver.Common.props"]
     inputs = wdk.extract(packages, kit, selected)
     licenses = output / "licenses"
     licenses.mkdir(exist_ok=True)
@@ -145,29 +315,35 @@ def generate(output: Path, cache: Path, neverd: str, clang: str) -> None:
     }, indent=2) + "\n", encoding="utf-8")
     include = kit / f"c/Include/{VERSION}"
     # The WDK package's x64 name identifies its host tools/libraries. Its
-    # architecture-conditional headers are compiled for ARM64 here; no host
-    # architecture definition or x64 structure is substituted.
-    common = [clang, "--target=aarch64-pc-windows-msvc", "-ffreestanding",
+    # architecture-conditional headers are compiled for the requested target;
+    # no host architecture definition or structure is substituted.
+    common = [clang, "--target=" + triple, "-ffreestanding",
               "-fms-extensions", "-fms-compatibility", "-Wno-invalid-token-paste",
               "-Wno-ignored-pragma-intrinsic", "-Wno-ignored-attributes",
               "-Wno-nonportable-include-path", "-Wno-pragma-pack",
-              "-Wno-microsoft-anon-tag", "-D_ARM64_=1",
+              "-Wno-microsoft-anon-tag", "-D" + macro + "=1",
               "-D_WIN32_WINNT=0x0A00", "-DNTDDI_VERSION=0x0A00000C",
               "-ivfsoverlay", str(overlay)]
     built = []
-    for name, (headers, directories, defines) in LIBRARIES.items():
+    for base, (headers, directories, defines) in LIBRARIES.items():
+        name = base + suffix
         source = output / (name + ".c")
         source.write_text(include_headers(headers), encoding="utf-8")
-        arguments = common + defines + [item for part in directories
+        defaults, convention = compiler_defaults(kit, architecture, base)
+        arguments = common + defines + defaults + [item for part in directories
                                         for item in ("-I", str(include / part))]
         preprocessed = output / (name + ".pre.c")
         command = arguments + ["-E", str(source)]
         run(command, output / (name + ".pre.log"), preprocessed)
-        read = checked_types(neverd, preprocessed, output / (name + ".parse.log"))
+        if convention:
+            preprocessed.write_text(
+                f"#pragma neverd_default_calling_convention({convention})\n" +
+                preprocessed.read_text(encoding="utf-8"), encoding="utf-8")
+        read = checked_types(neverd, preprocessed, output / (name + ".parse.log"), model)
         generated = output / (name + ".h")
         with tempfile.TemporaryDirectory(dir=output, prefix="render-") as scratch:
             temporary = Path(scratch) / generated.name
-            render = [neverd, "types", "--data-model", "LLP64", "--record-abi",
+            render = [neverd, "types", "--data-model", model, "--record-abi",
                       "microsoft", "--declare", str(preprocessed), "--all",
                       "--prototypes", "--spelling", "windows", "--no-offsets",
                       "-o", str(temporary)]
@@ -178,16 +354,16 @@ def generate(output: Path, cache: Path, neverd: str, clang: str) -> None:
                 "// Source packages, commands and hashes: manifest.json.\n"
                 "// Original Microsoft notices: licenses/.\n" + body,
                 encoding="utf-8")
-            reread = checked_types(neverd, temporary, output / (name + ".roundtrip.log"))
+            reread = checked_types(neverd, temporary, output / (name + ".roundtrip.log"), model)
             if (set(read["types"]) - set(reread["types"]) or
                     set(read["prototypes"]) - set(reread["prototypes"])):
                 raise ValueError(f"declarations disappeared while rendering {name}")
             # Independently compare the actual Microsoft headers with the
-            # emitted type declarations under the ARM64 compiler ABI. Function
+            # emitted type declarations under the target compiler ABI. Function
             # prototypes are excluded: target CRT builtin spellings need not
             # equal the renderer's fixed-width aliases.
             layouts = output / (name + ".layouts.h")
-            run([neverd, "types", "--data-model", "LLP64", "--record-abi",
+            run([neverd, "types", "--data-model", model, "--record-abi",
                  "microsoft", "--declare", str(temporary), "--all", "--asserts",
                  "--spelling", "windows", "--no-offsets", "-o", str(layouts)],
                 output / (name + ".layouts-render.log"))
@@ -200,12 +376,19 @@ def generate(output: Path, cache: Path, neverd: str, clang: str) -> None:
                                     output / (name + ".generated-layouts.log"))
             count = verify_layouts(original_layouts, generated_layouts)
             temporary.replace(generated)
+        providers = merge_providers(base, generated, output, arguments, common,
+                                     neverd, model, original_layouts)
+        final = checked_types(neverd, generated, output / (name + ".final.log"), model)
         built.append({"name": name, "sha256": wdk.digest(generated),
-                      "types": len(read["types"]), "verified_records": count,
+                      "types": len(final["types"]),
+                      "prototypes": len(final["prototypes"]),
+                      "verified_records": count, "providers": providers,
+                      "default_calling_convention": convention,
                       "commands": [command, render]})
-        print(f"Generated {name}: {body.splitlines()[0]}", flush=True)
+        print(f"Generated {name}: {len(final['types'])} types, "
+              f"{len(final['prototypes'])} prototypes", flush=True)
     record = {
-        "provider": "Microsoft SDK/WDK", "architecture": "arm64",
+        "provider": "Microsoft SDK/WDK", "architecture": architecture,
         "schema": 1, "libraries": built,
         "compiler": subprocess.check_output([clang, "--version"], text=True),
         "packages": [{"file": name, "url": url, "sha256": digest}
@@ -223,9 +406,11 @@ def main() -> None:
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--neverd", required=True)
     parser.add_argument("--clang", default="clang")
+    parser.add_argument("--architecture", choices=[*TARGETS, "all"], default="all")
     arguments = parser.parse_args()
     generate(arguments.output.resolve(), arguments.cache.resolve(),
-             str(Path(arguments.neverd).resolve()), arguments.clang)
+             str(Path(arguments.neverd).resolve()), arguments.clang,
+             arguments.architecture)
 
 
 if __name__ == "__main__":

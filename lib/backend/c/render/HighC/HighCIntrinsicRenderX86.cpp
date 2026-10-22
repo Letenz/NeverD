@@ -1414,6 +1414,8 @@ bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
     return true;
   switch (Id) {
   // What Microsoft's <intrin.h> declares and the GNU headers do not.
+  case Intrinsic::CetWrss:
+  case Intrinsic::CetWruss:
   case Intrinsic::Lidt:
   case Intrinsic::Sidt:
   case Intrinsic::Invlpg:
@@ -1956,21 +1958,6 @@ std::string renderX86TypedIntrinsicCall(
       HasCIntrinsics = true;
       return "__int2c()";
     }
-  }
-  // Shadow-stack writes take C operands through the MSVC intrinsics; an
-  // inline-asm operand cannot be a C expression.
-  if ((Call.IntrinsicId == I::CetWrss || Call.IntrinsicId == I::CetWruss) &&
-      Call.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-      Call.Operands.size() == 2 && Call.Operands[0] && Call.Operands[1] &&
-      Call.Operands[1]->Type &&
-      (Call.Operands[1]->Type->Size == 4 ||
-       Call.Operands[1]->Type->Size == 8)) {
-    const bool Is64 = Call.Operands[1]->Type->Size == 8;
-    HasCIntrinsics = true;
-    return std::string(Call.IntrinsicId == I::CetWrss ? "_wrss" : "_wruss") +
-           (Is64 ? "q((unsigned __int64)(" : "d((unsigned int)(") +
-           ExprFn(*Call.Operands[1]) + "), (void *)(uintptr_t)(" +
-           ExprFn(*Call.Operands[0]) + "))";
   }
   if (TheArch == Arch::X86 || TheArch == Arch::X64)
     if (std::string Compare =

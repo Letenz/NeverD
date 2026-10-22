@@ -868,6 +868,39 @@ def distributed_prefix_corpus(width, count):
     return rows
 
 
+
+def multiple_residual_corpus(width, count):
+    """Nonzero products with simultaneous unobserved high-bit factors.
+
+    The even-offset factors share a prefix but the odd residue rows retain
+    several independent disturbances. Nearby controls observe one extra bit,
+    so a first-order expansion may no longer discard the cross terms.
+    """
+    rows = []
+    for index in range(count):
+        kind = index % 128
+        control = kind >= 112
+        flavor = kind % 16
+        degree = 4 if control else (4, 8, 16, 24, 32, 48, 64)[kind // 16]
+        bits = 2 + (flavor % 4 == 3)
+        needed = bits + 1 if flavor < 8 else 2 * bits
+        if control:
+            needed = 2 * bits + 1
+        factors = []
+        for i in range(degree):
+            u, v = f"(y+{i})", f"(z+{2*i})"
+            high = (f"({u}&{-1 << bits})",
+                    f"({u}*{v}&{-1 << bits})",
+                    f"({u}<<{bits})",
+                    f"(({u}&-2)*({v}&{-1 << (bits-1)}))")[flavor % 4]
+            base = f"(x+{2*i})"
+            op = "+" if flavor % 8 >= 4 else "^"
+            factors.append(f"({base}{op}{high})")
+        rows.append(f"({3 << (width-needed)}*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -1010,7 +1043,7 @@ def main():
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
                  "row-residual", "mixed-frontier", "extreme-frontier",
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
-                 "distributed-prefix"),
+                 "distributed-prefix", "multiple-residual"),
         default="complement",
     )
     args = parser.parse_args()
@@ -1046,6 +1079,7 @@ def main():
                 "prefix-residue": prefix_residue_corpus,
                 "residue-frontier": residue_frontier_corpus,
                 "distributed-prefix": distributed_prefix_corpus,
+                "multiple-residual": multiple_residual_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

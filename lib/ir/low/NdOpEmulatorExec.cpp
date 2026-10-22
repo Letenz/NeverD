@@ -708,13 +708,8 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
       return Value.isConst() || ((Value.isReg() || Value.isTemp()) &&
                                  Registers.contains(Value.Offset));
     };
-    if (Img.Arch != Arch::X64 || Op.MemoryOrdering != NdMemoryOrdering::None ||
-        Op.NumInputs != 3 || Op.Inputs[0].Size != 2 ||
-        (!Op.Output.isReg() && !Op.Output.isTemp()) ||
-        !intrinsicSupportsMemoryAddressSpace(Id) ||
-        !intrinsicMemoryAddressSpaceShapeIsValid(
-            Id, Op.NumInputs, Op.Output.Size, Op.Inputs[1].Size,
-            Op.Inputs[2].Size, 0) ||
+    if (Img.Arch != Arch::X64 ||
+        !x86SystemStateShapeIsValid(Id, x86SystemStateLowShape(Op, Img.Arch)) ||
         !IsKnownScalar(Op.Inputs[1]) || !IsKnownScalar(Op.Inputs[2]) ||
         !X86CurrentPrivilegeLevel || !X86IA32Pasid || !X86LinearAddressBits)
       return false;

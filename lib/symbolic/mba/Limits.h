@@ -68,9 +68,20 @@ inline constexpr unsigned kMaxAffineResidueDepth = 8;
 inline constexpr unsigned kMinAffineResidueScaledFactors = 1;
 inline constexpr std::size_t kMaxAffineResidueEdges = 64;
 inline constexpr unsigned kMaxAffineResidueTableBits = 8;
+/// Keep optional multiple-residual recovery from starving the surrounding DAG.
+inline constexpr std::size_t kMaxMultipleResidueWork = 49152;
+/// Direct decision proofs still spend the caller's existing cumulative budget.
+inline constexpr std::size_t kMaxResidueDecisionWork = 49152;
+inline constexpr std::size_t kMaxResidueDecisionNodes = 4096;
+inline constexpr unsigned kMaxResidueDecisionDepth = 64;
+inline constexpr unsigned kMaxResidueDecisionInputs = 3;
+inline constexpr unsigned kMaxResidueDecisionSynthesisInputs = 6;
+inline constexpr unsigned kMaxUnconditionedResidueDecisionBits = 3;
+inline constexpr std::size_t kMaxResidueDecisionPolynomialTerms = 256;
 inline constexpr unsigned kMaxResiduePrefixBits = 16;
 inline constexpr unsigned kMaxResiduePrefixHintDepth = 2;
 inline constexpr unsigned kMaxResiduePrefixHintNodes = 16;
+inline constexpr std::size_t kMaxResidueWitnessWork = 1024;
 
 // lib/symbolic/mba/SymBitwise.cpp
 /// The most inputs the exhaustive search will ever tabulate.

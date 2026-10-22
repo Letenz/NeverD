@@ -5,7 +5,8 @@
 //===----------------------------------------------------------------------===//
 /// \file
 /// Exercise the shared pipeline and both source routes across x86/x64 native
-/// formats. These synthetic fixtures never execute privileged host operations.
+/// formats. Privileged success is not assumed; isolated system-memory probes
+/// compare faults with the original bytes on the same host.
 //===----------------------------------------------------------------------===//
 
 #include "X86SHA512Reference.h"
@@ -19,10 +20,12 @@
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86SystemStateAsm.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
@@ -33,10 +36,12 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <algorithm>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -402,14 +407,81 @@ int main(void) {
 }
 
 namespace {
+std::string freestandingC(std::string Source) {
+  // Cross-target checks use the real compiler intrinsic headers without
+  // requiring a target CRT installation. Only the standard memory prototypes
+  // are supplied; generated declarations, bodies and assembly stay intact.
+  const std::string Include = "#include <string.h>";
+  if (const auto At = Source.find(Include); At != std::string::npos)
+    Source.replace(At, Include.size(),
+                   "extern void *memcpy(void *, const void *, __SIZE_TYPE__);\n"
+                   "extern void *memset(void *, int, __SIZE_TYPE__);");
+  return Source;
+}
+
+std::string faultDriver(const BinaryImage &Image) {
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  OS << R"C(
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern void virtualization_test(void);
+extern void neverd_original(void);
+static int result_fd;
+static void fault(int signal, siginfo_t *info, void *context) {
+  int result[2] = {signal, info->si_code};
+  (void)context;
+  _exit(write(result_fd, result, sizeof(result)) != sizeof(result));
+}
+static int observe(void (*fn)(void), int result[2]) {
+  int descriptors[2];
+  if (pipe(descriptors)) return 1;
+  pid_t pid = fork();
+  if (pid < 0) return 2;
+  if (!pid) {
+    close(descriptors[0]);
+    result_fd = descriptors[1];
+    struct sigaction action = {0};
+    action.sa_sigaction = fault;
+    action.sa_flags = SA_SIGINFO;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGILL, &action, 0) || sigaction(SIGSEGV, &action, 0) ||
+        sigaction(SIGBUS, &action, 0)) _exit(3);
+    fn();
+    _exit(4); // All fixtures deliberately have invalid addresses.
+  }
+  close(descriptors[1]);
+  ssize_t bytes = read(descriptors[0], result, 2 * sizeof(int));
+  close(descriptors[0]);
+  int status;
+  if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+      WEXITSTATUS(status) || bytes != 2 * sizeof(int)) return 5;
+  return 0;
+}
+int main(void) {
+  int expected[2], actual[2];
+  if (observe(neverd_original, expected) ||
+      observe(virtualization_test, actual)) return 1;
+  return expected[0] != actual[0] || expected[1] != actual[1];
+}
+__asm__(".text\n.globl neverd_original\nneverd_original:\n"
+)C";
+  for (const auto Byte : Image.Segments.front().Data)
+    OS << "\".byte " << unsigned(Byte) << "\\n\"\n";
+  OS << ");\n";
+  return Source;
+}
+
 // Compile the actual LLVM assembly and both emitted C routes, including all
-// output constraints. Privileged fixtures are only compiled. Integer SHA512
-// fixtures additionally link and execute against an independent expected value.
+// output constraints. Success fixtures execute against an independent expected
+// value; selected system-memory fixtures instead compare faults with raw bytes.
 void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                    llvm::StringRef Mnemonic,
-                   std::optional<uint64_t> Expected = std::nullopt) {
+                   std::optional<uint64_t> Expected = std::nullopt,
+                   bool OriginalBytes = false, bool CompareFaults = false) {
 #if !defined(__linux__) || !defined(__x86_64__)
-  if (Expected)
+  if (Expected || CompareFaults)
     GTEST_SKIP() << "Native execution fixture requires Linux x86-64";
 #endif
   const std::string Compiler = NEVERD_TEST_CLANG;
@@ -439,12 +511,8 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   for (auto Source : {High, LLVM, Native}) {
     SCOPED_TRACE(Route);
     const bool IR = Route++ == 2;
-    const std::string Include = "#include <string.h>";
-    if (const auto At = Source.find(Include); At != std::string::npos)
-      Source.replace(
-          At, Include.size(),
-          "extern void *memcpy(void *, const void *, __SIZE_TYPE__);\n"
-          "extern void *memset(void *, int, __SIZE_TYPE__);");
+    if (!IR)
+      Source = freestandingC(std::move(Source));
     llvm::SmallString<128> Input(Directory), Output(Directory),
         ErrorFile(Directory), Driver(Directory), Executable(Directory);
     llvm::sys::path::append(Input, IR ? "source.ll" : "source.c");
@@ -458,10 +526,13 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
     OS << Source;
     OS.close();
     ASSERT_FALSE(OS.has_error());
-    if (Expected) {
+    if (Expected || CompareFaults) {
       llvm::raw_fd_ostream DriverOS(Driver, Error);
       ASSERT_FALSE(Error);
-      if (Image.Arch == Arch::X86) {
+      if (CompareFaults) {
+        ASSERT_EQ(Image.Arch, Arch::X64);
+        DriverOS << faultDriver(Image);
+      } else if (Image.Arch == Arch::X86) {
         DriverOS << R"C(
 void *memcpy(void *d, const void *s, unsigned n) {
   for (unsigned i = 0; i < n; ++i) ((unsigned char *)d)[i] = ((const unsigned char *)s)[i];
@@ -497,6 +568,10 @@ void _start(void) {
           Input,
           "-o",
           Output};
+      // Match Codegen's x86 SSE2 baseline. Clang's plain i386 target has no
+      // XMM register class for the emitted floating-point assembly operands.
+      if (Image.Arch == Arch::X86)
+        Arguments.push_back("-msse2");
       if (!IR)
         Arguments.insert(Arguments.end(),
                          {"-std=gnu11", "-ffreestanding",
@@ -510,7 +585,7 @@ void _start(void) {
       ASSERT_EQ(Status, 0) << (Diagnostics ? (*Diagnostics)->getBuffer().str()
                                            : "")
                            << Source;
-      if (Expected) {
+      if (Expected || CompareFaults) {
         ASSERT_EQ(llvm::sys::ExecuteAndWait(
                       Compiler, LinkArguments(Driver, Output, Executable),
                       std::nullopt, Redirects),
@@ -520,7 +595,7 @@ void _start(void) {
       }
     }
   }
-  if (Expected) {
+  if (Expected || CompareFaults) {
     // The repository's LLVM fork is the native oracle. The system Clang above
     // independently checks emitted IR compatibility and compiles generated C.
     llvm::SmallString<128> Object(Directory), Driver(Directory),
@@ -539,9 +614,79 @@ void _start(void) {
                   Compiler, LinkArguments(Driver, Object, Executable)),
               0);
     EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0);
+    if (OriginalBytes) {
+      llvm::SmallString<128> Assembly(Directory);
+      llvm::sys::path::append(Assembly, "original.s");
+      llvm::raw_fd_ostream Original(Assembly, Error);
+      ASSERT_FALSE(Error);
+      Original << ".text\n.globl virtualization_test\nvirtualization_test:\n";
+      for (const auto Byte : Image.Segments.front().Data)
+        Original << ".byte " << unsigned(Byte) << '\n';
+      Original << ".section .note.GNU-stack,\"\",@progbits\n";
+      Original.close();
+      ASSERT_FALSE(Original.has_error());
+      ASSERT_EQ(llvm::sys::ExecuteAndWait(
+                    Compiler, LinkArguments(Driver, Assembly, Executable)),
+                0);
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0);
+    }
   }
 }
+
+std::vector<uint8_t> fpEncodingFunction(Arch A) {
+  if (A == Arch::X86)
+    return {0xb8, 3, 0, 0, 0, 0xf2, 0x0f, 0x2a, 0xc8, 0xb8, 7, 0, 0, 0, 0xf2,
+            0x0f, 0x2a, 0xd0, 0xc4, 0xc1, 0x33, 0x58, 0xc2, // VADDSD;
+                                                            // ignored
+                                                            // B/vvvv[3].
+            0xc4, 0xc1, 0x7b, 0x2c, 0xc0, // VCVTTSD2SI; ignored B.
+            0xc3};
+  return {0x48, 0x83, 0xec, 0x28, // SUB rsp,40.
+          0x48, 0xb8, 0,    0,    0,    0,    0,    0,
+          0xf0, 0x3f, 0x48, 0x89, 0x04, 0x24, // [rsp] = 1.0.
+          0x48, 0xb8, 0,    0,    0,    0,    0,    0,
+          0,    0x40, 0x48, 0x89, 0x44, 0x24, 0x08, // [rsp+8] = 2.0.
+          0x66, 0x0f, 0x10, 0x04, 0x24,             // MOVUPD xmm0,[rsp].
+          0xd5, 0x48, 0x8d, 0x04, 0x24,             // LEA r16,[rsp].
+          0x66, 0xd5, 0xd0, 0x58, 0x00,             // ADDPD xmm0,[r16].
+          0xf2, 0xd5, 0xc8, 0x2c, 0xc8,             // CVTTSD2SI r17,xmm0.
+          0xd5, 0x48, 0x89, 0xc8,                   // MOV rax,r17.
+          0x48, 0x83, 0xc4, 0x28, 0xc3};
+}
 } // namespace
+
+TEST(X86FPEncodingSource, BothModesSurviveEveryFormatAndSourceRoute) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (const bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(NoOpt);
+        auto Image = image(A, Format, fpEncodingFunction(A));
+        ASSERT_NO_FATAL_FAILURE(sourceRoutes(Image, NoOpt, Entry, {}));
+      }
+}
+
+TEST(X86FPEncodingSource, Rex2ExecutesThroughEveryRouteWithoutAPXHardware) {
+  for (const bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    auto Image =
+        image(Arch::X64, BinaryFormat::ELF, fpEncodingFunction(Arch::X64));
+    ASSERT_NO_FATAL_FAILURE(compileRoutes(Image, NoOpt, Entry, {}, 2));
+  }
+}
+
+TEST(X86FPEncodingSource, Mode32IgnoredFieldsAgreeWithOriginalNativeBytes) {
+  if (!llvm::sys::getHostCPUFeatures().lookup("avx"))
+    GTEST_SKIP() << "Original VEX instruction oracle requires AVX";
+  for (const bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    auto Image =
+        image(Arch::X86, BinaryFormat::ELF, fpEncodingFunction(Arch::X86));
+    ASSERT_NO_FATAL_FAILURE(compileRoutes(Image, NoOpt, Entry, {}, 10, true));
+  }
+}
 
 TEST(X86VectorEncodingSource, Mode32IgnoredExtensionsExecuteThroughEveryRoute) {
   for (const bool NoOpt : {false, true}) {
@@ -601,6 +746,195 @@ TEST(X86SystemStateSource, GeneratedAssemblyCompilesForBothWordSizesAtO0AndO2) {
       compileRoutes(Image, false, Entry + Offset, E.Mnemonic);
       if (::testing::Test::HasFailure())
         return;
+    }
+}
+
+TEST(X86SystemMemorySource, BothSourceRoutesRetainEffectsAcrossAllFormats) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true})
+        for (const auto &E : systemMemoryEncodings(A)) {
+          SCOPED_TRACE(E.Mnemonic);
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(NoOpt);
+          size_t Offset;
+          auto Image = image(A, Format, function(A, E.Bytes, Offset));
+          std::string High, LLVM;
+          sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, &High, &LLVM);
+          const bool Segmented =
+              E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65;
+          for (const auto *Source : {&High, &LLVM}) {
+            if (Format == BinaryFormat::COFF && Source == &High && !Segmented &&
+                (E.Id == Intrinsic::CetWrss || E.Id == Intrinsic::CetWruss)) {
+              EXPECT_NE(Source->find("_" + std::string(E.Mnemonic) + "("),
+                        std::string::npos)
+                  << *Source;
+              EXPECT_NE(Source->find("#include <intrin.h>"), std::string::npos);
+              continue;
+            }
+            EXPECT_NE(Source->find("__asm__ volatile"), std::string::npos);
+            EXPECT_NE(Source->find("\"memory\""), std::string::npos);
+            if (Segmented)
+              EXPECT_NE(
+                  Source->find(E.Bytes.front() == 0x64 ? "%%fs:" : "%%gs:"),
+                  std::string::npos)
+                  << *Source;
+          }
+          if (::testing::Test::HasFailure())
+            return;
+        }
+}
+
+TEST(X86SystemMemorySource, GeneratedInstructionsCompileAtO0AndO2) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : systemMemoryEncodings(A)) {
+      SCOPED_TRACE(E.Mnemonic);
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      size_t Offset;
+      auto Image = image(A, BinaryFormat::ELF, function(A, E.Bytes, Offset));
+      compileRoutes(Image, false, Entry + Offset, E.Mnemonic);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+}
+
+TEST(X86SystemMemorySource, WindowsShadowWritesCompileWithMsvcIntrinsics) {
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "Clang is unavailable";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-cet-coff", Directory));
+  auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  llvm::SmallString<128> Input(Directory), Object(Directory),
+      ErrorFile(Directory);
+  llvm::sys::path::append(Input, "shadow.c");
+  llvm::sys::path::append(Object, "shadow.obj");
+  llvm::sys::path::append(ErrorFile, "clang.err");
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : systemMemoryEncodings(A)) {
+      if ((E.Id != Intrinsic::CetWrss && E.Id != Intrinsic::CetWruss) ||
+          E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
+        continue;
+      SCOPED_TRACE(E.Mnemonic);
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      size_t Offset;
+      auto Image = image(A, BinaryFormat::COFF, function(A, E.Bytes, Offset));
+      std::string High;
+      sourceRoutes(Image, false, Entry + Offset, E.Mnemonic, &High);
+      std::error_code Error;
+      llvm::raw_fd_ostream OS(Input, Error);
+      ASSERT_FALSE(Error);
+      OS << freestandingC(High);
+      OS.close();
+      ASSERT_FALSE(OS.has_error());
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        const std::vector<llvm::StringRef> Arguments = {
+            Compiler,
+            A == Arch::X64 ? "--target=x86_64-pc-windows-msvc"
+                           : "--target=i686-pc-windows-msvc",
+            "-ffreestanding",
+            "-fno-strict-aliasing",
+            "-mshstk",
+            "-Werror=implicit-function-declaration",
+            Optimization,
+            "-c",
+            Input,
+            "-o",
+            Object};
+        const std::optional<llvm::StringRef> Redirects[] = {
+            std::nullopt, std::nullopt, ErrorFile.str()};
+        const int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments,
+                                                     std::nullopt, Redirects);
+        const auto Diagnostics = llvm::MemoryBuffer::getFile(ErrorFile);
+        ASSERT_EQ(Status, 0)
+            << (Diagnostics ? (*Diagnostics)->getBuffer().str() : "") << High;
+      }
+    }
+}
+
+TEST(X86SystemMemorySource, FaultsMatchOriginalInstructionsAcrossEveryRoute) {
+  // Feature/privilege/enablement checks must precede ordinary operand faults.
+  // 0x8000000000000000 is noncanonical for both 48- and 57-bit addressing.
+  for (const auto &E : std::vector<SystemEncoding>{
+           {{0x0f, 0x38, 0xf6, 0x08}, Intrinsic::CetWrss, "wrssd"},
+           {{0x48, 0x0f, 0x38, 0xf6, 0x08}, Intrinsic::CetWrss, "wrssq"},
+           {{0x66, 0x0f, 0x38, 0xf5, 0x08}, Intrinsic::CetWruss, "wrussd"},
+           {{0x66, 0x48, 0x0f, 0x38, 0xf5, 0x08},
+            Intrinsic::CetWruss,
+            "wrussq"},
+           {{0xf2, 0x0f, 0x38, 0xf8, 0x08}, Intrinsic::Enqcmd, "enqcmd"},
+           {{0xf3, 0x0f, 0x38, 0xf8, 0x08}, Intrinsic::Enqcmds, "enqcmds"}}) {
+    SCOPED_TRACE(E.Mnemonic);
+    std::vector<uint8_t> Bytes = {0x48, 0xb8, 0,    0, 0, 0, 0, 0,
+                                  0,    0x80, 0xb9, 1, 0, 0, 0};
+    const auto Offset = Bytes.size();
+    Bytes.insert(Bytes.end(), E.Bytes.begin(), E.Bytes.end());
+    Bytes.push_back(0xc3);
+    auto Image = image(Arch::X64, BinaryFormat::ELF, Bytes);
+    for (bool NoOpt : {false, true}) {
+      compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                    false, true);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+  }
+}
+
+TEST(X86SystemMemorySource, MalformedLLVMAssemblyCannotBypassTheContract) {
+  for (const auto Id : {Intrinsic::CetWrss, Intrinsic::CetWruss,
+                        Intrinsic::Enqcmd, Intrinsic::Enqcmds})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Id));
+      SCOPED_TRACE(Mutation);
+      const bool Enqueue = Id == Intrinsic::Enqcmd || Id == Intrinsic::Enqcmds;
+      const auto P =
+          x86SystemStateAsm(Id, Arch::X64, 8, NdMemoryAddressSpace::Default);
+      ASSERT_TRUE(P);
+      llvm::LLVMContext Context;
+      llvm::Module Module("system-memory-contract", Context);
+      Module.setDataLayout("e-p:64:64");
+      llvm::IRBuilder<> B(Context);
+      auto *Pointer = llvm::PointerType::getUnqual(Context);
+      std::vector<llvm::Type *> Types = {
+          Mutation == 4 ? static_cast<llvm::Type *>(B.getInt64Ty()) : Pointer,
+          Enqueue ? static_cast<llvm::Type *>(Pointer) : B.getInt64Ty()};
+      llvm::Type *Return = Enqueue ? B.getInt8Ty() : B.getVoidTy();
+      auto *Signature = llvm::FunctionType::get(Return, Types, false);
+      auto *Function = llvm::Function::Create(
+          Signature, llvm::GlobalValue::ExternalLinkage, "effect", Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+      std::string Constraints = P->Constraints;
+      if (Mutation == 1)
+        Constraints.erase(Constraints.find(",~{memory}"));
+      auto *Assembly = llvm::InlineAsm::get(
+          Signature, P->Text + (Mutation == 3 ? "\n\tnop" : ""), Constraints,
+          Mutation != 2, false,
+          Mutation == 6 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
+      auto *Call =
+          B.CreateCall(Assembly, {Function->getArg(0), Function->getArg(1)});
+      if (Mutation == 5)
+        Call->setOnlyReadsMemory();
+      if (Mutation == 7)
+        Call->setOnlyWritesMemory();
+      if (Enqueue)
+        B.CreateRet(Call);
+      else
+        B.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      Options.EmitIncludes = false;
+      std::string Text;
+      llvm::raw_string_ostream OS(Text);
+      if (Mutation == 0)
+        EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options)) << Text;
+      else
+        EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                     std::invalid_argument);
     }
 }
 
