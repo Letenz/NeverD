@@ -29,6 +29,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -141,8 +142,7 @@ private:
 
 /// The pointer the loader stored in a relocated slot, as a code address when
 /// the slot points to code.
-inline std::optional<va_t> relocatedPointer(const BinaryImage &Img,
-                                            va_t Slot) {
+inline std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
   const size_t Size = Img.getPointerSize();
   const uint8_t *Bytes = Size ? Img.readVA(Slot, Size) : nullptr;
   if (!Bytes)
@@ -168,6 +168,14 @@ FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
                           int MaxFunctions);
 FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions);
 
+/// Coverage of the shared native traversal, independent of lift support.
+struct FunctionDecodeStatus {
+  uint64_t Instructions = 0;
+  uint64_t Bytes = 0;
+  bool Incomplete = false;
+  bool Stopped = false;
+};
+
 /// Decodes each function of \p Page in \p Img with a decoder of its own,
 /// functions in parallel, and calls Visit(Index, Decoder, Instruction, Scratch)
 /// with one exclusive scratch workspace per decoding worker for each of its
@@ -182,7 +190,9 @@ bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
                             InstructionFlowScratch &)>
-        Visit);
+        Visit,
+    const std::function<bool()> &Stop = {},
+    std::vector<FunctionDecodeStatus> *Status = nullptr);
 
 /// The width of the reads and writes the instructions of each of \p
 /// Functions state at each address in \p Img: the direct references

@@ -136,6 +136,10 @@ struct PipelineOptions {
   /// Native source views may postpone HighIR projection after shared ABI and
   /// return recovery. Patch/lift, VM routes and DumpHigh retain eager behavior.
   bool DeferHighIR = false;
+  /// Prepare and verify the same machine ABI MedIR consumed by the LLVM
+  /// backend, then stop before any HighIR or LLVM emission. Native analysis
+  /// only; incompatible with source, patch/lift and interpreter output modes.
+  bool MedAnalysisOnly = false;
   bool PatchMode = false;
   bool LiftMode = false;
   /// LLVM-to-C uses the LLVM route without authorizing source-only rewrites
@@ -195,6 +199,11 @@ struct PipelineOptions {
   /// Borrowed for this run only. See PipelineAnalysisCache's lifetime and
   /// invalidation contract; nullptr preserves independent analysis.
   PipelineAnalysisCache *AnalysisCache = nullptr;
+
+  /// Machine analysis and rewriting exclude presentation-only source hints.
+  bool usesMachineMedIR() const {
+    return PatchMode || LiftMode || MedAnalysisOnly;
+  }
 };
 
 enum class PipelineFunctionDisposition {
@@ -703,7 +712,8 @@ private:
   void recognizeLibraries(const BinaryImage &Img, const PipelineOptions &Opts,
                           PipelineResult &Result, DebugContext *Dbg);
 
-  /// Shortcut path: MedIR -> LLVM IR (skip HighIR).
+  /// Machine ABI MedIR preparation, followed by LLVM emission unless analysis
+  /// alone was requested. Does not build HighIR.
   bool runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                         const PipelineOptions &Opts, PipelineResult &Result,
                         const DebugContext *Dbg);

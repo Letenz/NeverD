@@ -50,7 +50,7 @@
 namespace neverd {
 
 namespace {
-constexpr llvm::StringLiteral ArgumentBanks = "neverd.argument-banks";
+constexpr auto ArgumentBanks = LLVMArgumentBanksAttribute;
 
 std::optional<std::pair<unsigned, unsigned>>
 argumentBanks(const llvm::Function &Function) {

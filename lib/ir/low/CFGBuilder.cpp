@@ -2659,6 +2659,12 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
     Stub.Mode = *Mode;
     Stub.BranchTarget = Entry;
     rewriteAsTailCall(Stub);
+    // This block models an edge into another function, not instructions
+    // decoded at that function's entry. Preserve synthetic provenance through
+    // Low-to-Med lowering; sequence zero would falsely bind the call/return to
+    // an original operation in the callee.
+    for (auto &Op : Stub.Ops)
+      Op.Seq = -1;
     Insns[Entry] = std::move(Stub);
     ExploredAddrs.insert(Entry);
   }
