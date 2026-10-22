@@ -68,6 +68,9 @@ inline constexpr unsigned kMaxAffineResidueDepth = 8;
 inline constexpr unsigned kMinAffineResidueScaledFactors = 1;
 inline constexpr std::size_t kMaxAffineResidueEdges = 64;
 inline constexpr unsigned kMaxAffineResidueTableBits = 8;
+inline constexpr unsigned kMaxResiduePrefixBits = 16;
+inline constexpr unsigned kMaxResiduePrefixHintDepth = 2;
+inline constexpr unsigned kMaxResiduePrefixHintNodes = 16;
 
 // lib/symbolic/mba/SymBitwise.cpp
 /// The most inputs the exhaustive search will ever tabulate.

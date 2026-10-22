@@ -652,6 +652,76 @@ def affine_residue_corpus(width, count):
     return rows
 
 
+def prefix_residue_corpus(width, count):
+    """High-bit disturbances preserving a complete low-residue product proof."""
+    rng = random.Random(0x50524546 + width)
+    mask = (1 << width) - 1
+    tail = "+(x^y)+2*(x&y)+(z|w)+(z&w)"
+    rows = []
+    for index in range(count):
+        kind = index % 128
+        control = None
+        if kind < 112:
+            degree = (4, 8, 16, 32, 64, 128, 256)[kind // 16]
+            flavor = kind % 16
+        else:
+            degree = 4
+            flavor = (kind - 112) % 8
+            control = (kind - 112) // 8
+        bits = min(width, (degree - 1).bit_length())
+        low = (1 << bits) - 1
+        zeros = degree - degree.bit_count()
+        if flavor == 13:
+            zeros = degree - 2
+        if flavor == 14:
+            zeros += degree // 2
+        scale = 1 << max(width - zeros, 0)
+        factors = []
+        for i in range(degree - (control == 1)):
+            offset = i - (control == 0 and i + 1 == degree)
+            base = "(x+3*y+5*z)"
+            if flavor == 13:
+                base = "(x+3*y+5*z)" if i < degree // 2 else "(x-3*y+5*z)"
+                offset = i % (degree // 2)
+            if flavor == 15:
+                base = "((x+3*(y+5*z))^v)"
+            fixed = int(flavor == 14 and i % 2 == 0)
+            a = ((rng.getrandbits(width) | 1) << fixed) & mask
+            b = (a * offset - (flavor == 6)) & mask
+            high_bits = min(width, bits + fixed)
+            high = f"((u*{2*i+1})<<{high_bits})"
+            f = f"({a}*{base}+{b})"
+            if flavor in (0, 13, 14, 15):
+                f = f"({f}^{high})"
+            elif flavor == 1:
+                f = f"({f}|{high})"
+            elif flavor == 2:
+                f = f"({f}&({high}|{low}))"
+            elif flavor == 3:
+                f = f"(({a}*({base}&{low})+{b})^{high})"
+            elif flavor == 4:
+                f = f"({f}+{high})"
+            elif flavor == 5:
+                f = f"({f}+({high}|(v<<{bits})))"
+            elif flavor == 6:
+                f = f"({f}^({high}|{low}))"
+            elif flavor == 7:
+                f = f"({f}&{low})"
+            elif flavor == 8:
+                f = f"zext(extract({f},0,{bits}),{width})"
+            elif flavor == 9:
+                f = f"sext(extract({f},0,{bits}),{width})"
+            elif flavor == 10:
+                f = f"((({f}^{high})&((v<<{bits})|{low}))|{high})"
+            elif flavor == 11:
+                f = f"({f}^(u&{mask ^ low}))"
+            else:
+                f = f"({f}^{rng.getrandbits(width) & (mask ^ low)})"
+            factors.append(f)
+        rows.append(f"({scale}*{'*'.join(factors)})" + tail)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -793,7 +863,7 @@ def main():
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
                  "row-residual", "mixed-frontier", "extreme-frontier",
-                 "residue-product", "affine-residue"),
+                 "residue-product", "affine-residue", "prefix-residue"),
         default="complement",
     )
     args = parser.parse_args()
@@ -826,6 +896,7 @@ def main():
                 "extreme-frontier": extreme_frontier_corpus,
                 "residue-product": residue_product_corpus,
                 "affine-residue": affine_residue_corpus,
+                "prefix-residue": prefix_residue_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

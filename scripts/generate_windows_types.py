@@ -11,7 +11,8 @@ native API headers are under the MIT License, and renders the types and
 prototypes they declare as the C NeverD reads back:
 
 1. clang preprocesses what the target's code includes: a driver's
-   <ntifs.h>, which brings <ntddk.h> and <wdm.h>, in kernel mode, for
+   <ntifs.h>, which brings <ntddk.h> and <wdm.h>, plus the NDIS, storage,
+   USB, HID, filter and NETIO provider headers, in kernel mode, for
    Windows 10 2004 (NTDDI_WIN10_VB); in user mode, for Windows 11 24H2
    (NTDDI_WIN11_GE), the version mingw-w64's SDK headers describe, a
    program's <windows.h>, the native API ntdll exports as phnt declares it
@@ -34,13 +35,17 @@ prototypes they declare as the C NeverD reads back:
    left out declare, and what names it, is left out with them, and nothing
    else.
 
-The output starts with where it came from.  Run it again when the headers or
-the reader change, and check the result with scripts/check_type_renders.py.
+The kernel also reads the pinned public-domain ReactOS fltkernel.h from
+--reactos-ddk (checked against scripts/windows_types/reactos-fltkernel.sha256)
+and phnt's SYSTEM_INFORMATION_CLASS enum. Both kernel and user generation
+require --phnt. The output starts with where it came from. Run it again when
+the headers or reader change, and check with scripts/check_type_renders.py.
 """
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -64,18 +69,23 @@ VERSION = ["-DNTDDI_VERSION=0x0A000008", "-D_WIN32_WINNT=0x0A00"]
 # whatever the version, and the native API of that version.
 USER_VERSION = ["-DNTDDI_VERSION=0x0A000010", "-D_WIN32_WINNT=0x0A00",
                 "-DWINVER=0x0A00", "-DPHNT_MODE=PHNT_MODE_USER",
-                "-DPHNT_VERSION=PHNT_WINDOWS_11_24H2", "-DWIN32_NO_STATUS"]
+                "-DPHNT_VERSION=PHNT_WINDOWS_11_24H2", "-DWIN32_NO_STATUS",
+                "-DSECURITY_WIN32"]
 
 # What phnt takes from Microsoft's SDK: the macros mingw-w64 spells otherwise
 # or lacks (phnt_prelude.h, included first), the types it lacks
 # (phnt_sdk_types.h) and the headers it names otherwise.
 PHNT_SHIMS = REPOSITORY / "scripts" / "windows_types"
 
+# Public-domain ReactOS DDK additions not shipped by mingw-w64. Generation
+# reads this pinned input; opening/decompiling a binary never downloads it.
+REACTOS_REVISION = "b6224c3165811265422dacd5ed0de36b1c2311c9"
+
 # Headers whose declarations are the C runtime's, not the kernel's.
 KERNEL_RUNTIME = re.compile(
     r"/(?:corecrt[^/]*|crtdefs|_mingw[^/]*|stddef|stdarg|stdlib|stdio|string|"
     r"wchar|ctype|errno|limits|malloc|mm_malloc|vadefs|excpt|intrin|setjmp|"
-    r"x86intrin|swprintf|sec_api/[^/]*|psdk_inc/[^/]*)\.(?:h|inl)$")
+    r"x86intrin|swprintf|sec_api/[^/]*|psdk_inc/(?!_ip_types)[^/]*)\.(?:h|inl)$")
 
 # The C runtime's routines, which the C library tables describe, and
 # winpthreads' POSIX ones.  The runtime's types stay where the system's
@@ -128,7 +138,16 @@ USER_HEADERS = (
     "wininet", "shellapi", "shlobj", "shlwapi", "psapi", "tlhelp32",
     "dbghelp", "bcrypt", "ncrypt", "iphlpapi", "setupapi", "wintrust",
     "softpub", "userenv", "wtsapi32", "lm", "sddl", "aclapi", "ntsecapi",
-    "commctrl", "urlmon", "winevt", "evntrace")
+    "commctrl", "urlmon", "winevt", "evntrace", "dwmapi", "uxtheme", "avrt",
+    "mmsystem", "wlanapi", "bluetoothapis", "winldap", "winber", "winusb",
+    "hidsdi", "hidpi", "virtdisk", "vss", "winspool", "imm", "sensapi",
+    "ras", "rasdlg", "raserror", "rtutils", "powrprof", "sspi", "authz",
+    "dpapi", "dhcpcsdk", "fwpmu", "fltuser")
+
+# Driver provider APIs are not pulled in by ntifs.h. Keep their ABI types in
+# the same architecture-specific kernel library as the core kernel APIs.
+KERNEL_HEADERS = ("ntifs", "ndis", "storport", "scsiwmi", "usb", "usbdi",
+                  "usbdlib", "wmilib", "wdmsec", "hidusage", "hidpi", "bcrypt")
 
 # The phnt headers that <phnt.h> leaves for a program to include: the Zw
 # routines, WinStations, the session manager, win32k's GDI calls, service
@@ -163,13 +182,14 @@ USER_UNIT = (["#include <winsock2.h>", "#include <ws2tcpip.h>",
 
 
 def kernel(triple, model, arch, output):
-    """What a driver for the architecture includes: <ntifs.h>, which
-    brings <ntddk.h> and <wdm.h>, in kernel mode."""
+    """Core kernel and driver-provider headers, in kernel mode."""
     return Target(
-        triple, model, ["#include <ntifs.h>"], ["-D_KERNEL_MODE"] + VERSION,
+        triple, model, [f"#include <{header}.h>" for header in KERNEL_HEADERS],
+        ["-D_KERNEL_MODE", "-DNDIS620", "-DNDIS_LEGACY_DRIVER"] + VERSION,
         ["ddk", ""], KERNEL_RUNTIME, None,
         f"kernel's types and prototypes for {arch} ({model}), as a driver\n"
-        "// declares them with <ntifs.h>", HEADERS / output)
+        "// declares core, network, filter, storage, USB, HID and crypto APIs",
+        HEADERS / output)
 
 
 def user(triple, model, arch, output):
@@ -244,6 +264,37 @@ def system_lines(text, defined, dropped):
     return "\n".join(kept) + "\n"
 
 
+def repair_kernel_declarations(text):
+    """Correct the missing comma in mingw-w64 13's legacy WAN declaration.
+
+    Match this declaration only. A newer, already-correct DDK needs no fix;
+    other malformed declarations must still fail the ordinary parse check.
+    """
+    return re.sub(
+        r"(NdisMWanIndicateReceiveComplete\(\s*"
+        r"NDIS_HANDLE MiniportAdapterHandle)\s+(NDIS_HANDLE NdisLinkContext)",
+        r"\1,\n\2", text)
+
+
+def kernel_additions(arguments, work):
+    """Read phnt's information-class enum and the public-domain filter DDK."""
+    native = (Path(arguments.phnt) / "ntexapi.h").read_text(encoding="utf-8")
+    enums = re.findall(r"typedef enum _SYSTEM_INFORMATION_CLASS\s*\{[^}]*\}"
+                       r"\s*SYSTEM_INFORMATION_CLASS;", native)
+    if len(enums) != 1:
+        sys.exit("phnt must declare exactly one SYSTEM_INFORMATION_CLASS enum")
+    enum_header = work / "system_information_class.h"
+    enum_header.write_text(enums[0] + "\n", encoding="utf-8")
+    ddk = Path(arguments.reactos_ddk) / "fltkernel.h"
+    if not ddk.is_file():
+        sys.exit("--reactos-ddk must contain the pinned fltkernel.h")
+    expected = (PHNT_SHIMS / "reactos-fltkernel.sha256").read_text().split()[0]
+    if hashlib.sha256(ddk.read_bytes()).hexdigest() != expected:
+        sys.exit("fltkernel.h does not match the pinned ReactOS DDK input")
+    return [f'#include "{enum_header}"', '#include "kernel_api.h"',
+            f'#include "{ddk.resolve()}"', '#include "kernel_netio.h"']
+
+
 def read(neverd, model, source):
     """The names of the types \\p source declares and the problems the
     reader meets, as `neverd types --json` lists them."""
@@ -301,13 +352,18 @@ def generate(arguments, name, target, version):
     if target.phnt:
         include = ["-include", str(PHNT_SHIMS / "phnt_prelude.h"), "-I",
                    str(PHNT_SHIMS), "-I", str(arguments.phnt)] + include
+    else:
+        include = ["-I", str(PHNT_SHIMS)] + include
     output = Path(arguments.output) if arguments.output else target.output
     with tempfile.TemporaryDirectory(prefix="neverd-windows-types-") as scratch:
         work = Path(scratch)
         unit = work / "system.c"
-        unit.write_text("\n".join(target.unit) + "\n", encoding="utf-8")
+        additions = [] if target.phnt else kernel_additions(arguments, work)
+        unit.write_text("\n".join(target.unit + additions) + "\n", encoding="utf-8")
         text = run([arguments.clang, f"--target={target.triple}", "-E",
                     *include, *target.defines, str(unit)])
+        if not target.phnt:
+            text = repair_kernel_declarations(text)
         source = check(arguments.neverd, target, text,
                        macros(arguments.clang, target, include, unit), work)
         rendered = work / "rendered.h"
@@ -338,6 +394,8 @@ def generate(arguments, name, target, version):
         header = "".join(f"// {line}\n" for line in textwrap.wrap(
             text, 77, break_long_words=False, break_on_hyphens=False))
     else:
+        commit = run(["git", "-C", str(arguments.phnt), "rev-parse",
+                      "HEAD"]).strip()
         header = (
             f"// The Windows {target.describes} for Windows 10 2004.  "
             "Generated\n"
@@ -347,8 +405,12 @@ def generate(arguments, name, target, version):
             "from\n"
             "// them, as NeverD reads and renders their declarations again.  "
             "The\n"
-            "// headers' notices are in LICENSES/mingw-w64-headers.txt.  Do "
-            "not\n// edit; generate it again.\n")
+            "// headers' notices are in LICENSES/mingw-w64-headers.txt.\n"
+            f"// Filter declarations: ReactOS DDK at {REACTOS_REVISION}\n"
+            "// (public domain; LICENSES/reactos-ddk.txt). Native information\n"
+            f"// classes: phnt at {commit} (LICENSES/phnt.txt).\n"
+            "// scripts/windows_types supplies declarations the DDK omits.\n"
+            "// Do not edit; generate it again.\n")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(header + body, encoding="utf-8")
     shown = (output.relative_to(REPOSITORY)
@@ -367,6 +429,9 @@ def main():
                         help="a checkout of https://github.com/winsiderss/"
                              "phnt, whose native API the user mode libraries "
                              "declare")
+    parser.add_argument("--reactos-ddk", type=Path,
+                        help="directory containing fltkernel.h from ReactOS "
+                             f"{REACTOS_REVISION} (sdk/include/ddk)")
     parser.add_argument("--target", action="append", choices=sorted(TARGETS),
                         help="the library to generate; repeat for more "
                              "(default: every library)")
@@ -377,8 +442,10 @@ def main():
     names = arguments.target or sorted(TARGETS)
     if arguments.output and len(names) != 1:
         parser.error("--output takes one --target")
-    if not arguments.phnt and any(TARGETS[name].phnt for name in names):
-        parser.error("the user mode libraries read phnt: give --phnt")
+    if not arguments.phnt:
+        parser.error("Windows libraries read phnt declarations: give --phnt")
+    if not arguments.reactos_ddk and any(not TARGETS[name].phnt for name in names):
+        parser.error("kernel libraries read the filter DDK: give --reactos-ddk")
     version = run(["dpkg-query", "-W", "-f=${Version}", "mingw-w64-common"]
                   ).strip() if Path("/usr/bin/dpkg-query").exists() else "?"
     for name in names:

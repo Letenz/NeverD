@@ -157,6 +157,66 @@ std::string body(const std::string &Source, const std::string &Name) {
 
 unsigned family(uint64_t RegOff) { return static_cast<unsigned>(RegOff / 8); }
 
+TEST(Win64CallContract, CpuidScratchExchangeAddsNoPhantomParameters) {
+  constexpr va_t Query = Text + 0x40;
+  std::vector<uint8_t> Code(0x80, 0xCC);
+  std::vector<uint8_t> Call = {0xE8};
+  for (uint8_t B : rel32(Text + 9, Query))
+    Call.push_back(B);
+  put(Code, Text, framed({Call}));
+  put(Code, Query, {0x31, 0xC0,             // xor eax, eax
+                    0x31, 0xC9,             // xor ecx, ecx
+                    0x4C, 0x87, 0xC3,       // xchg rbx, r8
+                    0x0F, 0xA2,             // cpuid
+                    0x4C, 0x87, 0xC3,       // xchg rbx, r8
+                    0x44, 0x31, 0xC0,       // xor eax, r8d
+                    0x31, 0xC8, 0x31, 0xD0, // xor eax, ecx; xor eax, edx
+                    0xC3});                 // ret
+  const BinaryImage Img =
+      makeImage(Code, {{Text, "query_wrapper"}, {Query, "cpu_query"}}, {});
+  for (bool IncludeCallee : {false, true}) {
+    SCOPED_TRACE(IncludeCallee);
+    const std::set<va_t> Entries =
+        IncludeCallee ? std::set<va_t>{Text, Query} : std::set<va_t>{Text};
+    const std::string Source = liftEntries(Img, Entries);
+    EXPECT_NE(Source.find("query_wrapper(void)"), std::string::npos) << Source;
+    EXPECT_NE(Source.find("cpu_query()"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+    if (IncludeCallee)
+      EXPECT_NE(Source.find("cpu_query(void)"), std::string::npos) << Source;
+
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.LiftMode = true;
+    Opts.SourceProjection = true;
+    Opts.NoOpt = true;
+    Opts.OnlyFunctionEntries = Entries;
+    auto Result = Pipeline().run(Img, Ctx, Opts);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_NE(Result.LlvmModule, nullptr);
+    EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+    if (IncludeCallee) {
+      auto *Callee = Result.LlvmModule->getFunction("cpu_query");
+      ASSERT_NE(Callee, nullptr);
+      EXPECT_EQ(Callee->arg_size(), 0u);
+    }
+    auto *Caller = Result.LlvmModule->getFunction("query_wrapper");
+    ASSERT_NE(Caller, nullptr);
+    EXPECT_EQ(Caller->arg_size(), 0u);
+    unsigned Calls = 0;
+    for (auto &Block : *Caller)
+      for (auto &Instruction : Block)
+        if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
+            Call && (!Call->getCalledFunction() ||
+                     !Call->getCalledFunction()->isIntrinsic())) {
+          ++Calls;
+          EXPECT_EQ(Call->arg_size(), 0u);
+        }
+    EXPECT_EQ(Calls, 1u);
+  }
+}
+
 TEST(Win64CallContract, ACallThroughTheImportSlotPassesTheCallersArguments) {
   // wrap(s, f) calls fputs through its slot without writing RCX or RDX.
   constexpr va_t Wrap = Text;

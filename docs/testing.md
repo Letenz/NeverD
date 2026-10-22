@@ -402,8 +402,12 @@ for correlated factor residues through degree 256, odd strides, wrapped
 offsets, multiple opaque bases and nearby nonzero controls.
 Use `--family affine-residue --count 96` for independent odd units, even
 factors, nested/distributed affine bases, correlated bases, partial-prefix
-perturbations and nonzero neighbors through degree 256. Run all sixteen
-families at 8/16/32/64 bits
+perturbations and nonzero neighbors through degree 256.
+Use `--family prefix-residue --count 128` for degree-4–256 products with
+independent high-bit XOR/OR/AND disturbances, masked and signed/unsigned narrow
+views, nested wrappers, even factors and nonlinear/correlated bases. Sixteen
+nearby controls retain a nonzero product. Run all seventeen families at
+8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
 with no output-cost regression against the frozen baseline. Keep both the CLI
@@ -415,6 +419,14 @@ work counts to the CLI report before computing per-case medians and percentiles.
 The independent evaluator handles explicit word widths, extracts, extensions
 and modular shifts. Check it with
 `python3 tools/neverd-bench/tests/test_symbolic_masks.py`.
+`SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
+exhaustive small-word perturbations, nonzero coefficient/offset controls,
+zero-prefix versus zero-word refusal, exact/short resource budgets and Z3
+checks of full-width replacements. Mixed source widths also check nonzero
+synthesis through narrowing and widening. Run it in both the focused MBA and
+full symbolic owners. Worker prefix-quartic/octic and nonzero-neighbor fixtures
+execute both C backends through CLI whole/function requests and GUI worker
+requests at O0/O2, including toggle/cache isolation.
 The mixed-degree C++ regression adds an independently generated three-block
 variant and a full-word arithmetic oracle through 257 bits. Cache regressions
 cover compatible and incompatible complement bases, storage refusal followed by
@@ -1439,13 +1451,23 @@ reads each pointer once;
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
 [phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
-`scripts/generate_windows_types.py --phnt <checkout>` (each generated
-header names the commit). After running it, check each library in every
-language:
+`scripts/generate_windows_types.py --phnt <checkout> --reactos-ddk <headers>`
+(each generated header names the commits). Kernel generation requires
+`fltkernel.h` from ReactOS commit `b6224c3165811265422dacd5ed0de36b1c2311c9`,
+under `sdk/include/ddk`; the generator verifies its pinned SHA-256 before
+reading it. `scripts/tests/test_generate_windows_types.py` checks this input
+boundary and the narrowly matched legacy WAN declaration repair.
+`HeaderLibrary.DriverProvidersHaveExactConfigurationCallContracts` checks x86
+and x64 parameter counts, conventions and layouts; the synthetic
+`SessionCAPITest.DriverProviderImportsUseTheirDeclaredSourceABI` checks HighC
+and LLVMC through the SDK, without loading a driver. After generation, check
+each library in every language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsKernelX86.h --data-model ILP32
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
