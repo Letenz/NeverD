@@ -69,7 +69,9 @@ public:
   /// Redraw the columns that name segments once the regions change.
   void addressSpaceChanged();
   int total() const { return total_; }
-  bool loading() const { return !pageRequests_.isEmpty(); }
+  bool loading() const {
+    return refresh_.has_value() || !pageRequests_.isEmpty();
+  }
   QJsonObject rowObject(int row) const;
   std::optional<Address> addressAt(int row) const;
   /// The item a row stands for when its cross references are listed: a
@@ -90,6 +92,16 @@ signals:
   void failed(const QString &message);
 
 private:
+  /// Background discovery replaces cached pages together, keeping row
+  /// identities and selections instead of emptying the table between reads.
+  void refreshFunctions();
+  void refreshNextPage(quint64 serial);
+  struct Refresh {
+    QVector<int> pending;
+    QHash<int, QJsonArray> pages;
+    int total = -1;
+  };
+  std::optional<Refresh> refresh_;
   std::optional<Address> itemAddress(const QJsonObject &object) const;
   QJsonObject pagePayload(int page) const;
   void finishLocation(std::optional<int> row, const QString &error = {});

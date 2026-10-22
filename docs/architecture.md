@@ -1211,6 +1211,10 @@ revision, listing generation and source transformation options identify a
 document. A hit can answer before preparing the mutable single-function Session;
 it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
+Background function discovery similarly stages cached chooser pages before
+replacing them, remapping persistent indexes by image address when rows move.
+Explicit filters, sorts, semantic edits and session changes still retire those
+reads through their normal invalidation paths.
 Documents own text, rows and edit anchors, and project or presentation changes
 invalidate them. After decoration, a document checks whether its row numbers
 and both ends of its name spans are monotone. Pages seek directly through those

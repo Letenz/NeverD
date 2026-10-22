@@ -1109,6 +1109,12 @@ escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
 Timing-independent cache tests complement
 `source_revisit_bench.py`, which measures complete real source pages.
 
+`functionsClicksKeepTheLoadedListAndDocument` checks selection and activation
+against a fixture and optional native input, including revisiting a function.
+`backgroundFunctionDiscoveryKeepsSelection` inserts a function before loaded rows
+and checks persistent selection, sorting, filtering and retiring an obsolete
+background refresh.
+
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
 It also checks that statement navigation without library or call-expression

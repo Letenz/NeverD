@@ -666,6 +666,15 @@ const char *neverd_dashboard_json(neverd_session_t s) {
   return copy(Json{{"hashes", {{"sha256", fixtureDigest(s)}}}}.dump());
 }
 int neverd_func_count(neverd_session_t s) {
+  auto &state = *session(s);
+  if (state.path.ends_with("chooser-refresh.bin") &&
+      std::filesystem::exists(
+          std::filesystem::u8path(state.path + ".discover")) &&
+      std::find(state.functions.begin(), state.functions.end(), Base + 8) ==
+          state.functions.end())
+    state.functions.insert(std::upper_bound(state.functions.begin(),
+                                            state.functions.end(), Base + 8),
+                           Base + 8);
   return static_cast<int>(session(s)->functions.size());
 }
 // The ordering fixture publishes one new identity. Its first listing rebuild
@@ -739,6 +748,8 @@ int neverd_func_size(neverd_session_t s, int index) {
 }
 const char *neverd_func_name(neverd_session_t s, int index) {
   const auto address = neverd_func_entry(s, index);
+  if (address == Base + 8 && session(s)->path.ends_with("chooser-refresh.bin"))
+    return copy("function_discovered");
   auto it = session(s)->names.find(address);
   if (it == session(s)->names.end() && address == Base + 0x150 &&
       session(s)->path.ends_with("pseudocode-navigation.bin"))

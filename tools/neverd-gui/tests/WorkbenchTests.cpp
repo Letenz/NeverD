@@ -2436,6 +2436,152 @@ private slots:
       }
     }
   }
+  void functionsClicksKeepTheLoadedListAndDocument_data() {
+    QTest::addColumn<QString>("worker");
+    QTest::addColumn<QString>("input");
+    QTest::newRow("fixture")
+        << QString::fromLocal8Bit(TEST_WORKER) << QString();
+    const auto worker = qEnvironmentVariable("NEVERD_RENAME_BENCH_WORKER");
+    const auto input = qEnvironmentVariable("NEVERD_RENAME_BENCH_INPUT");
+    if (!worker.isEmpty() && !input.isEmpty())
+      QTest::newRow("native") << worker << input;
+  }
+
+  void backgroundFunctionDiscoveryKeepsSelection_data() {
+    QTest::addColumn<bool>("sorted");
+    QTest::newRow("address-order") << false;
+    QTest::newRow("sorted-filtered") << true;
+  }
+
+  void backgroundFunctionDiscoveryKeepsSelection() {
+    QFETCH(bool, sorted);
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto path = writeFixture(directory, "chooser-refresh.bin");
+    bench.session.open(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *view = bench.functions();
+    auto &model = view->model();
+    auto *table = view->table();
+    QTRY_COMPARE(model.total(), 600);
+    QTRY_VERIFY(!bench.session.busy());
+    if (sorted) {
+      model.setFilter("function_");
+      model.sort(0, Qt::DescendingOrder);
+      QTRY_COMPARE(model.total(), 600);
+      QTRY_VERIFY(!model.loading());
+    }
+    model.data(model.index(257, 0), Qt::DisplayRole);
+    QTRY_VERIFY(!model.rowObject(257).isEmpty());
+    const int row = sorted ? 20 : 255;
+    const auto selected = model.addressAt(row);
+    const auto alsoSelected = model.addressAt(257);
+    QVERIFY(selected && alsoSelected);
+    table->setCurrentIndex(model.index(row, 0));
+    table->selectionModel()->select(model.index(257, 0),
+                                    QItemSelectionModel::Select |
+                                        QItemSelectionModel::Rows);
+    table->scrollTo(model.index(row, 0));
+    const int top = table->verticalScrollBar()->value();
+    QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy layouts(&model, &QAbstractItemModel::layoutChanged);
+    QVERIFY(!writeFixture(directory, "chooser-refresh.bin.discover").isEmpty());
+    auto background = bench.session.background();
+    background["functions"] = 601;
+    SessionTestAccess::receive(
+        bench.session, {{"type", "heartbeat"},
+                        {"project_id", bench.session.queries().projectId()},
+                        {"background", background}});
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), 601, OpenTimeoutMs);
+    QTRY_VERIFY(!model.loading());
+    QCOMPARE(resets.count(), 0);
+    QVERIFY(layouts.count() > 0);
+    QCOMPARE(view->currentAddress(), selected);
+    QSet<Address> addresses;
+    for (const auto &index : table->selectionModel()->selectedRows())
+      if (const auto address = model.addressAt(index.row()))
+        addresses.insert(*address);
+    QCOMPARE(addresses, (QSet<Address>{*selected, *alsoSelected}));
+    QCOMPARE(table->verticalScrollBar()->value(), top);
+    QCOMPARE(model.filter(), sorted ? QStringLiteral("function_") : QString());
+    // A filter change supersedes an in-flight background refresh.
+    emit bench.session.functionsChanged();
+    model.setFilter("function_599");
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), 1, OpenTimeoutMs);
+    QTRY_COMPARE(model.addressAt(0), std::optional<Address>(Base + 599 * 16));
+  }
+
+  void functionsClicksKeepTheLoadedListAndDocument() {
+    QFETCH(QString, worker);
+    QFETCH(QString, input);
+    QTemporaryDir directory;
+    auto path = writeFixture(directory, QStringLiteral("source-cache.bin"));
+    if (!input.isEmpty()) {
+      path = directory.filePath(QFileInfo(input).fileName());
+      QVERIFY(QFile::copy(input, path));
+      const auto pdb = qEnvironmentVariable("NEVERD_RENAME_BENCH_PDB");
+      if (!pdb.isEmpty())
+        QVERIFY(
+            QFile::copy(pdb, directory.filePath(QFileInfo(pdb).fileName())));
+    }
+    Workbench bench(worker);
+    bench.session.open(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), NativeOpenTimeoutMs);
+    auto *functions = bench.functions();
+    QVERIFY(functions);
+    auto *table = functions->table();
+    auto &model = functions->model();
+    QTRY_VERIFY_WITH_TIMEOUT(!model.rowObject(20).isEmpty(),
+                             NativeOpenTimeoutMs);
+    // Wait for initial discovery before attributing a change to clicking.
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.busy(), NativeOpenTimeoutMs);
+    QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy revisions(&bench.session, &Session::revisionChanged);
+    QSignalSpy discoveries(&bench.session, &Session::functionsChanged);
+    connect(&model, &QAbstractItemModel::modelReset, this, [&] {
+      qInfo() << "function list reset: revision" << bench.session.revision()
+              << "functions" << bench.session.background().value("functions")
+              << "revision events" << revisions.count() << "inventory events"
+              << discoveries.count();
+    });
+    for (const int row : {8, 16, 20}) {
+      const auto index = model.index(row, 0);
+      const auto target = model.addressAt(row);
+      QVERIFY(target);
+      table->scrollTo(index);
+      const auto cell =
+          table->visualRect(index).intersected(table->viewport()->rect());
+      QVERIFY(!cell.isEmpty());
+      QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                        cell.center());
+      QCOMPARE(table->currentIndex(), index);
+      QTest::keyClick(table, Qt::Key_Return);
+      QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentFunction(),
+                                target, NativeOpenTimeoutMs);
+      QTest::qWait(100);
+      QCOMPARE(table->currentIndex(), index);
+    }
+    qInfo() << "function activation: list resets" << resets.count()
+            << "revisions" << revisions.count() << "discoveries"
+            << discoveries.count();
+    QCOMPARE(resets.count(), 0);
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(code->complete(), NativeOpenTimeoutMs);
+    qInfo() << "after pseudocode: list resets" << resets.count() << "revisions"
+            << revisions.count() << "discoveries" << discoveries.count();
+    const auto version = code->documentVersion();
+    const auto index = table->currentIndex();
+    table->setFocus();
+    QTest::keyClick(table, Qt::Key_Return);
+    QTest::qWait(100);
+    QCOMPARE(code->documentVersion(), version);
+    QCOMPARE(table->currentIndex(), index);
+    QCOMPARE(resets.count(), 0);
+  }
+
   void independentAnalysisViewsRunConcurrently() {
     QTemporaryDir directory;
     Workbench bench;
