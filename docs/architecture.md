@@ -1376,7 +1376,10 @@ a Cartesian residue table. Bounds from different bases add without assuming
 those bases are independent. A zero replacement requires the sum of these
 bounds and the enclosing literal's trailing zeros to cover the full word width.
 This proof accepts opaque nonlinear bases, retains multiplicities and wrapped
-offsets, and never expands the product. Traversal, comparison, wide constants,
+offsets, and never expands the product.
+A product whose complete bases are already identical uses one offset vector
+and avoids per-factor coefficient maps. Structural admission is reused across
+the zero proof and nonzero recovery for the same immutable product. Traversal, comparison, wide constants,
 scratch storage and final emission use the same request budgets. Partial
 proofs leave their products intact, while already proved zero summands can be
 removed safely before ordinary MBA recovery.

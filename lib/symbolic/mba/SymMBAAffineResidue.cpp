@@ -221,7 +221,10 @@ SymRef projectShiftedBitwise(PrefixConstants &Prefixes, SymRef R,
 bool readFactor(const SymContext &Ctx, SymRef R, const llvm::APInt &Scale,
                 Factor &Out, Resources &Res, size_t &Edges, unsigned Depth = 0,
                 PrefixConstants *Prefixes = nullptr) {
-  const size_t SourceWords = (size_t(Ctx.width(R)) - 1) / 64 + 1;
+  // Ordinary affine recursion keeps the source width. Only prefix peeling
+  // can expose another width, so leave the established fast path untouched.
+  const size_t SourceWords =
+      Prefixes ? (size_t(Ctx.width(R)) - 1) / 64 + 1 : Res.SourceWords;
   if (++Edges > limits::kMaxAffineResidueEdges ||
       !Res.scalar(1 + (Prefixes ? std::max(Res.Words, SourceWords) : Res.Words),
                   SourceWords))
@@ -724,8 +727,12 @@ bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root) {
 }
 
 SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
-                                    WorkBudget &Budget, size_t &Storage) {
-  if (Budget.exhausted() || !hasProjectedResidueFactors(Ctx, Root))
+                                    WorkBudget &Budget, size_t &Storage,
+                                    bool Admitted) {
+  if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
+      Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
+      Ctx.numOperands(Root) > limits::kMaxResidueProductFactors ||
+      (!Admitted && !hasProjectedResidueFactors(Ctx, Root)))
     return Root;
   const unsigned Width = Ctx.width(Root);
   llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(Root));
@@ -797,9 +804,9 @@ SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
   return Root;
 }
 
-std::optional<SymRef> foldAffineProductResidues(SymContext &Ctx, SymRef Root,
-                                                WorkBudget &Budget,
-                                                size_t &Storage) {
+std::optional<SymRef>
+foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                          size_t &Storage, std::optional<bool> ProjectedHint) {
   if (Ctx.op(Root) != SymOp::Mul ||
       Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
       Ctx.numOperands(Root) > limits::kMaxResidueProductFactors ||
@@ -829,8 +836,10 @@ std::optional<SymRef> foldAffineProductResidues(SymContext &Ctx, SymRef Root,
   Factors.reserve(N);
   unsigned Needed = ReadWidth;
   PrefixConstants Prefixes{Ctx, Res, {}};
-  const bool Project = ReadWidth <= limits::kMaxResiduePrefixBits &&
-                       hasProjectedResidueFactors(Ctx, Root);
+  const bool ProjectedFactors =
+      ProjectedHint ? *ProjectedHint : hasProjectedResidueFactors(Ctx, Root);
+  const bool Project =
+      ReadWidth <= limits::kMaxResiduePrefixBits && ProjectedFactors;
   llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(Root));
   for (auto R : Inputs) {
     if (!Res.scalar(2 * Words))
@@ -868,8 +877,7 @@ std::optional<SymRef> foldAffineProductResidues(SymContext &Ctx, SymRef Root,
   // their remaining precision. Never drop those zeros before they have been
   // included in Needed; the synthesized word restores their enclosing scale.
   if (Needed <= limits::kMaxAffineResidueTableBits &&
-      (Needed < ReadWidth || !Project) &&
-      hasProjectedResidueFactors(Ctx, Root)) {
+      (Needed < ReadWidth || !Project) && ProjectedFactors) {
     for (auto &F : Factors) {
       if (!Res.scalar(Words))
         return Root;

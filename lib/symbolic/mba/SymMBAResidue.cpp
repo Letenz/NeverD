@@ -48,16 +48,76 @@ bool hasOffsetFactors(const SymContext &Ctx, SymRef Root) {
   return false;
 }
 
+// A common exact base needs only one offset vector. Avoid constructing one
+// coefficient map per factor when the original unit-offset proof suffices.
+SymRef foldCommonOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                               size_t &Storage) {
+  auto Factors = Ctx.operands(Root);
+  const auto Scale = Ctx.isConst(Factors.front()) ? Factors.front() : SymRef{};
+  if (Scale)
+    Factors = Factors.drop_front();
+  auto BaseOf = [&](const SymRef &R) -> llvm::ArrayRef<SymRef> {
+    if (Ctx.op(R) != SymOp::Add)
+      return {&R, 1};
+    auto Terms = Ctx.operands(R);
+    return Ctx.isConst(Terms.front()) ? Terms.drop_front() : Terms;
+  };
+  const auto First = Factors.front();
+  const auto Base = BaseOf(First);
+  if (Base.size() > limits::kMaxResidueBaseTerms)
+    return Root;
+  for (auto F : Factors)
+    if (!llvm::equal(Base, BaseOf(F)))
+      return Root;
+  const unsigned Width = Ctx.width(Root);
+  const size_t Words = (size_t(Width) - 1) / 64 + 1;
+  const size_t Bytes = sizeof(llvm::APInt) + 2 * Words * sizeof(uint64_t);
+  const size_t Work = Factors.size() * (1 + Base.size() + Words) + Words;
+  if (Factors.size() + 2 > Storage / Bytes || !Budget.canConsume(Work))
+    return Root;
+  Budget.consume(Work);
+  Storage -= (Factors.size() + 2) * Bytes;
+  unsigned Needed = Width;
+  if (Scale)
+    Needed -= Ctx.constValue(Scale).countr_zero();
+  std::vector<llvm::APInt> Offsets;
+  Offsets.reserve(Factors.size());
+  for (auto F : Factors) {
+    if (Ctx.op(F) == SymOp::Add && Ctx.isConst(Ctx.operand(F, 0)))
+      Offsets.push_back(Ctx.constValue(Ctx.operand(F, 0)));
+    else
+      Offsets.emplace_back(Width, 0);
+  }
+  auto Zeros = minimumProductResidueZeros(Offsets, Width, Needed, Budget);
+  return Zeros && *Zeros == Needed && Budget.consume() ? Ctx.mkZero(Width)
+                                                       : Root;
+}
+
 SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage) {
-  if (Budget.exhausted())
+  if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
+      Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
+      Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
     return Root;
-  // High-bit wrappers can obscure an otherwise cheap residue proof. Read
-  // their bounded prefixes before a full affine map spends the shared budget.
-  auto Projected = foldProjectedProductResidues(Ctx, Root, Budget, Storage);
-  if (Projected != Root || !hasOffsetFactors(Ctx, Root) || Budget.exhausted())
-    return Projected;
-  if (auto Affine = foldAffineProductResidues(Ctx, Root, Budget, Storage))
+  const bool OffsetHint = hasOffsetFactors(Ctx, Root);
+  if (OffsetHint) {
+    auto Common = foldCommonOffsetProduct(Ctx, Root, Budget, Storage);
+    if (Common != Root || Budget.exhausted())
+      return Common;
+  }
+  // Inspect the immutable product once. The zero proof and nonzero affine
+  // recovery share this admission result, including a negative result.
+  const bool ProjectedHint = hasProjectedResidueFactors(Ctx, Root);
+  if (ProjectedHint) {
+    auto Projected = foldProjectedProductResidues(Ctx, Root, Budget, Storage,
+                                                  /*Admitted=*/true);
+    if (Projected != Root || Budget.exhausted())
+      return Projected;
+  }
+  if (!OffsetHint)
+    return Root;
+  if (auto Affine =
+          foldAffineProductResidues(Ctx, Root, Budget, Storage, ProjectedHint))
     return *Affine;
   const unsigned Width = Ctx.width(Root);
   const size_t Words = (size_t(Width) - 1) / 64 + 1;
