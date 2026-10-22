@@ -1,0 +1,191 @@
+#include "../../lib/loader/ReadOnlyBytesIndex.h"
+#include "gtest/gtest.h"
+
+#include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BinaryEncoding.h"
+
+namespace neverd {
+namespace {
+constexpr va_t TextVA = 0x401000;
+constexpr va_t ReadVA = TextVA + 0x10;
+constexpr va_t OperandVA = ReadVA + 1;
+constexpr va_t TargetVA = 0x402020;
+
+BinaryImage codeImage() {
+  BinaryImage Image;
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x400000;
+  Segment Code;
+  Code.VA = TextVA;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data.resize(0x100, 0xcc);
+  Code.Data[0x10] = 0xb8;
+  writeLE<uint32_t>(Code.Data.data() + 0x11, TargetVA);
+  Code.Data[0x15] = 0xc3;
+  Code.Size = Code.FileSz = Code.Data.size();
+  Section Section;
+  Section.VA = Code.VA;
+  Section.Flags = Code.Flags;
+  Section.Size = Section.FileSz = Code.Size;
+  Image.Segments.push_back(std::move(Code));
+  Image.Sections.push_back(std::move(Section));
+  Image.BaseRelocations.push_back({OperandVA, 3});
+  return Image;
+}
+
+TEST(ImmutablePE32Code, IndexedAndOrdinaryReadersKeepEveryFixupBoundary) {
+  for (unsigned Mutation = 0; Mutation != 29; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = codeImage();
+    RelocatedAddressField Field;
+    Field.Width = 4;
+    Field.TargetVA = TargetVA;
+    Field.EncodedValue = TargetVA;
+    bool Expected = Mutation <= 5 || Mutation == 10 || Mutation == 17 ||
+                    Mutation == 18 || Mutation == 25;
+    switch (Mutation) {
+    case 1:
+      Image.BaseRelocations.insert(Image.BaseRelocations.begin(),
+                                   {ReadVA + 0x40, 3});
+      Image.BaseRelocations.push_back({ReadVA - 8, 3});
+      break;
+    case 2:
+      Image.BaseRelocations.push_back({ReadVA, 0});
+      break;
+    case 3:
+      Image.CodeAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 4:
+      Image.DataAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 5:
+      Image.CodeAddressRelocOperands.emplace(OperandVA, Field);
+      Image.DataAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 6:
+      Image.BaseRelocations.clear();
+      Image.CodeAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 7:
+      Image.BaseRelocations.push_back(Image.BaseRelocations.front());
+      break;
+    case 8:
+      Image.BaseRelocations.front().Type = 10;
+      break;
+    case 9:
+      Image.BaseRelocations.push_back({ReadVA - 3, 3});
+      break;
+    case 10:
+      Image.BaseRelocations.push_back({ReadVA - 4, 3});
+      break;
+    case 11:
+      ++Field.TargetVA;
+      Image.CodeAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 12:
+      Field.Width = 8;
+      Image.CodeAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 13:
+      Field.PCRelativeFromInstructionEnd = true;
+      Image.CodeAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 14:
+      Field.Kind = RelocatedAddressFieldKind::I386ELFGOTOFF;
+      Image.CodeAddressRelocOperands.emplace(OperandVA, Field);
+      break;
+    case 15:
+      Image.CodeAddressRelocOperands.emplace(OperandVA + 1, Field);
+      break;
+    case 16:
+    case 17:
+      Field.Width = 255;
+      Image.CodeAddressRelocOperands.emplace(
+          ReadVA - (Mutation == 16 ? 254 : 255), Field);
+      break;
+    case 18:
+      Field.Width = 0;
+      Image.CodeAddressRelocOperands.emplace(ReadVA, Field);
+      break;
+    case 19:
+      Image.CodePtrRelocSlots.insert(ReadVA - 3);
+      break;
+    case 20:
+      Image.DataPtrRelocSlots.insert(ReadVA - 3);
+      break;
+    case 21:
+      Image.RelCodeRelocSlots.insert(ReadVA - 3);
+      break;
+    case 22:
+      Image.RelDataPtrRelocSlots.insert(ReadVA - 3);
+      break;
+    case 23:
+      Image.RuntimeCallablePointerSlots.push_back({ReadVA - 3});
+      break;
+    case 24:
+    case 25: {
+      RelocationEntry Entry;
+      Entry.Address = ReadVA - (Mutation == 24 ? 7 : 8);
+      Image.Relocations.push_back(Entry);
+      break;
+    }
+    case 26:
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+      break;
+    case 27:
+      Image.Segments.push_back(Image.Segments.front());
+      break;
+    case 28:
+      Image.Segments.front().FileSz = 0x15;
+      break;
+    default:
+      break;
+    }
+    const auto Ordinary =
+        readImmutablePE32CodeBytes(Image, ReadVA, 6, {OperandVA});
+    size_t Work = 0;
+    IndexedPE32CodeBytes Index(Image, Work, 10000);
+    const auto Indexed = Index.read(ReadVA, 6, {OperandVA});
+    EXPECT_EQ(Ordinary.has_value(), Expected);
+    EXPECT_EQ(Indexed, Ordinary);
+    EXPECT_GT(Work, 0u);
+    if (Expected) {
+      ASSERT_TRUE(Indexed);
+      EXPECT_EQ(*Indexed,
+                (std::vector<uint8_t>{0xb8, 0x20, 0x20, 0x40, 0, 0xc3}));
+    }
+  }
+}
+
+TEST(ImmutablePE32Code, IndexedQueriesChargeColdAndRepeatedWork) {
+  const auto Image = codeImage();
+  size_t Required = 0;
+  {
+    IndexedPE32CodeBytes Index(Image, Required, 10000);
+    ASSERT_TRUE(Index.read(ReadVA, 6, {OperandVA}));
+  }
+  for (size_t Limit : {size_t{0}, Required - 1, Required}) {
+    size_t Work = 0;
+    IndexedPE32CodeBytes Index(Image, Work, Limit);
+    EXPECT_EQ(Index.read(ReadVA, 6, {OperandVA}).has_value(),
+              Limit == Required);
+    EXPECT_EQ(Work, Limit);
+    EXPECT_FALSE(Index.read(ReadVA, 6, {OperandVA}));
+  }
+  size_t Work = 0;
+  IndexedPE32CodeBytes Index(Image, Work, 10000);
+  ASSERT_TRUE(Index.read(ReadVA, 6, {OperandVA}));
+  const auto Before = Work;
+  EXPECT_TRUE(Index.read(ReadVA, 6, {OperandVA}));
+  EXPECT_GT(Work, Before);
+  EXPECT_FALSE(Index.read(ReadVA, 6, {OperandVA, OperandVA}));
+  EXPECT_FALSE(Index.read(ReadVA, 6, {ReadVA - 1}));
+  EXPECT_FALSE(Index.read(ReadVA, 0, {}));
+  EXPECT_FALSE(Index.read(UINT64_MAX, 6, {}));
+}
+} // namespace
+} // namespace neverd

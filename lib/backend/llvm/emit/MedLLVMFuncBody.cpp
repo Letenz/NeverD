@@ -266,8 +266,13 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
       // cannot prove them.
       switch (Op.Opcode) {
       case NdOp::STORE:
-        if (Op.NumInputs >= 2 && addressFragmentCanStayInLocalFrameSlot(
-                                     Op.Inputs[0], Op.Inputs[1].Size))
+        // Only a tainted value needs the local-spill exemption. Ordinary
+        // scalar stores must not each replay the function-wide alias/reload
+        // proof merely to discover that there is no fragment to reject.
+        if (Op.NumInputs >= 2 &&
+            (!occurrenceHasAddressFragmentTaint(Op.Inputs[1]) ||
+             addressFragmentCanStayInLocalFrameSlot(Op.Inputs[0],
+                                                    Op.Inputs[1].Size)))
           break;
         [[fallthrough]];
       case NdOp::ATOMIC_XCHG:

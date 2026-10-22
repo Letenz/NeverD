@@ -232,6 +232,68 @@ TEST_F(PEFixedImageTest, CompleteFieldsAdmitCodeAndDataButExcludeLoaderWrites) {
   EXPECT_FALSE(View->read(Base + 0x21fd, 4, false));
   EXPECT_FALSE(View->read(InvalidVA, 2, false));
   EXPECT_FALSE(View->read(Base, 0, false));
+  const auto Header = View->read(Base, 2, false);
+  ASSERT_TRUE(Header);
+  EXPECT_EQ((*Header)[0], 'M');
+  EXPECT_EQ((*Header)[1], 'Z');
+  EXPECT_FALSE(View->read(Base, 2, true));
+}
+
+TEST_F(PEFixedImageTest, HeaderMappingMustMatchTheCurrentRawSnapshot) {
+  const auto Original = Image;
+  for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Image = Original;
+    auto &Segment = Image.Segments.back();
+    auto &Section = Image.Sections.back();
+    ASSERT_EQ(Segment.VA, Base);
+    switch (Mutation) {
+    case 0:
+      Segment.Data[0x20] ^= 1;
+      break;
+    case 1:
+      Section.Data[0x20] ^= 1;
+      break;
+    case 2:
+      Segment.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      break;
+    case 3:
+      Section.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 4:
+      ++Segment.VA;
+      break;
+    case 5:
+      --Section.FileSz;
+      break;
+    case 6:
+      Segment.Data.pop_back();
+      break;
+    case 7:
+      Segment.ReadOnlyAfterRelocations = true;
+      break;
+    case 8:
+      Section.Type = IMAGE_SCN_CNT_INITIALIZED_DATA;
+      break;
+    case 9:
+      Image.Segments.pop_back();
+      Image.Sections.pop_back();
+      break;
+    case 10:
+      Image.Raw[0x20] ^= 1;
+      break;
+    case 11:
+      Image.DataPtrRelocSlots.erase(Base + Optional + 24);
+      break;
+    case 12:
+      Image.DataPtrRelocTargetOwners.erase(Base + Optional + 24);
+      break;
+    case 13:
+      Image.DataPtrRelocTargetOwners[Base + Optional + 24] = Base + 1;
+      break;
+    }
+    EXPECT_FALSE(refusal().empty());
+  }
 }
 
 TEST_F(PEFixedImageTest, LoadConfigurationExcludesExactLoaderWriteFootprint) {
@@ -327,8 +389,8 @@ TEST_F(PEFixedImageTest, ZeroVirtualSizesRetainOriginalBytesAndMetadata) {
   auto Loaded = load(Bytes);
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
   EXPECT_EQ(Loaded->Raw, Bytes);
-  ASSERT_EQ(Loaded->Segments.size(), 4u);
-  ASSERT_EQ(Loaded->Sections.size(), 4u);
+  ASSERT_EQ(Loaded->Segments.size(), 5u);
+  ASSERT_EQ(Loaded->Sections.size(), 5u);
   for (unsigned I = 0; I != 4; ++I) {
     EXPECT_EQ(Loaded->Segments[I].Size, SectionBytes);
     EXPECT_EQ(Loaded->Sections[I].Size, SectionBytes);
@@ -597,7 +659,12 @@ TEST_F(PEFixedImageTest, ImportWritesCannotChangeLaterLoaderMetadata) {
     // First IAT overwrites the next descriptor's FirstThunk or a later
     // lookup terminator; a static inventory cannot authorize either write.
     put32(Image.Raw, IData + 16, Case == 0 ? 0x3024 : 0x3068);
-    sync();
+    // Header publication independently refuses this initialization footprint.
+    // Reload so the fixed-view check reaches the metadata conflict rather than
+    // correctly rejecting the previous image's now-obsolete header mapping.
+    auto Reloaded = load(Image.Raw);
+    ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+    Image = std::move(*Reloaded);
     EXPECT_NE(refusal().find("loader metadata"), std::string::npos);
   }
 }
@@ -624,7 +691,7 @@ TEST_F(PEFixedImageTest, MalformedRelocationTailNeverPublishesAPrefix) {
   llvm::consumeError(std::move(Error));
   EXPECT_TRUE(Image.BaseRelocations.empty());
   EXPECT_TRUE(Image.CodePtrRelocSlots.empty());
-  EXPECT_TRUE(Image.DataPtrRelocSlots.empty());
+  EXPECT_EQ(Image.DataPtrRelocSlots, (std::set<va_t>{Base + Optional + 24}));
 }
 
 TEST_F(PEFixedImageTest, LegacyWordPackedBlocksLoadWithoutFixedImageProof) {
@@ -738,7 +805,8 @@ TEST_F(PEFixedImageTest,
     ASSERT_EQ(Fields.size(), 1u);
     EXPECT_EQ(CodeTarget ? Image.CodePtrRelocSlots.size()
                          : Image.DataPtrRelocSlots.size(),
-              1u);
+              CodeTarget ? 1u : 2u);
+    EXPECT_TRUE(Image.DataPtrRelocSlots.contains(Base + Optional + 24));
     auto View = PEFixedImageView::create(Image);
     ASSERT_TRUE(static_cast<bool>(View)) << llvm::toString(View.takeError());
     ASSERT_TRUE(proof().proved());
@@ -928,7 +996,8 @@ TEST_F(PEFixedImageTest, OrdinaryLoadingDoesNotInheritTheAnalysisRecordBudget) {
   ASSERT_FALSE(static_cast<bool>(Limited));
   EXPECT_NE(llvm::toString(Limited.takeError()).find("budget"),
             std::string::npos);
-  auto Expanded = PEFixedImageView::create(*Loaded, {.MaxRecords = 200000});
+  // Header initialization now also authenticates and orders every write.
+  auto Expanded = PEFixedImageView::create(*Loaded, {.MaxRecords = 1000000});
   ASSERT_TRUE(static_cast<bool>(Expanded))
       << llvm::toString(Expanded.takeError());
 }

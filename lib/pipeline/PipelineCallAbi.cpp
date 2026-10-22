@@ -564,6 +564,57 @@ int callRecoveryTotalArity(const MedFunc &Func, int MaxParamIndex) {
   return Func.IsVariadic ? limits::kMaxCallArgs : MaxParamIndex + 1;
 }
 
+int integerParameterIndex(const MedVar &Param,
+                          const IntegerArgumentLayout &Layout) {
+  if (Param.RegOff != kNoParamReg)
+    return Layout.registerIndex(Param.RegOff);
+  return Param.Kind == MedVar::Param ? Param.Id : -1;
+}
+
+/// An ordinary cached recovery needs only its final arity. A binary80
+/// consumer also needs its parameter carriers to preserve the last argument
+/// and materialize explicit unknowns for a missing ordinary prefix.
+struct RecoveredArgumentBound {
+  size_t Parameters = 0;
+  llvm::ArrayRef<MedVar> X87Parameters;
+};
+
+std::optional<RecoveredArgumentBound> argumentBoundOf(const MedFunc &Callee) {
+  if (Callee.IsVariadic || Callee.SourceParametersBound)
+    return std::nullopt;
+  return RecoveredArgumentBound{Callee.Params.size(),
+                                Callee.ConsumesX87Argument
+                                    ? llvm::ArrayRef<MedVar>(Callee.Params)
+                                    : llvm::ArrayRef<MedVar>{}};
+}
+
+/// Recovery may collect local spills beyond a callee's final ordinary
+/// signature. A checked x87 argument follows that entire recovered prefix:
+/// remove surplus ordinary arguments before it, never the argument itself.
+void boundRecoveredArguments(MedCallInfo &Call, RecoveredArgumentBound Bound) {
+  if (Call.Args.size() == Bound.Parameters)
+    return;
+  if (!Bound.X87Parameters.empty() && !Call.Args.empty()) {
+    if (Call.Args.size() > Bound.Parameters)
+      Call.Args.erase(Call.Args.begin() + Bound.Parameters - 1,
+                      Call.Args.end() - 1);
+    // A missing ordinary value cannot move the x87 argument into its slot.
+    // Keep the missing value explicit for source views and native refusal.
+    while (Call.Args.size() < Bound.Parameters) {
+      const MedVar &Param = Bound.X87Parameters[Call.Args.size() - 1];
+      Call.Args.insert(Call.Args.end() - 1,
+                       MedVar::makeUnspecified(Param.Size, Param.TheArch));
+    }
+  } else if (Call.Args.size() > Bound.Parameters) {
+    Call.Args.resize(Bound.Parameters);
+  }
+}
+
+void boundRecoveredArguments(MedCallInfo &Call, const MedFunc &Callee) {
+  if (const auto Bound = argumentBoundOf(Callee))
+    boundRecoveredArguments(Call, *Bound);
+}
+
 /// The integer register arguments a call to \p Func passes through: its
 /// register parameters through \p MaxRegisterIndex, but only the named ones
 /// of a variadic function whose save area spills the rest.
@@ -630,14 +681,11 @@ OmittedCalleeMemo::CalleeSummary summarizeCallee(const MedFunc &MF,
                TRI.isFPArgReg(P.RegOff, Img.abiFormat())) {
       // Floating-point/vector argument register: counted separately.
       FPRegs.push_back(P.RegOff);
-    } else if (P.RegOff != kNoParamReg) {
-      if (int Idx = IntegerLayout.registerIndex(P.RegOff); Idx > MaxRegIdx)
-        MaxRegIdx = Idx;
-      MaxIdx = std::max(MaxIdx, IntegerLayout.registerIndex(P.RegOff));
-    } else if (P.Kind == MedVar::Param) {
-      // Stack parameter (detectStackParams / detectCdeclStackParams): its
-      // Id is the argument index.
-      MaxIdx = std::max(MaxIdx, P.Id);
+    } else {
+      const int Index = integerParameterIndex(P, IntegerLayout);
+      if (P.RegOff != kNoParamReg)
+        MaxRegIdx = std::max(MaxRegIdx, Index);
+      MaxIdx = std::max(MaxIdx, Index);
     }
   }
   for (const auto &Blk : MF.Blocks)
@@ -921,12 +969,11 @@ void propagateForwardedCallArities(
       if (P.RegOff != kNoParamReg &&
           TRI.isFPArgReg(P.RegOff, Img.abiFormat())) {
         Gives.FPRegs.push_back(P.RegOff);
-      } else if (P.RegOff != kNoParamReg) {
-        const int ArgIdx = ProbeLayout.registerIndex(P.RegOff);
-        MaxRegIdx = std::max(MaxRegIdx, ArgIdx);
-        MaxIdx = std::max(MaxIdx, ArgIdx);
-      } else if (P.Kind == MedVar::Param) {
-        MaxIdx = std::max(MaxIdx, P.Id);
+      } else {
+        const int Index = integerParameterIndex(P, ProbeLayout);
+        if (P.RegOff != kNoParamReg)
+          MaxRegIdx = std::max(MaxRegIdx, Index);
+        MaxIdx = std::max(MaxIdx, Index);
       }
     }
     std::sort(Gives.FPRegs.begin(), Gives.FPRegs.end());
@@ -1306,13 +1353,10 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     int MaxRI = -1, MaxI = -1;
     const IntegerArgumentLayout Layout = integerArgumentLayoutOf(MF, TRI2);
     for (const auto &P : MF.Params) {
-      const int Index =
-          P.RegOff != kNoParamReg ? Layout.registerIndex(P.RegOff) : -1;
-      if (Index >= 0) {
+      const int Index = integerParameterIndex(P, Layout);
+      if (P.RegOff != kNoParamReg)
         MaxRI = std::max(MaxRI, Index);
-        MaxI = std::max(MaxI, Index);
-      } else if (P.Kind == MedVar::Param)
-        MaxI = std::max(MaxI, P.Id);
+      MaxI = std::max(MaxI, Index);
     }
     return std::make_pair(MaxRI + 1, callRecoveryTotalArity(MF, MaxI));
   };
@@ -1342,8 +1386,12 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     const MedFunc &KeptBody = *OmittedCallees[I];
     const va_t Entry = KeptBody.Entry;
     OmittedRecovery &Callee = Omitted[I];
-    Callee.Holder =
-        Remembers ? KeptBodies[Result.MedFuncs.size() + I] : nullptr;
+    // The cached recovery retains ordinary arity, not the final binary80
+    // parameter carriers and types needed by the argument-binding boundary.
+    // Preserve the complete recovery for these consumers.
+    Callee.Holder = Remembers && !KeptBody.ConsumesX87Argument
+                        ? KeptBodies[Result.MedFuncs.size() + I]
+                        : nullptr;
     if (OmittedCalleeMemo::Conversion *Holder = Callee.Holder)
       for (auto It = Holder->Recoveries.begin(); It != Holder->Recoveries.end();
            ++It) {
@@ -1493,26 +1541,52 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       Memo->keepSecondPass(*Callee.Holder, *Callee.Kept, std::move(Gives));
     }
   }
+  // Forwarder promotion can insert ordinary parameters before the explicit
+  // binary80 parameter. Refresh the typed signature after its order settles;
+  // otherwise an emitter falls back to an integer type for the i80 payload.
+  std::vector<MedFunc *> RecoveredBodies;
+  for (MedFunc &Body : Result.MedFuncs)
+    RecoveredBodies.push_back(&Body);
+  for (OmittedRecovery &Callee : Omitted)
+    if (Callee.Body)
+      RecoveredBodies.push_back(&*Callee.Body);
+  for (MedFunc *Body : RecoveredBodies)
+    if (Body->ConsumesX87Argument &&
+        Body->TypedParams.size() != Body->Params.size())
+      inferMedTypes(*Body, Img.Arch);
   // An omitted definition cannot give the emitter its parameter count.
   // Apply the same final signature bound used for an emitted callee after
   // forwarder promotion, so incidental live registers do not become extra
   // arguments merely because output was restricted to its caller.
-  std::map<va_t, size_t> OmittedParameters;
+  std::map<va_t, RecoveredArgumentBound> SignatureBounds;
   for (size_t I = 0; I < OmittedCallees.size(); ++I) {
     const MedFunc &F = *OmittedCallees[I];
     if (I < Recovered) {
-      if (Omitted[I].Bounds)
-        OmittedParameters.emplace(F.Entry, Omitted[I].Parameters);
-    } else if (!F.IsVariadic && !F.SourceParametersBound) {
-      OmittedParameters.emplace(F.Entry, F.Params.size());
+      const OmittedRecovery &Callee = Omitted[I];
+      if (Callee.Body) {
+        if (const auto Bound = argumentBoundOf(*Callee.Body))
+          SignatureBounds.emplace(F.Entry, *Bound);
+      } else if (Callee.Bounds) {
+        SignatureBounds.emplace(F.Entry,
+                                RecoveredArgumentBound{Callee.Parameters, {}});
+      }
+    } else if (const auto Bound = argumentBoundOf(F)) {
+      SignatureBounds.emplace(F.Entry, *Bound);
     }
   }
+  // Consumers have an explicit final argument outside the ordinary ABI
+  // scan. Bind it after forwarder promotion has settled ordinary parameters,
+  // before either the LLVM or HighIR emitter sees a truncated prefix.
+  for (const MedFunc &F : Result.MedFuncs)
+    if (F.ConsumesX87Argument)
+      if (const auto Bound = argumentBoundOf(F))
+        SignatureBounds.emplace(F.Entry, *Bound);
   for (MedFunc &F : Result.MedFuncs)
     for (MedCallInfo &CI : F.CallInfos) {
-      auto It = CI.IsIndirect ? OmittedParameters.end()
-                              : OmittedParameters.find(CI.TargetAddr);
-      if (It != OmittedParameters.end() && CI.Args.size() > It->second)
-        CI.Args.resize(It->second);
+      auto It = CI.IsIndirect ? SignatureBounds.end()
+                              : SignatureBounds.find(CI.TargetAddr);
+      if (It != SignatureBounds.end())
+        boundRecoveredArguments(CI, It->second);
     }
 }
 
@@ -1531,8 +1605,7 @@ void matchCallsToCalleeSignatures(const BinaryImage &Img,
       if (Callee.IsVariadic || Callee.SourceParametersBound ||
           Img.findImportAt(Callee.Entry))
         continue;
-      if (CI.Args.size() > Callee.Params.size())
-        CI.Args.resize(Callee.Params.size());
+      boundRecoveredArguments(CI, Callee);
       // The callee reads the scalar in an argument register's low lane: an
       // SSE register's other bytes, which a scalar instruction leaves as they
       // were, pass nothing.

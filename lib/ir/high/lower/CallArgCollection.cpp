@@ -1461,6 +1461,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
                                       HighExpr::makeConst(0, 4));
             Arg->Type = NdType::makeInt(Read, false);
           }
+          if (Ops[CallIdx].X87ArgumentInput && K + 1 == CI->Args.size() &&
+              Arg && Arg->Type && Arg->Type->Size == 10 &&
+              Arg->Type->Kind != NdTypeKind::Float)
+            Arg = HighExpr::makeBitCast(std::move(Arg), NdType::makeFloat(10));
           FromABI.push_back(std::move(Arg));
         }
         // The register that holds an indirect call's target is no argument

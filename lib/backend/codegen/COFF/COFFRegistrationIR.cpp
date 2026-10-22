@@ -567,7 +567,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       continue;
     if (State.Unknown)
       return rejectIR("source scope is not determined at a CFG block");
-    if (State.Levels.size() > 1) {
+    if (State.levels().size() > 1) {
       const auto Begin = BlockEntries.find(State.BlockId);
       const auto End = BlockExits.find(State.BlockId);
       if (Begin == BlockEntries.end() || End == BlockExits.end() ||
@@ -581,7 +581,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
               uint32_t(x86_registration::DynamicScopeLevel))
         return rejectIR("dynamic source block lost its exact state identity");
       std::map<int32_t, coff_registration::DynamicSEHScopeCase> Cases;
-      for (int32_t Level : State.Levels) {
+      for (int32_t Level : State.levels()) {
         if (Level < 0) {
           if (Level != *Source.Registration->SeededTryLevel)
             return rejectIR("dynamic source scope has an unknown sentinel");
@@ -605,9 +605,9 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       SourceExits.emplace(State.BlockId, End->second.Anchor->getParent());
       continue;
     }
-    const int32_t Level = State.Levels.empty()
+    const int32_t Level = State.levels().empty()
                               ? *Source.Registration->SeededTryLevel
-                              : State.Levels.front();
+                              : State.levels().front();
     auto Target = BlockExits.find(State.BlockId);
     if (Target == BlockExits.end() ||
         Target->second.Identity.SourceVA != State.Range.End ||
@@ -713,9 +713,9 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("handler target has no checked source block");
     const auto *Entry = SourceEntries.at(HandlerState->BlockId);
     const llvm::BasicBlock *Body = Entry;
-    if (!HandlerState->Levels.empty() && HandlerState->Levels.front() >= 0)
+    if (!HandlerState->levels().empty() && HandlerState->levels().front() >= 0)
       Body = Enters
-                 .at({uint32_t(HandlerState->Levels.front()),
+                 .at({uint32_t(HandlerState->levels().front()),
                       uint32_t(HandlerState->BlockId)})
                  .second->getNormalDest();
     // A nested except body remains inside its outer scope. Its catchret must

@@ -36,7 +36,7 @@ bool hasCallbackContract(const MedFunc &Func) {
       State.Blocks.size() > limits::kMaxRegistrationEHRecords ||
       State.CxxContinuations.size() > limits::kMaxRegistrationEHRecords)
     return false;
-  return cxxRegistrationFrameCoordinate(EH, &State).has_value();
+  return cxxRegistrationFrameCoordinate(Func).has_value();
 }
 
 std::optional<std::pair<uint32_t, uint32_t>>

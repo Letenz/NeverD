@@ -52,6 +52,19 @@ public:
            E.varIsFrameDerived(Op.Output) &&
            !E.canonicalFrameSlotKey(Op.Output, true);
   }
+
+  static bool derivedRootHasIndependentIdentity(const MedFunc &Func,
+                                                const MedVar &Value,
+                                                const MedVar &Root,
+                                                int64_t Offset) {
+    MedLLVMEmitter E;
+    E.CurMedFunc = &Func;
+    E.TargetArch = Arch::X86;
+    E.TargetFormat = BinaryFormat::COFF;
+    const auto Slot = E.canonicalFrameSlotKey(Value);
+    return Slot && Slot->first == std::make_pair(Root.Id, Root.SSAVer) &&
+           Slot->second == Offset && !E.canonicalFrameSlotKey(Value, true);
+  }
 };
 } // namespace neverd
 
@@ -97,6 +110,7 @@ TEST(WindowsRegistrationRealigned, RuntimeRootsKeepInvocationIdentity) {
                     MedOp::RegistrationRootKind::RealignedFramePointer,
                     MedOp::RegistrationRootKind::RealignedRestoredStackPointer,
                     MedOp::RegistrationRootKind::DisplacedFramePointer}) {
+    SCOPED_TRACE(unsigned(Kind));
     const bool FP =
         Kind == MedOp::RegistrationRootKind::EstablishedFramePointer ||
         Kind == MedOp::RegistrationRootKind::RealignedFramePointer ||
@@ -106,6 +120,7 @@ TEST(WindowsRegistrationRealigned, RuntimeRootsKeepInvocationIdentity) {
         Kind == MedOp::RegistrationRootKind::RealignedRestoredStackPointer;
     MedFunc Func;
     Func.Blocks.resize(1);
+    Func.Blocks[0].Ops.reserve(2);
     auto &Root = Func.Blocks[0].Ops.emplace_back();
     Root.Opcode = NdOp::COPY;
     Root.Output.Kind = MedVar::Reg;
@@ -120,6 +135,19 @@ TEST(WindowsRegistrationRealigned, RuntimeRootsKeepInvocationIdentity) {
     Root.RegistrationStackOffset = Restored ? -32 : 0;
     ASSERT_TRUE(hasValidRegistrationRootShape(Root));
     EXPECT_TRUE(MedLLVMEmitterTestPeer::rootHasIndependentIdentity(Func, Root));
+    auto &Derived = Func.Blocks[0].Ops.emplace_back();
+    Derived.Opcode = NdOp::INT_SUB;
+    Derived.Output = Root.Output;
+    Derived.Output.Kind = MedVar::Temp;
+    Derived.Output.Id = 2;
+    Derived.addInput(Root.Output);
+    MedVar Offset;
+    Offset.Kind = MedVar::Const;
+    Offset.Size = 4;
+    Offset.ConstVal = 16;
+    Derived.addInput(Offset);
+    EXPECT_TRUE(MedLLVMEmitterTestPeer::derivedRootHasIndependentIdentity(
+        Func, Derived.Output, Root.Output, -16));
     Root.RegistrationRoot = MedOp::RegistrationRootKind::None;
     Root.RegistrationStackOffset = 0;
     EXPECT_FALSE(

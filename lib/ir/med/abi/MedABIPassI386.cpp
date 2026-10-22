@@ -32,8 +32,14 @@ bool recoverI386RegistrationCookieCall(const MedFunc &Func,
   const auto &EH = *Func.ExceptionMetadata;
   const auto &States = *Func.RegistrationStates;
   const auto &Call = Block.Ops[CallIndex];
+  const bool CxxCookies =
+      EH.Encoding == ExceptionEncoding::X86CxxFuncInfo && EH.Cxx &&
+      EH.Personality == ExceptionPersonality::CxxFrameHandler3 &&
+      !States.CxxCookieConditions.empty() &&
+      States.CxxCookieConditions.size() <= 2 && States.SecurityCookieVA &&
+      States.SecurityCookieVA <= UINT32_MAX - 3;
   if (!EH.Registration || EH.ParseStatus != ExceptionParseStatus::Complete ||
-      EH.Encoding != ExceptionEncoding::X86ScopeTableEH4 ||
+      (EH.Encoding != ExceptionEncoding::X86ScopeTableEH4 && !CxxCookies) ||
       Func.Entry != EH.CodeRange.Begin || !States.SecurityCookiesComplete ||
       States.CookieChecks.size() > limits::kMaxRegistrationEHRecords ||
       !States.CookieCheckVA || States.CookieCheckVA > UINT32_MAX || Call.Dead ||

@@ -2142,16 +2142,22 @@ bool collectLowAddressUses(
       if (!mergePredecessors(Func.Blocks[BlockIndex], Input))
         return failCollect("merge-preds", FuncIndex,
                            Func.Blocks[BlockIndex].StartAddr);
+      // The graph and transfer rules are frozen for this solve. Identical
+      // incoming facts already have a complete output; final use recording
+      // remains a separate transfer below.
+      if (Processed[BlockIndex] && Input == InStates[BlockIndex])
+        continue;
       ModuleAddressState Output;
       if (!transfer(Func.Blocks[BlockIndex], Input, nullptr, Output))
         return failCollect("transfer-fixpoint", FuncIndex,
                            Func.Blocks[BlockIndex].StartAddr);
       const bool FirstVisit = !Processed[BlockIndex];
       Processed[BlockIndex] = true;
-      if (!FirstVisit && Input == InStates[BlockIndex] &&
-          Output == OutStates[BlockIndex])
-        continue;
+      // Recording needs the latest input even when this block kills every
+      // changed fact. Only a changed output can affect a successor.
       InStates[BlockIndex] = std::move(Input);
+      if (!FirstVisit && Output == OutStates[BlockIndex])
+        continue;
       OutStates[BlockIndex] = std::move(Output);
       auto queueSucc = [&](int SuccId) {
         auto Pos = PositionForId.find(SuccId);
@@ -2708,6 +2714,8 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     bool Complete = false;
   };
   std::vector<CompletePhysicalEnvelope> PhysicalEnvelopes(Owners.size());
+  CompletePhysicalEnvelope AllPhysicalStorage;
+  AllPhysicalStorage.Complete = true;
   for (size_t OwnerIndex = 0; OwnerIndex < Owners.size(); ++OwnerIndex) {
     const ModuleJumpTableOwner &Owner = Owners[OwnerIndex];
     if (!Budget.consume(Owner.PhysicalIdentityRanges.size()))
@@ -2726,7 +2734,67 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         Envelope.End = *End;
     }
     PhysicalEnvelopes[OwnerIndex] = Envelope;
+    AllPhysicalStorage.Complete &= Envelope.Complete;
+    if (Envelope.Complete) {
+      if (AllPhysicalStorage.Begin == InvalidVA ||
+          Envelope.Begin < AllPhysicalStorage.Begin)
+        AllPhysicalStorage.Begin = Envelope.Begin;
+      if (AllPhysicalStorage.End == InvalidVA ||
+          Envelope.End > AllPhysicalStorage.End)
+        AllPhysicalStorage.End = Envelope.End;
+    }
   }
+  // Retain a prefix maximum of the complete owner envelopes. The last start
+  // at or before an address then proves whether any envelope covers it, even
+  // when envelopes overlap or nest. Do not scan the unrelated space between
+  // disjoint owners as though the whole module were one table object.
+  std::map<va_t, va_t> PhysicalEndByBegin;
+  if (AllPhysicalStorage.Complete) {
+    for (const CompletePhysicalEnvelope &Envelope : PhysicalEnvelopes) {
+      if (!scanPair(
+              detail::orderedContainerLookupWork(PhysicalEndByBegin.size())) ||
+          !Budget.consume())
+        return abandonAnalysis();
+      auto [It, Inserted] =
+          PhysicalEndByBegin.emplace(Envelope.Begin, Envelope.End);
+      if (!Inserted)
+        It->second = std::max(It->second, Envelope.End);
+    }
+    va_t End = 0;
+    for (auto &[Begin, PrefixEnd] : PhysicalEndByBegin) {
+      if (!scanPair())
+        return abandonAnalysis();
+      End = std::max(End, PrefixEnd);
+      PrefixEnd = End;
+    }
+  }
+  // This is only a rejection filter for exact addresses. Each owner keeps
+  // its sparse filler, internal gaps and one-past endpoint; possible matches
+  // still use the owner-aware checks below. An incomplete range disables it.
+  // A frozen gap proves every strictly interior address disjoint. Reuse that
+  // one interval across nearby inputs, each still paying its field-scan debit.
+  std::optional<std::pair<va_t, va_t>> LastPhysicalGap;
+  auto outsideAllPhysicalStorage = [&](va_t Address) -> std::optional<bool> {
+    if (!AllPhysicalStorage.Complete)
+      return false;
+    if (Address < AllPhysicalStorage.Begin || Address > AllPhysicalStorage.End)
+      return true;
+    if (LastPhysicalGap && Address > LastPhysicalGap->first &&
+        Address < LastPhysicalGap->second)
+      return true;
+    if (!scanPair(
+            detail::orderedContainerLookupWork(PhysicalEndByBegin.size())))
+      return std::nullopt;
+    const auto After = PhysicalEndByBegin.upper_bound(Address);
+    if (After == PhysicalEndByBegin.begin())
+      return true;
+    const va_t BeforeEnd = std::prev(After)->second;
+    if (Address <= BeforeEnd)
+      return false;
+    if (After != PhysicalEndByBegin.end())
+      LastPhysicalGap = std::pair{BeforeEnd, After->first};
+    return true;
+  };
 
   std::map<va_t, std::set<va_t>> TableObjectAliases;
   size_t TableAliasWorkRemaining = limits::kMaxJumpTableEvidenceWork;
@@ -2865,7 +2933,10 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
   };
   // Index the frozen public inventory once instead of scanning every source
   // for every loader field. Preserve all sources, including conflicting and
-  // imprecise ones; anchor eligibility is not source eligibility.
+  // imprecise ones; anchor eligibility is not source eligibility. Only actual
+  // loader fields query this index below, so indexing a source needs no
+  // preliminary lookup in both loader maps. Unmatched keys grant no authority
+  // and still spend the same bounded retention account.
   std::map<va_t, std::vector<ExactSource>> SourcesByField;
   for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex)
     for (const auto &Occurrence :
@@ -2873,20 +2944,6 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
       if (!scanPair())
         return abandonAnalysis();
       if (Occurrence.FieldVA == InvalidVA)
-        continue;
-      if (!scanPair(detail::orderedContainerLookupWork(
-              Img.DataAddressRelocOperands.size())))
-        return abandonAnalysis();
-      bool HasLoaderField =
-          Img.DataAddressRelocOperands.count(Occurrence.FieldVA) != 0;
-      if (!HasLoaderField) {
-        if (!scanPair(detail::orderedContainerLookupWork(
-                Img.CodeAddressRelocOperands.size())))
-          return abandonAnalysis();
-        HasLoaderField =
-            Img.CodeAddressRelocOperands.count(Occurrence.FieldVA) != 0;
-      }
-      if (!HasLoaderField)
         continue;
       if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
         return abandonAnalysis();
@@ -2911,6 +2968,19 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
 
   auto protectRelocationUse = [&](va_t FieldVA,
                                   const RelocatedAddressField &Field) {
+    if (!scanPair())
+      return false;
+    // A complete absolute target outside every physical envelope cannot
+    // expose an owner, regardless of which instruction contexts name it.
+    // Screen it before paying for the field/source lookup. PC-relative loader
+    // approximations must still reach the exact-source/container logic.
+    if (!Field.PCRelativeFromInstructionEnd) {
+      const auto Outside = outsideAllPhysicalStorage(Field.TargetVA);
+      if (!Outside)
+        return false;
+      if (*Outside)
+        return true;
+    }
     if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
       return false;
     const auto Sources = SourcesByField.find(FieldVA);
@@ -3035,12 +3105,17 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     if (!protectRelocationUse(FieldVA, Field))
       return abandonAnalysis();
   for (va_t PointerSlot : Img.DataPtrRelocSlots) {
-    if (!Budget.consume())
+    if (!scanPair())
       return abandonAnalysis();
     const uint8_t *P = Img.readVA(PointerSlot, Img.getPointerSize());
     if (!P)
       return abandonAnalysis();
     const va_t Target = static_cast<va_t>(readPtr(P, Img.is64Bit()));
+    const auto Outside = outsideAllPhysicalStorage(Target);
+    if (!Outside)
+      return abandonAnalysis();
+    if (*Outside)
+      continue;
     va_t TargetOwnerVA = InvalidVA;
     if (auto It = Img.DataPtrRelocTargetOwners.find(PointerSlot);
         It != Img.DataPtrRelocTargetOwners.end())

@@ -29,6 +29,17 @@ entries and unwind frame starts; a frame that begins later, a chained row or a
 cold fragment cannot supply an independent callable identity. Next-entry bounds
 use those primary identities as well. Explicitly selecting code for analysis
 retains its separate decode and admission checks.
+Patch/lift output requires every explicitly selected entry to survive into
+MedIR before LLVM emission. Automatically included exception callbacks cannot
+substitute for a rejected parent. Failures retain the entry's audit disposition
+and first decode or unsupported-instruction address; source views can still
+return their partial analysis.
+
+PE32 discovery rejects heuristic entries inside the operand bytes of reachable,
+complete instructions. The owning entry's control-flow walk supplies this
+evidence; overlapping paths, data and section boundaries invalidate it.
+Independent symbols, exports, direct calls and relocated pointers retain their
+separate authority.
 
 The COFF CFG reader also requires unique, complete file-backed storage for the
 target's minimum instruction unit. The table must be immutable, while target
@@ -692,6 +703,20 @@ yet a load narrower than a pointer cannot read a code pointer: such a base is
 data among the code, an index table, not a code address
 (`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
 jump table beside it stays a code address.
+The jump-table resolver shares complete guest-address COPY/ZEXT tracing across
+ordinary, unscaled and two-level loads. Linked PE32 compact switches may name
+both bases by absolute displacements. Their immutable index bytes still need
+a bounded selector, a complete relocated target run and disjoint decoded code.
+LLVM may omit the exact authenticated index read only when all its value uses
+end at the same switch's authenticated target read and that target has no other
+observable use. Both use closures spend one finite evidence budget; extra
+reads, stores, calls, returns or selector uses keep the original read mandatory.
+When an index remains observable, the executable-data mirror includes the
+adjacent resolver-owned index span after its relocated target run. It derives
+one extent from the complete module inventory before materialization, retaining
+shared suffix aliases. Only contiguous immutable bytes without even a partial
+code/data/import/runtime pointer slot qualify; gaps and unproved extents cannot
+extend the object.
 MSVC places an i386 switch's jump table in `.text` after its function, where
 the base relocations record its slots as instruction operands. No instruction
 holds more pointer-wide relocated fields back to back than
@@ -1635,6 +1660,56 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+Published block states expose their complete level domain through
+`RegistrationBlockState::levels()`. Explicit domains use `ExplicitLevels`;
+unknown blocks can share one immutable, owning `SharedLevels` vector created
+by that solver run. Publication charges its construction once and every block
+reference separately. Frame facts, catch searches, callback identities and
+lifetime checks remain per block. Copies retain the domain after the solver
+and input function are destroyed. Sharing does not make an unknown state
+complete, remove an exceptional edge or change native admission.
+`ExceptionalEdge::contexts()` retains the correlated table-region and
+originating-state pairs for each transfer. Single contexts live inline;
+registration C++ cleanup edges for a shared level domain can own one immutable
+`ExceptionalEdgeContextDomain` per target. CFG construction skips empty unwind
+tails only after validating the strictly descending state graph, builds every
+pair once, and charges each published edge against the existing work limit.
+Catch searches remain the per-block solver result. The unwind table still
+owns action order; grouping reachability edges does not reorder cleanups.
+Frame proofs, undefined-input fingerprints and source-stack snapshots bind
+every context, and snapshot consumers reuse the domain's content digest.
+Exact singleton consumers reject multiple contexts. MedIR remaps endpoints and
+deduplicates predecessors within each uniquely numbered source, preserving
+distinct domains and throwing instructions without scanning all earlier
+sources of a shared handler. None of this supplies missing frame, lifetime,
+callee or native exception evidence.
+`X86CxxRuntimeABI` owns the shared PE32 provider selection for the FH3 cdecl
+dispatcher and the two-word stdcall throw entry: VCRUNTIME140,
+VCRUNTIME140D and MSVCR100. Both entry proofs still require their exact import
+names, slots and code. This provider identity does not authenticate a handler's
+GS prefix, its parent frame or its exception effects.
+`getCheckedX86CxxHandlerABI` retains each authenticated GS prefix condition:
+the cookie slot and XOR base relative to the registration node, the exact
+checker call and mismatch target, and the immutable code ranges. A second
+check can reuse the first XOR base or add twelve. The checker success-path
+decoder owns its register-preservation and image-cookie identity proof.
+`getCheckedX86CxxPersonalityABI` continues to require an unguarded dispatcher;
+the guarded description supplies no parent initialization, lifetime or check
+elision authority.
+The same LowIR state solver projects those C++ conditions into the source
+parent's established frame. It requires complete four-byte initialization
+before publication, the exact image-cookie XOR base, and intact conditions at
+every exceptional dispatch. Ordinary calls, cleanup footprints and catch-object
+construction must preserve both the image cookie and the parent slots.
+Catch entry preserves an encoded word only after every cleanup's write extent
+is known to be disjoint. Exact successful source checks preserve all GPRs and
+use their own call receipts rather than an ordinary callee-frame effect.
+If those receipts cannot be published, call, runtime-object and image-read
+closure also fail; the unchecked mismatch path has no summarized effects.
+`CxxCookieConditions` describes source values only; it grants no generated
+cookie layout or authority to erase observable encoded values. The native
+dispatcher API continues to reject guarded handlers until those output
+obligations have their own proof.
 SEH dispatch joins use an explicit pending queue. After ordinary propagation
 quiesces, equal source snapshots contribute their complete level domains to
 runtime roots together. `dispatchSource` owns the inherited facts used by both
@@ -1659,6 +1734,15 @@ operation identity, width, literal and reaching-state transitions. Finally
 execution partitions frame outcomes by the resulting try level; local unwind
 reloads that level before selecting another cleanup. Joining frames first or
 recomputing narrow-write semantics downstream would lose that correlation.
+C++ state writes can also use complete reaching register values or a
+four-byte `AND`/`OR` update of the checked state slot. CFG cutting and state
+transfer share `stateStoreCandidate`; the latter still proves the actual
+address and resulting level on every path. The original load, store and
+arithmetic flags remain intact. `LowScalarConstant` owns width-correct
+`AND 0` and `OR all-ones` results even when a join loses the old scalar value.
+Supplied instruction operation slices use the same ownership check as LowIR
+structural validation, before an invalid operation address can erase temporary
+frame provenance.
 The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
 state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
 cookies and result publication have separate translation units. The private
@@ -1704,9 +1788,9 @@ These invocation slots are separate from the logical register snapshots of
 source setjmp calls and must not be restored by source longjmp resumptions.
 The shared scope-retention owner also includes rows used solely by authenticated
 ordinary calls, without making their source try levels active.
-`abi/MedABIPassI386.cpp` binds an authenticated EH4 cookie check to its current
-ECX value. Finally register exchanges and inferred callee signatures cannot add
-EDX, floating-point or stack arguments to that checked protocol.
+`abi/MedABIPassI386.cpp` binds an authenticated EH4 or C++ cookie check to its
+current ECX value. Finally register exchanges and inferred callee signatures
+cannot add EDX, floating-point or stack arguments to that checked protocol.
 `X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
 MedIR callback stores. Native writes require a checked byte, word or full-word
 constant store with a proved finite set of complete resulting states. Narrow
@@ -2051,6 +2135,24 @@ ordinary subgraph, while the checked
 RaiseException provider supplies its separate stdcall adjustment. These facts
 do not grant object borrows, memory-effect completeness or native EH authority;
 the existing call-frame and generated-code checks remain required.
+Exact, file-backed MSVCRT/MSVCR100 allocation, release and memory-copy/fill
+imports likewise supply only their cdecl returning-stack adjustment. Named
+PE32 scalar/array new/delete entries keep their exact decorated spelling.
+Direct IAT calls and authenticated jump veneers share the same provider and
+storage checks. Their allocation, deallocation, aliasing and callback effects
+remain outside this register-only proof.
+Cleanup relay caching uses the existing unwind-record bound, independently of
+the smaller ordinary-callee cache. Successful and failed lookups still consume
+the same cumulative work budget. Within one dispatch snapshot, each unwind
+action supplies its callback root once: its `ToState` and frame input do not
+depend on the originating level. Complete cleanup-effect proofs retain every
+originating level separately. Once that proof fails, no cleanup effects can be
+published, and already visited suffixes need no further traversal. Unknown
+states can then share a bounded index of the immutable callback target/state
+pairs present in the LowIR graph. Each dispatch still transfers its own frame
+snapshot; source frames and cleanup effects are never cached by that index.
+Known-state paths keep their exact unwind walks. Unknown states, all reachable
+callback roots and the existing output-work limit remain conservative.
 `getCheckedX86RegistrationLeafCalleeABI` uses the same affine transfer for
 callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller
@@ -2069,6 +2171,108 @@ or poisoned operations. It shares the frame proof's bounded work budget.
 ESI-based relays bind their base and saved entry EBP to each parent after cache
 lookup, again during caller ABI replay and during LLVM emission. LowIR owns
 the saved frame lifetime and object borrow proof.
+`getCheckedX86AllocatingStackProbeCall` authenticates an immutable PE32
+allocation constant, direct call and complete allocating page-probe helper.
+The fixed C++ installation proof uses its preserved EBP and below-node stores
+to identify a cookie-publishing frame. Entry recovery reuses that full layout
+proof before separating the frame from a preceding guessed owner. The exact
+handler/cookie operands may carry HIGHLOW fixups; allocation, call displacement
+and helper instructions may not. This description supplies no ordinary callee
+ABI or source lifetime proof. The original CALL remains in LowIR and MedIR,
+including page reads, faults, underflow clamping and return-PC movement;
+native reconstruction remains unavailable without their physical projection.
+`getCheckedX86CxxPrologueCall` shares the loader's exact EAX-handler helper
+decoder with entry discovery. It authenticates the current caller, allocation,
+helper, FuncInfo dispatch and any SafeSEH membership, then describes ordered
+live stack writes relative to the helper's established EBP. The description
+retains overlapping saves, the moved return PC's final ESP, cookie encoding and
+the returned register/flag effects. The loader uses its exact node and state
+offsets to collect source-store observations. `RegistrationStatePrologue`
+binds the actual stack word, EAX,
+incoming register identities and decoded occurrence at an unambiguous parent
+entry. Its cleanup-only transfer preserves ordered overlapping writes and
+publishes a distinct physical-call receipt, not an ordinary callee stack-pop
+contract. Catch entries and native reconstruction still require separate
+physical transfers; source-slot metadata alone grants neither.
+When a preceding padding guess prevents a closed-body boundary proof,
+`COFFRegistrationEHCallBoundary` requires two independent instruction witnesses:
+the guess lies inside a reached instruction, and a reached direct CALL names
+the complete checked prologue. Its bounded graph starts at the image entry and
+already authenticated physical registration entries. Actual witness paths
+must have immutable, unambiguous storage and valid absolute-operand fixups;
+indirect edges, byte-scan hits and the deferred candidates supply no roots.
+Stated boundaries remain authoritative. This fallback changes source ownership
+only and grants no ordinary callee, successful-return or native frame contract.
+The scoped `IndexedPE32CodeBytes` index avoids rescanning every image fixup for
+each witness span. It and the ordinary reader share one storage/fixup validator.
+Index construction, lookups and inspected records use the caller's existing
+budget; the image remains immutable for the index's lifetime. A completed
+traversal can publish independently checked boundaries even if a later witness
+exhausts the remaining allowance.
+`RegistrationPrologue` projects this checked physical entry into MedIR before
+stack analysis and SSA. It re-lifts the current three-instruction prefix and
+requires exact operations, boundaries and the source receipt to agree. The
+loader's ordered writes supply the save layout; the x86 lifter supplies XOR's
+arithmetic flags. Both return-PC stores, the cookie read and the FS chain
+transfer remain explicit. Scratch storage is separate from source temporaries,
+and all frame displacements keep their signed representation. This projection
+preserves the source EH metadata and needs a separate native frame binding.
+`RegistrationSharedCall` in LowIR binds each source occurrence to current
+immutable helper bytes, exact re-lifted caller operations, entry ownership,
+and a unique chain receipt. MedIR expansion and the parent's call/frame ABI
+query share this authority. The ABI closure treats these source invocations
+as physical frame operations; it still checks every ordinary callee and does
+not grant the shared helper an ordinary calling convention. Guarded exits
+remain outside this ABI projection until their checker is preserved.
+`RegistrationEpilogue` subsequently expands unguarded shared exits from the
+current helper instructions, using the same decoder, relocations and x86
+lifter as ordinary instructions. Exact caller boundaries and chain-removal
+receipts bind each occurrence. Explicit CALL/RET stack effects retain the
+moved return PC; EAX, EDX and flags are preserved by the helper's own dataflow.
+Guarded wrappers keep their original calls until the checker and its failure
+path have a physical projection.
+`RegistrationPhysicalFrame` independently replays the expanded private LowIR.
+Only the replay temporarily treats expanded helper boundaries as non-calls;
+source boundaries and state receipts, including `CxxPrologue`, stay unchanged.
+Every non-chain block, call, cleanup, incoming-frame, catch, runtime-object and
+image-read fact must agree. The separate immutable binding records the exact
+entry/exit occurrences and replayed chain operations. Consumers require each
+current MedIR FS access, a unique same-instruction zero-offset computation and
+fresh loader descriptors, including the entry's ordered writes. Native LLVM
+emission and independent COFF validation use that same binding and retain
+their other ABI, control, frame-privacy and output checks. Guarded handlers and
+guarded shared exits remain outside this physical native projection.
+Registration range recovery uses complete installing prefixes as local entry
+boundaries. A bounded instruction graph can disprove a heuristic start inside
+an operand while retaining stated, exported, relocated and conflicting direct
+entries. Data-pointer discovery marks an unrelocated address-valued word as
+the same weak candidate used for padding; a later relocated slot can confirm
+it independently of scan order. A complete stack-aligned C++ prefix establishes
+the installing function's start only. Its node displacement must account for
+the allocation, cookie and each actual EBX/ESI/EDI push; duplicated saves and a
+displacement for a different save count cannot establish an entry. This supplies
+no fixed EBP coordinates or native frame receipt. Cleanup-only C++ bodies can
+end at their closed return graph without absorbing the following function.
+The exact checked shared entry helper supplies its returning fallthrough to
+that ownership graph. Other calls, including later calls to the same target,
+retain the conservative control boundary; a function name alone proves no
+return edge.
+`getCheckedX86CxxEpilogueCall` authenticates the shared exit's immutable caller,
+complete restore body and optional GS-checking wrapper. `RegistrationCxxState` binds those
+current-image descriptions in the CFG layer; the state solver itself keeps no
+loader dependency. Its exit transfer requires the installed node, outside
+state, initialized pop words, exact saved register identities and intact parent
+return address. It preserves EAX, EDX and flags, models the helper PC separately
+from the parent's PC, restores ESP and retires the chain at the exact call
+boundary. Shared exits are chain removals, not ordinary callee stack-pop
+contracts. A guarded exit additionally requires the same live EBP-16 cookie
+condition owned by the checked exceptional handler, a current leaf checker
+and proven global-cookie preservation. Only then can the state solver follow
+the checker's equal-value return, model its nested return-PC store and replace
+the six arithmetic flags with CMP's actual result. Other register/flag
+provenance is retained. This physical wrapper never becomes an ordinary
+cookie-check receipt. Overlapping saves remain refused, and guarded exits still
+need a physical checker/failure-path projection before native reconstruction.
 `RegistrationCleanupABI` authenticates immutable MSVC tail-jump relays and
 Clang relays that save EBP, adjust the source frame and call one or more checked
 leaves before restoring EBP. The ordered call list retains every ECX object
@@ -2158,6 +2362,17 @@ try and handler tables and bind each cleanup to its generated state and range.
 The COFF table validator reparses source metadata, checks all raw table edges,
 matches the physical catch subfield and authenticates every absolute pointer
 fixup. SEH and C++ share generated-section and pointer-field ownership checks.
+Parents with only cleanup actions obtain the same layout from their cleanup
+records. They retain a literal zero try count and pointer with no overlapping
+fixup; no empty table is allocated. The shared state-map proof checks every
+ordered cleanup and outer edge. Handler, SafeSEH, relocation and final PE graph
+validation apply equally to these parents.
+Their source unwind projection visits each descending edge once, retaining up
+to the shared 4,096-record limit while separately bounding nested cleanup
+funclets to 128. Empty transitions reuse the prior target and do not add
+funclet depth. Mixed try/catch graphs retain their smaller search bound.
+Generated state-map validation uses the shared record limit and still binds
+every native state and outer edge to the source projection.
 The emitter fixes original image storage identity before materializing any
 function or shard, including masked native C++ sources. Preserved callee
 footprints and ordinary helper bodies therefore share the same canonical image
@@ -2188,6 +2403,11 @@ definition. The committed receipt retains sorted original/generated RVAs; final
 validation requires PE32 x86, an executable original entry and the exact E9
 target, in addition to the generated section hash. A complete language table
 cannot authorize an omitted or redirected entry trampoline.
+For a checked shared entry beginning with a narrow PUSH and MOV EAX, handler,
+the five-byte jump retires the MOV's complete HIGHLOW operand. Preparation
+authenticates that exact handler field and its original bytes before removing
+the relocation, including the operand bytes outside the jump. Other partially
+overwritten relocation fields still refuse.
 The same bounded COFF FuncInfo decoder exposes complete normalized wire graphs,
 record extents and callback-pointer fields without inventing a physical frame.
 Valid record aliases remain inspectable; distinct ownership is a separate
@@ -2839,6 +3059,19 @@ Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
 limit. Guard syntax collection and materialization keep their separate, smaller
 expression limit. This lets a shallow guard cross a longer predecessor graph
 without treating depth exhaustion as a completed proof or skipping replay.
+A guard operand reloaded from memory may nominate the nearest literal STORE
+in its block. The shared value resolver must prove that exact literal reaches
+the exact operand use before guard materialization accepts it. Lexical
+proximity supplies no memory, frame or constant-value authority.
+Direct and reloaded guard constants reject address provenance and address
+owners: a relocation's small source value is not a numeric bound after relinking.
+Within one block, the value resolver can forward an equal-width literal STORE
+to a LOAD through the same unchanged full guest pointer, including complete
+address copies and zero-extension into the internal VA width. The first
+intervening writer, atomic, call, intrinsic or control transfer ends that
+search. Predicated stores and changed pointer lanes refuse it. This local
+identity does not require a function-entry SP offset and supplies no private
+frame, cross-block memory or authenticated-writer permission.
 Linked x64 PE RVA tables query the loader's image base at each exact address
 operand through that same all-path value resolver. The candidate does not
 depend on finding a nearby lexical LEA, and a different value folded from an
@@ -2960,6 +3193,17 @@ opcode must fit the LowOp input array. Malformed records make the graph
 incomplete rather than supplying an unconstrained value or a negative dependency
 certificate. Validation debits the same shared graph work account on cold and
 cached queries; unsupported opcodes acquire no semantics from this check.
+
+The reaching-value graph distinguishes an opaque definition from an unresolved
+dependency, including an implicit caller-saved clobber. Copies, casts, partial
+register writes and predecessor joins retain that distinction. A stable
+occurrence can still prove equality with itself or supply unconstrained numeric
+bits, but cannot turn an incomplete dependency walk into a negative `MayDepend`
+certificate. A known producer beside an unknown input still establishes a
+positive dependency. Unresolved alternatives also keep the query incomplete;
+only separately authenticated producer occurrences can stand as direct roots.
+Closing an active cycle introduces no new source; the existing pending-walk
+owner still requires every incoming definition before its result can be reused.
 
 An immutable resolver graph may retain completed backward definition searches
 in a bounded, lazily allocated table. Exact block, use position, register view
@@ -3103,12 +3347,26 @@ owns the final publication decision.
 Module arbitration keeps input capacity, retained evidence and repeated work
 separate. The LowIR inventory admits at most 400000 operations; its queue still
 has 65536 debits, and block transfers share 1048576 operation debits across
-functions, fixed-point visits and final use recording. Address-occurrence
+functions, fixed-point visits and final use recording. A completed transfer is
+reused when its complete incoming state is unchanged; only a changed output
+schedules successors. The solver still saves changed incoming facts when a
+block kills them, because final use recording must observe those inputs.
+Address-occurrence
 screening uses the scan account. Retained anchors, field-index nodes and every
 source reference use the evidence account. One frozen field index preserves
-all matching contexts, including imprecise and conflicting sources; a missing
+all matching contexts, including imprecise and conflicting sources. Actual
+loader fields query it directly; an unmatched source key supplies no field
+authority and still spends retained evidence. A missing
 PC-relative occurrence retains the loader field's container rather than
-authorizing its approximate numeric target. Any exhaustion protects every
+authorizing its approximate numeric target. Loader fields and data pointers
+spend the scan account. Exact absolute targets outside every complete physical
+owner envelope are rejected before source lookup. A bounded index of starts
+and prefix-maximum ends also rejects space between disjoint owners, while
+preserving overlapping owners, sparse filler, internal gaps and one-past
+endpoints. PC-relative approximations cannot use this filter. An unreadable
+pointer still fails the inventory. The last proved gap is reusable within
+the frozen inventory, with a scan debit for every input. Only matching
+owner evidence spends the retained account. Any exhaustion protects every
 requested relocation slot and rejects writable dispatch owners.
 
 An x86/x64 absolute dispatch may name the preceding table's one-past address
@@ -4467,7 +4725,11 @@ relocation predicate for untagged constants; equal original VAs alone cannot
 establish equality between independently rebuilt objects.
 
 The x86 CFG builder proves local x87 call-stack effects before constructing
-TOP-state block copies. One LowIR analysis may share up to 128 immutable machine
+TOP-state block copies. A shape-checked integer DIV/IDIV precondition preserves
+x87 state on normal continuation. It remains in the emitted body and grants no
+permission to suppress divide faults; malformed guards and unknown state
+intrinsics still refuse the call summary.
+One LowIR analysis may share up to 128 immutable machine
 graphs or empty projection-refusal markers across its independent CFG builders,
 under an 8 MiB retained-payload allowance including the construction context.
 This bounds the shared cache, not active builders or their private graph
@@ -4575,6 +4837,51 @@ explicit bit casts, including separately emitted callers. This proves stack
 transport, not complete x87 control-word or exception semantics. Shared import
 target tracing also rejects partial pointer writes, opaque call barriers and
 instruction temporaries borrowed from another instruction.
+
+An internal i386 helper may instead consume one incoming logical ST0 and
+return an integer. The same machine graph proves that every return consumes
+that value, that no path reads or changes the caller's lower stack entries,
+and how many empty scratch slots it needs above its argument. Unknown calls,
+ordinary ABI callees, divergent returns, control-word changes, environment
+resets and recursive closures cannot establish this contract. A caller must
+prove both the argument's payload/tag and the empty scratch slots before
+admission.
+LowIR binds the binary80 argument before SSA and advances TOP. MedIR transports
+it as a separate final parameter while retaining the integer return. Calls
+preserve lower ST values and the control word, invalidate the consumed and
+scratch payloads, and cannot infer a floating return from a later read of a
+retained ST value. Final signature matching removes surplus ordinary arguments
+before the separate binary80 argument, after forwarder promotion has settled.
+Missing ordinary values keep their positions and refuse native output.
+Definitions and declarations of omitted consumers retain the same binary80
+argument type; transport through integer temporaries uses bit casts.
+This is a typed internal-call contract. Patch output, exported or address-taken
+consumers, and consumers at the image's native entry still require a native
+x87 argument adapter and are refused until one is available.
+
+PE32 `_CI*` imports have a separate physical register-stack ABI. Exact ordinary
+imports from MSVCRT or MSVCR100 currently support `_CIsqrt`, `_CIsin`, `_CIcos`,
+`_CIatan`, `_CIacos` and `_CIpow`. The shared import contract binds one or two
+binary80 inputs in logical ST0/ST1 order and one binary80 result before SSA.
+Callers must prove every argument's full tag and payload and all other slots
+empty; no lower-stack or control-word preservation is inferred for the CRT.
+Ordinary argument recovery cannot collect spills or promote integer registers
+for these calls.
+Raw cached wrappers must still run x87 call binding, including calls whose net
+TOP change is zero; a cached integer-only body cannot erase stack arguments.
+
+LLVM calls a private adapter that places the operands in the original x87
+registers and calls the original import. Indirect calls pass the actual pointer
+loaded from the rebuilt IAT; its writable contents are not replaced by a fixed
+symbol. It preserves the external identity
+and runtime behavior, including precision, global state and error handlers;
+it does not substitute a C or LLVM mathematical operation. The assembly call
+declares caller clobbers and can unwind. Unsupported providers, delay imports,
+other recognized `_CI*` contracts and unproved input states remain refused.
+Native-context and no-return paths cannot bypass the argument contract.
+HighC and LLVMC source output also refuse these calls until they have native
+adapters of their own. Deferred MedIR analysis remains available; resuming its
+HighIR projection enforces the same refusal.
 
 FH3 catch-return evidence binds the source funclet, return instruction and
 owning continuation after module discovery converges. Shared SSA verifies the
@@ -4836,6 +5143,16 @@ APFloat semantics and preserves floating state independently of that machine
 instruction admission. General x87 TOP/tag/status and fault ordering remain
 outside this projection.
 
+Both typed x87 tag seeds and owned-context captures consume the final CFG's
+source-counted relocation-root suppression. A switch label whose every
+relocation source belongs to an active table inherits its predecessors' state,
+even if the loader's additive `CodeRefTargets` union still contains it.
+Independent address-taking instructions, unconsumed or protected slots,
+exception landings and other roots inside a block retain their independent
+entry semantics. Inline absolute sources qualify suppression only after their
+targets are decoded; they never seed otherwise unreachable table arms. The x87
+pass does not repeat table-ownership analysis.
+
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
 containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES
@@ -5095,6 +5412,12 @@ write instructions and incomplete or mismatched bundles still refuse.
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
+
+`PEHeaderMapping` owns the optional file-backed `<PE headers>` mapping in linked PE images. It appends a normalized segment and region after real COFF sections, preserving their indexes, and copies original file bytes even when LLVM needs a zero-VirtualSize reader projection. Complete headers, target-width bounds, ordinary page alignment, and disjoint raw and virtual section ownership are required. Padding beyond SizeOfHeaders is not admitted. Unsupported layouts retain `pe.headers_unmapped` and grant no header read authority.
+
+`PEHeaderInitialization` bounds the loader write footprint before publishing this read-only mapping. Ordinary import lookup/IAT extents, scalar base relocations and legacy load-configuration cookie destinations must exclude header pages. `PELoaderWriteRanges` shares the metadata-overlap rule with the fixed-image reader, so one write cannot change a later descriptor, terminator or configuration field. A rebased cookie destination requires its own complete scalar fixup. TLS, delay/bound imports, extended load configurations and other unmodeled writer protocols retain the refusal. The four-million-unit budget charges visited metadata bytes and section/record queries; fixed-image validation also charges that work to its caller's limits. This proves storage initialization, not a callee's effects or an unreachable control branch.
+
+The optional-header ImageBase field keeps an absolute data-pointer identity in DataPtrRelocSlots and DataPtrRelocTargetOwners, separately from the file's explicit BaseRelocations. Ordinary immutable-read queries exclude this field, and mirrored headers retain their own base address; a rebasing loader may replace that field. Other header bytes still pass ordinary immutable-read and fixup checks. The fixed preferred-base view independently binds both mapped copies to the raw snapshot, and its v5 digest includes the changed mapping contract. Raw-environment evidence and external-exit encodings are unchanged.
 
 Raw recovery's explicit `X64TerminalImports` domain describes stable named PE
 bindings whose callees neither return nor reenter the residual graph, including
@@ -7545,6 +7868,13 @@ with other unwind records. A padding guess is absorbed only when another
 function's decoded CFG owns it. Code admission grants no exception-rewrite
 authority; the format backend still checks that contract separately.
 
+The PE32 registration range map also retains the tail target of an exact
+`CALL rel32; JMP rel32` at the format-owned image entry. The prefix and target
+must have unique immutable instruction storage, without operand fixups, and
+the signed target calculation must stay in the PE32 address space. This is
+an ownership boundary only; ordinary function symbols do not acquire the
+same rule, and it grants no returning-call, callable ABI or frame proof.
+
 CFG block publication first builds a provisional control view from instruction
 membership and each block's terminal boundary. This view retains no copied
 LowOps; decoded instruction records remain authoritative. After final
@@ -7746,6 +8076,31 @@ A bounded indexed load may rebuild an immutable Objective-C object-pointer table
 For an immutable scalar byte table, a small fixed addition or subtraction in the address expression may be folded into the table base before the indexed range proof. The emitted offset then contains only the bounded index and stride. Publication rejects any later fixed-bias edit to that offset, so the helper's base and byte count continue to cover every load exactly.
 
 An immutable scalar table indexed by an unbounded runtime value, such as a field an object holds (`table[obj->field]`), has a proven base but no provable index bound, so the scalar-offset proof rejects the offset. When the literal-table audit has reached exactly one read-only base, and no pointer merge, PHI, frame reload or mutable base, the LLVM backend reads the table through its region's read-only run mirror at the table's own offset plus the runtime index (`tryResolveRuntimeIndexedReadOnlyTable`). The mirror keeps the region's byte layout, so an in-region index reads the original element and an out-of-region one is the program's own undefined behaviour, as for a pointer table's run redirect. The offset proof itself is unchanged: a loaded index is still a stable offset only under a dominating guard or a low-bit mask (`RuntimeScalarBoundsBelongToTheScaledDefinition`).
+
+A selection between computed addresses in one complete pointer-mirror run may
+retain an unbounded runtime offset without changing the scalar-offset proof.
+Every feasible arm must preserve its complete pointer and use the same
+symbolized address model. The shared runtime-source audit follows nested
+opaque loads, complete acyclic value selections and exact private-frame
+reloads through every reaching store. An ordinary mutable image word can also
+supply runtime bits when its complete load extent has one materialized writable
+owner and no relocation, pointer binding or runtime callable-storage contract
+overlaps it. Loader-materialized zero fill qualifies; an ELF object's complete
+relocation write footprint must independently exclude the field. This reads
+live storage, without freezing its initializer or inferring the loaded value's
+pointer target. The audit excludes reconstructed image pointers, hidden mapped
+bases, uninitialized or escaped stack storage and incomplete or cyclic value
+graphs. Load-address dependencies stay visible through every nesting
+level, and this proof grants neither a scalar bound nor a callable domain.
+The container audit requires the complete run, including any exact relocation
+owner. A mutable segment qualifies only when all its memory bytes are present,
+including any loader-authenticated zero fill, and direct accesses, selected
+accesses and stores share its canonical writable pointer mirror. Such an address
+keeps its emitted arithmetic and selection, with no raw-VA rebasing. A raw or
+mixed model, truncated pointer, incomplete storage or per-object embedding cannot
+acquire this permission. Indirect calls still need their independent complete
+callable-slot domain, and pointer recurrences retain
+their separate initialization and step proofs.
 
 Jump-table recovery emits transfers to ordinary successor blocks instead of rebuilding their statements through a separate path. Each block keeps one lowering owner, including shared cases, default targets and loop entries. Dispatch-edge PHI copies execute before the corresponding transfer, with parallel snapshots preserved; incomplete edge bindings remain explicit failures.
 

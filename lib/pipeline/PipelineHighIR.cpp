@@ -267,6 +267,8 @@ bool Pipeline::resumeHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
 void Pipeline::rebuildHighIR(const BinaryImage &Img,
                              const PipelineOptions &Opts,
                              PipelineResult &Result, DebugContext *Dbg) {
+  for (const MedFunc &Function : Result.MedFuncs)
+    MedToHighConverter::validateCallContracts(Function);
   PipelineAnalysisCache *Cache = sharedAnalysisCache(Img, Opts);
   // Same import map as prepareSourceMedIR. Debug and thunk names are this
   // run's overlay; Names removes them after the workers below have joined.

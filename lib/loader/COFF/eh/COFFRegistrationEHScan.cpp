@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -173,6 +174,27 @@ std::optional<va_t> directInstallEntry(const BinaryImage &Img,
   return Entry;
 }
 
+/// Observe the caller's exact `push allocation; push table; call helper`
+/// prefix. This supplies an entry candidate, not a registration layout.
+std::optional<va_t> helperCallerEntry(const Segment &Seg, size_t CallOffset,
+                                      va_t TableVA) {
+  if (CallOffset < 7 || Seg.Data[CallOffset - 5] != 0x68 ||
+      readLE<uint32_t>(Seg.Data.data() + CallOffset - 4) != TableVA)
+    return std::nullopt;
+  size_t Begin = CallOffset - 7;
+  int64_t Allocation = 0;
+  if (Seg.Data[Begin] == 0x6a)
+    Allocation = int8_t(Seg.Data[Begin + 1]);
+  else if (CallOffset >= 10 && Seg.Data[CallOffset - 10] == 0x68) {
+    Begin = CallOffset - 10;
+    Allocation = readLE<int32_t>(Seg.Data.data() + Begin + 1);
+  } else
+    return std::nullopt;
+  if (Allocation < 0 || Allocation > limits::kMaxSourceCallBorrowedBytes)
+    return std::nullopt;
+  return Seg.VA + Begin;
+}
+
 /// Resolve the frames served by a shared prologue helper.
 ///
 /// At `/O1` and `/O2` MSVC stops inlining the SEH prologue and calls
@@ -198,6 +220,8 @@ resolvePrologueHelperCallers(const BinaryImage &Img,
                              const InstallSite &Helper) {
   std::vector<InstallSite> Callers;
   std::vector<va_t> Covered;
+  std::set<va_t> ObservedEntries;
+  size_t BoundaryWork = 0;
 
   for (const Segment &Seg : Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.size() < 5)
@@ -229,9 +253,12 @@ resolvePrologueHelperCallers(const BinaryImage &Img,
       std::optional<ExceptionAddressRange> Range = Functions.find(Img, CallVA);
       if (!Range || Range->overlaps(Helper.Range))
         continue;
-      if (std::find(Covered.begin(), Covered.end(), Range->Begin) !=
-          Covered.end())
-        continue;
+      // Earlier callers may have proved a separate entry inside this same
+      // tentative symbol range. Subsequent sites belong to that latest owner
+      // until another closed body proves a new boundary.
+      const auto Next = ObservedEntries.upper_bound(CallVA);
+      if (Next != ObservedEntries.begin())
+        Range->Begin = std::max(Range->Begin, *std::prev(Next));
 
       InstallSite Site;
       Site.InstallVA = CallVA;
@@ -249,11 +276,32 @@ resolvePrologueHelperCallers(const BinaryImage &Img,
       }
       if (Site.TableVA == 0)
         continue;
+      if (const auto Entry = helperCallerEntry(Seg, I, Site.TableVA);
+          Entry && Site.Range.Begin < *Entry && Site.Range.contains(*Entry)) {
+        // A prefix inside an instruction or reached by ordinary fallthrough
+        // belongs to the current function. Only a completely decoded body
+        // that closes before it can separate an otherwise unnamed caller.
+        if (checkedRegistrationRangeEnd(Img, {Site.Range.Begin, *Entry},
+                                        {Site.Range.Begin}, BoundaryWork)) {
+          Site.Range.Begin = *Entry;
+          ObservedEntries.insert(*Entry);
+        }
+      }
+      if (std::find(Covered.begin(), Covered.end(), Site.Range.Begin) !=
+          Covered.end())
+        continue;
 
-      Covered.push_back(Range->Begin);
+      Covered.push_back(Site.Range.Begin);
       Callers.push_back(std::move(Site));
     }
   }
+  std::sort(Callers.begin(), Callers.end(),
+            [](const InstallSite &A, const InstallSite &B) {
+              return A.Range.Begin < B.Range.Begin;
+            });
+  for (size_t I = 1; I < Callers.size(); ++I)
+    Callers[I - 1].Range.End =
+        std::min(Callers[I - 1].Range.End, Callers[I].Range.Begin);
   return Callers;
 }
 
@@ -343,9 +391,20 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
 
       // A second complete direct prologue owns a separate frame even when
       // entry discovery placed both installs in one tentative range.
-      if (const auto Entry = directInstallEntry(Img, Site);
-          Entry && Range->contains(*Entry))
+      auto Entry = directInstallEntry(Img, Site);
+      if (!Entry)
+        Entry = alignedCxxInstallEntry(Img, Site);
+      if (!Entry) {
+        Site.Range = *Range;
+        if (const auto CookieEntry = directCxxCookieInstallEntry(Img, Site)) {
+          Entry = CookieEntry->Address;
+          Site.ReturningEntryCall = CookieEntry->ReturningCall;
+        }
+      }
+      if (Entry && Range->contains(*Entry)) {
         Range->Begin = *Entry;
+        Site.HasPhysicalEntry = true;
+      }
       // Other hits inside one body describe the same re-established frame.
       if (std::find(CoveredFunctions.begin(), CoveredFunctions.end(),
                     Range->Begin) != CoveredFunctions.end())

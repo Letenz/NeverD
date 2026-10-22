@@ -4318,6 +4318,19 @@ TEST_F(JTE_X86_64, CompactPDataCountsAllKnownEntriesForEvidenceWork) {
                             {0x3000, 0x3020, 0, 0},
                             {0x4000, 0x4020, 0, 0},
                             {0x5000, 0x5020, 0, 0}};
+  neverd::Segment Other;
+  Other.VA = ImageBase + 0x4000;
+  Other.Size = Other.FileSz = 0x20;
+  Other.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Other.Data.assign(Other.Size, 0xcc);
+  Other.Data.front() = 0xc3;
+  neverd::Section OtherSection;
+  OtherSection.VA = Other.VA;
+  OtherSection.Size = OtherSection.FileSz = Other.Size;
+  OtherSection.Flags = Other.Flags;
+  Image.Sections.push_back(OtherSection);
+  Image.Segments.push_back(std::move(Other));
   neverd::Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
   neverd::CFGBuilder Builder;
@@ -4326,9 +4339,11 @@ TEST_F(JTE_X86_64, CompactPDataCountsAllKnownEntriesForEvidenceWork) {
   (void)Builder.build(Image, Decoder, FunctionVA,
                       "coff_image_relative_rva_switch");
   EXPECT_TRUE(Builder.isKnownFunctionEntry(FunctionVA));
-  // Unmapped metadata still contributes to the inventory's work bound, but
-  // cannot establish a callable entry without executable ownership.
-  EXPECT_FALSE(Builder.isKnownFunctionEntry(ImageBase + 0x4000));
+  EXPECT_TRUE(Builder.isKnownFunctionEntry(ImageBase + 0x4000));
+  // Unmapped records still cost evidence work without becoming callable
+  // entries. Restricted loading must not undercharge the directory search.
+  EXPECT_FALSE(Builder.isKnownFunctionEntry(ImageBase + 0x3000));
+  EXPECT_FALSE(Builder.isKnownFunctionEntry(ImageBase + 0x5000));
   EXPECT_EQ(Builder.knownFunctionEntryCount(), Image.COFFPDataRecords.size());
 }
 
@@ -5618,6 +5633,161 @@ TEST_F(JTE_X86_32, NarrowGuardRetainsRootsWhenEscapeAuditIsIncomplete) {
   EXPECT_TRUE(Low.JumpTables.front().SuppressibleRelocationSlots.empty());
   for (auto Target : Low.JumpTables.front().Targets)
     EXPECT_TRUE(Low.OrdinaryModuleAnalysisRoots.count(Target));
+}
+
+TEST_F(JTE_X86_32, ReloadedGuardLiteralRequiresTheExactReachingStore) {
+  for (const char *Object : {"test_jumptable_narrow_guard_i386.o",
+                             "test_jumptable_narrow_guard_x64.o"}) {
+    SCOPED_TRACE(Object);
+    auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) / Object);
+    ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+        << llvm::toString(ImageOrErr.takeError());
+    auto &Image = *ImageOrErr;
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    for (const auto &[Name, Count] :
+         {std::pair{"reloaded_guard", 3u}, std::pair{"reloaded_guard_copy", 3u},
+          std::pair{"reloaded_guard_changed_sp", 0u},
+          std::pair{"reloaded_guard_partial_sp", 0u},
+          std::pair{"reloaded_guard_atomic", 0u},
+          std::pair{"reloaded_guard_address", 0u},
+          std::pair{"reloaded_guard_direct_address", 0u},
+          std::pair{"reloaded_guard_changed", 4u},
+          std::pair{"reloaded_guard_clobbered", 0u},
+          std::pair{"reloaded_guard_call", 0u},
+          std::pair{"reloaded_guard_wrong_slot", 0u},
+          std::pair{"reloaded_guard_partial", 0u},
+          std::pair{"reloaded_guard_root", 0u},
+          std::pair{"reloaded_guard_pivot", 3u}}) {
+      SCOPED_TRACE(Name);
+      const auto *Function = Image.findSymbol(Name);
+      ASSERT_NE(Function, nullptr);
+      neverd::CFGBuilder Builder;
+      const auto Low =
+          Builder.build(Image, Decoder, Function->Addr, Function->Name);
+      ASSERT_TRUE(Low.hasCompleteInstructionLift());
+      if (std::string_view(Name).ends_with("_address")) {
+        // In ET_REL the text starts at zero, so this real relocation has
+        // exactly the scalar control's bits. Its address changes on relink.
+        ASSERT_TRUE(std::any_of(
+            Low.RelocatedInstructionAddressOccurrences.begin(),
+            Low.RelocatedInstructionAddressOccurrences.end(),
+            [](const neverd::RelocatedInstructionAddressOccurrence &Source) {
+              return Source.TargetVA == 2 &&
+                     Source.Provenance ==
+                         neverd::ConstantAddressProvenance::CodeAddress;
+            }));
+      }
+      if (!Count) {
+        EXPECT_TRUE(Low.JumpTables.empty());
+        continue;
+      }
+      ASSERT_EQ(Low.JumpTables.size(), 1u);
+      EXPECT_EQ(Low.JumpTables.front().Targets.size(), Count);
+      ASSERT_EQ(Low.JumpTables.front().SlotIndices.size(), Count);
+      EXPECT_EQ(Low.JumpTables.front().SlotIndices.back(), Count - 1);
+      neverd::CFGBuilder Exhausted;
+      Exhausted.setMaskFixedPointEvidenceBudgetForTesting(0);
+      EXPECT_TRUE(
+          Exhausted.build(Image, Decoder, Function->Addr, Function->Name)
+              .JumpTables.empty());
+    }
+  }
+}
+
+TEST_F(JTE_X86_64, ReloadedGuardExecutesTheOriginalSelection) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires an x86-64 Linux execution host";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires Clang";
+  const auto Assembly = tmpFile("reloaded-guard.s");
+  const auto Object = tmpFile("reloaded-guard.o");
+  {
+    std::ifstream Input(fs::path(TEST_SOURCE_DIR) /
+                        "x86_64/test_jumptable_narrow_guard_x64.s");
+    ASSERT_TRUE(Input.good());
+    std::ofstream Out(Assembly);
+    for (std::string Line; std::getline(Input, Line);) {
+      if (Line.starts_with("NARROW_GUARD "))
+        continue;
+      if (Line.starts_with("RELOADED_GUARD ") &&
+          Line != "RELOADED_GUARD reloaded_guard" &&
+          Line != "RELOADED_GUARD reloaded_guard_copy, 8" &&
+          Line != "RELOADED_GUARD reloaded_guard_changed, 1" &&
+          Line != "RELOADED_GUARD reloaded_guard_pivot, 7")
+        continue;
+      Out << Line << '\n';
+    }
+  }
+  const auto Assembled =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-c",
+                               Assembly.string(), "-o", Object.string()});
+  ASSERT_TRUE(Assembled.ok()) << Assembled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const auto Harness = tmpFile("reloaded-guard.c");
+  {
+    std::ofstream Out(Harness);
+    Out << R"(
+extern unsigned long reloaded_guard(unsigned long);
+extern unsigned long reloaded_guard_copy(unsigned long);
+extern unsigned long reloaded_guard_changed(unsigned long);
+extern unsigned long reloaded_guard_pivot(unsigned long);
+int main(void) {
+  const unsigned long inputs[] = {0, 1, 2, 3, 4, 255, 0xffffffffUL, ~0UL};
+  for (unsigned i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+    unsigned long x = inputs[i], expected = x <= 2 ? 710 + x : 798;
+    if (reloaded_guard(x) != expected ||
+        reloaded_guard_copy(x) != expected ||
+        reloaded_guard_pivot(x) != expected ||
+        reloaded_guard_changed(x) != (x == 3 ? 799 : expected))
+      return 1;
+  }
+  return 0;
+}
+)";
+  }
+  for (bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    neverd::PipelineOptions Options;
+    Options.LiftMode = true;
+    Options.NoOpt = NoOpt;
+    Options.EmitDumpOutput = false;
+    for (const char *Name :
+         {"reloaded_guard", "reloaded_guard_copy", "reloaded_guard_changed",
+          "reloaded_guard_pivot"}) {
+      const auto *Function = ImageOrErr->findSymbol(Name);
+      ASSERT_NE(Function, nullptr);
+      Options.OnlyFunctionEntries.insert(Function->Addr);
+    }
+    llvm::LLVMContext Context;
+    auto Result = neverd::Pipeline().run(*ImageOrErr, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_NE(Result.LlvmModule, nullptr);
+    EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+    const auto IRFile = tmpFile("reloaded-guard.ll");
+    {
+      std::string IR;
+      llvm::raw_string_ostream Stream(IR);
+      Result.LlvmModule->print(Stream, nullptr);
+      std::ofstream(IRFile) << IR;
+    }
+    for (const char *Optimization : {"-O0", "-O2"})
+      for (const auto &Input : {Object, IRFile}) {
+        SCOPED_TRACE(Optimization);
+        SCOPED_TRACE(Input.string());
+        const auto Exe = tmpFile("reloaded-guard");
+        const auto Built =
+            exec(NEVERD_TEST_CLANG, {Optimization, "-no-pie", Input.string(),
+                                     Harness.string(), "-o", Exe.string()});
+        ASSERT_TRUE(Built.ok()) << Built.err;
+        const auto Run = exec(Exe.string(), {});
+        EXPECT_TRUE(Run.ok()) << Run.err;
+      }
+  }
+#endif
 }
 
 TEST_F(JTE_X86_32, NarrowGuardUsesTheExactFullRegisterDefinition) {

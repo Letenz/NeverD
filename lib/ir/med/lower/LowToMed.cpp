@@ -13,6 +13,9 @@
 
 #include "neverd/ir/med/LowToMed.h"
 
+#include "../X86/RegistrationEpilogue.h"
+#include "../X86/RegistrationPhysicalFrame.h"
+#include "../X86/RegistrationPrologue.h"
 #include "../X86/RegistrationRoots.h"
 
 #include "neverd/Limits.h"
@@ -584,10 +587,20 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
     }
 }
 
-MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
+MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                    BinaryFormat Fmt) {
   TargetArch = TheArch;
   TargetFormat = Fmt;
+  auto Physical = Image && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
+                      ? x86_registration::projectCxxPrologue(*Image, SourceLow)
+                      : std::nullopt;
+  if (Physical)
+    x86_registration::projectCxxEpilogues(*Image, SourceLow, *Physical);
+  const auto PhysicalFrame =
+      Physical ? x86_registration::analyzePhysicalCxxFrame(*Image, SourceLow,
+                                                           *Physical)
+               : nullptr;
+  const LowFunc &Low = Physical ? *Physical : SourceLow;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops) {
       if (isLowRawEnvironmentRequirement(Op))
@@ -728,7 +741,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
   Func.RegistrationStates = Low.RegistrationStates;
+  Func.RegistrationPhysicalFrame = PhysicalFrame;
   Func.CalleePopBytes = Low.CalleePopBytes;
+  Func.ConsumesX87Argument = Low.ConsumesX87Argument;
   bool HasReturn = false, AllX87Returns = true;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops)
@@ -749,10 +764,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   } else {
     if (Low.RegistrationStates && Image)
       Func.RegistrationCallerCleanupABIComplete =
-          hasCallerCleanupRegistrationABI(Low, *Image);
+          hasCallerCleanupRegistrationABI(SourceLow, *Image);
     if (Low.ExceptionMetadata && Low.ExceptionMetadata->Cxx && Image)
       Func.RegistrationCxxEntryPopBytes =
-          getCheckedX86RegistrationCxxParentABI(Low, *Image);
+          getCheckedX86RegistrationCxxParentABI(SourceLow, *Image);
   }
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
@@ -1043,8 +1058,28 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
                 LB.Ops, LowOpIndex, *Convention->VariadicVectorCountRegister);
             Count && *Count <= ConventionRegs.floatingParamRegs(Fmt).size())
           MOp.VariadicVectorCount = static_cast<int8_t>(*Count);
-      if (!bindFormattedCall(MB, MOp, LOp))
+      // Bind ordinary register arguments first. The checked stack argument
+      // is a separate binary80 operand, not an integer register argument.
+      const unsigned X87Arguments = LOp.X87ImportArguments
+                                        ? LOp.X87ImportArguments
+                                        : unsigned(LOp.ConsumesX87Argument);
+      if (X87Arguments && LOp.NumInputs == X87Arguments + 1)
+        MOp.NumInputs = 1;
+      if (LOp.X87ImportArguments) {
+        MOp.CalleeRegisterArgs = 0;
+        MOp.CalleeStackArgs = 0;
+        MOp.CalleeVectorArgs = 0;
+      } else if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MOp, LOp);
+      if (X87Arguments && LOp.NumInputs == X87Arguments + 1) {
+        MOp.X87ArgumentInput = MOp.NumInputs;
+        MOp.X87ImportArguments = LOp.X87ImportArguments;
+        for (unsigned K = 1; K <= X87Arguments; ++K)
+          MOp.addInput(ndVarToMedVar(LOp.Inputs[K]));
+        const unsigned Slot = x86reg::stRegIndex(LOp.Inputs[1].Offset);
+        for (unsigned K = 0; K <= LOp.X87ScratchSlots; ++K)
+          MOp.X87ClobberedSlots |= uint8_t(1u << ((Slot + 8 - K) & 7));
+      }
       if (TheArch == Arch::X86 && Low.RegistrationStates &&
           Low.RegistrationStates->SecurityCookiesComplete &&
           Low.RegistrationStates->cookieCheck(LOp.Addr, LOp.Seq)) {

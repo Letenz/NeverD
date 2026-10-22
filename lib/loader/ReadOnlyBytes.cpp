@@ -1,5 +1,7 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 
+#include "ReadOnlyBytesIndex.h"
+
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Limits.h"
 
@@ -235,10 +237,43 @@ bool isFileBackedCodeImageRange(const BinaryImage &Image, va_t Address,
          mappedBytes(Image, Address, Size, false, true);
 }
 
+namespace {
+using PE32CodeFixup = read_only_detail::PE32CodeFixup;
+
+template <typename Visitor>
+bool visitPE32CodeFixups(const BinaryImage &Image, Visitor Visit) {
+  using Kind = PE32CodeFixup::Kind;
+  for (const auto &R : Image.BaseRelocations)
+    if (R.Type &&
+        !Visit(PE32CodeFixup{
+            Kind::Base, R.Address,
+            uint8_t(R.Type == llvm::COFF::IMAGE_REL_BASED_HIGHLOW ? 4 : 8),
+            R.Type}))
+      return false;
+  for (const auto &R : Image.Relocations)
+    if (!Visit(PE32CodeFixup{Kind::Forbidden, R.Address, 8}))
+      return false;
+  for (const auto *Fields :
+       {&Image.CodeAddressRelocOperands, &Image.DataAddressRelocOperands})
+    for (const auto &[Slot, Field] : *Fields)
+      if (!Visit(PE32CodeFixup{Kind::Operand, Slot, Field.Width, 0, &Field}))
+        return false;
+  for (const auto *Slots :
+       {&Image.CodePtrRelocSlots, &Image.DataPtrRelocSlots,
+        &Image.RelCodeRelocSlots, &Image.RelDataPtrRelocSlots})
+    for (va_t Slot : *Slots)
+      if (!Visit(PE32CodeFixup{Kind::Forbidden, Slot, 4}))
+        return false;
+  for (const auto &Slot : Image.RuntimeCallablePointerSlots)
+    if (!Visit(PE32CodeFixup{Kind::Forbidden, Slot.SlotVA, 4}))
+      return false;
+  return true;
+}
+
+template <typename FixupQuery>
 std::optional<std::vector<uint8_t>>
-readImmutablePE32CodeBytes(const BinaryImage &Image, va_t Address,
-                           uint32_t Size,
-                           const std::vector<va_t> &AbsoluteOperands) {
+readPE32CodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size,
+                  const std::vector<va_t> &AbsoluteOperands, FixupQuery Query) {
   if (Image.Format != BinaryFormat::COFF || Image.IsRelocatable ||
       Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 || !Size ||
       Size > ::neverd::limits::loader::kMaxImageReadBytes ||
@@ -256,44 +291,111 @@ readImmutablePE32CodeBytes(const BinaryImage &Image, va_t Address,
     if (It != Operands.begin() && *It - *std::prev(It) < 4)
       return std::nullopt;
   std::set<va_t> Relocated;
-  for (const auto &Relocation : Image.BaseRelocations)
-    if (Relocation.Type &&
-        overlaps(Address, Size, Relocation.Address,
-                 Relocation.Type == llvm::COFF::IMAGE_REL_BASED_HIGHLOW ? 4
-                                                                        : 8)) {
-      if (Relocation.Type != llvm::COFF::IMAGE_REL_BASED_HIGHLOW ||
-          !Operands.count(Relocation.Address) ||
-          !Relocated.insert(Relocation.Address).second)
-        return std::nullopt;
-    }
-  for (const auto &Relocation : Image.Relocations)
-    if (overlaps(Address, Size, Relocation.Address, 8))
-      return std::nullopt;
-  auto CheckedFields = [&](const auto &Fields) {
-    for (const auto &[Slot, Field] : Fields)
-      if (overlaps(Address, Size, Slot, Field.Width)) {
-        if (!Operands.count(Slot) || !Relocated.count(Slot) ||
-            Field.Width != 4 || Field.PCRelativeFromInstructionEnd ||
-            Field.Kind != RelocatedAddressFieldKind::Generic ||
-            Field.TargetVA !=
-                llvm::support::endian::read32le(Bytes + (Slot - Address)))
+  std::set<va_t> FieldSlots;
+  if (!Query([&](const PE32CodeFixup &Fixup) {
+        if (!overlaps(Address, Size, Fixup.Address, Fixup.Width))
+          return true;
+        using Kind = PE32CodeFixup::Kind;
+        if (Fixup.Type == Kind::Base)
+          return Fixup.BaseType == llvm::COFF::IMAGE_REL_BASED_HIGHLOW &&
+                 Operands.count(Fixup.Address) &&
+                 Relocated.insert(Fixup.Address).second;
+        if (Fixup.Type == Kind::Forbidden)
           return false;
-      }
-    return true;
-  };
-  if (!CheckedFields(Image.CodeAddressRelocOperands) ||
-      !CheckedFields(Image.DataAddressRelocOperands))
+        const auto &Field = *Fixup.Field;
+        if (!Operands.count(Fixup.Address) || Field.Width != 4 ||
+            Field.PCRelativeFromInstructionEnd ||
+            Field.Kind != RelocatedAddressFieldKind::Generic ||
+            Field.TargetVA != llvm::support::endian::read32le(
+                                  Bytes + (Fixup.Address - Address)))
+          return false;
+        FieldSlots.insert(Fixup.Address);
+        return true;
+      }))
     return std::nullopt;
-  for (const auto *Slots :
-       {&Image.CodePtrRelocSlots, &Image.DataPtrRelocSlots,
-        &Image.RelCodeRelocSlots, &Image.RelDataPtrRelocSlots})
-    for (va_t Slot : *Slots)
-      if (overlaps(Address, Size, Slot, 4))
-        return std::nullopt;
-  for (const auto &Slot : Image.RuntimeCallablePointerSlots)
-    if (overlaps(Address, Size, Slot.SlotVA, 4))
+  // Sorted indexes may visit a normalized operand before its HIGHLOW entry.
+  // Both inventories still have to name exactly the same current field.
+  for (va_t Slot : FieldSlots)
+    if (!Relocated.count(Slot))
       return std::nullopt;
   return std::vector<uint8_t>(Bytes, Bytes + Size);
+}
+} // namespace
+
+std::optional<std::vector<uint8_t>>
+readImmutablePE32CodeBytes(const BinaryImage &Image, va_t Address,
+                           uint32_t Size,
+                           const std::vector<va_t> &AbsoluteOperands) {
+  return readPE32CodeBytes(
+      Image, Address, Size, AbsoluteOperands,
+      [&](auto Visit) { return visitPE32CodeFixups(Image, Visit); });
+}
+
+bool IndexedPE32CodeBytes::charge(size_t Amount) {
+  if (Amount > Limit - std::min(Work, Limit)) {
+    Work = Limit;
+    Valid = false;
+    return false;
+  }
+  Work += Amount;
+  return true;
+}
+
+IndexedPE32CodeBytes::IndexedPE32CodeBytes(const BinaryImage &Image,
+                                           size_t &Work, size_t Limit)
+    : Image(Image), Work(Work), Limit(Limit) {
+  if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
+      Image.Format != BinaryFormat::COFF || Image.IsRelocatable)
+    return;
+  const size_t Count =
+      Image.BaseRelocations.size() + Image.Relocations.size() +
+      Image.CodeAddressRelocOperands.size() +
+      Image.DataAddressRelocOperands.size() + Image.CodePtrRelocSlots.size() +
+      Image.DataPtrRelocSlots.size() + Image.RelCodeRelocSlots.size() +
+      Image.RelDataPtrRelocSlots.size() +
+      Image.RuntimeCallablePointerSlots.size();
+  size_t SortWork = 2;
+  for (size_t N = Count; N > 1; N = N / 2 + N % 2)
+    ++SortWork;
+  if (Count > (Limit - std::min(Work, Limit)) / SortWork) {
+    Work = Limit;
+    return;
+  }
+  if (!charge(Count * SortWork))
+    return;
+  Fixups.reserve(Count);
+  visitPE32CodeFixups(Image, [&](const PE32CodeFixup &Fixup) {
+    MaximumWidth = std::max(MaximumWidth, Fixup.Width);
+    Fixups.push_back(Fixup);
+    return true;
+  });
+  std::sort(Fixups.begin(), Fixups.end(),
+            [](const auto &A, const auto &B) { return A.Address < B.Address; });
+  Valid = true;
+}
+
+std::optional<std::vector<uint8_t>>
+IndexedPE32CodeBytes::read(va_t Address, uint32_t Size,
+                           const std::vector<va_t> &AbsoluteOperands) {
+  size_t LookupWork = 1;
+  for (size_t N = Fixups.size(); N > 1; N = N / 2 + N % 2)
+    ++LookupWork;
+  if (!Valid ||
+      !charge(LookupWork + Size + AbsoluteOperands.size() +
+              2 * (Image.Segments.size() + Image.Sections.size()) + 1))
+    return std::nullopt;
+  return readPE32CodeBytes(
+      Image, Address, Size, AbsoluteOperands, [&](auto Visit) {
+        const va_t First =
+            Address >= MaximumWidth - 1 ? Address - (MaximumWidth - 1) : 0;
+        auto It = std::lower_bound(
+            Fixups.begin(), Fixups.end(), First,
+            [](const auto &F, va_t A) { return F.Address < A; });
+        for (; It != Fixups.end() && It->Address < Address + Size; ++It)
+          if (!charge(1) || !Visit(*It))
+            return false;
+        return true;
+      });
 }
 
 std::optional<uint64_t> readImmutableChainedImageValue(const BinaryImage &Image,

@@ -98,7 +98,11 @@ llvm::Error validateFramePrivacy(
   std::map<const llvm::BasicBlock *, const RegistrationCxxCatchFrameContract *>
       Invocations;
   if (Cxx) {
-    if (!Cxx->Image || !LogicalFrame || Cxx->Catches.empty())
+    // A cleanup-only parent has no runtime catch objects. Its independently
+    // replayed destructor borrows still require the complete frame privacy
+    // and definite-initialization proof below.
+    if (!Cxx->Image || !LogicalFrame ||
+        (Cxx->Catches.empty() && Cxx->Borrows.empty()))
       return Reject("incomplete runtime object/frame contract");
     for (const auto &Catch : Cxx->Catches) {
       if (!Catch.Catch || Catch.Catch->getFunction() != &Parent ||

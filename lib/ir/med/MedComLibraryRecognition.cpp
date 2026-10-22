@@ -624,12 +624,13 @@ public:
 private:
   bool terminalExceptionExit(const ExceptionalEdge &Edge) const {
     const auto *EH = F.ExceptionMetadata ? &*F.ExceptionMetadata : nullptr;
+    const auto *Context = Edge.singleContext();
     if (!EH || EH->ParseStatus != ExceptionParseStatus::Complete || !EH->Cxx ||
         !EH->Cxx->hasValidStateGraph() || !EH->Cxx->TryBlocks.empty() ||
         EH->Cxx->IsCatchFunclet || EH->Cxx->IsSeparated ||
         EH->Cxx->UnwindMap.size() != 1 ||
         Edge.Kind != ExceptionalEdgeKind::CxxCleanup || Edge.BlockId != -1 ||
-        Edge.State != 0 || !Edge.TargetVA)
+        !Context || Context->State != 0 || !Edge.TargetVA)
       return false;
     const auto &Action = EH->Cxx->UnwindMap.front();
     if (Action.ActionVA != Edge.TargetVA || Action.ToState != -1 ||

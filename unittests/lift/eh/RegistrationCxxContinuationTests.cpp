@@ -99,7 +99,7 @@ TEST(RegistrationState, CxxCatchResumesWithTheRuntimeStackAndState) {
   EXPECT_TRUE(Result.Blocks[5].CallbackOnly);
   EXPECT_EQ(Result.Blocks[5].CxxMinimumTryLevel, 1);
   EXPECT_FALSE(Result.Blocks[6].CallbackOnly);
-  EXPECT_EQ(Result.Blocks[6].Levels, (std::vector<int32_t>{1}));
+  EXPECT_EQ(Result.Blocks[6].levels(), (std::vector<int32_t>{1}));
 }
 
 TEST(RegistrationState,
@@ -226,7 +226,7 @@ TEST(RegistrationState, CatchEntryUsesTheRuntimeCatchState) {
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
   ASSERT_EQ(Result.Blocks.size(), 7u);
-  EXPECT_EQ(Result.Blocks[5].Levels, (std::vector<int32_t>{1}));
+  EXPECT_EQ(Result.Blocks[5].levels(), (std::vector<int32_t>{1}));
   EXPECT_TRUE(Result.Blocks[5].CallbackOnly);
 }
 
