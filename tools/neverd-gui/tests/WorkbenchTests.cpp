@@ -11,6 +11,7 @@
 #include "GraphView.h"
 #include "HexView.h"
 #include "InstanceServer.h"
+#include "JumpDialog.h"
 #include "LinkDispatch.h"
 #include "LinkOpener.h"
 #include "ListingView.h"
@@ -6253,6 +6254,52 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(list->model()->rowCount(), 3, OpenTimeoutMs);
   }
 
+  void typeLibrariesWaitForTheirCatalogueBeforeOfferingChoices() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    bench.action(ActionId::ViewTypeLibraries)->trigger();
+    auto *view = bench.window->findChild<TypeLibrariesView *>();
+    QVERIFY(view);
+    auto *add =
+        view->findChild<QToolButton *>(QStringLiteral("typeLibrariesAdd"));
+    QVERIFY(add);
+
+    bool premature = false;
+    QStringList offered;
+    QTimer closer;
+    closer.setSingleShot(true);
+    connect(&closer, &QTimer::timeout, this, [&] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget());
+          dialog &&
+          dialog->objectName() == QLatin1String("addTypeLibraryDialog")) {
+        auto *choices = dialog->findChild<QTreeWidget *>(
+            QStringLiteral("typeLibraryChoices"));
+        premature = choices && choices->topLevelItemCount() == 0;
+        if (choices)
+          for (int row = 0; row < choices->topLevelItemCount(); ++row)
+            offered.push_back(choices->topLevelItem(row)->text(0));
+        dialog->reject();
+      }
+    });
+    closer.start(0);
+    // The catalogue reply is deferred. An immediate click must not open an
+    // empty snapshot that stays empty even after that reply arrives.
+    QTest::mouseClick(add, Qt::LeftButton);
+    closer.stop();
+    QVERIFY2(!premature,
+             "Add opened before the type-library catalogue arrived.");
+    QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(), OpenTimeoutMs);
+
+    closer.start(0);
+    QTest::mouseClick(add, Qt::LeftButton);
+    QCOMPARE(offered, QStringList{QStringLiteral("uefi-x64")});
+  }
+
   void typeLibrariesAreAddedAndLeftOutByShiftF11() {
     // Shift+F11, as IDA lists its type libraries: the program's two join
     // its types; Del leaves the kernel's out, Ins adds UEFI's, and the
@@ -7485,6 +7532,95 @@ private slots:
     hex->setTextEncoding(QStringLiteral("klingon"));
     QTRY_COMPARE_WITH_TIMEOUT(hex->textEncoding(), QString(), OpenTimeoutMs);
     QVERIFY(!QSettings().contains(QStringLiteral("hex/textEncoding")));
+  }
+
+  void browseListsLoadWithoutTypingAndReloadWithTheProject_data() {
+    QTest::addColumn<int>("kind");
+    QTest::addColumn<int>("action");
+    struct Case {
+      const char *Name;
+      ChooserKind Kind;
+      ActionId Action;
+    };
+    for (const auto &row : {
+             Case{"functions", ChooserKind::Functions, ActionId::ViewFunctions},
+             Case{"names", ChooserKind::Names, ActionId::ViewNames},
+             Case{"strings", ChooserKind::Strings, ActionId::ViewStrings},
+             Case{"segments", ChooserKind::Segments, ActionId::ViewSegments},
+             Case{"imports", ChooserKind::Imports, ActionId::ViewImports},
+             Case{"exports", ChooserKind::Exports, ActionId::ViewExports},
+             Case{"string-references", ChooserKind::StringReferences,
+                  ActionId::SearchStringReferences},
+         })
+      QTest::newRow(row.Name) << int(row.Kind) << int(row.Action);
+  }
+
+  void browseListsLoadWithoutTypingAndReloadWithTheProject() {
+    QFETCH(int, kind);
+    QFETCH(int, action);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    const QString input =
+        writeFixture(directory, QStringLiteral("pseudocode-import.bin"));
+    bench.window->openFile(input);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    QVERIFY(bench.action(ActionId(action))->isEnabled());
+    bench.action(ActionId(action))->trigger();
+    ChooserView *list = nullptr;
+    for (auto *candidate : bench.window->findChildren<ChooserView *>())
+      if (candidate->model().kind() == ChooserKind(kind))
+        list = candidate;
+    QVERIFY(list);
+    QTRY_VERIFY_WITH_TIMEOUT(list->model().total() > 0 &&
+                                 list->model().addressAt(0).has_value(),
+                             OpenTimeoutMs);
+    QVERIFY(!list->model().index(0, 0).data().toString().isEmpty());
+    QVERIFY(list->model().filter().isEmpty());
+    bench.action(ActionId::FileClose)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(list->model().total(), 0);
+    bench.window->openFile(input);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(list->model().total() > 0 &&
+                                 list->model().addressAt(0).has_value(),
+                             OpenTimeoutMs);
+    QVERIFY(list->model().filter().isEmpty());
+  }
+
+  void jumpMatchesRetireWhenTheExpressionChanges() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    const auto oldHistory = QSettings().value(QStringLiteral("jump/history"));
+    const auto restore = qScopeGuard([&] {
+      if (oldHistory.isValid())
+        QSettings().setValue(QStringLiteral("jump/history"), oldHistory);
+      else
+        QSettings().remove(QStringLiteral("jump/history"));
+    });
+    const QString recent = hexAddress(Base + 0x40);
+    QSettings().setValue(QStringLiteral("jump/history"), QStringList{recent});
+    JumpDialog dialog(bench.session, bench.window.get());
+    auto *input = dialog.findChild<QLineEdit *>();
+    auto *matches = dialog.findChild<QListWidget *>();
+    QVERIFY(input && matches);
+    QCOMPARE(matches->count(), 1);
+    QCOMPARE(matches->item(0)->text(), recent);
+    input->setText(QStringLiteral("function_1"));
+    QTRY_VERIFY_WITH_TIMEOUT(matches->count() > 1, OpenTimeoutMs);
+    QVERIFY(matches->item(0)->text().startsWith(QStringLiteral("function_1")));
+    matches->setCurrentRow(0);
+    input->clear();
+    QTRY_COMPARE_WITH_TIMEOUT(matches->count(), 1, OpenTimeoutMs);
+    QCOMPARE(matches->item(0)->text(), recent);
+    input->setText(QStringLiteral("function_2"));
+    QVERIFY2(!matches->currentItem(),
+             "The previous expression kept its jump target.");
   }
 
   void viewsFollowTheSessionAndNavigation() {

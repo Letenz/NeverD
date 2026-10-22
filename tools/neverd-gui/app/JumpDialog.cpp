@@ -66,9 +66,21 @@ JumpDialog::JumpDialog(Session &session, QWidget *parent)
   debounce_.setInterval(::neverd::limits::gui::kJumpDialogSearchDebounceMs);
   connect(&debounce_, &QTimer::timeout, this, &JumpDialog::search);
   connect(input_, &QLineEdit::textChanged, this, [this] {
-    matches_->clearSelection();
-    debounce_.start();
+    // Retire the previous text's replies before the debounce fires.
+    ++serial_;
+    debounce_.stop();
+    matches_->clear();
+    hint_->clear();
+    if (input_->text().trimmed().isEmpty())
+      showRecent();
+    else
+      debounce_.start();
   });
+  showRecent();
+}
+
+void JumpDialog::showRecent() {
+  matches_->clear();
   // Recent jumps while nothing is typed.
   for (const auto &text : QSettings().value(HistoryKey).toStringList()) {
     auto *item =
@@ -89,7 +101,7 @@ void JumpDialog::search() {
        {"limit", ::neverd::limits::gui::kJumpDialogMaxMatches},
        {"sort", "name"}},
       this,
-      [this, serial, text](const QJsonObject &payload) {
+      [this, serial](const QJsonObject &payload) {
         if (serial != serial_)
           return;
         matches_->clear();
@@ -114,8 +126,9 @@ void JumpDialog::search() {
         hint_->setText(
             tr("%n matches", "", int(payload.value("total").toInt())));
       },
-      [this](const QString &, const QString &message) {
-        hint_->setText(message);
+      [this, serial](const QString &, const QString &message) {
+        if (serial == serial_)
+          hint_->setText(message);
       });
 }
 
