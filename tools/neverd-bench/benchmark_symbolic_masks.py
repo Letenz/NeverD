@@ -17,6 +17,7 @@ import operator
 from pathlib import Path
 import platform
 import random
+import re
 import statistics
 import subprocess
 import tempfile
@@ -587,6 +588,70 @@ def residue_product_corpus(width, count):
     return rows
 
 
+def affine_residue_corpus(width, count):
+    """Independent odd units, even factors and partial-width affine bases."""
+    rng = random.Random(0x41464652 + width)
+    mask = (1 << width) - 1
+    tail = "+(x^y)+2*(x&y)+(z|w)+(z&w)"
+    rows = []
+    for index in range(count):
+        kind = index % 96
+        control = None
+        if kind < 63:
+            degree = (4, 8, 16, 32, 64, 128, 256)[kind // 9]
+            flavor = kind % 9
+        elif kind < 72:
+            degree = (4, 8, 16)[(kind - 63) // 3]
+            flavor = (0, 3, 7)[kind % 3]
+        else:
+            degree = (4, 8)[kind % 2]
+            flavor = (0, 1, 3)[(kind - 72) // 8]
+            control = (kind - 72) % 4
+        zeros = degree - degree.bit_count()
+        if flavor == 8:
+            zeros = degree - 2
+        fixed = 1 if flavor == 5 or control == 3 else (2 if flavor == 6 else 0)
+        scale = 1 << max(width - zeros - fixed, 0)
+        if control == 2:
+            scale += 1
+        factors = []
+        for i in range(degree - (control == 0)):
+            offset = (i if control is not None else 11 + 5 * i)
+            if control == 1 and i == degree - 1:
+                offset -= 1
+            if flavor == 8:
+                offset = 11 + 5 * (i % (degree // 2))
+            unit = (rng.getrandbits(width) | 1)
+            a = (unit << (fixed if i == 0 else 0)) & mask
+            b = (a * offset) & mask
+            if control == 3 and i == 0:
+                b = (b + 1) & mask
+            if flavor in (0,):
+                body = f"{a}*x"
+            elif flavor == 1:
+                body = f"{a}*((x+y)^z)"
+            elif flavor in (2, 5):
+                body = f"{a}*(x+y)"
+            elif flavor == 3:
+                body = f"{a}*x+{3*a & mask}*y+{5*a & mask}*z"
+            elif flavor == 4:
+                body = f"{a}*x*y"
+            elif flavor == 6:
+                body = f"{a}*x+{2*a & mask}*y+{3*a & mask}*z"
+            elif flavor == 7:
+                body = f"{a}*(x+3*(y+5*z))"
+            else:
+                body = f"{a}*x+{(a if i < degree//2 else -a) & mask}*y"
+            if 63 <= kind < 72:
+                # These perturbations preserve only the bounded low-bit
+                # affine base, not a full-width common scalar factor.
+                perturb = (rng.getrandbits(width) << (degree + 1).bit_length()) & mask
+                body += f"+{perturb}*w"
+            factors.append(f"({body}+{b})")
+        rows.append(f"({scale}*{'*'.join(factors)})" + tail)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -597,28 +662,74 @@ def check_semantics(expressions, results, width):
         ast.BitAnd: operator.and_,
         ast.BitOr: operator.or_,
         ast.BitXor: operator.xor,
+        ast.LShift: operator.lshift,
+        ast.RShift: operator.rshift,
     }
     unary = {ast.USub: operator.neg, ast.UAdd: operator.pos, ast.Invert: operator.invert}
 
-    def evaluate(node, values):
+    def parse(expression):
+        # SymPrint's explicit widths are lexical suffixes, not Python comments.
+        expression = re.sub(r"\b(0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+|[A-Za-z_]\w*)#([0-9]+)\b",
+                            r"word(\1,\2)", expression)
+        return ast.parse(expression, mode="eval")
+
+    def typed(node, values):
         if isinstance(node, ast.Constant) and type(node.value) is int:
-            return node.value & mask
+            return node.value & mask, width
         if isinstance(node, ast.Name) and node.id in values:
-            return values[node.id]
+            return values[node.id], width
         if isinstance(node, ast.BinOp) and type(node.op) in binary:
-            return binary[type(node.op)](
-                evaluate(node.left, values), evaluate(node.right, values)
-            ) & mask
+            left, left_width = typed(node.left, values)
+            right, right_width = typed(node.right, values)
+            bits = max(left_width, right_width)
+            word_mask = (1 << bits) - 1
+            left &= word_mask
+            right &= (1 << (right_width or bits)) - 1
+            if isinstance(node.op, (ast.LShift, ast.RShift)) and right >= bits:
+                return 0, bits
+            return binary[type(node.op)](left, right) & word_mask, bits
         if isinstance(node, ast.UnaryOp) and type(node.op) in unary:
-            return unary[type(node.op)](evaluate(node.operand, values)) & mask
+            value, bits = typed(node.operand, values)
+            bits = bits or width
+            return unary[type(node.op)](value) & ((1 << bits) - 1), bits
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            name = node.func.id
+            if name == "word" and len(node.args) == 2:
+                value, bits = node.args
+                if (isinstance(bits, ast.Constant) and type(bits.value) is int
+                        and bits.value > 0):
+                    if isinstance(value, ast.Constant) and type(value.value) is int:
+                        return value.value & ((1 << bits.value) - 1), bits.value
+                    if isinstance(value, ast.Name) and value.id in values:
+                        return values[value.id] & ((1 << bits.value) - 1), bits.value
+            if name == "extract" and len(node.args) == 3:
+                value, _ = typed(node.args[0], values)
+                offset, bits = node.args[1:]
+                if (isinstance(offset, ast.Constant) and type(offset.value) is int
+                        and isinstance(bits, ast.Constant) and type(bits.value) is int
+                        and offset.value >= 0 and bits.value > 0):
+                    return (value >> offset.value) & ((1 << bits.value) - 1), bits.value
+            if name in ("zext", "sext", "trunc") and len(node.args) == 2:
+                value, source_bits = typed(node.args[0], values)
+                target = node.args[1]
+                if (isinstance(target, ast.Constant) and type(target.value) is int
+                        and target.value > 0):
+                    source_bits = source_bits or width
+                    value &= (1 << source_bits) - 1
+                    if name == "sext" and value & (1 << (source_bits - 1)):
+                        value -= 1 << source_bits
+                    return value & ((1 << target.value) - 1), target.value
         raise ValueError(f"Unsupported benchmark expression: {ast.dump(node)}")
+
+    def evaluate(node, values):
+        return typed(node, values)[0] & mask
 
     rng = random.Random(0x53454D00 + width)
     edges = (0, 1, mask, mask >> 1, 1 << (width - 1), mask // 3)
     names = sorted({
-        node.id for expression in expressions
-        for node in ast.walk(ast.parse(expression, mode="eval"))
-        if isinstance(node, ast.Name)
+        node.id for expression in [*expressions, *(r["output"] for r in results)]
+        for node in ast.walk(parse(expression))
+        if isinstance(node, ast.Name) and node.id not in ("word", "extract", "zext", "sext", "trunc")
     })
     assignments = [
         {name: (x if index % 2 == 0 else y)
@@ -636,8 +747,8 @@ def check_semantics(expressions, results, width):
     if len(expressions) != len(results):
         raise AssertionError("Engine returned an incomplete corpus")
     for expression, result in zip(expressions, results):
-        before = ast.parse(expression, mode="eval").body
-        after = ast.parse(result["output"], mode="eval").body
+        before = parse(expression).body
+        after = parse(result["output"]).body
         for values in assignments:
             if evaluate(before, values) != evaluate(after, values):
                 raise AssertionError((width, expression, result["output"], values))
@@ -682,7 +793,7 @@ def main():
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
                  "row-residual", "mixed-frontier", "extreme-frontier",
-                 "residue-product"),
+                 "residue-product", "affine-residue"),
         default="complement",
     )
     args = parser.parse_args()
@@ -714,6 +825,7 @@ def main():
                 "mixed-frontier": mixed_frontier_corpus,
                 "extreme-frontier": extreme_frontier_corpus,
                 "residue-product": residue_product_corpus,
+                "affine-residue": affine_residue_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")
