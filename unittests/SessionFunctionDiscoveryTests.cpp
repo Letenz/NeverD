@@ -18,6 +18,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 
 namespace {
 std::string takeString(const char *Text) {
@@ -288,6 +289,27 @@ TEST_F(SessionFunctionDiscovery, ClosingSessionStopsItsOwnedDiscovery) {
   neverd_session_destroy(Session);
   Session = nullptr;
   EXPECT_TRUE(Token->load());
+}
+
+TEST_F(SessionFunctionDiscovery,
+       NonNativeSynchronousQueryDoesNotJoinAnEarlierJob) {
+  const auto Native = write("earlier.elf", makeNativeELF(false));
+  const auto Contract = write("current.evm", "6001600055");
+  ASSERT_EQ(neverd_session_load(Session, Native.c_str()), 1);
+  auto &State = *static_cast<neverd::sdk::Session *>(Session);
+  std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Pending;
+  State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+      State.FunctionListRevision, Pending.get_future()});
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  // A query for the replacement input must not wait for an unrelated job.
+  // It requests retirement, then a later poll drains the completed future.
+  EXPECT_TRUE(State.FunctionDiscovery->Cancel->load());
+  EXPECT_GE(neverd_session_discover_functions(Session), 0);
+  EXPECT_TRUE(State.FunctionDiscovery);
+  Pending.set_value({});
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), 1);
+  EXPECT_FALSE(State.FunctionDiscovery);
 }
 
 } // namespace

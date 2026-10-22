@@ -1059,14 +1059,17 @@ int neverd_session_discover_functions_cancellable(neverd_session_t Sess,
   };
   try {
     S->retireStaleDiscovery();
-    const auto Job = takeDiscoveryJob(*S, true, Cancelled);
-    if (Job == DiscoveryJobState::Complete)
-      return static_cast<int>(S->Functions.size());
-    if (Job == DiscoveryJobState::Cancelled)
+    if (Cancelled && Cancelled()) {
+      if (S->FunctionDiscovery)
+        (void)takeDiscoveryJob(*S, true, [] { return true; });
       return Stopped();
-    if (Cancelled && Cancelled())
-      return Stopped();
+    }
     if (nativeDiscovery(*S) && !S->DiscoveredFunctions) {
+      const auto Job = takeDiscoveryJob(*S, true, Cancelled);
+      if (Job == DiscoveryJobState::Complete)
+        return static_cast<int>(S->Functions.size());
+      if (Job == DiscoveryJobState::Cancelled)
+        return Stopped();
       auto Functions = detectFunctions(S->Img, Cancelled);
       if (!Functions)
         return Stopped();
