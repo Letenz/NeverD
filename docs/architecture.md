@@ -3934,6 +3934,12 @@ the return address the call pushed. HighC prints it as
 Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
 
+The pipeline runs both annotations through `markSourceStackAccesses`, sharing
+one batch of entry-stack offset proofs and the resulting load/store ranges.
+Only annotation flags change between the two consumers. The ranges are discarded
+before returning; no result survives a later IR mutation, and the proof's
+join, provenance, depth and work-limit rules are unchanged.
+
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C
 route prints `frame0`. Every frame access and address the writer can certify

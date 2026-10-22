@@ -190,9 +190,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
           simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(),
                                        MF.EntryKind);
           // Source views keep no prologue storage of the caller's registers.
-          markCalleeSavePrologueSaves(MF, Img.Arch, Img.abiFormat(),
-                                      MF.EntryKind);
-          markReturnAddressReads(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
+          markSourceStackAccesses(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
         }
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
