@@ -39,7 +39,21 @@ inline constexpr unsigned kMaxCubicCofactorSearchAtoms = 3;
 inline constexpr unsigned kMinQuadraticRowAtoms = 4;
 inline constexpr unsigned kMaxQuadraticRowAtoms = 8;
 inline constexpr std::size_t kMaxQuadraticRowTerms = 8;
-inline constexpr std::size_t kMinCompletedRegionCacheWork = 256;
+inline constexpr std::size_t kMinCompletedRegionCacheWork = 64;
+inline constexpr std::size_t kCompletedMemoEntryBytes = 256;
+inline constexpr std::size_t kCompletedMemoStorageDivisor = 8;
+inline constexpr std::size_t kMinArithmeticMemoTerms = 3;
+inline constexpr std::size_t kMinArithmeticCommonFactors = 3;
+inline constexpr std::size_t kMinArithmeticCommonProductOperands = 4;
+inline constexpr std::size_t kMinFlatArithmeticSumTerms = 8;
+inline constexpr std::size_t kMinUnitProductOperands = 3;
+inline constexpr std::size_t kMaxUnitProductCoordinates = 64;
+inline constexpr std::size_t kMaxBooleanBoundaryNodes = 128;
+inline constexpr unsigned kMinCanonicalAffineAtoms = 4;
+inline constexpr unsigned kMinProductCofactorDegree = 4;
+inline constexpr unsigned kMaxPartitionCubeAxes = 3;
+inline constexpr unsigned kMinCompressedCommonFactors = 3;
+inline constexpr std::size_t kMinParityMemoCapacity = 8;
 inline constexpr unsigned kMinQuadraticCongruenceAtoms = 4;
 inline constexpr unsigned kMinPackedPolynomialAtoms = 4;
 inline constexpr unsigned kMinPackedPolynomialWidth = 8;
@@ -111,7 +125,7 @@ inline constexpr int kMaxProjectedBitWindowOperands = 32;
 inline constexpr int kSymMBATryFastComplementarySumCtxNumOperandsALimit = 8;
 
 // lib/symbolic/mba/SymMBAArithmetic.cpp
-inline constexpr int kSymMBAArithmeticNormalizeCtxNumOperandsRLimit = 6;
+inline constexpr int kSymMBAArithmeticNormalizeCtxNumOperandsRLimit = 2;
 inline constexpr int
     kSymMBAArithmeticReduceDistributionProofCtxNumOperandsBeforeLimit = 6;
 inline constexpr int

@@ -532,6 +532,8 @@ void affineResidualCandidates(SymContext &Ctx,
   assert(Weights.size() == (size_t(1) << Count));
   if (!Budget.consume(Weights.size()))
     return;
+  if (isIndependentWeightedSum(Weights))
+    return;
   llvm::SmallVector<llvm::APInt, 4> Values;
   for (const llvm::APInt &Value : Weights) {
     if (llvm::is_contained(Values, Value))
@@ -639,8 +641,7 @@ void affineResidualCandidates(SymContext &Ctx,
         auto Found = Synthesized.find(Key);
         if (Found == Synthesized.end()) {
           const unsigned Arity = std::popcount(truthTableSupport(Table));
-          const size_t Functions = size_t(1) << (size_t(1) << Arity);
-          const size_t SynthesisWork = Functions * Functions;
+          const size_t SynthesisWork = bitwiseSynthesisWork(Arity);
           // This optional table must fit the remaining shared allowance.
           // Refusing it must not spend work that later regions could use.
           if (SynthesisWork > Limits.SynthesisWork ||
@@ -740,8 +741,7 @@ void booleanResidualCandidates(SymContext &Ctx,
     auto Found = Synthesized.find(Key);
     if (Found == Synthesized.end()) {
       const unsigned Arity = std::popcount(truthTableSupport(Table));
-      const size_t Functions = size_t(1) << (size_t(1) << Arity);
-      const size_t Work = Functions * Functions;
+      const size_t Work = bitwiseSynthesisWork(Arity);
       if (Work > Limits.SynthesisWork || !Budget.canConsume(Work))
         return std::nullopt;
       if (!Budget.consume(Work))

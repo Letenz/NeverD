@@ -657,6 +657,55 @@ bool hasBitwiseProductSum(const SymContext &Ctx, SymRef R) {
   return false;
 }
 
+// Boolean rewrites over the very same opaque words preserve the surrounding
+// MBA abstraction. A second reading of the old spelling is useful when an
+// arithmetic/opaque boundary changes, but not for these already proved local
+// Boolean substitutions. Bound this comparison independently of tree depth.
+bool sameBooleanBoundary(const SymContext &Ctx, SymRef Before, SymRef After,
+                         WorkBudget &Budget, size_t &Storage) {
+  auto Boolean = [&](SymRef R) {
+    const auto Op = Ctx.op(R);
+    return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor ||
+           Op == SymOp::Not;
+  };
+  if (!Boolean(Before) || (!Boolean(After) && !Ctx.isVar(After)))
+    return false;
+  auto Collect = [&](SymRef Root, llvm::SmallVectorImpl<uint32_t> &Leaves) {
+    llvm::SmallVector<SymRef, 16> Pending{Root};
+    llvm::DenseSet<uint32_t> Seen;
+    while (!Pending.empty()) {
+      SymRef R = Pending.pop_back_val();
+      if (!Budget.canConsume(1) ||
+          Seen.size() >= detail::limits::kMaxBooleanBoundaryNodes ||
+          Storage < 128)
+        return false;
+      Budget.consume();
+      if (!Seen.insert(R.index()).second)
+        continue;
+      Storage -= 128;
+      if (!Boolean(R)) {
+        Leaves.push_back(R.index());
+        continue;
+      }
+      const auto Inputs = Ctx.operands(R);
+      if (Inputs.size() >
+              detail::limits::kMaxBooleanBoundaryNodes -
+                  std::min<size_t>(detail::limits::kMaxBooleanBoundaryNodes,
+                                   Pending.size()) ||
+          !Budget.canConsume(Inputs.size()) ||
+          Inputs.size() > Storage / (2 * sizeof(SymRef)))
+        return false;
+      Budget.consume(Inputs.size());
+      Storage -= Inputs.size() * 2 * sizeof(SymRef);
+      Pending.append(Inputs.begin(), Inputs.end());
+    }
+    llvm::sort(Leaves);
+    return true;
+  };
+  llvm::SmallVector<uint32_t, 16> Left, Right;
+  return Collect(Before, Left) && Collect(After, Right) && Left == Right;
+}
+
 // A candidate can introduce a factored sum that was absent from the original
 // postorder. Visit its unmeasured nodes once, reusing exact child replacements.
 // The snapshot below is deliberately not extended with nodes emitted by this
@@ -1005,8 +1054,6 @@ SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
     if (Ctx.isVar(R)) {
       if (!llvm::is_contained(Inputs, R))
         Inputs.push_back(R);
-      if (Inputs.size() > detail::limits::kMaxLinearTailInputs)
-        return Root;
       continue;
     }
     auto Op = Ctx.op(R);
@@ -1019,7 +1066,13 @@ SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
   MBAOptions Inner = Opts;
   Inner.MaxTableBytes -= Storage;
   SolveReport Report;
-  auto Reduced = solveOneRegion(Ctx, Tail, Inner, Budget, Report);
+  if (Inputs.size() > detail::limits::kMaxLinearTailInputs) {
+    // Preserve the per-region arity bound, but let disjoint small kernels
+    // finish before walking the large products that merely share their sum.
+    Inner.MaxAtoms = std::min(resolveLimits(Inner).MaxAtoms,
+                              detail::limits::kMaxLinearTailInputs);
+  }
+  const SymRef Reduced = solveOneRegion(Ctx, Tail, Inner, Budget, Report);
   Rep.BudgetExhausted |= Report.BudgetExhausted;
   Rep.NumAtoms = std::max(Rep.NumAtoms, Report.NumAtoms);
   if (Reduced == Tail || Report.Evidence != MBAEvidence::Derivation)
@@ -1144,6 +1197,16 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   return Result;
 }
 
+namespace detail {
+
+class MBADeepSimplifier {
+public:
+  static MBAResult run(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                       MBARewriteCache &Cache, WorkBudget &Budget);
+};
+
+} // namespace detail
+
 MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   MBARewriteCache Disabled(Ctx, 0);
   return simplifyMBADeep(Ctx, E, Opts, Disabled);
@@ -1151,6 +1214,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 
 MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                           MBARewriteCache &Cache) {
+  WorkBudget Budget(Opts.MaxWork);
+  Budget.MemoOwner = &Ctx;
+  Budget.MemoCapacity = Opts.MaxTableBytes /
+                        detail::limits::kCompletedMemoStorageDivisor /
+                        detail::limits::kCompletedMemoEntryBytes;
+  return detail::MBADeepSimplifier::run(Ctx, E, Opts, Cache, Budget);
+}
+
+MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
+                                         const MBAOptions &Opts,
+                                         MBARewriteCache &Cache,
+                                         WorkBudget &Budget) {
   if (Cache.Owner != &Ctx)
     throw std::invalid_argument("MBA rewrite cache belongs to another context");
   MBAResult Result;
@@ -1159,7 +1234,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return Result;
   Result.SizeBefore = readingCost(Ctx, E);
   Result.SizeAfter = Result.SizeBefore;
-  WorkBudget Budget(Opts.MaxWork);
+  const size_t WorkStart = Budget.used();
   if (auto Hit = Cache.Rewrites.find(E.index());
       Hit != Cache.Rewrites.end() && Budget.consume()) {
     if ((Opts.AllowGrowth || doesNotGrow(Ctx, Hit->second, E)) &&
@@ -1169,7 +1244,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       Result.Changed = true;
       Result.Outcome = MBAOutcome::Rewritten;
       Result.Evidence = MBAEvidence::Derivation;
-      Result.Work = Budget.used();
+      Result.Work = Budget.used() - WorkStart;
       ++Cache.ReusedRoots;
       return Result;
     }
@@ -1182,11 +1257,99 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     Result.Changed = true;
     Result.Outcome = MBAOutcome::Rewritten;
     Result.Evidence = MBAEvidence::Derivation;
-    Result.Work = Budget.used();
+    Result.Work = Budget.used() - WorkStart;
     if (Cache.Rewrites.size() < Cache.Capacity &&
         readingScore(Ctx, Fast) < readingScore(Ctx, E))
       Cache.Rewrites.try_emplace(E.index(), Fast);
     return Result;
+  }
+
+  // Large homogeneous blocks can each contain a different sparse partition.
+  // Finish their local rewrites before composing the sum. Otherwise extracting
+  // common powers across degrees makes every parent revisit the other blocks.
+  // All recursive requests share this caller's remaining work allowance.
+  if (Ctx.op(E) == SymOp::Add &&
+      Ctx.numOperands(E) <= detail::limits::kProductCofactorMaxTerms) {
+    std::array<std::pair<unsigned, unsigned>,
+               detail::limits::kProductCofactorMaxTerms>
+        Counts{};
+    size_t Groups = 0, Edges = 0;
+    bool Flat = true;
+    auto Degree = [&](SymRef T) -> unsigned {
+      if (Ctx.op(T) != SymOp::Mul)
+        return 0;
+      const auto F = Ctx.operands(T);
+      const auto D = F.size() - unsigned(Ctx.isConst(F.front()));
+      return D >= detail::limits::kMinCompletedProductWalkDegree ? D : 0;
+    };
+    for (SymRef T : Ctx.operands(E)) {
+      const unsigned D = Degree(T);
+      if (!D)
+        continue;
+      const auto F = Ctx.operands(T);
+      if (F.size() > detail::limits::kProductCofactorMaxEdges - Edges) {
+        Flat = false;
+        break;
+      }
+      Edges += F.size();
+      Flat &= llvm::none_of(F, [&](SymRef R) {
+        return Ctx.op(R) == SymOp::Add || Ctx.op(R) == SymOp::Mul;
+      });
+      size_t I = 0;
+      while (I < Groups && Counts[I].first != D)
+        ++I;
+      if (I == Groups)
+        Counts[Groups++] = {D, 0};
+      ++Counts[I].second;
+    }
+    if (Flat && Groups >= 2 &&
+        llvm::all_of(llvm::ArrayRef(Counts).take_front(Groups), [](auto Entry) {
+          return Entry.second >=
+                 detail::limits::kProductCofactorMinCompletionTerms;
+        })) {
+      const size_t Bytes =
+          256 * Ctx.numOperands(E) + Edges * 4 * sizeof(SymRef);
+      if (Bytes <= Opts.MaxTableBytes &&
+          Budget.consume(Ctx.numOperands(E) + Edges)) {
+        std::map<unsigned, llvm::SmallVector<SymRef, 16>> Parts;
+        for (SymRef T : Ctx.operands(E))
+          Parts[Degree(T)].push_back(T);
+        llvm::SmallVector<SymRef, 8> Results;
+        bool Sampled = false, Incomplete = false;
+        for (const auto &[D, Terms] : Parts) {
+          const SymRef Part = Ctx.mkAdd(Terms);
+          MBAOptions Inner = Opts;
+          Inner.MaxWork = Budget.unlimited()
+                              ? Opts.MaxWork
+                              : Opts.MaxWork - (Budget.used() - WorkStart);
+          Inner.MaxTableBytes -= Bytes;
+          const auto R = run(Ctx, Part, Inner, Cache, Budget);
+          Incomplete |= R.Outcome == MBAOutcome::BudgetExhausted ||
+                        (!Budget.unlimited() && R.Work == Inner.MaxWork);
+          Sampled |= R.Evidence == MBAEvidence::Samples;
+          Result.NumAtoms = std::max(Result.NumAtoms, R.NumAtoms);
+          Results.push_back(R.Expr);
+        }
+        SymRef Combined = Ctx.mkAdd(Results);
+        SolveReport Final;
+        Combined = solveArithmetic(Ctx, Combined, Opts, Budget, Final, false);
+        Incomplete |= Final.BudgetExhausted;
+        Result.NumAtoms = std::max(Result.NumAtoms, Final.NumAtoms);
+        Result.Work = Budget.used() - WorkStart;
+        if (readingScore(Ctx, Combined) < readingScore(Ctx, E) &&
+            agreeOnSamples(Ctx, E, Combined, Opts.VerifySamples)) {
+          Result.Expr = Combined;
+          Result.SizeAfter = readingCost(Ctx, Combined);
+          Result.Changed = true;
+          Result.Outcome = MBAOutcome::Rewritten;
+          Result.Evidence =
+              Sampled ? MBAEvidence::Samples : MBAEvidence::Derivation;
+          if (!Sampled && !Incomplete && Cache.Rewrites.size() < Cache.Capacity)
+            Cache.Rewrites.try_emplace(E.index(), Combined);
+          return Result;
+        }
+      }
+    }
   }
 
   // Recover a shared masked word before visiting its many independently
@@ -1203,6 +1366,47 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   }
   if (WalkRoot == Prepared)
     WalkRoot = solveExpandedProducts(Ctx, Prepared, Opts, Budget, WholeRep);
+  if (ProductCofactors && Ctx.op(WalkRoot) == SymOp::Add &&
+      Ctx.numOperands(WalkRoot) <= detail::limits::kMaxCompletedProductTerms &&
+      128 + Ctx.numOperands(WalkRoot) * 2 * sizeof(SymRef) <=
+          Opts.MaxTableBytes) {
+    llvm::SmallVector<SymRef, 16> Products, Tail;
+    size_t Storage = Opts.MaxTableBytes - 128 -
+                     Ctx.numOperands(WalkRoot) * 2 * sizeof(SymRef);
+    for (SymRef Term : Ctx.operands(WalkRoot)) {
+      const bool Higher =
+          Ctx.op(Term) == SymOp::Mul &&
+          Ctx.numOperands(Term) - unsigned(Ctx.isConst(Ctx.operand(Term, 0))) >=
+              4;
+      if (Higher)
+        Term = foldProductParity(Ctx, Term, Budget, Storage);
+      (Higher ? Products : Tail).push_back(Term);
+    }
+    if (Products.size() >= 2 && !Tail.empty() &&
+        Budget.consume(Products.size() + Tail.size())) {
+      const SymRef Frontier = Ctx.mkAdd(Products);
+      SolveReport Local;
+      SymRef Compact =
+          solveArithmetic(Ctx, Frontier, Opts, Budget, Local, false);
+      WholeRep.BudgetExhausted |= Local.BudgetExhausted;
+      auto SharedMonomial = [&](SymRef R) {
+        return Ctx.op(R) == SymOp::Mul &&
+               Ctx.numOperands(R) - unsigned(Ctx.isConst(Ctx.operand(R, 0))) >=
+                   4 &&
+               llvm::any_of(Ctx.operands(R),
+                            [&](SymRef F) { return Ctx.op(F) == SymOp::Add; });
+      };
+      const bool HasCommon =
+          SharedMonomial(Compact) ||
+          (Ctx.op(Compact) == SymOp::Add &&
+           llvm::any_of(Ctx.operands(Compact), SharedMonomial));
+      if (HasCommon &&
+          readingScore(Ctx, Compact) < readingScore(Ctx, Frontier)) {
+        Tail.push_back(Compact);
+        WalkRoot = Ctx.mkAdd(Tail);
+      }
+    }
+  }
   SymRef WholeAlternative = WalkRoot;
   if (WalkRoot != E && !Budget.exhausted()) {
     // Preserve enclosing common factors before child readings can hide them.
@@ -1258,8 +1462,19 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   SymKnownBits Known(Ctx);
   std::vector<std::pair<uint32_t, SymRef>> PendingRewrites;
   bool Reused = false;
+  llvm::DenseMap<uint32_t, bool> PreservedReadings;
+  SymRef RebuiltInput;
+  bool PreservedChildren = false;
   auto Remember = [&](uint32_t Index, SymRef Value, bool Complete) {
     Solved[Index] = Value;
+    if (RefinementStorage >= 64) {
+      RefinementStorage -= 64;
+      PreservedReadings[Index] =
+          Value == SymRef(Index) ||
+          (PreservedChildren && Value == RebuiltInput) ||
+          (Complete && sameBooleanBoundary(Ctx, SymRef(Index), Value, Budget,
+                                           RefinementStorage));
+    }
     constexpr size_t CacheEntryBytes = 128;
     if (Complete && Value != SymRef(Index) &&
         PendingRewrites.size() < Cache.Capacity - Cache.Rewrites.size() &&
@@ -1293,6 +1508,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
 
     SymRef Rebuilt = R;
+    PreservedChildren = true;
     if (!Ops.empty()) {
       llvm::SmallVector<SymRef, 8> NewOps;
       NewOps.reserve(Ops.size());
@@ -1300,15 +1516,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       for (SymRef C : Ops) {
         SymRef S = Solved.lookup(C.index());
         Changed |= S != C;
+        PreservedChildren &= S == C || PreservedReadings.lookup(C.index());
         NewOps.push_back(S);
       }
       if (Changed)
         Rebuilt = Ctx.rebuild(R, NewOps);
     }
 
+    RebuiltInput = Rebuilt;
     Rebuilt = foldObservedWindow(Ctx, Rebuilt, Budget, RefinementStorage);
     Rebuilt = foldKnownBits(Ctx, Rebuilt, Known, Budget, RefinementStorage);
     Rebuilt = foldConditionalControls(Ctx, Rebuilt, Budget, RefinementStorage);
+    PreservedChildren &= Rebuilt == RebuiltInput;
     if (!canMeasureAtRoot(Ctx, Rebuilt)) {
       Solved[Index] = Rebuilt;
       continue;
@@ -1359,7 +1578,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
           ChildrenChanged &&
           (hasBitwiseInteraction(Ctx, R) || hasBitwiseProductSum(Ctx, R));
       SymRef Original = R;
-      if (ChildrenChanged && !Budget.exhausted())
+      if (ChildrenChanged && !PreservedChildren && !Budget.exhausted())
         Original = WholeRegion
                        ? solveRegionOrSplit(Ctx, R, Opts, Budget, OriginalRep,
                                             &Regions, &RefinementStorage)
@@ -1425,7 +1644,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     AnySampled |= Completed.Evidence == MBAEvidence::Samples;
     Skipped |= Completed.BudgetExhausted;
   }
-  Result.Work = Budget.used();
+  Result.Work = Budget.used() - WorkStart;
 
   // A locally shorter child can make the composed spelling longer. Retain
   // the independently proved whole-root candidate as an alternative even

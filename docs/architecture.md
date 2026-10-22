@@ -1243,12 +1243,28 @@ unchanged. Canonical flat products and coefficient changes retain the same
 fast path when no unary shift fold can apply. Sum collection reuses an original
 scaled addend only while its coefficient is unchanged; merging another addend
 invalidates that reuse before modular cancellation or reconstruction.
-Arithmetic normalization reads flat monomials directly and skips multiplication
-by unit coefficients. Completed polynomials can be reused only within one
-normalizer with a fixed context, width and complement policy. Candidate emission
-cannot mutate these tables; new roots still require normalization and complete
-coefficient equality. Returned references remain local to that normalizer, and
-later independent verifiers start with fresh state.
+Arithmetic normalization reads flat monomials directly, preserves repeated
+complement coordinates and skips multiplication by unit coefficients. A deep
+request owns bounded caches of completed polynomial expansions, abstractions,
+region results and parity tables. Homogeneous high-degree partitions share that
+same request and work account, then undergo a final common-factor recovery.
+Refusals and unfinished results are not cached. Polynomial reuse requires the
+same context, width and coordinate meaning; an opaque-complement expansion may
+cross into another basis only after checking every retained coordinate.
+Candidate construction cannot mutate these tables, and emitted arithmetic
+candidates still require a separately expanded, complete coefficient equality.
+Factor-discovery fingerprints only propose candidates: full polynomial equality
+must succeed before reuse. All retained tables disappear with the request.
+Small binary partition cubes also factor their complete modular coefficient
+tensors, including absent corners and disturbed coefficients. A separate raw
+circuit retains the original partition sums for the distribution proof; only
+individually proved partition identities enter the value circuit. Quadratic
+row recovery groups corners with identical source-factor membership, while
+checking all diagonal and off-diagonal coefficients before synthesis.
+Complete optimal Boolean recipes through three inputs are generated from the
+same fixed-point search and stored as immutable data. Runtime work charges
+cover table interpretation and emitted nodes; larger explicitly requested
+truth-table searches retain their existing bounds.
 Already allocated monomial keys and coefficients move into polynomial tables;
 copying callers retain separate storage charges. This avoids allocating the
 same product entry twice without sharing mutable proof state.
