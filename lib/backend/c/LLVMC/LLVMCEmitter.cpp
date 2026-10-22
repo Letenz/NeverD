@@ -1663,6 +1663,7 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
   const unsigned PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;
   const auto Scalar = [&](const TypeRef &Type) {
     return Type && Type->Size && Type->Size <= PointerBytes &&
+           (Type->Kind != NdTypeKind::Ptr || Type->Size == PointerBytes) &&
            (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
             (Type->Kind == NdTypeKind::Struct && Type->IsEnum)) &&
            hasCSpelling(cDisplayType(Type));
@@ -1709,6 +1710,8 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           Fits &= !Param.Indirect && Param.Pieces.size() == 1 &&
                   Param.Pieces[0].Argument == I &&
                   (Carrier->isIntegerTy() || Carrier->isPointerTy()) &&
+                  (!Carrier->isPointerTy() ||
+                   Carrier->getPointerAddressSpace() == 0) &&
                   Mod.getDataLayout().getTypeStoreSize(Carrier) >=
                       Parameters[I]->Size;
         }

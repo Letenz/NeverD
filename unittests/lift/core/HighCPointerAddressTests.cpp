@@ -48868,15 +48868,18 @@ TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
     }
   } Debug;
   for (const auto Arch : {Arch::X64, Arch::AArch64, Arch::X86})
-    for (unsigned Mode = 0; Mode < 5; ++Mode) {
+    for (unsigned Mode = 0; Mode < 6; ++Mode) {
       SCOPED_TRACE(Mode);
       Debug.LiveVoid = Mode == 1;
       Debug.WrongArity = Mode == 2;
       Debug.PointerBytes = Arch == Arch::X86 ? 4 : 8;
+      const unsigned MachinePointerBytes = Debug.PointerBytes;
+      if (Mode == 5)
+        Debug.PointerBytes = MachinePointerBytes == 4 ? 8 : 4;
       llvm::LLVMContext Context;
       llvm::Module Module("header-imports", Context);
       Module.setDataLayout(Arch == Arch::X86 ? "e-p:32:32" : "e-p:64:64");
-      auto *Word = llvm::Type::getIntNTy(Context, Debug.PointerBytes * 8);
+      auto *Word = llvm::Type::getIntNTy(Context, MachinePointerBytes * 8);
       auto *Type = llvm::FunctionType::get(Word, {Word}, false);
       const auto Function = [&](const char *Name) {
         auto *Signature = Mode == 4 && llvm::StringRef(Name) == "SdkCode"
