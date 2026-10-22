@@ -82,6 +82,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabBar>
+#include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
@@ -7047,6 +7048,82 @@ private slots:
     const auto refused = reply(malformed);
     QCOMPARE(refused.value("status"), QJsonValue("error"));
     QVERIFY(!refused.value("message").toString().isEmpty());
+  }
+
+  void pathfinderChooserLoadsBeforeFiltering_data() {
+    QTest::addColumn<bool>("exclusion");
+    QTest::addColumn<bool>("chooseImport");
+    QTest::newRow("waypoint-function") << false << false;
+    QTest::newRow("waypoint-import") << false << true;
+    QTest::newRow("exclusion-function") << true << false;
+    QTest::newRow("exclusion-import") << true << true;
+  }
+
+  void pathfinderChooserLoadsBeforeFiltering() {
+    QFETCH(bool, exclusion);
+    QFETCH(bool, chooseImport);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-import.bin")));
+    // No later discovery or revision signal may load the new dialog for it.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    bench.action(ActionId::ViewPathfinder)->trigger();
+    auto *view = bench.window->findChild<PathfinderView *>();
+    QVERIFY(view);
+    auto *add = view->findChild<QToolButton *>(
+        exclusion ? QStringLiteral("pathfinderExclude")
+                  : QStringLiteral("pathfinderAdd"));
+    QVERIFY(add && add->isEnabled());
+
+    bool loaded = false;
+    QTimer chooser, timeout;
+    connect(&chooser, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != QLatin1String("pathfinderChooser"))
+        return;
+      auto *tabs = dialog->findChild<QTabWidget *>();
+      if (!tabs || tabs->count() != 2)
+        return;
+      auto *functions = qobject_cast<ChooserView *>(tabs->widget(0));
+      auto *imports = qobject_cast<ChooserView *>(tabs->widget(1));
+      if (!functions || !imports || functions->model().addressAt(0) != Base ||
+          imports->model().addressAt(0) != Base + 0x160)
+        return;
+      chooser.stop();
+      timeout.stop();
+      // Both pages arrived with empty filters, including the hidden tab.
+      loaded = functions->model().filter().isEmpty() &&
+               imports->model().filter().isEmpty() &&
+               functions->model().index(0, 0).data().toString() ==
+                   QStringLiteral("function_0") &&
+               imports->model().index(0, 2).data().toString() ==
+                   QStringLiteral("function_22");
+      tabs->setCurrentIndex(chooseImport ? 1 : 0);
+      auto *selected = chooseImport ? imports : functions;
+      selected->table()->setCurrentIndex(selected->model().index(0, 0));
+      if (auto *buttons = dialog->findChild<QDialogButtonBox *>())
+        QTest::mouseClick(buttons->button(QDialogButtonBox::Ok),
+                          Qt::LeftButton);
+      else
+        dialog->reject();
+    });
+    connect(&timeout, &QTimer::timeout, this, [] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        dialog->reject();
+    });
+    timeout.setSingleShot(true);
+    timeout.start(OpenTimeoutMs);
+    chooser.start(10);
+    QTest::mouseClick(add, Qt::LeftButton);
+    QVERIFY2(loaded, "The waypoint chooser did not load its unfiltered lists.");
+    const QVector<Address> expected{chooseImport ? Base + 0x160 : Base};
+    QTRY_COMPARE_WITH_TIMEOUT(exclusion ? view->exclusions()
+                                        : view->waypoints(),
+                              expected, OpenTimeoutMs);
   }
 
   void pathfinderListsTheCallPathsBetweenWaypoints() {
