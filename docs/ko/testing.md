@@ -2131,3 +2131,10 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
 이 검사는 선언된 영역을 검증하며 예외 처리나 소스/native 동등성을 증명하지 않습니다.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+진입 객체 회귀는 기호 복사, 저장 슬롯과 슬롯 복사, 런타임 루프, 잃어버린 바인딩과 합류, 객체 별칭, 전체 넓은/원자/세그먼트 쓰기, 상대 경계, 잘못된 선언, 영수증 변조, 준비·연산 예산의 정확한 한계와 부족한 한계, 노드 예산 소진을 검사한다. 독립적인 바이트/레지스터 오라클이 유지된 효과를 확인한다. 담당 테스트와 raw 소비자 거부 테스트를 함께 실행한다. 이 검사는 전체 함수, 컴파일된 C 또는 일반 ABI 인증서를 제공하지 않는다.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

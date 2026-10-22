@@ -76,10 +76,23 @@ struct FrameOrigins {
   std::set<uint64_t> ExternalFrameBytes;
 };
 
+struct EntryPointer {
+  /// Zero names the frame; otherwise the declaration index plus one. Distinct
+  /// identities do not assert unequal physical pointer values.
+  size_t Root = 0;
+  uint64_t Offset = 0;
+
+  bool isFrame() const { return Root == 0; }
+  bool operator==(const EntryPointer &) const = default;
+  bool operator<(const EntryPointer &Other) const {
+    return std::tie(Root, Offset) < std::tie(Other.Root, Other.Offset);
+  }
+};
+
 struct FrameFacts {
-  /// Exact, complete root-relative pointers stored at root-relative addresses.
+  /// Exact, complete entry pointers stored at frame-relative addresses.
   /// Partial and potentially aliasing writes invalidate the complete pointer.
-  std::map<uint64_t, uint64_t> AffineValues;
+  std::map<uint64_t, EntryPointer> AffineValues;
   bool NativeStackActive = false;
   std::set<uint64_t> NativeReturnSlots;
 };
@@ -98,9 +111,9 @@ struct ControlMarginal {
 struct Projection {
   uint32_t FrameResidue = 0;
   Constants Scalars;
-  /// Complete 64-bit register values equal to the entry frame root plus a
+  /// Complete 64-bit register values equal to a declared entry root plus a
   /// modular displacement. No arbitrary expression escapes a node context.
-  std::map<uint64_t, uint64_t> AffineRegisters;
+  std::map<uint64_t, EntryPointer> AffineRegisters;
   std::map<uint64_t, uint8_t> FrameBytes;
   std::map<uint64_t, uint8_t> AbsoluteBytes;
   FrameFacts Frame;
@@ -115,7 +128,7 @@ struct ContextKey {
   // A complete entry-relative pointer is a structural fact, not a numeric
   // constant. Keep its displacement separately so a selected virtual stack
   // cursor can distinguish contexts without fixing the invocation's address.
-  std::vector<std::optional<uint64_t>> FrameControls;
+  std::vector<std::optional<EntryPointer>> FrameControls;
   bool NativeStackActive = false;
   std::optional<uint64_t> StackDisplacement;
   std::vector<std::pair<uint64_t, std::optional<uint64_t>>> ReturnSlots;
@@ -179,30 +192,38 @@ Projection project(SymState &State, SymRef Root,
     for (uint64_t Offset : AffineCandidates)
       if (const auto Displacement = affineDisplacement(
               State.context(), State.read(SymSpace::Register, Offset, 8), Root))
-        Result.AffineRegisters.emplace(Offset, *Displacement);
+        Result.AffineRegisters.emplace(Offset, EntryPointer{0, *Displacement});
     for (const auto &Byte : State.constantRegionBytes(Root))
       Result.FrameBytes.emplace(Byte.Offset, Byte.Value);
   }
   return Result;
 }
 
+SymRef entryPointerValue(SymContext &Ctx, SymRef FrameRoot,
+                         llvm::ArrayRef<SymRef> ObjectRoots,
+                         const EntryPointer &Pointer) {
+  const auto Root =
+      Pointer.isFrame() ? FrameRoot : ObjectRoots[Pointer.Root - 1];
+  return Ctx.mkAdd(Root, Ctx.mkConst(64, Pointer.Offset));
+}
+
 void seed(SymContext &Ctx, SymState &State, SymRef Root,
-          const Projection &Values) {
+          llvm::ArrayRef<SymRef> ObjectRoots, const Projection &Values) {
   for (const auto &[Key, Value] : Values.Scalars)
     State.write(Key.first, Key.second, Ctx.mkConst(8, Value));
   if (Root) {
-    for (const auto &[Register, Displacement] : Values.AffineRegisters)
+    for (const auto &[Register, Pointer] : Values.AffineRegisters)
       State.write(SymSpace::Register, Register,
-                  Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+                  entryPointerValue(Ctx, Root, ObjectRoots, Pointer));
     // A complete affine value takes precedence over independently projected
     // byte marginals. They can agree only under the incoming frame predicate,
     // which has not been installed yet and is not a syntactic equality.
     for (const auto &[Offset, Value] : Values.FrameBytes)
       State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
                   Ctx.mkConst(8, Value));
-    for (const auto &[Offset, Displacement] : Values.Frame.AffineValues)
+    for (const auto &[Offset, Pointer] : Values.Frame.AffineValues)
       State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
-                  Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+                  entryPointerValue(Ctx, Root, ObjectRoots, Pointer));
   }
   // These are current predecessor facts, intersected after all guest writes.
   // Seed the absolute bank directly: a program STORE would invalidate frame
@@ -831,6 +852,7 @@ private:
   bool emitTargets(Node &Draft, const SpecializationInstruction &Instruction,
                    const LowOp &Original, LowOp Residual, SymExec &Exec,
                    SymContext &Ctx, SymState &State, SymRef FrameRoot,
+                   llvm::ArrayRef<SymRef> ObjectRoots,
                    const FrameOrigins &Origins, const FrameFacts &Frame,
                    StepResult Flow);
   bool publish();
@@ -840,10 +862,11 @@ private:
   FiniteValues enumerate(SymContext &Ctx, SymRef Predicate,
                          llvm::ArrayRef<SymRef> Values, uint32_t Limit,
                          detail::FiniteValueObserver Observe = {});
-  bool projectEdge(SymState &State, SymRef Root, const FrameOrigins &Origins,
-                   const FrameFacts &Frame, SymRef Predicate,
-                   SpecializationCursor Successor, Projection &Out,
-                   bool &Reachable);
+  bool projectEdge(SymState &State, SymRef Root,
+                   llvm::ArrayRef<SymRef> ObjectRoots,
+                   const FrameOrigins &Origins, const FrameFacts &Frame,
+                   SymRef Predicate, SpecializationCursor Successor,
+                   Projection &Out, bool &Reachable);
   int addDispatchNode(const LowInstructionBoundary &Origin, const NdVar &Target,
                       uint64_t Value, int Taken, int Other,
                       bool Synthetic = false);
@@ -856,6 +879,16 @@ private:
   std::optional<uint64_t>
   frameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value, SymRef Root,
               FrameOffsetProof Proof = FrameOffsetProof::Optional);
+  bool chargeObjectWork(uint64_t Count);
+  bool createObjectRoots(SymContext &Ctx, std::vector<SymRef> &Roots);
+  std::optional<EntryPointer> objectPointer(SymContext &Ctx, SymRef Value,
+                                            llvm::ArrayRef<SymRef> Roots);
+  std::optional<EntryPointer>
+  storedPointer(SymContext &Ctx, SymRef Predicate, SymRef Value,
+                SymRef FrameRoot, llvm::ArrayRef<SymRef> ObjectRoots,
+                FrameOffsetProof Proof = FrameOffsetProof::Optional);
+  bool projectObjects(SymState &State, llvm::ArrayRef<SymRef> Roots,
+                      Projection &Out);
 
   SpecializationProvider &Provider;
   SpecializationCursor Entry;
@@ -897,6 +930,72 @@ private:
   static constexpr uint64_t FrameValueTemp = DispatchTemp + 48;
   static constexpr uint64_t DispatchTargetTemp = DispatchTemp + 56;
 };
+
+bool Specializer::chargeObjectWork(uint64_t Count) {
+  if (Result.EvaluatedOperations > Options.MaxOperations ||
+      Count > Options.MaxOperations - Result.EvaluatedOperations)
+    return fail(SpecializationStatus::BudgetExceeded,
+                "entry object operation budget exhausted");
+  Result.EvaluatedOperations += Count;
+  return true;
+}
+
+bool Specializer::createObjectRoots(SymContext &Ctx,
+                                    std::vector<SymRef> &Roots) {
+  if (!chargeObjectWork(Options.EntryFrameExcludedObjects.size()))
+    return false;
+  Roots.reserve(Options.EntryFrameExcludedObjects.size());
+  for (size_t I = 0; I < Options.EntryFrameExcludedObjects.size(); ++I) {
+    Roots.push_back(Ctx.mkFreshVar(64, "entry_object"));
+    if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+      return fail(SpecializationStatus::BudgetExceeded,
+                  "entry object symbolic-node budget exhausted");
+  }
+  return true;
+}
+
+std::optional<EntryPointer>
+Specializer::objectPointer(SymContext &Ctx, SymRef Value,
+                           llvm::ArrayRef<SymRef> Roots) {
+  for (size_t I = 0; I < Roots.size(); ++I) {
+    if (!chargeObjectWork(1))
+      return std::nullopt;
+    if (const auto Offset = affineDisplacement(Ctx, Value, Roots[I]))
+      return EntryPointer{I + 1, *Offset};
+  }
+  return std::nullopt;
+}
+
+std::optional<EntryPointer>
+Specializer::storedPointer(SymContext &Ctx, SymRef Predicate, SymRef Value,
+                           SymRef FrameRoot, llvm::ArrayRef<SymRef> ObjectRoots,
+                           FrameOffsetProof Proof) {
+  if (const auto Offset = frameOffset(Ctx, Predicate, Value, FrameRoot, Proof))
+    return EntryPointer{0, *Offset};
+  return Failed ? std::nullopt : objectPointer(Ctx, Value, ObjectRoots);
+}
+
+bool Specializer::projectObjects(SymState &State, llvm::ArrayRef<SymRef> Roots,
+                                 Projection &Out) {
+  if (Roots.empty())
+    return true;
+  for (uint64_t Register : AffineCandidates) {
+    if (!chargeObjectWork(1))
+      return false;
+    if (Out.AffineRegisters.count(Register))
+      continue;
+    if (const auto Pointer =
+            objectPointer(State.context(),
+                          State.read(SymSpace::Register, Register, 8), Roots))
+      Out.AffineRegisters.emplace(Register, *Pointer);
+    if (Failed)
+      return false;
+    if (State.context().numNodes() > Options.MaxSymbolicNodes)
+      return fail(SpecializationStatus::BudgetExceeded,
+                  "entry object projection symbolic-node budget exhausted");
+  }
+  return true;
+}
 
 std::optional<uint64_t> Specializer::frameOffset(SymContext &Ctx,
                                                  SymRef Predicate, SymRef Value,
@@ -1372,6 +1471,7 @@ FiniteValues Specializer::enumerate(SymContext &Ctx, SymRef Predicate,
 }
 
 bool Specializer::projectEdge(SymState &State, SymRef Root,
+                              llvm::ArrayRef<SymRef> ObjectRoots,
                               const FrameOrigins &Origins,
                               const FrameFacts &Frame, SymRef Predicate,
                               SpecializationCursor Successor, Projection &Out,
@@ -1398,6 +1498,8 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
     return true;
   }
   Out = project(State, Root, AffineCandidates, Origins, Frame);
+  if (!projectObjects(State, ObjectRoots, Out))
+    return false;
   Out.FrameResidue = FrameResidue;
   Reachable = !Ctx.isConstZero(Predicate);
   if (!Reachable)
@@ -1419,7 +1521,7 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
               DemandedAffineRegisters.count(Register)
                   ? FrameOffsetProof::Demanded
                   : FrameOffsetProof::Optional))
-        Out.AffineRegisters.emplace(Register, *Offset);
+        Out.AffineRegisters.emplace(Register, EntryPointer{0, *Offset});
       if (Failed)
         return false;
     }
@@ -1800,12 +1902,12 @@ int Specializer::enqueue(SpecializationCursor Cursor,
   ContextKey Key{Cursor, {}};
   Key.FrameResidue = Incoming.FrameResidue;
   const auto FrameControl = [](const auto &Values, uint64_t Offset,
-                               uint16_t Bytes) -> std::optional<uint64_t> {
+                               uint16_t Bytes) -> std::optional<EntryPointer> {
     if (Bytes != 8)
       return std::nullopt;
     const auto At = Values.find(Offset);
     return At == Values.end() ? std::nullopt
-                              : std::optional<uint64_t>(At->second);
+                              : std::optional<EntryPointer>(At->second);
   };
   const auto RegisterControl = [&](const SymRegisterRange &Range) {
     Key.Controls.push_back(
@@ -1835,8 +1937,8 @@ int Specializer::enqueue(SpecializationCursor Cursor,
   if (Key.NativeStackActive) {
     const auto At =
         Incoming.AffineRegisters.find(Options.FrameBaseRegister->Offset);
-    if (At != Incoming.AffineRegisters.end())
-      Key.StackDisplacement = At->second;
+    if (At != Incoming.AffineRegisters.end() && At->second.isFrame())
+      Key.StackDisplacement = At->second.Offset;
     for (uint64_t Offset : Incoming.Frame.NativeReturnSlots)
       Key.ReturnSlots.emplace_back(
           Offset, constantFrameWord(Incoming.FrameBytes,
@@ -1952,12 +2054,11 @@ int Specializer::addDispatchNode(const LowInstructionBoundary &Origin,
   return Id;
 }
 
-bool Specializer::emitTargets(Node &Draft,
-                              const SpecializationInstruction &Instruction,
-                              const LowOp &Original, LowOp Residual,
-                              SymExec &Exec, SymContext &Ctx, SymState &State,
-                              SymRef FrameRoot, const FrameOrigins &Origins,
-                              const FrameFacts &Frame, StepResult Flow) {
+bool Specializer::emitTargets(
+    Node &Draft, const SpecializationInstruction &Instruction,
+    const LowOp &Original, LowOp Residual, SymExec &Exec, SymContext &Ctx,
+    SymState &State, SymRef FrameRoot, llvm::ArrayRef<SymRef> ObjectRoots,
+    const FrameOrigins &Origins, const FrameFacts &Frame, StepResult Flow) {
   std::optional<detail::ControlDependencyCache> LocalDependencies;
   llvm::SaveAndRestore<detail::ControlDependencyCache *> RestoreDependencies(
       DependencyCache, nullptr);
@@ -1975,8 +2076,8 @@ bool Specializer::emitTargets(Node &Draft,
     for (const auto &Transfer : Nodes[FailureNode].Transfers) {
       Projection Unused;
       bool Reachable = true;
-      if (!projectEdge(State, FrameRoot, Origins, Frame, Exec.pathPredicate(),
-                       Transfer, Unused, Reachable))
+      if (!projectEdge(State, FrameRoot, ObjectRoots, Origins, Frame,
+                       Exec.pathPredicate(), Transfer, Unused, Reachable))
         return false;
     }
     return true;
@@ -2012,8 +2113,8 @@ bool Specializer::emitTargets(Node &Draft,
                                std::optional<uint64_t> KnownTarget) -> int {
     Projection EdgeState;
     bool Reachable = true;
-    if (!projectEdge(State, FrameRoot, Origins, Frame, Predicate, Cursor,
-                     EdgeState, Reachable))
+    if (!projectEdge(State, FrameRoot, ObjectRoots, Origins, Frame, Predicate,
+                     Cursor, EdgeState, Reachable))
       return -1;
     if (!Reachable)
       return -2;
@@ -2245,7 +2346,17 @@ bool Specializer::evaluate(int Id) {
   SymState State(Ctx, Options.ByteOrder);
   const SymRef FrameRoot =
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
-  seed(Ctx, State, FrameRoot, Draft.Incoming);
+  std::vector<SymRef> ObjectRoots;
+  if (!createObjectRoots(Ctx, ObjectRoots))
+    return false;
+  if (!ObjectRoots.empty() &&
+      (!chargeObjectWork(Draft.Incoming.AffineRegisters.size()) ||
+       !chargeObjectWork(Draft.Incoming.Frame.AffineValues.size())))
+    return false;
+  seed(Ctx, State, FrameRoot, ObjectRoots, Draft.Incoming);
+  if (!ObjectRoots.empty() && Ctx.numNodes() > Options.MaxSymbolicNodes)
+    return fail(SpecializationStatus::BudgetExceeded,
+                "entry object seeding symbolic-node budget exhausted");
   seedRuntimeMemoryState(Ctx, State, Options);
   auto RuntimeControls = seedRuntimeControlState(Ctx, State, Options);
   // Rebuilt nodes forget correlations, including prior writes, but retain the
@@ -2275,6 +2386,22 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::BudgetExceeded,
                     "entry frame exclusion node budget exhausted");
     }
+  }
+  for (size_t I = 0; I < ObjectRoots.size(); ++I) {
+    if (!chargeObjectWork(1))
+      return false;
+    const auto &Object = Options.EntryFrameExcludedObjects[I];
+    const auto &Bounds = *Options.EntryFrameBounds;
+    IncomingPredicate = Ctx.mkAnd(
+        IncomingPredicate, detail::nonwrappingFramePredicate(
+                               Ctx, ObjectRoots[I], Object.Begin, Object.End));
+    IncomingPredicate = Ctx.mkAnd(
+        IncomingPredicate, detail::disjointFrameRangesPredicate(
+                               Ctx, FrameRoot, Bounds.Begin, Bounds.End,
+                               ObjectRoots[I], Object.Begin, Object.End));
+    if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+      return fail(SpecializationStatus::BudgetExceeded,
+                  "entry object predicate symbolic-node budget exhausted");
   }
   const auto &Joint = Draft.Incoming.Controls;
   for (const auto &Column : Draft.Incoming.Marginals) {
@@ -2873,9 +3000,9 @@ bool Specializer::evaluate(int Id) {
               return Contains(Range.Begin, Range.End);
             });
           };
-          // Preserve a current saved frame address only after proving that
+          // Preserve a current saved entry pointer only after proving that
           // this write misses its complete physical cell. This carries no
-          // object identity or new alias premise; an overlapping or unknown
+          // new alias premise; an overlapping or unknown
           // footprint still drops the saved relation below.
           if (!Displacement && Options.ProveStoreReturnSlotSeparation &&
               !Frame.AffineValues.empty()) {
@@ -2998,13 +3125,14 @@ bool Specializer::evaluate(int Id) {
               // A complete saved root may later restore stack or control
               // state. Prove its displacement before projection even when its
               // expression has no alignment-shaped mask.
-              if (const auto Value =
-                      frameOffset(Ctx, Exec.pathPredicate(),
-                                  Exec.operandValue(*Memory.StoredValue),
-                                  FrameRoot, FrameOffsetProof::Demanded)) {
+              if (const auto Value = storedPointer(
+                      Ctx, Exec.pathPredicate(),
+                      Exec.operandValue(*Memory.StoredValue), FrameRoot,
+                      ObjectRoots, FrameOffsetProof::Demanded)) {
                 Frame.AffineValues[*Displacement] = *Value;
-                State.write(SymSpace::Temporary, FrameValueTemp,
-                            Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, *Value)));
+                State.write(
+                    SymSpace::Temporary, FrameValueTemp,
+                    entryPointerValue(Ctx, FrameRoot, ObjectRoots, *Value));
                 Evaluated.Inputs[Memory.StoredValue - Original.Inputs] =
                     NdVar::tmp(FrameValueTemp, 8);
               }
@@ -3523,9 +3651,9 @@ bool Specializer::evaluate(int Id) {
           if (Ctx.numNodes() > Options.MaxSymbolicNodes)
             return fail(SpecializationStatus::BudgetExceeded,
                         "copied frame-slot symbolic-node budget exhausted");
-          if (const auto Displacement =
-                  frameOffset(Ctx, Exec.pathPredicate(), Value, FrameRoot))
-            Frame.AffineValues[Offset] = *Displacement;
+          if (const auto Pointer = storedPointer(Ctx, Exec.pathPredicate(),
+                                                 Value, FrameRoot, ObjectRoots))
+            Frame.AffineValues[Offset] = *Pointer;
           if (Failed)
             return false;
           if (Ctx.numNodes() > Options.MaxSymbolicNodes)
@@ -3601,7 +3729,8 @@ bool Specializer::evaluate(int Id) {
         }
       }
       if (!emitTargets(Draft, Instruction, Original, std::move(Residual), Exec,
-                       Ctx, State, FrameRoot, Origins, Frame, Flow))
+                       Ctx, State, FrameRoot, ObjectRoots, Origins, Frame,
+                       Flow))
         return false;
       Finished = true;
     }
@@ -4389,6 +4518,22 @@ SpecializationResult Specializer::run() {
       Seeded.emplace(SymSpace::Register, Offset + I);
     setUnsafeOrigin(NdVar::reg(Offset, 8), true, InitialOrigins);
   }
+  std::vector<SymRef> ObjectRoots;
+  if (!createObjectRoots(Ctx, ObjectRoots) ||
+      !chargeObjectWork(ObjectRoots.size()))
+    return std::move(Result);
+  for (size_t I = 0; I < ObjectRoots.size(); ++I) {
+    const auto &Register = Options.EntryFrameExcludedObjects[I].Register;
+    Initial.write(SymSpace::Register, Register.Offset, ObjectRoots[I]);
+    AffineCandidates.insert(Register.Offset);
+    for (unsigned B = 0; B < Register.Bytes; ++B)
+      Seeded.emplace(SymSpace::Register, Register.Offset + B);
+    if (Ctx.numNodes() > Options.MaxSymbolicNodes) {
+      fail(SpecializationStatus::BudgetExceeded,
+           "entry object binding symbolic-node budget exhausted");
+      return std::move(Result);
+    }
+  }
   // Source ABIs do not provide arbitrary incoming arithmetic flag values.
   // A retained PUSHFQ may use them only after reachable native code has
   // defined every modelled flag; must-provenance joins preserve this condition.
@@ -4441,8 +4586,10 @@ SpecializationResult Specializer::run() {
     Refinement.MachineExits = std::move(*Index);
   }
   std::vector<int> Entries;
-  const auto InitialProjection =
+  auto InitialProjection =
       project(Initial, FrameRoot, AffineCandidates, InitialOrigins, {});
+  if (!projectObjects(Initial, ObjectRoots, InitialProjection))
+    return std::move(Result);
   const uint64_t FirstResidue =
       Options.EntryFrameAlignment ? Options.EntryFrameAlignment->Residue : 0;
   const uint64_t Stride =

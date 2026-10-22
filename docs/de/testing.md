@@ -2257,3 +2257,10 @@ Die Regressionen prüfen die exakte Erhaltung von CC, F1 und CD 03, die Ablehnun
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
 Diese Prüfungen qualifizieren deklarierte Regionen, nicht die Ausnahmebehandlung oder Quell-/Native-Äquivalenz.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+Die Eingangsobjektregressionen prüfen symbolische Kopien, Sicherungen und kopierte Slots, Laufzeitschleifen, verlorene Bindungen und Zusammenführungen, Objektaliasse, vollständige breite/atomare/segmentierte Schreibzugriffe, relative Grenzen, ungültige Deklarationen, manipulierte Belege sowie exakte und unzureichende Vorbereitungs- und Operationsbudgets sowie erschöpfte Knotenbudgets. Unabhängige Byte-/Registerorakel prüfen erhaltene Effekte. Die zuständigen Suites und raw-Konsumentenablehnungen gemeinsam ausführen; dies liefert kein Zertifikat für ganze Funktionen, kompiliertes C oder eine gewöhnliche ABI.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

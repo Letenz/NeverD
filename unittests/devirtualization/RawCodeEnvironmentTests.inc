@@ -185,6 +185,16 @@ struct RawByteOracle {
           }
           break;
         }
+        case NdOp::COND_BR: {
+          const auto Target = read(Op.Inputs[0]);
+          const bool Taken = read(Op.Inputs[1]) != 0;
+          for (int Id : B.Succs)
+            if ((F.Blocks.at(Id).StartAddr == Target) == Taken)
+              Next = Id;
+          if (Next < 0)
+            return false;
+          break;
+        }
         case NdOp::BRANCH: {
           const auto Target = read(Op.Inputs[0]);
           for (int Id : B.Succs)
@@ -1331,3 +1341,6 @@ TEST_F(PEFixedImageTest, RawCodeCmpxchgReceiptBindsOrdering) {
 
 #include "MachineExitEnvironmentTests.inc"
 #include "WideImmutableImageTests.inc"
+
+// Entry-object fixtures reuse the machine-exit byte oracle above.
+#include "EntryObjectEnvironmentTests.inc"
