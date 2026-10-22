@@ -1383,4 +1383,52 @@ TEST(SymMBAPrefixResidue, GeneratedReadingsStillSimplifyOriginalOpaqueInputs) {
   }
 }
 
+TEST(SymMBAPrefixResidue, MixedResidualProductsLeaveBudgetForTheirLinearTail) {
+  std::mt19937_64 Random(0x4d49584544544149);
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (unsigned Degree : {4u, 24u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Degree);
+      SymContext Ctx;
+      const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      const auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+      auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+      const auto Scale = llvm::APInt(Width, 3).shl(Width - 6);
+      llvm::SmallVector<SymRef, 32> Factors{Ctx.mkConst(Scale)};
+      for (unsigned I = 0; I < Degree; ++I) {
+        auto U =
+            Ctx.mkAnd(Ctx.mkAdd(Y, C(I)), Ctx.mkConst(~llvm::APInt(Width, 1)));
+        auto V = Ctx.mkAnd(Ctx.mkAdd(Z, C(2 * I)),
+                           Ctx.mkConst(~llvm::APInt(Width, 3)));
+        Factors.push_back(Ctx.mkXor(Ctx.mkAdd(X, C(2 * I)), Ctx.mkMul(U, V)));
+      }
+      const auto Input = Ctx.mkAdd({Ctx.mkMul(Factors), Ctx.mkXor(X, Y),
+                                    Ctx.mkMul(C(2), Ctx.mkAnd(X, Y)),
+                                    Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+      MBAOptions Opts;
+      Opts.MaxWork = 65536;
+      Opts.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, Input, Opts);
+      EXPECT_LT(Result.Work, Opts.MaxWork);
+      EXPECT_LT(Result.SizeAfter, Result.SizeBefore);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &V : Values)
+          V = word(Width, Random);
+        if (Trial < 512)
+          Values = {llvm::APInt(Width, Trial / 64),
+                    llvm::APInt(Width, Trial / 8 % 8),
+                    llvm::APInt(Width, Trial % 8), llvm::APInt(Width, Trial)};
+        auto Want = Scale;
+        for (unsigned I = 0; I < Degree; ++I)
+          Want *= (Values[0] + 2 * I) ^
+                  (((Values[1] + I) & ~llvm::APInt(Width, 1)) *
+                   ((Values[2] + 2 * I) & ~llvm::APInt(Width, 3)));
+        Want += Values[0] + Values[1] + Values[2] + Values[3];
+        EXPECT_EQ(Reduced.eval(Values), Want);
+      }
+    }
+}
+
 } // namespace

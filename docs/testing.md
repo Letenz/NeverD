@@ -465,6 +465,8 @@ tests cover context isolation, storage refusal and reuse under larger scratch
 allowances when storage did not limit the preceding search.
 Generated-reading regressions require the deep walk to simplify an original
 opaque division's numerator and propagate it through the emitted proof.
+Mixed quartic and degree-24 residuals must also leave work for the surrounding
+linear tail within a fixed 65,536-work request.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.
