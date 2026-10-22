@@ -108,7 +108,8 @@ ChooserModel::ChooserModel(Session &session, const AddressSpace &space,
   });
   connect(&session_, &Session::unloaded, this, &ChooserModel::reload);
   if (kind_ == ChooserKind::Functions || kind_ == ChooserKind::Names)
-    connect(&session_, &Session::functionsChanged, this, &ChooserModel::reload);
+    connect(&session_, &Session::functionsChanged, this,
+            &ChooserModel::refreshFunctions);
 }
 
 QString ChooserModel::title() const {
@@ -153,6 +154,7 @@ void ChooserModel::addressSpaceChanged() {
 }
 
 void ChooserModel::reload() {
+  refresh_.reset();
   ++locationSerial_;
   finishLocation(std::nullopt,
                  tr("The table changed before the address was selected."));
@@ -179,8 +181,104 @@ void ChooserModel::reload() {
     requestPage(0);
 }
 
+void ChooserModel::refreshFunctions() {
+  if (!session_.loaded() || localRows_ || pages_.isEmpty()) {
+    reload();
+    return;
+  }
+  ++serial_;
+  ++locationSerial_;
+  finishLocation(std::nullopt,
+                 tr("The table changed before the address was selected."));
+  session_.queries().unsubscribeOwner(this);
+  refresh_.emplace();
+  // Include the viewport's outstanding pages first. Keep the staging set
+  // within the same page allowance as the ordinary cache.
+  for (const int page : requestOrder_)
+    refresh_->pending.append(page);
+  for (const int page : pageOrder_)
+    if (!refresh_->pending.contains(page) &&
+        refresh_->pending.size() <
+            ::neverd::limits::gui::kChooserViewMaxCachedPages)
+      refresh_->pending.append(page);
+  pageRequests_.clear();
+  requestOrder_.clear();
+  refreshNextPage(serial_);
+}
+
+void ChooserModel::refreshNextPage(quint64 serial) {
+  const int page = refresh_->pending.takeFirst();
+  session_.read(
+      operation_, pagePayload(page), this,
+      [this, serial, page](const QJsonObject &payload) {
+        if (serial != serial_ || !refresh_)
+          return;
+        const int total = payload.value("total").toInt(-1);
+        if (total < 0 || (refresh_->total >= 0 && refresh_->total != total)) {
+          // A later discovery notification will retry. Retain the old pages
+          // rather than combine different inventories or loop on cached reads.
+          refresh_.reset();
+          emit failed(tr("Functions changed while refreshing the table."));
+          return;
+        }
+        refresh_->total = total;
+        refresh_->pages.insert(page, payload.value("items").toArray());
+        if (!refresh_->pending.isEmpty()) {
+          refreshNextPage(serial);
+          return;
+        }
+        auto replacement = std::move(*refresh_);
+        refresh_.reset();
+        if (total == total_ && replacement.pages == pages_)
+          return;
+        if (total < total_) {
+          beginResetModel();
+          total_ = total;
+          pages_ = std::move(replacement.pages);
+          endResetModel();
+        } else {
+          if (total > total_) {
+            beginInsertRows({}, total_, total - 1);
+            total_ = total;
+            endInsertRows();
+          }
+          emit layoutAboutToBeChanged();
+          const auto before = persistentIndexList();
+          QHash<Address, int> positions;
+          for (auto it = replacement.pages.cbegin();
+               it != replacement.pages.cend(); ++it)
+            for (int i = 0; i < it->size(); ++i)
+              if (const auto address = itemAddress(it->at(i).toObject()))
+                positions.insert(
+                    *address,
+                    it.key() * ::neverd::limits::gui::kChooserViewPageSize + i);
+          QModelIndexList after;
+          for (const auto &old : before) {
+            const auto address = addressAt(old.row());
+            const auto at =
+                address ? positions.constFind(*address) : positions.cend();
+            after.append(at != positions.cend() ? index(*at, old.column())
+                                                : QModelIndex());
+          }
+          pages_ = std::move(replacement.pages);
+          changePersistentIndexList(before, after);
+          emit layoutChanged();
+        }
+        pageOrder_.clear();
+        for (auto it = pages_.cbegin(); it != pages_.cend(); ++it)
+          pageOrder_.push_front(it.key());
+        emit totalChanged(total_);
+      },
+      [this, serial](const QString &, const QString &message) {
+        if (serial != serial_)
+          return;
+        refresh_.reset();
+        emit failed(message);
+      });
+}
+
 void ChooserModel::requestPage(int page) const {
-  if (pageRequests_.contains(page) || !session_.loaded() ||
+  if (refresh_ || pageRequests_.contains(page) || !session_.loaded() ||
       operation_.isEmpty())
     return;
   // Fast scrolling replaces older viewport requests instead of filling the

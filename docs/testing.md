@@ -1145,6 +1145,12 @@ place through successive renames.
 Local name edits leave settled assembly and graph views alone; source comments
 retain semantic invalidation.
 
+`functionsClicksKeepTheLoadedListAndDocument` checks selection and activation
+against a fixture and optional native input, including revisiting a function.
+`backgroundFunctionDiscoveryKeepsSelection` inserts a function before loaded rows
+and checks persistent selection, sorting, filtering and retiring an obsolete
+background refresh.
+
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
 It also checks that statement navigation without library or call-expression
