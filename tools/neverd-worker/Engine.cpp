@@ -1601,6 +1601,8 @@ Json Engine::metadata() const {
           {"format", ownedString(neverd_session_format_name(session_))},
           {"bitness", neverd_session_bitness(session_)},
           {"file_size", std::to_string(neverd_session_file_size(session_))},
+          // The input's identity, which links name it by.
+          {"sha256", inputHash()},
           // The project folder beside the input, and which build its files
           // describe: a project made for another build may not match.
           {"project", projectJson()},

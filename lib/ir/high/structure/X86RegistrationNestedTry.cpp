@@ -113,9 +113,9 @@ bool checkNestedRegistrationTry(const HighStmt &Stmt, const MedFunc &Med,
               !Op.Inputs[0].isConst() ||
               Op.Inputs[0].ConstVal != Call->Target ||
               State == States.Blocks.end() || State->Unknown ||
-              State->Levels.size() != 1 ||
+              State->levels().size() != 1 ||
               !llvm::any_of(State->CxxSearches, [&](const auto &Search) {
-                return Search.Level == State->Levels.front() &&
+                return Search.Level == State->levels().front() &&
                        Search.ExitedCatches == 1 &&
                        Search.TryIndex < Tries.size() &&
                        Tries[Search.TryIndex].TryLow == TryLow &&

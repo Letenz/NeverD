@@ -120,10 +120,10 @@ TEST(RegistrationSEHStateStore, RejectsChangedOrMissingSourceEffects) {
 
 TEST(RegistrationSEHStateStore, UsesAllDynamicParentStatesAndOuterScopes) {
   auto Function = sourceStateStore();
-  Function.RegistrationStates->Blocks[0].Levels = {1, 2};
+  Function.RegistrationStates->Blocks[0].ExplicitLevels = {1, 2};
   EXPECT_EQ(getX86RegistrationSEHRetainedScopes(Function),
             (std::optional<std::vector<uint32_t>>{{}}));
-  Function.RegistrationStates->Blocks[0].Levels = {-1, 2};
+  Function.RegistrationStates->Blocks[0].ExplicitLevels = {-1, 2};
   EXPECT_EQ(getX86RegistrationSEHRetainedScopes(Function),
             (std::optional<std::vector<uint32_t>>{{0, 1}}));
   Function.ExceptionMetadata->Registration->Scopes[1].EnclosingLevel = 1;
@@ -190,7 +190,7 @@ TEST(RegistrationSEHStateStore, ByteLiteralDoesNotNameTheCompleteScope) {
   Chain.Scopes.clear();
   for (int32_t Level = 0; Level != 259; ++Level)
     Chain.Scopes.push_back({Level - 1, 0, 0x2020, true});
-  Function.RegistrationStates->Blocks[0].Levels = {257};
+  Function.RegistrationStates->Blocks[0].ExplicitLevels = {257};
   auto &Native = Chain.TryLevelStores[0];
   auto &Receipt = Function.RegistrationStates->SEHStateStores[0];
   auto &Value = Function.Blocks[1].Ops[0].Inputs[1];
@@ -233,7 +233,7 @@ TEST(RegistrationSEHStateStore,
     Chain.Scopes.clear();
     for (int32_t Level = 0; Level != 256; ++Level)
       Chain.Scopes.push_back({Level ? Level - 1 : Sentinel, 0, 0x2020, true});
-    Function.RegistrationStates->Blocks[0].Levels = {255};
+    Function.RegistrationStates->Blocks[0].ExplicitLevels = {255};
     auto &Native = Chain.TryLevelStores[0];
     auto &Receipt = Function.RegistrationStates->SEHStateStores[0];
     auto &Value = Function.Blocks[1].Ops[0].Inputs[1];
@@ -255,7 +255,7 @@ TEST(RegistrationSEHStateStore,
   auto Function = sourceStateStore();
   Function.ExceptionMetadata->Registration->TryLevelStores.clear();
   Function.RegistrationStates->SEHStateStores.clear();
-  Function.RegistrationStates->Blocks[1].Levels = {1};
+  Function.RegistrationStates->Blocks[1].ExplicitLevels = {1};
   ASSERT_TRUE(getX86RegistrationSEHStateStores(Function));
   EXPECT_FALSE(getX86RegistrationSEHRetainedScopes(Function));
 }

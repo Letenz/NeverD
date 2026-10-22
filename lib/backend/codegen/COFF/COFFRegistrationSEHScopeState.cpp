@@ -27,7 +27,7 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
     return rejectIR("logical state has incomplete callback store receipts");
   if (CallbackStores->empty() &&
       !llvm::any_of(Source.RegistrationStates->Blocks, [](const auto &Block) {
-        return !Block.CallbackOnly && Block.Levels.size() > 1;
+        return !Block.CallbackOnly && Block.levels().size() > 1;
       }))
     return Result;
   Result.Enabled = true;

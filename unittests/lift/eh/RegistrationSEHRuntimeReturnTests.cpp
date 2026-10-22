@@ -47,7 +47,7 @@ protected:
     RegistrationBlockState State;
     State.BlockId = 20;
     State.Range = {FinallyVA, FinallyVA + 16};
-    State.Levels = {0};
+    State.ExplicitLevels = {0};
     State.CallbackOnly = State.CanDispatch = State.Reached = true;
     States.Blocks.push_back(State);
     States.SEHControls = {{RegistrationSEHControlContract::Kind::NearReturn,

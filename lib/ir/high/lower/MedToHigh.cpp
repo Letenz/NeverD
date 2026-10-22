@@ -44,6 +44,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <set>
+#include <stdexcept>
 #include <string_view>
 #include <unordered_set>
 
@@ -1248,7 +1249,16 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
     eliminateDeadStmts(Func);
 }
 
+void MedToHighConverter::validateCallContracts(const MedFunc &Med) {
+  for (const MedBlock &Block : Med.Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.X87ImportArguments)
+        throw std::runtime_error(
+            "C source output requires a native x87 import call adapter");
+}
+
 HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
+  validateCallContracts(Med);
   const ExceptionFunction *EH =
       Med.ExceptionMetadata ? &*Med.ExceptionMetadata : nullptr;
   if (!EH || !EH->SEH || EH->SEH->Scopes.empty() || EH->Cxx || EH->Itanium ||

@@ -42,6 +42,10 @@ void LowToMedConverter::modelCallX87Return(MedFunc &Func) {
       auto &Op = Blk.Ops[OI];
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
+      // A consumer removes its explicit argument and preserves the remaining
+      // stack. A later ST read is that retained value, not a floating result.
+      if (Op.X87ArgumentInput)
+        continue;
       // A proved LowIR call already defines the physical slot selected by
       // its control-flow TOP. Its SSA lifetime can extend beyond this block.
       if (Op.Output.Kind == MedVar::Reg && TRI.isX87StackReg(Op.Output.RegOff))

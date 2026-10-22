@@ -11,6 +11,7 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowNoReturn.h"
+#include "neverd/ir/low/RegistrationSharedCall.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -50,6 +51,14 @@ bool hasRegistrationCallFrameABI(
       if (!Reachability.emplace(State.BlockId, &State).second)
         return false;
   }
+  if (States && States->CxxPrologue &&
+      !chargeCalleeWork(Work,
+                        Function.Blocks.size() + States->ChainAccesses.size()))
+    return false;
+  const auto SharedEntry =
+      getCheckedX86RegistrationCxxPrologueCall(Image, Function);
+  if (States && States->CxxPrologue && !SharedEntry)
+    return false;
   std::set<va_t> Targets;
   std::map<va_t, uint32_t> ScalarMemberPops;
   for (const auto &Block : Function.Blocks) {
@@ -69,6 +78,24 @@ bool hasRegistrationCallFrameABI(
         continue;
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
+      if (SharedEntry) {
+        if (Block.StartAddr == Function.Entry &&
+            Block.EndAddr == SharedEntry->Caller.End &&
+            &Op == &Block.Ops.back() && Op.Addr == SharedEntry->CallVA &&
+            Op.Seq == States->CxxPrologue->OpSeq) {
+          // This exact rooted call establishes the source frame; it has no
+          // ordinary callee ABI. Native lowering must project its effects.
+          continue;
+        }
+        if (&Op == &Block.Ops.back()) {
+          if (!chargeCalleeWork(Work, States->ChainAccesses.size()))
+            return false;
+          if (const auto Exit = getCheckedX86RegistrationCxxEpilogueCall(
+                  Image, Function, Block);
+              Exit && !Exit->CookieCheck)
+            continue;
+        }
+      }
       if (States && States->Complete && States->CallbackStatesComplete &&
           States->RegistrationLifetimeComplete &&
           States->SEHLocalUnwindsComplete) {
@@ -112,6 +139,26 @@ bool hasRegistrationCallFrameABI(
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
           !Image.isCodeAddress(Op.Inputs[0].Offset))
         return false;
+      if (States && States->SecurityCookiesComplete)
+        if (const auto *Cookie = States->cookieCheck(Op.Addr, Op.Seq)) {
+          const auto Success = coff_loader::getCheckedX86CookieCheckSuccessPath(
+              Image, States->CookieCheckVA);
+          if (States->CookieCheckVA != Op.Inputs[0].Offset || !Success ||
+              Success->SecurityCookieVA != States->SecurityCookieVA ||
+              !chargeCalleeWork(Work, Block.InstructionBoundaries.size()))
+            return false;
+          const auto Boundary =
+              llvm::find_if(Block.InstructionBoundaries, [&](const auto &B) {
+                return B.Address == Op.Addr;
+              });
+          if (Boundary == Block.InstructionBoundaries.end() ||
+              Boundary->Control != LowInstructionControl::Call ||
+              Op.Addr + Boundary->Size != Cookie->EndAddress)
+            return false;
+          // The exact cookie receipt replaces an ordinary callee-frame
+          // effect. Its successful path preserves the source registers.
+          continue;
+        }
       if (UseReachability) {
         const auto *Call = States->callFrameEffect(Op.Addr, Op.Seq);
         if (!Call || Call->Target != Op.Inputs[0].Offset ||
@@ -124,15 +171,6 @@ bool hasRegistrationCallFrameABI(
             Boundary->Control != LowInstructionControl::Call ||
             Op.Addr + Boundary->Size != Call->EndAddress)
           return false;
-      }
-      if (Function.RegistrationStates &&
-          Function.RegistrationStates->SecurityCookiesComplete &&
-          Function.RegistrationStates->cookieCheck(Op.Addr, Op.Seq)) {
-        const va_t Check = Function.RegistrationStates->CookieCheckVA;
-        if (Check != Op.Inputs[0].Offset ||
-            !coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, Check))
-          return false;
-        continue;
       }
       if (States && States->Complete && States->CallbackStatesComplete &&
           States->SEHJumpCapturesComplete &&

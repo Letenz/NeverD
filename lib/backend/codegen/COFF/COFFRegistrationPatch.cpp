@@ -317,9 +317,24 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
         for (const auto &[Original, Generated] : Mappings) {
           const uint64_t Begin = Original - Image.Base;
           if (uint64_t(RVA) < Begin + 5 && Begin < uint64_t(RVA) + 4) {
-            if (RVA < Begin || uint64_t(RVA) + 4 > Begin + 5)
-              return reject(
-                  "entry trampoline partially overwrites a relocation field");
+            if (RVA < Begin || uint64_t(RVA) + 4 > Begin + 5) {
+              // A checked shared entry starts with PUSH imm8; MOV EAX,
+              // handler. The jump replaces the MOV's opcode and first two
+              // operand bytes, retiring its whole handler-pointer field.
+              // Keeping that relocation would rebase bytes of the new jump.
+              // No other partially overwritten field has this authority.
+              const auto Source = Sources.find(Original);
+              const auto Call = Source != Sources.end() && Source->second->Cxx
+                                    ? coff_loader::getCheckedX86CxxPrologueCall(
+                                          Image, *Source->second)
+                                    : std::nullopt;
+              if (!Call || Call->Caller.Begin != Original ||
+                  Call->CallVA - Original != 7 || RVA != Begin + 3 ||
+                  readLE<uint32_t>(OriginalBinary.data() + *Field) !=
+                      Call->HandlerVA)
+                return reject("entry trampoline partially overwrites a "
+                              "relocation field");
+            }
             Removed = true;
           }
         }

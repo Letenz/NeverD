@@ -322,7 +322,10 @@ def main() -> None:
             run("install_name_tool", "-change", dependency, "@rpath/" + str(relative), frameworks / "libneverd.dylib")
     plist = {"CFBundleName": "NeverD", "CFBundleDisplayName": "NeverD", "CFBundleExecutable": "neverd-gui",
              "CFBundleIdentifier": "dev.neversight.neverd", "CFBundlePackageType": "APPL",
-             "CFBundleShortVersionString": "3389.0.1", "CFBundleVersion": "3389.0.1", "NSHighResolutionCapable": True}
+             "CFBundleShortVersionString": "3389.0.1", "CFBundleVersion": "3389.0.1", "NSHighResolutionCapable": True,
+             # neverd:// links clicked anywhere open in the workbench, which LaunchServices hands them.
+             "CFBundleURLTypes": [{"CFBundleURLName": "dev.neversight.neverd.link",
+                                   "CFBundleURLSchemes": ["neverd"]}]}
     icon = source / "resources/NeverD.icns"
     if icon.is_file():
         shutil.copy2(icon, resources / icon.name)

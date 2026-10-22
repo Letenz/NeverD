@@ -18,6 +18,8 @@ add_neverd_component_library(NeverDLoader
   COFF/COFFObjectExterns.cpp
   COFF/COFFObjectView.cpp
   COFF/PEImports.cpp
+  COFF/PEHeaderMapping.cpp
+  COFF/PEHeaderInitialization.cpp
   COFF/PEFixedImage.cpp
   COFF/PEProgramExports.cpp
   COFF/RichHeader.cpp
@@ -35,6 +37,7 @@ add_neverd_component_library(NeverDLoader
   COFF/eh/COFFRegistrationEHCallback.cpp
   COFF/eh/COFFRegistrationEHCallbackRange.cpp
   COFF/eh/COFFRegistrationEHBodyRange.cpp
+  COFF/eh/COFFRegistrationEHCallBoundary.cpp
   COFF/eh/COFFRegistrationEHRealignment.cpp
   COFF/eh/COFFRegistrationEHFixedFrame.cpp
   COFF/eh/COFFRegistrationEHEncoding.cpp
@@ -46,6 +49,10 @@ add_neverd_component_library(NeverDLoader
   COFF/eh/COFFRegistrationScalarLeaf.cpp
   COFF/eh/COFFRegistrationEHPersonality.cpp
   COFF/eh/COFFRegistrationEHScan.cpp
+  COFF/eh/COFFRegistrationEHCxxHelper.cpp
+  COFF/eh/COFFStackProbe.cpp
+  COFF/eh/COFFCxxEpilogue.cpp
+  COFF/eh/COFFRegistrationEHAlignedEntry.cpp
   COFF/eh/COFFRegistrationEHScopeTable.cpp
   COFF/eh/COFFRegistrationEHThrowInfo.cpp
   COFF/unwind/COFFUnwind.cpp
@@ -82,6 +89,7 @@ add_neverd_component_library(NeverDLoader
   Raw/RawLoader.cpp
   ${NEVERD_ISA_MODEL_INC}
   ExecutableCodeOwnerIndex.cpp
+  ExceptionEdge.cpp
   Go/GoDeferInfo.cpp
   Go/GoFuncTable.cpp
   Go/GoModuleData.cpp

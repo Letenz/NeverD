@@ -22,7 +22,10 @@ The helper copies the GUI, worker, engine, Qt plugins and recursive non-system
 dependencies. It rewrites library IDs and dependencies, supplies
 bundle-relative search paths, rejects unresolved references and escaping or
 dangling symlinks, and derives `LSMinimumSystemVersion` from every bundled
-Mach-O image. `Contents/Resources/dependency-audit.json` records that audit;
+Mach-O image. `Info.plist` declares the `neverd` URL scheme
+(`CFBundleURLTypes`), so that LaunchServices hands a clicked `neverd://` link
+to the workbench; on Linux and Windows, `neverd-gui --register-link-handler`
+registers it for the user instead. `Contents/Resources/dependency-audit.json` records that audit;
 hashes are taken before signing. The app icon comes from the repository's SVG
 logo. Every Mach-O image is ad-hoc signed before the complete bundle is signed
 and verified.

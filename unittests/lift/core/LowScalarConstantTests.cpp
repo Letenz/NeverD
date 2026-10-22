@@ -109,4 +109,47 @@ TEST(LowScalarConstant, UnknownOperandsAndMalformedWidthsStayUnknown) {
       EXPECT_FALSE(lowScalarConstantResult(Op, constant));
     }
 }
+
+TEST(LowScalarConstant, BitwiseAbsorbersMatchEveryConcreteByte) {
+  for (uint16_t Width : {1, 2, 4, 8})
+    for (NdOp Opcode : {NdOp::INT_AND, NdOp::INT_OR})
+      for (bool Reverse : {false, true}) {
+        const uint64_t Mask = UINT64_MAX >> ((8 - Width) * 8);
+        const uint64_t Absorber = Opcode == NdOp::INT_AND ? 0 : Mask;
+        auto Op = binary(Opcode, Width, Absorber, Absorber);
+        Op.Inputs[Reverse ? 0 : 1] = NdVar::reg(8, Width);
+        EXPECT_EQ(lowScalarConstantResult(Op, constant), Absorber);
+        // The query knows nothing about the register. Independently execute
+        // all byte patterns replicated across the declared operand width.
+        for (uint64_t Byte = 0; Byte != 256; ++Byte) {
+          NdOpEmulator Emulator(BinaryImage{});
+          Emulator.setRegister(8, Byte * UINT64_C(0x0101010101010101));
+          ASSERT_TRUE(Emulator.step(Op));
+          const auto Value = Emulator.getRegister(0);
+          ASSERT_TRUE(Value);
+          EXPECT_EQ(*Value & Mask, Absorber);
+        }
+      }
+}
+
+TEST(LowScalarConstant, BitwisePartialMasksAndMalformedWidthsStayUnknown) {
+  for (uint16_t Width : {1, 2, 4, 8})
+    for (NdOp Opcode : {NdOp::INT_AND, NdOp::INT_OR})
+      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+        const uint64_t Mask = UINT64_MAX >> ((8 - Width) * 8);
+        auto Op = binary(Opcode, Width, 0, Opcode == NdOp::INT_AND ? 0 : Mask);
+        Op.Inputs[0] = NdVar::reg(8, Width);
+        if (Mutation == 0)
+          Op.Inputs[1].Offset = Opcode == NdOp::INT_AND ? Mask : 0;
+        if (Mutation == 1)
+          Op.Inputs[1].Offset = 1;
+        if (Mutation == 2)
+          Op.Inputs[0].Size = Width == 8 ? 4 : 8;
+        if (Mutation == 3)
+          Op.Inputs[1].Size = Width == 8 ? 4 : 8;
+        if (Mutation == 4)
+          Op.Output.Size = 0;
+        EXPECT_FALSE(lowScalarConstantResult(Op, constant));
+      }
+}
 } // namespace

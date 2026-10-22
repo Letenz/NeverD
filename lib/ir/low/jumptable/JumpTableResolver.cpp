@@ -6391,8 +6391,14 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           return false;
         }
         for (const LowOp &Op : It->second.Ops) {
-          if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)
-            AddQuery(Op.Inputs[1], Op);
+          if (Op.Opcode == NdOp::STORE) {
+            const auto Memory = lowMemoryOperands(Op);
+            if (!Memory.Complete) {
+              AnalysisComplete = false;
+              return false;
+            }
+            AddQuery(*Memory.StoredValue, Op);
+          }
           if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
               (Op.Opcode == NdOp::INTRINSIC &&
                !lowIntrinsicHasOnlyValueEffects(Op)) ||

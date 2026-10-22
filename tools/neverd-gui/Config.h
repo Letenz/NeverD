@@ -38,6 +38,9 @@ inline constexpr int kLocalTypesViewMinimumPaneWidth = 48;
 
 // tools/neverd-gui/app/MainWindow.cpp
 inline constexpr int kMainWindowMinimumFunctionsWidth = 240;
+/// The digits of the input's SHA-256 a copied link names it by: 64 bits tell
+/// builds apart, and the link stays short.
+inline constexpr int kCopiedLinkHashDigits = 16;
 inline constexpr int kMainWindowMaximumFunctionsWidth = 420;
 inline constexpr int kMainWindowMinimumOutputHeight = 120;
 inline constexpr int kMainWindowMaximumOutputHeight = 260;

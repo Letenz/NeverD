@@ -289,8 +289,8 @@ TEST(WindowsRegistrationMultipleCatch, InputPE32ReconstructsOrderedCatches) {
             Op.DoesNotReturn = false;
     if (Mutation == 3)
       for (auto &Block : Changed.RegistrationStates->Blocks)
-        if (!Block.CallbackOnly && Block.Levels == std::vector<int32_t>{0})
-          Block.Levels = {-1};
+        if (!Block.CallbackOnly && Block.levels() == std::vector<int32_t>{0})
+          Block.ExplicitLevels = {-1};
     const auto Rejected = MedToHighConverter().convert(Changed, Arch::X86);
     EXPECT_EQ(Rejected.StructuredExceptionRegions, 0u);
     EXPECT_GT(Rejected.UnstructuredExceptionRegions, 0u);

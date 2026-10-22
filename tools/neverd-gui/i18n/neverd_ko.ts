@@ -124,6 +124,14 @@
         <translation>현재 주소를 복사합니다</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>링크 복사(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>커서 위치를 가리키는 neverd:// 링크를 복사합니다. NeverD는 그 위치에서 엽니다</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>이름 바꾸기(&amp;N)...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>이동할 책갈피를 선택합니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>링크로 이동(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>neverd:// 또는 ida:// 링크가 가리키는 위치로 이동합니다</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -2864,6 +2880,62 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Pathfinding</source>
         <translation>경로 탐색</translation>
     </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>다른 프로그램이 이 창에서 링크를 열 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>링크를 복사했습니다: %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>링크로 이동</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>링크 (neverd:// 또는 ida://):</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>따라갈 수 있는 링크가 아닙니다: %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>링크를 따라갈 프로그램이 열려 있지 않습니다.</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>이 링크는 입력 파일의 다른 빌드를 가리킵니다. 링크의 SHA-256은 %1(으)로 시작하고, %2의 SHA-256은 %3(으)로 시작합니다.</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>링크는 %2이(가) 아니라 %1을(를) 가리킵니다. 여기서 엽니다.</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>링크가 열리기 전에 프로그램이 바뀌었습니다.</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>%1(이)라는 로컬 형식이 없습니다.</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>링크의 주소 %1은(는) %2에 없습니다.</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>%1에 책갈피가 없습니다.</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>%1에 함수가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>다른 링크가 이 링크를 대신했습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -5077,6 +5149,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Copy</source>
         <translation>복사</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>링크는 neverd:// 또는 ida://로 시작합니다.</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>Knowledge Exchange 링크는 프로그램의 위치가 아니라 다운로드할 파일을 가리킵니다.</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>링크는 리소스 앞에 입력 파일 이름을 지정합니다.</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>링크는 리소스 하나를 지정하며, 입력 파일 이름이 있으면 그 뒤에 둡니다.</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>링크는 functions, addresses, strings, segments, names, imports, exports, types, bookmarks 중 하나를 지정합니다. "%1"이(가) 아닙니다.</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>링크에는 %1을(를) 한 번만 지정합니다.</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1은(는) 10진수 또는 0x 뒤의 숫자입니다. "%2"이(가) 아닙니다.</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>링크에는 "%1" 보기가 없습니다.</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256은 입력 파일 SHA-256의 16진수 8~64자리입니다. "%1"이(가) 아닙니다.</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>링크에는 rva와 ea 중 하나만 지정합니다.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>types 링크는 주소가 아니라 name=으로 형식을 지정합니다.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>types 링크는 name=으로 형식을 지정합니다.</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>%1 링크는 주소를 rva= 또는 ea=로 지정합니다.</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>%1 링크는 형식이 아니라 주소를 지정합니다.</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>%1 링크는 %3이(가) 아니라 %2에서 표시됩니다.</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>실행 중인 NeverD %n개가 프로그램을 열고 있지만 링크가 그중 어느 것도 가리키지 않습니다. 입력 파일 이름을 지정하세요.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>%1을(를) 연 NeverD가 응답하지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>%1을(를) 연 NeverD에서 열었습니다 (프로세스 %2).</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(응답 없음)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(열린 프로그램 없음)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>분석 완료</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>분석 중</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD가 실행 중이 아닙니다.</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>이제 neverd:// 링크가 NeverD에서 열리지 않습니다.</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>레지스트리가 neverd:// 처리기를 받아들이지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>이제 neverd:// 링크가 %1에서 열립니다.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>macOS에서는 NeverD 응용 프로그램이 neverd:// 링크를 선언합니다. 응용 프로그램 폴더에 두면 그 안에서 열립니다.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>macOS에서는 NeverD 응용 프로그램이 neverd:// 링크를 선언합니다. 중지하려면 응용 프로그램을 제거하세요.</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>%1을(를) 제거할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>%1을(를) 쓸 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>%1을(를) 썼지만 xdg-mime이 이를 neverd:// 링크 처리기로 지정하지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>실행 중인 NeverD 중 링크의 프로그램을 연 것이 없습니다.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>실행 중인 NeverD 중 링크의 프로그램을 연 것이 없고, 최근에 연 파일 중에도 해당하는 것이 없습니다. 파일도 지정하세요: neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>

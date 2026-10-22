@@ -25,6 +25,7 @@
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -1447,6 +1448,20 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
   // Stack parameters that follow the registers used (i386 cdecl and regparm).
   if (Convention && Convention->StackArgumentsFollowUsedRegisters)
     detectCdeclStackParams(Func, TargetArch);
+
+  if (Func.ConsumesX87Argument && TheArch == Arch::X86) {
+    const auto It = RegVarMap.find({x86reg::ST0, x86reg::FPURegSize});
+    if (It != RegVarMap.end()) {
+      MedVar Param;
+      Param.Kind = MedVar::Param;
+      Param.Id = It->second;
+      Param.Size = x86reg::FPURegSize;
+      Param.RegOff = x86reg::ST0;
+      Param.TheArch = TheArch;
+      Func.Params.push_back(Param);
+      Func.FPParamScalarBytes[Param.RegOff] = Param.Size;
+    }
+  }
 
   // AArch64: recover the hidden indirect-result (sret) pointer in x8 for a
   // by-value aggregate return (no-op on targets without a dedicated x8).
