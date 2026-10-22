@@ -48838,3 +48838,94 @@ TEST(HighCPointerAddresses, PointerObjectsReturnAsTheirIntegers) {
       << Source;
   expectCSyntax(Source);
 }
+
+TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
+  class ProviderDebug : public NullDebugContext {
+  public:
+    bool LiveVoid = false;
+    bool WrongArity = false;
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "SdkAcquire" && Name != "SdkCode" && Name != "SdkClose")
+        return std::nullopt;
+      FunctionSym F;
+      F.Name = Name.str();
+      F.PrototypeLibrary = "windows-kernel-arm64";
+      F.Params = {{"Object", NdType::makePtr()}};
+      F.ReturnType = Name == "SdkAcquire" ? NdType::makePtr()
+                     : Name == "SdkClose" || LiveVoid
+                         ? NdType::makeVoid()
+                         : NdType::makeInt(4, true);
+      if (WrongArity && Name == "SdkCode")
+        F.Params.emplace_back("Extra", NdType::makeInt(4));
+      return F;
+    }
+  } Debug;
+  for (const auto Arch : {Arch::X64, Arch::AArch64})
+    for (unsigned Mode = 0; Mode < 5; ++Mode) {
+      SCOPED_TRACE(Mode);
+      Debug.LiveVoid = Mode == 1;
+      Debug.WrongArity = Mode == 2;
+      llvm::LLVMContext Context;
+      llvm::Module Module("header-imports", Context);
+      Module.setDataLayout("e-p:64:64");
+      auto *Word = llvm::Type::getInt64Ty(Context);
+      auto *Type = llvm::FunctionType::get(Word, {Word}, false);
+      const auto Function = [&](const char *Name) {
+        auto *Signature = Mode == 4 && llvm::StringRef(Name) == "SdkCode"
+                              ? llvm::FunctionType::get(Word, {Word}, true)
+                              : Type;
+        return llvm::Function::Create(
+            Signature, llvm::GlobalValue::ExternalLinkage, Name, Module);
+      };
+      auto *Acquire = Function("SdkAcquire");
+      auto *Code = Function("SdkCode");
+      auto *Close = Function("SdkClose");
+      auto *Caller = Function("provider_roundtrip");
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Caller));
+      auto *Handle = B.CreateCall(Acquire, {Caller->getArg(0)}, "handle");
+      auto *Status = B.CreateCall(Code, {Handle}, "status");
+      if (Mode == 4)
+        B.CreateCall(Code, {Handle, B.getInt64(3)}, "conflicting");
+      B.CreateCall(Close, {Handle}, "unused");
+      B.CreateRet(Status);
+      ASSERT_FALSE(llvm::verifyModule(Module));
+      CEmitterOptions Options;
+      Options.TheArch = Arch;
+      Options.Format = BinaryFormat::COFF;
+      Options.PreserveLLVMFunctionTypes = Mode == 3;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(
+          LLVMCEmitter().emit(Module, Out, Options, &Debug, nullptr, Caller));
+      Out.flush();
+      if (Mode) {
+        EXPECT_EQ(Source.find("int32_t SdkCode("), std::string::npos) << Source;
+        EXPECT_EQ(Source.find("void SdkCode("), std::string::npos) << Source;
+        if (Mode == 3)
+          EXPECT_EQ(Source.find("void SdkClose("), std::string::npos) << Source;
+        continue;
+      }
+      EXPECT_NE(Source.find("void* SdkAcquire(void* Object)"),
+                std::string::npos)
+          << Source;
+      EXPECT_NE(Source.find("int32_t SdkCode(void* Object)"), std::string::npos)
+          << Source;
+      EXPECT_NE(Source.find("void SdkClose(void* Object)"), std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find(" = SdkClose("), std::string::npos) << Source;
+      // Independently typed providers observe the original pointer, exact
+      // ordering, one close effect, and the low 32 result bits at O0/O2.
+      compileAndRunCallOrdering(Source + R"c(
+        static int item, phase;
+        void *SdkAcquire(void *p) { if (p != &item || phase++) __builtin_trap(); return p; }
+        int32_t SdkCode(void *p) { if (p != &item || phase++ != 1) __builtin_trap(); return -1; }
+        void SdkClose(void *p) { if (p != &item || phase++ != 2) __builtin_trap(); }
+        int main(void) {
+          uint64_t result = provider_roundtrip((uintptr_t)&item);
+          return result != UINT32_MAX || phase != 3;
+        }
+      )c",
+                                true);
+    }
+}

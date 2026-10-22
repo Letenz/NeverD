@@ -97,6 +97,13 @@ public:
   //--- Module-level (LLVMCEmitter.cpp) ---
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);
+  /// One declaration per imported symbol, admitted only when every printed
+  /// call has the header's complete scalar integer/pointer operand layout.
+  void prepareSourceImportPrototypes(llvm::Module &Mod);
+  const FunctionSym *sourceImportCallee(const llvm::CallBase &Call) const;
+  std::string sourceImportDeclaration(const FunctionSym &Function,
+                                      llvm::StringRef Name);
+  std::map<std::string, FunctionSym> SourceImportPrototypes;
   /// Records which symbol each function identifier stands for
   /// (CSourceMap::Names), as HighC does, from the ordinary render.
   void recordSourceNames(const llvm::Module &Mod);
