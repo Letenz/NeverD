@@ -1,6 +1,9 @@
 add_neverd_component_library(NeverDDecode
   Decoder.cpp
   NativeOperands.cpp
+  AArch64/AArch64NativeOperands.cpp
+  ARM/ARMNativeOperands.cpp
+  X86/X86NativeOperands.cpp
   InstructionRelocations.cpp
   InstructionRelocationsAArch64.cpp
   InstructionRelocationsARM.cpp
