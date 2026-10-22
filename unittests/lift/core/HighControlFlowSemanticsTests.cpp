@@ -283,6 +283,10 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
         return A * B;
       case NdOp::INT_AND:
         return A & B;
+      case NdOp::INT_OR:
+        return A | B;
+      case NdOp::INT_XOR:
+        return A ^ B;
       case NdOp::INT_EQUAL:
         return uint64_t(A == B);
       case NdOp::INT_NOTEQUAL:
@@ -1245,6 +1249,139 @@ TEST(HighControlFlowSemantics, SwitchAbsorbsTheRangeCheckItsDefaultRepeats) {
   EXPECT_TRUE(Jumping.Body[1].DefaultBody.empty());
   for (size_t I = 0; I < Inputs.size(); ++I)
     EXPECT_EQ(execute(Jumping, Inputs[I]), Expected[I]) << Inputs[I];
+}
+
+TEST(HighControlFlowSemantics, DefaultWordIdentitiesPreserveBitsWithoutSearch) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (NdOp Outer :
+           {NdOp::INT_AND, NdOp::INT_OR, NdOp::INT_XOR, NdOp::INT_SUB})
+        for (bool Nested : {false, true}) {
+          if (Nested && Outer != NdOp::INT_AND && Outer != NdOp::INT_OR)
+            continue;
+          SCOPED_TRACE(testing::Message() << Bytes << ':' << Signed << ':'
+                                          << int(Outer) << ':' << Nested);
+          auto X = local(0);
+          X->Var.Size = Bytes;
+          X->Type = NdType::makeInt(Bytes, Signed);
+          auto Y = HighExpr::makeConst(0xA5, Bytes);
+          Y->Type = X->Type;
+          ExprPtr Other = X;
+          if (Nested) {
+            Other = HighExpr::makeBinop(
+                Outer == NdOp::INT_AND ? NdOp::INT_OR : NdOp::INT_AND, Y, X);
+            Other->Type = X->Type;
+          }
+          auto Root = HighExpr::makeBinop(Outer, Other, X);
+          Root->Type = X->Type;
+          HighFunc F;
+          F.Body = {result(0, Root)};
+          const uint64_t Mask =
+              Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+          const std::vector<uint64_t> Inputs = {
+              0, 1, Mask, Mask >> 1, UINT64_C(0xABCD0123EF457689) & Mask};
+          std::vector<std::optional<uint64_t>> Expected;
+          for (auto Input : Inputs)
+            Expected.push_back(execute(F, Input));
+          EXPECT_TRUE(simplifyAllExprs(F.Body));
+          EXPECT_TRUE(F.Body[0].RetVal->Kind == ExprKind::Var ||
+                      F.Body[0].RetVal->Kind == ExprKind::Const);
+          for (size_t I = 0; I < Inputs.size(); ++I)
+            EXPECT_EQ(execute(F, Inputs[I]), Expected[I]);
+        }
+}
+
+TEST(HighControlFlowSemantics,
+     DefaultMixedWordIdentitiesPreserveModularResults) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Sum : {false, true})
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << Bytes << ':' << Sum << ':' << Reversed);
+        const uint64_t Mask =
+            Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+        for (uint64_t Constant :
+             {uint64_t(0), uint64_t(0xA5), Mask, Mask >> 1}) {
+          auto X = local(0);
+          X->Var.Size = Bytes;
+          X->Type = NdType::makeInt(Bytes, false);
+          auto Y = HighExpr::makeConst(Constant, Bytes);
+          Y->Type = X->Type;
+          auto A = HighExpr::makeBinop(NdOp::INT_OR, X, Y);
+          auto B =
+              HighExpr::makeBinop(Sum ? NdOp::INT_AND : NdOp::INT_XOR, Y, X);
+          A->Type = B->Type = X->Type;
+          auto Root = HighExpr::makeBinop(Sum ? NdOp::INT_ADD : NdOp::INT_AND,
+                                          Reversed ? B : A, Reversed ? A : B);
+          Root->Type = X->Type;
+          HighFunc F;
+          F.Body = {result(0, Root)};
+          EXPECT_TRUE(simplifyAllExprs(F.Body));
+          // An inner AND by zero may fold before the paired identity runs.
+          if (Constant)
+            EXPECT_EQ(F.Body[0].RetVal->Op,
+                      Sum ? NdOp::INT_ADD : NdOp::INT_XOR);
+          for (uint64_t Input = 0; Input < 256; ++Input) {
+            const uint64_t XValue =
+                (Input * UINT64_C(0x0101010101010101)) & Mask;
+            const uint64_t Expected =
+                Sum ? XValue + Constant : XValue ^ Constant;
+            ASSERT_TRUE(execute(F, XValue).has_value());
+            EXPECT_EQ(*execute(F, XValue) & Mask, Expected & Mask);
+          }
+        }
+      }
+}
+
+TEST(HighControlFlowSemantics, WordIdentitiesKeepObservationsAndWidths) {
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    ExprPtr X = local(0);
+    X->Type = NdType::makeInt(8, false);
+    if (Case == 0)
+      X = HighExpr::makeLoad(X, NdType::makeInt(8, false));
+    if (Case == 1) {
+      X = HighExpr::makeCall("observe", 0x4000, {X});
+      X->Type = NdType::makeInt(8, false);
+    }
+    if (Case == 4)
+      X = HighExpr::makeUndef(8);
+    if (Case == 5) {
+      X = HighExpr::makeBinop(NdOp::INT_ADD, X, HighExpr::makeUndef(8));
+      X->Type = NdType::makeInt(8, false);
+    }
+    ExprPtr Y = X;
+    if (Case == 2) {
+      Y = std::make_shared<HighExpr>(*X);
+      Y->Type = NdType::makeInt(4, false);
+      Y->Var.Size = 4;
+    }
+    auto Root = HighExpr::makeBinop(NdOp::INT_AND, X, Y);
+    Root->Type = NdType::makeInt(8, false);
+    if (Case == 3)
+      Root->MemoryOrdering = NdMemoryOrdering::Acquire;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::INT_AND);
+  }
+}
+
+TEST(HighControlFlowSemantics, WordIdentitiesBoundSharedExpressionExpansion) {
+  ExprPtr X = local(0);
+  X->Type = NdType::makeInt(8, false);
+  for (unsigned I = 0; I < 20; ++I) {
+    X = HighExpr::makeBinop(NdOp::INT_ADD, X, X);
+    X->Type = NdType::makeInt(8, false);
+  }
+  auto Root = HighExpr::makeBinop(NdOp::INT_XOR, X, X);
+  Root->Type = X->Type;
+  HighFunc F;
+  F.Body = {result(0, Root)};
+  // Few distinct nodes can expand into a huge tree. Keep it without an
+  // unbounded structural comparison or an algebraic search.
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
 }
 
 TEST(HighControlFlowSemantics, AdjacentLocalSlicesPreserveEveryBit) {
