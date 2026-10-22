@@ -243,6 +243,8 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
                       {"sub", sub},
                       {"before", before},
                       {"after", after}};
+  if (kind == Fetch::Jump || kind == Fetch::Refresh)
+    payload["recover_address"] = hexAddress(cursor ? cursor->item : address);
   if (opcodeBytes_ > 0)
     payload["opcode_bytes"] = opcodeBytes_;
   session_.read(

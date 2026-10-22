@@ -243,6 +243,7 @@ struct DecodedFunction {
   std::map<std::int64_t, std::string> manualNames;
   std::vector<Instruction> instructions;
   std::set<std::uint64_t> labels;
+  std::uint64_t entry = 0;
   std::uint64_t end = 0;
   std::optional<UnwindMark> unwind;
   std::string recoveryError;
@@ -623,10 +624,35 @@ struct Listing::Impl {
   /// Recovered bodies replace a linear scan's references in their own extent.
   /// Keep these across decode-cache eviction and an unfinished background scan.
   struct RecoveredReferences {
-    std::uint64_t end;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     std::vector<Reference> rows;
+
+    void mergeRanges() {
+      std::sort(ranges.begin(), ranges.end());
+      std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+      for (const auto &range : ranges)
+        if (!merged.empty() && range.first <= merged.back().second)
+          merged.back().second = std::max(merged.back().second, range.second);
+        else
+          merged.push_back(range);
+      ranges = std::move(merged);
+    }
+
+    bool contains(std::uint64_t address) const {
+      const auto next =
+          std::upper_bound(ranges.begin(), ranges.end(), address,
+                           [](std::uint64_t value, const auto &range) {
+                             return value < range.first;
+                           });
+      return next != ranges.begin() && address < std::prev(next)->second;
+    }
   };
   std::map<std::uint64_t, RecoveredReferences> recoveredReferences;
+  /// Exact decoded bytes, separately from the envelope used for layout.
+  /// Several functions can share code; ambiguous ownership stays unresolved.
+  std::map<std::uint64_t, std::map<std::uint64_t, std::uint32_t>>
+      recoveredInstructions;
+  std::uint32_t maxRecoveredInstructionSize = 0;
   std::optional<std::uint64_t> indexCursor;
   std::size_t indexDone = 0, indexTotal = 0;
   std::string indexError;
@@ -731,6 +757,8 @@ struct Listing::Impl {
     decoded.clear();
     decodedOrder.clear();
     recoveredReferences.clear();
+    recoveredInstructions.clear();
+    maxRecoveredInstructionSize = 0;
     alignCache.clear();
     applyDisplayNames();
     discoveryListingPending = false;
@@ -747,6 +775,8 @@ struct Listing::Impl {
     decoded.clear();
     decodedOrder.clear();
     recoveredReferences.clear();
+    recoveredInstructions.clear();
+    maxRecoveredInstructionSize = 0;
     alignCache.clear();
     applyDisplayNames();
   }
@@ -1602,29 +1632,37 @@ struct Listing::Impl {
                ? &*it
                : nullptr;
   }
-  /// Index of the function whose decoded extent contains \p address.
-  int functionIndex(std::uint64_t address) {
-    auto it = std::upper_bound(
-        functions.begin(), functions.end(), address,
-        [](std::uint64_t value, const Function &f) { return value < f.entry; });
-    if (it == functions.begin())
-      return -1;
-    --it;
-    const int index = static_cast<int>(it - functions.begin());
-    if (address >= it->end)
-      return -1;
-    // Decoding sets where an unsized body ends, and moves a sized one's end
-    // before its padding.
-    if (it->size) {
-      decode(index);
-      return address < it->end ? index : -1;
+  std::optional<int> recoveredFunctionIndex(std::uint64_t address) const {
+    std::optional<std::uint64_t> owner;
+    auto at = recoveredInstructions.upper_bound(address);
+    const bool exact = recoveredInstructions.contains(address);
+    while (at != recoveredInstructions.begin()) {
+      --at;
+      // A proven start wins over the operand bytes of a different decode
+      // stream. Two owners of the same start remain ambiguous.
+      if (exact && at->first != address)
+        break;
+      if (address - at->first >= maxRecoveredInstructionSize)
+        break;
+      for (const auto &[entry, size] : at->second) {
+        if (address - at->first >= size)
+          continue;
+        if (owner && *owner != entry)
+          return -1;
+        owner = entry;
+      }
     }
-    if (address != it->entry && address >= decode(index).end)
-      return -1;
-    return index;
+    if (!owner)
+      return std::nullopt;
+    const auto it = std::lower_bound(
+        functions.begin(), functions.end(), *owner,
+        [](const Function &f, std::uint64_t value) { return f.entry < value; });
+    return it != functions.end() && it->entry == *owner
+               ? std::optional(static_cast<int>(it - functions.begin()))
+               : std::nullopt;
   }
-  /// Function extent without decoding, for coarse classification.
-  int functionIndexCoarse(std::uint64_t address) const {
+
+  int declaredFunctionIndex(std::uint64_t address) const {
     auto it = std::upper_bound(
         functions.begin(), functions.end(), address,
         [](std::uint64_t value, const Function &f) { return value < f.entry; });
@@ -1632,6 +1670,35 @@ struct Listing::Impl {
       return -1;
     --it;
     return address < it->end ? static_cast<int>(it - functions.begin()) : -1;
+  }
+  /// Index of the function whose decoded extent contains \p address.
+  int functionIndex(std::uint64_t address) {
+    const int index = declaredFunctionIndex(address);
+    // Explicit parts retain their own presentation extent. Their recovered
+    // instructions still carry the parent's semantic ownership.
+    if (index < 0 || !functions[index].chunkOf)
+      if (const auto recovered = recoveredFunctionIndex(address))
+        return *recovered;
+    if (index < 0)
+      return -1;
+    const auto &function = functions[index];
+    // Decoding sets where an unsized body ends, and moves a sized one's end
+    // before its padding.
+    if (function.size) {
+      decode(index);
+      return address < function.end ? index : -1;
+    }
+    if (address != function.entry && address >= decode(index).end)
+      return -1;
+    return index;
+  }
+  /// Function extent without decoding, for coarse classification.
+  int functionIndexCoarse(std::uint64_t address) const {
+    const int index = declaredFunctionIndex(address);
+    if (index < 0 || !functions[index].chunkOf)
+      if (const auto recovered = recoveredFunctionIndex(address))
+        return *recovered;
+    return index;
   }
   const StringItem *stringAt(std::uint64_t address) const {
     auto it = std::upper_bound(strings.begin(), strings.end(), address,
@@ -1718,7 +1785,12 @@ struct Listing::Impl {
   /// variable below it.
   void buildFrame(DecodedFunction &body) const {
     const auto &instructions = body.instructions;
-    std::size_t first = 0;
+    std::size_t first =
+        std::lower_bound(instructions.begin(), instructions.end(), body.entry,
+                         [](const Instruction &i, std::uint64_t address) {
+                           return i.address < address;
+                         }) -
+        instructions.begin();
     while (first < instructions.size() &&
            (instructions[first].mnemonic == "endbr64" ||
             instructions[first].mnemonic == "endbr32"))
@@ -1813,7 +1885,10 @@ struct Listing::Impl {
         return std::nullopt;
       return static_cast<std::size_t>(it - instructions.begin());
     };
-    reach(0, 0);
+    const auto entry = indexOf(body.entry);
+    if (!entry)
+      return;
+    reach(*entry, 0);
     while (!work.empty()) {
       const auto index = work.back();
       work.pop_back();
@@ -1906,11 +1981,14 @@ struct Listing::Impl {
     if (auto it = decoded.find(function.entry); it != decoded.end())
       return it->second;
     DecodedFunction body;
+    body.entry = function.entry;
     std::uint64_t cursor = function.entry;
     std::uint64_t furthestTarget = 0;
     bool stop = false;
     bool recovered = functionDisasm && native;
+    bool complete = true;
     if (recovered) {
+      cursor = 0; // A continuation may precede its function's entry.
       std::optional<std::uint64_t> previousAddress;
       for (;;) {
         const char *raw = functionDisasm(
@@ -1929,6 +2007,7 @@ struct Listing::Impl {
           break;
         }
         const auto page = takeJson(raw);
+        complete &= page.value("lift_complete", false);
         auto chunk = instructionRows(page.at("instructions"));
         for (auto &instruction : chunk) {
           if (instruction.address < cursor ||
@@ -1938,9 +2017,14 @@ struct Listing::Impl {
             throw Error("analysis_failed",
                         "Invalid recovered instruction page");
           previousAddress = instruction.address;
-          if (instruction.address >= function.entry &&
-              instruction.address < function.end &&
-              instruction.address + instruction.size <= function.end)
+          if (function.chunkOf && (instruction.address < function.entry ||
+                                   instruction.address >= function.end))
+            continue;
+          // A synthetic tail-call block names the callee's entry but owns
+          // none of its instruction bytes. All other recovered instructions
+          // retain their frame, including code beyond another entry's range.
+          const auto *other = functionAtEntry(instruction.address);
+          if (!other || other->entry == function.entry)
             body.instructions.push_back(std::move(instruction));
           if (body.instructions.size() >
               ::neverd::limits::worker::kListingMaxUnsizedInstructions)
@@ -1963,7 +2047,9 @@ struct Listing::Impl {
       stop = recovered;
       cursor = function.entry;
       for (const auto &instruction : body.instructions)
-        cursor = std::max(cursor, instruction.address + instruction.size);
+        if (instruction.address >= function.entry &&
+            instruction.address < function.end)
+          cursor = std::max(cursor, instruction.address + instruction.size);
     }
     // An unsized body usually ends within a few dozen instructions; growing
     // chunks keep the engine from lifting far past its terminator.
@@ -2009,9 +2095,17 @@ struct Listing::Impl {
       function.end = body.end;
     if (recovered) {
       auto &overlay = recoveredReferences[function.entry];
-      overlay.end = std::max(function.end, body.end);
+      overlay.ranges = {{function.entry, std::max(function.end, body.end)}};
       overlay.rows.clear();
       for (const auto &instruction : body.instructions) {
+        overlay.ranges.emplace_back(instruction.address,
+                                    instruction.address + instruction.size);
+        if (complete) {
+          recoveredInstructions[instruction.address][ownerOf(index).entry] =
+              instruction.size;
+          maxRecoveredInstructionSize =
+              std::max(maxRecoveredInstructionSize, instruction.size);
+        }
         if (instruction.target) {
           const auto kind = instruction.flow == Flow::Call ? RefKind::Call
                             : instruction.flow == Flow::CondJump
@@ -2026,9 +2120,10 @@ struct Listing::Impl {
                                       ? instruction.accessWidths.at(ref.first)
                                       : std::uint8_t{0}});
       }
+      overlay.mergeRanges();
       if (indexState == IndexState::Ready) {
         std::erase_if(references, [&](const Reference &reference) {
-          if (reference.from < function.entry || reference.from >= overlay.end)
+          if (!overlay.contains(reference.from))
             return false;
           // These facts are owned by relocated storage and switch recovery,
           // not the instruction scan whose results this body supersedes.
@@ -2057,8 +2152,7 @@ struct Listing::Impl {
     }
     for (const auto &instruction : body.instructions)
       if (instruction.target && isBranch(instruction.flow) &&
-          *instruction.target > function.entry &&
-          *instruction.target < body.end)
+          *instruction.target != function.entry)
         body.labels.insert(*instruction.target);
     // Branches from other functions into this body need labels too.
     if (indexState == IndexState::Ready) {
@@ -2133,18 +2227,27 @@ struct Listing::Impl {
   /// a branch of the body reaches stays in it.  Returns whether it trimmed.
   bool trimPadding(DecodedFunction &body) const {
     auto &instructions = body.instructions;
-    auto padding = instructions.end();
-    while (padding != instructions.begin() &&
-           isPaddingMnemonic(std::prev(padding)->mnemonic))
+    const auto at = [&](std::uint64_t address) {
+      return std::lower_bound(instructions.begin(), instructions.end(), address,
+                              [](const Instruction &i, std::uint64_t value) {
+                                return i.address < value;
+                              });
+    };
+    // This is the main extent's padding, not a suffix of every recovered
+    // fragment sorted by address. Remote fragments keep their own boundaries.
+    const auto first = at(body.entry), last = at(body.end);
+    auto padding = last;
+    while (padding != first && isPaddingMnemonic(std::prev(padding)->mnemonic))
       --padding;
-    if (padding == instructions.begin() || padding == instructions.end() ||
+    if (padding == first || padding == last ||
         fallsThrough(std::prev(padding)->flow))
       return false;
     const std::uint64_t end = padding->address;
-    for (auto it = instructions.begin(); it != padding; ++it)
-      if (it->target && *it->target >= end && *it->target < body.end)
+    for (const auto &instruction : instructions)
+      if (instruction.target && *instruction.target >= end &&
+          *instruction.target < body.end)
         return false;
-    instructions.erase(padding, instructions.end());
+    instructions.erase(padding, last);
     body.end = end;
     return true;
   }
@@ -2428,6 +2531,14 @@ struct Listing::Impl {
   }
   std::optional<Item> nextItem(const Item &item) {
     const auto end = item.start + item.size;
+    // Two independently decoded streams can overlap. A preceding stream's
+    // operand bytes must not make paging skip another proven start.
+    if (item.kind == ItemKind::Instruction && !item.userCode) {
+      const auto at = recoveredInstructions.upper_bound(item.start);
+      if (at != recoveredInstructions.end() && at->first < end)
+        if (auto next = itemAt(at->first); next && next->start == at->first)
+          return next;
+    }
     if (end < regions[item.region].end)
       return itemAt(end);
     for (std::size_t r = item.region + 1; r < regions.size(); ++r)
@@ -2436,8 +2547,19 @@ struct Listing::Impl {
     return std::nullopt;
   }
   std::optional<Item> previousItem(const Item &item) {
-    if (item.start > regions[item.region].start)
+    if (item.start > regions[item.region].start) {
+      auto at = recoveredInstructions.lower_bound(item.start);
+      if (at != recoveredInstructions.begin()) {
+        --at;
+        if (item.start - at->first <= maxRecoveredInstructionSize)
+          if (auto previous = itemAt(at->first);
+              previous && previous->start == at->first &&
+              previous->kind == ItemKind::Instruction &&
+              previous->start + previous->size >= item.start)
+            return previous;
+      }
       return itemAt(item.start - 1);
+    }
     for (int r = item.region - 1; r >= 0; --r)
       if (auto previous = itemAt(regions[r].end - 1))
         return previous;
@@ -2956,7 +3078,27 @@ struct Listing::Impl {
     const DecodedFunction &body =
         item.function >= 0 ? decode(item.function) : standaloneBody;
     const Instruction &instruction = instructionOf(item);
-    if (function.chunkOf && item.start == function.entry) {
+    const bool remote = item.function >= 0 && !function.chunkOf &&
+                        (item.start < function.entry || item.start >= body.end);
+    bool remoteStart = false;
+    bool remoteEnd = false;
+    if (remote) {
+      const auto at = std::lower_bound(
+          body.instructions.begin(), body.instructions.end(), item.start,
+          [](const Instruction &i, std::uint64_t address) {
+            return i.address < address;
+          });
+      if (at != body.instructions.end() && at->address == item.start) {
+        remoteStart =
+            at == body.instructions.begin() ||
+            std::prev(at)->address + std::prev(at)->size != item.start ||
+            item.start == body.end;
+        remoteEnd = std::next(at) == body.instructions.end() ||
+                    std::next(at)->address != item.start + item.size ||
+                    item.start + item.size == function.entry;
+      }
+    }
+    if ((function.chunkOf && item.start == function.entry) || remoteStart) {
       // A chunk opens with its function's name, then its label; the code
       // before it brings the rule a jump or return ends with.
       const auto &owner = ownerOf(item.function);
@@ -3151,12 +3293,14 @@ struct Listing::Impl {
                    ListingRole::AutoComment);
       addLine(out, item, item.start, "comment", std::move(close));
     }
-    if (item.function >= 0 && next >= body.end) {
+    if (item.function >= 0 && ((item.start >= function.entry &&
+                                item.start < body.end && next >= body.end) ||
+                               remoteEnd)) {
       // The footer belongs to the last instruction.  Code that no function
       // owns, padding or data follows a rule; a function brings its own.
       StyledText end =
           lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
-      if (function.chunkOf) {
+      if (function.chunkOf || remote) {
         const auto &owner = ownerOf(item.function);
         end.append(ChunkEndLead, ListingRole::AutoComment);
         end.append(owner.name, ListingRole::CodeName, owner.entry);
@@ -3597,10 +3741,13 @@ struct Listing::Impl {
 
   /// Replace raw scan results with the recovered bodies already viewed.
   void applyRecoveredReferences() {
+    RecoveredReferences covered;
+    for (const auto &[entry, overlay] : recoveredReferences)
+      covered.ranges.insert(covered.ranges.end(), overlay.ranges.begin(),
+                            overlay.ranges.end());
+    covered.mergeRanges();
     std::erase_if(references, [&](const Reference &reference) {
-      const auto next = recoveredReferences.upper_bound(reference.from);
-      return next != recoveredReferences.begin() &&
-             reference.from < std::prev(next)->second.end;
+      return covered.contains(reference.from);
     });
     for (const auto &[entry, overlay] : recoveredReferences)
       references.insert(references.end(), overlay.rows.begin(),
@@ -4109,6 +4256,22 @@ Json Listing::page(const Json &payload) {
   auto anchor = d.itemAt(address);
   if (!anchor)
     throw Error("invalid_address", "Address is outside the mapped image");
+  // A jump or an invalidated cursor may be in an unvisited fragment, or
+  // inside a decoy instruction. Paging stays a presentation-only query.
+  if (payload.contains("recover_address") && d.native && d.functionDisasm) {
+    const auto target = parseAddress(stringField(payload, "recover_address"));
+    const auto item = target == address ? anchor : d.itemAt(target);
+    if (item && d.regions[item->region].exec &&
+        !d.userItemOverlapping(target, 1) &&
+        (item->kind != ItemKind::Instruction || item->start != target)) {
+      (void)chunkOwner(target);
+      // Discovery can rebuild the function and item indexes even if this
+      // address still has no proven owner.
+      anchor = d.itemAt(address);
+      if (!anchor)
+        throw Error("invalid_address", "Address is outside the mapped image");
+    }
+  }
   std::vector<Line> forward = d.itemLines(*anchor);
   // A sub-line past the item's last line continues with the next item, so a
   // client can page forward from its last loaded line.
@@ -4517,11 +4680,47 @@ std::string Listing::nameAt(std::uint64_t address) {
 
 std::optional<std::uint64_t> Listing::chunkOwner(std::uint64_t address) {
   auto &d = *impl_;
+  d.discover();
   d.build();
-  const int f = d.functionIndexCoarse(address);
-  if (f < 0 || !d.functions[f].chunkOf)
+  if (const int f = d.functionIndex(address); f >= 0) {
+    if (d.functions[f].chunkOf)
+      return d.ownerOf(f).entry;
+    // Operand coverage can be a decoy stream swallowing the real start.
+    // Search for a proven start before accepting that weaker ownership.
+    if (d.recoveredInstructions.contains(address))
+      if (const auto found = d.recoveredFunctionIndex(address))
+        return *found >= 0 ? std::optional(d.ownerOf(*found).entry)
+                           : std::nullopt;
+    // Bytecode and older engines retain their ordinary extent lookup.
+    if (!d.functionDisasm || !d.native)
+      return d.ownerOf(f).entry;
+  }
+  if (!d.functionDisasm || !d.native || d.regionIndex(address) < 0)
     return std::nullopt;
-  return d.ownerOf(f).entry;
+  const auto middle = std::lower_bound(
+      d.functions.begin(), d.functions.end(), address,
+      [](const Function &f, std::uint64_t value) { return f.entry < value; });
+  auto left = middle, right = middle;
+  for (std::size_t count = 0;
+       count < ::neverd::limits::worker::kListingOwnerSearchFunctions;) {
+    const auto before = left == d.functions.begin()
+                            ? UINT64_MAX
+                            : address - std::prev(left)->entry;
+    const auto after =
+        right == d.functions.end() ? UINT64_MAX : right->entry - address;
+    if (std::min(before, after) >
+        ::neverd::limits::worker::kListingOwnerSearchDistance)
+      break;
+    const auto candidate = before <= after ? --left : right++;
+    if (candidate->chunkOf ||
+        d.regionIndex(candidate->entry) != d.regionIndex(address))
+      continue;
+    ++count;
+    (void)d.decode(static_cast<int>(candidate - d.functions.begin()));
+  }
+  const auto found = d.recoveredFunctionIndex(address);
+  return found && *found >= 0 ? std::optional(d.ownerOf(*found).entry)
+                              : std::nullopt;
 }
 
 std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
