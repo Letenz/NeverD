@@ -189,6 +189,16 @@ int runStructuralDiff() {
       throw std::runtime_error(
           "validation options require --validate-function");
     const bool ReviewView = DiffList == "reviews";
+    const bool FunctionInventory =
+        DiffList == "all" || DiffList == "matched" || DiffList == "changed" ||
+        DiffList == "ambiguous" || DiffList == "unmatched";
+    if (!FunctionInventory && (DiffListSide.getNumOccurrences() ||
+                               DiffListSearch.getNumOccurrences() ||
+                               DiffListSort.getNumOccurrences() ||
+                               DiffListDescending.getNumOccurrences() ||
+                               DiffAmbiguousWith.getNumOccurrences()))
+      throw std::runtime_error("function inventory filters require --list "
+                               "all/matched/changed/ambiguous/unmatched");
     if (!ReviewView && (DiffReviewCase.getNumOccurrences() ||
                         DiffReviewFunction.getNumOccurrences() ||
                         DiffReviewSide.getNumOccurrences() ||
@@ -480,9 +490,16 @@ int runStructuralDiff() {
                          ? neverd_comparison_region_page_json
                          : neverd_comparison_regions_json)(C, Q.c_str()));
     } else if (!DiffList.empty()) {
-      const auto Q = render(llvm::json::Object{{"kind", DiffList.getValue()},
-                                               {"offset", unsigned(DiffOffset)},
-                                               {"limit", unsigned(DiffLimit)}});
+      llvm::json::Object Query{{"kind", DiffList.getValue()},
+                               {"side", DiffListSide.getValue()},
+                               {"search", DiffListSearch.getValue()},
+                               {"sort", DiffListSort.getValue()},
+                               {"descending", bool(DiffListDescending)},
+                               {"offset", unsigned(DiffOffset)},
+                               {"limit", unsigned(DiffLimit)}};
+      if (DiffAmbiguousWith.getNumOccurrences())
+        Query["ambiguous_with"] = DiffAmbiguousWith.getValue();
+      const auto Q = render(std::move(Query));
       Output = take(neverd_comparison_functions_json(C, Q.c_str()));
     } else if (!DiffFunc.empty()) {
       uint64_t Address = 0;

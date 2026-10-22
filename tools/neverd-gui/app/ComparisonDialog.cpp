@@ -12,6 +12,7 @@
 
 #include "../ResourceLimits.h"
 #include "ComparisonChangesDialog.h"
+#include "ComparisonCounterpartDialog.h"
 #include "ComparisonFlowDialog.h"
 #include "ComparisonGraph.h"
 #include "ComparisonImpactDialog.h"
@@ -33,7 +34,6 @@
 #include <QGroupBox>
 #include <QGuiApplication>
 #include <QHeaderView>
-#include <QInputDialog>
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
@@ -394,6 +394,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   Confirm = new QPushButton(tr("Confirm pair"), Details);
   Unmatch = new QPushButton(tr("Unmatch"), Details);
   Remap = new QPushButton(tr("Pair with…"), Details);
+  Remap->setObjectName("comparisonPairWith");
   Undo = new QPushButton(icon("undo"), tr("Undo"), Details);
   Undo->setObjectName("comparisonUndo");
   Redo = new QPushButton(icon("redo"), tr("Redo"), Details);
@@ -836,19 +837,11 @@ void ComparisonDialog::edit(const QString &Kind) {
   auto A = PrimaryAddress, B = SecondaryAddress;
   if (Kind == "match") {
     const bool NeedPrimary = SelectedSide == "secondary";
-    bool Accepted = false;
-    const auto Address = QInputDialog::getText(
-        this, tr("Choose counterpart"),
-        tr("%1 function entry address (hexadecimal). Existing pairs will be "
-           "replaced; Undo restores them.")
-            .arg(NeedPrimary ? tr("Primary") : tr("Secondary")),
-        QLineEdit::Normal, NeedPrimary ? A : B, &Accepted);
-    if (!Accepted || Address.isEmpty())
-      return;
-    if (NeedPrimary)
-      A = Address;
-    else
-      B = Address;
+    auto *Picker = new ComparisonCounterpartDialog(
+        Session, SelectedSide, NeedPrimary ? B : A, NeedPrimary ? A : B, this);
+    Picker->setAttribute(Qt::WA_DeleteOnClose);
+    Picker->open();
+    return;
   }
   Session.command("comparison_override",
                   {{"kind", Kind}, {"primary", A}, {"secondary", B}});

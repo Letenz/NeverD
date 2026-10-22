@@ -959,6 +959,13 @@ manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker
 checks compile the owned `unittests/diff/patch_fixture.c` and compare the same
 saved schema across public surfaces, including failure and stale-result refusal.
+Ambiguity inventory tests page more than the preview limit in both directions,
+checking search/sort, strict source binding, empty/final/invalid pages, edits,
+undo and restore. CLI uses 40 independently named compiled copies; the worker
+uses authored raw bodies. The real Qt picker test uses 417 raw functions to
+cross the page boundary, then checks search, selection, address zero, displaced
+pairs, undo, cancellation and revision invalidation. These are UI and inventory
+contracts, not matching-quality or throughput measurements.
 Function-detail tests cancel a real large native alignment while polling status,
 check its cached stop state and unclassified CFG, then refresh and time out a new
 calculation. The real Qt/worker test verifies that a stopped page exposes Retry

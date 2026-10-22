@@ -151,6 +151,13 @@ window used to route branch arrows. Revision and navigation fences still apply.
 `lib/diff` owns the immutable comparison model, normalization-independent matching,
 block/instruction deltas, correspondence overrides and versioned persistence.
 It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+The C API's `functions_json` inventory projects the same accepted mappings and
+retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
+the full group's target-side inventory, with ordinary search/sort/paging; it
+does not run another matcher or promote a candidate. Mapping edits and restore
+invalidate that inventory cache. CLI and the Qt counterpart picker consume this
+projection; the picker keeps bounded pages and invalidates its selection when
+the worker's comparison revision changes.
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,

@@ -19,6 +19,37 @@ def stable(document):
     return document
 
 
+def ambiguity_pages(args, root):
+    source = root / "copies.c"
+    source.write_text("\n".join(f"int copy_{index:02d}(void) {{ return 7; }}" for index in range(40))
+                      + "\nint comparison_marker = MARKER;\n")
+    paths = [root / "copies-before.o", root / "copies-after.o"]
+    for marker, path in enumerate(paths):
+        run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O0",
+             "-fno-asynchronous-unwind-tables", f"-DMARKER={marker}", str(source), "-o", str(path)], {0})
+    base = [args.neverd, "diff", "--structural", "-a", str(paths[0]), "-b", str(paths[1]), "--ignore-names"]
+    for side, opposite in (("secondary", "primary"), ("primary", "secondary")):
+        inventory = json.loads(run(base + ["--list", "ambiguous", "--list-side", opposite,
+                                          "--list-search", "copy_01"], {2, 3}).stdout)
+        assert inventory["total"] == 1, inventory
+        anchor = inventory["items"][0]["address"]
+        query = ["--list", "all", "--list-side", side, "--ambiguous-with", anchor]
+        first = json.loads(run(base + query + ["--limit", "7"], {2, 3}).stdout)
+        assert first["total"] >= 39 and first["ambiguity"]["active"], first
+        assert len(first["items"]) == 7 and first["next_offset"] == 7
+        tail = json.loads(run(base + query + ["--offset", str(first["total"] - 3), "--limit", "7"], {2, 3}).stdout)
+        assert len(tail["items"]) == 3 and tail["next_offset"] is None
+        descending = json.loads(run(base + query + ["--list-sort", "address", "--list-descending", "--limit", "1"], {2, 3}).stdout)
+        assert descending["items"][0] == tail["items"][-1]
+        filtered = json.loads(run(base + query + ["--list-search", "copy_31"], {2, 3}).stdout)
+        assert filtered["total"] == 1 and filtered["items"][0]["name"] == "copy_31"
+        run(base + query + ["--offset", str(first["total"] + 1)], {1})
+    for options in (["--ambiguous-with", "0x10"], ["--list", "reviews", "--list-side", "secondary"],
+                    ["--list", "all", "--list-side", "wrong"], ["--list", "all", "--ambiguous-with", "0xdead"]):
+        run(base + options, {1})
+    run([args.neverd, "diff", "-a", str(paths[0]), "-b", str(paths[1]), "--list-search", "copy"], {1})
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--neverd", required=True)
@@ -41,6 +72,7 @@ def main():
     lib.neverd_free_string.argtypes = [pointer]
     with tempfile.TemporaryDirectory(prefix="neverd-diff-cli-") as folder:
         root = pathlib.Path(folder)
+        ambiguity_pages(args, root)
         for limit in (17, 9):
             run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",
                  f"-DPATCH_LIMIT={limit}", args.fixture, "-o", str(root / f"{limit}.o")], {0})

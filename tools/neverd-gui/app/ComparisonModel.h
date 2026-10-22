@@ -23,6 +23,7 @@ class ComparisonModel final : public QAbstractTableModel {
 public:
   enum class Kind {
     Functions,
+    Candidates,
     Instructions,
     Regions,
     RegionAnchors,

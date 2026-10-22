@@ -28,6 +28,33 @@ Progress goes to stderr. `--list` supports `all`, `matched`, `changed`,
 primary entry address or an unambiguous name and returns paired original bytes,
 operands, instruction alignment, CFG and matching evidence.
 
+Function inventories support `--list-side primary|secondary`, `--list-search`
+(name or hexadecimal address), `--list-sort` (address, name, size, similarity,
+confidence or changes), and `--list-descending`. To inspect every retained
+ambiguity candidate for a primary function, select the secondary inventory:
+
+```sh
+neverd diff --structural -a original.exe -b patched.exe --list all \
+  --list-side secondary --ambiguous-with 0x140001000 --limit 200
+```
+
+Continue with `--offset` using the response's `next_offset`. `ambiguous_with`
+always names a function on the opposite side; an absent source is an error,
+while a valid source with no retained ambiguity group returns an empty page.
+The `ambiguity` metadata identifies the source, group explanation and unfiltered
+candidate count. Search and sort apply to the returned candidate functions.
+The usual inventory's short `candidates` array remains a preview; it does not
+limit this query's total. These are the engine's retained hypotheses, not all
+possible correspondences or accepted matches.
+
+In the desktop, select a function and choose **Pair with…**. The resizable
+picker pages all retained ambiguity candidates and can switch to **All
+functions** for manual pairing. Search accepts names and hexadecimal addresses,
+including zero. Rows show current pairings; a selection explains which pairs
+will be replaced. **Pair functions** records the edit and **Undo** restores the
+previous pairs. Searching, browsing and cancelling do not edit the mapping.
+Changed comparison revisions invalidate the picker until it is reopened.
+
 `--options FILE` accepts an object containing:
 
 | Option | Meaning |

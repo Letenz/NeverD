@@ -16,6 +16,58 @@ def ok(client, operation, payload=None):
     return reply["payload"]
 
 
+def ambiguity_pages(client, root):
+    # More than the inventory's preview, with independently known boundaries.
+    body = bytes.fromhex("b80700000083c003c3") + b"\xcc" * 7
+    inputs = []
+    for side, base in (("primary", 0x1000), ("secondary", 0x8000)):
+        path = root / f"candidates-{side}.bin"
+        data = bytearray(body * 40)
+        if side == "secondary":
+            data[-1] = 0xdd
+        path.write_bytes(data)
+        inputs.append({"path": str(path), "load_options": {
+            "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": hex(base)}})
+    summary = ok(client, "comparison_start", {
+        "primary": inputs[0], "secondary": inputs[1], "options": {"use_names": False}})
+    revision = summary["comparison_revision"]
+    for side, source in (("secondary", "0x1010"), ("primary", "0x8010")):
+        query = {"side": side, "ambiguous_with": source, "limit": 7,
+                 "expected_comparison_revision": revision}
+        first = ok(client, "comparison_functions", query)
+        assert first["total"] >= 39 and first["ambiguity"]["active"], first
+        assert first["total"] == first["ambiguity"]["candidate_total"]
+        addresses, page = [], first
+        while True:
+            addresses += [item["address"] for item in page["items"]]
+            if page["next_offset"] is None:
+                break
+            page = ok(client, "comparison_functions", {**query, "offset": page["next_offset"]})
+        assert len(set(addresses)) == len(addresses) == first["total"]
+        assert addresses == sorted(addresses, key=lambda address: int(address, 16))
+        filtered = ok(client, "comparison_functions", {**query, "search": addresses[-1]})
+        assert filtered["total"] == 1 and filtered["items"][0]["address"] == addresses[-1]
+        reversed_page = ok(client, "comparison_functions", {**query, "sort": "address", "descending": True})
+        assert reversed_page["items"][0]["address"] == addresses[-1]
+        refused = client.call("comparison_functions", {**query, "offset": len(addresses) + 1})
+        assert refused["status"] == "error", refused
+    query = {"side": "secondary", "ambiguous_with": "0x1010"}
+    original = ok(client, "comparison_functions", query)
+    edited = ok(client, "comparison_override", {
+        "kind": "match", "primary": "0x1010", "secondary": "0x8030",
+        "expected_comparison_revision": revision})
+    stale = client.call("comparison_functions", {**query, "expected_comparison_revision": revision})
+    assert stale["error"]["code"] == "stale_comparison", stale
+    resolved = ok(client, "comparison_functions", query)
+    assert resolved["total"] == 0 and not resolved["ambiguity"]["active"], resolved
+    assert resolved["comparison_revision"] == edited["comparison_revision"]
+    ok(client, "comparison_undo")
+    restored = ok(client, "comparison_functions", query)
+    assert restored["items"] == original["items"] and restored["ambiguity"] == original["ambiguity"]
+    for source in ("0xdead", 4112):
+        assert client.call("comparison_functions", {**query, "ambiguous_with": source})["status"] == "error"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("worker")
@@ -37,6 +89,7 @@ def main():
                     "comparison_cfg_summary", "comparison_cfg_viewport", "comparison_cfg_focus"}.issubset(
                         client.hello["comparison_cancellable_operations"])
             assert client.call("comparison_functions")["error"]["code"] == "comparison_not_loaded"
+            ambiguity_pages(client, root)
             start = {"primary": {"path": str(a)}, "secondary": {"path": str(b)}, "options": {"regions": True, "dataflow": True, "flow_regions": {"min_nodes": 2}}}
             summary = ok(client, "comparison_start", start)
             assert summary["schema"] == "neverd.bindiff.summary"
