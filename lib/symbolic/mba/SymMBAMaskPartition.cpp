@@ -144,12 +144,6 @@ SymRef sharedPartitionFactor(SymContext &Ctx, SymRef A, SymRef B, SymOp Op) {
 
   // The outer operator may have flattened one mask. Rebuild only its
   // nonshared operands, then prove that the two residual masks complement.
-  const SymOp Dual = Op == SymOp::And ? SymOp::Or : SymOp::And;
-  auto ContainsDual = [&](llvm::ArrayRef<SymRef> Terms) {
-    return llvm::any_of(Terms, [&](SymRef R) { return Ctx.op(R) == Dual; });
-  };
-  if (!ContainsDual(AF) && !ContainsDual(BF))
-    return SymRef();
   llvm::SmallVector<SymRef, 8> Shared, Left, Right;
   size_t I = 0, J = 0;
   while (I < AF.size() && J < BF.size()) {

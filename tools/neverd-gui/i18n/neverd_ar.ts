@@ -1654,6 +1654,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>تغير الجدول قبل تحديد العنوان.</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>حل تحديد عنوان آخر محل هذا التحديد.</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>لم تعثر العملية العاملة على العنوان المطلوب.</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>لا تزال المراجع قيد الفهرسة…</translation>
     </message>

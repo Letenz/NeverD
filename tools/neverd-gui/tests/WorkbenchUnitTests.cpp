@@ -68,6 +68,7 @@
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <kddockwidgets/qtwidgets/views/Separator.h>
+#include <limits>
 #include <memory>
 
 using namespace neverd::gui;
@@ -673,6 +674,28 @@ private slots:
         choose(QStringLiteral("neverd:///functions?rva=1"), instances.mid(0, 2))
             .index,
         1);
+  }
+
+  void relativeLinksDoNotWrap() {
+    DeepLink relative;
+    relative.rva = std::numeric_limits<Address>::max();
+    QVERIFY(!relative.address(1));
+    QCOMPARE(relative.address(0), relative.rva);
+    relative.rva = 0;
+    QCOMPARE(relative.address(std::numeric_limits<Address>::max()),
+             std::optional<Address>(std::numeric_limits<Address>::max()));
+  }
+
+  void linkNumbersContainOnlyDigits() {
+    for (const QString &number :
+         {QStringLiteral("%091"), QStringLiteral("1%09"),
+          QStringLiteral("%0a1"), QStringLiteral("1%0d"),
+          QStringLiteral("0x%091")}) {
+      const auto parsed =
+          parseDeepLink(QStringLiteral("neverd:///addresses?ea=") + number);
+      QVERIFY2(!parsed.link, qPrintable(number));
+      QVERIFY(!parsed.error.isEmpty());
+    }
   }
 
   void commandsKeepIdasShortcuts() {

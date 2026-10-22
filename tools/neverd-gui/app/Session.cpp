@@ -223,6 +223,13 @@ bool Session::indexReady() const {
   return background_.value("state").toString() == QLatin1String("ready");
 }
 
+bool Session::analysisComplete() const {
+  return loaded_ && !opening_ &&
+         (indexReady() || (background_.value("state").toString() ==
+                               QLatin1String("unavailable") &&
+                           queries_.analysisComplete()));
+}
+
 bool Session::busy() const {
   const auto state = background_.value("state").toString();
   return opening_ || queries_.hasPending() ||
