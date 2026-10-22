@@ -30,6 +30,7 @@ namespace web {
 class PackageReviewDialog;
 }
 
+class ComparisonDialog;
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
@@ -324,6 +325,7 @@ private:
   QJsonArray bookmarks_;
   QPointer<QDialog> quickStart_;
   QPointer<web::PackageReviewDialog> packageReview_;
+  QPointer<ComparisonDialog> comparison_;
   bool startupQuickStartPending_ = false;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;

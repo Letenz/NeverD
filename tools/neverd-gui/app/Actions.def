@@ -33,6 +33,11 @@ NEVERD_ACTION(
     QT_TRANSLATE_NOOP("Actions", "Offline package &review..."), "", "open",
     QT_TRANSLATE_NOOP("Actions",
                       "Inspect local package evidence and analyst reviews"))
+NEVERD_ACTION(FileCompare, QT_TRANSLATE_NOOP("Actions", "Compare &binaries…"),
+              "", "compare",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Compare two binaries, inspect changes and "
+                                "review function correspondence"))
 NEVERD_ACTION(FileReload,
               QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
               "refresh",
@@ -454,8 +459,8 @@ NEVERD_ACTION(PathfinderNewPath,
                                 "Start a new call path at the function under "
                                 "the cursor"))
 NEVERD_ACTION(PathfinderAddWaypoint,
-              QT_TRANSLATE_NOOP("Actions", "&Add to the path"),
-              "Ctrl+Shift+F9", "pathfinder",
+              QT_TRANSLATE_NOOP("Actions", "&Add to the path"), "Ctrl+Shift+F9",
+              "pathfinder",
               QT_TRANSLATE_NOOP("Actions",
                                 "Add the function under the cursor to the "
                                 "call path as its last waypoint"))

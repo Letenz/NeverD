@@ -131,6 +131,32 @@ if(BUILD_TESTING)
       -o "-,txt")
   endif()
   find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+  if(NEVERD_WORKER_REAL_ENGINE_TESTS)
+    qt_add_executable(neverd-gui-comparison-tests tests/ComparisonTests.cpp)
+    target_link_libraries(neverd-gui-comparison-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_compile_definitions(neverd-gui-comparison-tests PRIVATE
+      TEST_COMPARISON_WORKER="$<TARGET_FILE:neverd-worker>")
+    add_dependencies(neverd-gui-comparison-tests neverd-worker)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+      set(_neverd_diff_effect_fixture "${CMAKE_CURRENT_BINARY_DIR}/comparison-effects.so")
+      add_custom_command(OUTPUT "${_neverd_diff_effect_fixture}"
+        COMMAND "${CMAKE_C_COMPILER}" -shared -nostdlib -fPIC -O1 -fno-builtin
+          -fno-asynchronous-unwind-tables -fno-stack-protector
+          "${CMAKE_SOURCE_DIR}/unittests/diff/call_effects_fixture.c"
+          -o "${_neverd_diff_effect_fixture}"
+        DEPENDS "${CMAKE_SOURCE_DIR}/unittests/diff/call_effects_fixture.c"
+        VERBATIM)
+      add_custom_target(neverd-gui-comparison-effects-fixture DEPENDS "${_neverd_diff_effect_fixture}")
+      add_dependencies(neverd-gui-comparison-tests neverd-gui-comparison-effects-fixture)
+      target_compile_definitions(neverd-gui-comparison-tests PRIVATE
+        TEST_COMPARISON_EFFECT_FIXTURE="${_neverd_diff_effect_fixture}")
+    endif()
+    set_target_properties(neverd-gui-comparison-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME NeverDGuiComparison COMMAND neverd-gui-comparison-tests)
+    set_tests_properties(NeverDGuiComparison PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120 LABELS "NeverDBinaryDiff")
+  endif()
+
   if(NEVERD_WORKER_WEB_ENGINE_TESTS)
     qt_add_executable(neverd-gui-web-tests tests/WebReviewTests.cpp)
     target_link_libraries(neverd-gui-web-tests PRIVATE neverd_gui_app Qt6::Test)

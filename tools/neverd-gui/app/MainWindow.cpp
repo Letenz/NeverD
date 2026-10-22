@@ -4,6 +4,7 @@
 #include "../ResourceLimits.h"
 #include "ChooserView.h"
 #include "CodeView.h"
+#include "ComparisonDialog.h"
 #include "ConnectionsDialog.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
@@ -1281,6 +1282,14 @@ void MainWindow::connectActions() {
     connect(actions_.action(id), &QAction::triggered, this, slot);
   };
   on(ActionId::FileOpen, [this] { openDialog(); });
+  on(ActionId::FileCompare, [this] {
+    if (!comparison_)
+      comparison_ = new ComparisonDialog(session_.workerPath(),
+                                         session_.filePath(), this);
+    comparison_->show();
+    comparison_->raise();
+    comparison_->activateWindow();
+  });
   on(ActionId::FilePackageReview, [this] {
     if (!packageReview_)
       packageReview_ =
@@ -1692,6 +1701,7 @@ void MainWindow::updateActions() {
                         name.startsWith(QStringLiteral("Help")) ||
                         name == QLatin1String("FileOpen") ||
                         name == QLatin1String("FilePackageReview") ||
+                        name == QLatin1String("FileCompare") ||
                         name == QLatin1String("FileExit") ||
                         name == QLatin1String("FileQuickStart") ||
                         name.startsWith(QStringLiteral("ViewZoom")) ||
