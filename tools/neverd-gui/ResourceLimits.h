@@ -45,6 +45,9 @@ inline constexpr int kCodeViewPageLines = 256;
 inline constexpr int kCodeViewNameRefreshPageLines =
     ::neverd::sdk::kMaxCodeViewPageLines;
 
+// tools/neverd-gui/app/FindInViewDialog.cpp
+inline constexpr int kFindInViewDebounceMs = 120;
+
 // tools/neverd-gui/app/DisassemblyView.cpp
 inline constexpr std::size_t kDisassemblyViewMaxHistory = 512;
 

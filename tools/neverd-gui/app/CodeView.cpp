@@ -1637,11 +1637,18 @@ void CodeText::paintEvent(QPaintEvent *) {
     painter.setClipRect(QRect(
         gutterRight, y, std::max(0, area.width() - gutterRight), lineHeight_));
     auto &layout = lines_[i].styled.layout(font, styleStamp_, codeColor);
-    if (!highlight_.isEmpty() && layout.lineCount()) {
+    if ((!SearchHighlight.Text.isEmpty() || !highlight_.isEmpty()) &&
+        layout.lineCount()) {
       const QTextLine textLine = layout.lineAt(0);
-      for (const int at : tokenOccurrences(lines_[i].styled.text, highlight_)) {
+      const bool searching = !SearchHighlight.Text.isEmpty();
+      const auto matches =
+          searching ? SearchHighlight.matches(lines_[i].styled.text)
+                    : tokenOccurrences(lines_[i].styled.text, highlight_);
+      const int length =
+          searching ? SearchHighlight.Text.size() : highlight_.size();
+      for (const int at : matches) {
         const qreal x0 = textLine.cursorToX(at);
-        const qreal x1 = textLine.cursorToX(at + int(highlight_.size()));
+        const qreal x1 = textLine.cursorToX(at + length);
         painter.fillRect(QRectF(left + x0, y, x1 - x0, lineHeight_),
                          theme.color(ColorRole::ListingHighlight));
       }
@@ -2093,6 +2100,79 @@ bool CodeText::findText(const QString &text, bool forward) {
     }
   }
   return false;
+}
+
+std::pair<int, int> CodeText::searchSelection() const {
+  if (lines_.isEmpty())
+    return {0, 0};
+  const auto original = [this](int line, int column) {
+    const int at = displayPosition(line, column);
+    return library_.canFold() ? library_.originalPosition(at) : at;
+  };
+  const int cursor = original(cursorLine_, cursorColumn_);
+  const int anchor =
+      anchor_ ? original(anchor_->first, anchor_->second) : cursor;
+  return {std::min(cursor, anchor), std::max(cursor, anchor)};
+}
+
+QString CodeText::searchSeed() const {
+  const auto [begin, end] = searchSelection();
+  const auto selected = source_.mid(begin, end - begin);
+  return !selected.isEmpty() && !selected.contains(u'\n') ? selected
+                                                          : currentToken();
+}
+
+void CodeText::setSearchHighlight(const ViewSearchQuery &query) {
+  SearchHighlight = query;
+  viewport()->update();
+}
+
+bool CodeText::selectSearchRange(int begin, int length) {
+  if (!complete() || begin < 0 || length <= 0 || begin > source_.size() ||
+      length > source_.size() - begin)
+    return false;
+  const int line = QStringView(source_).left(begin).count(u'\n');
+  const int lastLine =
+      line + QStringView(source_).mid(begin, length).count(u'\n');
+  bool unfolded = false;
+  for (int row = line; row <= lastLine; ++row)
+    unfolded |= library_.unfoldSourceLine(row);
+  if (unfolded) {
+    rebuildLines();
+    emit foldingChanged();
+  }
+  const auto projected = [this](int at) {
+    const int position =
+        library_.canFold() ? library_.projectedPosition(at) : at;
+    const int row =
+        std::clamp(int(std::upper_bound(lineStarts_.cbegin(),
+                                        lineStarts_.cend(), position) -
+                       lineStarts_.cbegin()) -
+                       1,
+                   0, int(lines_.size()) - 1);
+    return std::pair{row, position - lineStarts_[row]};
+  };
+  const auto first = projected(begin);
+  const auto last = projected(begin + length);
+  // Searching this pane must not navigate the assembly or request another
+  // function. Tab remains the explicit synchronization gesture.
+  const QScopedValueRollback<bool> following(following_, true);
+  moveCursor(first.first, first.second, false);
+  moveCursor(last.first, last.second, true);
+  auto &layout = lines_[first.first].styled.layout(Theme::instance().codeFont(),
+                                                   styleStamp_, codeColor);
+  if (layout.lineCount()) {
+    const qreal left = textLeft() + layout.lineAt(0).cursorToX(first.second);
+    const qreal right = textLeft() + layout.lineAt(0).cursorToX(last.second);
+    const qreal gutter = textLeft() + horizontalScrollBar()->value();
+    if (left < gutter || right - left > viewport()->width() - gutter)
+      horizontalScrollBar()->setValue(horizontalScrollBar()->value() +
+                                      int(left - gutter));
+    else if (right > viewport()->width())
+      horizontalScrollBar()->setValue(horizontalScrollBar()->value() +
+                                      int(right - viewport()->width()));
+  }
+  return true;
 }
 
 void CodeText::keyPressEvent(QKeyEvent *event) {
