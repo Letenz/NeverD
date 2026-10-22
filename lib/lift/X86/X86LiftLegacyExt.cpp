@@ -13,6 +13,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86FPEncoding.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
@@ -503,15 +504,24 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
 
   // MOVDIRI — scalar direct store.
   case X86_INS_MOVDIRI: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    if (X86.operands[0].type == X86_OP_MEM) {
-      S.storeToMem(X86.operands[0], Src);
-    } else {
-      S.emit(NdOp::COPY, Dst, {Src});
-    }
+    FPEncodingInfo Encoding;
+    if (!parseFPEncoding(Insn, X86, L.targetArch(), false, 2, 0, Encoding) ||
+        Encoding.Opcode != 0xf9 || X86.op_count != 2)
+      return false;
+    const uint16_t Width = Encoding.W ? 8 : 4;
+    if (X86.operands[0].type != X86_OP_MEM || X86.operands[0].size != Width ||
+        !matchesFPGPROperand(X86.operands[1], Encoding.gprRegIndex(), Width) ||
+        !validateFPEncodingTail(Insn, X86, Encoding, X86.operands[0]))
+      return false;
+    const NdVar Address = S.computeEA(X86.operands[0]);
+    const NdVar Source = L.operandRead(S, X86.operands[1]);
+    if (Address.Size != 8 || Source.Size != Width)
+      return false;
+    // A plain STORE loses the WC transaction and write-completion atomicity.
+    // Keep the actual memory operation, including unaligned stores, native.
+    S.emitIntrinsic(Intrinsic::X86DirectStore, {}, {Address, Source},
+                    NdMemoryOrdering::None,
+                    S.memoryAddressSpace(X86.operands[0]));
     break;
   }
 
@@ -522,9 +532,15 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     // In 64-bit mode ES has architectural base zero.  The 32-bit form needs
     // explicit ES-base and segment-limit state that LowIR does not model, so
     // keep that form fail-closed instead of silently treating ES as flat.
-    if (L.targetArch() != Arch::X64 || X86.op_count != 2 ||
+    FPEncodingInfo Encoding;
+    if (L.targetArch() != Arch::X64 ||
+        !parseFPEncoding(Insn, X86, L.targetArch(), false, 2, 1, Encoding) ||
+        Encoding.Opcode != 0xf8 || X86.op_count != 2 ||
         X86.operands[0].type != X86_OP_REG ||
-        X86.operands[1].type != X86_OP_MEM || X86.operands[1].size != 64)
+        X86.operands[1].type != X86_OP_MEM || X86.operands[1].size != 64 ||
+        !matchesFPGPROperand(X86.operands[0], Encoding.gprRegIndex(),
+                             Encoding.AddressSize) ||
+        !validateFPEncodingTail(Insn, X86, Encoding, X86.operands[1]))
       return false;
 
     NdVar Address = L.operandRead(S, X86.operands[0]);
@@ -536,18 +552,15 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       Address = ExtendedAddress;
     }
 
-    // Intel specifies that the ordinary source read precedes the direct
-    // store.  Keeping the load first also snapshots overlapping sources.
-    const NdVar Source = L.operandRead(S, X86.operands[1]);
-    if (Source.Size != 64)
+    const NdVar SourceAddress = S.computeEA(X86.operands[1]);
+    if (SourceAddress.Size != 8)
       return false;
-    S.emitIntrinsic(Intrinsic::RequireAligned, {},
-                    {Address, NdVar::cst(64, 8)});
-
-    const NdVar FullMask = expandCompactLaneMask(S, NdVar::cst(0xff, 1), 64, 8);
-    if (FullMask.Size != 64)
-      return false;
-    S.emitIntrinsic(Intrinsic::MaskedStoreQ, {}, {Address, FullMask, Source});
+    // The instruction owns feature checks, the complete source read, alignment
+    // and the indivisible direct store. A masked ordinary store cannot express
+    // its write-completion atomicity or memory-type protocol.
+    S.emitIntrinsic(Intrinsic::X86DirectStore64B, {}, {SourceAddress, Address},
+                    NdMemoryOrdering::None,
+                    S.memoryAddressSpace(X86.operands[1]));
     break;
   }
 

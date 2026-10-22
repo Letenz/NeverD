@@ -131,14 +131,19 @@ bool MedLLVMEmitter::emitX86Fence(const MedOp & /*Op*/, Intrinsic IC,
   using I = Intrinsic;
   switch (IC) {
   case I::Mfence:
-    Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
-    return true;
   case I::Lfence:
-    Builder.CreateFence(llvm::AtomicOrdering::Acquire);
+  case I::Sfence: {
+    // LLVM's acquire/release fences can disappear on x86. In particular a
+    // release fence does not drain MOVDIR/non-temporal stores. Keep the actual
+    // hardware barrier, including LFENCE's execution-ordering semantics.
+    const char *Mnemonic = IC == I::Mfence   ? "mfence"
+                           : IC == I::Lfence ? "lfence"
+                                             : "sfence";
+    auto *Signature = llvm::FunctionType::get(Builder.getVoidTy(), false);
+    Builder.CreateCall(
+        llvm::InlineAsm::get(Signature, Mnemonic, "~{memory}", true));
     return true;
-  case I::Sfence:
-    Builder.CreateFence(llvm::AtomicOrdering::Release);
-    return true;
+  }
   case I::Pause: {
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::x86_sse2_pause);

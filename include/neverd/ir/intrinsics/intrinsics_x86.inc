@@ -16,9 +16,9 @@ Int3 = 1000, // int3  -> @llvm.debugtrap
 
     // Synchronization / scheduling.
     Pause,  // pause   (yield hint)
-    Mfence, // mfence  -> fence seq_cst
-    Lfence, // lfence  -> fence acquire
-    Sfence, // sfence  -> fence release
+    Mfence, // native memory fence
+    Lfence, // native load/execution fence
+    Sfence, // native store fence, including direct/non-temporal stores
 
     // Cache control.
     Clflush, Clflushopt, Clwb,

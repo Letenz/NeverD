@@ -395,7 +395,9 @@ enum class X86SystemStateKind : uint8_t {
   AccessRights,
   AdjustRpl,
   ShadowWrite,
-  Enqueue
+  Enqueue,
+  DirectStore,
+  DirectStore64B
 };
 
 struct X86SystemStateContract {
@@ -422,12 +424,15 @@ constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
   return x86SystemStateContract(Id).Mnemonic != nullptr;
 }
 
-/// The enqueue portal is a second address. Its implicit ES segment is flat in
-/// long mode and never inherits the source operand's FS/GS override.
+/// The enqueue portal and block direct-store destination are second addresses.
+/// Their implicit ES segment is flat in long mode and never inherits the
+/// source operand's FS/GS override.
 constexpr bool isX86SystemStateAddressArgument(Intrinsic Id, unsigned Index) {
   const auto C = x86SystemStateContract(Id);
   return (C.MemoryArgument >= 0 && Index == unsigned(C.MemoryArgument)) ||
-         (C.Kind == X86SystemStateKind::Enqueue && Index == 1);
+         ((C.Kind == X86SystemStateKind::Enqueue ||
+           C.Kind == X86SystemStateKind::DirectStore64B) &&
+          Index == 1);
 }
 
 enum class X86VirtualizationResult : uint8_t { None, Flags, Read };

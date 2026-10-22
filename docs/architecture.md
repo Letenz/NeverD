@@ -5190,6 +5190,18 @@ enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
 retry behavior; CET writes still require an execution environment it lacks.
 Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
 CET writes, after validating the same operand contract.
+MOVDIRI and long-mode MOVDIR64B also use the shared native memory contract.
+MOVDIRI retains its scalar width; MOVDIR64B carries both addresses, with FS/GS
+applying only to the source. No ordinary load, masked store or eager alignment
+check replaces the instruction's WC transaction and write-completion atomicity.
+The scalar emulator retains a single-threaded ordinary-memory projection,
+including a complete source snapshot before the block destination write. It
+does not model cache/WC protocol, feature faults or real device completion.
+X86 LLVM lowering preserves MFENCE/LFENCE/SFENCE as hardware instructions with
+compiler memory effects; generic acquire/release fences do not guarantee the
+barriers required by direct or non-temporal stores.
+LLVM-to-C collects ISA headers from the same intrinsic-rendering decision on
+all architectures, including x86 fence assembly rendered as `_mm_*` calls.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.

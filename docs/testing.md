@@ -24,6 +24,22 @@ unavailable, retaining the compiler's actual intrinsic headers and emitted bodie
 The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
 
+The system-memory matrix also covers 24 MOVDIRI/MOVDIR64B encodings, including
+16-bit addressing within the i386 target, long-mode address-size overrides,
+both scalar widths and FS/GS. `X86DirectStore.*` checks scalar memory projection
+and malformed decoder detail. Run `NeverDX86MOVDIR64BStateTests` for source
+snapshots, overlap, fault ordering and destination write admission.
+`X86DirectStoreSource.*` executes both C routes, emitted LLVM IR, repository
+LLVM objects and original bytes on a host with the corresponding feature.
+It checks aligned/unaligned scalar stores, full-width values, preserved flags
+and overlapping block sources against an independent byte-array oracle at
+O0/O2 and both pipeline settings. A scalar stack fixture verifies that a later
+load observes the direct store rather than a forwarded earlier value.
+`X86FenceSource.*` verifies that all three
+hardware fence instructions survive LLVM optimization and object generation.
+These checks do not measure concurrent bus transactions or device completion;
+their native instruction and memory-effect contracts retain those operations.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.

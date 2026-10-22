@@ -703,6 +703,37 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
     return Address && ((*Address & (Alignment - 1)) == 0);
   }
 
+  if (Id == Intrinsic::X86DirectStore || Id == Intrinsic::X86DirectStore64B) {
+    const auto Shape = x86SystemStateLowShape(Op, Img.Arch);
+    const auto IsKnownScalar = [&](const NdVar &Value) {
+      return Value.isConst() || ((Value.isReg() || Value.isTemp()) &&
+                                 Registers.contains(Value.Offset));
+    };
+    if ((Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
+        !x86SystemStateShapeIsValid(Id, Shape) ||
+        !IsKnownScalar(Op.Inputs[1]) || !IsKnownScalar(Op.Inputs[2]))
+      return false;
+    const auto Address = resolveMemoryAddress(Op, readOperand(Op.Inputs[1]));
+    if (!Address)
+      return false;
+    // This is the ordinary, single-threaded BinaryImage memory projection.
+    // Native execution owns CPUID, cache/WC protocol, concurrent visibility and
+    // device completion. Do not substitute this projection in native output.
+    if (Id == Intrinsic::X86DirectStore)
+      return storeMemory(*Address, Shape.InputSizes[1],
+                         readOperand(Op.Inputs[2]));
+    const auto Source = loadMemoryBytes(*Address, 64);
+    if (!Source)
+      return false;
+    if (CollectLoads &&
+        static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
+      LoadLog.push_back({*Address, 64});
+    // Snapshot the source before checking/storing the implicit ES destination.
+    // storeMemoryBytes validates the entire write before changing the overlay.
+    const uint64_t Destination = readOperand(Op.Inputs[2]);
+    return (Destination & 63) == 0 && storeMemoryBytes(Destination, *Source);
+  }
+
   if (Id == Intrinsic::Enqcmd || Id == Intrinsic::Enqcmds) {
     const auto IsKnownScalar = [&](const NdVar &Value) {
       return Value.isConst() || ((Value.isReg() || Value.isTemp()) &&

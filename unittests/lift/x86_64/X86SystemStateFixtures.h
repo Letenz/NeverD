@@ -23,6 +23,37 @@ struct SystemEncoding {
   const char *Mnemonic;
 };
 
+inline std::vector<SystemEncoding> directStoreEncodings(Arch A) {
+  std::vector<SystemEncoding> E;
+  for (uint8_t Segment : {0, 0x64, 0x65})
+    for (bool AddressOverride : {false, true}) {
+      for (bool Wide : {false, true}) {
+        if (Wide && A == Arch::X86)
+          continue;
+        std::vector<uint8_t> Bytes;
+        if (Segment)
+          Bytes.push_back(Segment);
+        if (AddressOverride)
+          Bytes.push_back(0x67);
+        if (Wide)
+          Bytes.push_back(0x48);
+        // [eax/rax], ecx/rcx; the i386 address override selects [bx+si].
+        Bytes.insert(Bytes.end(), {0x0f, 0x38, 0xf9, 0x08});
+        E.push_back({Bytes, Intrinsic::X86DirectStore, "movdiri"});
+      }
+      if (A == Arch::X64) {
+        std::vector<uint8_t> Bytes;
+        if (Segment)
+          Bytes.push_back(Segment);
+        if (AddressOverride)
+          Bytes.push_back(0x67);
+        Bytes.insert(Bytes.end(), {0x66, 0x0f, 0x38, 0xf8, 0x08});
+        E.push_back({Bytes, Intrinsic::X86DirectStore64B, "movdir64b"});
+      }
+    }
+  return E;
+}
+
 inline std::vector<SystemEncoding> systemMemoryEncodings(Arch A) {
   std::vector<SystemEncoding> E;
   for (uint8_t Segment : {0, 0x64, 0x65}) {
@@ -60,6 +91,8 @@ inline std::vector<SystemEncoding> systemMemoryEncodings(Arch A) {
                        Supervisor ? "enqcmds" : "enqcmd"});
         }
   }
+  const auto Direct = directStoreEncodings(A);
+  E.insert(E.end(), Direct.begin(), Direct.end());
   return E;
 }
 

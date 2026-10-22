@@ -19,6 +19,8 @@ NEVERD_X86_SYSTEM_STATE(X86LoadAccessRights, "lar", AccessRights, -1)
 NEVERD_X86_SYSTEM_STATE(X86LoadAccessRightsMemory, "lar", AccessRights, 0)
 NEVERD_X86_SYSTEM_STATE(X86AdjustRpl, "arpl", AdjustRpl, -1)
 NEVERD_X86_SYSTEM_STATE(X86AdjustRplMemory, "arpl", AdjustRpl, 0)
+NEVERD_X86_SYSTEM_STATE(X86DirectStore, "movdiri", DirectStore, 0)
+NEVERD_X86_SYSTEM_STATE(X86DirectStore64B, "movdir64b", DirectStore64B, 0)
 
 // These IDs predate this inventory. Consumers opt in without allocating or
 // renumbering their serialized IDs or duplicating the older name tables.
