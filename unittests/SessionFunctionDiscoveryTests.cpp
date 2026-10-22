@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <memory>
 
 namespace {
 std::string takeString(const char *Text) {
@@ -247,7 +248,16 @@ TEST_F(SessionFunctionDiscovery, CooperativeStopKeepsInventoryAndAllowsRetry) {
     EXPECT_EQ(neverd_func_count(Session), Count);
     EXPECT_NE(takeString(neverd_last_error(Session)).find("cancelled"),
               std::string::npos);
-    ASSERT_EQ(neverd_session_discover_functions(Session), Count);
+    std::unique_ptr<void, decltype(&neverd_session_destroy)> Fresh(
+        neverd_session_create(), neverd_session_destroy);
+    ASSERT_EQ(neverd_session_load(Fresh.get(), Path.c_str()), 1);
+    const auto Complete = neverd_session_discover_functions(Fresh.get());
+    ASSERT_GE(Complete, 0);
+    ASSERT_EQ(neverd_session_discover_functions(Session), Complete);
+    const auto &Expected = *static_cast<neverd::sdk::Session *>(Fresh.get());
+    EXPECT_EQ(State.Functions, Expected.Functions);
+    EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+              Expected.Img.VerifiedFunctionEntries);
     EXPECT_TRUE(State.DiscoveredFunctions);
     EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
   }
@@ -273,7 +283,16 @@ TEST_F(SessionFunctionDiscovery,
   EXPECT_FALSE(State.DiscoveredFunctions);
   EXPECT_EQ(State.FunctionListRevision, Revision);
   EXPECT_EQ(neverd_func_count(Session), Count);
-  ASSERT_EQ(neverd_session_discover_functions(Session), Count);
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Fresh(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Fresh.get(), Path.c_str()), 1);
+  const auto Complete = neverd_session_discover_functions(Fresh.get());
+  ASSERT_GE(Complete, 0);
+  ASSERT_EQ(neverd_session_discover_functions(Session), Complete);
+  const auto &Expected = *static_cast<neverd::sdk::Session *>(Fresh.get());
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
   EXPECT_TRUE(State.DiscoveredFunctions);
 }
 
