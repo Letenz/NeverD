@@ -1008,6 +1008,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     OS << "\n";
     IncludedHeaders.insert(Headers.begin(), Headers.end());
   }
+  if (Opts.TheArch == Arch::X86) {
+    // i386 Clang supports bit-precise integers but does not define the native
+    // 128-bit aliases used by LLVM C's 65..128-bit scalar carriers. Retain the
+    // same signed/unsigned operations, including packed FP results and MXCSR.
+    OS << "#if !defined(__SIZEOF_INT128__) && defined(__BITINT_MAXWIDTH__) && "
+          "__BITINT_MAXWIDTH__ >= 128\n"
+          "typedef unsigned _BitInt(128) __uint128_t;\n"
+          "typedef _BitInt(128) __int128_t;\n"
+          "#endif\n\n";
+  }
   if (HasWin64Call) {
     Win64CallABI =
         GlobalIdentifierAllocator.allocate("__neverd_ms_abi", "nd_ms_abi");
@@ -1052,7 +1062,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Name, Shape] : ScalarUnaries) {
     const unsigned CarrierBits = Shape.carrierBits();
     const std::string Type = CarrierBits == 128
-                                 ? "unsigned __int128"
+                                 ? "__uint128_t"
                                  : "uint" + std::to_string(CarrierBits) + "_t";
     if (Shape.Kind == llvm::Intrinsic::bitreverse) {
       OS << "static inline " << Type << " " << Name << "(" << Type
@@ -1077,7 +1087,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Name, Shape] : IntegerSaturations) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
-                                 ? "unsigned __int128"
+                                 ? "__uint128_t"
                                  : "uint" + std::to_string(CarrierBits) + "_t";
     OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
        << Type << " b) {\n";
@@ -1095,7 +1105,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
-                                 ? "unsigned __int128"
+                                 ? "__uint128_t"
                                  : "uint" + std::to_string(CarrierBits) + "_t";
     OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
        << Type << " b) {\n";
@@ -1115,9 +1125,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   }
   for (const auto &[Name, Shape] : FunnelShifts) {
     const auto [Width, Left] = Shape;
-    const std::string Type = Width == 128
-                                 ? "unsigned __int128"
-                                 : "uint" + std::to_string(Width) + "_t";
+    const std::string Type =
+        Width == 128 ? "__uint128_t" : "uint" + std::to_string(Width) + "_t";
     OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
        << Type << " b, " << Type << " amount) {\n"
        << "    unsigned int shift = (unsigned int)(amount % " << Width

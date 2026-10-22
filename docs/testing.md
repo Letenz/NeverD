@@ -1920,6 +1920,25 @@ unions and LLVM-C's typed signatures.
 
 ## Scalar x86 floating-point state
 
+`NeverDX86FPEncodingTests` checks real REX2 forms across arithmetic, comparison,
+conversion and approximation, plus ignored extension bits in 32-bit VEX forms.
+Its concrete checks retain all vector lanes, GPR-bank identity, MXCSR, flags,
+address-size wrapping and FS/GS ownership. Forged detail, unsupported maps,
+truncated/mixed prefixes, unused vvvv and LDS disambiguation remain negative
+controls. Run it with the FP arithmetic/FMA, conversion, COMI, mask-compare,
+ROUND, approximation and instruction-coverage owners.
+
+`X86FPEncodingSource.*` in `NeverDX86VirtualizationSourceTests` checks ELF,
+COFF and Mach-O through both source routes, with and without optimization.
+ELF fixtures execute both C routes and emitted IR at O0/O2 plus objects built
+by the repository LLVM fork. The x64 fixture uses REX2 inputs without needing
+host APX. The 32-bit fixture additionally executes original VEX bytes, requiring
+Linux i386 execution and host AVX. External i386 compilation uses `-msse2`,
+matching Codegen's baseline. No native APX hardware oracle is claimed.
+`LLVMCValues.I386WideCarriersRetainWrappingShiftsAndSignedComparison` executes
+65/96/128-bit carriers at O0/O2 with undefined-behavior traps and independent
+APInt expectations; general wide-integer runtime/ABI support is not certified.
+
 `NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
 with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Raw binary80
 values, complete output guards, control words and defined C1 cover all RC,
