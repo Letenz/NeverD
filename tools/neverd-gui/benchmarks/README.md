@@ -189,8 +189,8 @@ anything from it but its own output; both need a local installation.
 workbench side drives the real worker as the GUI does when it opens a file:
 open, the first page of the function list and of the listing (browsable),
 then the reference index, which an explicit cross-reference query finishes
-on demand (analysis complete), then the first page of each sampled
-function's pseudocode, which F5 decompiles on demand. The IDA side runs IDA
+on demand (analysis complete), then every page of each sampled function's C.
+The worker's first-page latency is also recorded. The IDA side runs IDA
 as a library (idalib) in the Python that has its `idapro` package: one
 process loads the file without analysis (browsable), another opens it with
 auto-analysis and waits for it (analysis complete), then decompiles the same
@@ -204,6 +204,21 @@ python3 tools/neverd-gui/benchmarks/ida_compare_bench.py \
   --samples 3 --decompile 100 --output build-bench/vs-ida.json \
   --markdown build-bench/vs-ida.md /path/to/binary...
 ```
+
+Pass `--warm` to finish the worker's background warming before the F5 requests;
+without it, background warming is disabled. The `ready_ms` measurement includes
+any requested warming, and each raw sample records its terminal warm state.
+`full` means the bounded cache filled before every function was prepared.
+The JSON retains each entry's complete-source byte count and SHA-256, failures,
+and IDA kernel version. Source equality between NeverD builds checks
+reproducibility; it does not prove semantic equivalence to the input binary.
+Sample order alternates between the two tools.
+
+Use `--entries-file /path/to/entries.txt` with one input binary to replay a
+fixed inventory (one hexadecimal address per line). Missing entries remain
+reported for each tool; they are not removed by the common-function sampling.
+Keep builds and tests outside the timing window. Run the harness checks with
+`python3 -m unittest discover -s tools/neverd-gui/benchmarks/tests`.
 
 `gui_vs_ida_bench.py` times both windows from launch on a private X server
 (Xvfb, through Qt's xcb plugin), with default preferences: the workbench
