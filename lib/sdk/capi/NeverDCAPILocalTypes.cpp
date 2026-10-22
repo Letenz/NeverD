@@ -871,6 +871,8 @@ const char *neverd_local_types_json(neverd_session_t Sess,
                           {"unions", S->LocalTypeStats.Unions},
                           {"enums", S->LocalTypeStats.Enums},
                           {"declaredOnly", S->LocalTypeStats.DeclaredOnly},
+                          {"unsupportedFunctionTypes",
+                           S->LocalTypeStats.UnsupportedFunctionTypes},
                           {"nestingMismatches", std::move(Mismatches)},
                           {"skipped", std::move(Skipped)},
                           {"conflicts", std::move(Conflicts)},
@@ -1183,6 +1185,21 @@ const char *neverd_types_convert(const char *RequestJson) {
       if (!Prefix || Prefix->empty())
         return refuse("\"importPrefix\" must be a nonempty C identifier");
     }
+    std::vector<llvm::StringRef> Selected;
+    std::optional<llvm::ArrayRef<llvm::StringRef>> Selection;
+    if (const auto *Value = Declaration->get("importPrototypes")) {
+      const auto *Names = Value->getAsArray();
+      if (!Prefix || !Names)
+        return refuse(
+            "\"importPrototypes\" requires importPrefix and an array of names");
+      for (const auto &Name : *Names) {
+        const auto Text = Name.getAsString();
+        if (!Text || Text->empty())
+          return refuse("\"importPrototypes\" names must be nonempty strings");
+        Selected.push_back(*Text);
+      }
+      Selection = Selected;
+    }
     types::ParseOptions Parse;
     Parse.Lang = *Lang;
     Parse.KeepGoing = KeepGoing;
@@ -1196,7 +1213,8 @@ const char *neverd_types_convert(const char *RequestJson) {
       Result.Types.clear();
       Result.Prototypes.clear();
       if (Result.Problems.empty()) {
-        auto Imported = types::importPrototypes(Library, Provider, *Prefix);
+        auto Imported =
+            types::importPrototypes(Library, Provider, *Prefix, Selection);
         if (!Imported)
           return refuse("declaration " + std::to_string(I) + ": " +
                         llvm::toString(Imported.takeError()));

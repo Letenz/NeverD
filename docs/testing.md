@@ -1737,11 +1737,21 @@ and Go renderers. The fixture's source says how to rebuild the
 
 `TypeImport.*` checks independent prototype providers with equal-size but
 different pointees, recursive dependencies, callback conventions and
-transactional refusal. `SessionCAPITypeConversion.*` exercises the same owner
+transactional refusal, including exact-name selection and absent-name errors.
+`SessionCAPITypeConversion.*` exercises the same owner
 through `neverd_types_convert`, including provider provenance and rejection of
 partial providers even with `keepGoing`. The optional Microsoft generator
 checks original and imported record layouts for x86, x64 and ARM64; these local
 SDK/WDK inputs are not required by the synthetic unit tests.
+`LocalTypesDebugContext.CallbackConventionsSurviveParameterAndReturnTypes`
+checks callback conventions through the declaration-to-debug-type adapter on
+32-bit and 64-bit models. `HighCSourceCalls.CallbackDeclaratorsPreserveArgumentsAndReturnTypes`
+checks nested callback declarations used by both emitters; `SourceABI` rejects
+specialized callbacks from ordinary-C projection. CodeView convention tests
+cover target-width normalization and unsupported-convention refusal.
+`I386CallContract.LLVMCCallbackFactoryKeepsBothCallingConventions` compiles
+the generated import declaration against an independent expected function
+type for all cdecl/stdcall combinations of a factory and its callback.
 
 To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
 `ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,

@@ -2206,6 +2206,16 @@ TEST(SourceABI, CallbackTypesKeepTheirSignaturesAndRejectMalformedGraphs) {
                                               NdType::makeInt(4), {Pointer}))));
   EXPECT_FALSE(equalSourceTypes(
       Callback, NdType::makePtr(NdType::makeFunc(NdType::makeVoid()))));
+  // A different callback convention cannot enter an ordinary-C projection,
+  // even if its integer and pointer carriers happen to be identical.
+  for (auto Convention :
+       {types::CallingConvention::Stdcall, types::CallingConvention::Vectorcall,
+        types::CallingConvention::Win64}) {
+    auto Specialized = NdType::makePtr(
+        NdType::makeFunc(NdType::makeVoid(), {Pointer}, Convention));
+    EXPECT_FALSE(equalSourceTypes(Specialized, Callback));
+    EXPECT_FALSE(equalSourceTypes(Specialized, Specialized));
+  }
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     SourceFunctionTypeHint Hint;
     Hint.ReturnType = Callback;

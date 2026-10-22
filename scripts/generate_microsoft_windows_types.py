@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from typing import NamedTuple
 import xml.etree.ElementTree as ET
 
 import build_wdk_driver_fixtures as wdk
@@ -46,13 +47,38 @@ LIBRARIES = {
     "WindowsUser": (USER_HEADERS, ["um", "shared", "km/crt"],
                          ["-DSECURITY_WIN32=1"]),
 }
+
+
+class Provider(NamedTuple):
+    name: str
+    headers: tuple[str, ...]
+    defines: tuple[str, ...] = ()
+    prototypes: tuple[str, ...] = ()
+
+
 # These official headers have incompatible same-named types (for example,
 # WinHTTP's UTF-16 URL_COMPONENTS versus WinINet's ANSI default). Parse each
 # provider on its own and import only the missing prototypes and their types.
 ISOLATED_PROVIDERS = {
     "WindowsUser": (
-        ("WinHTTP", ("winsock2", "winhttp")),
-        ("HTTPServer", ("winsock2", "windows", "http")),
+        Provider("WinHTTP", ("winsock2", "winhttp")),
+        Provider("HTTPServer", ("winsock2", "windows", "http")),
+        Provider("Esent", ("winsock2", "windows", "esent")),
+        Provider("ConfigManager", ("winsock2", "windows", "cfg", "cfgmgr32", "newdev")),
+        # PDNS_RECORD is selected by UNICODE even in explicit *_W declarations.
+        # Keep the official Unicode profile for these reviewed entry points,
+        # then import remaining ANSI/UTF-8 and encoding-neutral declarations.
+        Provider("DNSUnicode", ("winsock2", "windows", "windns"),
+                 ("UNICODE=1", "_UNICODE=1"),
+                 ("DnsQuery_W", "DnsModifyRecordsInSet_W", "DnsReplaceRecordSetW",
+                  "DnsExtractRecordsFromMessage_W", "DnsQueryEx", "DnsServiceBrowse")),
+        Provider("DNS", ("winsock2", "windows", "windns")),
+        Provider("MSI", ("winsock2", "windows", "msi", "msiquery", "msidefs")),
+        Provider("Cluster", ("winsock2", "windows", "clusapi")),
+        # Match Microsoft's Tapi3 metadata partition. windows.h may otherwise
+        # define WIN32 without a value, while tapi.h uses it in #if expressions.
+        Provider("TAPI", ("winsock2", "windows", "tapi", "tspi"), ("WIN32=1",)),
+        Provider("OpenGL", ("winsock2", "windows", "gl/gl", "gl/glu")),
     ),
 }
 TARGETS = {
@@ -138,19 +164,41 @@ def merge_providers(base: str, primary: Path, output: Path,
     directory.mkdir(exist_ok=True)
     units = []
     dump = ["-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete"]
-    for name, headers in providers:
+    for name, headers, defines, prototypes in providers:
+        provider_arguments = arguments + ["-D" + value for value in defines]
         source = directory / (name + ".c")
         source.write_text(include_headers(headers), encoding="utf-8")
         # The CLI uses this file's stem as the provider prefix.
         preprocessed = directory / (name + ".h")
-        command = arguments + ["-E", str(source)]
+        command = provider_arguments + ["-E", str(source)]
         run(command, directory / (name + ".pre.log"), preprocessed)
         parsed = checked_types(neverd, preprocessed, directory / (name + ".parse.log"), model)
-        layouts = run(arguments + dump + [str(source)],
+        input_hash = wdk.digest(preprocessed)
+        commands = [command]
+        if prototypes:
+            original = directory / (name + ".pre.h")
+            preprocessed.replace(original)
+            empty = directory / "empty.h"
+            empty.write_text("/* Prototype selection starts without existing declarations. */\n",
+                             encoding="utf-8")
+            selection = [neverd, "types", "--data-model", model, "--record-abi", "microsoft",
+                         "--declare", str(empty), "--declare", str(original),
+                         "--merge-prototypes", "--all", "--prototypes", "--spelling", "windows",
+                         "--no-offsets", "--json"]
+            selection += ["--import-prototype=" + routine for routine in prototypes]
+            selected = json.loads(run(selection, directory / (name + ".select.log")))
+            if (selected.get("error") or selected.get("problems") or
+                    set(selected.get("prototypes", [])) != set(prototypes)):
+                raise ValueError(f"official prototype selection failed for {name}")
+            preprocessed.write_text(selected["source"], encoding="utf-8")
+            commands.append(selection)
+        layouts = run(provider_arguments + dump + [str(source)],
                       directory / (name + ".official-clang.log"),
                       directory / (name + ".official-layouts.log"))
         units.append({"name": name, "source": preprocessed, "headers": headers,
-                      "layouts": layouts, "parsed": parsed, "command": command})
+                      "defines": defines, "selected_prototypes": prototypes,
+                      "input_sha256": input_hash, "layouts": layouts,
+                      "parsed": parsed, "commands": commands})
     command = [neverd, "types", "--data-model", model, "--record-abi", "microsoft",
                "--declare", str(primary), "--merge-prototypes", "--all",
                "--prototypes", "--spelling", "windows", "--no-offsets", "--json"]
@@ -185,10 +233,13 @@ def merge_providers(base: str, primary: Path, output: Path,
             count = verify_layouts(unit["layouts"], generated_layouts,
                                    renamed, report["dependencies"])
             records.append({"name": unit["name"], "headers": unit["headers"],
-                            "input_sha256": wdk.digest(unit["source"]),
+                            "defines": unit["defines"],
+                            "selected_prototypes": unit["selected_prototypes"],
+                            "input_sha256": unit["input_sha256"],
+                            "declaration_sha256": wdk.digest(unit["source"]),
                             "parsed_prototypes": len(unit["parsed"]["prototypes"]),
                             "verified_records": count, "import": report,
-                            "commands": [unit["command"], command]})
+                            "commands": unit["commands"] + [command]})
         # Replace the primary only after the complete merge and compiler
         # checks pass. The manifest remains absent until both libraries pass.
         temporary.write_text(

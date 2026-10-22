@@ -1599,6 +1599,7 @@ private:
         Def->Defined = false;
         Declared.Record = std::move(Def);
         Library.define(std::move(Declared));
+        note(Result.Types, NotedTypes, Name);
       }
       return makeNamed(Name, Kind);
     }

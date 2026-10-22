@@ -158,6 +158,37 @@ TEST(TypeImport, CallbackConventionAndQualifiersArePartOfItsIdentity) {
             CallingConvention::Cdecl);
 }
 
+TEST(TypeImport, ExactSelectionRetainsOnlyItsDependencyClosure) {
+  TypeLibrary Library, Provider;
+  parse(Library, "int Existing(int Value);");
+  parse(Provider, "struct Wide { unsigned short *Text; };\n"
+                  "struct Narrow { char *Text; };\n"
+                  "void QueryW(struct Wide **Result);\n"
+                  "void QueryA(struct Narrow **Result);\n"
+                  "void Existing(void);\n");
+  const llvm::StringRef Names[] = {"QueryW", "Existing", "QueryW"};
+  auto Imported = importPrototypes(Library, Provider, "Wide", Names);
+  ASSERT_TRUE(bool(Imported)) << llvm::toString(Imported.takeError());
+  EXPECT_EQ(Imported->Prototypes, (std::vector<std::string>{"QueryW"}));
+  EXPECT_EQ(Imported->Dependencies, (std::vector<std::string>{"Wide"}));
+  EXPECT_NE(Library.find("Wide"), nullptr);
+  EXPECT_EQ(Library.find("Narrow"), nullptr);
+  EXPECT_EQ(Library.findPrototype("QueryA"), nullptr);
+  EXPECT_EQ(Library.findPrototype("Existing")->Params.size(), 1u);
+
+  const llvm::StringRef Missing[] = {"QueryA", "Absent"};
+  auto Refused = importPrototypes(Library, Provider, "Wide", Missing);
+  ASSERT_FALSE(bool(Refused));
+  llvm::consumeError(Refused.takeError());
+  EXPECT_EQ(Library.find("Narrow"), nullptr);
+  EXPECT_EQ(Library.findPrototype("QueryA"), nullptr);
+  auto Empty = importPrototypes(Library, Provider, "Wide",
+                                llvm::ArrayRef<llvm::StringRef>{});
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_TRUE(Empty->Prototypes.empty());
+  EXPECT_TRUE(Empty->Types.empty());
+}
+
 TEST(TypeImport, RefusalsDoNotPartiallyModifyTheDestination) {
   TypeLibrary Library;
   parse(Library, "struct Existing { int Value; }; int Present(void);");
