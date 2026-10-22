@@ -185,6 +185,29 @@ def residue_elf(degree):
     return elf(code)
 
 
+def affine_residue_elf(degree, neighbor=False):
+    # Original x64: r8d = x+3*y+5*z; each IMUL has a different odd unit.
+    # The neighbor repeats the penultimate offset and must remain nonzero.
+    units = (0x9E3779B1, 0x85EBCA77, 0xC2B2AE3D, 0x27D4EB2F,
+             0x165667B1, 0xD3A2646D, 0xA24BAED5, 0x9FB21C65)
+    scale = 1 << (32 - (degree - degree.bit_count()))
+    code = bytearray.fromhex("4189f8 448d0c76 4501c8 448d0c92 4501c8 b8")
+    code += struct.pack("<I", scale)
+    factors = []
+    for i, unit in enumerate(units[:degree]):
+        offset = i - 1 if neighbor and i == degree - 1 else i
+        constant = unit * offset & 0xFFFFFFFF
+        code += bytes.fromhex("4169c8") + struct.pack("<I", unit)
+        code += bytes.fromhex("81c1") + struct.pack("<I", constant)
+        code += bytes.fromhex("0fafc1")
+        factors.append(f"({unit}U*(x+3U*y+5U*z)+{constant}U)")
+    code += bytes.fromhex("01f8 01f0 01d0 c3")
+    expected = "x+y+z"
+    if neighbor:
+        expected += f"+{scale}U*" + "*".join(factors)
+    return elf(code), expected
+
+
 def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
@@ -259,7 +282,10 @@ def execute_source(root, name, text, compiler, expected):
 
 def run_fixture(worker, cli, compiler, kind, image, expected):
     def enhanced_shape(text):
-        if kind.startswith("residue-"):
+        if kind == "affine-residue-neighbor":
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert ">>" in code, text
+        elif kind.startswith("residue-"):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert "*" not in code and "<<" not in code, text
         elif kind == "masked":
@@ -315,7 +341,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith("residue-"):
+                    if kind.startswith("residue-") or kind == "affine-residue-neighbor":
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -374,6 +400,9 @@ if __name__ == "__main__":
     options = parser.parse_args()
     try:
         for kind, image, expected in (
+            ("residue-affine-quartic", *affine_residue_elf(4)),
+            ("residue-affine-octic", *affine_residue_elf(8)),
+            ("affine-residue-neighbor", *affine_residue_elf(8, True)),
             ("residue-quartic", residue_elf(4), "x+y+z"),
             ("residue-octic", residue_elf(8), "x+y+z"),
             ("affine", affine_elf(), "182U*x + 73U*y + 211U*z + 37U"),
