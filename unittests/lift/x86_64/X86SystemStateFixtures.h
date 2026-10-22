@@ -23,6 +23,46 @@ struct SystemEncoding {
   const char *Mnemonic;
 };
 
+inline std::vector<SystemEncoding> systemMemoryEncodings(Arch A) {
+  std::vector<SystemEncoding> E;
+  for (uint8_t Segment : {0, 0x64, 0x65}) {
+    for (bool User : {false, true})
+      for (bool Wide : {false, true}) {
+        if (Wide && A == Arch::X86)
+          continue;
+        std::vector<uint8_t> Bytes;
+        if (Segment)
+          Bytes.push_back(Segment);
+        if (User)
+          Bytes.push_back(0x66);
+        if (Wide)
+          Bytes.push_back(0x48);
+        Bytes.insert(Bytes.end(),
+                     {0x0f, 0x38, static_cast<uint8_t>(User ? 0xf5 : 0xf6),
+                      0x0c, 0x24}); // [esp/rsp], ecx/rcx
+        E.push_back(
+            {Bytes, User ? Intrinsic::CetWruss : Intrinsic::CetWrss,
+             User ? (Wide ? "wrussq" : "wrussd") : (Wide ? "wrssq" : "wrssd")});
+      }
+    if (A == Arch::X64)
+      for (bool Supervisor : {false, true})
+        for (bool Address32 : {false, true}) {
+          std::vector<uint8_t> Bytes;
+          if (Segment)
+            Bytes.push_back(Segment);
+          if (Address32)
+            Bytes.push_back(0x67);
+          Bytes.insert(Bytes.end(),
+                       {static_cast<uint8_t>(Supervisor ? 0xf3 : 0xf2), 0x0f,
+                        0x38, 0xf8, 0x04, 0x24}); // rax/eax, [rsp/esp]
+          E.push_back({Bytes,
+                       Supervisor ? Intrinsic::Enqcmds : Intrinsic::Enqcmd,
+                       Supervisor ? "enqcmds" : "enqcmd"});
+        }
+  }
+  return E;
+}
+
 inline std::vector<SystemEncoding> systemEncodings(Arch A) {
   std::vector<SystemEncoding> E = {
       {{0xf3, 0x0f, 0xc7, 0xf8}, Intrinsic::X86ReadPid, "rdpid"},

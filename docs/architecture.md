@@ -609,6 +609,14 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
+Independent declaration providers use `types::importPrototypes` at generation
+time, through `neverd_types_convert` and the standalone CLI. It imports missing
+prototypes with their dependency closure, shares structurally identical types,
+and renames conflicting types and affected dependents without replacing earlier
+declarations. Type identity includes pointees, qualifiers, callbacks and enum
+values as well as layout. Provider parse errors prevent an import. This owner
+is separate from the runtime priority merge of system and program types; the
+flattened generated headers add no provider merge during decompilation.
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
 a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
 provider headers declare into `lib/types/headers/WindowsKernelX64.h`
@@ -1657,10 +1665,16 @@ Nonzero residue branches may keep an exact opaque factor. Every factor's
 complete coefficient map must first agree with the common modular base. In
 each base residue, the known low values give conservative trailing-zero bounds
 for all cofactors. A factor becomes a constant only when those bounds hide
-all of its unobserved bits; at most one remaining factor is retained. Its
-coefficient table can use a narrower proved reading without assuming the
-factor's upper bits are zero. The emitter compares retained factors with
-combined coefficient tables for shared atoms. Known low bits also reduce an
+all of its unobserved bits. Several remaining factors can be retained when
+an independent valuation bound proves that every product of two or more
+unobserved remainders vanishes. Prefix and suffix products build their exact
+linear coefficients without division, including zero and noninvertible row
+values. The constant table corrects the repeated constant product. If any
+cross term remains observable, the whole row is refused. Each coefficient
+table can use a narrower proved reading without assuming a factor's upper
+bits are zero. Equal coefficient tables share one emitted lookup. The emitter
+compares retained factors with combined coefficient tables for shared atoms.
+Known low bits also reduce an
 atom's coefficient precision, with the discarded coefficient times its known
 value retained in the constant table. Disjoint residue branches can share
 arithmetic and bitwise structure while selecting their differing literals;
@@ -1670,6 +1684,20 @@ once a full common base is proved, an unprofitable table leaves the remaining
 allowance for polynomial recovery instead of starting another residue search.
 The residual search shares the remaining work/storage allowance and accepts
 only a smaller completed result.
+For multiple retained factors, bounded Boolean decision graphs can prove the
+entire observed word directly or reduce the exact linearized reading. The
+graphs use complemented edges, shared word operations and known zero bits;
+unsupported operations remain exact opaque words. A shared odd branch is
+isolated only when the even branch is proved zero, and its selector is restored
+before emission. Sparse Boolean polynomials are derived from complete decision
+graphs and factored before emission, avoiding exponential printed expansion.
+Optional refinement retains the last completed candidate. Completed attempts
+are request-local; storage refusals retry when a larger allowance is available.
+The deep walk keeps original opaque inputs and changed original products
+eligible. Their rewrites propagate through the canonical builder without
+repeated analysis of the emitted reading. Independent linear tails
+finish before walking a generated product reading. A concrete odd-input
+witness may reject further zero-proof attempts but never authorizes a rewrite.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.
@@ -5145,6 +5173,16 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
+Their historical intrinsic IDs remain stable. Both enqueue operands are
+addresses; only the command-source address inherits FS/GS, while the portal
+retains long mode's implicit flat ES. LLVM resolves both address identities
+without issuing a load or store, then executes the owned assembly and captures
+ZF. HighC and LLVMC use the same operand and effect constraints. The concrete
+enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
+retry behavior; CET writes still require an execution environment it lacks.
+Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
+CET writes, after validating the same operand contract.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.

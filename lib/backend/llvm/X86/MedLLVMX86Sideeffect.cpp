@@ -1037,11 +1037,6 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
         "x86 MSR access requires an authenticated architectural execution "
         "environment");
   }
-  if (IC == Intrinsic::CetWrss || IC == Intrinsic::CetWruss ||
-      IC == Intrinsic::Enqcmd || IC == Intrinsic::Enqcmds)
-    llvm::report_fatal_error(
-        "x86 system-memory effect requires an authenticated architectural "
-        "execution environment");
   if (IC == Intrinsic::AMXLoadConfig || IC == Intrinsic::AMXStoreConfig ||
       IC == Intrinsic::AMXTileLoad || IC == Intrinsic::AMXTileStore ||
       IC == Intrinsic::AMXTileZero || IC == Intrinsic::AMXClearStartRow ||

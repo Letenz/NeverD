@@ -4,6 +4,26 @@
 
 # Testing NeverD
 
+`X86SystemMemory.*` and `X86SystemMemorySource.*` cover WRSSD/Q, WRUSSD/Q and
+long-mode ENQCMD/ENQCMDS through the shared system contract. Run
+`NeverDX86SystemStateTests`, `NeverDX86SystemSideeffectTests` and
+`NeverDX86VirtualizationSourceTests`, together with the APX existing-GPR tests.
+The source suite covers ELF/COFF/Mach-O, both pipeline optimization settings,
+32/64-bit widths, source FS/GS and long-mode address-size overrides. Generated
+HighC, LLVM-to-C and LLVM IR compile at O0/O2; the repository LLVM backend also
+produces native objects. Linux x64 subprocess tests compare signal and fault
+code with original machine bytes for invalid operands, including instruction
+enablement/privilege before address faults. They do not certify successful
+shadow-stack updates or real device enqueue completion on this host. Malformed
+assembly, missing effects and forged memory attributes remain rejected. The
+Windows HighC cases also retain the unsegmented CET MSVC intrinsics and header.
+Clang compiles their actual generated C for i686/x64 Windows MSVC targets at
+O0/O2 with shadow-stack intrinsics enabled; this is compile-only coverage.
+The fixture supplies standard memory prototypes when target CRT headers are
+unavailable, retaining the compiler's actual intrinsic headers and emitted bodies.
+The existing concrete enqueue tests independently cover retry, unchanged memory,
+source/header/portal fault order and missing CPL/PASID state.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.
@@ -416,7 +436,11 @@ odd-product residues, carry propagation and nested bitwise/width projections.
 Its degree-4–256 products include a useful consecutive offset block and an odd
 residual tail, so the higher-degree cases still require more than parity.
 Sixteen nearby controls per width must retain their nonzero behavior.
-Run all nineteen families at
+Use `--family multiple-residual --count 128` for nonzero degree-4–64 products
+with simultaneous independent high-bit disturbances and nearby cases with
+observable cross terms. Keep the previous nineteen families frozen when
+checking performance and output cost.
+Run all twenty families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -449,6 +473,20 @@ domains, check independent 8–257-bit arithmetic, and verify that a short budge
 can return only a completed equivalent candidate. Distributed quartic/octic
 source fixtures and a
 nonzero neighbor execute through both C backends and all CLI/worker routes.
+Multiple-residual tests cover independent arithmetic through 257 bits,
+exhaustive small domains, full-width Z3 checks and exact/short cumulative
+resources. Quartic/octic machine-code fixtures and an observable-cross-term
+neighbor execute through all six CLI/worker source routes and both C
+optimization levels, including ordinary/enhanced cache isolation.
+Decision-word tests cover complemented odd/even branches, sparse Boolean
+reconstruction, casts, shifted constant tables with overshifts and opaque
+division inputs. Zero words must preserve their original width. Attempt-cache
+tests cover context isolation, storage refusal and reuse under larger scratch
+allowances when storage did not limit the preceding search.
+Generated-reading regressions require the deep walk to simplify an original
+opaque division's numerator and propagate it through the emitted proof.
+Mixed quartic and degree-24 residuals must also leave work for the surrounding
+linear tail within a fixed 65,536-work request.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.
@@ -1669,6 +1707,14 @@ lists (each nesting must flatten back exactly), the PDB import against
 and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
+
+`TypeImport.*` checks independent prototype providers with equal-size but
+different pointees, recursive dependencies, callback conventions and
+transactional refusal. `SessionCAPITypeConversion.*` exercises the same owner
+through `neverd_types_convert`, including provider provenance and rejection of
+partial providers even with `keepGoing`. The optional Microsoft generator
+checks original and imported record layouts for x86, x64 and ARM64; these local
+SDK/WDK inputs are not required by the synthetic unit tests.
 
 To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
 `ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,

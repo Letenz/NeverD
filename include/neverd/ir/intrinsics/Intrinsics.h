@@ -393,7 +393,9 @@ enum class X86SystemStateKind : uint8_t {
   Monitor,
   Wait,
   AccessRights,
-  AdjustRpl
+  AdjustRpl,
+  ShadowWrite,
+  Enqueue
 };
 
 struct X86SystemStateContract {
@@ -407,7 +409,9 @@ constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
 #define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, Kind, MemoryArgument)            \
   case Intrinsic::Id:                                                          \
     return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
+#define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_EXISTING_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
   default:
     return {};
@@ -416,6 +420,14 @@ constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
 
 constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
   return x86SystemStateContract(Id).Mnemonic != nullptr;
+}
+
+/// The enqueue portal is a second address. Its implicit ES segment is flat in
+/// long mode and never inherits the source operand's FS/GS override.
+constexpr bool isX86SystemStateAddressArgument(Intrinsic Id, unsigned Index) {
+  const auto C = x86SystemStateContract(Id);
+  return (C.MemoryArgument >= 0 && Index == unsigned(C.MemoryArgument)) ||
+         (C.Kind == X86SystemStateKind::Enqueue && Index == 1);
 }
 
 enum class X86VirtualizationResult : uint8_t { None, Flags, Read };

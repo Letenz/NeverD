@@ -1681,14 +1681,13 @@ private:
         // An anonymous record, including Microsoft's named C extensions.
         if (Spec.Type->Kind == TypeExprKind::Record)
           Draft.Members.push_back({"", Spec.Type, false, 0, ""});
-        else if (!Cpp && !Spec.Typedef && (Spec.Defines || Spec.TypeName) &&
+        else if (!Cpp && !Spec.Typedef &&
                  libraryRecordABIOf(Library.recordABI()) ==
                      RecordABI::Microsoft &&
                  Spec.Type->Kind == TypeExprKind::Named) {
-          // Microsoft's C also admits an anonymous member defined with a
-          // tag or named by a typedef. Preserve its storage and promoted
-          // members, rather than treating it as a tag-only declaration such as
-          // struct S;.
+          // Microsoft's C admits both typedef and tagged anonymous members,
+          // including a reference to an existing tag: struct S;. This embeds
+          // the record, and an incomplete tag is an incomplete field error.
           if (const LocalType *Named = Library.resolve(Spec.Type->Name)) {
             if (Named->Record) {
               if (!Named->Record->Defined) {

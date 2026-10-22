@@ -101,7 +101,8 @@ std::string locals(const X86SystemStateAsm &P,
 
 std::string
 renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
-                               const std::vector<std::string> &Arguments) {
+                               const std::vector<std::string> &Arguments,
+                               bool MsvcIntrinsics, bool &HasCIntrinsics) {
   const auto Id = Expression.IntrinsicId;
   const auto C = x86SystemStateContract(Id);
   X86SystemStateShape Shape;
@@ -120,12 +121,23 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
         E && E->Type &&
         (E->Type->Kind == NdTypeKind::Int || E->Type->Kind == NdTypeKind::Ptr);
     Shape.InputSizes[I] = E && E->Type ? E->Type->Size : 0;
-    if (I == C.MemoryArgument && E && E->Type &&
+    if (isX86SystemStateAddressArgument(Id, I) && E && E->Type &&
         E->Type->Kind == NdTypeKind::Ptr)
       Shape.InputSizes[I] = 8;
   }
   if (!x86SystemStateShapeIsValid(Id, Shape))
     throw std::invalid_argument("invalid x86 system expression contract");
+  // Preserve the established MSVC spelling after the shared admission check.
+  // These compiler intrinsics own the actual shadow-stack access; segmented
+  // operands instead need the explicit assembly contract below.
+  if (MsvcIntrinsics && C.Kind == X86SystemStateKind::ShadowWrite &&
+      Shape.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+    const auto Width = x86SystemStateWidth(Id, Shape);
+    HasCIntrinsics = true;
+    return "_" + std::string(C.Mnemonic) + (Width == 8 ? "q" : "d") + "((" +
+           unsignedType(Width) + ")(" + Arguments[1] +
+           "), (void *)(uintptr_t)(" + Arguments[0] + "))";
+  }
   const auto P = x86SystemStateAsm(
       Id, TargetArch, x86SystemStateWidth(Id, Shape), Shape.MemoryAddressSpace);
   if (!P)
@@ -155,7 +167,9 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
     return {};
   const Intrinsic Inventory[] = {
 #define NEVERD_X86_SYSTEM_STATE(Id, ...) Intrinsic::Id,
+#define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_EXISTING_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
   };
   bool Known = false;
@@ -165,7 +179,10 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
   Mnemonic = Mnemonic.split(' ').first;
   for (const auto Id : Inventory) {
     const auto C = x86SystemStateContract(Id);
-    if (Mnemonic != C.Mnemonic)
+    if (Mnemonic != C.Mnemonic &&
+        !(C.Kind == X86SystemStateKind::ShadowWrite &&
+          (Mnemonic == std::string(C.Mnemonic) + "d" ||
+           Mnemonic == std::string(C.Mnemonic) + "q")))
       continue;
     Known = true;
     for (uint16_t Width : {0, 2, 4, 8})
@@ -177,14 +194,16 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
             P->Constraints != Asm->getConstraintString() ||
             !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
             Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
-            Call.getNumOperandBundles() || Call.doesNotAccessMemory() ||
+            Call.getNumOperandBundles() || Call.onlyReadsMemory() ||
+            Call.onlyWritesMemory() ||
             Call.arg_size() != P->InputBytes.size() ||
             Arguments.size() != Call.arg_size() || !matchesReturn(Call, *P))
           continue;
         bool Types = true;
         for (size_t I = 0; I < P->InputBytes.size(); ++I) {
           const auto *T = Call.getArgOperand(I)->getType();
-          if (I == C.MemoryArgument && Space == NdMemoryAddressSpace::Default)
+          if (isX86SystemStateAddressArgument(Id, I) &&
+              (I != C.MemoryArgument || Space == NdMemoryAddressSpace::Default))
             Types &= T->isPointerTy() && T->getPointerAddressSpace() == 0;
           else
             Types &= T->isIntegerTy(8 * P->InputBytes[I]);

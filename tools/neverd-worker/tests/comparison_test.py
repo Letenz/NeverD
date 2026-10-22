@@ -26,7 +26,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="neverd-comparison-worker-") as folder:
         root = Path(folder)
         for limit in (17, 9):
-            subprocess.run([args.cc, "-c", "-O1", "-fno-asynchronous-unwind-tables",
+            subprocess.run([args.cc, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",
                             f"-DPATCH_LIMIT={limit}", str(fixture), "-o", str(root / f"{limit}.o")],
                            check=True, capture_output=True)
         a, b = root / "17.o", root / "9.o"
