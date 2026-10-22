@@ -40,6 +40,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -236,22 +237,25 @@ public:
     std::optional<int64_t> Delta;
     int Height = 0;
   };
-  const StackDelta *stackDelta(const MedVar &V) const {
-    const auto It = StackDeltas.find(key(V));
+  const StackDelta *stackDelta(const MedVar &V, uint64_t StackPointer) const {
+    const auto It = StackDeltas.find({key(V), StackPointer});
     return It == StackDeltas.end() ? nullptr : &It->second;
   }
-  void rememberStackDelta(const MedVar &V, StackDelta Answer) {
-    StackDeltas.try_emplace(key(V), Answer);
+  void rememberStackDelta(const MedVar &V, uint64_t StackPointer,
+                          StackDelta Answer) {
+    StackDeltas.try_emplace(StackDeltaKey{key(V), StackPointer}, Answer);
   }
 
 private:
-  static std::tuple<int, int, int, uint64_t> key(const MedVar &V) {
+  using Identity = std::tuple<int, int, int, uint64_t>;
+  using StackDeltaKey = std::pair<Identity, uint64_t>;
+  static Identity key(const MedVar &V) {
     return {static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff};
   }
 
   const MedFunc &Func;
-  llvm::DenseMap<std::tuple<int, int, int, uint64_t>, MedDefSite> Sites;
-  llvm::DenseMap<std::tuple<int, int, int, uint64_t>, StackDelta> StackDeltas;
+  llvm::DenseMap<Identity, MedDefSite> Sites;
+  llvm::DenseMap<StackDeltaKey, StackDelta> StackDeltas;
   bool Built = false;
 };
 

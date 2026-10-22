@@ -905,6 +905,11 @@ without evicting. `NeverDWorkerWarmFunctions` checks the worker's `warm` open
 option against the mock engine: off by default, a running pass, a restart
 after an edit, a full cache and an engine without preparation.
 
+`NeverDMedStackDeltaTests` checks shared stack-offset queries through PHI joins,
+the original depth boundary in both query orders, definition invalidation and
+distinct target stack-pointer references. Build that target for the focused
+check; `NeverDLiftTests` also includes the same cases.
+
 `MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
 DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on
 x86, x64, ARM32 and AArch64. The module jump-table and Windows continuation

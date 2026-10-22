@@ -939,7 +939,7 @@ static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
   // An answer no cap shaped serves any query whose walk stays under the cap,
   // so the calls of one function share their stack-pointer chains.
   if (Defs)
-    if (const auto *Known = Defs->stackDelta(V);
+    if (const auto *Known = Defs->stackDelta(V, TRI.StackPointer);
         Known &&
         Depth + Known->Height <=
             ::neverd::limits::ir::kMedABIPassSupportStackPtrDeltaAtDepthLimit)
@@ -952,7 +952,7 @@ static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
   const auto Walk = stackPtrDeltaUncached(Func, TRI, V, Depth, Defs, Memo);
   Memo.try_emplace(Key, Walk);
   if (Defs && !Walk.Capped)
-    Defs->rememberStackDelta(V, {Walk.Delta, Walk.Height});
+    Defs->rememberStackDelta(V, TRI.StackPointer, {Walk.Delta, Walk.Height});
   return Walk;
 }
 
