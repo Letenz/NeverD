@@ -345,7 +345,9 @@ TEST_F(PEFixedImageTest, EntryObjectNodeLimitsNeverPublishPartialRecovery) {
     auto O = entryObjectOptions();
     O.MaxSymbolicNodes = Nodes;
     const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
-    EXPECT_EQ(R.Status, SpecializationStatus::BudgetExceeded) << R.Diagnostic;
+    EXPECT_EQ(R.Status, Nodes ? SpecializationStatus::BudgetExceeded
+                              : SpecializationStatus::InvalidInput)
+        << R.Diagnostic;
     EXPECT_TRUE(R.Residual.Blocks.empty());
     EXPECT_TRUE(R.Origins.empty());
     EXPECT_TRUE(R.ExternalExits.empty());
