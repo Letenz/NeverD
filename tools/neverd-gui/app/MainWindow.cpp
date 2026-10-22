@@ -1396,16 +1396,18 @@ void MainWindow::showLinkedAddress(Address address, LinkView view) {
   };
   switch (view) {
   case LinkView::Disasm:
+    // Leaving the graph may restore its old cursor in the listing. Do that
+    // before the requested jump, and retire any deferred graph switch.
+    disassembly_->setGraphMode(false);
     navigate(address);
-    if (disassembly_->graphMode())
-      toggleGraph();
     return;
   case LinkView::Graph: {
     navigate(address);
     const auto epoch = session_.epoch();
-    QTimer::singleShot(0, this, [this, epoch] {
+    const auto serial = codeNavigationSerial_;
+    QTimer::singleShot(0, this, [this, epoch, serial] {
       if (session_.loaded() && session_.epoch() == epoch &&
-          !disassembly_->graphMode())
+          serial == codeNavigationSerial_ && !disassembly_->graphMode())
         toggleGraph();
     });
     return;

@@ -106,8 +106,9 @@ void configureOptions(QCommandLineParser &parser) {
                            kDefaultStartupBenchmarkTimeoutMilliseconds)});
   parser.addOption(
       {QStringLiteral("interaction-benchmark"),
-       QStringLiteral("Scroll, jump, open graphs and pseudocode in the opened "
-                      "file, write their latencies as JSON and exit"),
+       QStringLiteral("Scroll, jump, follow links, open graphs and pseudocode "
+                      "in the opened file, write their latencies as JSON "
+                      "and exit"),
        QStringLiteral("path")});
   parser.addOption(
       {QStringLiteral("interaction-benchmark-timeout"),
