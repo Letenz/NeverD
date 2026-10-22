@@ -4981,6 +4981,14 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
+Their historical intrinsic IDs remain stable. Both enqueue operands are
+addresses; only the command-source address inherits FS/GS, while the portal
+retains long mode's implicit flat ES. LLVM resolves both address identities
+without issuing a load or store, then executes the owned assembly and captures
+ZF. HighC and LLVMC use the same operand and effect constraints. The concrete
+enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
+retry behavior; CET writes still require an execution environment it lacks.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.

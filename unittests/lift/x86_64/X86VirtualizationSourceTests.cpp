@@ -5,7 +5,8 @@
 //===----------------------------------------------------------------------===//
 /// \file
 /// Exercise the shared pipeline and both source routes across x86/x64 native
-/// formats. These synthetic fixtures never execute privileged host operations.
+/// formats. Privileged success is not assumed; isolated system-memory probes
+/// compare faults with the original bytes on the same host.
 //===----------------------------------------------------------------------===//
 
 #include "X86SHA512Reference.h"
@@ -19,10 +20,12 @@
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86SystemStateAsm.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
@@ -38,6 +41,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -403,15 +407,69 @@ int main(void) {
 }
 
 namespace {
+std::string faultDriver(const BinaryImage &Image) {
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  OS << R"C(
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern void virtualization_test(void);
+extern void neverd_original(void);
+static int result_fd;
+static void fault(int signal, siginfo_t *info, void *context) {
+  int result[2] = {signal, info->si_code};
+  (void)context;
+  _exit(write(result_fd, result, sizeof(result)) != sizeof(result));
+}
+static int observe(void (*fn)(void), int result[2]) {
+  int descriptors[2];
+  if (pipe(descriptors)) return 1;
+  pid_t pid = fork();
+  if (pid < 0) return 2;
+  if (!pid) {
+    close(descriptors[0]);
+    result_fd = descriptors[1];
+    struct sigaction action = {0};
+    action.sa_sigaction = fault;
+    action.sa_flags = SA_SIGINFO;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGILL, &action, 0) || sigaction(SIGSEGV, &action, 0) ||
+        sigaction(SIGBUS, &action, 0)) _exit(3);
+    fn();
+    _exit(4); // All fixtures deliberately have invalid addresses.
+  }
+  close(descriptors[1]);
+  ssize_t bytes = read(descriptors[0], result, 2 * sizeof(int));
+  close(descriptors[0]);
+  int status;
+  if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+      WEXITSTATUS(status) || bytes != 2 * sizeof(int)) return 5;
+  return 0;
+}
+int main(void) {
+  int expected[2], actual[2];
+  if (observe(neverd_original, expected) ||
+      observe(virtualization_test, actual)) return 1;
+  return expected[0] != actual[0] || expected[1] != actual[1];
+}
+__asm__(".text\n.globl neverd_original\nneverd_original:\n"
+)C";
+  for (const auto Byte : Image.Segments.front().Data)
+    OS << "\".byte " << unsigned(Byte) << "\\n\"\n";
+  OS << ");\n";
+  return Source;
+}
+
 // Compile the actual LLVM assembly and both emitted C routes, including all
-// output constraints. Privileged fixtures are only compiled. Integer SHA512
-// fixtures additionally link and execute against an independent expected value.
+// output constraints. Success fixtures execute against an independent expected
+// value; selected system-memory fixtures instead compare faults with raw bytes.
 void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                    llvm::StringRef Mnemonic,
                    std::optional<uint64_t> Expected = std::nullopt,
-                   bool OriginalBytes = false) {
+                   bool OriginalBytes = false, bool CompareFaults = false) {
 #if !defined(__linux__) || !defined(__x86_64__)
-  if (Expected)
+  if (Expected || CompareFaults)
     GTEST_SKIP() << "Native execution fixture requires Linux x86-64";
 #endif
   const std::string Compiler = NEVERD_TEST_CLANG;
@@ -460,10 +518,13 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
     OS << Source;
     OS.close();
     ASSERT_FALSE(OS.has_error());
-    if (Expected) {
+    if (Expected || CompareFaults) {
       llvm::raw_fd_ostream DriverOS(Driver, Error);
       ASSERT_FALSE(Error);
-      if (Image.Arch == Arch::X86) {
+      if (CompareFaults) {
+        ASSERT_EQ(Image.Arch, Arch::X64);
+        DriverOS << faultDriver(Image);
+      } else if (Image.Arch == Arch::X86) {
         DriverOS << R"C(
 void *memcpy(void *d, const void *s, unsigned n) {
   for (unsigned i = 0; i < n; ++i) ((unsigned char *)d)[i] = ((const unsigned char *)s)[i];
@@ -516,7 +577,7 @@ void _start(void) {
       ASSERT_EQ(Status, 0) << (Diagnostics ? (*Diagnostics)->getBuffer().str()
                                            : "")
                            << Source;
-      if (Expected) {
+      if (Expected || CompareFaults) {
         ASSERT_EQ(llvm::sys::ExecuteAndWait(
                       Compiler, LinkArguments(Driver, Output, Executable),
                       std::nullopt, Redirects),
@@ -526,7 +587,7 @@ void _start(void) {
       }
     }
   }
-  if (Expected) {
+  if (Expected || CompareFaults) {
     // The repository's LLVM fork is the native oracle. The system Clang above
     // independently checks emitted IR compatibility and compiles generated C.
     llvm::SmallString<128> Object(Directory), Driver(Directory),
@@ -677,6 +738,129 @@ TEST(X86SystemStateSource, GeneratedAssemblyCompilesForBothWordSizesAtO0AndO2) {
       compileRoutes(Image, false, Entry + Offset, E.Mnemonic);
       if (::testing::Test::HasFailure())
         return;
+    }
+}
+
+TEST(X86SystemMemorySource, BothSourceRoutesRetainEffectsAcrossAllFormats) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true})
+        for (const auto &E : systemMemoryEncodings(A)) {
+          SCOPED_TRACE(E.Mnemonic);
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(NoOpt);
+          size_t Offset;
+          auto Image = image(A, Format, function(A, E.Bytes, Offset));
+          std::string High, LLVM;
+          sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, &High, &LLVM);
+          for (const auto &Source : {High, LLVM}) {
+            EXPECT_NE(Source.find("__asm__ volatile"), std::string::npos);
+            EXPECT_NE(Source.find("\"memory\""), std::string::npos);
+            if (E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
+              EXPECT_NE(
+                  Source.find(E.Bytes.front() == 0x64 ? "%%fs:" : "%%gs:"),
+                  std::string::npos)
+                  << Source;
+          }
+          if (::testing::Test::HasFailure())
+            return;
+        }
+}
+
+TEST(X86SystemMemorySource, GeneratedInstructionsCompileAtO0AndO2) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : systemMemoryEncodings(A)) {
+      SCOPED_TRACE(E.Mnemonic);
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      size_t Offset;
+      auto Image = image(A, BinaryFormat::ELF, function(A, E.Bytes, Offset));
+      compileRoutes(Image, false, Entry + Offset, E.Mnemonic);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+}
+
+TEST(X86SystemMemorySource, FaultsMatchOriginalInstructionsAcrossEveryRoute) {
+  // Feature/privilege/enablement checks must precede ordinary operand faults.
+  // 0x8000000000000000 is noncanonical for both 48- and 57-bit addressing.
+  for (const auto &E : std::vector<SystemEncoding>{
+           {{0x0f, 0x38, 0xf6, 0x08}, Intrinsic::CetWrss, "wrssd"},
+           {{0x48, 0x0f, 0x38, 0xf6, 0x08}, Intrinsic::CetWrss, "wrssq"},
+           {{0x66, 0x0f, 0x38, 0xf5, 0x08}, Intrinsic::CetWruss, "wrussd"},
+           {{0x66, 0x48, 0x0f, 0x38, 0xf5, 0x08},
+            Intrinsic::CetWruss,
+            "wrussq"},
+           {{0xf2, 0x0f, 0x38, 0xf8, 0x08}, Intrinsic::Enqcmd, "enqcmd"},
+           {{0xf3, 0x0f, 0x38, 0xf8, 0x08}, Intrinsic::Enqcmds, "enqcmds"}}) {
+    SCOPED_TRACE(E.Mnemonic);
+    std::vector<uint8_t> Bytes = {0x48, 0xb8, 0,    0, 0, 0, 0, 0,
+                                  0,    0x80, 0xb9, 1, 0, 0, 0};
+    const auto Offset = Bytes.size();
+    Bytes.insert(Bytes.end(), E.Bytes.begin(), E.Bytes.end());
+    Bytes.push_back(0xc3);
+    auto Image = image(Arch::X64, BinaryFormat::ELF, Bytes);
+    for (bool NoOpt : {false, true}) {
+      compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                    false, true);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+  }
+}
+
+TEST(X86SystemMemorySource, MalformedLLVMAssemblyCannotBypassTheContract) {
+  for (const auto Id : {Intrinsic::CetWrss, Intrinsic::CetWruss,
+                        Intrinsic::Enqcmd, Intrinsic::Enqcmds})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Id));
+      SCOPED_TRACE(Mutation);
+      const bool Enqueue = Id == Intrinsic::Enqcmd || Id == Intrinsic::Enqcmds;
+      const auto P =
+          x86SystemStateAsm(Id, Arch::X64, 8, NdMemoryAddressSpace::Default);
+      ASSERT_TRUE(P);
+      llvm::LLVMContext Context;
+      llvm::Module Module("system-memory-contract", Context);
+      Module.setDataLayout("e-p:64:64");
+      llvm::IRBuilder<> B(Context);
+      auto *Pointer = llvm::PointerType::getUnqual(Context);
+      std::vector<llvm::Type *> Types = {
+          Mutation == 4 ? static_cast<llvm::Type *>(B.getInt64Ty()) : Pointer,
+          Enqueue ? static_cast<llvm::Type *>(Pointer) : B.getInt64Ty()};
+      llvm::Type *Return = Enqueue ? B.getInt8Ty() : B.getVoidTy();
+      auto *Signature = llvm::FunctionType::get(Return, Types, false);
+      auto *Function = llvm::Function::Create(
+          Signature, llvm::GlobalValue::ExternalLinkage, "effect", Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+      std::string Constraints = P->Constraints;
+      if (Mutation == 1)
+        Constraints.erase(Constraints.find(",~{memory}"));
+      auto *Assembly = llvm::InlineAsm::get(
+          Signature, P->Text + (Mutation == 3 ? "\n\tnop" : ""), Constraints,
+          Mutation != 2, false,
+          Mutation == 6 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
+      auto *Call =
+          B.CreateCall(Assembly, {Function->getArg(0), Function->getArg(1)});
+      if (Mutation == 5)
+        Call->setOnlyReadsMemory();
+      if (Mutation == 7)
+        Call->setOnlyWritesMemory();
+      if (Enqueue)
+        B.CreateRet(Call);
+      else
+        B.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      Options.EmitIncludes = false;
+      std::string Text;
+      llvm::raw_string_ostream OS(Text);
+      if (Mutation == 0)
+        EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options)) << Text;
+      else
+        EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                     std::invalid_argument);
     }
 }
 

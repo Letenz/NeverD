@@ -53,7 +53,7 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   }
   for (uint8_t I = 0; I < L->Arguments; ++I) {
     P.InputConstraints.push_back("r");
-    P.InputBytes.push_back(I == C.MemoryArgument
+    P.InputBytes.push_back(isX86SystemStateAddressArgument(Id, I)
                                ? (TargetArch == Arch::X64 ? 8 : 4)
                                : L->InputSizes[I]);
   }
@@ -95,6 +95,13 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
       P.InputConstraints[0] = "0";
       P.Text += " " + Input(1) + ", $0\n\tsetz $1";
     }
+    break;
+  case K::ShadowWrite:
+    P.Text += Width == 8 ? "q " : "d ";
+    P.Text += Input(1) + ", " + Memory(0);
+    break;
+  case K::Enqueue:
+    P.Text += " " + Memory(0) + ", " + Input(1) + "\n\tsetz $0";
     break;
   }
   auto Constraint = [&](const std::string &Text) {

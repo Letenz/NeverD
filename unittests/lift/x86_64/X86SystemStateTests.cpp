@@ -11,6 +11,7 @@
 #include "X86SystemStateFixtures.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/llvm/X86SystemStateAsm.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/lift/X86Regs.h"
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <exception>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -137,6 +139,71 @@ TEST(X86SystemState,
       EXPECT_TRUE(std::none_of(Ops.begin(), Ops.end(), [](const LowOp &Op) {
         return Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE;
       }));
+    }
+}
+
+TEST(X86SystemMemory, SharedContractRetainsAddressesWidthAndRealCompletion) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : test::systemMemoryEncodings(A)) {
+      SCOPED_TRACE(E.Mnemonic);
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      const auto Ops = lift(A, E.Bytes);
+      const auto It = std::find_if(Ops.begin(), Ops.end(), [&](const auto &Op) {
+        return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+               Op.Inputs[0].Offset == static_cast<uint64_t>(E.Id);
+      });
+      ASSERT_NE(It, Ops.end());
+      EXPECT_TRUE(std::none_of(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+        return Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
+               Op.Opcode == NdOp::NOP;
+      }));
+      const auto Shape = x86SystemStateLowShape(*It, A);
+      EXPECT_TRUE(x86SystemStateShapeIsValid(E.Id, Shape));
+      const bool Enqueue =
+          E.Id == Intrinsic::Enqcmd || E.Id == Intrinsic::Enqcmds;
+      EXPECT_EQ(It->Output.Size, Enqueue ? 1 : 0);
+      const auto Plan = x86SystemStateAsm(
+          E.Id, A, x86SystemStateWidth(E.Id, Shape), Shape.MemoryAddressSpace);
+      ASSERT_TRUE(Plan);
+      EXPECT_TRUE(Plan->Text.starts_with(E.Mnemonic));
+      EXPECT_NE(Plan->Constraints.find("~{memory}"), std::string::npos);
+      EXPECT_EQ(Plan->ChangesFlags, Enqueue);
+      EXPECT_EQ(Plan->Text.find("setz") != std::string::npos, Enqueue);
+      EXPECT_EQ(
+          x86SystemStateMemoryBytes(E.Id, x86SystemStateWidth(E.Id, Shape)),
+          Enqueue ? 64 : It->Inputs[2].Size);
+      for (unsigned Fault = 0; Fault != 7; ++Fault) {
+        auto Bad = Shape;
+        switch (Fault) {
+        case 0:
+          Bad.ValidId = false;
+          break;
+        case 1:
+          Bad.Arguments = 1;
+          break;
+        case 2:
+          Bad.InputSizes[0] = 4;
+          break;
+        case 3:
+          Bad.InputSizes[1] = 2;
+          break;
+        case 4:
+          Bad.ScalarInputs[1] = false;
+          break;
+        case 5:
+          Bad.OutputSize = 4;
+          break;
+        case 6:
+          Bad.MemoryAddressSpace = static_cast<NdMemoryAddressSpace>(255);
+          break;
+        }
+        EXPECT_FALSE(x86SystemStateShapeIsValid(E.Id, Bad));
+      }
+      if (Enqueue || It->Inputs[2].Size == 8) {
+        auto Bad = Shape;
+        Bad.TargetArch = Arch::X86;
+        EXPECT_FALSE(x86SystemStateShapeIsValid(E.Id, Bad));
+      }
     }
 }
 

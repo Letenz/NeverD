@@ -19,3 +19,12 @@ NEVERD_X86_SYSTEM_STATE(X86LoadAccessRights, "lar", AccessRights, -1)
 NEVERD_X86_SYSTEM_STATE(X86LoadAccessRightsMemory, "lar", AccessRights, 0)
 NEVERD_X86_SYSTEM_STATE(X86AdjustRpl, "arpl", AdjustRpl, -1)
 NEVERD_X86_SYSTEM_STATE(X86AdjustRplMemory, "arpl", AdjustRpl, 0)
+
+// These IDs predate this inventory. Consumers opt in without allocating or
+// renumbering their serialized IDs or duplicating the older name tables.
+#ifdef NEVERD_X86_EXISTING_SYSTEM_STATE
+NEVERD_X86_EXISTING_SYSTEM_STATE(CetWrss, "wrss", ShadowWrite, 0)
+NEVERD_X86_EXISTING_SYSTEM_STATE(CetWruss, "wruss", ShadowWrite, 0)
+NEVERD_X86_EXISTING_SYSTEM_STATE(Enqcmd, "enqcmd", Enqueue, 0)
+NEVERD_X86_EXISTING_SYSTEM_STATE(Enqcmds, "enqcmds", Enqueue, 0)
+#endif

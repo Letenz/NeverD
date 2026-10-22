@@ -42,6 +42,7 @@ complete instruction support or semantic test coverage.
 | VMASKMOVPS/PD and VPMASKMOVD/Q stores | A void output replaces an invalid zero-width RAX result. Tests cover both vector widths, both architectures and inactive lanes over unmapped memory. |
 | Shared 32-bit VEX3/EVEX register and address validators | Mode-aware register-bank selection for their callers, including F16C, FMA4, SHA512 and EVEX integer/vector families. Ignored extension fields select the low bank; reserved fields still fail clearly. |
 | REX2 and 32-bit VEX floating-point forms | Shared prefix validation replaces eight local parsers. The 13 previously failing REX2 and nine 32-bit VEX examples now strictly lift, retaining distinct GPR/vector/address extension rules. Concrete and executable source/native-route regressions cover the new behavior. |
+| WRSSD/Q, WRUSSD/Q, ENQCMD and ENQCMDS native output | The shared system contract emits the real instruction in LLVM, HighC and LLVM-to-C. Memory stays inside the instruction, enqueue returns its actual ZF, and FS/GS qualifies only the explicit memory operand. |
 
 `X86SystemState.def` and `X86SystemState.h` own the system-instruction inventory
 and operand/completion shapes. LowIR, Low-to-Med conversion, Med verification,
@@ -54,6 +55,16 @@ memory and flag constraints. They require the architectural CPU features,
 privilege and machine state at execution time. The scalar emulator explicitly
 refuses these environment-dependent effects before mutating state. This change
 does not introduce a virtual CPU or synthesize successful hardware responses.
+
+The system-memory follow-up also brings the existing CET writes and enqueue
+intrinsics under this contract without changing their serialized IDs.
+WRSSD/WRUSSD retain their 32-bit-target forms; the qword forms require x64.
+ENQCMD/ENQCMDS remain long-mode-only in the lifter: their second address is an
+implicit ES destination, independent of a source FS/GS override. Their native
+implementations own all permission checks and memory accesses; no compiler
+preload or ordinary store is substituted. The existing scalar enqueue executor
+continues to require explicit CPL/PASID state and returns retry for ordinary
+memory. It does not acquire a real device portal from this change.
 
 LLVM-to-C now lowers masked memory operations to guarded lane accesses in its
 private module clone before scalarization. Inactive lanes neither access memory
@@ -86,8 +97,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
 | ENCLS, ENCLV | Leaf-specific implicit register/flag completion, enclave memory and exception contracts. These supervisor/VMM operations should not be conflated with ENCLU's context transitions. |
 | AMX native LLVM output | Versioned TILECFG/tile-state ownership, restartable strided memory, partial progress and fault continuation. Existing strict LowIR support is not native code-generation support. |
-| ENQCMD/ENQCMDS and WRSSD/Q, WRUSSD/Q native LLVM output | The backend explicitly refuses these system-memory effects. Their existing LowIR/concrete-executor contracts do not provide native lowering. |
-| Explicit-operand RDMSR/WRMSRNS, URDMSR and UWRMSR native LLVM output | The `X86MsrAccess` backend guard remains explicit. Operand-free legacy RDMSR uses a separate existing intrinsic. |
+| Explicit-operand RDMSR/WRMSRNS, URDMSR and UWRMSR native LLVM output | The `X86MsrAccess` backend guard remains explicit. Operand-free legacy RDMSR uses a separate existing intrinsic. The documented VEX immediate RDMSR/WRMSRNS encodings also need decoder/lifter admission. |
 | ENQCMD, ENQCMDS, MOVDIR64B in 32-bit mode | Implicit ES destination base/limit ownership. Existing 64-bit support does not prove these forms. |
 
 MOVDIRI and MOVDIR64B also need a native direct-store review: their current
@@ -240,3 +250,6 @@ The 32-bit VEX/EVEX mode rules are described in sections 2.3.5 and 2.7.2 of Inte
 REX2 map selection and the different GPR/vector extension rules are specified
 in section 3.1.2.1 of Intel's
 [APX architecture specification](https://cdrdv2-public.intel.com/861610/355828-007-intel-apx-spec.pdf).
+The explicit MSR encoding audit uses the RDMSR, WRMSRNS, URDMSR and UWRMSR
+tables in Intel's
+[September 2025 ISA extensions reference](https://cdrdv2-public.intel.com/865891/319433-059-architecture-instruction-set-extensions-programming-reference_2025-0930.pdf).

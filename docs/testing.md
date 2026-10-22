@@ -4,6 +4,21 @@
 
 # Testing NeverD
 
+`X86SystemMemory.*` and `X86SystemMemorySource.*` cover WRSSD/Q, WRUSSD/Q and
+long-mode ENQCMD/ENQCMDS through the shared system contract. Run
+`NeverDX86SystemStateTests`, `NeverDX86SystemSideeffectTests` and
+`NeverDX86VirtualizationSourceTests`, together with the APX existing-GPR tests.
+The source suite covers ELF/COFF/Mach-O, both pipeline optimization settings,
+32/64-bit widths, source FS/GS and long-mode address-size overrides. Generated
+HighC, LLVM-to-C and LLVM IR compile at O0/O2; the repository LLVM backend also
+produces native objects. Linux x64 subprocess tests compare signal and fault
+code with original machine bytes for invalid operands, including instruction
+enablement/privilege before address faults. They do not certify successful
+shadow-stack updates or real device enqueue completion on this host. Malformed
+assembly, missing effects and forged memory attributes remain rejected. The
+existing concrete enqueue tests independently cover retry, unchanged memory,
+source/header/portal fault order and missing CPL/PASID state.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.
