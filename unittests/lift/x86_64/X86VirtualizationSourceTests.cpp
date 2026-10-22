@@ -1086,6 +1086,49 @@ TEST(X86DirectStoreSource, BlockStoresMatchOriginalBytesIncludingOverlap) {
   }
 }
 
+TEST(X86DirectStoreSource, StackWritesInvalidateEarlierValuesAcrossRoutes) {
+  if (!llvm::sys::getHostCPUFeatures().lookup("movdiri"))
+    GTEST_SKIP() << "Original-byte execution requires host MOVDIRI";
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const bool Wide : {false, true}) {
+      if (A == Arch::X86 && Wide)
+        continue;
+      const uint64_t Value = Wide ? UINT64_C(0xfedcba9876543210) : 0x87654321;
+      std::vector<uint8_t> Bytes;
+      if (A == Arch::X64)
+        Bytes.push_back(0x48);
+      Bytes.insert(Bytes.end(), {0x83, 0xec, 0x10});
+      if (Wide)
+        Bytes.push_back(0x48);
+      Bytes.insert(Bytes.end(), {0xc7, 0x04, 0x24, 0x55, 0, 0, 0});
+      if (Wide)
+        Bytes.push_back(0x48);
+      Bytes.push_back(0xb9);
+      for (unsigned I = 0; I != (Wide ? 8u : 4u); ++I)
+        Bytes.push_back(Value >> (8 * I));
+      const auto Offset = Bytes.size();
+      if (Wide)
+        Bytes.push_back(0x48);
+      Bytes.insert(Bytes.end(),
+                   {0x0f, 0x38, 0xf9, 0x0c, 0x24, 0x0f, 0xae, 0xf8});
+      if (Wide)
+        Bytes.push_back(0x48);
+      Bytes.insert(Bytes.end(), {0x8b, 0x04, 0x24});
+      if (A == Arch::X64)
+        Bytes.push_back(0x48);
+      Bytes.insert(Bytes.end(), {0x83, 0xc4, 0x10, 0xc3});
+      auto Image = image(A, BinaryFormat::ELF, Bytes);
+      for (const bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(Wide);
+        SCOPED_TRACE(NoOpt);
+        compileRoutes(Image, NoOpt, Entry + Offset, "movdiri", Value, true);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+    }
+}
+
 TEST(X86FenceSource, HardwareBarriersSurviveNativeLLVMOptimization) {
   for (const auto A : {Arch::X86, Arch::X64})
     for (const auto &E : std::vector<SystemEncoding>{

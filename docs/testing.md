@@ -33,7 +33,9 @@ snapshots, overlap, fault ordering and destination write admission.
 LLVM objects and original bytes on a host with the corresponding feature.
 It checks aligned/unaligned scalar stores, full-width values, preserved flags
 and overlapping block sources against an independent byte-array oracle at
-O0/O2 and both pipeline settings. `X86FenceSource.*` verifies that all three
+O0/O2 and both pipeline settings. A scalar stack fixture verifies that a later
+load observes the direct store rather than a forwarded earlier value.
+`X86FenceSource.*` verifies that all three
 hardware fence instructions survive LLVM optimization and object generation.
 These checks do not measure concurrent bus transactions or device completion;
 their native instruction and memory-effect contracts retain those operations.

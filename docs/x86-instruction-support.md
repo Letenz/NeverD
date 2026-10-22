@@ -287,6 +287,15 @@ optimization and compile both C routes. The new executable checks exposed and
 fixed a missing x86 intrinsic header in LLVM-to-C; the freestanding i386 driver
 also supplies its required standard `memcpy` implementation.
 
+After integrating loader cancellation through `f34344003`, all 30 incremental
+checks pass: 23 system-state, encoding-corpus and native-buffer checks, three
+SDK cancellation/state-preservation checks, and four executable direct-store
+and fence source checks. The added stack-alias fixture verifies that scalar
+direct stores invalidate an earlier stack value before a subsequent load in
+every generated route, both word sizes and both pipeline settings. The broad
+and 300-check results above precede this loader-only integration; GUI and worker
+builds remain disabled in this qualification profile.
+
 The architectural references are Intel's
 [Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 and the SHA512 entries in the
