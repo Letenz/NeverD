@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>Вниз</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>Функции изменились во время обновления таблицы.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>Выбранные функции превышают лимит страниц таблицы.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>Слишком много изменений выбора во время обновления таблицы.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1814,6 +1826,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>Сохранённое объявление места вызова требует проверки: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>Не удалось обновить исходный код: %1</translation>
     </message>
 </context>
 <context>
@@ -2217,18 +2233,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>Описание:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>Найти в представлении</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>Текст:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>Текст «%1» не найден среди загруженных строк</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3725,6 +3729,97 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Не удалось сохранить файл символов в %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>Найти в представлении</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>Текст для поиска</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>Учитывать регистр</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>Слова целиком</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>Поиск по кругу</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Назад</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Далее</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>Предыдущее совпадение (Shift+Enter или Shift+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>Следующее совпадение (Enter или F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;Текст:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Закрыть</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: текущая функция, включая свёрнутый код</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>Дизассемблер: загруженные строки, включая видимые адреса</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>Конец области поиска</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>Начало области поиска</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>Ожидание исходного кода…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>Нет текста для поиска</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>Введите текст для поиска</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>Совпадений нет</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 из %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n совпадение</numerusform>
+            <numerusform>%n совпадения</numerusform>
+            <numerusform>%n совпадений</numerusform>
+        </translation>
     </message>
 </context>
 <context>

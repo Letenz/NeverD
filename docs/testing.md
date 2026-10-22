@@ -1157,6 +1157,11 @@ integration checks run with the actual linked worker, without `LD_PRELOAD`.
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
 
+`NeverDWorkerLocalTypes` checks immediate-offset inference independently of the
+bundled header count: an unfiltered query verifies the candidate limit, then a
+named PDB record verifies a partial member fit. It does not assume a partial
+program-type match precedes hundreds of exact header matches.
+
 `NeverDWorkerCodeEdits` checks declared local targets, image-name replacements,
 UTF-8 span remapping, comments and raw string isolation, and rejection of stale,
 colliding or shadowed names. The controller edits source, C and LLVM C with a

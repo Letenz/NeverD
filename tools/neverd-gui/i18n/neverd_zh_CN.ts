@@ -1677,6 +1677,18 @@
         <source>Down</source>
         <translation>向下</translation>
     </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>刷新表格期间函数列表发生了变化。</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>所选函数超出了表格缓存页数上限。</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>刷新表格期间选择变更次数过多。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ChooserView</name>
@@ -1804,6 +1816,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>已保存的调用点声明需要检查： </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>无法刷新源代码：%1</translation>
     </message>
 </context>
 <context>
@@ -2205,18 +2221,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>描述：</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>在视图中查找</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>文本：</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>在已加载的行中未找到“%1”</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -3711,6 +3715,95 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>无法将符号文件保存到 %1：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>在视图中查找</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>查找文本</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>区分大小写</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>整词匹配</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>循环查找</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>上一个</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>下一个</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>上一个匹配项（Shift+Enter 或 Shift+F3）</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>下一个匹配项（Enter 或 F3）</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>文本(&amp;T)：</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>关闭</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1：当前函数（包括折叠代码）</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>反汇编：已加载的行（包括可见地址）</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>已到查找范围末尾</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>已到查找范围开头</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>正在等待源代码…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>没有可搜索的文本</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>输入要查找的文本</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>无匹配项</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n 个匹配项</numerusform>
+        </translation>
     </message>
 </context>
 <context>
