@@ -595,6 +595,14 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
+Independent declaration providers use `types::importPrototypes` at generation
+time, through `neverd_types_convert` and the standalone CLI. It imports missing
+prototypes with their dependency closure, shares structurally identical types,
+and renames conflicting types and affected dependents without replacing earlier
+declarations. Type identity includes pointees, qualifiers, callbacks and enum
+values as well as layout. Provider parse errors prevent an import. This owner
+is separate from the runtime priority merge of system and program types; the
+flattened generated headers add no provider merge during decompilation.
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
 a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
 provider headers declare into `lib/types/headers/WindowsKernelX64.h`
