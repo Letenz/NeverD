@@ -26,6 +26,17 @@
 #include <vector>
 
 namespace neverd::symbolic::detail {
+
+struct ResidueMemo {
+  struct Attempt {
+    SymRef Result;
+    size_t AvailableStorage;
+    bool Multiple;
+  };
+  std::map<std::pair<uint32_t, bool>, Attempt> Attempts;
+  std::vector<std::pair<uint32_t, uint32_t>> Generated;
+};
+
 namespace {
 
 using Atom = std::vector<uint32_t>;
@@ -37,6 +48,56 @@ struct Factor {
   unsigned Zeros = 0;
   bool FixedValuation = false;
 };
+
+// Retry a storage-limited attempt when more storage becomes available. Other
+// completed attempts are reusable across callers' scratch allowances. A
+// declined attempt is a search result, not an equivalence certificate.
+template <typename Search>
+SymRef reuseResidueAttempt(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                           size_t &Storage, bool Projected, Search Run) {
+  const bool Cacheable = Budget.MemoOwner == &Ctx && Budget.MemoCapacity;
+  const auto Key = std::make_pair(Root.index(), Projected);
+  if (Cacheable && Budget.Residues) {
+    const size_t LookupWork =
+        1 + 2 * std::bit_width(Budget.Residues->Attempts.size() >> 1);
+    if (Budget.canConsume(LookupWork)) {
+      Budget.consume(LookupWork);
+      auto It = Budget.Residues->Attempts.find(Key);
+      if (It != Budget.Residues->Attempts.end() &&
+          Storage <= It->second.AvailableStorage) {
+        return It->second.Result;
+      }
+    }
+  }
+  const size_t Available = Storage;
+  const size_t BeforeMultiple = Budget.MultipleResidueAttempts;
+  bool StorageLimited = false;
+  auto Result = Run(StorageLimited);
+  const size_t Bytes =
+      sizeof(decltype(ResidueMemo::Attempts)::value_type) + 4 * sizeof(void *) +
+      (Budget.Residues ? 0 : sizeof(ResidueMemo) + 2 * sizeof(void *));
+  const size_t InsertWork =
+      1 + (Budget.Residues
+               ? 2 * std::bit_width(Budget.Residues->Attempts.size() >> 1)
+               : 0);
+  if (Cacheable && !Budget.exhausted() && Budget.canConsume(InsertWork) &&
+      Bytes <= Storage &&
+      (!Budget.Residues ||
+       Budget.Residues->Attempts.size() < Budget.MemoCapacity)) {
+    Budget.consume(InsertWork);
+    Storage -= Bytes;
+    if (!Budget.Residues)
+      Budget.Residues = std::make_shared<ResidueMemo>();
+    Budget.Residues->Attempts.insert_or_assign(
+        Key,
+        ResidueMemo::Attempt{
+            Result,
+            StorageLimited ? Available : std::numeric_limits<size_t>::max(),
+            !StorageLimited &&
+                BeforeMultiple != Budget.MultipleResidueAttempts});
+  }
+  return Result;
+}
 
 // Keep the existing unit-offset proof cheap. This bounded hint does not
 // inspect bitwise interiors or grant any equality.
@@ -64,8 +125,25 @@ struct Resources {
   size_t Words;
   size_t SourceWords;
   bool Failed = false;
+  std::optional<size_t> OptionalStart;
+  bool *StorageLimited = nullptr;
+
+  size_t optionalRemaining() const {
+    if (!OptionalStart)
+      return limits::kMaxResidueDecisionWork;
+    return limits::kMaxMultipleResidueWork -
+           std::min(limits::kMaxMultipleResidueWork,
+                    Budget.used() - *OptionalStart);
+  }
 
   bool charge(size_t Work, size_t Bytes = 0) {
+    if (Bytes > Storage && StorageLimited)
+      *StorageLimited = true;
+    if (OptionalStart &&
+        (Work > optionalRemaining() || !Budget.canConsume(Work))) {
+      Failed = true;
+      return false;
+    }
     if (Bytes > Storage || !Budget.consume(Work)) {
       Failed = true;
       return false;
@@ -88,7 +166,8 @@ struct Resources {
 // misses it, so retain the other bounded precisions after the first attempt.
 template <typename Prover>
 bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
-                              Resources &Res, Prover Prove) {
+                              Resources &Res, Prover Prove,
+                              const bool *Nonzero = nullptr) {
   unsigned First = MaxBits;
   size_t Potential = 0;
   for (unsigned Bits = 1; Bits < MaxBits; ++Bits) {
@@ -101,12 +180,88 @@ bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
   if (Prove(First))
     return true;
   for (unsigned Bits = 1; Bits <= MaxBits; ++Bits) {
-    if (Res.Failed || Res.Budget.exhausted())
+    if (Res.Failed || Res.Budget.exhausted() || (Nonzero && *Nonzero))
       break;
     if (Bits != First && Prove(Bits))
       return true;
   }
   return false;
+}
+
+// One concrete input is sufficient to reject a zero identity, never to grant
+// a replacement. Evaluate parity with every actual variable set to one; do
+// not assign independent values to correlated opaque subexpressions.
+bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
+                          Resources &Res) {
+  std::map<uint32_t, std::optional<bool>> Values;
+  size_t Work = 0;
+  auto Read = [&](auto &&Self, SymRef R,
+                  unsigned Depth) -> std::optional<bool> {
+    if (Work >= limits::kMaxResidueWitnessWork ||
+        Depth >= limits::kMaxAffineResidueDepth || !Res.charge(1))
+      return std::nullopt;
+    ++Work;
+    if (auto It = Values.find(R.index()); It != Values.end())
+      return It->second;
+    const auto Op = Ctx.op(R);
+    auto Evaluate = [&]() -> std::optional<bool> {
+      if (Ctx.isConst(R)) {
+        const size_t Words = (size_t(Ctx.width(R)) - 1) / 64 + 1;
+        if (Words > limits::kMaxResidueWitnessWork - Work ||
+            !Res.scalar(Words, Words))
+          return std::nullopt;
+        Work += Words;
+        return Ctx.constValue(R)[0];
+      }
+      if (Op == SymOp::Var)
+        return true;
+      if (Op == SymOp::ZExt || Op == SymOp::SExt ||
+          (Op == SymOp::Extract && !Ctx.node(R).Aux))
+        return Self(Self, Ctx.operand(R, 0), Depth + 1);
+      if (Op == SymOp::Not) {
+        auto V = Self(Self, Ctx.operand(R, 0), Depth + 1);
+        return V ? std::optional<bool>(!*V) : std::nullopt;
+      }
+      if (Op == SymOp::Shl && Ctx.isConst(Ctx.operand(R, 1))) {
+        const size_t Words = (size_t(Ctx.width(R)) - 1) / 64 + 1;
+        if (Words > limits::kMaxResidueWitnessWork - Work ||
+            !Res.scalar(Words, Words))
+          return std::nullopt;
+        Work += Words;
+        return Ctx.constValue(Ctx.operand(R, 1)).isZero()
+                   ? Self(Self, Ctx.operand(R, 0), Depth + 1)
+                   : std::optional<bool>(false);
+      }
+      if (Op != SymOp::Add && Op != SymOp::Mul && Op != SymOp::And &&
+          Op != SymOp::Or && Op != SymOp::Xor)
+        return std::nullopt;
+      const bool Conjunction = Op == SymOp::Mul || Op == SymOp::And;
+      std::optional<bool> Result = Conjunction;
+      for (auto Child : Ctx.operands(R)) {
+        auto V = Self(Self, Child, Depth + 1);
+        if ((Conjunction && V && !*V) || (Op == SymOp::Or && V && *V))
+          return V;
+        if (!V || !Result) {
+          Result = std::nullopt;
+          continue;
+        }
+        if (Op == SymOp::Add || Op == SymOp::Xor)
+          *Result ^= *V;
+      }
+      return Result;
+    };
+    auto Result = Evaluate();
+    if (!Res.Failed && Res.charge(1, sizeof(decltype(Values)::value_type) +
+                                         4 * sizeof(void *)))
+      Values.emplace(R.index(), Result);
+    return Result;
+  };
+  for (auto F : Factors) {
+    auto V = Read(Read, F, 0);
+    if (!V || !*V || Res.Failed)
+      return false;
+  }
+  return true;
 }
 
 // Retain partial facts while computing a prefix. Unknown bits are always zero
@@ -125,6 +280,7 @@ struct PrefixConstants {
   SymContext &Ctx;
   Resources &Res;
   std::map<std::pair<uint32_t, unsigned>, PrefixValue> Values;
+  bool ExpandTopXors = false;
 
   std::optional<uint64_t> get(SymRef R, unsigned Bits) {
     auto Result = infer(R, Bits);
@@ -361,6 +517,25 @@ bool readFactor(const SymContext &Ctx, SymRef R, const llvm::APInt &Scale,
           return Read(Unknown, -Scale);
         }
       }
+      if (Op == SymOp::Xor && Prefixes->ExpandTopXors) {
+        // XOR is additive modulo this precision when any overlap is confined
+        // to its top bit: every resulting carry lies outside the word.
+        uint64_t Seen = 0, Overlap = 0;
+        for (auto Child : Ctx.operands(R)) {
+          const auto Known = Prefixes->infer(Child, Bits);
+          if (Res.Failed)
+            return false;
+          const auto Possible = Mask & ~(Known.Known & ~Known.Value);
+          Overlap |= Seen & Possible;
+          Seen |= Possible;
+        }
+        if (!(Overlap & (Mask >> 1))) {
+          for (auto Child : Ctx.operands(R))
+            if (!Read(Child, Scale))
+              return false;
+          return true;
+        }
+      }
       if (auto Projected = projectShiftedBitwise(*Prefixes, R, Bits))
         return Read(Projected, Scale);
       if (Res.Failed)
@@ -559,11 +734,11 @@ bool proveAffineResidues(const std::vector<Factor> &Factors, unsigned Bits,
 // product by a multiple of 2^(Bits + sum_{j != i} zeros[j]). When all but at
 // most one factor meet the required precision, retain the precision that factor
 // still requires.
-SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
-                                      llvm::ArrayRef<Factor> Factors,
-                                      llvm::ArrayRef<SymRef> Originals,
-                                      const llvm::APInt &Scale, unsigned Bits,
-                                      unsigned Needed, Resources &Res) {
+SymRef synthesizeResidualResidueTable(
+    SymContext &Ctx, SymRef Root, llvm::ArrayRef<Factor> Factors,
+    llvm::ArrayRef<SymRef> Originals, const llvm::APInt &Scale, unsigned Bits,
+    unsigned Needed, Resources &Res, bool &DecisionAttempted,
+    SymRef &DecisionResult, bool &DecisionRequested, bool &IncompatibleBase) {
   if (!Bits || Bits > limits::kMaxAffineResidueTableBits || !Needed ||
       Needed > limits::kMaxAffineResidueTableBits ||
       Factors.size() != Originals.size() || Factors.empty() ||
@@ -640,15 +815,19 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
         return Root;
       auto Term = F.Terms.find(Key);
       const uint64_t Actual = Term == F.Terms.end() ? 0 : Low(Term->second);
-      if ((A * C & Mask) != Actual)
+      if ((A * C & Mask) != Actual) {
+        IncompatibleBase = true;
         return Root;
+      }
     }
     for (const auto &[Key, C] : F.Terms) {
       if (!Res.scalar(Res.Words +
                       Key.size() * (1 + std::bit_width(Base.size()))))
         return Root;
-      if (!Base.contains(Key) && Low(C))
+      if (!Base.contains(Key) && Low(C)) {
+        IncompatibleBase = true;
         return Root;
+      }
     }
     Rows.emplace_back(A, Low(F.Offset));
   }
@@ -669,6 +848,7 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
                                             std::vector<uint64_t>(Count));
   std::vector<uint64_t> Values(N);
   std::vector<unsigned> Zeros(N), Required(N);
+  bool MultipleResiduals = false;
   for (size_t X = 0; X < Count; ++X) {
     size_t Total = 0;
     for (size_t I = 0; I < N; ++I) {
@@ -679,13 +859,65 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
     if (Total >= Needed)
       continue;
     size_t Residual = N;
+    size_t ResidualCount = 0;
+    unsigned Largest = 0, SecondLargest = 0;
     for (size_t I = 0; I < N; ++I) {
       // Here Total < Needed; this subtraction cannot underflow.
       if (Needed - (Total - Zeros[I]) <= Bits)
         continue;
-      if (Residual != N)
-        return Root;
       Residual = I;
+      ++ResidualCount;
+      if (Zeros[I] >= Largest) {
+        SecondLargest = Largest;
+        Largest = Zeros[I];
+      } else {
+        SecondLargest = std::max(SecondLargest, Zeros[I]);
+      }
+    }
+    if (ResidualCount > 1) {
+      DecisionRequested = true;
+      if (!Res.OptionalStart) {
+        Res.OptionalStart = Res.Budget.used();
+        ++Res.Budget.MultipleResidueAttempts;
+      }
+      if (!DecisionAttempted) {
+        DecisionAttempted = true;
+        const auto Exact = foldResidueDecisions(
+            Ctx, Root, Res.Budget, Res.Storage,
+            Needed > limits::kMaxUnconditionedResidueDecisionBits,
+            Res.optionalRemaining(), Res.StorageLimited);
+        if (Exact != Root) {
+          DecisionResult = Exact;
+          return Exact;
+        }
+      }
+      // Write each retained factor as v_i + d_i, with 2^Bits dividing d_i.
+      // Every term containing two or more d_i vanishes if the least such
+      // valuation covers Needed. Replacing further v_i by d_i cannot lower
+      // that valuation because Zeros[i] <= Bits. Never divide by v_i: a row
+      // may contain zero or an even, noninvertible value.
+      if (2 * Bits + Total - Largest - SecondLargest < Needed)
+        return Root;
+      MultipleResiduals = true;
+      if (!Res.charge(6 * N + 1, (N + 1) * sizeof(uint64_t)))
+        return Root;
+      std::vector<uint64_t> Before(N + 1, 1);
+      for (size_t I = 0; I < N; ++I)
+        Before[I + 1] = Before[I] * Values[I] & ResultMask;
+      uint64_t After = 1;
+      for (size_t I = N; I-- != 0;) {
+        const unsigned Precision = Needed - (Total - Zeros[I]);
+        if (Precision > Bits) {
+          Tables[I][X] =
+              (Before[I] * After) & ((uint64_t(1) << (Needed - Zeros[I])) - 1);
+          Required[I] = std::max(Required[I], Precision);
+        }
+        After = After * Values[I] & ResultMask;
+      }
+      // sum_i F_i*prod_{j!=i}(v_j) counts the constant product once for
+      // every retained factor. Restore its single occurrence exactly.
+      Tables[N][X] = (1 - ResidualCount) * Before[N] & ResultMask;
+      continue;
     }
     uint64_t Coefficient = 1;
     for (size_t I = 0; I < N; ++I)
@@ -708,8 +940,9 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
   // Reserve both bit-lookup and arithmetic decision candidates, their score
   // walks, and the final sum before creating any expression nodes.
-  if (!Res.charge(Active * Count * (2 * Needed + 32) + Ctx.dagSize(Root),
-                  Active * Count * (sizeof(uint64_t) + 32 * NodeBytes)))
+  const size_t Lookups = MultipleResiduals ? 1 : Active;
+  if (!Res.charge(Lookups * Count * (2 * Needed + 32) + Ctx.dagSize(Root),
+                  Lookups * Count * (sizeof(uint64_t) + 32 * NodeBytes)))
     return Root;
   llvm::SmallVector<SymRef, 16> Terms;
   for (const auto &[Key, C] : Base) {
@@ -835,8 +1068,9 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
     }
     return Key.empty() ? Ctx.mkConst(Width, 1) : Ctx.mkMul(Atoms);
   };
-  llvm::SmallVector<SymRef, 16> FactoredTerms{
-      Ctx.mkMul(Ctx.mkConst(Scale), Lookup(Tables[N]))};
+  llvm::SmallVector<SymRef, 16> FactoredTerms;
+  if (!MultipleResiduals)
+    FactoredTerms.push_back(Ctx.mkMul(Ctx.mkConst(Scale), Lookup(Tables[N])));
   // Distribute the residue coefficient tables through each projected affine
   // map. Identical opaque atoms receive one complete coefficient table, so
   // shared affine coordinates are emitted once rather than once per factor.
@@ -864,7 +1098,7 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
   };
   if (!AddColumn({}, llvm::APInt(Needed, 1), Tables[N]))
     return Root;
-  PrefixConstants Prefixes{Ctx, Res, {}};
+  PrefixConstants Prefixes{Ctx, Res, {}, MultipleResiduals};
   for (size_t I = 0; I < N; ++I) {
     const auto &Table = Tables[I];
     if (std::none_of(Table.begin(), Table.end(), [](uint64_t V) { return V; }))
@@ -874,22 +1108,24 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
     if (!readFactor(Ctx, Originals[I], llvm::APInt(Required[I], 1), Projected,
                     Res, Edges, 0, &Prefixes))
       return Root;
-    if (!Res.charge(1 + 4 * Projected.Terms.size(),
-                    (1 + 4 * Projected.Terms.size()) * NodeBytes))
-      return Root;
-    llvm::SmallVector<SymRef, 16> Addends{
-        Ctx.mkConst(Projected.Offset.sextOrTrunc(Width))};
-    for (const auto &[Key, C] : Projected.Terms) {
-      auto Value = EmitAtom(Key);
-      if (!Value)
+    if (!MultipleResiduals) {
+      if (!Res.charge(1 + 4 * Projected.Terms.size(),
+                      (1 + 4 * Projected.Terms.size()) * NodeBytes))
         return Root;
-      Addends.push_back(Ctx.mkMul(Ctx.mkConst(C.sextOrTrunc(Width)), Value));
+      llvm::SmallVector<SymRef, 16> Addends{
+          Ctx.mkConst(Projected.Offset.sextOrTrunc(Width))};
+      for (const auto &[Key, C] : Projected.Terms) {
+        auto Value = EmitAtom(Key);
+        if (!Value)
+          return Root;
+        Addends.push_back(Ctx.mkMul(Ctx.mkConst(C.sextOrTrunc(Width)), Value));
+      }
+      auto Value = Ctx.mkAdd(Addends);
+      if (readingScore(Ctx, Originals[I]) < readingScore(Ctx, Value))
+        Value = Originals[I];
+      FactoredTerms.push_back(
+          Ctx.mkMul({Ctx.mkConst(Scale), Lookup(Table), Value}));
     }
-    auto Value = Ctx.mkAdd(Addends);
-    if (readingScore(Ctx, Originals[I]) < readingScore(Ctx, Value))
-      Value = Originals[I];
-    FactoredTerms.push_back(
-        Ctx.mkMul({Ctx.mkConst(Scale), Lookup(Table), Value}));
     // Eliminate the pivot coordinate in favor of Word. Its low Bits bits
     // equal X in this row, so higher coefficient bits can move exactly into
     // the row's constant. Other coordinates retain their complete differences.
@@ -923,9 +1159,12 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
       if (!C.isZero() && !AddColumn(Key, C, Table))
         return Root;
   }
-  auto Factored = Ctx.mkAdd(FactoredTerms);
-  auto Best =
-      readingScore(Ctx, Factored) < readingScore(Ctx, Root) ? Factored : Root;
+  auto Best = Root;
+  if (!MultipleResiduals) {
+    auto Factored = Ctx.mkAdd(FactoredTerms);
+    if (readingScore(Ctx, Factored) < readingScore(Ctx, Root))
+      Best = Factored;
+  }
   // An atom with K known low bits equals V + 2^K*Q. Reduce its
   // coefficients modulo 2^(Needed-K), retaining the discarded part times V
   // in the constant column. In particular, cofactor tables multiplying a
@@ -946,6 +1185,79 @@ SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
           (Constant[X] + (Table[X] - Reduced) * Known.Value) & ResultMask;
       Table[X] = Reduced;
     }
+  }
+  if (MultipleResiduals) {
+    // Several retained factors often have the same complete coefficient
+    // table. Factor that table once before emitting their sum, avoiding both
+    // repeated lookups and a quadratic search for disjoint supports.
+    using Groups = std::map<std::vector<uint64_t>, std::vector<const Atom *>>;
+    Groups EqualTables;
+    for (const auto &[Key, Table] : Columns) {
+      if (!Res.charge(Count * (1 + std::bit_width(EqualTables.size())),
+                      sizeof(const Atom *)))
+        return Best;
+      if (std::none_of(Table.begin(), Table.end(),
+                       [](uint64_t V) { return V; }))
+        continue;
+      auto It = EqualTables.find(Table);
+      if (It == EqualTables.end()) {
+        if (!Res.charge(Count, sizeof(Groups::value_type) + 4 * sizeof(void *) +
+                                   Count * sizeof(uint64_t)))
+          return Best;
+        It = EqualTables.emplace(Table, std::vector<const Atom *>{}).first;
+      }
+      It->second.push_back(&Key);
+    }
+    if (!Res.charge(EqualTables.size() * Count * (2 * Needed + 32),
+                    EqualTables.size() * Count *
+                        (sizeof(uint64_t) + 32 * NodeBytes)))
+      return Best;
+    llvm::SmallVector<SymRef, 16> Summands;
+    for (const auto &[Table, Keys] : EqualTables) {
+      llvm::SmallVector<SymRef, 16> Values;
+      for (const auto *Key : Keys) {
+        auto Value = EmitAtom(*Key);
+        if (!Value)
+          return Best;
+        Values.push_back(Value);
+      }
+      Summands.push_back(Ctx.mkMul(Lookup(Table), Ctx.mkAdd(Values)));
+    }
+    bool EvenZero = true, OddZero = true;
+    for (const auto &[Key, Table] : Columns) {
+      (void)Key;
+      if (!Res.charge(Count))
+        return Best;
+      for (size_t X = 0; X < Count; ++X) {
+        EvenZero &= (X & 1) || !Table[X];
+        OddZero &= !(X & 1) || !Table[X];
+      }
+    }
+    auto Sum = Summands.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(Summands);
+    auto Unconditional = Ctx.mkMul(Ctx.mkConst(Scale), Sum);
+    if (EvenZero != OddZero) {
+      auto Selector = Ctx.mkAnd(Word, Ctx.mkConst(Width, 1));
+      if (OddZero)
+        Selector = Ctx.mkXor(Selector, Ctx.mkConst(Width, 1));
+      Sum = Ctx.mkMul(Selector, Sum);
+    }
+    auto Result = Ctx.mkMul(Ctx.mkConst(Scale), Sum);
+
+    auto Reduced = foldResidueDecisions(
+        Ctx, Result, Res.Budget, Res.Storage,
+        Needed > limits::kMaxUnconditionedResidueDecisionBits,
+        Res.optionalRemaining(), Res.StorageLimited);
+
+    if (Reduced != Result &&
+        readingScore(Ctx, Reduced) < readingScore(Ctx, Root)) {
+      DecisionResult = Reduced;
+      return Reduced;
+    }
+    if (readingScore(Ctx, Unconditional) < readingScore(Ctx, Best)) {
+      DecisionResult = Unconditional;
+      return Unconditional;
+    }
+    return Best;
   }
   // Column combination may split factors into more table-bearing atoms.
   // Account for both candidate forms and their score walks before emission.
@@ -1418,6 +1730,50 @@ SymRef synthesizeResidueTable(SymContext &Ctx, SymRef Root,
 
 } // namespace
 
+void recordResidueReading(SymContext &Ctx, size_t First, WorkBudget &Budget,
+                          size_t &Storage) {
+  const size_t Bytes =
+      2 * sizeof(std::pair<uint32_t, uint32_t>) +
+      (Budget.Residues ? 0 : sizeof(ResidueMemo) + 2 * sizeof(void *));
+  if (Budget.MemoOwner != &Ctx || !Budget.MemoCapacity ||
+      First >= Ctx.numNodes() || Ctx.numNodes() > UINT32_MAX ||
+      Bytes > Storage || !Budget.canConsume(1) ||
+      (Budget.Residues &&
+       Budget.Residues->Generated.size() >= Budget.MemoCapacity))
+    return;
+  Budget.consume();
+  Storage -= Bytes;
+  if (!Budget.Residues)
+    Budget.Residues = std::make_shared<ResidueMemo>();
+  Budget.Residues->Generated.emplace_back(uint32_t(First),
+                                          uint32_t(Ctx.numNodes()));
+}
+
+bool hasCompletedResidueReading(const SymContext &Ctx, SymRef Root,
+                                WorkBudget &Budget, bool GeneratedOnly) {
+  if (Budget.MemoOwner != &Ctx || !Budget.Residues)
+    return false;
+  const auto &Memo = *Budget.Residues;
+  if (Memo.Generated.empty() &&
+      (GeneratedOnly || !Budget.MultipleResidueAttempts))
+    return false;
+  const size_t Work = 1 + std::bit_width(Memo.Generated.size()) +
+                      std::bit_width(Memo.Attempts.size());
+  if (!Budget.canConsume(Work))
+    return false;
+  Budget.consume(Work);
+  auto Range = std::upper_bound(
+      Memo.Generated.begin(), Memo.Generated.end(), Root.index(),
+      [](uint32_t Index, const auto &R) { return Index < R.first; });
+  if (Range != Memo.Generated.begin() &&
+      Root.index() < std::prev(Range)->second)
+    return true;
+  if (GeneratedOnly || Ctx.op(Root) != SymOp::Mul)
+    return false;
+  const auto It = Memo.Attempts.find({Root.index(), false});
+  return It != Memo.Attempts.end() && It->second.Multiple;
+}
+
 bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root) {
   if (Ctx.op(Root) != SymOp::Mul ||
       Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
@@ -1491,9 +1847,10 @@ bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root) {
   return false;
 }
 
-SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
-                                    WorkBudget &Budget, size_t &Storage,
-                                    bool Admitted) {
+static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
+                                               WorkBudget &Budget,
+                                               size_t &Storage, bool Admitted,
+                                               bool &StorageLimited) {
   if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
       Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
       Ctx.numOperands(Root) > limits::kMaxResidueProductFactors ||
@@ -1504,6 +1861,7 @@ SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
   auto Operands = llvm::ArrayRef<SymRef>(Inputs);
   const size_t SourceWords = (size_t(Width) - 1) / 64 + 1;
   Resources Res{Budget, Storage, 1, SourceWords};
+  Res.StorageLimited = &StorageLimited;
   unsigned Needed = Width;
   if (Ctx.isConst(Operands.front())) {
     if (!Res.scalar(SourceWords))
@@ -1574,15 +1932,41 @@ SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
   };
   // Failed precision attempts share the same cumulative resource account;
   // the cache only contains completed queries keyed by their exact width.
+  bool WitnessChecked = false;
+  bool Nonzero = false;
   if (proveAtResiduePrecisions(
           Operands.size(), MaxBits, Needed, Res,
-          [&](unsigned Bits) { return Prove(Bits, Needed); }))
+          [&](unsigned Bits) {
+            if (Prove(Bits, Needed))
+              return true;
+            if (!WitnessChecked && !Res.Failed &&
+                Needed <= limits::kMaxAffineResidueTableBits) {
+              WitnessChecked = true;
+              Nonzero = hasOddProductWitness(Ctx, Operands, Res);
+            }
+            return false;
+          },
+          &Nonzero))
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
   return Root;
 }
 
-SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
-                                   WorkBudget &Budget, size_t &Storage) {
+SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
+                                    WorkBudget &Budget, size_t &Storage,
+                                    bool Admitted) {
+  if (!Admitted && !hasProjectedResidueFactors(Ctx, Root))
+    return Root;
+  return reuseResidueAttempt(Ctx, Root, Budget, Storage, true,
+                             [&](bool &Limited) {
+                               return foldProjectedProductResiduesImpl(
+                                   Ctx, Root, Budget, Storage, true, Limited);
+                             });
+}
+
+static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
+                                              WorkBudget &Budget,
+                                              size_t &Storage,
+                                              bool &StorageLimited) {
   if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
       Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
       Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
@@ -1592,6 +1976,7 @@ SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
   auto Operands = llvm::ArrayRef<SymRef>(Inputs);
   const size_t SourceWords = (size_t(Width) - 1) / 64 + 1;
   Resources Res{Budget, Storage, 1, SourceWords};
+  Res.StorageLimited = &StorageLimited;
   unsigned Needed = Width;
   if (Ctx.isConst(Operands.front())) {
     if (!Res.scalar(SourceWords))
@@ -1601,6 +1986,9 @@ SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
   }
   PrefixConstants Prefixes{Ctx, Res, {}};
   SymRef Best = Root;
+  bool DecisionAttempted = false;
+  bool DecisionRequested = false;
+  SymRef DecisionResult;
   if (Needed <= limits::kMaxAffineResidueTableBits) {
     const auto Scale = Ctx.isConst(Inputs.front())
                            ? Ctx.constValue(Inputs.front())
@@ -1623,13 +2011,39 @@ SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
       }
       if (!Complete)
         break;
-      auto Result = synthesizeResidualResidueTable(Ctx, Root, Factors, Operands,
-                                                   Scale, Bits, Needed, Res);
+      bool IncompatibleBase = false;
+      auto Result = synthesizeResidualResidueTable(
+          Ctx, Root, Factors, Operands, Scale, Bits, Needed, Res,
+          DecisionAttempted, DecisionResult, DecisionRequested,
+          IncompatibleBase);
+      if (DecisionResult)
+        return DecisionResult;
       if (Result != Root && readingScore(Ctx, Result) < readingScore(Ctx, Best))
         Best = Result;
+      // Once the retained disturbances break the common affine coordinate,
+      // stop this optional widening search. This grants no replacement;
+      // other arithmetic and child-region searches retain their allowance.
+      if (DecisionRequested && IncompatibleBase)
+        break;
     }
   }
+  if (Best == Root && DecisionRequested && !DecisionAttempted &&
+      !Budget.exhausted()) {
+    auto Exact = foldResidueDecisions(Ctx, Root, Budget, Storage, false,
+                                      Res.optionalRemaining(), &StorageLimited);
+    if (Exact != Root)
+      return Exact;
+  }
   return Best;
+}
+
+SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
+                                   WorkBudget &Budget, size_t &Storage) {
+  return reuseResidueAttempt(Ctx, Root, Budget, Storage, false,
+                             [&](bool &Limited) {
+                               return foldResidualProductResiduesImpl(
+                                   Ctx, Root, Budget, Storage, Limited);
+                             });
 }
 
 std::optional<SymRef>

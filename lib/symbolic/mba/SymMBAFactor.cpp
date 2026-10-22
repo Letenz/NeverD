@@ -191,6 +191,7 @@ static SymRef solveProductCofactorsImpl(
   std::array<SymRef, MaxTerms> Pending;
   size_t Top = 1, TermsSeen = 0, Edges = 0, Visits = 0;
   unsigned Higher = 0;
+  SymRef LastHigher;
   bool NestedSum = false;
   Pending[0] = E;
   while (Top) {
@@ -217,11 +218,16 @@ static SymRef solveProductCofactorsImpl(
     if (Factors.size() > MaxEdges - Edges)
       return E;
     Edges += Factors.size();
-    Higher += EffectiveDegree(Factors) >= MinDegree;
+    if (EffectiveDegree(Factors) >= MinDegree) {
+      ++Higher;
+      LastHigher = R;
+    }
     NestedSum |= llvm::any_of(
         Factors, [&](SymRef F) { return Ctx.op(F) == SymOp::Add; });
   }
   if (Budget.exhausted())
+    return E;
+  if (Higher == 1 && hasCompletedResidueReading(Ctx, LastHigher, Budget))
     return E;
   if (Higher < 2)
     return NestedSum ? solveNestedProductCofactors(Ctx, E, Opts, Budget, Rep)

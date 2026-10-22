@@ -995,8 +995,10 @@ namespace {
 // Read a small linear tail separately from a large product frontier. Those
 // summands remain additive even when the nonlinear terms use the same inputs.
 // This is a decomposition of the sum, not an independence assumption.
-SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
-                          WorkBudget &Budget, SolveReport &Rep) {
+SymRef simplifyLinearTail(
+    SymContext &Ctx, SymRef Root, const MBAOptions &Opts, WorkBudget &Budget,
+    SolveReport &Rep,
+    size_t MinDegree = detail::limits::kMinLinearTailProductDegree) {
   if (Ctx.op(Root) != SymOp::Add ||
       Ctx.numOperands(Root) > detail::limits::kMaxLinearTailTerms ||
       Budget.exhausted())
@@ -1014,7 +1016,7 @@ SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
     if (Ctx.op(Body) == SymOp::Mul) {
       Higher +=
           Ctx.numOperands(Body) - unsigned(Ctx.isConst(Ctx.operand(Body, 0))) >=
-          detail::limits::kMinLinearTailProductDegree;
+          MinDegree;
     } else {
       const size_t Cost = Ctx.readabilityCost(Body);
       if (Cost > detail::limits::kMaxLinearTailNodes - Nodes)
@@ -1357,7 +1359,21 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
   // the normal walk still simplifies their children and any remaining terms.
   SolveReport WholeRep;
   size_t ValuationStorage = Opts.MaxTableBytes;
+  const size_t ResidueAttempts = Budget.MultipleResidueAttempts;
   SymRef Prepared = foldProductValuations(Ctx, E, Budget, ValuationStorage);
+  if (Budget.MultipleResidueAttempts != ResidueAttempts &&
+      !Budget.exhausted()) {
+    // Retain the cheap linear tail before walking a newly synthesized product
+    // reading. Its generated bit selectors may no longer expose the original
+    // high-degree boundary used to recognize that independent tail.
+    auto Tail = simplifyLinearTail(Ctx, E, Opts, Budget, WholeRep,
+                                   detail::limits::kMinProductCofactorDegree);
+    if (Tail != E) {
+      Tail = foldProductValuations(Ctx, Tail, Budget, ValuationStorage);
+      if (readingScore(Ctx, Tail) < readingScore(Ctx, Prepared))
+        Prepared = Tail;
+    }
+  }
   SymRef WalkRoot = solveWeightedMasks(Ctx, Prepared, Opts, Budget, WholeRep);
   bool ProductCofactors = false;
   if (WalkRoot == Prepared) {
@@ -1524,12 +1540,26 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
     }
 
     RebuiltInput = Rebuilt;
+    if (hasCompletedResidueReading(Ctx, R, Budget, true)) {
+      // These nodes were just emitted from an exact observed-word proof.
+      // Child replacements are already propagated by the canonical builder;
+      // avoid reprojecting every generated bit into another extraction tree.
+      Remember(Index, Rebuilt, false);
+      continue;
+    }
     Rebuilt = foldObservedWindow(Ctx, Rebuilt, Budget, RefinementStorage);
     Rebuilt = foldKnownBits(Ctx, Rebuilt, Known, Budget, RefinementStorage);
     Rebuilt = foldConditionalControls(Ctx, Rebuilt, Budget, RefinementStorage);
     PreservedChildren &= Rebuilt == RebuiltInput;
     if (!canMeasureAtRoot(Ctx, Rebuilt)) {
       Solved[Index] = Rebuilt;
+      continue;
+    }
+    if (Rebuilt == R && hasCompletedResidueReading(Ctx, R, Budget)) {
+      // The exact low-word emitter already selected this reading. Keep
+      // original opaque inputs eligible for normal analysis and propagate
+      // child rewrites without expanding the generated Boolean nodes again.
+      Remember(Index, Rebuilt, false);
       continue;
     }
 

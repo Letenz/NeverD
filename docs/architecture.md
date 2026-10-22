@@ -1493,10 +1493,16 @@ Nonzero residue branches may keep an exact opaque factor. Every factor's
 complete coefficient map must first agree with the common modular base. In
 each base residue, the known low values give conservative trailing-zero bounds
 for all cofactors. A factor becomes a constant only when those bounds hide
-all of its unobserved bits; at most one remaining factor is retained. Its
-coefficient table can use a narrower proved reading without assuming the
-factor's upper bits are zero. The emitter compares retained factors with
-combined coefficient tables for shared atoms. Known low bits also reduce an
+all of its unobserved bits. Several remaining factors can be retained when
+an independent valuation bound proves that every product of two or more
+unobserved remainders vanishes. Prefix and suffix products build their exact
+linear coefficients without division, including zero and noninvertible row
+values. The constant table corrects the repeated constant product. If any
+cross term remains observable, the whole row is refused. Each coefficient
+table can use a narrower proved reading without assuming a factor's upper
+bits are zero. Equal coefficient tables share one emitted lookup. The emitter
+compares retained factors with combined coefficient tables for shared atoms.
+Known low bits also reduce an
 atom's coefficient precision, with the discarded coefficient times its known
 value retained in the constant table. Disjoint residue branches can share
 arithmetic and bitwise structure while selecting their differing literals;
@@ -1506,6 +1512,20 @@ once a full common base is proved, an unprofitable table leaves the remaining
 allowance for polynomial recovery instead of starting another residue search.
 The residual search shares the remaining work/storage allowance and accepts
 only a smaller completed result.
+For multiple retained factors, bounded Boolean decision graphs can prove the
+entire observed word directly or reduce the exact linearized reading. The
+graphs use complemented edges, shared word operations and known zero bits;
+unsupported operations remain exact opaque words. A shared odd branch is
+isolated only when the even branch is proved zero, and its selector is restored
+before emission. Sparse Boolean polynomials are derived from complete decision
+graphs and factored before emission, avoiding exponential printed expansion.
+Optional refinement retains the last completed candidate. Completed attempts
+are request-local; storage refusals retry when a larger allowance is available.
+The deep walk keeps original opaque inputs and changed original products
+eligible. Their rewrites propagate through the canonical builder without
+repeated analysis of the emitted reading. Independent linear tails
+finish before walking a generated product reading. A concrete odd-input
+witness may reject further zero-proof attempts but never authorizes a rewrite.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.

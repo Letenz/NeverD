@@ -54,5 +54,20 @@ class WordOracleTests(unittest.TestCase):
                     self.equivalent(expression, "x+y+z+w", width)
 
 
+    def test_multiple_residual_identities_and_nonzero_controls(self):
+        for width in (8, 16, 32, 64):
+            rows = bench.multiple_residual_corpus(width, 128)
+            self.assertEqual(rows, bench.multiple_residual_corpus(width, 128))
+            for block in range(7):
+                for flavor in (0, 2, 4, 6):
+                    scale = 3 << (width - 3)
+                    tail = "*(1+4*y)" if block == 0 and flavor in (0, 4) else ""
+                    self.equivalent(rows[16*block+flavor],
+                                    f"x+y+z+w+{scale}*(x&1){tail}", width)
+            for expression in rows[112:]:
+                with self.assertRaises(AssertionError):
+                    self.equivalent(expression, "x+y+z+w", width)
+
+
 if __name__ == "__main__":
     unittest.main()
