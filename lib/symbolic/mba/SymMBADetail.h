@@ -280,6 +280,7 @@ struct ArithmeticMemo;
 struct RegionMemo;
 struct AbstractionMemo;
 struct ParityMemo;
+struct ResidueMemo;
 
 class WorkBudget {
 public:
@@ -320,6 +321,11 @@ public:
   std::shared_ptr<RegionMemo> Regions;
   std::shared_ptr<AbstractionMemo> Abstractions;
   std::shared_ptr<ParityMemo> Parities;
+  // Optional search attempts, including declines. A declined attempt grants
+  // no equality; it only avoids repeating the same search under fewer
+  // resources.
+  std::shared_ptr<ResidueMemo> Residues;
+  size_t MultipleResidueAttempts = 0;
   size_t IncompleteAbstractions = 0;
 
 private:
@@ -636,6 +642,20 @@ SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
 /// the cheaper full-affine and projected-zero paths have declined.
 SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
                                    WorkBudget &Budget, size_t &Storage);
+
+/// Complete bounded bit decisions over a product's observed low word.
+SymRef foldResidueDecisions(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                            size_t &Storage, bool OddProductOnly = false,
+                            size_t MaxWork = std::numeric_limits<size_t>::max(),
+                            bool *StorageLimited = nullptr);
+
+/// Avoid rediscovering an emitted exact low-word reading. Original opaque
+/// inputs still participate in the deep walk. The canonical builder propagates
+/// their rewrites; changed original products remain eligible for analysis.
+void recordResidueReading(SymContext &Ctx, size_t First, WorkBudget &Budget,
+                          size_t &Storage);
+bool hasCompletedResidueReading(const SymContext &Ctx, SymRef Root,
+                                WorkBudget &Budget, bool GeneratedOnly = false);
 
 /// Only the low product bit survives a highest-bit scale.
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,

@@ -312,7 +312,7 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         set_tests_properties(NeverDWorkerCLIDataPresentation PROPERTIES TIMEOUT 180)
         add_test(NAME NeverDWorkerComparison
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/comparison_test.py"
-            $<TARGET_FILE:neverd-worker> --neverd $<TARGET_FILE:neverd>
+            $<TARGET_FILE:neverd-worker> --neverd "${_neverd_worker_test_cli}"
             --cc "${_neverd_worker_source_cc}")
         set_tests_properties(NeverDWorkerComparison PROPERTIES TIMEOUT 120 LABELS "NeverDBinaryDiff")
         add_test(NAME NeverDWorkerCLIInstructionFlow
