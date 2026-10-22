@@ -699,6 +699,19 @@ for equality before attributing a speed difference to the allocator. Use
 Decode-only results do not measure the allocation-heavy IR stages; an allocator
 change does not guarantee an improvement for every workload.
 
+The mimalloc worker collects free pages after a request-free interval matching
+its configured purge delay. Check full source output after idle collection,
+plus allocator, transport and source-cache regressions. New requests must wake
+the delay immediately, including when `MIMALLOC_PURGE_DELAY` is very large.
+`NeverDWorkerIdleMemory` checks negative, zero, short and maximum C-long delays
+through real worker requests and complete cached source reads across idle waits.
+A negative delay disables this collection. A standalone worker built with
+`NEVERD_WORKER_MIMALLOC=OFF` must still build and serve the same protocol.
+Record current RSS/PSS at readiness and after idling separately from the process
+high-water RSS: returning idle pages can lower current use while preserving an
+earlier peak. Match worker executables, engine inputs, thread counts and paging
+options when isolating engine memory changes.
+
 
 ## Legacy GS recovery tests
 

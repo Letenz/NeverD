@@ -3,6 +3,11 @@
 #include "ResourceLimits.h"
 #include "WebEngine.h"
 
+#ifdef NEVERD_WORKER_HAS_MIMALLOC
+#include <mimalloc.h>
+#endif
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -318,6 +323,33 @@ Json hello() {
 constexpr auto IdleGracePeriod = std::chrono::milliseconds(
     ::neverd::limits::worker::kMainIdleGracePeriodMilliseconds);
 
+#ifdef NEVERD_WORKER_HAS_MIMALLOC
+void collectPagesAfterIdle(State &state, std::unique_lock<std::mutex> &lock) {
+  const long delay = mi_option_get(mi_option_purge_delay);
+  if (delay < 0)
+    return;
+  using Clock = std::chrono::steady_clock;
+  const auto now = Clock::now();
+  const auto maximumDelay =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          Clock::duration::max());
+  const auto duration = std::chrono::duration_cast<Clock::duration>(
+      std::min(std::chrono::milliseconds(delay), maximumDelay));
+  const auto deadline =
+      now.time_since_epoch() > Clock::duration::max() - duration
+          ? Clock::time_point::max()
+          : now + duration;
+  if (!state.changed.wait_until(lock, deadline, [&] {
+        return state.stopping || !state.queue.empty();
+      })) {
+    // Free pages belong to this process; every live SDK allocation stays.
+    lock.unlock();
+    mi_collect(true);
+    lock.lock();
+  }
+}
+#endif
+
 void executeLoop(State &state, Transport &transport) {
   try {
     Engine engine;
@@ -366,6 +398,10 @@ void executeLoop(State &state, Transport &transport) {
                     ::neverd::limits::worker::kMainExecuteLoopMilliseconds),
                 [&] { return state.stopping || !state.queue.empty(); });
         }
+#ifdef NEVERD_WORKER_HAS_MIMALLOC
+        if (!state.stopping && state.queue.empty())
+          collectPagesAfterIdle(state, lock);
+#endif
         state.changed.wait(
             lock, [&] { return state.stopping || !state.queue.empty(); });
         if (state.stopping && state.queue.empty())
