@@ -29,6 +29,7 @@ public:
   bool cancellable() const { return !Cancellable.isEmpty(); }
   bool cancelRequested() const { return CancelRequested; }
   const QJsonObject &summary() const { return Summary; }
+  QString operationMessage() const { return OperationMessage; }
   QString revision() const { return Summary["comparison_revision"].toString(); }
   void start(const QJsonObject &Primary, const QJsonObject &Secondary,
              const QJsonObject &Options = {}, const QString &Saved = {});
@@ -52,6 +53,7 @@ private:
   EngineClient Client;
   QHash<QString, Pending> Requests;
   QJsonObject Summary;
+  QString OperationMessage;
   QStringList Cancellable, CancellableOperations;
   bool Ready = false, Busy = false, CancelRequested = false;
   void receive(const QJsonObject &Message);

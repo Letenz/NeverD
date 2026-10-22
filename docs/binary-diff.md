@@ -633,15 +633,27 @@ The standard worker `cancel` operation acknowledges the request first. Only the
 terminal comparison reply reports computation stopped and whether a partial
 result was retained. The worker advertises `comparison_cancellable_operations`;
 the GUI uses that list for queued/running analysis requests and Cancel state.
-Native discovery, decoding, feature extraction and delta measurement cooperate
-with cancellation. Discovery checks its metadata, architecture scan, verification
+Input loading, native discovery, decoding, feature extraction and delta
+measurement cooperate with cancellation. `neverd_session_load_cancellable`
+returns 1 for a completed load, 0 for failure and -2 for an observed stop before
+publication. Stopped preparation preserves the previous session's image,
+analysis and edits. Worker replacement during either input's loading preserves
+the old comparison and its revision, without publishing a new partial result.
+The GUI displays readable per-side loading stages, formats byte counts in the
+user's locale, keeps Cancel pending until the terminal acknowledgement and
+allows another attempt. A stopped replacement leaves the old review available.
+Native byte hashing and copying check bounded batches without capping file size;
+format parsing, load-time scans and PDB progress share the loading control. Discovery checks its metadata, architecture scan, verification
 and overlap walks, joins its workers and publishes no partial candidate inventory.
 Stopped extraction reports `stopped_phase:"discovery"` or `"decode"`; retry starts
 fresh discovery, and closing a session stops its owned discovery job. The additive
 `neverd_session_discover_functions_cancellable` returns -2 for cancellation,
 separately from -1 for failure and nonnegative completed function counts.
-Input loading, indivisible metadata helpers, sorting and allocation can still
-delay a stop; cancellation remains cooperative rather than a hard deadline.
+File I/O, allocations, individual metadata helpers and sorting can still delay
+a stop. Cancellation remains cooperative, with no hard deadline. Session
+publication and sidecar restoration after final preparation finish normally if
+a stop arrives after the final checkpoint; old engines lacking the additive load
+API finish loading before observing a comparison stop.
 
 ## Current boundaries and verification
 

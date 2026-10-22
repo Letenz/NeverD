@@ -383,6 +383,85 @@ private slots:
     delete Dialog;
     QCOMPARE(Failure.count(), 0);
   }
+  void cancellingInputLoadingKeepsThePreviousComparison() {
+    const auto Large = Directory.filePath("loading-large.bin");
+    QFile Sparse(Large);
+    QVERIFY(Sparse.open(QIODevice::WriteOnly));
+    QVERIFY(Sparse.resize(64 * 1024 * 1024));
+    Sparse.close();
+    const auto Small = Directory.filePath("loading-small.bin");
+    QVERIFY(write(Small, QByteArray::fromHex("b807000000c3")));
+    ComparisonDialog Dialog(TEST_COMPARISON_WORKER);
+    Dialog.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Dialog.session().ready(), Timeout);
+    QSignalSpy Failures(&Dialog.session(), &ComparisonSession::failed);
+    auto *Primary = Dialog.findChild<QLineEdit *>("comparisonPrimary");
+    auto *Secondary = Dialog.findChild<QLineEdit *>("comparisonSecondary");
+    for (const char *Name : {"primaryLoader", "secondaryLoader"})
+      Dialog.findChild<QComboBox *>(Name)->setCurrentIndex(1);
+    auto *Start = Dialog.findChild<QPushButton *>("comparisonStart");
+    auto *Cancel = Dialog.findChild<QPushButton *>("comparisonCancel");
+    auto *Status = Dialog.findChild<QLabel *>("comparisonStatus");
+    for (const bool Retain : {false, true}) {
+      const auto Before = Dialog.session().summary();
+      QCOMPARE(!Before.isEmpty(), Retain);
+      Primary->setText(Large);
+      Secondary->setText(Small);
+      bool Clicked = false, StillRunning = false, Enabled = false;
+      QString StageText;
+      const auto Connection = connect(
+          &Dialog.session(), &ComparisonSession::progress, &Dialog,
+          [&](const auto &P) {
+            if (Clicked || P["phase"] != QJsonValue("primary:load:hash") ||
+                P["done"].toDouble() <= 0)
+              return;
+            Clicked = true;
+            StageText = Status->text();
+            Enabled = Cancel->isEnabled();
+            QTest::mouseClick(Cancel, Qt::LeftButton);
+            StillRunning = Dialog.session().busy();
+          });
+      QTest::mouseClick(Start, Qt::LeftButton);
+      QTRY_VERIFY_WITH_TIMEOUT(Clicked && !Dialog.session().busy(), Timeout);
+      disconnect(Connection);
+      QVERIFY(Enabled);
+      QVERIFY(StillRunning);
+      QVERIFY(StageText.contains("Checking file identity"));
+      QVERIFY(!StageText.contains("primary:load"));
+      QCOMPARE(Dialog.session().summary(), Before);
+      QVERIFY(Status->text().contains("Loading stopped"));
+      QVERIFY(Status->text().contains(Retain ? "previous comparison"
+                                             : "try again"));
+      QVERIFY(Start->isEnabled());
+      QVERIFY(!Cancel->isEnabled());
+      QCOMPARE(Failures.count(), 0);
+      const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+      if (Retain && !Captures.isEmpty()) {
+        QDir().mkpath(Captures);
+        QVERIFY(Dialog.grab().save(Captures + "/loading-stopped-retained.png"));
+      }
+      // The same UI can start again, clearing the stopped state on completion.
+      Primary->setText(Small);
+      QTest::mouseClick(Start, Qt::LeftButton);
+      QTRY_VERIFY_WITH_TIMEOUT(!Dialog.session().busy(), Timeout);
+      QCOMPARE(Dialog.session().summary()["state"].toString(),
+               QString("complete"));
+      QVERIFY(Dialog.session().operationMessage().isEmpty());
+      QCOMPARE(Failures.count(), 0);
+    }
+    // A failed replacement has the same retention guarantee and its reason
+    // remains visible after the request bookkeeping emits another update.
+    const auto BeforeFailure = Dialog.session().summary();
+    Primary->setText(Directory.filePath("missing-input.bin"));
+    QTest::mouseClick(Start, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Dialog.session().busy(), Timeout);
+    QCOMPARE(Failures.count(), 1);
+    QCOMPARE(Dialog.session().summary(), BeforeFailure);
+    QVERIFY(Status->text().contains("Could not replace"));
+    QVERIFY(Status->text().contains("previous comparison"));
+    Dialog.close();
+  }
+
   void cancelButtonWaitsForActualStop() {
     const auto Path = Directory.filePath("large.bin");
     QVERIFY(write(Path, QByteArray(8 * 1024 * 1024, char(0x90)) + char(0xc3)));

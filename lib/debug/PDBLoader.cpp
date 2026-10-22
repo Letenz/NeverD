@@ -1955,6 +1955,8 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
 
         Progress.report("debug", 0, PubCount, "pdb publics");
         for (uint32_t I = 0; I < PubCount; ++I) {
+          if (I % limits::debug::kPDBLoadPublicProgressRecords == 0)
+            Progress.check();
           const uint32_t Off = llvm::support::endian::read32le(
               AddrBytes.data() + I * sizeof(uint32_t));
           pdb_loader_detail::ParsedPublicSym32 Pub;
@@ -1972,7 +1974,8 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
             DataNames.observe(VA, Pub.Name);
           }
           const uint32_t Done = I + 1;
-          if (Done == PubCount || (Done % 4096u) == 0)
+          if (Done == PubCount ||
+              (Done % limits::debug::kPDBLoadPublicProgressRecords) == 0)
             Progress.report("debug", Done, PubCount, "pdb publics");
         }
 
@@ -2096,10 +2099,12 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   } else {
     parallelForEach(ModuleCount, [&](auto Claim, size_t Total) {
       for (size_t Index = Claim(); Index < Total; Index = Claim()) {
+        Progress.check();
         ScanModule(static_cast<uint32_t>(Index));
         const uint32_t Done =
             Finished.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (Done == ModuleCount || (Done % 16) == 0) {
+        if (Done == ModuleCount ||
+            (Done % limits::debug::kPDBLoadModuleProgressRecords) == 0) {
           std::lock_guard<std::mutex> Guard(ProgressMutex);
           Progress.report("debug", Done, ModuleCount, "pdb modules");
         }
