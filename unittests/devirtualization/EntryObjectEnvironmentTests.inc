@@ -355,6 +355,41 @@ TEST_F(PEFixedImageTest, EntryObjectNodeLimitsNeverPublishPartialRecovery) {
   }
 }
 
+TEST_F(PEFixedImageTest, EntryObjectRootsMayEqualTheFrameRoot) {
+  const uint8_t Code[] = {
+      0x48, 0x39, 0xe1,             // cmp rcx,rsp
+      0x75, 6,                      // jne different
+      0xb8, 1,    0,    0, 0, 0xc3, // mov eax,1; ret
+      0xb8, 2,    0,    0, 0, 0xc3, // different: mov eax,2; ret
+  };
+  auto Loaded = load(machineExitFixture(Code));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  auto O = entryObjectOptions();
+  // Equal roots still describe adjacent, disjoint complete ranges.
+  O.EntryFrameExcludedObjects[0].Begin = 8;
+  O.EntryFrameExcludedObjects[0].End = 16;
+  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Object : {0x1000U, 0x2000U}) {
+    SCOPED_TRACE(Object);
+    auto Actual = machineExitState(0x1000);
+    Actual.write(NdVar::reg(x86reg::RCX, 8), Object);
+    auto Expected = Actual;
+    Expected.write(NdVar::reg(x86reg::RAX, 8), Object == 0x1000 ? 1 : 2);
+    for (uint64_t Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                          x86reg::SF, x86reg::OF})
+      Expected.write(NdVar::reg(Flag, 1),
+                     Flag == x86reg::PF ||
+                         (Flag == x86reg::ZF && Object == 0x1000));
+    ASSERT_TRUE(Actual.run(R, O)) << Actual.Diagnostic;
+    std::erase_if(Actual.Registers, [](const auto &V) {
+      return V.first.first == VnodeSpace::TEMP;
+    });
+    EXPECT_EQ(Actual.Registers, Expected.Registers);
+    EXPECT_EQ(Actual.Memory, Expected.Memory);
+  }
+}
+
 TEST_F(PEFixedImageTest, EntryObjectsRemainARawOnlyDomainWhenUnused) {
   auto Loaded = load(machineExitFixture({0xc3}));
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
