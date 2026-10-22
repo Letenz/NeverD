@@ -356,7 +356,8 @@ TEST_F(PEFixedImageTest, MachineExitLookupUsesBoundedIndexedWork) {
     ASSERT_TRUE(Actual.run(R, O)) << Actual.Diagnostic;
     expectMachineExitState(Actual, Expected, 0x12340);
     O.MaxOperations = R.EvaluatedOperations;
-    EXPECT_TRUE(specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
+    EXPECT_TRUE(
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
     for (uint64_t Limit : {uint64_t{1}, R.EvaluatedOperations - 1}) {
       O.MaxOperations = Limit;
       const auto Short = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);

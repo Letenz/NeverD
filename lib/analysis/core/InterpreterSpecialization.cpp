@@ -4430,15 +4430,14 @@ SpecializationResult Specializer::run() {
     auto Index = (*Architecture)->prepareMachineExitLookup(Options, Work);
     Result.EvaluatedOperations = Options.MaxOperations - Work;
     if (!Index) {
-      llvm::handleAllErrors(std::move(Index.takeError()),
-                            [&](const llvm::ErrorInfoBase &Error) {
-                              fail(Error.convertToErrorCode() ==
-                                           std::make_error_code(
-                                               std::errc::value_too_large)
-                                       ? SpecializationStatus::BudgetExceeded
-                                       : SpecializationStatus::InvalidInput,
-                                   Error.message());
-                            });
+      llvm::handleAllErrors(
+          std::move(Index.takeError()), [&](const llvm::ErrorInfoBase &Error) {
+            fail(Error.convertToErrorCode() ==
+                         std::make_error_code(std::errc::value_too_large)
+                     ? SpecializationStatus::BudgetExceeded
+                     : SpecializationStatus::InvalidInput,
+                 Error.message());
+          });
       return std::move(Result);
     }
     Refinement.MachineExits = std::move(*Index);
