@@ -356,7 +356,8 @@ TEST_F(PEFixedImageTest, MachineExitLookupUsesBoundedIndexedWork) {
     ASSERT_TRUE(Actual.run(R, O)) << Actual.Diagnostic;
     expectMachineExitState(Actual, Expected, 0x12340);
     O.MaxOperations = R.EvaluatedOperations;
-    EXPECT_TRUE(specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
+    EXPECT_TRUE(
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
     for (uint64_t Limit : {uint64_t{1}, R.EvaluatedOperations - 1}) {
       O.MaxOperations = Limit;
       const auto Short = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
@@ -368,6 +369,45 @@ TEST_F(PEFixedImageTest, MachineExitLookupUsesBoundedIndexedWork) {
       EXPECT_FALSE(Short.RawEnvironment);
     }
   }
+}
+
+TEST_F(PEFixedImageTest, MachineTrapExitEndsRegionAtDeclaredTrap) {
+  // NOP; NOP; INT3. A declared Trap exit ends the region at the trap: the
+  // trap effect is retained and no continuation is modeled.
+  auto Loaded = load(machineExitFixture({0x90, 0x90, 0xcc}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  auto O = machineExitOptions(Base + 0x1002, MachineExitKind::Trap);
+  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  ASSERT_TRUE(R.RawEnvironment);
+  ASSERT_EQ(R.ExternalExits.size(), 1u);
+  ASSERT_TRUE(R.ExternalExits.front().MachineExit);
+  EXPECT_EQ(R.ExternalExits.front().MachineExit->Address, Base + 0x1002);
+  EXPECT_EQ(R.ExternalExits.front().MachineExit->Kind, MachineExitKind::Trap);
+}
+
+TEST_F(PEFixedImageTest, UndeclaredTrapRemainsUnsupported) {
+  // The same trap, left undeclared, still fails closed.
+  auto Loaded = load(machineExitFixture({0x90, 0x90, 0xcc}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  SpecializationOptions O;
+  O.ExplicitMachineState = O.NormalNonfaultingExecution = O.X64CetDisabled =
+      true;
+  O.FrameBaseRegister = symbolic::SymRegisterRange{x86reg::RSP, 8};
+  O.RequireRestoredFrameAtReturn = true;
+  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
+  EXPECT_NE(R.Diagnostic.find("opaque native terminator"), std::string::npos);
+}
+
+TEST_F(PEFixedImageTest, MachineTrapExitRejectsNonTrapInstruction) {
+  // A Trap declaration on a non-trap instruction fails closed.
+  auto Loaded = load(machineExitFixture({0x90, 0x90, 0xcc}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  auto O = machineExitOptions(Base + 0x1000, MachineExitKind::Trap);
+  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  EXPECT_FALSE(R.complete());
+  EXPECT_EQ(R.Status, SpecializationStatus::InvalidInput);
 }
 
 TEST_F(PEFixedImageTest, MachineExitIntegrityBudgetsAndOrdinaryConsumers) {

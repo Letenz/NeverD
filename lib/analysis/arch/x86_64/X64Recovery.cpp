@@ -159,7 +159,8 @@ validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
     if (E.Version != 1 || E.Address == InvalidVA ||
         (E.Kind != SpecializationX64MachineExitKind::Call &&
          E.Kind != SpecializationX64MachineExitKind::Jump &&
-         E.Kind != SpecializationX64MachineExitKind::Return))
+         E.Kind != SpecializationX64MachineExitKind::Return &&
+         E.Kind != SpecializationX64MachineExitKind::Trap))
       return Invalid("invalid machine-exit declaration");
     for (size_t J = 0; J < I; ++J)
       if (Options.X64MachineExits[J].Address == E.Address)

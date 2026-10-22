@@ -578,7 +578,14 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
     return x64::runtimeFlagsIntrinsic(Op, Options.X64FlagsProfile) ||
            detail::stringTransferShape(Op) ||
            supportsRuntimeControlOperation(Op, Options) ||
-           (Options.X64CR8State && detail::taskPriorityOperation(Op));
+           (Options.X64CR8State && detail::taskPriorityOperation(Op)) ||
+           // A resumable-trap side effect (INT3/INT1) is retained verbatim as a
+           // declared Trap machine exit's final op; it has no modelled state
+           // effect. Only a declared Trap exit reaches evaluation, since an
+           // undeclared trap terminator fails the opaque-terminator gate first.
+           (NoOutput && Op.NumInputs >= 1 && Op.Inputs[0].isConst() &&
+            (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int3) ||
+             Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int1)));
   default:
     return false;
   }
@@ -2358,10 +2365,25 @@ bool Specializer::evaluate(int Id) {
             InputBlock, LowInstructionBoundaryRequirement::Required))
       return fail(SpecializationStatus::InvalidInput,
                   llvm::toString(std::move(Error)));
-    // A valid opaque terminator is unsupported semantics, not malformed
+    // Resolve a caller-declared machine exit before classifying the terminator.
+    // A declared exit ends the region at this address; a Trap kind legitimately
+    // falls on an opaque terminator (see SpecializationX64MachineExit).
+    std::optional<SpecializationExternalExit> ExternalExit;
+    uint64_t ExitWork = Options.MaxOperations - Result.EvaluatedOperations;
+    const bool LookedUp =
+        Refinement.MachineExits->lookup(Cursor.Address, ExitWork, ExternalExit);
+    Result.EvaluatedOperations = Options.MaxOperations - ExitWork;
+    if (!LookedUp)
+      return fail(SpecializationStatus::BudgetExceeded,
+                  "machine-exit lookup budget exhausted");
+    if (ExternalExit)
+      ExternalExit->Original = Instruction;
+    // An undeclared opaque terminator is unsupported semantics, not malformed
     // provider input. Recovery may refine the controlling state and prove its
-    // path unreachable; InvalidInput would incorrectly disable that retry.
-    if (Instruction.Origin.Control == LowInstructionControl::Terminator)
+    // path unreachable; InvalidInput would incorrectly disable that retry. A
+    // declared machine exit at this address ends the region instead.
+    if (Instruction.Origin.Control == LowInstructionControl::Terminator &&
+        !ExternalExit)
       return fail(SpecializationStatus::Unsupported,
                   "opaque native terminator requires exception semantics");
     const auto UsesReservedTemporary = [&](const NdVar &V) {
@@ -2380,16 +2402,6 @@ bool Specializer::evaluate(int Id) {
     const auto RuntimeRead =
         lowerRuntimeRegisterRead(Instruction, Options, ReadSample);
     std::vector<LowOp> Operations = Instruction.Ops;
-    std::optional<SpecializationExternalExit> ExternalExit;
-    uint64_t ExitWork = Options.MaxOperations - Result.EvaluatedOperations;
-    const bool LookedUp =
-        Refinement.MachineExits->lookup(Cursor.Address, ExitWork, ExternalExit);
-    Result.EvaluatedOperations = Options.MaxOperations - ExitWork;
-    if (!LookedUp)
-      return fail(SpecializationStatus::BudgetExceeded,
-                  "machine-exit lookup budget exhausted");
-    if (ExternalExit)
-      ExternalExit->Original = Instruction;
     if (Instruction.TerminalImport) {
       if (std::find(Options.X64TerminalImports.begin(),
                     Options.X64TerminalImports.end(),
@@ -3592,6 +3604,13 @@ bool Specializer::evaluate(int Id) {
         return false;
       Finished = true;
     }
+    // A trap exit retains its trap op as the region's last effect; there is no
+    // physical transfer to drive the ExternalExit finish path above, so the
+    // declared trap boundary ends the region here.
+    if (!Finished && ExternalExit && ExternalExit->MachineExit &&
+        ExternalExit->MachineExit->Kind ==
+            SpecializationX64MachineExitKind::Trap)
+      Finished = true;
     Slice.OpCount = Draft.Block.Ops.size() - Slice.FirstOp;
     Slice.ExternalExit = std::move(ExternalExit);
     Draft.Slices.push_back(std::move(Slice));
@@ -4093,6 +4112,14 @@ bool Specializer::publish() {
           Boundary.Immediate = Slice.Origin.Immediate;
         }
       }
+      if (Slice.ExternalExit && Slice.ExternalExit->MachineExit &&
+          Slice.ExternalExit->MachineExit->Kind ==
+              SpecializationX64MachineExitKind::Trap) {
+        // No transfer op set the boundary above; the retained trap op ends the
+        // region, so reflect the native terminator on the residual boundary.
+        Boundary.Control = Slice.Origin.Control;
+        Boundary.ControlFlags = Slice.Origin.ControlFlags;
+      }
       Block.InstructionBoundaries.push_back(Boundary);
       if (Slice.ExternalExit) {
         auto Exit = *Slice.ExternalExit;
@@ -4403,15 +4430,14 @@ SpecializationResult Specializer::run() {
     auto Index = (*Architecture)->prepareMachineExitLookup(Options, Work);
     Result.EvaluatedOperations = Options.MaxOperations - Work;
     if (!Index) {
-      llvm::handleAllErrors(std::move(Index.takeError()),
-                            [&](const llvm::ErrorInfoBase &Error) {
-                              fail(Error.convertToErrorCode() ==
-                                           std::make_error_code(
-                                               std::errc::value_too_large)
-                                       ? SpecializationStatus::BudgetExceeded
-                                       : SpecializationStatus::InvalidInput,
-                                   Error.message());
-                            });
+      llvm::handleAllErrors(
+          std::move(Index.takeError()), [&](const llvm::ErrorInfoBase &Error) {
+            fail(Error.convertToErrorCode() ==
+                         std::make_error_code(std::errc::value_too_large)
+                     ? SpecializationStatus::BudgetExceeded
+                     : SpecializationStatus::InvalidInput,
+                 Error.message());
+          });
       return std::move(Result);
     }
     Refinement.MachineExits = std::move(*Index);
