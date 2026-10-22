@@ -118,7 +118,8 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch) {
   } else if (Insn->bytes[0] == 0xc4 || X86.opcode[0] == 0xc4) {
     CanonicalVex3EncodingInfo Encoding;
     if (!parseCanonicalVex3EncodingInfo(Insn, X86, TargetArch, Encoding) ||
-        (Encoding.P0 & 0x1f) != 7 || Encoding.Opcode != 0xf8 ||
+        (Encoding.P0 & 0x1f) != 7 ||
+        (Encoding.Opcode != 0xf8 && Encoding.Opcode != 0xf6) ||
         (Encoding.P1 & 0xfc) != 0x78 || (Encoding.ModRM & 0xf8) != 0xc0 ||
         !validateCanonicalVex3RegisterTail(Insn, X86, Encoding, 4) ||
         X86.encoding.imm_offset != Encoding.Offset + 5 ||
@@ -130,8 +131,12 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch) {
       return std::nullopt;
     BNumber = Encoding.rmIndex();
     Immediate = readImmediate32(&Insn->bytes[Encoding.Offset + 5]);
-    Kind = Write ? X86MsrAccessKind::UwrmsrVexImmediate
-                 : X86MsrAccessKind::UrdmsrVexImmediate;
+    if (Encoding.Opcode == 0xf6)
+      Kind = Write ? X86MsrAccessKind::WrmsrnsVexImmediate
+                   : X86MsrAccessKind::RdmsrVexImmediate;
+    else
+      Kind = Write ? X86MsrAccessKind::UwrmsrVexImmediate
+                   : X86MsrAccessKind::UrdmsrVexImmediate;
   } else {
     size_t OpcodeOffset = 0;
     uint8_t SegmentPrefix = 0;
@@ -222,7 +227,9 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch) {
   }
 
   const bool Privileged = *Kind == X86MsrAccessKind::RdmsrImmediate ||
-                          *Kind == X86MsrAccessKind::WrmsrnsImmediate;
+                          *Kind == X86MsrAccessKind::WrmsrnsImmediate ||
+                          *Kind == X86MsrAccessKind::RdmsrVexImmediate ||
+                          *Kind == X86MsrAccessKind::WrmsrnsVexImmediate;
   if (Privileged) {
     if (Insn->detail->groups_count != 1 ||
         Insn->detail->groups[0] != X86_GRP_PRIVILEGE)
@@ -233,8 +240,10 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch) {
 
   switch (*Kind) {
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
     return Insn->id == X86_INS_RDMSR ? Kind : std::nullopt;
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
     return Insn->id == X86_INS_WRMSRNS ? Kind : std::nullopt;
   case X86MsrAccessKind::UrdmsrLegacyRegister:
   case X86MsrAccessKind::UrdmsrVexImmediate:

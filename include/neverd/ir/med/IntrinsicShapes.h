@@ -440,6 +440,9 @@ inline X86InvalidateIntrinsicShape x86InvalidateMedShape(const MedOp &Op) {
 }
 
 inline X86MsrAccessIntrinsicShape x86MsrAccessMedShape(const MedOp &Op) {
+  const auto IsScalar = [](const MedVar &V) {
+    return isMedIntrinsicScalarInput(V) || V.Kind == MedVar::Param;
+  };
   Arch TargetArch = Arch::Unknown;
   const auto ObserveArch = [&](const MedVar &Value) {
     if (Value.isConst() || Value.Size == 0 || Value.TheArch == Arch::Unknown)
@@ -458,18 +461,18 @@ inline X86MsrAccessIntrinsicShape x86MsrAccessMedShape(const MedOp &Op) {
       .MemoryOrdering = Op.MemoryOrdering,
       .MemoryAddressSpace = Op.MemoryAddressSpace,
       .NumInputs = Op.NumInputs,
-      .IntrinsicIdIsConst = Op.NumInputs > 0 && Op.Inputs[0].isConst(),
+      .IntrinsicIdIsConst = Op.NumInputs > 0 && Op.Inputs[0].isConst() &&
+                            Op.IntrinsicOutputs.empty(),
       .IntrinsicIdSize = Op.NumInputs > 0 ? Op.Inputs[0].Size : uint16_t{0},
       .OutputIsWritableScalar = isMedIntrinsicWritableScalar(Op.Output),
       .OutputSize = Op.Output.Size,
       .KindIsConst = Op.NumInputs > 1 && Op.Inputs[1].isConst(),
       .Kind = Op.NumInputs > 1 ? Op.Inputs[1].ConstVal : UINT64_C(0),
       .KindSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : uint16_t{0},
-      .SelectorIsScalar =
-          Op.NumInputs > 2 && isMedIntrinsicScalarInput(Op.Inputs[2]),
+      .SelectorIsScalar = Op.NumInputs > 2 && IsScalar(Op.Inputs[2]),
+      .SelectorIsConst = Op.NumInputs > 2 && Op.Inputs[2].isConst(),
       .SelectorSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : uint16_t{0},
-      .ValueIsScalar =
-          Op.NumInputs > 3 && isMedIntrinsicScalarInput(Op.Inputs[3]),
+      .ValueIsScalar = Op.NumInputs > 3 && IsScalar(Op.Inputs[3]),
       .ValueSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : uint16_t{0},
   };
 }

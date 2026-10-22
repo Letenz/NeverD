@@ -12,6 +12,7 @@
 
 #include "neverd/ir/high/HighIR.h"
 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 
@@ -28,6 +29,10 @@ std::string unsignedType(uint16_t Bytes) {
 std::string gnuConstraint(const std::string &Text) {
   if (Text == "{ax}")
     return "a";
+  if (Text == "={ax}")
+    return "=a";
+  if (Text == "{cx}")
+    return "c";
   if (Text == "{dx}")
     return "d";
   return Text;
@@ -35,7 +40,15 @@ std::string gnuConstraint(const std::string &Text) {
 
 std::string gnuText(const std::string &Text) {
   std::string Result;
-  for (char C : Text) {
+  for (size_t I = 0; I < Text.size(); ++I) {
+    if (Text.compare(I, 6, "${0:c}") == 0 ||
+        Text.compare(I, 6, "${1:c}") == 0) {
+      Result += "%c";
+      Result += Text[I + 2];
+      I += 5;
+      continue;
+    }
+    const char C = Text[I];
     if (C == '$')
       Result += '%';
     else if (C == '%')
@@ -60,7 +73,8 @@ std::string renderAsm(const X86SystemStateAsm &P,
   for (size_t I = 0; I < Outputs.size(); ++I) {
     if (I)
       Text += ", ";
-    Text += "\"" + P.OutputConstraints[I] + "\"(" + Outputs[I] + ")";
+    Text +=
+        "\"" + gnuConstraint(P.OutputConstraints[I]) + "\"(" + Outputs[I] + ")";
   }
   Text += " : ";
   for (size_t I = 0; I < Inputs.size(); ++I) {
@@ -97,6 +111,98 @@ std::string locals(const X86SystemStateAsm &P,
   return Text;
 }
 
+std::string renderMsrExpression(Arch TargetArch, const HighExpr &E,
+                                const std::vector<std::string> &Arguments) {
+  if (E.Operands.size() < 2 || E.Operands.size() > 3 ||
+      Arguments.size() != E.Operands.size())
+    throw std::invalid_argument("invalid HighC MSR argument count");
+  const auto IsScalar = [](const HighExpr *V) {
+    return V && V->Type &&
+           (V->Type->Kind == NdTypeKind::Int ||
+            V->Type->Kind == NdTypeKind::Ptr);
+  };
+  const auto IsConst = [](const HighExpr *V) {
+    return V && V->Kind == ExprKind::Const && V->Type &&
+           V->Type->Kind == NdTypeKind::Int;
+  };
+  const auto *Kind = E.Operands[0].get();
+  const auto *Selector = E.Operands[1].get();
+  const auto *Value = E.Operands.size() == 3 ? E.Operands[2].get() : nullptr;
+  const X86MsrAccessIntrinsicShape Shape = {
+      .TargetArch = TargetArch,
+      .MemoryOrdering = E.MemoryOrdering,
+      .MemoryAddressSpace = E.MemoryAddressSpace,
+      .NumInputs = static_cast<uint8_t>(1 + E.Operands.size()),
+      .IntrinsicIdIsConst = E.Kind == ExprKind::Call &&
+                            E.IntrinsicOutputs.empty() && !E.IsIndirectCall &&
+                            !E.IndirectTarget && !E.SourceCallHint &&
+                            !E.DoesNotReturn,
+      .IntrinsicIdSize = 2,
+      .OutputIsWritableScalar = IsScalar(&E),
+      .OutputSize = E.Type ? E.Type->Size : uint16_t{0},
+      .KindIsConst = IsConst(Kind),
+      .Kind = Kind ? Kind->ConstVal : 0,
+      .KindSize = Kind && Kind->Type ? Kind->Type->Size : uint16_t{0},
+      .SelectorIsScalar = IsScalar(Selector),
+      .SelectorIsConst = IsConst(Selector),
+      .SelectorSize =
+          Selector && Selector->Type ? Selector->Type->Size : uint16_t{0},
+      .ValueIsScalar = IsScalar(Value),
+      .ValueSize = Value && Value->Type ? Value->Type->Size : uint16_t{0},
+  };
+  if (TargetArch != Arch::X64 ||
+      !intrinsicX86MsrAccessShapeIsValid(E.IntrinsicId, Shape))
+    throw std::invalid_argument("invalid HighC MSR operand/output contract");
+  const auto P =
+      x86MsrAccessAsm(static_cast<X86MsrAccessKind>(Shape.Kind), TargetArch);
+  std::vector<std::string> Outputs;
+  std::string Text = "({ " + locals(*P, Outputs);
+  Text += renderAsm(*P, Outputs, {Arguments.begin() + 1, Arguments.end()});
+  if (!Outputs.empty()) {
+    Text += E.Type->Kind == NdTypeKind::Ptr ? " (void *)(uintptr_t)" : " ";
+    Text += Outputs[0] + ";";
+  }
+  return Text + " })";
+}
+
+std::string renderMsrCall(Arch TargetArch, const llvm::CallInst &Call,
+                          const llvm::InlineAsm &Asm, const std::string &Result,
+                          bool ResultLive,
+                          const std::vector<std::string> &Arguments) {
+  for (unsigned I = 0; I < static_cast<unsigned>(X86MsrAccessKind::Count);
+       ++I) {
+    const auto Kind = static_cast<X86MsrAccessKind>(I);
+    const auto P = x86MsrAccessAsm(Kind, TargetArch);
+    if (!P || P->Text != Asm.getAsmString() ||
+        P->Constraints != Asm.getConstraintString() || !Asm.hasSideEffects() ||
+        Asm.isAlignStack() || Asm.canThrow() ||
+        Asm.getDialect() != llvm::InlineAsm::AD_ATT ||
+        Asm.getFunctionType()->isVarArg() || Call.getNumOperandBundles() ||
+        Call.onlyReadsMemory() || Call.onlyWritesMemory() ||
+        Call.doesNotReturn() || Call.arg_size() != P->InputBytes.size() ||
+        Arguments.size() != Call.arg_size() || !matchesReturn(Call, *P))
+      continue;
+    bool Types = true;
+    for (size_t A = 0; A < P->InputBytes.size(); ++A)
+      Types &=
+          Call.getArgOperand(A)->getType()->isIntegerTy(8 * P->InputBytes[A]);
+    if (!Types || (x86MsrAccessHasImmediateSelector(Kind) &&
+                   !llvm::isa<llvm::ConstantInt>(Call.getArgOperand(0))))
+      continue;
+    if (P->OutputBytes.empty())
+      return renderAsm(*P, {}, Arguments) + '\n';
+    if (ResultLive) {
+      if (Result.empty())
+        throw std::invalid_argument("MSR result has no C identity");
+      return renderAsm(*P, {Result}, Arguments) + '\n';
+    }
+    std::vector<std::string> Outputs;
+    std::string Text = "{ " + locals(*P, Outputs);
+    return Text + renderAsm(*P, Outputs, Arguments) + " }\n";
+  }
+  throw std::invalid_argument("unsupported x86 MSR inline assembly contract");
+}
+
 } // namespace
 
 std::string
@@ -104,6 +210,8 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
                                const std::vector<std::string> &Arguments,
                                bool MsvcIntrinsics, bool &HasCIntrinsics) {
   const auto Id = Expression.IntrinsicId;
+  if (Id == Intrinsic::X86MsrAccess)
+    return renderMsrExpression(TargetArch, Expression, Arguments);
   const auto C = x86SystemStateContract(Id);
   X86SystemStateShape Shape;
   Shape.TargetArch = TargetArch;
@@ -163,6 +271,8 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
                          const std::string &Result, bool ResultLive,
                          const std::vector<std::string> &Arguments) {
   const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (Asm && llvm::StringRef(Asm->getAsmString()).starts_with("# x86 MSR: "))
+    return renderMsrCall(TargetArch, Call, *Asm, Result, ResultLive, Arguments);
   if (!Asm || (TargetArch != Arch::X86 && TargetArch != Arch::X64))
     return {};
   const Intrinsic Inventory[] = {

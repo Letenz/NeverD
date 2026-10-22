@@ -21,6 +21,31 @@ namespace neverd {
 
 llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
                                                 llvm::IRBuilder<> &Builder) {
+  if (Id == Intrinsic::X86MsrAccess) {
+    if (TargetArch != Arch::X64 ||
+        !intrinsicX86MsrAccessShapeIsValid(Id, x86MsrAccessMedShape(Op)))
+      llvm::report_fatal_error("invalid x86 MSR operand/output contract");
+    const auto P = x86MsrAccessAsm(
+        static_cast<X86MsrAccessKind>(Op.Inputs[1].ConstVal), TargetArch);
+    if (!P)
+      llvm::report_fatal_error("unsupported x86 MSR assembly contract");
+    std::vector<llvm::Value *> Arguments;
+    std::vector<llvm::Type *> Types;
+    for (size_t I = 0; I < P->InputBytes.size(); ++I) {
+      auto *T = sizeToType(P->InputBytes[I]);
+      auto *V = getVar(Op.Inputs[I + 2], Builder);
+      Arguments.push_back(V->getType()->isPointerTy()
+                              ? Builder.CreatePtrToInt(V, T)
+                              : Builder.CreateZExtOrTrunc(V, T));
+      Types.push_back(T);
+    }
+    auto *Result = P->OutputBytes.empty() ? Builder.getVoidTy()
+                                          : sizeToType(P->OutputBytes[0]);
+    auto *Asm = llvm::InlineAsm::get(
+        llvm::FunctionType::get(Result, Types, false), P->Text, P->Constraints,
+        /*hasSideEffects=*/true);
+    return Builder.CreateCall(Asm, Arguments);
+  }
   const auto Shape = x86SystemStateMedShape(Op, TargetArch);
   if (!x86SystemStateShapeIsValid(Id, Shape))
     llvm::report_fatal_error("invalid x86 system instruction operand contract");

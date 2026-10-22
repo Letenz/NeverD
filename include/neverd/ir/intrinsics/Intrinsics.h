@@ -68,18 +68,22 @@ enum class X86MsrAccessKind : uint8_t {
   UwrmsrEvexRegister,
   UrdmsrEvexImmediate,
   UwrmsrEvexImmediate,
+  RdmsrVexImmediate,
+  WrmsrnsVexImmediate,
   Count,
 };
 
 constexpr bool x86MsrAccessIsWrite(X86MsrAccessKind Kind) {
   switch (Kind) {
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
   case X86MsrAccessKind::UwrmsrLegacyRegister:
   case X86MsrAccessKind::UwrmsrVexImmediate:
   case X86MsrAccessKind::UwrmsrEvexRegister:
   case X86MsrAccessKind::UwrmsrEvexImmediate:
     return true;
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrLegacyRegister:
   case X86MsrAccessKind::UrdmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrEvexRegister:
@@ -93,7 +97,9 @@ constexpr bool x86MsrAccessIsWrite(X86MsrAccessKind Kind) {
 constexpr bool x86MsrAccessHasImmediateSelector(X86MsrAccessKind Kind) {
   switch (Kind) {
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
   case X86MsrAccessKind::UrdmsrVexImmediate:
   case X86MsrAccessKind::UwrmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrEvexImmediate:
@@ -592,8 +598,8 @@ intrinsicX86InvalidateShapeIsValid(Intrinsic Id,
 }
 
 /// Representation-neutral contract for explicit-operand MSR instructions.
-/// No ordinary host operation may implement this intrinsic: an authenticated
-/// architectural environment owns CPUID/XCR0/CPL, USER_MSR_CTL bitmap,
+/// Native execution retains the encoding family; the CPU owns
+/// CPUID/XCR0/CPL, USER_MSR_CTL bitmap,
 /// virtualization interception, MSR-specific validation, and exception order.
 struct X86MsrAccessIntrinsicShape {
   Arch TargetArch = Arch::Unknown;
@@ -608,6 +614,7 @@ struct X86MsrAccessIntrinsicShape {
   uint64_t Kind = 0;
   uint16_t KindSize = 0;
   bool SelectorIsScalar = false;
+  bool SelectorIsConst = false;
   uint16_t SelectorSize = 0;
   bool ValueIsScalar = false;
   uint16_t ValueSize = 0;
@@ -627,8 +634,9 @@ intrinsicX86MsrAccessShapeIsValid(Intrinsic Id,
     return false;
 
   const auto Kind = static_cast<X86MsrAccessKind>(Shape.Kind);
-  if (Shape.SelectorSize !=
-      (x86MsrAccessHasImmediateSelector(Kind) ? uint16_t{4} : uint16_t{8}))
+  if ((x86MsrAccessHasImmediateSelector(Kind) && !Shape.SelectorIsConst) ||
+      Shape.SelectorSize !=
+          (x86MsrAccessHasImmediateSelector(Kind) ? uint16_t{4} : uint16_t{8}))
     return false;
   if (x86MsrAccessIsWrite(Kind))
     return Shape.NumInputs == 4 && Shape.OutputSize == 0 &&

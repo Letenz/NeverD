@@ -5195,6 +5195,18 @@ compiler memory effects; generic acquire/release fences do not guarantee the
 barriers required by direct or non-temporal stores.
 LLVM-to-C collects ISA headers from the same intrinsic-rendering decision on
 all architectures, including x86 fence assembly rendered as `_mm_*` calls.
+Explicit-operand MSR operations retain their encoding family in `X86MsrAccess`.
+The shared shape owns selector constness/width, full-width data and read/write
+completion. The MSR plan in `X86SystemStateAsm.h` supplies exact native bytes,
+fixed RAX data/RCX selector constraints, side effects and memory ordering to all
+three output routes. Exact bytes preserve the Intel-defined URDMSR register
+roles despite an LLVM 23 assembler discrepancy, and retain APX requirements
+for EVEX forms even when operands are allocated low registers. Native hardware
+owns feature/CPL/bitmap/intercept checks; software emulation without that state
+continues to refuse the effect. LLVM-to-C admits only the complete owned
+assembly/signature/constraint/effect contract, including constant immediate
+selectors. No declaration-only helper or legacy serializing MSR substitution
+implements these forms.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.

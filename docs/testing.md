@@ -40,6 +40,21 @@ hardware fence instructions survive LLVM optimization and object generation.
 These checks do not measure concurrent bus transactions or device completion;
 their native instruction and memory-effect contracts retain those operations.
 
+`X86MsrAccessSource.*` in `NeverDX86VirtualizationSourceTests` covers all 12
+explicit MSR families, live/dead read results, both pipeline settings and
+ELF/COFF/Mach-O source output. It checks exact object bytes from repository LLVM
+and O0/O2 compilation of both C routes and LLVM IR. Linux x64 subprocesses
+compare signal and fault code with original bytes using CPL3 and out-of-range
+USER_MSR selectors. A separate controlled signal completion then verifies
+full-width read results, write values and register selectors, including dead
+results. This isolates register transport from actual MSR accessibility.
+Recovered register arguments, immediate constness, fixed
+register constraints, wrong modes and forged assembly/effects have separate
+checks. These tests do not qualify successful CPL0 or USER_MSR-enabled accesses.
+The APX existing-GPR suite checks the same LowIR shape and emulator refusal;
+the Capstone `x86_apx_evex_msr` unit checks decode, access, groups and reserved
+fields. Operand-free WRMSRNS remains outside this explicit-operand matrix.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.

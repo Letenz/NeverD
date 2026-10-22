@@ -2014,7 +2014,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
            exprStr(*E.Operands[0]) + "); __asm__ volatile(\"" + Op +
            "\" : \"+r\"(" + Temp + ") :: \"memory\"); " + Result + "; })";
   }
-  if (isX86SystemStateIntrinsic(E.IntrinsicId)) {
+  if (isX86SystemStateIntrinsic(E.IntrinsicId) ||
+      E.IntrinsicId == Intrinsic::X86MsrAccess) {
     std::vector<std::string> Arguments;
     for (const auto &Operand : E.Operands)
       Arguments.push_back(Operand ? exprStr(*Operand) : "");

@@ -102,7 +102,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
 | ENCLS, ENCLV | Leaf-specific implicit register/flag completion, enclave memory and exception contracts. These supervisor/VMM operations should not be conflated with ENCLU's context transitions. |
 | AMX native LLVM output | Versioned TILECFG/tile-state ownership, restartable strided memory, partial progress and fault continuation. Existing strict LowIR support is not native code-generation support. |
-| Explicit-operand RDMSR/WRMSRNS, URDMSR and UWRMSR native LLVM output | The `X86MsrAccess` backend guard remains explicit. Operand-free legacy RDMSR uses a separate existing intrinsic. The documented VEX immediate RDMSR/WRMSRNS encodings also need decoder/lifter admission. |
+| Operand-free WRMSRNS | Its ECX selector and EDX:EAX value need a distinct nonserializing native contract for both word sizes. Explicit-operand WRMSRNS is now covered separately. |
 | ENQCMD, ENQCMDS, MOVDIR64B in 32-bit mode | Implicit ES destination base/limit ownership. Existing 64-bit support does not prove these forms. |
 
 The direct-store execution checks cover ordinary memory. Native instructions
@@ -305,6 +305,45 @@ The 32-bit VEX/EVEX mode rules are described in sections 2.3.5 and 2.7.2 of Inte
 REX2 map selection and the different GPR/vector extension rules are specified
 in section 3.1.2.1 of Intel's
 [APX architecture specification](https://cdrdv2-public.intel.com/861610/355828-007-intel-apx-spec.pdf).
-The explicit MSR encoding audit uses the RDMSR, WRMSRNS, URDMSR and UWRMSR
-tables in Intel's
+The explicit MSR encoding audit initially used the
 [September 2025 ISA extensions reference](https://cdrdv2-public.intel.com/865891/319433-059-architecture-instruction-set-extensions-programming-reference_2025-0930.pdf).
+The decoder completion pins published Capstone revision
+`aa609adf2a4a36e6a899ab878bf5d414512a9330`.
+Native output is checked against Intel SDM revision 093
+[Volume 2B](https://cdrdv2.intel.com/v1/dl/getContent/671241) and
+[APX revision 9](https://cdrdv2.intel.com/v1/dl/getContent/784266).
+
+## Explicit-operand MSR completion
+
+`X86MsrAccess` now retains all 12 encoding families through LLVM, HighC and
+LLVM-to-C. The decoder and lifter admit the missing VEX immediate RDMSR and
+WRMSRNS forms without giving them an APX requirement. Existing serialized
+EVEX kind values remain unchanged. Immediate selectors must be constants;
+register selectors and data remain full-width scalar values, including
+recovered function arguments.
+
+The shared native contract binds RAX as data and RCX as a register selector,
+uses exact bytes for each family, and retains side effects and compiler memory
+ordering without changing arithmetic flags. This avoids an observed LLVM 23
+assembler discrepancy: `urdmsr %rcx, %rax` encodes ModRM `c1`, whereas the
+Intel-defined RAX destination and RCX selector require `c8`. The EVEX register
+form has the same discrepancy. Tests inspect generated machine bytes rather
+than accepting successful assembly as proof of operand identity.
+
+The CPU owns feature/CPL checks, USER_MSR_CTL and bitmap accesses, interception,
+MSR-specific checks, and faults. The software emulator still refuses execution
+without that environment. The native probes use CPL3 and out-of-range USER_MSR
+selectors; they establish fault equivalence, not successful privileged reads,
+writes, bitmap accesses or virtual-machine interception. A second controlled
+signal observer supplies a known full-width read result and checks write data
+and register selectors before resuming. This qualifies generated register
+transport and live/dead results without claiming successful MSR access.
+The separate operand-free WRMSRNS gap above remains explicit.
+
+On the `fe6321642` integration base, the new four-test source matrix and all
+28 APX existing-GPR checks pass. The decoder regression fails before the fix;
+all 76 x86 Capstone unit executables pass after it. The source matrix covers
+144 source/object combinations and 48 executable fixtures, each across both C
+routes, LLVM IR at O0/O2 and the repository LLVM object. Its malformed-assembly
+matrix contains 134 valid/rejected contract cases. Recovered register arguments
+add 24 source fixtures, with ELF compilation through every route.

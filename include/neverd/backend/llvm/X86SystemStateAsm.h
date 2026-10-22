@@ -125,6 +125,56 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   return P;
 }
 
+/// Fixed RAX data and RCX selector operands keep the documented ModRM roles.
+/// LLVM 23's URDMSR register assembler reverses those roles. Exact bytes also
+/// retain APX feature checks when an EVEX operand is allocated a low register.
+inline std::optional<X86SystemStateAsm> x86MsrAccessAsm(X86MsrAccessKind Kind,
+                                                        Arch TargetArch) {
+  if (TargetArch != Arch::X64 || Kind >= X86MsrAccessKind::Count)
+    return std::nullopt;
+  using K = X86MsrAccessKind;
+  const bool Write = x86MsrAccessIsWrite(Kind);
+  const bool Immediate = x86MsrAccessHasImmediateSelector(Kind);
+  const bool Privileged =
+      Kind == K::RdmsrImmediate || Kind == K::WrmsrnsImmediate ||
+      Kind == K::RdmsrVexImmediate || Kind == K::WrmsrnsVexImmediate;
+  const bool Evex =
+      Kind == K::RdmsrImmediate || Kind == K::WrmsrnsImmediate ||
+      Kind == K::UrdmsrEvexRegister || Kind == K::UwrmsrEvexRegister ||
+      Kind == K::UrdmsrEvexImmediate || Kind == K::UwrmsrEvexImmediate;
+  X86SystemStateAsm P;
+  P.Id = Intrinsic::X86MsrAccess;
+  P.Text = "# x86 MSR: ";
+  P.Text += Privileged ? (Write ? "wrmsrns" : "rdmsr")
+                       : (Write ? "uwrmsr" : "urdmsr");
+  P.Text += Evex ? " (EVEX)" : Immediate ? " (VEX)" : " (legacy)";
+  P.Text += "\n\t.byte ";
+  if (Evex) {
+    P.Text += Immediate ? "0x62,0xf7," : "0x62,0xf4,";
+    P.Text += Write ? "0x7e,0x08," : "0x7f,0x08,";
+  } else if (Immediate) {
+    P.Text += Write ? "0xc4,0xe7,0x7a," : "0xc4,0xe7,0x7b,";
+  } else {
+    P.Text += Write ? "0xf3,0x0f,0x38," : "0xf2,0x0f,0x38,";
+  }
+  P.Text += Privileged ? "0xf6," : "0xf8,";
+  P.Text += Immediate ? "0xc0" : "0xc8";
+  if (Immediate)
+    P.Text += Write ? "\n\t.long ${0:c}" : "\n\t.long ${1:c}";
+  P.InputConstraints = {Immediate ? "i" : "{cx}"};
+  P.InputBytes = {static_cast<uint16_t>(Immediate ? 4 : 8)};
+  if (Write) {
+    P.InputConstraints.push_back("{ax}");
+    P.InputBytes.push_back(8);
+    P.Constraints = Immediate ? "i,{ax},~{memory}" : "{cx},{ax},~{memory}";
+  } else {
+    P.OutputConstraints = {"={ax}"};
+    P.OutputBytes = {8};
+    P.Constraints = Immediate ? "={ax},i,~{memory}" : "={ax},{cx},~{memory}";
+  }
+  return P;
+}
+
 } // namespace neverd
 
 #endif // NEVERD_BACKEND_LLVM_X86SYSTEMSTATEASM_H
