@@ -1143,6 +1143,12 @@ cl::list<std::string> TypesDeclare(
     cl::desc("Add the types this file declares first: C (.h, .c), C++ (.hpp, "
              ".cpp), Rust (.rs) or Go (.go); repeat for more"),
     cl::value_desc("file"), cl::sub(TypesCmd));
+cl::opt<bool> TypesMergePrototypes(
+    "merge-prototypes",
+    cl::desc("Convert independent --declare providers: import only missing "
+             "prototypes from later files and prefix conflicting types with "
+             "their file stems; requires --data-model without a binary"),
+    cl::sub(TypesCmd));
 cl::opt<bool>
     TypesSave("save",
               cl::desc("Persist --declare types in the binary's project for "

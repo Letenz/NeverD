@@ -228,6 +228,8 @@ if(TARGET neverd_shared)
     "${CMAKE_CURRENT_SOURCE_DIR}/ObjCRuntimeTestProperties.cmake")
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
+    TypeConversionCAPITests.cpp
+    LINK_COMPONENTS Types
     LINK_LIBS neverd_shared
   )
   add_neverd_unittest(NeverDFunctionDisasmCAPITests

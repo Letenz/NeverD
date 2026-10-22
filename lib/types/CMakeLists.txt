@@ -107,6 +107,7 @@ add_neverd_component_library(NeverDTypes
   RustTypeParser.cpp
   RustTypeRender.cpp
   TypeFit.cpp
+  TypeImport.cpp
   TypeJSON.cpp
   TypeLayout.cpp
   TypeRender.cpp
