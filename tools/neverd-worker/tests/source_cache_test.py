@@ -251,6 +251,21 @@ def run(executable):
         assert rebuilt["fixture_pages"] > large["fixture_pages"], rebuilt
         assert rebuilt["text"] == large["text"]
 
+        # A large document still fits the existing byte allowance when the
+        # original is kept in wire form rather than a second parsed DOM.
+        # Every later page must reuse it; SDK counters make this independent
+        # of machine speed and encoded-page eviction.
+        huge_file = root / "pseudocode-large.bin"
+        huge_file.write_bytes(b"large source cache fixture")
+        huge = clients.enter_context(Client(executable))
+        ok(huge, "open", {"path": str(huge_file), "analysis": False})
+        head = source(huge, representation="llvmc")
+        assert head["total_lines"] == 20008, head
+        tail = source(huge, representation="llvmc", offset=20000, limit=16)
+        assert tail["complete"] and "code line 19999" in tail["text"], tail
+        assert tail["fixture_pages"] == head["fixture_pages"], (head, tail)
+        assert source(huge, representation="llvmc") == head
+
         # Switching pipelines can fail after discarding the preceding IR.
         # A graph request for A must really prepare A again; B then retries
         # successfully instead of being remembered as already prepared.

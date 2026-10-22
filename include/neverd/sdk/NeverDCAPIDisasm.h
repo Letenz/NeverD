@@ -294,16 +294,16 @@ NEVERD_API const char *neverd_ir_high(neverd_session_t Sess,
 NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
                                       neverd_va_t FuncEntry);
 
-/// Return a schema_version=1 page of native Low/Med IR with instruction
-/// anchors, or C/LLVMC with optional library regions. Representation is
-/// "low", "med", "c", "llvmc", "cpp", "rust", "go" or "source"; dialects
-/// spell the HighC page in that language and "source" in the function's own
-/// (C++, Rust, Go or C), adding dialect, unread and source_names (where each
-/// source name such as core::fmt::write is). Every C, LLVMC and dialect page
-/// lists identifier_symbols: the functions the emitted C names by another
-/// identifier than their symbol (fini for _fini, dotted_fn for dotted.fn),
-/// each as identifier, symbol and address. Dialects are offered for
-/// an image with that language's code (neverd_headers_json's
+/// Return a schema_version=1 page of native Low/Med/High/LLVM IR with
+/// instruction anchors, or C/LLVMC with optional library regions.
+/// Representation is "low", "med", "high", "llvm", "c", "llvmc", "cpp", "rust",
+/// "go" or "source"; dialects spell the HighC page in that language and
+/// "source" in the function's own (C++, Rust, Go or C), adding dialect, unread
+/// and source_names (where each source name such as core::fmt::write is). Every
+/// C, LLVMC and dialect page lists identifier_symbols: the functions the
+/// emitted C names by another identifier than their symbol (fini for _fini,
+/// dotted_fn for dotted.fn), each as identifier, symbol and address. Dialects
+/// are offered for an image with that language's code (neverd_headers_json's
 /// language.pseudocode); for another the page is mapping_status
 /// "unsupported_representation" with the reason. Offset is an absolute
 /// zero-based rendered line and Limit is 1..2048. Text is byte-for-byte the

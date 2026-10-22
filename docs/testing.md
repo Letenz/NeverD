@@ -1134,6 +1134,32 @@ escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
 Timing-independent cache tests complement
 `source_revisit_bench.py`, which measures complete real source pages.
 
+The same cache test checks a 20,008-line document across later pages using SDK
+call counters. The undecorated copy is retained as serialized JSON, with its
+string capacity counted in the existing cache budget; local-name refresh
+reconstructs that exact source without rerunning the engine. The GUI's
+20,000-line responsiveness check retains its 15-second loading and 500-ms event
+gap limits. Rename isolation checks wait for initial navigation to settle before
+observing signals caused by the edit.
+
+`NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
+VMREAD success/failure merges, instruction-owned memory, segmented addresses and
+strict scalar-emulator refusal. `NeverDX86VirtualizationSourceTests` covers both
+C routes across x86/x64 ELF, COFF and Mach-O with default/NoOpt, preserves actual
+query/effect anchors, and prevents folding an incoming stack value across
+VMREAD. Its Clang check assembles both C routes at O0/O2 for both word sizes;
+privileged instructions are not executed on the host. CPUID sibling cases keep
+EAX/ECX inputs, Windows subleaf spelling and ordered effects, including CLI/STI.
+The CPUID C execution check replaces only the intrinsic environment, verifies
+one query with leaf 7/subleaf 1, and stores four high-bit output words into
+64-bit cells at O0/O2 across all three formats and default/NoOpt.
+`SessionCAPITest.IntrinsicSourcePagesKeepTheExecutedInstruction` checks CPUID in
+C, LLVMC, pseudocode and HighIR, alongside CLI/STI effect rows. Native HighIR
+paging also shares the UTF-8,
+canonical-address and exact legacy-text checks. The GUI controller's `high-ir`
+row verifies both Tab directions; the optional `native-high-ir` row uses CPUID
+from a real worker and native file. The worker native-mapping test includes HighIR.
+
 `NeverDWorkerLocalNameCache` checks unchanged preparation/page counters through
 repeated local renames, clearing aliases, readonly replica updates, rejected
 collisions and obsolete targets. Changed input identities, annotations and
@@ -1163,6 +1189,12 @@ against a fixture and optional native input, including revisiting a function.
 `backgroundFunctionDiscoveryKeepsSelection` inserts a function before loaded rows
 and checks persistent selection, sorting, filtering and retiring an obsolete
 background refresh.
+`backgroundDiscoveryKeepsSelectionBeyondCachedPages` checks an insertion that
+moves a selected address into an unloaded page, both in address order and with
+sorting/filtering. It also verifies the selection model's other selected row.
+`NeverDWorkerLocalNameCache` rejects foreign function names, function edits and
+annotations committed after the owner's snapshot, retaining the prior replica
+document and all files on refusal.
 
 `listingRefreshKeepsItsContextAndArrows` observes every viewport paint through
 repeated refreshes, checks retained context, branch-gutter pixels and cursor
@@ -1178,6 +1210,21 @@ chunk boundary and optionally `NEVERD_LISTING_STABILITY_PDB`. It copies those
 inputs to a temporary directory, disables background analysis and alternates
 refresh/prefetch requests, requiring a stable inventory and listing generation
 after warmup. Missing external inputs are skips, not native qualification.
+
+The `findInView*` workbench cases exercise the production Ctrl+F action for
+pseudocode and LLVM C, multiple hits on one line, forward/backward wrap,
+case/word options, literal punctuation, Unicode comments and hidden block
+bodies. They check exact substring selection, address-prefix matching in the
+assembly, origin capture when focus moves into the modeless dialog, retargeting,
+complete multipage source, independent panes and retiring a source snapshot on
+function replacement or project close. Search must not issue a decompilation or
+move another pane merely to select a match. `viewSearchLiteralMatching*` checks
+the shared renderer/dialog matching rules without involving the worker.
+The large-source case selects among 20,000 hits without replacing the document.
+The optional native-input case uses NEVERD_FIND_WORKER, NEVERD_FIND_INPUT,
+NEVERD_FIND_TARGET and optional NEVERD_FIND_PDB / NEVERD_FIND_TEXT. It copies
+external inputs into a temporary directory and checks unchanged document identity
+and no cross-pane navigation; missing inputs are an explicit skip.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.

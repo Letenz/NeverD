@@ -273,6 +273,8 @@ void writeEdxEax(X86Lifter::LiftState &S, Arch TargetArch, NdVar Value) {
 } // namespace
 
 bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
+  if (liftVirtualization(*this, S, Insn, X86))
+    return true;
   unsigned InsnId = Insn->id;
   auto LiftOuts = [&](Intrinsic Id, unsigned ElemSz) {
     const uint16_t AddrSz = S.AddressSize;
@@ -585,12 +587,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         NdMemoryOrdering::None, LiftState::memoryAddressSpace(Descriptor));
     break;
   }
-  // VMX invalidation requires VMCS/VMX state that LowIR does not model.  Keep
-  // these instructions unlifted instead of collapsing them into INVPCID or a
-  // generic system placeholder.
-  case X86_INS_INVEPT:
-  case X86_INS_INVVPID:
-    return false;
   // Explicit-operand MSR forms retain their exact encoding family so an
   // authenticated executor can apply the correct feature, privilege, bitmap,
   // interception, and exception-order rules. The legacy operand-free RDMSR
@@ -784,21 +780,9 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_RDGSBASE:
   case X86_INS_WRFSBASE:
   case X86_INS_WRGSBASE:
+  // VMRUN exposes guest changes to unsaved GPR/FPU state; SKINIT performs
+  // nonlocal machine reinitialization. Neither is an ordinary opaque effect.
   case X86_INS_VMRUN:
-  case X86_INS_VMSAVE:
-  case X86_INS_VMLOAD:
-  case X86_INS_VMLAUNCH:
-  case X86_INS_VMRESUME:
-  case X86_INS_VMXOFF:
-  case X86_INS_VMXON:
-  case X86_INS_VMCLEAR:
-  case X86_INS_VMPTRLD:
-  case X86_INS_VMPTRST:
-  case X86_INS_VMREAD:
-  case X86_INS_VMWRITE:
-  case X86_INS_VMFUNC:
-  case X86_INS_STGI:
-  case X86_INS_CLGI:
   case X86_INS_SKINIT:
   case X86_INS_LAR:
   case X86_INS_ARPL:

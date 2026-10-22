@@ -1323,7 +1323,28 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     emitCallOp(Op, Builder, BlockId, OpIdx);
     return;
   case NdOp::INTRINSIC: {
+    // Intrinsics return through this arm rather than the common value path.
+    // Observe the emitted effect itself: a packed/query result can disappear
+    // during optimization while the CPUID, fence or memory effect survives.
+    auto *SourceBlock = Builder.GetInsertBlock();
+    const auto Insert = Builder.GetInsertPoint();
+    auto *Previous =
+        Insert == SourceBlock->begin() ? nullptr : &*std::prev(Insert);
+    auto *Following = Insert == SourceBlock->end() ? nullptr : &*Insert;
     Result = emitIntrinsic(Op, Builder);
+    if (SourceMap && Op.Addr != InvalidVA && Op.OriginSeq >= 0) {
+      if (!Previous || Previous->getParent() == SourceBlock)
+        for (auto *I = Previous               ? Previous->getNextNode()
+                       : SourceBlock->empty() ? nullptr
+                                              : &SourceBlock->front();
+             I && I != Following; I = I->getNextNode())
+          if (I->mayHaveSideEffects() || llvm::isa<llvm::CallBase>(I))
+            SourceMap->Observations.push_back(
+                {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, I});
+      if (llvm::isa_and_nonnull<llvm::Instruction>(Result))
+        SourceMap->Observations.push_back(
+            {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, Result});
+    }
     if (Result && Op.Output.Size > 0)
       setVar(Op.Output, Result, Builder);
 

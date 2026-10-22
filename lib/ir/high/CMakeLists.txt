@@ -1,6 +1,8 @@
 add_neverd_component_library(NeverDIRHigh
   HighExpr.cpp
   HighIRPrint.cpp
+  HighIRPrintRows.cpp
+  HighSourceMap.cpp
   HighSourceFlow.cpp
   HighVariableEdits.cpp
   HighSourceInputs.cpp

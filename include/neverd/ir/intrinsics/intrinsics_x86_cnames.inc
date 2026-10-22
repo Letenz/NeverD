@@ -252,3 +252,8 @@ C(Intrinsic::X86FPComiMemoryState, "neverd_x86_comi_memory_state");
 C(Intrinsic::X86FPMaskCompareState, "neverd_x86_mask_compare_state");
 C(Intrinsic::X86FPMaskCompareMemoryState,
   "neverd_x86_mask_compare_memory_state");
+
+#define NEVERD_X86_VIRTUALIZATION(Id, Mnemonic, ...)                           \
+  C(Intrinsic::Id, "__neverd_" #Id);
+#include "neverd/ir/intrinsics/X86Virtualization.def"
+#undef NEVERD_X86_VIRTUALIZATION

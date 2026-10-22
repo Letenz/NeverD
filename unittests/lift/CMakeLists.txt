@@ -568,6 +568,16 @@ target_include_directories(NeverDX86MOVDIR64BStateTests PRIVATE
 
 # Keeps opaque system-memory side effects independently runnable through
 # decode, lift and strict fail-closed emulation without executing host state.
+add_neverd_unittest(NeverDX86VirtualizationTests
+  x86_64/X86VirtualizationTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86VirtualizationSourceTests
+  x86_64/X86VirtualizationSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC)
+target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 add_neverd_unittest(NeverDX86SystemSideeffectTests
   x86_64/X86_64_SystemSideeffectTests.cpp
 

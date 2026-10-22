@@ -17,6 +17,7 @@
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86Virtualization.h"
 #include "neverd/ir/med/MedIR.h"
 
 namespace neverd {
@@ -325,6 +326,43 @@ inline ApxAtomicIntrinsicShape apxAtomicMedShape(const MedOp &Op) {
       .Condition = Op.NumInputs > 4 ? Op.Inputs[4].ConstVal : UINT64_C(0),
       .ConditionSize = Op.NumInputs > 4 ? Op.Inputs[4].Size : uint16_t{0},
   };
+}
+
+inline X86VirtualizationShape
+x86VirtualizationMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
+  X86VirtualizationShape Shape;
+  Shape.TargetArch = TargetArch;
+  if (Shape.TargetArch == Arch::Unknown && Op.Output.Size &&
+      Op.Output.Kind == MedVar::Reg)
+    Shape.TargetArch = Op.Output.TheArch;
+  Shape.MemoryOrdering = Op.MemoryOrdering;
+  Shape.MemoryAddressSpace = Op.MemoryAddressSpace;
+  Shape.ValidId = Op.NumInputs && Op.NumInputs <= Op.Inputs.size() &&
+                  Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+                  Op.Inputs[0].ConstVal <= UINT16_MAX &&
+                  Op.IntrinsicOutputs.empty();
+  if (Op.Output.Size && Op.Output.Kind == MedVar::Reg &&
+      Op.Output.TheArch != Shape.TargetArch)
+    Shape.ValidId = false;
+  Shape.OutputSize = Op.Output.Size;
+  Shape.WritableOutput =
+      (Op.Output.Kind == MedVar::Reg || Op.Output.Kind == MedVar::Temp) &&
+      Op.Output.Id >= 0;
+  Shape.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (uint8_t I = 0; I < Shape.Arguments && I < Shape.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    Shape.InputSizes[I] = Input.Size;
+    Shape.ScalarInputs[I] =
+        isMedIntrinsicScalarInput(Input) || Input.Kind == MedVar::Param ||
+        Input.Kind == MedVar::Stack || Input.Kind == MedVar::RetVal;
+    // TheArch names physical registers. EA/arithmetic temporaries are neutral
+    // scalars, including the canonical 64-bit address carrier used on i386.
+    if (Input.Kind == MedVar::Reg && Shape.TargetArch == Arch::Unknown)
+      Shape.TargetArch = Input.TheArch;
+    else if (Input.Kind == MedVar::Reg && Input.TheArch != Shape.TargetArch)
+      Shape.ValidId = false;
+  }
+  return Shape;
 }
 
 inline X86InvalidateIntrinsicShape x86InvalidateMedShape(const MedOp &Op) {

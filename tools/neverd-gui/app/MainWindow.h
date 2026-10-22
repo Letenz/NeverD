@@ -36,6 +36,7 @@ class PackageReviewDialog;
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
+class FindInViewDialog;
 class LocalTypesView;
 class PathfinderView;
 class TypeLibrariesView;
@@ -361,6 +362,7 @@ private:
   bool restoreGraph_ = false;
   QJsonArray bookmarks_;
   QPointer<QDialog> quickStart_;
+  QPointer<FindInViewDialog> FindDialog;
   QPointer<web::PackageReviewDialog> packageReview_;
   bool startupQuickStartPending_ = false;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,

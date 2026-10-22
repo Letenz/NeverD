@@ -1281,32 +1281,44 @@ std::string gnuCpuid(llvm::StringRef Leaf, llvm::StringRef Subleaf) {
                                Subleaf.str() + ", " + Outputs + ")";
 }
 
+std::string cpuidCompilerBarrier(bool GnuToolchain) {
+  return GnuToolchain ? "__atomic_signal_fence(__ATOMIC_SEQ_CST);"
+                      : "_ReadWriteBarrier();";
+}
+
 std::string renderCpuid(const std::vector<MedVar> &Outs,
                         const std::vector<ExprPtr> &Ops,
                         std::function<std::string(const HighExpr &)> ExprFn,
                         std::function<std::string(const MedVar &)> VarFn,
                         const IsAliveFn &IsAlive, bool GnuToolchain) {
   std::string Leaf = Ops.empty() ? "0" : ExprFn(*Ops[0]);
+  const std::string Subleaf =
+      Ops.size() > 1 && Ops[1] && Ops[1]->Kind != ExprKind::Undef
+          ? ExprFn(*Ops[1])
+          : std::string();
   // A block scope, so a second CPUID in the function does not redeclare
   // cpuInfo.
   std::string Result;
   if (GnuToolchain) {
     // The sub-leaf the code puts in ECX, where it puts a known one.
-    const std::string Subleaf =
-        Ops.size() > 1 && Ops[1] && Ops[1]->Kind != ExprKind::Undef
-            ? ExprFn(*Ops[1])
-            : std::string();
-    Result = "{\n    unsigned int cpuInfo[4];\n";
+    Result = "{\n    unsigned int cpuInfo[4];\n    " +
+             cpuidCompilerBarrier(GnuToolchain) + "\n";
     Result += "    " + gnuCpuid(Leaf, Subleaf) + ";\n";
   } else {
-    Result = "{\n    int cpuInfo[4];\n";
-    Result += "    __cpuid(cpuInfo, " + Leaf + ");\n";
+    Result = "{\n    int cpuInfo[4];\n    " +
+             cpuidCompilerBarrier(GnuToolchain) + "\n";
+    Result += Subleaf.empty()
+                  ? "    __cpuid(cpuInfo, " + Leaf + ");\n"
+                  : "    __cpuidex(cpuInfo, " + Leaf + ", " + Subleaf + ");\n";
   }
+  Result += "    " + cpuidCompilerBarrier(GnuToolchain) + "\n";
   const char *Names[] = {"cpuInfo[0]", "cpuInfo[1]", "cpuInfo[2]",
                          "cpuInfo[3]"};
   for (size_t I = 0; I < Outs.size() && I < 4; ++I)
     if (isAlive(Outs[I], IsAlive))
-      Result += "    " + VarFn(Outs[I]) + " = " + Names[I] + ";\n";
+      Result += "    " + VarFn(Outs[I]) + " = " +
+                (GnuToolchain ? std::string() : "(uint32_t)") + Names[I] +
+                ";\n";
   return Result + "}\n";
 }
 
@@ -2217,14 +2229,19 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
   case I::Cpuid: {
     std::string Leaf = Ops.empty() ? "0" : Ops[0];
     HasCIntrinsics = true;
+    const bool KnownSubleaf =
+        Ops.size() > 1 && Ops[1].find("__builtin_trap") == std::string::npos;
     if (GnuToolchain) {
-      // An unknown ECX prints as a trap: CPUID then takes no sub-leaf.
-      const bool KnownSubleaf =
-          Ops.size() > 1 && Ops[1].find("__builtin_trap") == std::string::npos;
-      return "{ unsigned int cpuInfo[4]; " +
-             gnuCpuid(Leaf, KnownSubleaf ? Ops[1] : std::string()) + "; }";
+      return "{ unsigned int cpuInfo[4]; " + cpuidCompilerBarrier(true) + " " +
+             gnuCpuid(Leaf, KnownSubleaf ? Ops[1] : std::string()) + "; " +
+             cpuidCompilerBarrier(true) + " }";
     }
-    return "{ int cpuInfo[4]; __cpuid(cpuInfo, " + Leaf + "); }";
+    return KnownSubleaf ? "{ int cpuInfo[4]; " + cpuidCompilerBarrier(false) +
+                              " __cpuidex(cpuInfo, " + Leaf + ", " + Ops[1] +
+                              "); " + cpuidCompilerBarrier(false) + " }"
+                        : "{ int cpuInfo[4]; " + cpuidCompilerBarrier(false) +
+                              " __cpuid(cpuInfo, " + Leaf + "); " +
+                              cpuidCompilerBarrier(false) + " }";
   }
   case I::Rdtscp: {
     HasCIntrinsics = true;
