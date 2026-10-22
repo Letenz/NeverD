@@ -402,10 +402,18 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   }
   if (Control.Progress)
     Control.Progress("discovery", 0, S.Functions.size());
-  if (Options.Discover && !Control.stop() &&
-      neverd_session_discover_functions(&S) < 0) {
-    Error = "function discovery failed";
-    return {};
+  if (Options.Discover && !Control.stop()) {
+    const auto Stop = [](void *Context) -> int {
+      return static_cast<const diff::ComparisonControl *>(Context)
+          ->stop()
+          .has_value();
+    };
+    const int Discovered = neverd_session_discover_functions_cancellable(
+        &S, Stop, const_cast<diff::ComparisonControl *>(&Control));
+    if (Discovered == -1) {
+      Error = S.LastError;
+      return {};
+    }
   }
   ProgramIdentity Identity;
   Identity.Path = S.FilePath.string();
@@ -436,6 +444,18 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   if (!Identity.DiscoveryComplete)
     Builder.warn("Function inventory is partial or filtered; unmatched does "
                  "not establish addition or deletion.");
+  if (const auto Stopped = Control.stop()) {
+    ComparisonInput Result;
+    Result.Stopped = Stopped;
+    Result.StoppedPhase = Options.Discover ? "discovery" : "decode";
+    Result.Program = Builder.finish();
+    Result.Program.Identity.DiscoveryComplete = false;
+    Result.Program.Warnings.push_back(
+        "Snapshot extraction stopped before decoding; function inventory is "
+        "incomplete.");
+    Result.Program.Identity.Revision = revision(Result.Program);
+    return Result;
+  }
   const AddressKeys Keys(S.Img, S.Functions);
   std::map<va_t, const FuncInfo *> Functions;
   for (const auto &F : S.Functions)
@@ -532,6 +552,7 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   else if (Exhausted)
     Result.Stopped = ComparisonState::ResourceLimited;
   if (Result.Stopped) {
+    Result.StoppedPhase = "decode";
     Result.Program.Identity.DiscoveryComplete = false;
     Result.Program.Warnings.push_back(
         "Snapshot extraction stopped; retained instructions and functions are "

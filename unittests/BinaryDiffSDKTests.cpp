@@ -1056,6 +1056,34 @@ TEST_F(BinaryDiffSDK,
                   .value_or(false));
 }
 
+TEST_F(BinaryDiffSDK,
+       DiscoveryCancellationKeepsItsPhaseAndIncompleteInventory) {
+  auto A = input(body()), B = input(body());
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  const auto Cancel = [](void *Context, const char *Phase, neverd_va_t,
+                         neverd_va_t) {
+    if (std::string_view(Phase) == "primary:discovery")
+      neverd_comparison_cancel(Context);
+  };
+  ASSERT_EQ(neverd_comparison_run(C, A, B, "{}", Cancel, C), 1)
+      << take(neverd_comparison_last_error(C));
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(Summary.getAsObject()->getString("state"), "cancelled");
+  EXPECT_EQ(Summary.getAsObject()->getString("stopped_phase"), "discovery");
+  const auto Saved = parsed(neverd_comparison_export_json(C));
+  ASSERT_TRUE(Saved.getAsObject());
+  const auto *Primary = Saved.getAsObject()->getObject("primary");
+  const auto *Secondary = Saved.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Primary);
+  ASSERT_TRUE(Secondary);
+  EXPECT_FALSE(Primary->getBoolean("discovery_complete").value_or(true));
+  EXPECT_FALSE(Secondary->getBoolean("discovery_complete").value_or(true));
+  // This stopped comparison must not make later discovery believe it is done.
+  EXPECT_GE(neverd_session_discover_functions(A), 1);
+  EXPECT_GE(neverd_session_discover_functions(B), 1);
+}
+
 TEST_F(BinaryDiffSDK, ExhaustedInstructionBudgetCannotLookComplete) {
   auto C = compare(input(body()), input(body()),
                    R"({"discover":false,"max_instructions":1})");

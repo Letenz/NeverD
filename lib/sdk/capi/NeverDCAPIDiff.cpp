@@ -536,7 +536,8 @@ static int runComparison(neverd_comparison_t Handle, neverd_session_t A,
       C.Result.SecondaryDataFlow = C.Secondary.DataFlow;
       C.Result.State =
           Primary->Stopped ? *Primary->Stopped : *Secondary->Stopped;
-      C.Result.StoppedPhase = "decode";
+      C.Result.StoppedPhase =
+          Primary->Stopped ? Primary->StoppedPhase : Secondary->StoppedPhase;
       C.Result.PrimaryMatch.assign(C.Primary.Functions.size(), NoIndex);
       C.Result.SecondaryMatch.assign(C.Secondary.Functions.size(), NoIndex);
       C.Result.PrimaryAmbiguity.assign(C.Primary.Functions.size(), NoIndex);

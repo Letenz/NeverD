@@ -1264,6 +1264,17 @@ only when discovery is complete. Worker polling waits for requests rather
 than busy-spinning while a snapshot is computing. Older SDKs retain the
 synchronous fallback.
 
+`FuncDetector` owns cooperative discovery stop across its metadata, native
+architecture scanners, candidate verification and overlap walks. Its controlled
+overload joins scan workers and returns no result on cancellation; verified entry
+publication occurs only after all filters and the final stop check. The SDK's
+additive cancellable discovery entry point shares that owner, distinguishes a
+stopped call from failure and preserves the prior inventory. A pending stepped
+job owns an atomic stop token; stale revisions and session destruction request
+stop before retirement or joining. DIFF forwards its cancellation/deadline probe
+to this same discovery path and retains the stopped extraction phase, without
+promoting a partial function list or treating it as a completed empty inventory.
+
 The worker polls stepped function discovery when the engine exports it;
 the client must also opt in through `open.step_discovery`. The default preserves
 synchronous discovery for older clients that do not coordinate image memory.

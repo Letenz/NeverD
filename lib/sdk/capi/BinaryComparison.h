@@ -34,6 +34,7 @@ struct ComparisonInputOptions {
 struct ComparisonInput {
   diff::Program Program;
   std::optional<diff::ComparisonState> Stopped;
+  std::string StoppedPhase;
 };
 
 std::optional<ComparisonInput>

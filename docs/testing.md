@@ -1014,6 +1014,15 @@ The analysis mode also checks System V call setup through an omitted callee's
 recovered summary, retains call/alias uncertainty, emits no HighIR/LLVM and
 refuses VM or conflicting output modes. It shares the machine ABI stage with
 lifting; run `PipelineOutcome` checks when changing that stage boundary.
+`FunctionDiscoveryCancellation.*` (in `NeverDImageAnalysisBoundaryTests`)
+checks x86/x64/ARM/Thumb/AArch64 scan stops with one and multiple workers,
+unchanged verified entries, decoder reuse, cancellation at the publication
+boundary and empty-complete versus cancelled results. Session discovery tests
+stop an active scan or pending snapshot, retain inventory/revision, retry and
+close an active job. SDK and real-worker comparison checks retain the discovery
+stop phase and incomplete coverage; stopped snapshots never authorize scalar
+validation. Run the image-boundary, session-discovery and comparison suites when
+changing these shared cancellation boundaries. No input instructions execute.
 Dependency integration covers graph/page/slice ownership after sessions close,
 saved SSA fact tampering, native and retained-node admission limits, and the
 CLI/worker/Qt review path. The Qt check switches input sides and disables a new

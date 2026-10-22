@@ -977,11 +977,14 @@ bool nativeDiscovery(const Session &S) {
          S.Img.Arch == Arch::ARM || S.Img.Arch == Arch::AArch64;
 }
 
-std::vector<std::pair<va_t, std::string>> detectFunctions(BinaryImage &Image) {
+std::optional<std::vector<std::pair<va_t, std::string>>>
+detectFunctions(BinaryImage &Image, const std::function<bool()> &Cancelled) {
   Decoder Dec;
   if (!Dec.init(Image))
     throw std::runtime_error("failed to initialize a decoder for the image");
-  return FuncDetector().detect(Image, Dec);
+  if (!Cancelled)
+    return FuncDetector().detect(Image, Dec);
+  return FuncDetector().detect(Image, Dec, Cancelled);
 }
 
 void publishDiscovery(Session &S,
@@ -991,12 +994,26 @@ void publishDiscovery(Session &S,
     S.refreshFunctionNames();
 }
 
-bool takeDiscoveryJob(Session &S, bool Wait) {
+enum class DiscoveryJobState { Pending, Complete, Cancelled };
+
+DiscoveryJobState
+takeDiscoveryJob(Session &S, bool Wait,
+                 const std::function<bool()> &Cancelled = {}) {
   if (!S.FunctionDiscovery)
-    return false;
-  if (!Wait && S.FunctionDiscovery->Result.wait_for(std::chrono::seconds(0)) !=
-                   std::future_status::ready)
-    return false;
+    return DiscoveryJobState::Pending;
+  bool Stop = false;
+  for (;;) {
+    if (Cancelled && Cancelled()) {
+      Stop = true;
+      S.FunctionDiscovery->Cancel->store(true, std::memory_order_relaxed);
+    }
+    if (S.FunctionDiscovery->Result.wait_for(std::chrono::milliseconds(
+            Wait ? kFunctionDiscoveryPollMilliseconds : 0)) ==
+        std::future_status::ready)
+      break;
+    if (!Wait)
+      return DiscoveryJobState::Pending;
+  }
   auto Job = std::move(*S.FunctionDiscovery);
   S.FunctionDiscovery.reset();
   if (Job.Revision != S.FunctionListRevision) {
@@ -1006,17 +1023,25 @@ bool takeDiscoveryJob(Session &S, bool Wait) {
       (void)Job.Result.get();
     } catch (...) {
     }
-    return false;
+    return Stop ? DiscoveryJobState::Cancelled : DiscoveryJobState::Pending;
   }
   auto Result = Job.Result.get();
+  if (Stop || Result.Cancelled || (Cancelled && Cancelled()))
+    return DiscoveryJobState::Cancelled;
   S.Img.VerifiedFunctionEntries.merge(Result.VerifiedEntries);
   S.Img.CodeRefTargets.merge(Result.CodeReferences);
   publishDiscovery(S, std::move(Result.Functions));
-  return true;
+  return DiscoveryJobState::Complete;
 }
 } // namespace
 
 int neverd_session_discover_functions(neverd_session_t Sess) {
+  return neverd_session_discover_functions_cancellable(Sess, nullptr, nullptr);
+}
+
+int neverd_session_discover_functions_cancellable(neverd_session_t Sess,
+                                                  neverd_cancel_probe_fn Probe,
+                                                  void *UserData) {
   auto *S = toSession(Sess);
   if (!S)
     return -1;
@@ -1025,11 +1050,27 @@ int neverd_session_discover_functions(neverd_session_t Sess) {
     S->setError("no binary loaded");
     return -1;
   }
+  const std::function<bool()> Cancelled =
+      Probe ? std::function<bool()>([&] { return Probe(UserData) != 0; })
+            : std::function<bool()>{};
+  const auto Stopped = [&] {
+    S->setError("function discovery cancelled");
+    return -2;
+  };
   try {
     S->retireStaleDiscovery();
+    const auto Job = takeDiscoveryJob(*S, true, Cancelled);
+    if (Job == DiscoveryJobState::Complete)
+      return static_cast<int>(S->Functions.size());
+    if (Job == DiscoveryJobState::Cancelled)
+      return Stopped();
+    if (Cancelled && Cancelled())
+      return Stopped();
     if (nativeDiscovery(*S) && !S->DiscoveredFunctions) {
-      if (!takeDiscoveryJob(*S, true))
-        publishDiscovery(*S, detectFunctions(S->Img));
+      auto Functions = detectFunctions(S->Img, Cancelled);
+      if (!Functions)
+        return Stopped();
+      publishDiscovery(*S, std::move(*Functions));
     }
     return static_cast<int>(S->Functions.size());
   } catch (const std::exception &E) {
@@ -1058,25 +1099,37 @@ int neverd_session_discover_functions_step(neverd_session_t Sess) {
     S->retireStaleDiscovery();
     if (!nativeDiscovery(*S) || S->DiscoveredFunctions)
       return 1;
-    if (takeDiscoveryJob(*S, false))
+    if (takeDiscoveryJob(*S, false) == DiscoveryJobState::Complete)
       return 1;
     if (!S->FunctionDiscovery) {
       auto Image = S->Img;
+      auto Cancel = std::make_shared<std::atomic<bool>>(false);
       S->FunctionDiscovery.emplace(Session::FunctionDiscoveryJob{
           S->FunctionListRevision,
-          std::async(std::launch::async, [Image = std::move(Image)]() mutable {
-            Session::FunctionDiscoveryResult Result;
-            auto Work = [&] {
-              Result.Functions = detectFunctions(Image);
-              Result.VerifiedEntries = std::move(Image.VerifiedFunctionEntries);
-              Result.CodeReferences = std::move(Image.CodeRefTargets);
-              // An async callable can outlive its invocation until get(). Do
-              // not retain the image while the owner serves foreground reads.
-              Image = BinaryImage{};
-            };
-            runWithLargeStackThreads(1, Work);
-            return Result;
-          })});
+          std::async(std::launch::async,
+                     [Image = std::move(Image), Cancel]() mutable {
+                       Session::FunctionDiscoveryResult Result;
+                       auto Work = [&] {
+                         auto Functions = detectFunctions(Image, [&] {
+                           return Cancel->load(std::memory_order_relaxed);
+                         });
+                         Result.Cancelled = !Functions;
+                         if (Functions) {
+                           Result.Functions = std::move(*Functions);
+                           Result.VerifiedEntries =
+                               std::move(Image.VerifiedFunctionEntries);
+                           Result.CodeReferences =
+                               std::move(Image.CodeRefTargets);
+                         }
+                         // An async callable can outlive its invocation until
+                         // get(). Do not retain the image while the owner
+                         // serves foreground reads.
+                         Image = BinaryImage{};
+                       };
+                       runWithLargeStackThreads(1, Work);
+                       return Result;
+                     }),
+          Cancel});
     }
     return 0;
   } catch (const std::exception &E) {

@@ -564,9 +564,11 @@ evidence; it does not embed both binaries or their full decoded snapshots.
 
 ## Shared API and worker
 
-`NeverDCAPIDiff.h` provides an opaque comparison handle. `run` takes two
-exclusively owned loaded sessions; the resulting snapshots outlive those sessions.
-Use `status_json` concurrently for progress and `cancel` to request a stop. Destroy
+`NeverDCAPIDiff.h` provides an opaque comparison handle. `run` captures two
+borrowed loaded sessions; callers retain ownership and must grant exclusive
+access for that call. Its snapshots outlive the sessions. `run_owned` instead
+transfers both sessions through handle slots that it clears on admission, keeping
+the loaded inputs for fresh scalar validation. Use `status_json` concurrently for progress and `cancel` to request a stop. Destroy
 the handle only after its running call and other concurrent queries have joined.
 All returned strings use `neverd_free_string`.
 
@@ -631,10 +633,15 @@ The standard worker `cancel` operation acknowledges the request first. Only the
 terminal comparison reply reports computation stopped and whether a partial
 result was retained. The worker advertises `comparison_cancellable_operations`;
 the GUI uses that list for queued/running analysis requests and Cancel state.
-Native decoding, feature extraction and delta measurement
-cooperate with cancellation. Input loading and the current synchronous function
-discovery call can still delay cancellation; this is an outstanding latency
-limitation, not a hard real-time guarantee.
+Native discovery, decoding, feature extraction and delta measurement cooperate
+with cancellation. Discovery checks its metadata, architecture scan, verification
+and overlap walks, joins its workers and publishes no partial candidate inventory.
+Stopped extraction reports `stopped_phase:"discovery"` or `"decode"`; retry starts
+fresh discovery, and closing a session stops its owned discovery job. The additive
+`neverd_session_discover_functions_cancellable` returns -2 for cancellation,
+separately from -1 for failure and nonnegative completed function counts.
+Input loading, indivisible metadata helpers, sorting and allocation can still
+delay a stop; cancellation remains cooperative rather than a hard deadline.
 
 ## Current boundaries and verification
 

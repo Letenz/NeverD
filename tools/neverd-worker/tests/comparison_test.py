@@ -193,6 +193,9 @@ def main():
             elapsed = time.monotonic() - began
             assert terminal["status"] == "ok", terminal
             assert terminal["payload"]["state"] == "cancelled", terminal
+            assert terminal["payload"]["stopped_phase"] == "discovery", terminal
+            assert not terminal["payload"]["primary"]["discovery_complete"], terminal
+            assert not terminal["payload"]["secondary"]["discovery_complete"], terminal
             assert terminal["partial_result_retained"] and not terminal["completed_before_cancellation"]
             assert terminal["payload"]["job"]["computation_stopped"]
             assert elapsed < 5, elapsed
