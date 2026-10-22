@@ -3875,6 +3875,9 @@ void HighCWriter::writeImageObjects() {
           Note = relocatedTargetNote(Addr);
       }
     }
+    if (Note.empty() && !Obj.String && !Obj.PointsTo && Opts.EmitComments)
+      if (const auto Text = imageStringComment(Opts.Image, Addr))
+        Note = *Text;
     OS << ";";
     if (Opts.EmitComments && !Note.empty())
       OS << " /* " << Note << " */";

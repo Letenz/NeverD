@@ -2935,8 +2935,14 @@ TEST(LLVMCValues, PreservedIndirectCallsKeepSignatureAndABI) {
                             : Convention == llvm::CallingConv::X86_64_SysV
                                 ? "__attribute__((sysv_abi)) "
                                 : "";
-    if (*Attribute)
-      EXPECT_NE(Text.find(Attribute), std::string::npos) << Text;
+    if (*Attribute) {
+      // Win64's portable spelling is a macro on the pointer declarator;
+      // the independent callee below still uses the compiler's attribute.
+      const char *Spelling = Convention == llvm::CallingConv::Win64
+                                 ? "__neverd_ms_abi *"
+                                 : Attribute;
+      EXPECT_NE(Text.find(Spelling), std::string::npos) << Text;
+    }
     // An independently written callee makes wrong widths, register assignment,
     // stack arguments and repeated calls observable. The fifth Win64 argument
     // is passed on the stack, while SysV passes it in a register.

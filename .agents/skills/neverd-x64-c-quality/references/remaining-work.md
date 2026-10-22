@@ -5,6 +5,13 @@ analysis and comparison output belong outside the repository.
 
 ## Open
 
+Mapped LLVM C now keeps array and record allocations out of scalar variable
+typing, including frames larger than the supported integer width. HighC and
+LLVM C annotate image blocks with the shared string scanner's text and encoding
+without changing memory accesses. `NeverDCSourcePresentationTests` covers these
+contracts, including UTF-16/UTF-32 byte orders; stack-string reconstruction and
+arbitrary runtime decoding remain separate work.
+
 | Gap | Next check |
 |---|---|
 | LLVMC Windows EH remains goto form | Keep recovered filters, nested cleanup order, and both normal and unwind edges visible. Compare the public `seh_probe` and C++ EH corpus output with HighC. |
