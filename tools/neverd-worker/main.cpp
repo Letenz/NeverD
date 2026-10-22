@@ -1,3 +1,4 @@
+#include "ComparisonService.h"
 #include "Engine.h"
 #include "Protocol.h"
 #include "ResourceLimits.h"
@@ -116,7 +117,9 @@ private:
 struct Request {
   Json value;
   std::size_t bytes;
-  bool cancelled = false;
+  std::atomic<bool> cancelled{false};
+  Request(Json Value, std::size_t Bytes)
+      : value(std::move(Value)), bytes(Bytes) {}
 };
 bool isWeb(const Json &request) {
   if (!request.is_object())
@@ -257,6 +260,29 @@ Json hello() {
                "queued_requests_stop; "
                "synchronous_engine_requires_completion_or_process_restart"},
               {"storage", "existing_json_sidecars"}};
+  if (Engine::comparesBinaries()) {
+    for (const char *operation :
+         {"comparison_start",         "comparison_summary",
+          "comparison_functions",     "comparison_function",
+          "comparison_function_page", "comparison_regions",
+          "comparison_region_page",   "comparison_dataflow",
+          "comparison_flow_regions",  "comparison_slice",
+          "comparison_impact",        "comparison_cfg_summary",
+          "comparison_cfg_viewport",  "comparison_cfg_focus",
+          "comparison_save",          "comparison_export",
+          "comparison_restore",       "comparison_override",
+          "comparison_undo",          "comparison_redo",
+          "comparison_validate",      "comparison_close",
+          "comparison_observations",  "comparison_scalar_validation",
+          "comparison_reviews",       "comparison_review_record"})
+      result["capabilities"].push_back(operation);
+    result["comparison_cancellation"] =
+        "cooperative; partial snapshots retained";
+    result["comparison_cancellable_operations"] = Json::array();
+    for (const auto Operation : ComparisonService::CancellableOperations)
+      result["comparison_cancellable_operations"].push_back(
+          std::string(Operation));
+  }
   // Function edits, data items and operand formats need an engine that keeps
   // them.
   if (Engine::keepsFunctionEdits())
@@ -395,6 +421,8 @@ void executeLoop(State &state, Transport &transport) {
             !value["project_id"].get<std::string>().empty() &&
             value["project_id"] != project())
           throw Error("stale_project", "Request refers to a different project");
+        engine.setCancellationProbe(
+            [request] { return request->cancelled.load(); });
         engine.setLoadProgressSink([&](const char *Phase, std::uint64_t Done,
                                        std::uint64_t Total,
                                        const char *Detail) {
@@ -421,17 +449,28 @@ void executeLoop(State &state, Transport &transport) {
                                                           : error.what()));
       }
       engine.setLoadProgressSink({});
+      engine.setCancellationProbe({});
       result["analysis_state"] = webRequest          ? web.analysisState()
                                  : engine.analyzed() ? "complete"
                                                      : "not_analyzed";
       {
         std::lock_guard lock(state.mutex);
         if (request->cancelled) {
-          // An acknowledged cancellation cannot stop the synchronous C ABI.
-          // Preserve committed mutations and the actual completion status.
+          // The comparison cooperates; legacy synchronous operations finish.
+          // Only the terminal reply reports that computation has stopped.
           result["cancellation_requested"] = true;
           result["calculation_stopped"] = true;
-          result["completed_before_cancellation"] = true;
+          const bool ComparisonOperation = ComparisonService::cancellable(op);
+          const bool ComparisonPartial =
+              ComparisonOperation && result.contains("payload") &&
+              result["payload"].value("state", std::string()) == "cancelled";
+          const bool ComparisonStopped =
+              ComparisonPartial ||
+              (ComparisonOperation && result.contains("error") &&
+               result["error"].value("code", std::string()) == "cancelled");
+          result["completed_before_cancellation"] = !ComparisonStopped;
+          if (ComparisonOperation)
+            result["partial_result_retained"] = ComparisonPartial;
         }
         state.revision = engine.revision();
         state.projectId = engine.projectId();
@@ -555,14 +594,18 @@ int main(int argc, char **argv) {
                 break;
               }
             }
-            transport.send(
-                response(value, state.revision, state.projectId, "ok",
-                         {{"accepted", accepted},
-                          {"stopped", stopped},
-                          {"state", !accepted ? "not_found"
-                                    : stopped ? "stopped"
-                                              : "pending"},
-                          {"requires_restart", accepted && !stopped}}));
+            transport.send(response(
+                value, state.revision, state.projectId, "ok",
+                {{"accepted", accepted},
+                 {"stopped", stopped},
+                 {"state", !accepted ? "not_found"
+                           : stopped ? "stopped"
+                                     : "pending"},
+                 {"requires_restart",
+                  accepted && !stopped &&
+                      (!state.active || !ComparisonService::cancellable(
+                                            state.active->value["operation"]
+                                                .get<std::string>()))}}));
           } else if (op == "shutdown") {
             state.stopping = true;
             cancelQueued(state, transport);
@@ -578,7 +621,7 @@ int main(int argc, char **argv) {
               throw Error("queue_full",
                           "Worker queue reached its request or byte limit");
             state.queue.push_back(
-                std::make_shared<Request>(Request{std::move(value), bytes}));
+                std::make_shared<Request>(std::move(value), bytes));
             state.pending.insert(id);
             state.queuedBytes += bytes;
             state.changed.notify_all();

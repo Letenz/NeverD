@@ -21,6 +21,10 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPISwift.cpp
     capi/NeverDCAPIDisasm.cpp
     capi/InstructionFlow.cpp
+    capi/BinaryComparison.cpp
+    capi/ComparisonDataFlow.cpp
+    capi/ComparisonScalarValidation.cpp
+    capi/NeverDCAPIDiff.cpp
     capi/ProgramMain.cpp
     capi/ImageStrings.cpp
     capi/LLVMFunctionView.cpp
@@ -128,6 +132,7 @@ target_link_libraries(neverd_shared PRIVATE
     NeverDSafety
     NeverDTranslate
     NeverDSigs
+    NeverDDiff
     NeverDSBF
     NeverDTypes
     NeverDUnpack
