@@ -1415,13 +1415,23 @@ reads each pointer once;
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
 [phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
-`scripts/generate_windows_types.py --phnt <checkout>` (each generated
-header names the commit). After running it, check each library in every
-language:
+`scripts/generate_windows_types.py --phnt <checkout> --reactos-ddk <headers>`
+(each generated header names the commits). Kernel generation requires
+`fltkernel.h` from ReactOS commit `b6224c3165811265422dacd5ed0de36b1c2311c9`,
+under `sdk/include/ddk`; the generator verifies its pinned SHA-256 before
+reading it. `scripts/tests/test_generate_windows_types.py` checks this input
+boundary and the narrowly matched legacy WAN declaration repair.
+`HeaderLibrary.DriverProvidersHaveExactConfigurationCallContracts` checks x86
+and x64 parameter counts, conventions and layouts; the synthetic
+`SessionCAPITest.DriverProviderImportsUseTheirDeclaredSourceABI` checks HighC
+and LLVMC through the SDK, without loading a driver. After generation, check
+each library in every language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsKernelX86.h --data-model ILP32
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \

@@ -443,7 +443,8 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
-a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`
+a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
+provider headers declare into `lib/types/headers/WindowsKernelX64.h`
 and `WindowsKernelX86.h`, and what a program's `<windows.h>`, the headers of
 the libraries programs most often call and phnt's native API (the `Nt`,
 `Zw`, `Rtl` and `Ldr` routines ntdll exports, the PEB and the TEB) declare
@@ -451,7 +452,12 @@ into `WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`;
 mingw-w64's DDK declares no ARM64 kernel. phnt is read with mingw-w64's SDK
 for Windows 11 24H2, in place of `<winternl.h>`; `scripts/windows_types`
 supplies what it takes from Microsoft's SDK that mingw-w64 lacks or spells
-otherwise. `scripts/generate_linux_types.py` renders what the GNU C
+otherwise. Kernel generation also reads a hash-pinned, public-domain ReactOS
+filter header and phnt's native information-class enum. Export inventories
+identify missing declarations; names or ordinals alone never imply an ABI.
+Libraries are parsed once per process and reused, without scanning a Windows
+installation or fetching declarations while decompiling.
+`scripts/generate_linux_types.py` renders what the GNU C
 Library's headers declare for a program built with `_GNU_SOURCE` into
 `LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and `LinuxARM.h`; a routine glibc
 gives an assembler name (`__isoc23_strtol` for strtol, as glibc 2.38 names

@@ -5952,6 +5952,40 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
 }
 
+TEST_F(SessionCAPITest, DriverProviderImportsUseTheirDeclaredSourceABI) {
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "driver_provider_imports.sys",
+                      std::ios::binary);
+  ASSERT_TRUE(Input.good());
+  const std::string Driver =
+      write("driver_provider_imports.sys",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Driver.c_str()), 1);
+  ASSERT_GE(neverd_session_discover_functions(Session), 0);
+  const int Index = neverd_func_find_by_name(Session, "ReadConfiguration");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  for (const char *View : {"c", "llvmc"}) {
+    SCOPED_TRACE(View);
+    const std::string Text =
+        takeString(neverd_ir_view_json(Session, Entry, View, 0, 2048));
+    auto Parsed = llvm::json::parse(Text);
+    ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+    const auto Source = Parsed->getAsObject()->getString("text");
+    ASSERT_TRUE(Source.has_value()) << Text;
+    EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
+    EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
+    if (std::string_view(View) == "c") {
+      EXPECT_TRUE(Source->contains("extern void NdisCloseConfiguration(void*"))
+          << Source->str();
+      EXPECT_TRUE(Source->contains("extern int32_t NdisOpenConfigurationEx("))
+          << Source->str();
+      EXPECT_TRUE(Source->contains("NdisParameterString")) << Source->str();
+    }
+  }
+}
+
 TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // A program without debug information that calls routines kernel32,
   // user32 and ntdll export, which NeverD's user mode headers declare, and
