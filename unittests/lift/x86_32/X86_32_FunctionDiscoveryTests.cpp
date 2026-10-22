@@ -271,6 +271,155 @@ TEST(X86_32_FunctionDiscovery, AnInt3ByteInsideAnInstructionIsNoPadding) {
   EXPECT_TRUE(hasEntry(Functions, 0x401041)) << "a start after real padding";
 }
 
+namespace {
+
+BinaryImage operandEntryImage() {
+  std::vector<uint8_t> Bytes(0x60, 0xCC);
+  Bytes[0] = 0xEB;
+  Bytes[1] = 0x0C;                                      // jmp 40100E
+  const uint8_t Body[] = {0x68, 0x90, 0x56, 0x53, 0x90, // push 90535690h
+                          0x58, 0xC3};                  // pop eax; ret
+  std::copy(std::begin(Body), std::end(Body), Bytes.begin() + 0x0E);
+  return makePeText(std::move(Bytes));
+}
+
+} // namespace
+
+TEST(X86_32_FunctionDiscovery, OperandBytesCannotSupplyHeuristicEntries) {
+  // 401010 looks like an aligned push-register prologue. The loader can also
+  // guess an unaligned boundary at 401011. Both are bytes of a reachable
+  // PUSH immediate, not instructions at those addresses.
+  BinaryImage Img = operandEntryImage();
+  Symbol Guess = Symbol::makeFunc(0x401011, 0);
+  Guess.IsBoundaryGuess = true;
+  Img.Symbols.push_back(Guess);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_FALSE(hasEntry(Functions, 0x401010));
+  EXPECT_FALSE(hasEntry(Functions, 0x401011));
+}
+
+TEST(X86_32_FunctionDiscovery, OperandEntriesKeepIndependentEvidence) {
+  for (unsigned Evidence = 0; Evidence != 4; ++Evidence) {
+    SCOPED_TRACE(Evidence);
+    BinaryImage Img = operandEntryImage();
+    switch (Evidence) {
+    case 0:
+      Img.Symbols.push_back(Symbol::makeFunc(0x401010, 0));
+      break;
+    case 1: {
+      Export Exp;
+      Exp.Name = "overlapping_entry";
+      Exp.Addr = 0x401010;
+      Img.Exports.push_back(Exp);
+      break;
+    }
+    case 2: {
+      auto &Bytes = Img.Segments[0].Data;
+      Bytes[0x30] = 0xE8; // call 401010
+      writeLE<uint32_t>(Bytes.data() + 0x31, uint32_t(-0x25));
+      Bytes[0x35] = 0xC3;
+      break;
+    }
+    case 3: {
+      Segment Data;
+      Data.Name = ".rdata";
+      Data.VA = 0x402000;
+      Data.Size = 4;
+      Data.Flags = SegmentFlags::Readable;
+      Data.Data = {0x10, 0x10, 0x40, 0x00};
+      Img.Segments.push_back(std::move(Data));
+      Img.CodePtrRelocSlots.insert(0x402000);
+      break;
+    }
+    }
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X86));
+    FuncDetector Detector;
+    EXPECT_TRUE(hasEntry(Detector.detect(Img, Dec), 0x401010));
+  }
+}
+
+TEST(X86_32_FunctionDiscovery, UnreachedOperandsDoNotDisproveAnEntry) {
+  BinaryImage Img = operandEntryImage();
+  Img.Segments[0].Data[0] = 0xC3;
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  EXPECT_TRUE(hasEntry(Detector.detect(Img, Dec), 0x401010));
+}
+
+TEST(X86_32_FunctionDiscovery, OperandProofRequiresOneCompleteCodeOwner) {
+  for (bool DataMarker : {false, true}) {
+    SCOPED_TRACE(DataMarker);
+    BinaryImage Img = operandEntryImage();
+    if (DataMarker) {
+      Img.DataInCode.insert(0x40100F);
+    } else {
+      Img.KnownCodeRanges.clear();
+      Img.Sections[0].Size = 0x0F;
+      Section Data = Img.Sections[0];
+      Data.VA = 0x40100F;
+      Data.Size = 1;
+      Data.Flags = SegmentFlags::Readable;
+      Data.Type = 0x40000040;
+      Img.Sections.push_back(Data);
+      Section Tail = Img.Sections[0];
+      Tail.VA = 0x401010;
+      Tail.Size = 0x50;
+      Img.Sections.push_back(Tail);
+    }
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X86));
+    FuncDetector Detector;
+    EXPECT_TRUE(hasEntry(Detector.detect(Img, Dec), 0x401010));
+  }
+}
+
+TEST(X86_32_FunctionDiscovery, AJumpIntoAnOperandPreservesItsEntry) {
+  BinaryImage Img = operandEntryImage();
+  auto &Bytes = Img.Segments[0].Data;
+  const uint8_t Entry[] = {0x75, 0x06,  // jne 401008
+                           0xEB, 0x0A}; // jmp 40100E
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+  Bytes[8] = 0xEB;
+  Bytes[9] = 0x06; // jmp 401010
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  EXPECT_TRUE(hasEntry(Detector.detect(Img, Dec), 0x401010));
+}
+
+TEST(X86_32_FunctionDiscovery, AnUnresolvedJumpMayEnterAnOperand) {
+  BinaryImage Img = operandEntryImage();
+  auto &Bytes = Img.Segments[0].Data;
+  const uint8_t Entry[] = {0x75, 0x1E,  // jne 401020
+                           0xEB, 0x0A}; // jmp 40100E
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+  Bytes[0x20] = 0xFF;
+  Bytes[0x21] = 0xE0; // jmp eax
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  EXPECT_TRUE(hasEntry(Detector.detect(Img, Dec), 0x401010));
+}
+
+TEST(X86_32_FunctionDiscovery, OverlappingDecodesDoNotDisproveAnOperandEntry) {
+  BinaryImage Img = operandEntryImage();
+  auto &Bytes = Img.Segments[0].Data;
+  const uint8_t Entry[] = {0x75, 0x0B,  // jne 40100D
+                           0xEB, 0x0A}; // jmp 40100E
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+  Bytes[0x0D] = 0xB8; // mov eax, 53569068h overlaps the PUSH.
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  EXPECT_TRUE(hasEntry(Detector.detect(Img, Dec), 0x401010));
+}
+
 TEST(X86_32_FunctionDiscovery, RecoversAlignedPushRegAndSehPrologues) {
   std::vector<uint8_t> Bytes(0x50, 0xCC);
   const uint8_t Entry[] = {0x55, 0x8B, 0xEC, 0x5D, 0xC3};

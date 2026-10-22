@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../loader/PEHeaderFixture.h"
 #include "NeverDLiftFixture.h"
 #include "gtest/gtest.h"
 
@@ -11,6 +12,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -72,6 +74,117 @@ protected:
     }
   }
 };
+
+TEST_F(NativePointerRelocationBoundary,
+       PEHeaderImageBaseRetainsItsMirroredStorageIdentity) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "header mirror code generation requires Clang";
+  for (const auto [Is64, Machine] :
+       {std::pair{false, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_I386)},
+        {true, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_AMD64)},
+        {false, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_ARMNT)},
+        {true, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_ARM64)}}) {
+    SCOPED_TRACE(Machine);
+    auto Bytes = test::peHeaderImage(Is64, Machine);
+    const auto PE = locatePEHeaders(reinterpret_cast<uint8_t *>(Bytes.data()),
+                                    Bytes.size());
+    reinterpret_cast<llvm::object::coff_section *>(PE.SectionTable)
+        ->VirtualSize = 16;
+    const unsigned Width = Is64 ? 8 : 4;
+    const uint64_t Base = getPEImageBase(PE);
+    const size_t Size = getPESizeOfHeaders(PE);
+    const size_t BaseOffset =
+        PE.OptionalHeader - reinterpret_cast<uint8_t *>(Bytes.data()) +
+        (Is64 ? offsetof(llvm::object::pe32plus_header, ImageBase)
+              : offsetof(llvm::object::pe32_header, ImageBase));
+    auto Loaded = COFFLoader().loadBuffer(
+        llvm::MemoryBufferRef(Bytes, "header-mirror.exe"));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    std::vector<MedFunc> Functions;
+    for (bool LoadBase : {false, true}) {
+      MedFunc F;
+      F.Entry = Base + 0x1000 + 4 * LoadBase;
+      F.Name = LoadBase ? "header_base" : "header_address";
+      F.ReturnType = NdType::makeInt(Width);
+      MedBlock B;
+      B.Id = 0;
+      B.StartAddr = F.Entry;
+      B.EndAddr = F.Entry + 4;
+      auto Value = MedVar::makeConst(Base, Width,
+                                     ConstantAddressProvenance::DataAddress);
+      if (LoadBase) {
+        Value = {};
+        Value.Size = Width;
+        Value.Kind = MedVar::Temp;
+        Value.TheArch = Loaded->Arch;
+        Value.Id = 1;
+        Value.SSAVer = 1;
+        MedOp Load;
+        Load.Opcode = NdOp::LOAD;
+        Load.Addr = F.Entry;
+        Load.Output = Value;
+        Load.addInput(MedVar::makeConst(
+            Base + BaseOffset, Width, ConstantAddressProvenance::DataAddress));
+        B.Ops.push_back(Load);
+      }
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = F.Entry;
+      Return.addInput(Value);
+      B.Ops.push_back(Return);
+      F.Blocks.push_back(std::move(B));
+      Functions.push_back(std::move(F));
+    }
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit(Functions, Context, "pe-header-mirror",
+                              Loaded->Arch, {}, &*Loaded, BinaryFormat::COFF);
+    ASSERT_NE(Module, nullptr);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    const fs::path IR = tmpFile("pe-header-mirror.ll");
+    const fs::path Object = tmpFile("pe-header-mirror.obj");
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(IR.string(), EC);
+    ASSERT_FALSE(EC);
+    Module->print(OS, nullptr);
+    OS.close();
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"--target=" + Module->getTargetTriple().str(),
+                                 "-c", IR.string(), "-o", Object.string()});
+    ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+#if defined(__linux__) && defined(__x86_64__)
+    if (Loaded->Arch != Arch::X64)
+      continue;
+    // This executes authored data-access functions only. The no-argument
+    // integer returns agree between the target and host ABIs. Check every
+    // original header byte except the field that must name this new storage.
+    const fs::path Harness = tmpFile("pe-header-mirror.c");
+    const fs::path Program = tmpFile("pe-header-mirror");
+    std::ofstream C(Harness);
+    C << "extern unsigned long long header_address(void), header_base(void);\n"
+         "static const unsigned char expected[] = {";
+    for (size_t I = 0; I != Size; ++I)
+      C << unsigned(static_cast<uint8_t>(Bytes[I])) << ',';
+    C << "};\nint main(void) {\n"
+         "const unsigned char *p = (void *)header_address();\n"
+         "if (header_base() != (unsigned long long)p) return 1;\n"
+         "for (unsigned i=0; i<sizeof(expected); ++i)\n"
+         "if ((i<"
+      << BaseOffset << " || i>=" << BaseOffset + Width
+      << ") && p[i]!=expected[i]) return 2;\nreturn 0; }\n";
+    C.close();
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      const auto Linked =
+          exec(NEVERD_TEST_CLANG,
+               {"--target=x86_64-unknown-linux-gnu", Optimization, IR.string(),
+                Harness.string(), "-o", Program.string()});
+      ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
+      const auto Ran = exec(Program.string(), {});
+      EXPECT_EQ(Ran.exitCode, 0) << Ran.err << Optimization;
+    }
+#endif
+  }
+}
 
 TEST_F(NativePointerRelocationBoundary,
        TargetAggregateLayoutCompilesAcrossArchitecturesAndFormats) {
@@ -853,6 +966,396 @@ TEST_F(NativePointerRelocationBoundary,
     EXPECT_EQ(Img.CodePtrRelocSlots, (std::set<va_t>{0x2008}));
     EXPECT_TRUE(Img.CodeRefTargets.empty());
   }
+}
+
+TEST_F(NativePointerRelocationBoundary,
+       RuntimeIndexedMirrorSelectionsSurviveRelinking) {
+#if !defined(__x86_64__) || defined(__APPLE__) || defined(_WIN32)
+  GTEST_SKIP() << "native execution requires an x86-64 ELF host";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "native fixture requires Clang's GNU-style driver";
+  const fs::path Source = tmpFile("runtime-mirror-selections.s");
+  const fs::path Object = tmpFile("runtime-mirror-selections.o");
+  const fs::path Harness = tmpFile("runtime-mirror-selections-main.c");
+  const fs::path Original = tmpFile("runtime-mirror-selections-original");
+  const fs::path IR = tmpFile("runtime-mirror-selections.ll");
+  const fs::path Rebuilt = tmpFile("runtime-mirror-selections-rebuilt");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS);
+    OS << R"(
+.text
+.globl selected_phi
+.type selected_phi,@function
+selected_phi:
+  mov (%rdi), %rax
+  test %rsi, %rsi
+  jz 1f
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+  jmp 2f
+1:
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+2:
+  mov (%rax), %rax
+  ret
+.size selected_phi,.-selected_phi
+.globl selected_cmov
+.type selected_cmov,@function
+selected_cmov:
+  mov (%rdi), %rdx
+  lea table_a(%rip), %rax
+  lea (%rax,%rdx,8), %rax
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rdx,8), %rcx
+  test %rsi, %rsi
+  cmovz %rcx, %rax
+  mov (%rax), %rax
+  ret
+.size selected_cmov,.-selected_cmov
+.globl selected_sources
+.type selected_sources,@function
+selected_sources:
+  sub $24, %rsp
+  mov (%rdi), %rax
+  mov (%rax), %rax
+  mov %rax, (%rsp)
+  test %rsi, %rsi
+  jz 1f
+  mov (%rsp), %rdx
+  jmp 2f
+1:
+  mov 8(%rdi), %rdx
+  mov (%rdx), %rdx
+2:
+  lea table_a(%rip), %rax
+  lea (%rax,%rdx,8), %rax
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rdx,8), %rcx
+  test %rsi, %rsi
+  cmovz %rcx, %rax
+  mov (%rax), %rax
+  add $24, %rsp
+  ret
+.size selected_sources,.-selected_sources
+.section .data.rel.ro,"aw",@progbits
+.p2align 3
+table_a:
+  .quad 11,23,47,89
+table_b:
+  .quad 101,211,433,877
+mirror_owner:
+  .quad selected_phi
+.section .note.GNU-stack,"",@progbits
+)";
+  }
+  {
+    std::ofstream OS(Harness);
+    ASSERT_TRUE(OS);
+    OS << R"(
+#include <stdint.h>
+extern uint64_t selected_phi(const uint64_t *, uint64_t);
+extern uint64_t selected_cmov(const uint64_t *, uint64_t);
+extern uint64_t selected_sources(const uint64_t *const *, uint64_t);
+int main(void) {
+  const uint64_t a[] = {11,23,47,89}, b[] = {101,211,433,877};
+  const uint64_t choices[] = {0,1,UINT64_MAX,UINT64_C(1)<<63};
+  for (unsigned repeat = 0; repeat != 16; ++repeat)
+    for (uint64_t index = 0; index != 4; ++index)
+      for (unsigned c = 0; c != 4; ++c) {
+        uint64_t expected = choices[c] ? a[index] : b[index];
+        if (selected_phi(&index, choices[c]) != expected) return 1;
+        if (selected_cmov(&index, choices[c]) != expected) return 2;
+        uint64_t reverse = 3 - index;
+        const uint64_t *pair[] = {&index, &reverse};
+        expected = choices[c] ? a[index] : b[reverse];
+        if (selected_sources(pair, choices[c]) != expected) return 3;
+      }
+  return 0;
+}
+)";
+  }
+  auto Compile =
+      exec(NEVERD_TEST_CLANG, {"-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  Compile =
+      exec(NEVERD_TEST_CLANG, {"-fPIE", "-pie", Object.string(),
+                               Harness.string(), "-o", Original.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  auto Native = exec(Original.string(), {});
+  ASSERT_EQ(Native.exitCode, 0) << Native.err;
+  auto Med = liftToMedIR(Object);
+  ASSERT_EQ(Med.exitCode, 0) << Med.err;
+  EXPECT_NE(Med.out.find("PHI RAX"), std::string::npos) << Med.out;
+  EXPECT_NE(Med.out.find("PHI RDX"), std::string::npos) << Med.out;
+  EXPECT_NE(Med.out.find("INT_OR RAX"), std::string::npos) << Med.out;
+  auto Lifted = liftToLLVMIRUnopt(Object);
+  ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+  EXPECT_NE(Lifted.out.find("@__nd_codeptr_"), std::string::npos);
+  const size_t Start = Lifted.out.find("; ModuleID");
+  ASSERT_NE(Start, std::string::npos);
+  {
+    std::ofstream OS(IR);
+    ASSERT_TRUE(OS);
+    OS << std::string_view(Lifted.out).substr(Start);
+  }
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    Compile =
+        exec(NEVERD_TEST_CLANG, {Optimization, "-fPIE", "-pie", IR.string(),
+                                 Harness.string(), "-o", Rebuilt.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    for (unsigned Attempt = 0; Attempt != 5; ++Attempt) {
+      auto Run = exec(Rebuilt.string(), {});
+      EXPECT_EQ(Run.exitCode, 0) << Run.err;
+    }
+  }
+#endif
+}
+
+TEST_F(NativePointerRelocationBoundary,
+       RuntimeIndexedMutableMirrorsKeepDirectAndSelectedStoresAliased) {
+#if !defined(__x86_64__) || defined(__APPLE__) || defined(_WIN32)
+  GTEST_SKIP() << "native execution requires an x86-64 ELF host";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "native fixture requires Clang's GNU-style driver";
+  const fs::path Source = tmpFile("mutable-runtime-mirror.s");
+  const fs::path Object = tmpFile("mutable-runtime-mirror.o");
+  const fs::path Harness = tmpFile("mutable-runtime-mirror-main.c");
+  const fs::path Original = tmpFile("mutable-runtime-mirror-original");
+  const fs::path IR = tmpFile("mutable-runtime-mirror.ll");
+  const fs::path Rebuilt = tmpFile("mutable-runtime-mirror-rebuilt");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS);
+    OS << R"(
+.text
+.globl selected_read
+.type selected_read,@function
+selected_read:
+  mov (%rdi), %rax
+  test %rsi, %rsi
+  jz 1f
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+  jmp 2f
+1:
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+2:
+  mov (%rax), %rax
+  ret
+.size selected_read,.-selected_read
+.globl selected_write
+.type selected_write,@function
+selected_write:
+  mov (%rdi), %rax
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rcx
+  lea table_b(%rip), %r8
+  lea (%r8,%rax,8), %r8
+  test %rsi, %rsi
+  cmovz %r8, %rcx
+  mov %rdx, (%rcx)
+  mov %rdx, %rax
+  ret
+.size selected_write,.-selected_write
+.globl direct_read
+.type direct_read,@function
+direct_read:
+  mov table_a+16(%rip), %rax
+  add table_b+16(%rip), %rax
+  ret
+.size direct_read,.-direct_read
+.globl direct_write
+.type direct_write,@function
+direct_write:
+  mov %rdi, table_a+16(%rip)
+  mov %rsi, table_b+16(%rip)
+  mov %rdi, %rax
+  ret
+.size direct_write,.-direct_write
+.data
+.p2align 3
+table_a: .quad 11,23,47,89
+table_b: .quad 101,211,433,877
+mirror_owner: .quad table_a
+.section .note.GNU-stack,"",@progbits
+)";
+  }
+  {
+    std::ofstream OS(Harness);
+    ASSERT_TRUE(OS);
+    OS << R"(
+#include <stdint.h>
+extern uint64_t selected_read(const uint64_t *, uint64_t);
+extern uint64_t selected_write(const uint64_t *, uint64_t, uint64_t);
+extern uint64_t direct_read(void);
+extern uint64_t direct_write(uint64_t,uint64_t);
+int main(void) {
+ uint64_t a[]={11,23,47,89}, b[]={101,211,433,877};
+ const uint64_t choices[]={0,1,UINT64_MAX,UINT64_C(1)<<63};
+ for(unsigned round=0;round!=16;++round) {
+  for(uint64_t i=0;i!=4;++i) for(unsigned c=0;c!=4;++c) {
+   if(selected_read(&i,choices[c])!=(choices[c]?a[i]:b[i])) return 1;
+   uint64_t n=(UINT64_C(0x1234567812345678) ^ (i+31*round+5*c));
+   if(selected_write(&i,choices[c],n)!=n) return 2;
+   (choices[c]?a:b)[i]=n;
+   if(selected_read(&i,choices[c])!=n) return 3;
+   if(direct_read()!=a[2]+b[2]) return 4;
+  }
+  a[2]=round+3;b[2]=round+517;
+  if(direct_write(a[2],b[2])!=a[2]) return 5;
+  uint64_t i=2;
+  if(selected_read(&i,1)!=a[2] || selected_read(&i,0)!=b[2]) return 6;
+ }
+ return 0;
+}
+)";
+  }
+  auto Compile =
+      exec(NEVERD_TEST_CLANG, {"-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  Compile =
+      exec(NEVERD_TEST_CLANG, {"-fPIE", "-pie", Object.string(),
+                               Harness.string(), "-o", Original.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  auto Native = exec(Original.string(), {});
+  ASSERT_EQ(Native.exitCode, 0) << Native.err;
+  auto Lifted = liftToLLVMIRUnopt(Object);
+  ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+  EXPECT_NE(Lifted.out.find("@__nd_codeptr_"), std::string::npos);
+  const size_t Start = Lifted.out.find("; ModuleID");
+  ASSERT_NE(Start, std::string::npos);
+  {
+    std::ofstream OS(IR);
+    ASSERT_TRUE(OS);
+    OS << std::string_view(Lifted.out).substr(Start);
+  }
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    Compile =
+        exec(NEVERD_TEST_CLANG, {Optimization, "-fPIE", "-pie", IR.string(),
+                                 Harness.string(), "-o", Rebuilt.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    for (unsigned Attempt = 0; Attempt != 5; ++Attempt) {
+      auto Run = exec(Rebuilt.string(), {});
+      EXPECT_EQ(Run.exitCode, 0) << Run.err;
+    }
+  }
+#endif
+}
+
+TEST_F(NativePointerRelocationBoundary,
+       RuntimeGlobalPointersFeedUnboundedScalarIndices) {
+#if !defined(__x86_64__) || defined(__APPLE__) || defined(_WIN32)
+  GTEST_SKIP() << "native execution requires an x86-64 ELF host";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "native fixture requires Clang's GNU-style driver";
+  const fs::path Source = tmpFile("runtime-global-source.s");
+  const fs::path Object = tmpFile("runtime-global-source.o");
+  const fs::path Harness = tmpFile("runtime-global-source-main.c");
+  const fs::path Original = tmpFile("runtime-global-source-original");
+  const fs::path IR = tmpFile("runtime-global-source.ll");
+  const fs::path Rebuilt = tmpFile("runtime-global-source-rebuilt");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS);
+    OS << R"(
+.text
+.globl bind_root
+.type bind_root,@function
+bind_root:
+  mov %rdi, runtime_root(%rip)
+  mov %rdi, %rax
+  ret
+.size bind_root,.-bind_root
+.globl selected_global
+.type selected_global,@function
+selected_global:
+  mov runtime_root(%rip), %rcx
+  mov (%rcx), %rax
+  test %rdi, %rdi
+  jz 1f
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+  jmp 2f
+1:
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+2:
+  mov (%rax), %rax
+  ret
+.size selected_global,.-selected_global
+.data
+.p2align 3
+runtime_root: .quad 0
+.section .data.rel.ro,"aw",@progbits
+.p2align 3
+table_a: .quad 11,23,47,89
+table_b: .quad 101,211,433,877
+mirror_owner: .quad selected_global
+.section .note.GNU-stack,"",@progbits
+)";
+  }
+  {
+    std::ofstream OS(Harness);
+    ASSERT_TRUE(OS);
+    OS << R"(
+#include <stdint.h>
+extern const uint64_t *bind_root(const uint64_t *);
+extern uint64_t selected_global(uint64_t);
+int main(void) {
+ const uint64_t a[]={11,23,47,89},b[]={101,211,433,877};
+ const uint64_t choices[]={0,1,UINT64_MAX,UINT64_C(1)<<63};
+ for(unsigned repeat=0;repeat!=16;++repeat)
+  for(uint64_t index=0;index!=4;++index)
+   for(unsigned c=0;c!=4;++c) {
+    uint64_t reverse=3-index;
+    const uint64_t *source=c&1?&index:&reverse;
+    if(bind_root(source)!=source) return 1;
+    uint64_t expected=choices[c]?a[*source]:b[*source];
+    if(selected_global(choices[c])!=expected) return 2;
+   }
+ return 0;
+}
+)";
+  }
+  auto Compile =
+      exec(NEVERD_TEST_CLANG, {"-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  Compile =
+      exec(NEVERD_TEST_CLANG, {"-fPIE", "-pie", Object.string(),
+                               Harness.string(), "-o", Original.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  auto Native = exec(Original.string(), {});
+  ASSERT_EQ(Native.exitCode, 0) << Native.err;
+  auto Lifted = liftToLLVMIRUnopt(Object);
+  ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+  EXPECT_NE(Lifted.out.find("@__nd_codeptr_"), std::string::npos);
+  const size_t Start = Lifted.out.find("; ModuleID");
+  ASSERT_NE(Start, std::string::npos);
+  {
+    std::ofstream OS(IR);
+    ASSERT_TRUE(OS);
+    OS << std::string_view(Lifted.out).substr(Start);
+  }
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    Compile =
+        exec(NEVERD_TEST_CLANG, {Optimization, "-fPIE", "-pie", IR.string(),
+                                 Harness.string(), "-o", Rebuilt.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    for (unsigned Attempt = 0; Attempt != 5; ++Attempt) {
+      auto Run = exec(Rebuilt.string(), {});
+      EXPECT_EQ(Run.exitCode, 0) << Run.err;
+    }
+  }
+#endif
 }
 
 TEST_F(NativePointerRelocationBoundary,

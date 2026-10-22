@@ -154,7 +154,7 @@ TEST(RegistrationLocalUnwind, EH4RequiresCookieFrameAndBoundBeforeCleanup) {
                                       {0, Mutation == 12 ? 0 : -2}}));
       EXPECT_TRUE(States.SecurityCookiesComplete);
       ASSERT_EQ(States.Blocks.size(), Function.Blocks.size());
-      EXPECT_EQ(States.Blocks[2].Levels,
+      EXPECT_EQ(States.Blocks[2].levels(),
                 (std::vector<int32_t>{Mutation == 12 ? 0 : -2}));
       const auto Seq = Function.Blocks[2].Ops.back().Seq;
       const auto Marker = llvm::find_if(States.FrameValues, [&](const auto &V) {

@@ -14,7 +14,6 @@
 #include "neverd/ir/med/X86RegistrationFrame.h"
 
 #include <cstdint>
-#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -38,6 +37,37 @@ struct AlignmentResult {
   uint64_t Remainder = 0;
   int64_t Offset = 0;
 };
+
+struct AlignmentMask {
+  unsigned BaseIndex = 0;
+  uint64_t Alignment = 0;
+};
+
+std::optional<AlignmentMask> alignmentMask(const MedOp &Op,
+                                           unsigned PointerSize) {
+  if ((PointerSize != 4 && PointerSize != 8) || Op.Opcode != NdOp::INT_AND ||
+      Op.NumInputs != 2 || Op.Output.Size != PointerSize ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      !Op.IntrinsicOutputs.empty())
+    return std::nullopt;
+  for (unsigned I = 0; I != 2; ++I) {
+    const MedVar &Base = Op.Inputs[I];
+    const MedVar &Mask = Op.Inputs[I ^ 1u];
+    if (Base.isConst() || Base.Size != PointerSize || !Mask.isConst() ||
+        Mask.Size != PointerSize || isAddressProvenance(Mask.Provenance))
+      continue;
+    const uint64_t WidthMask =
+        PointerSize == 4 ? uint64_t{UINT32_MAX} : UINT64_MAX;
+    if (Mask.ConstVal == 0 || (Mask.ConstVal & ~WidthMask))
+      continue;
+    const uint64_t Cleared = ~Mask.ConstVal & WidthMask;
+    const uint64_t Alignment = Cleared + 1;
+    if (Cleared && Alignment && (Alignment & (Alignment - 1)) == 0)
+      return AlignmentMask{I, Alignment};
+  }
+  return std::nullopt;
+}
 
 class StackOffsetProof {
 public:
@@ -67,44 +97,37 @@ public:
                                            unsigned Depth = 0) {
     if (Depth == 0)
       Steps = 0;
-    if (Op.Opcode != NdOp::INT_AND || Op.NumInputs != 2 ||
-        Op.Output.Size != TRI.PointerSize ||
-        Op.MemoryOrdering != NdMemoryOrdering::None ||
-        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-        !Op.IntrinsicOutputs.empty())
+    const auto Mask = alignmentMask(Op, TRI.PointerSize);
+    if (!Mask || Mask->Alignment >
+                     guaranteedEntryStackAlignment(Architecture, Format, Entry))
       return std::nullopt;
-    for (unsigned BaseIndex = 0; BaseIndex != 2; ++BaseIndex) {
-      const MedVar &Base = Op.Inputs[BaseIndex];
-      const MedVar &Mask = Op.Inputs[1 - BaseIndex];
-      if (Base.Size != TRI.PointerSize || Mask.Size != TRI.PointerSize ||
-          !Mask.isConst() || isAddressProvenance(Mask.Provenance))
-        continue;
-      const uint64_t WidthMask = TRI.PointerSize == 4
-                                     ? uint64_t{UINT32_MAX}
-                                     : std::numeric_limits<uint64_t>::max();
-      if ((Mask.ConstVal & ~WidthMask) != 0)
-        continue;
-      const uint64_t Cleared = ~Mask.ConstVal & WidthMask;
-      const uint64_t Alignment = Cleared + 1;
-      if (!Cleared || !Alignment ||
-          Alignment >
-              guaranteedEntryStackAlignment(Architecture, Format, Entry) ||
-          (Alignment & (Alignment - 1)) != 0)
-        continue;
-      auto Offset = resolve(Base, Depth + 1);
-      if (!Offset)
-        continue;
-      const uint64_t Remainder =
-          (uint64_t(*Offset) +
-           syntheticEntryStackResidue(Architecture, Format, Entry)) &
-          (Alignment - 1);
-      auto Aligned = safety::detail::checkedStackOffset(
-          *Offset, static_cast<int64_t>(Remainder), true);
-      if (!Aligned || !fitsPointerOffset(*Aligned))
-        continue;
-      return AlignmentResult{BaseIndex, Remainder, *Aligned};
-    }
-    return std::nullopt;
+    auto Offset = resolve(Op.Inputs[Mask->BaseIndex], Depth + 1);
+    if (!Offset)
+      return std::nullopt;
+    const uint64_t Remainder =
+        (uint64_t(*Offset) +
+         syntheticEntryStackResidue(Architecture, Format, Entry)) &
+        (Mask->Alignment - 1);
+    auto Aligned = safety::detail::checkedStackOffset(
+        *Offset, static_cast<int64_t>(Remainder), true);
+    if (!Aligned || !fitsPointerOffset(*Aligned))
+      return std::nullopt;
+    return AlignmentResult{Mask->BaseIndex, Remainder, *Aligned};
+  }
+
+  bool realignmentRoot(const MedOp &Op,
+                       const std::set<const MedOp *> &EarlierEntryOps) {
+    const auto Mask = alignmentMask(Op, TRI.PointerSize);
+    const Key K = key(Op.Output);
+    if (!Mask || Op.Output.Kind != MedVar::Reg ||
+        Op.Output.TheArch != Architecture ||
+        Op.Output.RegOff != TRI.StackPointer ||
+        Op.RegistrationRoot != MedOp::RegistrationRootKind::None ||
+        Ambiguous.count(K) || Definitions.find(K) == Definitions.end() ||
+        Definitions.at(K) != &Op)
+      return false;
+    AllowedDefinitions = &EarlierEntryOps;
+    return offset(Op.Inputs[Mask->BaseIndex]).has_value();
   }
 
   /// The offset of \p Value from the authenticated entry stack pointer.
@@ -166,10 +189,20 @@ private:
       return std::nullopt;
     if (Depth > ::neverd::limits::ir::kMedStackAlignmentResolveDepthLimit ||
         Value.Size != TRI.PointerSize ||
-        (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp))
+        (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp) ||
+        (AllowedDefinitions && Value.TheArch != Architecture))
       return std::nullopt;
     const Key K = key(Value);
     if (Ambiguous.count(K))
+      return std::nullopt;
+    const auto Definition = Definitions.find(K);
+    if (AllowedDefinitions &&
+        (Definition == Definitions.end() ||
+         !AllowedDefinitions->count(Definition->second) ||
+         Definition->second->MemoryOrdering != NdMemoryOrdering::None ||
+         Definition->second->MemoryAddressSpace !=
+             NdMemoryAddressSpace::Default ||
+         !Definition->second->IntrinsicOutputs.empty()))
       return std::nullopt;
     if (Value.Kind == MedVar::Reg && Value.RegOff == TRI.StackPointer &&
         (safety::detail::isAuthenticatedEntryRegisterLiveIn(Func, Value) ||
@@ -234,6 +267,9 @@ private:
   BinaryFormat Format;
   StackEntryKind Entry;
   bool FollowJoins;
+  // A realignment root must be established by the exact entry prefix already
+  // executed before its mask. Ordinary entry-offset queries also follow joins.
+  const std::set<const MedOp *> *AllowedDefinitions = nullptr;
   std::map<Key, const MedOp *> Definitions;
   std::map<Key, const PhiNode *> Joins;
   std::set<Key> Ambiguous;
@@ -246,6 +282,37 @@ private:
 };
 
 } // namespace
+
+std::vector<MedVar> entryStackRealignmentRoots(const MedFunc &Func,
+                                               Arch Architecture,
+                                               BinaryFormat Format) {
+  const MedBlock *Entry = nullptr;
+  for (const auto &Block : Func.Blocks)
+    if (Block.StartAddr == Func.Entry) {
+      if (Entry)
+        return {};
+      Entry = &Block;
+    }
+  if (!Entry || !Entry->Preds.empty() || !Entry->ExceptionalPreds.empty())
+    return {};
+  for (const auto &Block : Func.Blocks) {
+    for (int Successor : Block.Succs)
+      if (Successor == Entry->Id)
+        return {};
+    for (const auto &Successor : Block.ExceptionalSuccs)
+      if (Successor.BlockId == Entry->Id)
+        return {};
+  }
+  StackOffsetProof Proof(Func, Architecture, Format, StackEntryKind::Call);
+  std::vector<MedVar> Roots;
+  std::set<const MedOp *> EarlierEntryOps;
+  for (const auto &Op : Entry->Ops) {
+    if (Proof.realignmentRoot(Op, EarlierEntryOps))
+      Roots.push_back(Op.Output);
+    EarlierEntryOps.insert(&Op);
+  }
+  return Roots;
+}
 
 StackEntryKind functionEntryKind(const MedFunc &Func, StackEntryKind AtEntry) {
   if (AtEntry != StackEntryKind::ProcessEntry)

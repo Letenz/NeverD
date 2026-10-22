@@ -136,8 +136,8 @@ terminalRegistrationRegion(const MedFunc &Med, int32_t TryLow,
                                  S.CxxCatchStacks[0].back() == *Parent
                            : !S.CallbackOnly;
                 return S.Reached && Context && !S.Unknown &&
-                       S.Range.contains(Op.Addr) && !S.Levels.empty() &&
-                       llvm::all_of(S.Levels, [&](int32_t Level) {
+                       S.Range.contains(Op.Addr) && !S.levels().empty() &&
+                       llvm::all_of(S.levels(), [&](int32_t Level) {
                          return !Op.DoesNotReturn ||
                                 (Level >= Try.TryLow && Level <= Try.TryHigh);
                        });

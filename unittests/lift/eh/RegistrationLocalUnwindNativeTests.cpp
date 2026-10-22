@@ -58,7 +58,7 @@ MedFunc localUnwindSource(bool EH4, bool Indirect) {
     State.Range = {Block.StartAddr, Block.EndAddr};
     State.Reached = true;
     State.CallbackOnly = Id == 1;
-    State.Levels = {0};
+    State.ExplicitLevels = {0};
     States.Blocks.push_back(State);
   }
   Source.Blocks[0].Succs = {2};

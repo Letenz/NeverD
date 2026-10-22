@@ -202,7 +202,7 @@ getX86RegistrationSEHRetainedScopes(const MedFunc &Function) {
     if (++Work > limits::kMaxRegistrationEHStateWork)
       return std::nullopt;
     if (!State.CallbackOnly)
-      for (int32_t Level : State.Levels)
+      for (int32_t Level : State.levels())
         if (!Include(Parent, Level))
           return std::nullopt;
   }

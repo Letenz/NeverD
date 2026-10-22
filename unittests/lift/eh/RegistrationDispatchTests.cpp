@@ -65,7 +65,7 @@ TEST(RegistrationDispatch, ManyDistinctFramesStayWithinDefaultBudget) {
     ASSERT_NE(Root, A.Blocks.end());
     EXPECT_TRUE(Root->CallbackOnly);
     EXPECT_FALSE(Root->Unknown);
-    EXPECT_EQ(Root->Levels, std::vector<int32_t>{-1});
+    EXPECT_EQ(Root->levels(), std::vector<int32_t>{-1});
   }
 }
 
@@ -105,7 +105,7 @@ TEST(RegistrationDispatch, SharedFinallyRetainsEveryLevelWithinDefaultBudget) {
     EXPECT_FALSE(Root->Unknown);
     std::vector<int32_t> Expected(Count);
     std::iota(Expected.begin(), Expected.end(), -1);
-    EXPECT_EQ(Root->Levels, Expected);
+    EXPECT_EQ(Root->levels(), Expected);
   }
 }
 

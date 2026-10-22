@@ -152,9 +152,11 @@ RegistrationCallCalleeIndex::cleanupContracts(const LowFunc &Function) {
       continue;
     auto It = CleanupCache.find(Action.ActionVA);
     if (It == CleanupCache.end()) {
-      if (CleanupCache.size() ==
-          ::neverd::limits::ir::
-              kRegistrationCalleeIndexRegistrationCallCalleeIndexCleanupContractsCleanupCacheSizeLimit)
+      // Cleanup entries are owned by the bounded unwind graph, which can
+      // contain more distinct relays than the ordinary-callee cache. Keep
+      // that format bound and charge every successful or failed proof to the
+      // same cumulative work budget.
+      if (CleanupCache.size() == limits::kMaxRegistrationEHRecords)
         return std::nullopt;
       auto Relay = getCheckedX86RegistrationCleanupRelayABI(
           Image, Action.ActionVA, &Work);

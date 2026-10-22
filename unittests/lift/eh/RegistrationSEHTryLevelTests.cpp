@@ -186,7 +186,7 @@ TEST(RegistrationSEHTryLevel, RetirementSkipsRemainingFinallyEffects) {
     ADD_FAILURE() << Diagnostic;
   ASSERT_TRUE(A.Complete);
   ASSERT_TRUE(A.SEHStateStoresComplete);
-  ASSERT_EQ(A.Blocks[4].Levels, (std::vector<int32_t>{-1}));
+  ASSERT_EQ(A.Blocks[4].levels(), (std::vector<int32_t>{-1}));
   expectMarker(A, -40);
   const auto Store =
       std::find_if(A.SEHStateStores.begin(), A.SEHStateStores.end(),
@@ -202,7 +202,7 @@ TEST(RegistrationSEHTryLevel, BranchingCallbackKeepsStateAndFrameCorrelated) {
     ADD_FAILURE() << Diagnostic;
   ASSERT_TRUE(A.Complete);
   ASSERT_TRUE(A.SEHStateStoresComplete);
-  EXPECT_EQ(A.Blocks[4].Levels, (std::vector<int32_t>{0}));
+  EXPECT_EQ(A.Blocks[4].levels(), (std::vector<int32_t>{0}));
   // The zero-state arm writes the same pointer as the one-state arm's
   // subsequent cleanup. Joining arms before choosing the cleanup loses it.
   expectMarker(A, 0);
@@ -232,7 +232,7 @@ TEST(RegistrationSEHTryLevel, DeepUnwindKeepsTheDefaultProofBudget) {
         std::find_if(A.Blocks.begin(), A.Blocks.end(),
                      [](const auto &B) { return B.BlockId == 4; });
     ASSERT_NE(Resume, A.Blocks.end());
-    EXPECT_EQ(Resume->Levels, (std::vector<int32_t>{-1}));
+    EXPECT_EQ(Resume->levels(), (std::vector<int32_t>{-1}));
     expectMarker(A, -44);
   }
 }
@@ -242,7 +242,7 @@ TEST(RegistrationSEHTryLevel, ConvergingUnwindBranchesHaveSeparateAncestors) {
   for (const auto &Diagnostic : A.Diagnostics)
     ADD_FAILURE() << Diagnostic;
   ASSERT_TRUE(A.Complete);
-  EXPECT_EQ(A.Blocks[4].Levels, (std::vector<int32_t>{-1}));
+  EXPECT_EQ(A.Blocks[4].levels(), (std::vector<int32_t>{-1}));
   // Both arms reach the same outer frame. A completed sibling traversal is
   // not a recurrent configuration on the current path.
   expectMarker(A, -44);

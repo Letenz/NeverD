@@ -29,10 +29,10 @@ TEST(RegistrationFilterState, CallbackActivatedScopeHasIndependentRoots) {
   const auto &Handler = Result.Blocks.back();
   EXPECT_TRUE(Filter.Reached);
   EXPECT_TRUE(Filter.CallbackOnly);
-  EXPECT_EQ(Filter.Levels, (std::vector<int32_t>{2}));
+  EXPECT_EQ(Filter.levels(), (std::vector<int32_t>{2}));
   EXPECT_TRUE(Handler.Reached);
   EXPECT_FALSE(Handler.CallbackOnly);
-  EXPECT_EQ(Handler.Levels, (std::vector<int32_t>{1}));
+  EXPECT_EQ(Handler.levels(), (std::vector<int32_t>{1}));
 }
 
 TEST(RegistrationFilterState, UnknownSearchCannotPublishCompleteRootProofs) {

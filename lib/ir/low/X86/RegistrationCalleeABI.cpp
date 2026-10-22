@@ -44,17 +44,26 @@ checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target) {
   const auto *Named = Image.findImportAt(Target);
   const auto *Import =
       Named ? checkedImportSlot(Image, Named->IATAddr) : nullptr;
-  // These authenticated C-runtime math entries use caller cleanup on PE32.
-  // This is a returning ESP fact only: callbacks, errno and floating-point
-  // effects still prevent a private-memory or native replacement contract.
+  // These authenticated C-runtime entries use caller cleanup on PE32.
+  // This is a returning ESP fact only: allocation, deallocation, callbacks,
+  // errno and floating-point effects need separate memory/runtime contracts.
   if (Import && !Import->IsDelayImport &&
-      (Import->Name == "log" || Import->Name == "exp") &&
       isFileBackedPEImportSlot(Image, Import->IATAddr)) {
     const llvm::StringRef Module = Import->Module;
-    if (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
-        Module.equals_insensitive("ucrtbase.dll") ||
-        Module.equals_insensitive("ucrtbased.dll") ||
-        Module.equals_insensitive("msvcrt.dll"))
+    const llvm::StringRef Name = Import->Name;
+    if ((Module.equals_insensitive("msvcrt.dll") ||
+         Module.equals_insensitive("msvcr100.dll")) &&
+        (Name == "malloc" || Name == "calloc" || Name == "realloc" ||
+         Name == "free" || Name == "memcpy" || Name == "memmove" ||
+         Name == "memset" || Name == "??2@YAPAXI@Z" ||
+         Name == "??_U@YAPAXI@Z" || Name == "??3@YAXPAX@Z" ||
+         Name == "??_V@YAXPAX@Z"))
+      return 0;
+    if ((Name == "log" || Name == "exp") &&
+        (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
+         Module.equals_insensitive("ucrtbase.dll") ||
+         Module.equals_insensitive("ucrtbased.dll") ||
+         Module.equals_insensitive("msvcrt.dll")))
       return 0;
   }
   if (!Import || Import->Name != "RaiseException" ||

@@ -800,6 +800,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       noteRead(CI.TargetAddr);
       if (CallSlot)
         noteRead(*CallSlot);
+      if (Op.X87ImportArguments && Op.X87ArgumentInput &&
+          Op.X87ArgumentInput + Op.X87ImportArguments <= Op.NumInputs) {
+        // This call has no ordinary argument bank. Do not scan incidental
+        // spills or promote live integer registers to the caller's parameters.
+        for (unsigned K = 0; K < Op.X87ImportArguments; ++K)
+          CI.Args.push_back(Op.Inputs[Op.X87ArgumentInput + K]);
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
       // The routine the function-pointer variable an indirect call goes
       // through starts at: the call passes its arguments, but takes neither
       // its name nor its contract (PointerVariableCallee).  An import's slot
@@ -2112,7 +2121,25 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       if (StackAfterUsedRegisters) {
         CallerStackBase = 0;
         for (const MedVar &Param : Func.Params)
-          if (Param.RegOff != kNoParamReg)
+          if (Param.RegOff != kNoParamReg && !TRI.isX87StackReg(Param.RegOff))
+            ++CallerStackBase;
+        // A tail forwarder may gain its integer parameters only at the end
+        // of this pass. Number its incoming stack slots after that same
+        // prospective prefix now; otherwise a later pass adds the slot a
+        // second time under its corrected index.
+        IntegerArgumentLayout CallerLayout = DefaultIntegerLayout;
+        if (!Func.IntegerArgumentRegisters.empty())
+          CallerLayout.Registers = Func.IntegerArgumentRegisters;
+        else if (!PromoteOrder.empty())
+          CallerLayout.Registers = PromoteOrder;
+        int MaxPromoted = -1;
+        for (const auto &Promoted : PromoteParams)
+          MaxPromoted =
+              std::max(MaxPromoted, CallerLayout.registerIndex(Promoted.first));
+        for (int K = 0; K <= MaxPromoted; ++K)
+          if (llvm::none_of(Func.Params, [&](const MedVar &Param) {
+                return Param.RegOff == CallerLayout.Registers[K];
+              }))
             ++CallerStackBase;
       }
       // A variadic routine of the image keeps its arity open for the
@@ -2782,6 +2809,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                !(VectorArgumentCallees &&
                  VectorArgumentCallees->count(CI.TargetAddr)))
         CI.VarArgFixedCount = CalleeRegArgs;
+      if (Op.X87ArgumentInput && Op.X87ArgumentInput < Op.NumInputs)
+        CI.Args.push_back(Op.Inputs[Op.X87ArgumentInput]);
       Func.CallInfos.push_back(std::move(CI));
       if (!CallLaneOps.empty())
         Pending.push_back(
@@ -2817,6 +2846,14 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
   // promoted below is inserted at the front, keeping positions aligned).  Done
   // before the register promotion so the final order is reg params then stack
   // params.
+  const auto ordinaryParameterEnd = [&]() {
+    return Func.ConsumesX87Argument
+               ? llvm::find_if(Func.Params,
+                               [&](const MedVar &P) {
+                                 return TRI.isX87StackReg(P.RegOff);
+                               })
+               : Func.Params.end();
+  };
   if (!PromoteStackParams.empty()) {
     std::set<int> ExistingStack;
     for (const auto &P : Func.Params)
@@ -2831,7 +2868,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       P.RegOff = kNoParamReg;
       P.Size = static_cast<uint16_t>(TRI.PointerSize);
       P.TheArch = TheArch;
-      Func.Params.push_back(P);
+      Func.Params.insert(ordinaryParameterEnd(), P);
     }
   }
 
@@ -2972,7 +3009,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       P.TheArch = TheArch;
       FPParams.push_back(P);
     }
-    Func.Params.insert(Func.Params.end(), FPParams.begin(), FPParams.end());
+    Func.Params.insert(ordinaryParameterEnd(), FPParams.begin(),
+                       FPParams.end());
   }
 
   // Rewire a pure FP-returning forwarder's tail call: its result + the RETURN

@@ -1004,19 +1004,38 @@ TEST(ApplyDebugSymbolsTest, PublishesNamesOnlyDataObjectsWithoutExtents) {
 // there refutes the guess, but not code metadata.
 TEST(ApplyDebugSymbolsTest, DataRefutesAFunctionGuessedAfterPadding) {
   BinaryImage Img;
-  for (const va_t Addr : {0x1400u, 0x1500u, 0x1600u}) {
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  for (const va_t Addr : {0x1600u, 0x1800u}) {
+    Segment Code;
+    Code.VA = Addr;
+    Code.Size = Code.FileSz = 0x10;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Code.Data.assign(Code.Size, 0xc3);
+    Img.Segments.push_back(std::move(Code));
+  }
+  for (const va_t Addr : {0x1400u, 0x1500u, 0x1600u, 0x1700u, 0x1800u}) {
     Symbol Guess = Symbol::makeFunc(Addr);
     Guess.IsBoundaryGuess = true;
     Img.Symbols.push_back(Guess);
   }
   Img.KnownCodeRanges.push_back({0x1600, 0x1610});
+  Img.KnownCodeRanges.push_back({0x1700, 0x1710}); // No executable storage.
+  Img.KnownCodeRanges.push_back(
+      {0x1800, 0x1810}); // A continuation, not an entry.
+  Img.ContinuationCodeStarts.insert(0x1800);
   FakeDebugContext Dbg(
       {}, {{"??_C@_1BE@BDEKEKBI@?$AAW?$AAI?$AAN", 0x1400, 0, false},
-           {"table_or_code", 0x1600, 0, false}});
+           {"table_or_code", 0x1600, 0, false},
+           {"unmapped_object", 0x1700, 0, false},
+           {"continuation_object", 0x1800, 0, false}});
   EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
   EXPECT_EQ(findFunc(Img, 0x1400), nullptr);
   EXPECT_NE(findFunc(Img, 0x1500), nullptr);
   EXPECT_NE(findFunc(Img, 0x1600), nullptr);
+  EXPECT_EQ(findFunc(Img, 0x1700), nullptr);
+  EXPECT_EQ(findFunc(Img, 0x1800), nullptr);
 }
 
 // A pointer .data holds to such a literal points to data: the guess the

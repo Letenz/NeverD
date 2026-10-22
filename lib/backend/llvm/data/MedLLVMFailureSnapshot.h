@@ -233,15 +233,17 @@ struct SnapshotWriter {
     }
     const auto Exceptional = [&](const auto &Edges, const char *Kind) {
       for (const auto &E : Edges) {
-        if (!row(Kind))
-          return;
-        n("block", BB.Id);
-        n("other", E.BlockId);
-        u("target", E.TargetVA);
-        n("kind", E.Kind);
-        n("region", E.RegionIndex);
-        n("state", E.State);
-        end();
+        for (const auto &Context : E.contexts()) {
+          if (!row(Kind))
+            return;
+          n("block", BB.Id);
+          n("other", E.BlockId);
+          u("target", E.TargetVA);
+          n("kind", E.Kind);
+          n("region", Context.RegionIndex);
+          n("state", Context.State);
+          end();
+        }
       }
     };
     Exceptional(BB.ExceptionalSuccs, "exceptional-successor");
