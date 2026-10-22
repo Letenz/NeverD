@@ -3908,8 +3908,11 @@ Json Listing::indexState() const {
                 {"references", impl_->indexState == Impl::IndexState::Ready
                                    ? impl_->references.size()
                                    : 0},
-                {"generation", std::to_string(impl_->generation)},
-                {"functions", impl_->ownFunctions()}};
+                {"generation", std::to_string(impl_->generation)}};
+  // A listing not built yet lists nothing: a count of 0 would tell clients
+  // that every function is gone.
+  if (impl_->builtFunctionCount >= 0)
+    state["functions"] = impl_->ownFunctions();
   if (!impl_->indexError.empty())
     state["error"] = impl_->indexError;
   return state;
