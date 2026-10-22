@@ -36,11 +36,13 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -89,6 +91,10 @@ struct SolverLimits {
 };
 
 SolverLimits resolveLimits(const MBAOptions &Opts);
+
+/// Work bound for the complete small recipe lookup, or the larger runtime
+/// table construction when explicitly requested.
+size_t bitwiseSynthesisWork(unsigned NumVars);
 
 //===----------------------------------------------------------------------===//
 // Traversal and classification
@@ -270,6 +276,11 @@ SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates);
 /// reason to reject a particular degree.  Exhaustive mode passes the largest
 /// size_t and therefore removes the budget without changing the representation
 /// or the set of degrees it can express.
+struct ArithmeticMemo;
+struct RegionMemo;
+struct AbstractionMemo;
+struct ParityMemo;
+
 class WorkBudget {
 public:
   explicit WorkBudget(size_t Limit)
@@ -300,6 +311,16 @@ public:
   bool canConsume(size_t Units) const {
     return Unlimited || Units <= Remaining;
   }
+
+  // Enabled only by the deep entry point, whose context outlives this budget.
+  // The implementation retains completed arithmetic results, never refusals.
+  const SymContext *MemoOwner = nullptr;
+  size_t MemoCapacity = 0;
+  std::shared_ptr<ArithmeticMemo> Arithmetic;
+  std::shared_ptr<RegionMemo> Regions;
+  std::shared_ptr<AbstractionMemo> Abstractions;
+  std::shared_ptr<ParityMemo> Parities;
+  size_t IncompleteAbstractions = 0;
 
 private:
   size_t Remaining;
@@ -390,6 +411,7 @@ recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
 
 /// Recover a quadratic product by reading coefficient rows directly from its
 /// terms. Determined distinguishes a disproved product from resource refusal.
+/// For a single term, success preserves its coefficient and factor-table order.
 std::optional<QuadraticProduct>
 recoverQuadraticTerms(const SymContext &Ctx, llvm::ArrayRef<PolyTerm> Terms,
                       llvm::ArrayRef<uint32_t> AtomIds, uint32_t Width,
@@ -579,6 +601,41 @@ SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
 bool productCoefficientsFitScale(const HigherCoefficients &Higher,
                                  unsigned Degree, const llvm::APInt &Scale,
                                  WorkBudget &Budget);
+
+/// Prove modular zero products from complete low-bit residue partitions of
+/// factors sharing an additive base. Opaque bases need no independent inputs.
+SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                           size_t &Storage);
+
+/// A complete lower bound over every low-bit residue, capped at Ceiling.
+std::optional<unsigned>
+minimumProductResidueZeros(llvm::MutableArrayRef<llvm::APInt> Offsets,
+                           unsigned Width, unsigned Ceiling,
+                           WorkBudget &Budget);
+
+/// No value means the cheap affine hint declined; a value is a complete
+/// result or the original product when proof resources were insufficient.
+/// CompleteBase reports whether all factors share a proved full affine word,
+/// even when none of its candidate readings improves the product.
+std::optional<SymRef>
+foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                          size_t &Storage,
+                          std::optional<bool> ProjectedHint = std::nullopt,
+                          bool *CompleteBase = nullptr);
+
+/// Cheap admission only; no equality follows from this structural hint.
+bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root);
+
+/// Prove full-word product zero from complete affine maps of low prefixes.
+/// Admitted reuses a successful hint; it never authorizes a replacement.
+SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
+                                    WorkBudget &Budget, size_t &Storage,
+                                    bool Admitted = false);
+
+/// Recover nonzero products from complete cofactor precision proofs after
+/// the cheaper full-affine and projected-zero paths have declined.
+SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
+                                   WorkBudget &Budget, size_t &Storage);
 
 /// Only the low product bit survives a highest-bit scale.
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,

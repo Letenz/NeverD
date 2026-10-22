@@ -90,6 +90,36 @@ void addLiveIn(MedBlock &Entry, const MedVar &LiveIn) {
   Entry.Ops.push_back(unary(NdOp::COPY, LiveIn, LiveIn));
 }
 
+TEST(MedCallABI, BodyCopiesRetainEveryWideCallOperand) {
+  for (unsigned Count : {1u, 2u, 3u, 6u, 7u, 65u}) {
+    SCOPED_TRACE(Count);
+    MedFunc Function;
+    Function.Blocks.resize(1);
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    std::vector<MedVar> Expected;
+    for (unsigned I = 0; I < Count; ++I) {
+      const auto Value =
+          MedVar::makeConst(0x4000 + 16 * I, I % 2 ? 4 : 8,
+                            I ? ConstantAddressProvenance::DataAddress
+                              : ConstantAddressProvenance::CodeAddress,
+                            0x2000 + 8 * I);
+      Call.addInput(Value);
+      Expected.push_back(Value);
+    }
+    Function.Blocks[0].Ops.push_back(std::move(Call));
+    const MedFunc Copy = Function;
+    const MedFunc Moved = std::move(Function);
+    for (const MedFunc *Body : {&Copy, &Moved}) {
+      const auto &Kept = Body->Blocks[0].Ops[0];
+      ASSERT_EQ(Kept.NumInputs, Count);
+      ASSERT_GE(Kept.Inputs.size(), Count);
+      for (unsigned I = 0; I < Count; ++I)
+        EXPECT_EQ(Kept.Inputs[I], Expected[I]);
+    }
+  }
+}
+
 TEST(MedCallABI, CallbackTableAddressDoesNotReplaceTheActualFirstArgument) {
   for (Arch A : {Arch::X64, Arch::ARM, Arch::AArch64})
     for (BinaryFormat Format :
@@ -7921,6 +7951,40 @@ TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   EXPECT_EQ(Reads[Family(x86reg::RDX)], 0u);
   EXPECT_EQ(Reads[Family(x86reg::RCX)], 4u);
   EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
+}
+
+TEST(CallRegisterEffects, OverwrittenCopiesDoNotConsumeIncomingArguments) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::COFF;
+  const NdVar R8 = NdVar::reg(x86reg::R8, 8);
+  const NdVar RBX = NdVar::reg(x86reg::RBX, 8);
+  const GPRFamilyMask Args = (1u << (x86reg::RCX / 8)) |
+                             (1u << (x86reg::RDX / 8)) |
+                             (1u << (x86reg::R8 / 8));
+  // An overwritten move, a live store, an intervening call, a partial
+  // overwrite, an exit, and an exceptional observation respectively.
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    LowFunc Low = makeOneBlockLow(0x1000, "scratch", [&](auto Push) {
+      Push(NdOp::COPY, RBX, {R8});
+      if (Case == 1)
+        Push(NdOp::STORE, {}, {NdVar::reg(x86reg::RDI, 8), RBX});
+      if (Case == 2)
+        Push(NdOp::INDIR_CALL, NdVar::reg(x86reg::RAX, 8),
+             {NdVar::reg(x86reg::R11, 8)});
+      if (Case != 4)
+        Push(NdOp::COPY, NdVar::reg(x86reg::RBX, Case == 3 ? 1 : 4),
+             {NdVar::cst(0, Case == 3 ? 1 : 4)});
+    });
+    if (Case == 5)
+      Low.Blocks.front().ExceptionalSuccs.push_back({-1, 0});
+    const auto Summaries = solveCallRegisterEffects(
+        {{Low.Entry, localRegisterEffect(Img, Low)}}, Args, Args);
+    ASSERT_TRUE(Summaries.EntryReads.count(Low.Entry));
+    EXPECT_EQ(Summaries.EntryReads.at(Low.Entry)[x86reg::R8 / 8],
+              Case == 0 ? 0u : 8u);
+  }
 }
 
 TEST(CallRegisterEffects, EntryReadsCrossChainsCyclesAndPointerCalls) {

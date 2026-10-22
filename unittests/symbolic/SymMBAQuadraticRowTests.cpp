@@ -9,6 +9,7 @@
 #include "../../lib/symbolic/mba/SymMBADetail.h"
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <array>
 #include <random>
 
@@ -103,6 +104,107 @@ TEST(SymMBAQuadraticRows, CanceledMintermsDoNotBecomeFactorInputs) {
   checkProduct(*Product, 0x0033, 0xcc00, llvm::APInt(64, 6));
 }
 
+TEST(SymMBAQuadraticRows, SingleProductKeepsItsFactorsWithoutMatrixExpansion) {
+  for (unsigned Width : {1u, 8u, 9u, 63u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    llvm::SmallVector<SymRef, 8> Inputs;
+    llvm::SmallVector<uint32_t, 8> Ids;
+    for (const char *Name : {"a", "b", "c", "d", "e", "f", "g", "h"}) {
+      Inputs.push_back(C.mkVar(Name, Width));
+      C.collectVars(Inputs.back(), Ids);
+    }
+    // The declared truth-table order need not match the evaluator's variable
+    // order. Include widths that leave an incomplete final packed word.
+    std::rotate(Ids.begin(), Ids.begin() + 3, Ids.end());
+    auto Assignment = [](unsigned M) { return ((M & 31) << 3) | (M >> 5); };
+    auto A = C.mkOr(llvm::ArrayRef<SymRef>(Inputs).take_front(4));
+    auto B = C.mkAnd(llvm::ArrayRef<SymRef>(Inputs).drop_front(4));
+    auto Scale = llvm::APInt::getSignMask(Width);
+    llvm::SmallVector<detail::PolyTerm, 1> Terms{{Scale, {A, B}}};
+    detail::WorkBudget Full(2048);
+    bool Determined = false;
+    auto Product = detail::recoverQuadraticTerms(C, Terms, Ids, Width, Full,
+                                                 1 << 20, Determined);
+    ASSERT_TRUE(Product);
+    ASSERT_TRUE(Determined);
+    for (unsigned I = 0; I != 256; ++I)
+      for (unsigned J = I; J != 256; ++J) {
+        unsigned Want =
+            unsigned((Assignment(I) & 15) && (Assignment(J) >> 4) == 15);
+        unsigned Got =
+            unsigned(Product->Factors[0].at(I) && Product->Factors[1].at(J));
+        if (I != J) {
+          Want += unsigned((Assignment(J) & 15) && (Assignment(I) >> 4) == 15);
+          Got +=
+              unsigned(Product->Factors[0].at(J) && Product->Factors[1].at(I));
+        }
+        ASSERT_EQ(Scale * llvm::APInt(Width, Want, false, true),
+                  Product->Coefficient * llvm::APInt(Width, Got, false, true));
+      }
+    for (size_t Work : {size_t(0), Full.used() - 1, Full.used()}) {
+      detail::WorkBudget Budget(Work);
+      auto Result = detail::recoverQuadraticTerms(C, Terms, Ids, Width, Budget,
+                                                  1 << 20, Determined);
+      EXPECT_EQ(bool(Result), Work == Full.used());
+      EXPECT_EQ(Determined, bool(Result));
+      EXPECT_LE(Budget.used(), Work);
+    }
+    detail::WorkBudget Refusal(2048);
+    EXPECT_FALSE(detail::recoverQuadraticTerms(C, Terms, Ids, Width, Refusal,
+                                               1024, Determined));
+    EXPECT_FALSE(Determined);
+  }
+}
+
+TEST(SymMBAQuadraticRows,
+     FactorCongruenceProvesWordsAndRejectsCornerIllusions) {
+  for (unsigned Width : {8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    std::array<SymRef, 4> V{C.mkVar("x", Width), C.mkVar("y", Width),
+                            C.mkVar("z", Width), C.mkVar("w", Width)};
+    uint16_t ABits = 0, BBits = 0;
+    for (unsigned M = 0; M != 16; ++M) {
+      bool X = M & 1, Y = M & 2, Z = M & 4, W = M & 8;
+      ABits |= uint16_t(((X || Y) != (Z && W)) << M);
+      BBits |= uint16_t(((X && Z) || (Y && W)) << M);
+    }
+    auto A = C.mkXor(C.mkOr(V[0], V[1]), C.mkAnd(V[2], V[3]));
+    auto B = C.mkOr(C.mkAnd(V[0], V[2]), C.mkAnd(V[1], V[3]));
+    auto Scale = C.mkConst(Width, 6);
+    auto Before =
+        C.mkMul({Scale, fromTable(C, V, ABits), fromTable(C, V, BBits)});
+    auto After = C.mkMul({Scale, A, B});
+    ASSERT_NE(Before, After);
+    detail::WorkBudget Proof(4096);
+    ASSERT_TRUE(
+        detail::provePolynomialIdentity(C, Before, After, 8, Proof, 1 << 20));
+    for (size_t Work : {size_t(0), Proof.used() - 1, Proof.used()}) {
+      detail::WorkBudget Boundary(Work);
+      EXPECT_EQ(detail::provePolynomialIdentity(C, Before, After, 8, Boundary,
+                                                1 << 20),
+                Work == Proof.used());
+      EXPECT_LE(Boundary.used(), Work);
+    }
+    // Keep the work allowance at the congruence proof's exact requirement;
+    // the general coefficient proof must not mask a refused fast proof.
+    detail::WorkBudget NoStorage(Proof.used());
+    EXPECT_FALSE(
+        detail::provePolynomialIdentity(C, Before, After, 8, NoStorage, 0));
+    auto Changed = C.mkXor(B, fromTable(C, V, 1u << 2));
+    detail::WorkBudget Bad(65536);
+    EXPECT_FALSE(detail::provePolynomialIdentity(
+        C, Before, C.mkMul({Scale, A, Changed}), 8, Bad, 1 << 20));
+    // x*x+x vanishes at all-zero/all-ones corners but not on arbitrary words.
+    // The abstraction must retain this arithmetic word as an independent atom.
+    auto Illusion = C.mkMul(C.mkAdd(C.mkMul(V[0], V[0]), V[0]), B);
+    detail::WorkBudget Nonlinear(65536);
+    EXPECT_FALSE(detail::provePolynomialIdentity(C, Illusion, C.mkZero(Width),
+                                                 8, Nonlinear, 1 << 20));
+  }
+}
+
 TEST(SymMBAQuadraticRows, ChecksBeyondAnchorRowsAndHonorsRefusal) {
   SymContext C;
   std::array<SymRef, 4> Inputs{C.mkVar("x", 257), C.mkVar("y", 257),
@@ -140,6 +242,56 @@ TEST(SymMBAQuadraticRows, ChecksBeyondAnchorRowsAndHonorsRefusal) {
   EXPECT_FALSE(detail::recoverQuadraticTerms(C, Terms, Ids, 257, Bad, 1 << 20,
                                              Determined));
   EXPECT_TRUE(Determined);
+}
+
+TEST(SymMBAQuadraticRows, ShortKnownFactorsRetainTheImprovedLinearTail) {
+  std::mt19937_64 Random(0x666163746f7273);
+  for (unsigned Width : {8u, 9u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    llvm::SmallVector<SymRef, 8> Inputs;
+    llvm::SmallVector<uint32_t, 8> Ids;
+    for (const char *Name : {"a", "b", "c", "d", "e", "f", "g", "h"}) {
+      Inputs.push_back(C.mkVar(Name, Width));
+      C.collectVars(Inputs.back(), Ids);
+    }
+    auto A =
+        C.mkAnd(C.mkOr(Inputs[0], Inputs[1]), C.mkOr(Inputs[2], Inputs[3]));
+    auto B =
+        C.mkAnd(C.mkOr(Inputs[4], Inputs[5]), C.mkOr(Inputs[6], Inputs[7]));
+    auto Product = C.mkMul({C.mkConst(Width, 6), A, B});
+    auto Source =
+        C.mkAdd({Product, C.mkXor(Inputs[0], Inputs[1]),
+                 C.mkMul(C.mkConst(Width, 2), C.mkAnd(Inputs[0], Inputs[1]))});
+    auto Expected = C.mkAdd({Product, Inputs[0], Inputs[1]});
+    MBAOptions Options;
+    detail::WorkBudget Budget(4096);
+    auto Result =
+        detail::solvePolynomial(C, Source, Ids, Inputs, Options, Budget);
+    ASSERT_TRUE(Result);
+    EXPECT_LE(detail::readingCost(C, *Result),
+              detail::readingCost(C, Expected));
+    EXPECT_LT(detail::readingCost(C, *Result), detail::readingCost(C, Source));
+    detail::WorkBudget Proof(65536);
+    EXPECT_TRUE(detail::provePolynomialIdentity(C, Source, *Result, 8, Proof,
+                                                Options.MaxTableBytes));
+    for (unsigned Sample = 0; Sample != 384; ++Sample) {
+      llvm::SmallVector<llvm::APInt, 8> Values;
+      for (unsigned I = 0; I != 8; ++I) {
+        std::array<uint64_t, 5> Words;
+        for (auto &Word : Words)
+          Word = Random();
+        Values.push_back(Sample < 256 ? (Sample & (1u << I)
+                                             ? llvm::APInt::getAllOnes(Width)
+                                             : llvm::APInt(Width, 0))
+                                      : llvm::APInt(Width, Words));
+      }
+      auto Left = (Values[0] | Values[1]) & (Values[2] | Values[3]);
+      auto Right = (Values[4] | Values[5]) & (Values[6] | Values[7]);
+      auto Want = llvm::APInt(Width, 6) * Left * Right + Values[0] + Values[1];
+      EXPECT_EQ(C.eval(*Result, Values), Want);
+    }
+  }
 }
 
 TEST(SymMBAQuadraticRows, CommonPowersLeaveOnlyTheLowDegreeProof) {

@@ -3,6 +3,7 @@
 #include "Address.h"
 #include "LibraryCodeView.h"
 #include "StyledText.h"
+#include "ViewSearch.h"
 
 #include "neverd/support/IntegerLiterals.h"
 
@@ -130,6 +131,11 @@ public:
   QString selectedText() const;
   QString allText() const;
   bool findText(const QString &text, bool forward);
+  /// Source coordinates, independent of the current fold projection.
+  std::pair<int, int> searchSelection() const;
+  bool selectSearchRange(int begin, int length);
+  void setSearchHighlight(const ViewSearchQuery &query);
+  QString searchSeed() const;
   /// Move the cursor to \p line and reveal it.
   void setCursorLine(int line) { moveCursor(line, 0, false); }
   /// Select the whole text, as Ctrl+A does, without moving the view.
@@ -302,12 +308,17 @@ private:
   };
   std::optional<SourcePlace> placeAfterLoad_;
   QString representation_, status_, highlight_;
+  ViewSearchQuery SearchHighlight;
   /// Why the source on its way is not the one asked for (showOrdinary).
   QString statusNote_;
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
   bool complete_ = false;
+  int pageLines_ = 0;
+  /// A checked name-only refresh keeps the painted document until every
+  /// replacement page arrives. Cancellation discards these pages together.
+  std::optional<QVector<QJsonObject>> refreshPages_;
   bool interrupted_ = false;
   bool foldPreludeAfterLoad_ = true;
   QSet<QString> blocksAfterLoad_;

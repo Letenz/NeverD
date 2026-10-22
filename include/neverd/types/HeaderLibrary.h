@@ -78,15 +78,16 @@ const TypeLibrary *headerLibrary(HeaderLibrary Library,
 struct HeaderMerge {
   size_t Types = 0;
   size_t Prototypes = 0;
-  /// The header types left out: each holds by value a type whose size the
-  /// program gives otherwise, so its layout would not hold, or holds one
-  /// left out.  A record left out stays declared, as the types that point
-  /// to it name it.
+  /// The header types left out: each holds by value a type whose size or
+  /// alignment the program gives otherwise, so its layout would not hold, or
+  /// holds one left out.  A record left out stays declared, as the types that
+  /// point to it name it.
   std::vector<std::string> Conflicts;
 };
 
 /// Adds the types and prototypes of \p Headers that \p Library has none of
-/// the name of, as HeaderLibrary.h describes.
+/// the name of, as HeaderLibrary.h describes. Prototypes whose by-value
+/// layouts change or whose named dependencies were removed are omitted.
 HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers);
 
 } // namespace neverd::types

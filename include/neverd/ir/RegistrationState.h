@@ -14,12 +14,17 @@
 #include <algorithm>
 #include <compare>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace neverd {
+namespace coff_loader {
+struct X86CxxHandlerABI;
+struct X86CxxPrologueCall;
+}
 
 struct LowFunc;
 
@@ -39,7 +44,9 @@ struct RegistrationCxxSearch {
 struct RegistrationBlockState {
   int BlockId = -1;
   ExceptionAddressRange Range;
-  std::vector<int32_t> Levels;
+  /// Individually owned levels when SharedLevels is absent. Consumers use
+  /// levels() so an unknown domain need not be copied into every block.
+  std::vector<int32_t> ExplicitLevels;
   bool Unknown = false;
   /// Runtime-invoked filter/cleanup code has its own dispatch context. Its
   /// instructions must not be included in the parent's lexical try interval.
@@ -61,6 +68,14 @@ struct RegistrationBlockState {
   /// still keeps their frame facts separate. Native projection requires a
   /// unique stack and checks every ordinary and runtime continuation edge.
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>> CxxCatchStacks;
+  /// Immutable storage owned by the published result, never borrowed from a
+  /// solver or loader. Sharing levels does not share frame, search or lifetime
+  /// facts and does not change Unknown or any native-admission requirement.
+  std::shared_ptr<const std::vector<int32_t>> SharedLevels;
+
+  const std::vector<int32_t> &levels() const {
+    return SharedLevels ? *SharedLevels : ExplicitLevels;
+  }
 };
 
 /// A PE32 C++ catch returns a continuation code pointer to the runtime. This
@@ -124,12 +139,20 @@ struct RegistrationIncomingFrameAccess {
 };
 
 /// A source call whose authenticated leaf checker receives the exact decoded
-/// image cookie in ECX on every reaching path. Only this occurrence may be
-/// replaced by a compiler-owned physical cookie check.
+/// image cookie in ECX on every reaching path. Replacing this occurrence still
+/// requires the native frame protocol's independent output proof.
 struct RegistrationCookieCheck {
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;
   int OpSeq = -1;
+};
+
+/// A C++ handler's decoded cookie condition projected into the parent's
+/// established frame coordinate. This is not a physical output-frame offset.
+struct RegistrationCxxCookieCondition {
+  int32_t FrameOffset = 0;
+  int32_t XORFrameOffset = 0;
+  bool operator==(const RegistrationCxxCookieCondition &) const = default;
 };
 
 /// A typed scalar catch whose runtime object width follows the checked
@@ -321,6 +344,18 @@ struct RegistrationSEHStateStore {
   bool operator==(const RegistrationSEHStateStore &) const = default;
 };
 
+/// A checked physical shared-prologue invocation. This is separate from an
+/// ordinary callee ABI: it establishes EBP, allocates the node, preserves five
+/// GPRs and publishes FS:[0]. Native reconstruction requires its own transfer.
+struct RegistrationCxxPrologueEffect {
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  va_t HelperVA = InvalidVA;
+  int OpSeq = -1;
+  int32_t StackOffset = 0;
+  bool operator==(const RegistrationCxxPrologueEffect &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -358,6 +393,7 @@ struct RegistrationStateAnalysis {
   /// lifetime and callback state proof. This is not a native output receipt.
   bool ChainOperationsComplete = false;
   std::vector<RegistrationChainAccess> ChainAccesses;
+  std::optional<RegistrationCxxPrologueEffect> CxxPrologue;
   std::vector<RegistrationFrameValue> FrameValues;
   bool IncomingFrameAccessesComplete = true;
   std::vector<RegistrationIncomingFrameAccess> IncomingFrameAccesses;
@@ -373,13 +409,14 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationCxxCatchObject> CxxCatchObjects;
   bool RuntimeObjectAccessesComplete = false;
   std::vector<RegistrationRuntimeObjectAccess> RuntimeObjectAccesses;
-  /// EH4 source initialization, encoding and immutable cookie lifetime have
-  /// been checked across every ordinary and runtime path. This does not prove
-  /// the compiler's physical cookie; native codegen validates that separately.
+  /// EH4 source encoding or authenticated C++ handler cookie conditions have
+  /// been checked across ordinary and runtime paths. This grants no physical
+  /// output-cookie layout or permission to erase an observable encoded value.
   bool SecurityCookiesComplete = false;
   va_t SecurityCookieVA = 0;
   va_t CookieCheckVA = 0;
   std::vector<RegistrationCookieCheck> CookieChecks;
+  std::vector<RegistrationCxxCookieCondition> CxxCookieConditions;
   /// May-read image extents across all reachable ordinary and runtime roots.
   /// Exact frame-relative reads cannot alias these extents. Unknown addresses
   /// make the set incomplete rather than silently omitting a possible alias.
@@ -446,13 +483,18 @@ struct RegistrationStateAnalysis {
 /// Solve ordinary and runtime-dispatch state transfers together. Stores take
 /// effect only after their exact decoded instruction retires. A union at a
 /// join is retained; address order never selects a predecessor's state.
+/// CxxHandler and CxxPrologue, when supplied, must be the loader's checked
+/// descriptions for this source function and image; their conditions alone
+/// do not prove the parent.
 RegistrationStateAnalysis analyzeRegistrationStates(
     const LowFunc &Function, va_t SecurityCookieVA = 0, va_t CookieCheckVA = 0,
     const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups = nullptr,
     const std::vector<RegistrationCalleeStackContract> *Stacks = nullptr,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr,
-    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr);
+    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr,
+    const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr,
+    const coff_loader::X86CxxPrologueCall *CxxPrologue = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.
@@ -468,10 +510,10 @@ registrationRangesWhere(const RegistrationStateAnalysis &Analysis,
       continue;
     if (Block.Unknown)
       return std::nullopt;
-    if (Block.Levels.empty())
+    if (Block.levels().empty())
       continue;
-    const bool Included = Contains(Block.Levels.front());
-    for (int32_t Level : Block.Levels)
+    const bool Included = Contains(Block.levels().front());
+    for (int32_t Level : Block.levels())
       if (Contains(Level) != Included)
         return std::nullopt;
     if (Included)

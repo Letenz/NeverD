@@ -2,12 +2,14 @@
 #include "ActionRegistry.h"
 #include "Address.h"
 #include "AddressSpace.h"
+#include "DeepLink.h"
 #include "DialogReturnKey.h"
 #include "Docking.h"
 #include "Expression.h"
 #include "FlowLayout.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
+#include "LinkDispatch.h"
 #include "LoadFileDialog.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
@@ -66,6 +68,7 @@
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <kddockwidgets/qtwidgets/views/Separator.h>
+#include <limits>
 #include <memory>
 
 using namespace neverd::gui;
@@ -301,6 +304,46 @@ private slots:
                  (before - widgets[2]->geometry().right() - 1));
   }
 
+  void flowLayoutCentersOddAndEvenHeights_data() {
+    QTest::addColumn<int>("firstHeight");
+    QTest::addColumn<int>("secondHeight");
+    QTest::newRow("odd row, even item") << 21 << 20;
+    QTest::newRow("even item, odd row") << 20 << 21;
+    QTest::newRow("even row, odd item") << 22 << 19;
+    QTest::newRow("odd item, even row") << 19 << 22;
+  }
+
+  void flowLayoutCentersOddAndEvenHeights() {
+    QFETCH(int, firstHeight);
+    QFETCH(int, secondHeight);
+    class SizedWidget : public QWidget {
+    public:
+      SizedWidget(int height, QWidget *parent) : QWidget(parent) {
+        setFixedSize(20, height);
+      }
+      QSize sizeHint() const override { return size(); }
+    };
+    QWidget row;
+    auto *flow = new FlowLayout(&row);
+    flow->setContentsMargins(3, 5, 7, 9);
+    flow->setSpacing(4);
+    auto *first = new SizedWidget(firstHeight, &row);
+    auto *second = new SizedWidget(secondHeight, &row);
+    flow->addWidget(first);
+    flow->addWidget(second);
+    const QRect bounds(11, 13, 90, flow->heightForWidth(90));
+    flow->setGeometry(bounds);
+    const int rowHeight = qMax(firstHeight, secondHeight);
+    const int rowTop = bounds.top() + 5;
+    for (QWidget *widget : {first, second}) {
+      QCOMPARE(widget->geometry().size(), widget->sizeHint());
+      QCOMPARE(widget->geometry().center().y(), rowTop + (rowHeight - 1) / 2);
+      QVERIFY(widget->geometry().top() >= rowTop);
+      QVERIFY(widget->geometry().bottom() < rowTop + rowHeight);
+    }
+    QVERIFY(!first->geometry().intersects(second->geometry()));
+  }
+
   void addressSpellings() {
     QCOMPARE(hexAddress(0xffff800012340000ULL),
              QStringLiteral("0xffff800012340000"));
@@ -491,6 +534,168 @@ private slots:
         walk(action->menu());
     for (auto *action : registry.allActions())
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
+  }
+
+  void deepLinksTakeIdasFormAndRefuseWhatTheyCannotName() {
+    // NeverD's links take IDA's form, and NeverD reads IDA's links.
+    const auto link = [](const QString &text) {
+      const ParsedLink parsed = parseDeepLink(text);
+      return parsed.link ? *parsed.link : DeepLink{};
+    };
+    const DeepLink function = link(QStringLiteral(
+        "neverd:///trojan%201.exe/functions?rva=0x1240&view=pseudocode"
+        "&sha256=0123456789ABCDEF&from=chat"));
+    QCOMPARE(function.scheme, QStringLiteral("neverd"));
+    QCOMPARE(function.input, QStringLiteral("trojan 1.exe"));
+    QCOMPARE(function.resource, LinkResource::Functions);
+    QCOMPARE(function.rva, std::optional<Address>(0x1240));
+    QCOMPARE(function.shownView(), LinkView::Pseudocode);
+    QCOMPARE(function.sha256, QStringLiteral("0123456789abcdef"));
+    QCOMPARE(function.address(0x400000), std::optional<Address>(0x401240));
+    QVERIFY(function.namesHash(QStringLiteral("0123456789abcdef") +
+                               QString(48, QLatin1Char('0'))));
+    QVERIFY(!function.namesHash(QString(64, QLatin1Char('f'))));
+    // A parameter another tool adds stays out of the link NeverD writes.
+    QCOMPARE(formatDeepLink(function),
+             QStringLiteral("neverd:///trojan%201.exe/functions?rva=0x1240"
+                            "&view=pseudocode&sha256=0123456789abcdef"));
+    const DeepLink ida = link(QStringLiteral(
+        "ida://malware-samples/trojan1.i64/types?name=std%3A%3Astring"));
+    QCOMPARE(ida.scheme, QStringLiteral("ida"));
+    QCOMPARE(ida.source, QStringLiteral("malware-samples"));
+    QCOMPARE(ida.resource, LinkResource::Types);
+    QCOMPARE(ida.name, QStringLiteral("std::string"));
+    QCOMPARE(ida.shownView(), LinkView::Types);
+    QCOMPARE(
+        link(QStringLiteral("ida://localhost/addresses?ea=4198400")).address(0),
+        std::optional<Address>(0x401000));
+    QVERIFY(link(QStringLiteral("ida://localhost/addresses?ea=1"))
+                .source.isEmpty());
+    QCOMPARE(link(QStringLiteral("neverd:///bookmarks?rva=0x10")).shownView(),
+             LinkView::Disasm);
+    // An address shows at its line of the pseudocode, which IDA's do not.
+    QCOMPARE(link(QStringLiteral("neverd:///addresses?rva=0x10&view="
+                                 "pseudocode"))
+                 .shownView(),
+             LinkView::Pseudocode);
+
+    const auto refusal = [](const QString &text) {
+      return parseDeepLink(text).error;
+    };
+    QVERIFY(!refusal(QStringLiteral("https://example.com/functions?rva=1"))
+                 .isEmpty());
+    QCOMPARE(refusal(QStringLiteral("neverd:///functions?rva=1&ea=2")),
+             QStringLiteral("A link gives rva or ea, not both."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///functions")),
+             QStringLiteral("functions links give their address with rva= "
+                            "or ea=."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///types?rva=1")),
+             QStringLiteral("A types link names its type with name=, not an "
+                            "address."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///imports?rva=1&view=graph")),
+             QStringLiteral("imports links show in imports, disasm, "
+                            "hexdump, not in graph."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///functions?rva=-1")),
+             QStringLiteral("rva is a number, decimal or after 0x, not "
+                            "\"-1\"."));
+    QVERIFY(!refusal(QStringLiteral("neverd:///functions?rva=1&sha256=12"))
+                 .isEmpty());
+    for (const int digits : {8, 16, 64})
+      QVERIFY(
+          parseDeepLink(QStringLiteral("neverd:///functions?rva=1&sha256=") +
+                        QString(digits, QLatin1Char('a')))
+              .link.has_value());
+    for (const QString &hash :
+         {QString(7, QLatin1Char('a')), QString(65, QLatin1Char('a')),
+          QString(16, QLatin1Char('z'))})
+      QVERIFY(
+          !refusal(QStringLiteral("neverd:///functions?rva=1&sha256=") + hash)
+               .isEmpty());
+    QVERIFY(!refusal(QStringLiteral("neverd:///code?rva=1")).isEmpty());
+    QVERIFY(!refusal(QStringLiteral("ida://ke.example.com/api/v1/buckets/b/"
+                                    "assets/k"))
+                 .isEmpty());
+    QVERIFY(looksLikeDeepLink(QStringLiteral(" IDA:///functions?rva=1")));
+    QVERIFY(!looksLikeDeepLink(QStringLiteral("/tmp/neverd.bin")));
+
+    // IDA names a program's database after it.
+    QVERIFY(
+        linkNamesInput(QStringLiteral("foo.exe"), QStringLiteral("foo.exe")));
+    QVERIFY(linkNamesInput(QStringLiteral("foo.exe.i64"),
+                           QStringLiteral("foo.exe")));
+    QVERIFY(
+        linkNamesInput(QStringLiteral("foo.idb"), QStringLiteral("foo.exe")));
+    QVERIFY(
+        !linkNamesInput(QStringLiteral("bar.i64"), QStringLiteral("foo.exe")));
+  }
+
+  void aLinkGoesToTheWorkbenchThatHasItsProgram() {
+    // As IDA's hcli routes a link: by the input's hash, else its name, else
+    // to the only workbench with a program open.
+    const QList<QJsonObject> instances{
+        {{"loaded", false}},
+        {{"loaded", true},
+         {"input_name", "a.out"},
+         {"sha256", QString(64, QLatin1Char('a'))}},
+        {{"loaded", true},
+         {"input_name", "b.out"},
+         {"sha256", QString(64, QLatin1Char('b'))}}};
+    const auto choose = [&](const QString &text,
+                            const QList<QJsonObject> &among) {
+      const ParsedLink parsed = parseDeepLink(text);
+      return parsed.link ? chooseInstance(among, *parsed.link)
+                         : InstanceChoice{};
+    };
+    QCOMPARE(
+        choose(QStringLiteral("neverd:///b.out/functions?rva=1"), instances)
+            .index,
+        2);
+    // The hash outranks a name the file no longer has.
+    QCOMPARE(choose(QStringLiteral("neverd:///old.out/functions?rva=1"
+                                   "&sha256=aaaaaaaa"),
+                    instances)
+                 .index,
+             1);
+    QCOMPARE(
+        choose(QStringLiteral("neverd:///c.out/functions?rva=1"), instances)
+            .index,
+        -1);
+    // A name match must not bypass an explicitly different build hash.
+    QCOMPARE(choose(QStringLiteral("neverd:///a.out/functions?rva=1"
+                                   "&sha256=cccccccc"),
+                    instances)
+                 .index,
+             -1);
+    const InstanceChoice unnamed =
+        choose(QStringLiteral("neverd:///functions?rva=1"), instances);
+    QCOMPARE(unnamed.index, -1);
+    QVERIFY(unnamed.ambiguous);
+    QCOMPARE(
+        choose(QStringLiteral("neverd:///functions?rva=1"), instances.mid(0, 2))
+            .index,
+        1);
+  }
+
+  void relativeLinksDoNotWrap() {
+    DeepLink relative;
+    relative.rva = std::numeric_limits<Address>::max();
+    QVERIFY(!relative.address(1));
+    QCOMPARE(relative.address(0), relative.rva);
+    relative.rva = 0;
+    QCOMPARE(relative.address(std::numeric_limits<Address>::max()),
+             std::optional<Address>(std::numeric_limits<Address>::max()));
+  }
+
+  void linkNumbersContainOnlyDigits() {
+    for (const QString &number :
+         {QStringLiteral("%091"), QStringLiteral("1%09"),
+          QStringLiteral("%0a1"), QStringLiteral("1%0d"),
+          QStringLiteral("0x%091")}) {
+      const auto parsed =
+          parseDeepLink(QStringLiteral("neverd:///addresses?ea=") + number);
+      QVERIFY2(!parsed.link, qPrintable(number));
+      QVERIFY(!parsed.error.isEmpty());
+    }
   }
 
   void commandsKeepIdasShortcuts() {

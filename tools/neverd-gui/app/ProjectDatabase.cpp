@@ -85,10 +85,13 @@ constexpr const char *Schema[] = {
 /// One SQLite connection for the calling thread, closed on scope exit.
 class Connection {
 public:
-  explicit Connection(const QString &path)
+  enum class Access { ReadOnly, ReadWrite };
+  explicit Connection(const QString &path, Access access = Access::ReadWrite)
       : name_(QStringLiteral("nddb-") + QUuid::createUuid().toString()) {
     auto database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name_);
     database.setDatabaseName(path);
+    if (access == Access::ReadOnly)
+      database.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
     if (!database.open())
       error_ = database.lastError().text();
   }
@@ -619,7 +622,8 @@ QString ProjectDatabase::saveState(const QString &database,
 }
 
 std::optional<ProjectDatabase::Contents>
-ProjectDatabase::read(const QString &database, QString *error) {
+ProjectDatabase::read(const QString &database, QString *error,
+                      ReadScope scope) {
   const auto failed = [&](const QString &message) {
     if (error)
       *error = message;
@@ -629,7 +633,7 @@ ProjectDatabase::read(const QString &database, QString *error) {
     return failed(
         QCoreApplication::translate("ProjectDatabase", "%1 does not exist.")
             .arg(database));
-  Connection connection(database);
+  Connection connection(database, Connection::Access::ReadOnly);
   if (!connection.error().isEmpty())
     return failed(connection.error());
   auto db = connection.database();
@@ -663,6 +667,8 @@ ProjectDatabase::read(const QString &database, QString *error) {
     return failed(QCoreApplication::translate("ProjectDatabase",
                                               "%1 names an invalid input file.")
                       .arg(database));
+  if (scope == ReadScope::InputIdentity)
+    return contents;
   QSqlQuery sidecars(db);
   if (!sidecars.exec(QStringLiteral("SELECT suffix, data FROM sidecars")))
     return failed(lastError(sidecars));

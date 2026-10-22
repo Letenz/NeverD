@@ -422,6 +422,14 @@ expandX64MachineExit(const SpecializationInstruction &Instruction,
                             LowInstructionControlFlag::Indirect)))
       return invalid("machine JMP exit requires an unconditional near jump");
     break;
+  case Kind::Trap:
+    if (!Decode.isResumableTrap(Insn) || Instruction.IsNativeCall ||
+        Native != SpecializationNativeStackControl::None ||
+        B.Control != LowInstructionControl::Terminator || B.Immediate ||
+        B.ControlFlags != (LowInstructionControlFlag::Terminator |
+                           LowInstructionControlFlag::Resumable))
+      return invalid("machine trap exit requires a resumable trap terminator");
+    break;
   default:
     return invalid("unknown machine-exit kind");
   }
@@ -435,6 +443,30 @@ expandX64MachineExit(const SpecializationInstruction &Instruction,
     return invalid("machine exit has no complete strict lift");
   }
   const auto OriginalDigest = lowUndefinedOperationDigest(Instruction.Ops);
+  if (Declaration.Kind == Kind::Trap) {
+    // The trap has no exception-state audit. Authenticate the retained effect
+    // without upgrading Missing coverage or accepting invented arbitrary
+    // outputs or preservation claims from the provider.
+    if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||
+        Instruction.UndefinedEffects.Coverage != Effects.Coverage ||
+        Instruction.UndefinedEffects.OpCount != Effects.OpCount ||
+        Instruction.UndefinedEffects.OperationDigest != OriginalDigest ||
+        !Effects.Effects.empty() ||
+        !Instruction.UndefinedEffects.Effects.empty() ||
+        Instruction.PreservedState != LowInstructionPreservedState{})
+      return invalid("machine trap exit bytes differ from the complete lifted "
+                     "span");
+    NativeStackExpansion Result;
+    Result.Ops = Instruction.Ops;
+    Result.Boundary = B;
+    Result.UndefinedEffects = Instruction.UndefinedEffects;
+    Result.Receipt.OriginalBoundary = B;
+    Result.Receipt.OriginalOperationDigest = OriginalDigest;
+    Result.Receipt.ExpandedOperationDigest = OriginalDigest;
+    Result.Receipt.ReturnMode = NativeReturnExpansion::OuterFunctionBoundary;
+    Result.RetainedTerminator = true;
+    return Result;
+  }
   if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||
       Effects.Coverage != LowUndefinedCoverage::Complete ||
       !Effects.Effects.empty() ||

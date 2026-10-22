@@ -178,20 +178,20 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       CallbackBlocks.insert(IR->second);
       continue;
     }
-    if (State->second->Levels.size() > 1) {
-      for (int32_t Level : State->second->Levels)
+    if (State->second->levels().size() > 1) {
+      for (int32_t Level : State->second->levels())
         if (Level != Sentinel &&
             (Level < 0 || uint32_t(Level) >= Chain.Scopes.size()))
           return false;
       if (!x86_registration::canEmitDynamicSEHScope(*IR->second))
         return false;
-      Dynamic.emplace(IR->second, State->second->Levels);
+      Dynamic.emplace(IR->second, State->second->levels());
       Active.emplace(IR->second, x86_registration::DynamicScopeLevel);
       continue;
     }
-    const int32_t Level = State->second->Levels.empty()
+    const int32_t Level = State->second->levels().empty()
                               ? Sentinel
-                              : State->second->Levels.front();
+                              : State->second->levels().front();
     if (Level != Sentinel &&
         (Level < 0 || uint32_t(Level) >= Chain.Scopes.size()))
       return false;

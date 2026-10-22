@@ -675,6 +675,23 @@ TEST(LibCPrototype, WindowsRuntimeNamesStayInPE) {
   EXPECT_FALSE(libcArityForSymbol("terminate", LibCVariant::GNU).has_value());
 }
 
+TEST(LibCPrototype, WindowsDriverCRTUsesExactFixedParameters) {
+  for (const auto &[Name, Count] : {std::pair{"wcscat_s", 3u},
+                                    {"wcscpy_s", 3u},
+                                    {"wcsncat_s", 4u},
+                                    {"wcsncpy_s", 4u},
+                                    {"__C_specific_handler", 4u}}) {
+    const auto *Prototype = libcPrototype(Name, BinaryFormat::COFF);
+    ASSERT_NE(Prototype, nullptr) << Name;
+    EXPECT_EQ(Prototype->ParamCount, Count) << Name;
+    EXPECT_EQ(Prototype->Return, "int") << Name;
+    EXPECT_FALSE(Prototype->Variadic) << Name;
+    EXPECT_FALSE(Prototype->Winapi) << Name;
+  }
+  const auto *Wide = libcPrototype("wcscat_s", BinaryFormat::COFF);
+  EXPECT_EQ(Wide->Params[1], "size_t");
+}
+
 TEST(LibCPrototype, PointerTypes) {
   EXPECT_TRUE(isPointerType("void *"));
   EXPECT_TRUE(isPointerType("const unsigned short **"));

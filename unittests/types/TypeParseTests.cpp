@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 #include <map>
 #include <optional>
+#include <utility>
 
 using namespace neverd::types;
 using neverd::types::test::shapeOf;
@@ -290,6 +291,97 @@ TEST(TypeParse, KeepsADeclaredAlignmentUnderPack) {
   EXPECT_EQ(recordOf(Library, "P4n").Size, 12u);
 }
 
+TEST(TypeParse, RequiredAlignmentSurvivesContainingRecordsAndRoundTrips) {
+  // Clang's Microsoft ABI puts nested at 16 and tail at 32, even when an
+  // intermediate record has no explicit alignment attribute of its own.
+  for (auto Model : {DataModel::LLP64, DataModel::ILP32}) {
+    const TypeLibrary Library = parsed(R"(
+      typedef struct __declspec(align(16)) Leaf {
+        long long lo, hi;
+      } Leaf;
+      struct Wrapper { Leaf value; };
+      struct __declspec(align(16)) Explicit { Leaf value; };
+      union Choice { Leaf value; long long other; };
+      typedef struct Wrapper Alias;
+      #pragma pack(push, 4)
+      struct Packed { char tag; Alias nested; char tail; };
+      struct PackedExplicit { char tag; struct Explicit nested; char tail; };
+      struct PackedUnion { char tag; union Choice nested; char tail; };
+      struct PackedArray { char tag; Alias values[2]; char tail; };
+      #pragma pack(pop)
+      struct __declspec(align(4)) Weak { long long value; };
+      struct Natural { long long value; };
+      #pragma pack(push, 1)
+      struct PackedWeak { char tag; struct Weak value; };
+      struct PackedNatural { char tag; struct Natural value; };
+      #pragma pack(pop)
+    )",
+                                       {}, Model, RecordABI::Microsoft);
+    for (const char *Name : {"Packed", "PackedExplicit", "PackedUnion"}) {
+      EXPECT_EQ(shapeOf(recordOf(Library, Name)),
+                "struct{tag@0 nested@16 tail@32}");
+      EXPECT_EQ(recordOf(Library, Name).Size, 48u);
+      const auto RoundTrip =
+          parsed(renderTypes(Library, {Library.find(Name)}, {}), {}, Model,
+                 RecordABI::Microsoft);
+      const RecordDef &Restored = recordOf(RoundTrip, Name);
+      std::map<std::string, uint64_t> Offsets;
+      for (const Member &Field : Restored.Members)
+        Offsets[Field.Name] = Field.BitOffset;
+      // The renderer may name padding bytes. The original fields retain
+      // their offsets and the complete record retains its required align.
+      EXPECT_EQ(Offsets.at("tag"), 0u);
+      EXPECT_EQ(Offsets.at("nested"), 16u * 8);
+      EXPECT_EQ(Offsets.at("tail"), 32u * 8);
+      EXPECT_EQ(Restored.Size, 48u);
+      EXPECT_EQ(Restored.Alignment, 16u);
+    }
+    EXPECT_EQ(shapeOf(recordOf(Library, "PackedArray")),
+              "struct{tag@0 values@16 tail@48}");
+    EXPECT_EQ(recordOf(Library, "PackedArray").Size, 64u);
+    // An explicit alignment smaller than the natural one still makes the
+    // type's full alignment required. An unannotated scalar wrapper packs.
+    EXPECT_EQ(shapeOf(recordOf(Library, "PackedWeak")),
+              "struct{tag@0 value@8}");
+    EXPECT_EQ(recordOf(Library, "PackedWeak").Size, 16u);
+    EXPECT_EQ(shapeOf(recordOf(Library, "PackedNatural")),
+              "struct{tag@0 value@1}");
+    EXPECT_EQ(recordOf(Library, "PackedNatural").Size, 9u);
+  }
+}
+
+TEST(TypeParse, NamedPackingRestoresTheMatchingStackEntry) {
+  TypeLibrary Library(DataModel::LLP64);
+  const char *Source = R"(
+    #pragma pack(8)
+    #pragma pack(push, outer, 1)
+    #pragma pack(push, inner, 2)
+    #pragma pack(push, outer, 4)
+    #pragma pack(show)
+    struct Four { char c; long long value; };
+    #pragma pack(pop, outer)
+    struct Two { char c; long long value; };
+    #pragma pack(pop, missing)
+    struct StillTwo { char c; long long value; };
+    #pragma pack(pop, outer)
+    struct Eight { char c; long long value; };
+    #pragma pack(push, saved)
+    #pragma pack(1)
+    #pragma pack(pop, saved, 4)
+    struct Override { char c; long long value; };
+    #pragma pack(pop, absent, 2)
+    struct MissingOverride { char c; long long value; };
+  )";
+  ParseResult Read = parseCTypes(Source, Library);
+  ASSERT_TRUE(Read.ok()) << Read.Problems.front().Message;
+  EXPECT_EQ(recordOf(Library, "Four").Size, 12u);
+  EXPECT_EQ(recordOf(Library, "Two").Size, 10u);
+  EXPECT_EQ(recordOf(Library, "StillTwo").Size, 10u);
+  EXPECT_EQ(recordOf(Library, "Eight").Size, 16u);
+  EXPECT_EQ(recordOf(Library, "Override").Size, 12u);
+  EXPECT_EQ(recordOf(Library, "MissingOverride").Size, 10u);
+}
+
 TEST(TypeParse, ReadsEnumerationsWithConstants) {
   const TypeLibrary Library = parsed(R"(
     enum E { A, B = 5, C, D = B << 2, F = -1, G = (int)0x80000000, H = C | 1 };
@@ -402,6 +494,100 @@ TEST(TypeParse, ReadsWhatGnuPreprocessedHeadersHold) {
   EXPECT_EQ(Log.Params[1].Type->Kind, TypeExprKind::Pointer);
 }
 
+TEST(TypeParse, MicrosoftFixedWidthPointerAliasesKeepTheirWidths) {
+  for (const auto Model : {DataModel::ILP32, DataModel::LLP64}) {
+    const auto Library = parsed(R"(
+      typedef void *P;
+      typedef P ALIAS;
+      struct Mixed {
+        long long Flags;
+        void * __ptr32 Small;
+        unsigned int Length;
+        ALIAS __ptr32 Other;
+        ALIAS __ptr64 Wide;
+      };
+      _Static_assert(sizeof(((Mixed *)0)->Small) == 4, "small pointer");
+      _Static_assert(sizeof(((Mixed *)0)->Other) == 4, "alias pointer");
+      _Static_assert(sizeof(((Mixed *)0)->Wide) == 8, "wide pointer");
+      _Static_assert(__builtin_offsetof(Mixed, Length) == 12, "length");
+      _Static_assert(__builtin_offsetof(Mixed, Other) == 16, "other");
+      _Static_assert(__builtin_offsetof(Mixed, Wide) == 24, "wide");
+      _Static_assert(sizeof(Mixed) == 32, "record");
+    )",
+                                {}, Model, RecordABI::Microsoft);
+    EXPECT_EQ(Library.sizeOf(*makeNamed("P", TypeKind::Typedef)),
+              Model == DataModel::ILP32 ? 4u : 8u);
+    for (const auto Lang : {Language::C, Language::Cpp}) {
+      RenderOptions Options;
+      Options.Lang = Lang;
+      const LocalType *Roots[] = {Library.find("Mixed")};
+      ParseOptions Parse;
+      Parse.Lang = Lang;
+      const auto RoundTrip = parsed(renderTypes(Library, Roots, Options), Parse,
+                                    Model, RecordABI::Microsoft);
+      const auto &Fields = recordOf(RoundTrip, "Mixed").Members;
+      ASSERT_EQ(Fields.size(), 5u);
+      EXPECT_EQ(RoundTrip.sizeOf(*Fields[1].Type), 4u);
+      EXPECT_EQ(RoundTrip.sizeOf(*Fields[3].Type), 4u);
+      EXPECT_EQ(RoundTrip.sizeOf(*Fields[4].Type), 8u);
+      EXPECT_EQ(recordOf(RoundTrip, "Mixed").Size, 32u);
+    }
+  }
+}
+
+TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
+  for (auto [Model, ABI] : {std::pair{DataModel::ILP32, RecordABI::Microsoft},
+                            {DataModel::LLP64, RecordABI::Microsoft},
+                            {DataModel::ILP32, RecordABI::MinGW32},
+                            {DataModel::LLP64, RecordABI::MinGW64}}) {
+    const TypeLibrary Library = parsed(R"(
+      typedef struct _HEADER { unsigned short Tag; void *Link; } HEADER;
+      typedef HEADER HEADER_ALIAS;
+      typedef union { unsigned int Code; unsigned short Parts[2]; } VALUE;
+      struct Packet { char Prefix; HEADER_ALIAS; unsigned char Payload[3]; };
+      struct Promoted { VALUE; unsigned char Tail; };
+      struct Nested { struct Inner { unsigned int Value; void *Link; }; void *Tail; };
+      #pragma pack(push, 1)
+      struct Packed { char Prefix; HEADER_ALIAS; unsigned char Payload[3]; };
+      #pragma pack(pop)
+      struct Declaration { struct _HEADER; unsigned char Tail; };
+      _Static_assert(__builtin_offsetof(Packet, Tag) == sizeof(void *), "Tag");
+      _Static_assert(__builtin_offsetof(Packet, Link) == 2 * sizeof(void *), "Link");
+      _Static_assert(__builtin_offsetof(Packet, Payload) == 3 * sizeof(void *), "Payload");
+      _Static_assert(__builtin_offsetof(Promoted, Tail) == 4, "anonymous union");
+      _Static_assert(sizeof(Declaration) == 1, "a tag declaration has no storage");
+      _Static_assert(sizeof(Nested) == 3 * sizeof(void *), "named definition has storage in C");
+      _Static_assert(__builtin_offsetof(Nested, Tail) == 2 * sizeof(void *), "nested storage");
+    )",
+                                       {}, Model, ABI);
+    const uint64_t Pointer = Model == DataModel::LLP64 ? 8 : 4;
+    EXPECT_EQ(recordOf(Library, "Packet").Size, 4 * Pointer);
+    EXPECT_EQ(recordOf(Library, "Packed").Size, 2 * Pointer + 4);
+    EXPECT_EQ(recordOf(Library, "Promoted").Size, 8u);
+    ASSERT_EQ(recordOf(Library, "Packet").Members.size(), 3u);
+    EXPECT_TRUE(recordOf(Library, "Packet").Members[1].isAnonymous());
+    const auto RoundTrip = parsed(
+        renderType(Library, *Library.find("Packet"), {}), {}, Model, ABI);
+    EXPECT_EQ(recordOf(RoundTrip, "Packet").Size, 4 * Pointer);
+  }
+  TypeLibrary Incomplete(DataModel::LLP64);
+  EXPECT_FALSE(parseCTypes("typedef struct Unfinished U; "
+                           "struct Broken { U; int Tail; };",
+                           Incomplete)
+                   .ok());
+  ParseOptions Cpp;
+  Cpp.Lang = Language::Cpp;
+  const auto Declaration = parsed(R"(
+    typedef struct H { unsigned short Tag; void *Link; } Header;
+    struct P { char Prefix; Header; unsigned char Payload[3]; };
+    struct N { struct Inner { void *Value; }; unsigned int Value; };
+    static_assert(sizeof(P) == 4, "C++ typedef declaration has no storage");
+    static_assert(sizeof(N) == 4, "C++ named record declaration has no storage");
+  )",
+                                  Cpp);
+  EXPECT_EQ(recordOf(Declaration, "P").Size, 4u);
+}
+
 TEST(TypeParse, SizesAStringLiteralWithItsTerminator) {
   // <wininet.h>'s INTERNET_MAX_URL_LENGTH, as -E leaves it, sizes the
   // arrays of <commctrl.h> and <shlobj.h>; adjacent literals are one.
@@ -504,7 +690,7 @@ TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   TypeLibrary Library;
   // A #pragma pack of an unknown name leaves every layout after it unknown.
   ParseResult Pack =
-      parseCTypes("#pragma pack(push, UNKNOWN)\nstruct A { int a; };", Library);
+      parseCTypes("#pragma pack(UNKNOWN)\nstruct A { int a; };", Library);
   ASSERT_EQ(Pack.Problems.size(), 1u);
   EXPECT_NE(Pack.Problems[0].Message.find("UNKNOWN"), std::string::npos);
 
@@ -521,6 +707,97 @@ TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   EXPECT_EQ(Library.find("v4"), nullptr);
   EXPECT_EQ(Library.find("B"), nullptr);
   EXPECT_NE(Library.find("C"), nullptr);
+}
+
+TEST(TypeParse, ASourceUnitPreservesItsDefaultCallingConvention) {
+  const char *Source = R"(
+    int Before(int value);
+    #pragma neverd_default_calling_convention(__stdcall)
+    typedef int Routine(int value);
+    typedef int (*Callback)(int value);
+    struct Operations { int (*Run)(int value); };
+    int Default(int value);
+    int __cdecl CallerPops(int value);
+    int __fastcall RegisterArgs(int value);
+    int Variadic(int count, ...);
+    int __cdecl WithCallbacks(int (*CalleePops)(int),
+                              int (__cdecl *CallerPops)(int));
+    #pragma neverd_default_calling_convention()
+    int After(int value);
+  )";
+  for (auto Model : {DataModel::ILP32, DataModel::LLP64}) {
+    auto Library = parsed(Source, {}, Model, RecordABI::Microsoft);
+    const auto Expected = [Model](CallingConvention Convention) {
+      return Model == DataModel::ILP32 ? Convention
+                                       : CallingConvention::Unspecified;
+    };
+    for (const char *Name : {"Before", "After"}) {
+      ASSERT_NE(Library.findPrototype(Name), nullptr);
+      EXPECT_EQ(Library.findPrototype(Name)->Convention,
+                CallingConvention::Unspecified);
+    }
+    for (const auto &[Name, Convention] :
+         std::map<std::string, CallingConvention>{
+             {"Default", CallingConvention::Stdcall},
+             {"CallerPops", CallingConvention::Cdecl},
+             {"RegisterArgs", CallingConvention::Fastcall},
+             {"Variadic", CallingConvention::Cdecl},
+             {"WithCallbacks", CallingConvention::Cdecl}}) {
+      ASSERT_NE(Library.findPrototype(Name), nullptr);
+      EXPECT_EQ(Library.findPrototype(Name)->Convention, Expected(Convention))
+          << Name;
+    }
+    ASSERT_NE(Library.find("Routine"), nullptr);
+    ASSERT_NE(Library.find("Routine")->Function, nullptr);
+    EXPECT_EQ(Library.find("Routine")->Function->Convention,
+              Expected(CallingConvention::Stdcall));
+    ASSERT_NE(Library.find("Callback"), nullptr);
+    const auto Callback = Library.find("Callback")->Target;
+    ASSERT_TRUE(Callback && Callback->Element && Callback->Element->Function);
+    EXPECT_EQ(Callback->Element->Function->Convention,
+              Expected(CallingConvention::Stdcall));
+    const auto &Operations = recordOf(Library, "Operations");
+    ASSERT_EQ(Operations.Members.size(), 1u);
+    EXPECT_EQ(Operations.Members[0].Type->Element->Function->Convention,
+              Expected(CallingConvention::Stdcall));
+    const auto *WithCallbacks = Library.findPrototype("WithCallbacks");
+    ASSERT_EQ(WithCallbacks->Params.size(), 2u);
+    EXPECT_EQ(WithCallbacks->Params[0].Type->Element->Function->Convention,
+              Expected(CallingConvention::Stdcall));
+    EXPECT_EQ(WithCallbacks->Params[1].Type->Element->Function->Convention,
+              Expected(CallingConvention::Cdecl));
+    // Rendering makes the default explicit, so another parser needs no
+    // source-unit pragma and keeps callback conventions on round trip.
+    const auto RoundTrip =
+        parsed(renderTypes(Library,
+                           {Library.find("Routine"), Library.find("Callback"),
+                            Library.find("Operations")},
+                           {}),
+               {}, Model, RecordABI::Microsoft);
+    EXPECT_EQ(RoundTrip.find("Routine")->Function->Convention,
+              Expected(CallingConvention::Stdcall));
+    EXPECT_EQ(RoundTrip.find("Callback")->Target->Element->Function->Convention,
+              Expected(CallingConvention::Stdcall));
+    // Defaults belong to a parse, not to the library it updates.
+    ASSERT_TRUE(
+        parseCTypes("#pragma neverd_default_calling_convention(__stdcall)\n"
+                    "int Last(int value);",
+                    Library)
+            .ok());
+    ASSERT_TRUE(parseCTypes("int Separate(int value);", Library).ok());
+    EXPECT_EQ(Library.findPrototype("Separate")->Convention,
+              CallingConvention::Unspecified);
+  }
+  for (const char *Directive :
+       {"(unknown)", "__stdcall", "(__stdcall, __cdecl)"}) {
+    TypeLibrary Library(DataModel::ILP32);
+    const auto Result =
+        parseCTypes("#pragma neverd_default_calling_convention" +
+                        std::string(Directive) + "\nint Invalid(int value);",
+                    Library);
+    EXPECT_FALSE(Result.ok());
+    EXPECT_EQ(Library.findPrototype("Invalid"), nullptr);
+  }
 }
 
 TEST(TypeParse, AVariadicRoutineIsCdeclWhateverItsConvention) {
@@ -923,7 +1200,12 @@ TEST(TypeParse, SizesAMemberReachedThroughANullPointer) {
       struct { short s; long long q; };
       struct { int i; char b[3]; } n;
     } A;
+    typedef A __unaligned *PA, __unaligned *OTHER_PA;
+    typedef PA ALIAS_PA;
     _Static_assert(sizeof(((A *)0)->q) == 8, "A.q");
+    _Static_assert(sizeof(((PA)0)->q) == 8, "PA.q");
+    _Static_assert(sizeof(((ALIAS_PA)0)->n.b) == 3, "ALIAS_PA.n.b");
+    _Static_assert(sizeof(((OTHER_PA)0)->n.b) == 3, "OTHER_PA.n.b");
     _Static_assert(sizeof(((A *)0)->n.b) == 3, "A.n.b");
     _Static_assert(__builtin_offsetof(A, q) + sizeof(((A *)0)->q) == 24,
                    "A through q");

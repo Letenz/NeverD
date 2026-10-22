@@ -592,7 +592,8 @@ TEST(WindowsEHModesCorpus,
           EXPECT_TRUE(SemanticRange->contains(BlockRange));
           EXPECT_TRUE(llvm::any_of(
               Block.ExceptionalSuccs, [&](const ExceptionalEdge &Edge) {
-                return Edge.RegionIndex == 0 &&
+                return Edge.singleContext() &&
+                       Edge.singleContext()->RegionIndex == 0 &&
                        Edge.Kind == ExceptionalEdgeKind::SEHHandler &&
                        Edge.TargetVA == Scope.HandlerVA;
               }));
@@ -602,7 +603,8 @@ TEST(WindowsEHModesCorpus,
           SawUnprotectedSuccessor = true;
           EXPECT_FALSE(llvm::any_of(
               Block.ExceptionalSuccs, [](const ExceptionalEdge &Edge) {
-                return Edge.RegionIndex == 0 &&
+                return Edge.singleContext() &&
+                       Edge.singleContext()->RegionIndex == 0 &&
                        Edge.Kind == ExceptionalEdgeKind::SEHHandler;
               }));
         }

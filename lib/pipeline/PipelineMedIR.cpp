@@ -288,6 +288,8 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallVariadicFrom);
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
+  COPY_SOURCE_FACT(OmittedCalleeStackArgs);
+  COPY_SOURCE_FACT(OmittedCalleeStackSlots);
   COPY_SOURCE_FACT(OmittedCallees);
   COPY_SOURCE_FACT(CallPrototypeArguments);
   COPY_SOURCE_FACT(CallUserPrototypes);

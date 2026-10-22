@@ -136,12 +136,30 @@ std::optional<SymRef> groupedForm(SymContext &Ctx,
   if (Groups.empty())
     return Ctx.mkZero(Ctx.width(Atoms[0]));
 
-  const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  const bool Independent = isIndependentWeightedSum(Weights);
+  if (Independent &&
+      llvm::all_of(Atoms, [&](SymRef R) { return Ctx.isVar(R); })) {
+    // The complete weights already give an exact sum of scaled variables.
+    // Bound selector construction by that available spelling, rather than by
+    // the much larger enclosing polynomial. A variable costs one leaf; a
+    // scaled variable costs at most a literal, a multiply and that leaf.
+    // This needs no speculative interning and keeps the established tie order.
+    size_t Cost = 0, Count = 0;
+    for (unsigned I = 0; I != NumAtoms; ++I) {
+      const auto &Coefficient = Weights[size_t(1) << I];
+      if (Coefficient.isZero())
+        continue;
+      Cost += Coefficient.isOne() ? 1 : 3;
+      ++Count;
+    }
+    Cost = Count ? Cost + Count - 1 : 1;
+    Synthesis.MaxCost = std::min(Synthesis.MaxCost, Cost);
+  }
   // Only the new cumulative search is skipped for independent weighted sums;
   // the grouped and conjunction candidates remain available, since this test
   // establishes a shape rather than a minimum expression cost.
-  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 &&
-      !isIndependentWeightedSum(Weights)) {
+  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 && !Independent) {
     TruthTable Nonzero = TruthTable::zero(NumAtoms);
     for (const auto &[Value, Table] : Groups)
       Nonzero |= Table;
@@ -514,6 +532,8 @@ void affineResidualCandidates(SymContext &Ctx,
   assert(Weights.size() == (size_t(1) << Count));
   if (!Budget.consume(Weights.size()))
     return;
+  if (isIndependentWeightedSum(Weights))
+    return;
   llvm::SmallVector<llvm::APInt, 4> Values;
   for (const llvm::APInt &Value : Weights) {
     if (llvm::is_contained(Values, Value))
@@ -621,8 +641,7 @@ void affineResidualCandidates(SymContext &Ctx,
         auto Found = Synthesized.find(Key);
         if (Found == Synthesized.end()) {
           const unsigned Arity = std::popcount(truthTableSupport(Table));
-          const size_t Functions = size_t(1) << (size_t(1) << Arity);
-          const size_t SynthesisWork = Functions * Functions;
+          const size_t SynthesisWork = bitwiseSynthesisWork(Arity);
           // This optional table must fit the remaining shared allowance.
           // Refusing it must not spend work that later regions could use.
           if (SynthesisWork > Limits.SynthesisWork ||
@@ -722,8 +741,7 @@ void booleanResidualCandidates(SymContext &Ctx,
     auto Found = Synthesized.find(Key);
     if (Found == Synthesized.end()) {
       const unsigned Arity = std::popcount(truthTableSupport(Table));
-      const size_t Functions = size_t(1) << (size_t(1) << Arity);
-      const size_t Work = Functions * Functions;
+      const size_t Work = bitwiseSynthesisWork(Arity);
       if (Work > Limits.SynthesisWork || !Budget.canConsume(Work))
         return std::nullopt;
       if (!Budget.consume(Work))

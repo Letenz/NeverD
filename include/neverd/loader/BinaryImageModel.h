@@ -469,6 +469,8 @@ struct BinaryImage {
   /// emitter rebuilds such a table with `ptrtoint(@recompiled_data)` fields so
   /// the pointers survive relinking (the data analogue of CodePtrRelocSlots),
   /// instead of leaving the stale original VAs that would read unmapped memory.
+  /// Linked PE header mappings also record their format-owned ImageBase field
+  /// here. It remains distinct from the file's explicit BaseRelocations.
   std::set<uint64_t> DataPtrRelocSlots;
   /// Data-pointer slot -> address inside the relocation symbol's owning
   /// section/segment.  Slot bytes alone cannot disambiguate a one-past target
@@ -733,9 +735,9 @@ struct BinaryImage {
     return std::set<va_t>(Addrs.begin(), Addrs.end());
   }
 
-  /// Function starts whose only evidence is a padding-boundary guess: no
-  /// other symbol names the address and no primary unwind record begins
-  /// there.  See Symbol::IsBoundaryGuess.
+  /// Function starts supported only by a prologue heuristic: no other symbol
+  /// names the address and no primary unwind record begins there. Padding or
+  /// an unrelocated data word alone cannot confirm it. See IsBoundaryGuess.
   std::set<va_t> boundaryGuessFunctionStarts() const {
     // Debug info renames a guessed symbol in place; a real name confirms it.
     const auto Guessed = [](const Symbol &Sym) {
@@ -914,6 +916,15 @@ struct BinaryImage {
         return &Seg;
     return nullptr;
   }
+
+  /// Whether the \p Width bytes at \p Addr keep, once loading is done, what
+  /// the loader left there: they lie in a read-only segment, in one the
+  /// format makes read-only once relocated (Segment::ReadOnlyAfterRelocations),
+  /// in a segment or section of relocated constants (`.data.rel.ro`,
+  /// `__DATA_CONST`), or in a range ELF's PT_GNU_RELRO covers.  A linked
+  /// ELF's load segment holds sections of both kinds, so its name says
+  /// nothing of the bytes.
+  bool readOnlyAfterRelocations(va_t Addr, uint64_t Width) const;
 
   /// Return the mapped format-native section that owns \p Addr.
   ///

@@ -2142,16 +2142,22 @@ bool collectLowAddressUses(
       if (!mergePredecessors(Func.Blocks[BlockIndex], Input))
         return failCollect("merge-preds", FuncIndex,
                            Func.Blocks[BlockIndex].StartAddr);
+      // The graph and transfer rules are frozen for this solve. Identical
+      // incoming facts already have a complete output; final use recording
+      // remains a separate transfer below.
+      if (Processed[BlockIndex] && Input == InStates[BlockIndex])
+        continue;
       ModuleAddressState Output;
       if (!transfer(Func.Blocks[BlockIndex], Input, nullptr, Output))
         return failCollect("transfer-fixpoint", FuncIndex,
                            Func.Blocks[BlockIndex].StartAddr);
       const bool FirstVisit = !Processed[BlockIndex];
       Processed[BlockIndex] = true;
-      if (!FirstVisit && Input == InStates[BlockIndex] &&
-          Output == OutStates[BlockIndex])
-        continue;
+      // Recording needs the latest input even when this block kills every
+      // changed fact. Only a changed output can affect a successor.
       InStates[BlockIndex] = std::move(Input);
+      if (!FirstVisit && Output == OutStates[BlockIndex])
+        continue;
       OutStates[BlockIndex] = std::move(Output);
       auto queueSucc = [&](int SuccId) {
         auto Pos = PositionForId.find(SuccId);
@@ -2708,6 +2714,8 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     bool Complete = false;
   };
   std::vector<CompletePhysicalEnvelope> PhysicalEnvelopes(Owners.size());
+  CompletePhysicalEnvelope AllPhysicalStorage;
+  AllPhysicalStorage.Complete = true;
   for (size_t OwnerIndex = 0; OwnerIndex < Owners.size(); ++OwnerIndex) {
     const ModuleJumpTableOwner &Owner = Owners[OwnerIndex];
     if (!Budget.consume(Owner.PhysicalIdentityRanges.size()))
@@ -2726,7 +2734,67 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         Envelope.End = *End;
     }
     PhysicalEnvelopes[OwnerIndex] = Envelope;
+    AllPhysicalStorage.Complete &= Envelope.Complete;
+    if (Envelope.Complete) {
+      if (AllPhysicalStorage.Begin == InvalidVA ||
+          Envelope.Begin < AllPhysicalStorage.Begin)
+        AllPhysicalStorage.Begin = Envelope.Begin;
+      if (AllPhysicalStorage.End == InvalidVA ||
+          Envelope.End > AllPhysicalStorage.End)
+        AllPhysicalStorage.End = Envelope.End;
+    }
   }
+  // Retain a prefix maximum of the complete owner envelopes. The last start
+  // at or before an address then proves whether any envelope covers it, even
+  // when envelopes overlap or nest. Do not scan the unrelated space between
+  // disjoint owners as though the whole module were one table object.
+  std::map<va_t, va_t> PhysicalEndByBegin;
+  if (AllPhysicalStorage.Complete) {
+    for (const CompletePhysicalEnvelope &Envelope : PhysicalEnvelopes) {
+      if (!scanPair(
+              detail::orderedContainerLookupWork(PhysicalEndByBegin.size())) ||
+          !Budget.consume())
+        return abandonAnalysis();
+      auto [It, Inserted] =
+          PhysicalEndByBegin.emplace(Envelope.Begin, Envelope.End);
+      if (!Inserted)
+        It->second = std::max(It->second, Envelope.End);
+    }
+    va_t End = 0;
+    for (auto &[Begin, PrefixEnd] : PhysicalEndByBegin) {
+      if (!scanPair())
+        return abandonAnalysis();
+      End = std::max(End, PrefixEnd);
+      PrefixEnd = End;
+    }
+  }
+  // This is only a rejection filter for exact addresses. Each owner keeps
+  // its sparse filler, internal gaps and one-past endpoint; possible matches
+  // still use the owner-aware checks below. An incomplete range disables it.
+  // A frozen gap proves every strictly interior address disjoint. Reuse that
+  // one interval across nearby inputs, each still paying its field-scan debit.
+  std::optional<std::pair<va_t, va_t>> LastPhysicalGap;
+  auto outsideAllPhysicalStorage = [&](va_t Address) -> std::optional<bool> {
+    if (!AllPhysicalStorage.Complete)
+      return false;
+    if (Address < AllPhysicalStorage.Begin || Address > AllPhysicalStorage.End)
+      return true;
+    if (LastPhysicalGap && Address > LastPhysicalGap->first &&
+        Address < LastPhysicalGap->second)
+      return true;
+    if (!scanPair(
+            detail::orderedContainerLookupWork(PhysicalEndByBegin.size())))
+      return std::nullopt;
+    const auto After = PhysicalEndByBegin.upper_bound(Address);
+    if (After == PhysicalEndByBegin.begin())
+      return true;
+    const va_t BeforeEnd = std::prev(After)->second;
+    if (Address <= BeforeEnd)
+      return false;
+    if (After != PhysicalEndByBegin.end())
+      LastPhysicalGap = std::pair{BeforeEnd, After->first};
+    return true;
+  };
 
   std::map<va_t, std::set<va_t>> TableObjectAliases;
   size_t TableAliasWorkRemaining = limits::kMaxJumpTableEvidenceWork;
@@ -2865,7 +2933,10 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
   };
   // Index the frozen public inventory once instead of scanning every source
   // for every loader field. Preserve all sources, including conflicting and
-  // imprecise ones; anchor eligibility is not source eligibility.
+  // imprecise ones; anchor eligibility is not source eligibility. Only actual
+  // loader fields query this index below, so indexing a source needs no
+  // preliminary lookup in both loader maps. Unmatched keys grant no authority
+  // and still spend the same bounded retention account.
   std::map<va_t, std::vector<ExactSource>> SourcesByField;
   for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex)
     for (const auto &Occurrence :
@@ -2873,20 +2944,6 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
       if (!scanPair())
         return abandonAnalysis();
       if (Occurrence.FieldVA == InvalidVA)
-        continue;
-      if (!scanPair(detail::orderedContainerLookupWork(
-              Img.DataAddressRelocOperands.size())))
-        return abandonAnalysis();
-      bool HasLoaderField =
-          Img.DataAddressRelocOperands.count(Occurrence.FieldVA) != 0;
-      if (!HasLoaderField) {
-        if (!scanPair(detail::orderedContainerLookupWork(
-                Img.CodeAddressRelocOperands.size())))
-          return abandonAnalysis();
-        HasLoaderField =
-            Img.CodeAddressRelocOperands.count(Occurrence.FieldVA) != 0;
-      }
-      if (!HasLoaderField)
         continue;
       if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
         return abandonAnalysis();
@@ -2911,6 +2968,19 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
 
   auto protectRelocationUse = [&](va_t FieldVA,
                                   const RelocatedAddressField &Field) {
+    if (!scanPair())
+      return false;
+    // A complete absolute target outside every physical envelope cannot
+    // expose an owner, regardless of which instruction contexts name it.
+    // Screen it before paying for the field/source lookup. PC-relative loader
+    // approximations must still reach the exact-source/container logic.
+    if (!Field.PCRelativeFromInstructionEnd) {
+      const auto Outside = outsideAllPhysicalStorage(Field.TargetVA);
+      if (!Outside)
+        return false;
+      if (*Outside)
+        return true;
+    }
     if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
       return false;
     const auto Sources = SourcesByField.find(FieldVA);
@@ -3035,12 +3105,17 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     if (!protectRelocationUse(FieldVA, Field))
       return abandonAnalysis();
   for (va_t PointerSlot : Img.DataPtrRelocSlots) {
-    if (!Budget.consume())
+    if (!scanPair())
       return abandonAnalysis();
     const uint8_t *P = Img.readVA(PointerSlot, Img.getPointerSize());
     if (!P)
       return abandonAnalysis();
     const va_t Target = static_cast<va_t>(readPtr(P, Img.is64Bit()));
+    const auto Outside = outsideAllPhysicalStorage(Target);
+    if (!Outside)
+      return abandonAnalysis();
+    if (*Outside)
+      continue;
     va_t TargetOwnerVA = InvalidVA;
     if (auto It = Img.DataPtrRelocTargetOwners.find(PointerSlot);
         It != Img.DataPtrRelocTargetOwners.end())
@@ -3806,10 +3881,10 @@ std::map<va_t, va_t> callArgumentSourcesOf(
 /// The argument counts of every prototyped import of \p Img, as \p Kept
 /// holds them where they were read from the image as it is with \p Dbg; read
 /// now, and kept there, otherwise (PipelineAnalysisCache::ImportCounts).
-std::shared_ptr<const std::map<va_t, int>>
-imageImportCounts(const BinaryImage &Img, const DebugContext *Dbg,
-                  const std::map<va_t, PointerVariableCallee> &PointerCallees,
-                  std::shared_ptr<const ImageImportCounts> *Kept) {
+std::shared_ptr<const ImageImportCounts> imageImportArguments(
+    const BinaryImage &Img, const DebugContext *Dbg,
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    std::shared_ptr<const ImageImportCounts> *Kept) {
   std::shared_ptr<const ImageImportCounts> Everywhere =
       Kept && *Kept && (*Kept)->readFrom(Img, Dbg) ? *Kept : nullptr;
   if (!Everywhere) {
@@ -3823,19 +3898,44 @@ imageImportCounts(const BinaryImage &Img, const DebugContext *Dbg,
       Addresses.push_back(Slot);
     for (const Export &Exp : Img.Exports)
       Addresses.push_back(Exp.Addr);
+    const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+    ImportPrototypeArguments Prototyped = importPrototypeArguments(
+        Img, {}, {}, /*StackArguments=*/true, Dbg,
+        /*RegisterArguments=*/!Convention ||
+            !Convention->RegparmOnlyForInternalCalls,
+        &PointerCallees, /*ExportStarts=*/nullptr, &Addresses);
     Everywhere = std::make_shared<const ImageImportCounts>(ImageImportCounts{
         &Img, Dbg, Img.Imports.data(), Img.Imports.size(),
         Img.Relocations.data(), Img.Relocations.size(), Img.Exports.data(),
-        Img.Exports.size(),
-        importPrototypeArguments(Img, {}, {}, /*StackArguments=*/true, Dbg,
-                                 /*RegisterArguments=*/true, &PointerCallees,
-                                 /*ExportStarts=*/nullptr, &Addresses)
-            .Counts});
+        Img.Exports.size(), std::move(Prototyped.Counts),
+        std::move(Prototyped.StackArgs), std::move(Prototyped.StackSlots)});
     if (Kept)
       *Kept = Everywhere;
   }
-  return std::shared_ptr<const std::map<va_t, int>>(Everywhere,
-                                                    &Everywhere->Counts);
+  return Everywhere;
+}
+
+/// Omitted callees read the image's declarations, including imports absent
+/// from the selection. Warming and demand conversion share that same input.
+void setOmittedImportArguments(
+    const BinaryImage &Img, const DebugContext *Dbg,
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    std::shared_ptr<const ImageImportCounts> *Kept, PipelineResult &Result) {
+  const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+  if (!Convention || !Convention->ImportArgumentsFromPrototype ||
+      !Convention->ArgumentsFromCallSetup)
+    return;
+  const auto Arguments = imageImportArguments(Img, Dbg, PointerCallees, Kept);
+  if (Convention->RegparmOnlyForInternalCalls) {
+    Result.OmittedCalleeStackArgs = std::shared_ptr<const std::map<va_t, int>>(
+        Arguments, &Arguments->StackArgs);
+    Result.OmittedCalleeStackSlots = std::shared_ptr<const std::set<va_t>>(
+        Arguments, &Arguments->StackSlots);
+  } else {
+    Result.OmittedCalleeArgumentCounts =
+        std::shared_ptr<const std::map<va_t, int>>(Arguments,
+                                                   &Arguments->Counts);
+  }
 }
 
 void computeCallRegisterEffects(
@@ -3884,15 +3984,11 @@ void computeCallRegisterEffects(
           Img, Result.LowFuncs, {}, /*StackArguments=*/true, Dbg,
           /*RegisterArguments=*/true, &PointerCallees);
       Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
-      // An omitted callee's conversion reads the counts of the imports its
-      // own calls reach, as its own selection does, whichever functions this
-      // run selects: those of every import, counted once while the
-      // program's declarations stay (PipelineAnalysisCache::ImportCounts).
-      Result.OmittedCalleeArgumentCounts =
-          imageImportCounts(Img, Dbg, PointerCallees, KeptImportCounts);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
+    setOmittedImportArguments(Img, Dbg, PointerCallees, KeptImportCounts,
+                              Result);
     return;
   }
   // Each function's effect.  A callee's is the one its kept facts hold,
@@ -4232,6 +4328,30 @@ struct PipelineAnalysisCache::Impl {
           StackProbes(Img), PointerCallees(collectPointerVariableCallees(Img)),
           Roots(Img), Owners(Img) {}
 
+    /// Import-address names (getImportAddressNames). HighIR lays a run's own
+    /// function, debug and thunk names over this map and takes them off
+    /// before returning. The fingerprint is the import storage and the counts
+    /// admission of an import stub reads. Exception metadata is not in it, so
+    /// reset the cache before changing the image.
+    struct ImportNameMemo {
+      const void *ImportData = nullptr;
+      size_t ImportCount = 0;
+      size_t StubCount = 0;
+      size_t DataInCodeCount = 0;
+      size_t ContinuationCount = 0;
+      std::shared_ptr<std::map<va_t, std::string>> Names;
+
+      bool matches(const BinaryImage &Img) const {
+        return Names &&
+               ImportData == static_cast<const void *>(Img.Imports.data()) &&
+               ImportCount == Img.Imports.size() &&
+               StubCount == Img.ImportStubIndices.size() &&
+               DataInCodeCount == Img.DataInCode.size() &&
+               ContinuationCount == Img.ContinuationCodeStarts.size();
+      }
+    };
+    ImportNameMemo ImportNames;
+
     bool matches(const BinaryImage &Img, DebugContext *Dbg,
                  const SymbolInventory *CandidateInventory) const {
       return Image == &Img && Debug == Dbg &&
@@ -4294,6 +4414,45 @@ struct PipelineAnalysisCache::Impl {
                        CandidateEntries.end()));
   }
 };
+
+std::map<va_t, std::string> *
+Pipeline::importAddressNames(const BinaryImage &Img,
+                             PipelineAnalysisCache *Cache) {
+  if (!Cache)
+    return nullptr;
+  // Facts and a selection can each hold image inputs. Prefer a memo that
+  // already names this image's imports; otherwise fill the first inputs that
+  // belong to it. HighIR removes whatever it adds before it returns.
+  using InputsPtr = std::shared_ptr<PipelineAnalysisCache::Impl::ImageInputs>;
+  InputsPtr Inputs;
+  for (const std::shared_ptr<PipelineAnalysisCache::Impl> &Kept :
+       {Cache->Facts, Cache->SelectionFacts}) {
+    if (!Kept || !Kept->Inputs || Kept->Inputs->Image != &Img)
+      continue;
+    if (!Inputs)
+      Inputs = Kept->Inputs;
+    if (Kept->Inputs->ImportNames.matches(Img)) {
+      Inputs = Kept->Inputs;
+      break;
+    }
+  }
+  if (!Inputs)
+    return nullptr;
+  PipelineAnalysisCache::Impl::ImageInputs::ImportNameMemo &Memo =
+      Inputs->ImportNames;
+  if (Memo.matches(Img))
+    return Memo.Names.get();
+  auto Built = std::make_shared<std::map<va_t, std::string>>(
+      Img.getImportAddressNames());
+  Memo.Names.reset();
+  Memo.ImportData = static_cast<const void *>(Img.Imports.data());
+  Memo.ImportCount = Img.Imports.size();
+  Memo.StubCount = Img.ImportStubIndices.size();
+  Memo.DataInCodeCount = Img.DataInCode.size();
+  Memo.ContinuationCount = Img.ContinuationCodeStarts.size();
+  Memo.Names = std::move(Built);
+  return Memo.Names.get();
+}
 
 namespace {
 /// The starts of the image's function symbols that are not boundary
@@ -4479,26 +4638,49 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
                             DebugContext *Dbg, llvm::ArrayRef<va_t> Functions) {
   if (!Opts.AnalysisCache)
     return std::nullopt;
+  // The facts a selected-function run of a symbol start keeps (buildLowIR
+  // below), with what every run reads of the image's names, runtime routines
+  // and catch continuations, read here rather than in the first run.
+  const auto symbolFacts = [&](PipelineAnalysisCache &Cache) {
+    const auto Inventory =
+        PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
+    const std::vector<va_t> &CandidateEntries = Inventory->Starts;
+    (void)Inventory->functionNames(Img);
+    (void)Inventory->runtimeRoutineCalls(Img);
+    (void)Inventory->fh4ContinuationCandidates(Img);
+    // Facts for another symbol inventory serve no later run.
+    if (!Cache.Facts ||
+        !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get()))
+      Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
+          PipelineAnalysisCache::Impl::imageInputs(
+              Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
+          std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
+          /*RetainBodies=*/true, /*SymbolEntries=*/true);
+    else
+      Cache.Facts->Callees.trimMemoizedProofs(
+          limits::kMaxRetainedNoReturnAnswers);
+  };
   if (Img.Arch != Arch::X64) {
+    // i386, AArch64 and ARM runs share those facts too (sharedAnalysisCache).
+    if (Img.Arch == Arch::X86 || Img.Arch == Arch::AArch64 ||
+        Img.Arch == Arch::ARM)
+      symbolFacts(*Opts.AnalysisCache);
     // Where each call's setup gives its arguments, a restricted run reads
-    // the signature bodies of the callees it leaves out.  Outside the
-    // regparm convention, the summaries their conversions read are the same
-    // for every selection (computeCallRegisterEffects): the function-pointer
-    // variables' routines and the counts of every import.  Read those of
-    // Functions as such a run reads them.
+    // the signature bodies of the callees it leaves out. Those conversions
+    // read the image's import counts and stack-slot identities, together with
+    // the function-pointer variables' routines, independently of the current
+    // selection's calls. Warming supplies those same declaration facts.
     const CallArgumentConvention *Convention =
         callArgumentConvention(Img.Arch, Img.abiFormat());
-    if (!Convention || !Convention->ArgumentsFromCallSetup ||
-        Convention->RegparmOnlyForInternalCalls || Img.IsRelocatable)
+    if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
       return std::nullopt;
     PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
     const std::map<va_t, PointerVariableCallee> PointerCallees =
         collectPointerVariableCallees(Img);
     PipelineResult Summaries;
     Summaries.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
-    if (Convention->ImportArgumentsFromPrototype)
-      Summaries.OmittedCalleeArgumentCounts =
-          imageImportCounts(Img, Dbg, PointerCallees, &Cache.ImportCounts);
+    setOmittedImportArguments(Img, Dbg, PointerCallees, &Cache.ImportCounts,
+                              Summaries);
     if (!Cache.CalleeSignatures)
       Cache.CalleeSignatures = std::make_shared<OmittedCalleeMemo>();
     Summaries.CalleeSignatureMemo = Cache.CalleeSignatures;
@@ -4507,25 +4689,7 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
   // The entries a selected-function run of a symbol start knows (buildLowIR
   // below): its own entry adds nothing to them, so its run shares this state.
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
-  const auto Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
-  const std::vector<va_t> &CandidateEntries = Inventory->Starts;
-  // What every run reads of the image's names, runtime routines and catch
-  // continuations, read here rather than in the first run.
-  (void)Inventory->functionNames(Img);
-  (void)Inventory->runtimeRoutineCalls(Img);
-  (void)Inventory->fh4ContinuationCandidates(Img);
-  // Facts for another symbol inventory serve no later run.
-  if (!Cache.Facts ||
-      !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get())) {
-    Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
-        PipelineAnalysisCache::Impl::imageInputs(
-            Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
-        std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
-        /*RetainBodies=*/true, /*SymbolEntries=*/true);
-  } else {
-    Cache.Facts->Callees.trimMemoizedProofs(
-        limits::kMaxRetainedNoReturnAnswers);
-  }
+  symbolFacts(Cache);
   auto &Facts = *Cache.Facts;
   Facts.Inputs->Targets.clearMemoizedNames();
   const auto &Inputs = *Facts.Inputs;

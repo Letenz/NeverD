@@ -124,6 +124,14 @@
         <translation>Copia l&apos;indirizzo corrente</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>Copia &amp;link</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>Copia un link neverd:// al punto sotto il cursore, che NeverD apre lì</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>Ri&amp;nomina...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>Scegli il segnalibro a cui andare</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>Vai al &amp;link...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>Vai al punto indicato da un link neverd:// o ida://</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -1638,6 +1654,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>La tabella è cambiata prima della selezione dell’indirizzo.</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>Un’altra selezione di indirizzo ha sostituito questa.</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>Il processo di lavoro non ha trovato l’indirizzo richiesto.</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>Indicizzazione dei riferimenti ancora in corso…</translation>
     </message>
@@ -1648,6 +1676,18 @@
     <message>
         <source>Down</source>
         <translation>Giù</translation>
+    </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>Le funzioni sono cambiate durante l’aggiornamento della tabella.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>Le funzioni selezionate superano il limite di pagine della tabella.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>Troppi cambiamenti di selezione durante l’aggiornamento della tabella.</translation>
     </message>
 </context>
 <context>
@@ -1781,6 +1821,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>La dichiarazione salvata del sito di chiamata richiede una verifica: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>Impossibile aggiornare il codice sorgente: %1</translation>
     </message>
 </context>
 <context>
@@ -2183,18 +2227,6 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Description:</source>
         <translation>Descrizione:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>Trova nella vista</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>Testo:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>Impossibile trovare &apos;%1&apos; tra le righe caricate</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -2869,6 +2901,62 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Pathfinding</source>
         <translation>Ricerca di percorsi</translation>
+    </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>Altri programmi non possono aprire link in questa finestra: %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>Link copiato: %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>Vai al link</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>Link (neverd:// o ida://):</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>Non è un link da seguire: %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>Nessun programma aperto in cui seguire il link.</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>Il link indica un'altra build dell'input: il suo SHA-256 inizia con %1, quello di %2 con %3.</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>Il link indica %1, non %2; lo si segue qui.</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>Il programma è cambiato prima che il link si aprisse.</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>Nessun tipo locale si chiama %1.</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>L'indirizzo %1 del link non è in %2.</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>Nessun segnalibro a %1.</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>Nessuna funzione a %1.</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>Un altro link ha preso il posto di questo.</translation>
     </message>
 </context>
 <context>
@@ -3634,6 +3722,96 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Impossibile salvare il file dei simboli in %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>Trova nella vista</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>Testo da cercare</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>Distingui maiuscole e minuscole</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>Parole intere</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>Ricomincia dall’inizio</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Precedente</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Successivo</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>Corrispondenza precedente (Maiusc+Invio o Maiusc+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>Corrispondenza successiva (Invio o F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;Testo:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Chiudi</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: funzione corrente, incluso il codice compresso</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>Disassemblato: righe caricate, inclusi gli indirizzi visibili</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>Fine dell’intervallo di ricerca</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>Inizio dell’intervallo di ricerca</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>In attesa del codice sorgente…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>Nessun testo disponibile per la ricerca</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>Inserire il testo da cercare</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>Nessuna corrispondenza</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 di %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n corrispondenza</numerusform>
+            <numerusform>%n corrispondenze</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -5111,6 +5289,147 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Copy</source>
         <translation>Copia</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>Un link inizia con neverd:// o ida://.</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>Un link Knowledge Exchange indica un file da scaricare, non un punto in un programma.</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>Un link indica il suo input prima della sua risorsa.</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>Un link indica una sola risorsa, dopo il nome del suo input se ne ha uno.</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>Un link indica functions, addresses, strings, segments, names, imports, exports, types o bookmarks, non "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>Un link indica %1 una sola volta.</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 è un numero, decimale o dopo 0x, non "%2".</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>Un link non ha la vista "%1".</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 è di 8-64 cifre esadecimali dello SHA-256 dell'input, non "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>Un link indica rva o ea, non entrambi.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>Un link types indica il suo tipo con name=, non con un indirizzo.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>Un link types indica il suo tipo con name=.</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>I link %1 danno il loro indirizzo con rva= o ea=.</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>I link %1 indicano un indirizzo, non un tipo.</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>I link %1 si mostrano in %2, non in %3.</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>%n NeverD in esecuzione ha programmi aperti e il link non ne indica nessuno; aggiungi il nome dell'input.</numerusform>
+            <numerusform>%n NeverD in esecuzione hanno programmi aperti e il link non ne indica nessuno; aggiungi il nome dell'input.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>Il NeverD che ha aperto %1 non ha risposto.</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>Aperto nel NeverD che ha aperto %1 (processo %2).</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(non risponde)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(nessun programma aperto)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>analisi completata</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>analisi in corso</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD non è in esecuzione.</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>I link neverd:// non si aprono più in NeverD.</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>Il registro non ha accettato il gestore di neverd://.</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>I link neverd:// ora si aprono in %1.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>Su macOS l'applicazione NeverD dichiara i link neverd://; si aprono in essa una volta che è in Applicazioni.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>Su macOS l'applicazione NeverD dichiara i link neverd://; rimuovi l'applicazione per interromperlo.</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>Impossibile rimuovere %1.</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>Impossibile scrivere %1.</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>%1 è stato scritto, ma xdg-mime non lo ha reso il gestore dei link neverd://.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>Nessun NeverD in esecuzione ha aperto il programma del link.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>Nessun NeverD in esecuzione ha aperto il programma del link, e nessun file aperto di recente lo è; indica anche il file: neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>

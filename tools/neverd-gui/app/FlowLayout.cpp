@@ -95,13 +95,15 @@ int FlowLayout::arrange(const QRect &rect, bool place) const {
   int y = area.y();
   for (const Row &row : rows) {
     if (place) {
-      // Each at its own size, centred in its row, as a box layout centres a
-      // checkbox beside a taller combo box.
+      // Align the integer centres of the inclusive QRect extents. Rounding
+      // half the height difference instead shifts even-height items up one
+      // pixel beside an odd-height item.
       int left = area.x();
+      const int center = y + (row.height - 1) / 2;
       for (QLayoutItem *item : row.items) {
         const QSize hint = item->sizeHint();
         item->setGeometry(
-            QRect(QPoint(left, y + (row.height - hint.height()) / 2), hint));
+            QRect(QPoint(left, center - (hint.height() - 1) / 2), hint));
         left += hint.width() + horizontalSpacing();
       }
     }

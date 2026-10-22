@@ -245,8 +245,20 @@ encodings. Generated on 2026-10-06.
 
 ## Windows type libraries
 
+Local builds may use Microsoft's SDK/WDK declarations as the primary ARM64
+libraries. `scripts/generate_microsoft_windows_types.py` uses the official
+NuGet packages and hashes in `scripts/WDKDriverFixtures.def`. The original
+headers, generated declarations and Microsoft licenses remain outside this
+repository, in the selected local directory. They retain Microsoft's terms;
+they are not ReactOS or MIT-licensed headers. The build records their hashes
+and copies their notices beside the local SDK. The bundled compatibility
+libraries below supply only declarations absent from the official inputs,
+without replacing official types or prototypes. See
+[local Microsoft type libraries](docs/microsoft-windows-types.md).
+
 `lib/types/headers/WindowsKernelX64.h` and `WindowsKernelX86.h` hold the
-types and prototypes that `<ntifs.h>`, `<ntddk.h>` and `<wdm.h>` declare for
+types and prototypes that `<ntifs.h>`, `<ntddk.h>`, `<wdm.h>` and the NDIS,
+storage, USB, HID, filter and NETIO provider headers declare for
 x64 and x86 drivers of Windows 10 2004, and `lib/types/headers/WindowsUserX64.h`,
 `WindowsUserX86.h` and `WindowsUserARM64.h` those that `<windows.h>`, the
 headers of the libraries programs most often call and phnt's native API
@@ -283,6 +295,22 @@ from them as from mingw-w64's headers. phnt's `ntintsafe.h` and
 `ntstrsafe.h`, which are Microsoft's, are left out;
 `scripts/windows_types` holds the few macros and types phnt takes from
 Microsoft's SDK that mingw-w64 lacks. Generated on 2026-10-17.
+
+The filter provider declarations also read ReactOS's public-domain
+[`sdk/include/ddk/fltkernel.h`](https://github.com/reactos/reactos/blob/b6224c3165811265422dacd5ed0de36b1c2311c9/sdk/include/ddk/fltkernel.h)
+at commit `b6224c3165811265422dacd5ed0de36b1c2311c9`. Its original notice is
+preserved in [LICENSES/reactos-ddk.txt](LICENSES/reactos-ddk.txt); generation
+verifies the input's SHA-256. The kernel libraries also use phnt's
+`SYSTEM_INFORMATION_CLASS` enumeration under its MIT license. Provider
+libraries regenerated on 2026-10-22.
+
+`WindowsKernelARM64.h` also reads the public-domain core DDK templates under
+ReactOS `sdk/include/xdk` at that revision, plus its public-domain driver
+annotation headers. `scripts/windows_types/reactos-arm64.sha256` records all
+inputs. Generation uses ReactOS's GPL header-preprocessing tool locally;
+the tool's implementation is not embedded or redistributed in NeverD.
+The generated declarations retain their DDK notices in
+[LICENSES/reactos-ddk.txt](LICENSES/reactos-ddk.txt).
 
 ## Linux type libraries
 

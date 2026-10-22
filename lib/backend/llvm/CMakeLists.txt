@@ -43,6 +43,9 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMX86Sideeffect.cpp
   X86/MedLLVMX86SimdEmitter.cpp
   X86/MedLLVMX86ValueEmitter.cpp
+  X86/MedLLVMX86Virtualization.cpp
+  X86/MedLLVMX86SystemState.cpp
+  X86/X87ImportCall.cpp
   data/MedLLVMConstClass.cpp
   data/MedLLVMConstUse.cpp
   data/MedLLVMConstWalkedBase.cpp

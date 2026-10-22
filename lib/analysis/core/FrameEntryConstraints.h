@@ -51,6 +51,28 @@ inline symbolic::SymRef excludedFrameRangePredicate(symbolic::SymContext &Ctx,
                   Ctx.mkUle(Ctx.mkConst(64, ExcludedEnd), First));
 }
 
+/// Both complete relative ranges must already be nonwrapping. Distinct root
+/// identities do not imply different values or disjoint memory. Compare their
+/// first/last bytes so adjacency and a final byte at UINT64_MAX remain valid.
+inline symbolic::SymRef disjointFrameRangesPredicate(symbolic::SymContext &Ctx,
+                                                     symbolic::SymRef Root,
+                                                     int64_t Begin, int64_t End,
+                                                     symbolic::SymRef OtherRoot,
+                                                     int64_t OtherBegin,
+                                                     int64_t OtherEnd) {
+  assert(Root && OtherRoot && Ctx.width(Root) == 64 &&
+         Ctx.width(OtherRoot) == 64 && Begin < End && OtherBegin < OtherEnd);
+  const auto First =
+      Ctx.mkAdd(Root, Ctx.mkConst(64, static_cast<uint64_t>(Begin)));
+  const auto Last =
+      Ctx.mkAdd(Root, Ctx.mkConst(64, static_cast<uint64_t>(End) - 1));
+  const auto OtherFirst =
+      Ctx.mkAdd(OtherRoot, Ctx.mkConst(64, static_cast<uint64_t>(OtherBegin)));
+  const auto OtherLast = Ctx.mkAdd(
+      OtherRoot, Ctx.mkConst(64, static_cast<uint64_t>(OtherEnd) - 1));
+  return Ctx.mkOr(Ctx.mkUlt(Last, OtherFirst), Ctx.mkUlt(OtherLast, First));
+}
+
 } // namespace neverd::analysis::detail
 
 #endif

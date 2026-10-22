@@ -73,9 +73,12 @@ public:
   /// Replace only the workbench state of an existing database.
   static QString saveState(const QString &database,
                            const QHash<QString, QByteArray> &state);
-  /// Read everything but the input bytes.
+  enum class ReadScope { InputIdentity, Project };
+  /// Read metadata, or the complete project except its input bytes. Identity
+  /// metadata is a lookup hint; unpack still authenticates the stored bytes.
   static std::optional<Contents> read(const QString &database,
-                                      QString *error = nullptr);
+                                      QString *error = nullptr,
+                                      ReadScope scope = ReadScope::Project);
   /// Unpack the input and its sidecars into \p directory, returning the
   /// input path.  An existing input with the recorded digest is reused, and
   /// sidecars with a pending crash-recovery journal are left for the worker.

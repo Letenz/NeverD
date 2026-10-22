@@ -51,11 +51,20 @@ struct SpecializationTerminalImport {
   bool operator==(const SpecializationTerminalImport &) const = default;
 };
 
-enum class SpecializationX64MachineExitKind : uint8_t { Call, Jump, Return };
+enum class SpecializationX64MachineExitKind : uint8_t {
+  Call,
+  Jump,
+  Return,
+  Trap
+};
 
 /// An explicit end of a machine region, after this exact native transfer.
 /// The residual retains its real target and physical stack effects. No callee,
 /// continuation, ordinary return ABI or whole-function coverage is implied.
+/// A Trap exit ends the region at a declared resumable trap (INT3/INT1): the
+/// trap effect is retained and control leaves the region to an unmodeled
+/// external continuation (the native exception mechanism). No target, callee,
+/// return ABI or continuation is implied.
 struct SpecializationX64MachineExit {
   uint32_t Version = 1;
   va_t Address = 0;
@@ -204,6 +213,15 @@ struct SpecializationEntryFrameBounds {
   std::vector<SpecializationFrameExclusion> ExcludedAddressRanges;
 };
 
+struct SpecializationEntryObject {
+  /// Complete physical entry register holding this object's arbitrary root.
+  symbolic::SymRegisterRange Register;
+  /// Nonempty, nonwrapping half-open range relative to that entry value.
+  /// This grants no accessibility, initialization or loaded-pointer facts.
+  int64_t Begin = 0;
+  int64_t End = 0;
+};
+
 struct SpecializationOptions {
   /// Preserve incoming machine flags as symbolic machine-state inputs rather
   /// than claiming they are supplied by an ordinary source-language ABI.
@@ -310,6 +328,14 @@ struct SpecializationOptions {
   /// Requires FrameBaseRegister. Native proof APIs require the same bounds in
   /// their explicit frame contract. Absence keeps the full modular root domain.
   std::optional<SpecializationEntryFrameBounds> EntryFrameBounds;
+  /// Explicit raw-domain preconditions: each complete object range misses
+  /// EntryFrameBounds. The entry pointer remains symbolic. Objects may alias
+  /// each other, and their roots may equal the frame root when the declared
+  /// ranges are disjoint. No store exemption is implied: enable
+  /// ProveStoreFrameSeparation to prove each complete access independently.
+  /// Requires distinct complete x64 GPRs, excluding the frame register and
+  /// overlapping EntryConstants. Ordinary source/native consumers refuse.
+  std::vector<SpecializationEntryObject> EntryFrameExcludedObjects;
   /// Optional congruence domain for the entry frame root. Requires explicit
   /// machine state and an RSP FrameBaseRegister. Raw residual consumers enforce
   /// it; machine source rejects other roots before guest effects. Native proof
@@ -441,7 +467,7 @@ struct SpecializationOptions {
 
   bool hasRawEnvironment() const {
     return !X64CodeRegions.empty() || !X64ImportBindings.empty() ||
-           !X64MachineExits.empty();
+           !X64MachineExits.empty() || !EntryFrameExcludedObjects.empty();
   }
 
   uint32_t chainedVisitLimit() const {
@@ -492,11 +518,13 @@ struct SpecializationReadWitness {
   std::string Evidence;
 };
 
-/// An exact native transfer ending the declared analysis region. A terminal
-/// import retains its physical CALL; MachineExit additionally admits declared
-/// CALL/JMP/RET boundaries. The actual next PC and physical stack effects stay
-/// in the final INDIR_BR span. No ordinary successor or callee state summary is
-/// implied. Synthetic residual labels never supply native return addresses.
+/// An exact native transfer or trap ending the declared analysis region. A
+/// terminal import retains its physical CALL; MachineExit additionally admits
+/// declared CALL/JMP/RET and resumable trap boundaries. Transfers retain the
+/// actual next PC and physical stack effects in the final INDIR_BR span. A
+/// trap retains its authenticated final intrinsic without a continuation
+/// contract. No ordinary successor or callee state summary is implied.
+/// Synthetic residual labels never supply native return addresses.
 struct SpecializationExternalExit {
   uint32_t Version = 1;
   va_t ResidualAddress = 0;
@@ -541,7 +569,7 @@ struct SpecializationResult {
   bool complete() const { return Status == SpecializationStatus::Complete; }
 };
 
-/// Validate every remaining indirect transfer against its complete exit
+/// Validate every declared external transfer or trap against its complete exit
 /// receipt and the explicit domain. Stripping or altering a receipt invalidates
 /// this interface; the LowFunc alone is not an ordinary call-free function.
 /// Raw machine regions additionally require

@@ -256,6 +256,45 @@ TEST(LowIRUndefinedIndependence, UnreachableUnsupportedArmDoesNotPoisonProof) {
   expectStatus(P, Status::Unsupported);
 }
 
+TEST(LowIRUndefinedIndependence, FingerprintBindsEveryExceptionalContextPair) {
+  auto P = diamond(number(0, 1));
+  auto &Edges = P.Function.Blocks[1].ExceptionalSuccs;
+  Edges.emplace_back(-1, 0x8000, ExceptionalEdgeKind::CxxCleanup);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{0, 3}, {1, 4}});
+  // The exceptional block is infeasible. Its full metadata still belongs to
+  // this input fingerprint, without granting support to a reachable edge.
+  auto A = P.check();
+  ASSERT_TRUE(A.proved()) << A.Diagnostic;
+  ASSERT_TRUE(A.Certificate);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{1, 4}, {0, 3}, {1, 4}});
+  auto B = P.check();
+  ASSERT_TRUE(B.proved()) << B.Diagnostic;
+  EXPECT_EQ(A.Certificate->InputDigest, B.Certificate->InputDigest);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{0, 4}, {1, 3}});
+  auto C = P.check();
+  ASSERT_TRUE(C.proved()) << C.Diagnostic;
+  EXPECT_NE(A.Certificate->InputDigest, C.Certificate->InputDigest);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{0, 3}});
+  auto D = P.check();
+  ASSERT_TRUE(D.proved()) << D.Diagnostic;
+  Edges.front().SharedContexts.reset();
+  Edges.front().ExplicitContext = {0, 3};
+  auto E = P.check();
+  ASSERT_TRUE(E.proved()) << E.Diagnostic;
+  EXPECT_EQ(D.Certificate->InputDigest, E.Certificate->InputDigest);
+  P.Function.Blocks[0].Ops[0].Inputs[1] = number(1, 1);
+  P.rebind();
+  expectStatus(P, Status::Unsupported);
+}
+
 TEST(LowIRUndefinedIndependence, ReachableCyclesRefuseWithoutUnrolling) {
   Program P;
   P.Function.Blocks[0].Succs = {0, 1};

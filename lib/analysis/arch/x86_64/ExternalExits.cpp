@@ -133,14 +133,27 @@ llvm::Error validateExternalExits(const SpecializationResult &Result,
         continue;
       }
       const auto &Exit = *Found->second;
-      if (Span.empty() || Span.back().Opcode != NdOp::INDIR_BR ||
-          Boundary.FirstOp + Boundary.OpCount != Block.Ops.size() ||
-          !Block.Succs.empty() ||
-          Boundary.Control != LowInstructionControl::Branch ||
-          Boundary.ControlFlags != (LowInstructionControlFlag::Branch |
-                                    LowInstructionControlFlag::Indirect) ||
-          Boundary.Immediate ||
-          lowUndefinedOperationDigest(Span) != Exit.ResidualOperationDigest)
+      const bool TrapExit =
+          Exit.MachineExit &&
+          Exit.MachineExit->Kind == SpecializationX64MachineExitKind::Trap;
+      // A Trap exit ends the region on its retained trap intrinsic and keeps a
+      // terminator boundary; every other exit ends on its exact indirect
+      // transfer. Both are terminal: last span op, no successor, no immediate.
+      const bool ShapeOk =
+          !Span.empty() &&
+          Boundary.FirstOp + Boundary.OpCount == Block.Ops.size() &&
+          Block.Succs.empty() && !Boundary.Immediate &&
+          lowUndefinedOperationDigest(Span) == Exit.ResidualOperationDigest &&
+          (TrapExit
+               ? (Span.back().Opcode == NdOp::INTRINSIC &&
+                  Boundary.Control == LowInstructionControl::Terminator &&
+                  Boundary.ControlFlags == Exit.Original.Origin.ControlFlags)
+               : (Span.back().Opcode == NdOp::INDIR_BR &&
+                  Boundary.Control == LowInstructionControl::Branch &&
+                  Boundary.ControlFlags ==
+                      (LowInstructionControlFlag::Branch |
+                       LowInstructionControlFlag::Indirect)));
+      if (!ShapeOk)
         return Invalid("external exit differs from its terminal residual span");
       if (!Exit.MachineExit)
         if (auto Error = validateX64TerminalImportCall(Exit.Original))

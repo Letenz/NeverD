@@ -58,6 +58,7 @@
           "neverd_func_size",
           "neverd_func_type_json",
           "neverd_function_chunks_json",
+          "neverd_function_disasm_json",
           "neverd_functions_json",
           "neverd_functions_load",
           "neverd_functions_save",
@@ -1573,6 +1574,7 @@
           "neverd_func_attributes_json",
           "neverd_func_type_json",
           "neverd_function_chunks_json",
+          "neverd_function_disasm_json",
           "neverd_functions_json",
           "neverd_headers_json",
           "neverd_identify_json",
@@ -1872,8 +1874,8 @@
         "tools/neverd-worker/PROTOCOL.md"
       ],
       "limitations": [
-        "native LowIR and MedIR pages expose exact retained instruction anchors, not complete contributing-instruction provenance",
-        "synthetic operations and structural rows have no instruction address; C, HighIR, LLVM IR, and VM mappings are explicitly unsupported",
+        "native LowIR, MedIR and HighIR pages expose retained instruction anchors, not complete contributing-instruction provenance",
+        "synthetic and structural rows have no guessed address; surviving HighIR expressions retain their identity, C and LLVMC use canonical statement anchors, and VM instruction mappings remain unsupported",
         "object identifiers are scoped to the analysis revision and rendered pages are bounded to 2048 lines and 2 MiB"
       ],
       "tests": [

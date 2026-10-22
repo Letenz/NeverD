@@ -28,5 +28,8 @@ NEVERD_SETTINGS_KEY(NativeTitleBar, "ui/nativeTitleBar")
 // Whether every function's source opens simplified symbolically, as the
 // code windows' Optimization menu and Options > General set it.
 NEVERD_SETTINGS_KEY(SymbolicSimplification, "code/symbolicSimplification")
+// Whether a workbench keeps other programs from finding it and opening links
+// in it (InstanceServer), as IDA's DisableIpcServer does.
+NEVERD_SETTINGS_KEY(InstancesDisabled, "instances/disabled")
 
 #undef NEVERD_SETTINGS_KEY

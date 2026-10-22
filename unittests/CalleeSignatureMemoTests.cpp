@@ -6,9 +6,9 @@
 ///
 /// \file
 /// The callee signature memo's own rules: which kept conversion serves a run,
-/// and which forwarder probes a conversion keeps.  They read the pipeline's
-/// internals, so they link its library rather than the shared engine, whose
-/// Windows DLL exports only the C API.
+/// and which forwarder probes and recoveries a conversion keeps.  They read
+/// the pipeline's internals, so they link its library rather than the shared
+/// engine, whose Windows DLL exports only the C API.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -19,6 +19,7 @@
 
 #include <iterator>
 #include <memory>
+#include <utility>
 
 namespace {
 
@@ -105,6 +106,33 @@ TEST(CalleeSignatureMemo, ACalleeKeepsTheConversionOfEachSummaryItReads) {
   EXPECT_EQ(Callee.Conversions.size(), 2u);
 }
 
+TEST(CalleeSignatureMemo, WideOperandsCountAgainstTheBodyBudget) {
+  using Memo = neverd::OmittedCalleeMemo;
+  const auto HeldBytes = [](unsigned Count, bool Shrink = false) {
+    neverd::MedFunc Body;
+    Body.Blocks.resize(1);
+    auto &Call = Body.Blocks.front().Ops.emplace_back();
+    Call.Opcode = neverd::NdOp::CALL;
+    for (unsigned I = 0; I < Count; ++I)
+      Call.addInput(neverd::MedVar::makeConst(I, 8));
+    if (Shrink) {
+      Call.Inputs.resize(2);
+      Call.NumInputs = 2;
+    }
+    Memo Kept;
+    Memo::Conversion Converted;
+    Converted.Body = std::make_shared<const neverd::MedFunc>(std::move(Body));
+    const auto &Held = Kept.keep(*Kept.find(0x4000), std::move(Converted));
+    EXPECT_EQ(Kept.bytes(), Held.Bytes);
+    return Held.Bytes;
+  };
+  const size_t Inline = HeldBytes(2);
+  EXPECT_GE(HeldBytes(3), Inline + 3 * sizeof(neverd::MedVar));
+  EXPECT_GE(HeldBytes(65), Inline + 65 * sizeof(neverd::MedVar));
+  // Shrinking the active operands retains the external allocation.
+  EXPECT_GE(HeldBytes(65, true), Inline + 65 * sizeof(neverd::MedVar));
+}
+
 TEST(CalleeSignatureMemo, AConversionKeepsTheProbesUsedLast) {
   // A conversion keeps the forwarder probes of its body under the summaries
   // of the last runs, the latest first, and the memo counts them against its
@@ -137,6 +165,58 @@ TEST(CalleeSignatureMemo, AConversionKeepsTheProbesUsedLast) {
   EXPECT_EQ(Kept.bytes(), Bytes);
   EXPECT_EQ(Kept.conversionOf(*Held.Body), &Held);
   EXPECT_EQ(Kept.conversionOf(Body), nullptr);
+}
+
+TEST(CalleeSignatureMemo, AConversionKeepsTheRecoveriesUsedLast) {
+  // A conversion keeps the recoveries of its body under the summaries of the
+  // last runs, the latest first, and each recovery the second passes over
+  // the body it gave; the memo counts both against its bound.
+  using Memo = neverd::OmittedCalleeMemo;
+  Memo Kept;
+  Memo::Conversion &Held = Kept.find(0x4000)->Conversions.emplace_back();
+  Held.Body = std::make_shared<const neverd::MedFunc>();
+  auto Read = [](int Arity) {
+    std::vector<Memo::ProbeRead> Reads(2);
+    Reads.front().Key = 0x4000;
+    Reads.front().RegArity = Arity;
+    Reads.back().Key = 0x5000;
+    Reads.back().Name = "callee";
+    return Reads;
+  };
+  Memo::Recovery *Last = nullptr;
+  for (int Arity = 0; Arity <= static_cast<int>(Memo::MaxProbes); ++Arity) {
+    Memo::Recovery Recovery;
+    Recovery.Reads = Read(Arity);
+    Recovery.RegisterArity = Arity;
+    Recovery.IntegerArgumentRegisters = {1, 2};
+    Last = &Kept.keepRecovery(Held, std::move(Recovery));
+  }
+  ASSERT_EQ(Held.Recoveries.size(), Memo::MaxProbes);
+  EXPECT_EQ(Last, &Held.Recoveries.front());
+  EXPECT_EQ(Held.Recoveries.front().RegisterArity,
+            static_cast<int>(Memo::MaxProbes));
+  EXPECT_EQ(Held.Recoveries.back().RegisterArity, 1);
+  for (int Arity = 0; Arity <= static_cast<int>(Memo::MaxProbes); ++Arity) {
+    Memo::SecondPass Pass;
+    Pass.Reads = Read(Arity);
+    Pass.Parameters = static_cast<size_t>(Arity);
+    Kept.keepSecondPass(Held, *Last, std::move(Pass));
+  }
+  ASSERT_EQ(Last->Seconds.size(), Memo::MaxProbes);
+  EXPECT_EQ(Last->Seconds.front().Parameters, Memo::MaxProbes);
+  EXPECT_EQ(Last->Seconds.back().Parameters, 1u);
+  size_t Bytes = 0;
+  for (const Memo::Recovery &Recovery : Held.Recoveries) {
+    size_t Passes = 0;
+    for (const Memo::SecondPass &Pass : Recovery.Seconds) {
+      EXPECT_GT(Pass.Bytes, 0u);
+      Passes += Pass.Bytes;
+    }
+    EXPECT_GT(Recovery.Bytes, Passes);
+    Bytes += Recovery.Bytes;
+  }
+  EXPECT_EQ(Held.Bytes, Bytes);
+  EXPECT_EQ(Kept.bytes(), Bytes);
 }
 
 } // namespace

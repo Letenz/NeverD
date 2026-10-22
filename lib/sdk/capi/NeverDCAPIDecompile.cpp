@@ -29,6 +29,7 @@
 #include "neverd/evm/emit/EVMCEmitter.h"
 #include "neverd/evm/emit/EVMSolidityEmitter.h"
 #include "neverd/ir/NdOps.h"
+#include "neverd/ir/high/HighIRPrint.h"
 #include "neverd/ir/high/HighVariableEdits.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
 #include "neverd/loader/COFF/COFFException.h"
@@ -136,6 +137,37 @@ void emitLowView(const LowFunc &F, const IRRowSink &Sink,
            OS << "]\n";
          });
   }
+}
+
+void emitHighView(const HighFunc &F, const LowFunc *Low,
+                  const HighSourceMap &Sources, const IRRowSink &Sink) {
+  const auto Canonical =
+      Low ? instructionOrigins(*Low) : std::set<std::pair<va_t, int>>();
+  std::optional<HighStatementSourceIndex> Index;
+  if (Low)
+    Index.emplace(Sources);
+  const std::string Prefix = "high:" + vaHex(F.Entry);
+  Sink("; HighIR: " + F.Name + " @ " + vaHex(F.Entry) + "\n",
+       {Prefix + ":header", "header"});
+  Sink("; Params: " + std::to_string(F.Params.size()) +
+           ", Locals: " + std::to_string(F.Locals.size()) + "\n",
+       {Prefix + ":frame", "header"});
+  Sink("\n", {Prefix + ":blank"});
+  size_t Row = 0;
+  for (const auto &S : F.Body)
+    printHighStatementRows(
+        S, 0, [&](llvm::StringRef Text, const HighStmt *Statement) {
+          IRRowOrigin Origin{Prefix + ":row:" + std::to_string(Row++),
+                             Statement ? "operation" : "decoration"};
+          if (Statement && Index)
+            if (const auto O = Index->lookup(F.Entry, *Statement);
+                O && Canonical.contains({O->Address, O->Sequence})) {
+              Origin.Status = "instruction_anchor";
+              Origin.Address = O->Address;
+              Origin.Sequence = O->Sequence;
+            }
+          Sink(Text, Origin);
+        });
 }
 
 void emitMedView(const MedFunc &F, const LowFunc *Low, const IRRowSink &Sink) {
@@ -308,7 +340,7 @@ static std::string emissionFailure(const std::exception &Error) {
 }
 
 static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
-                           bool NeedHighIR) {
+                           Session::PipelineDepth Depth) {
   auto *S = toSession(Sess);
   if (!S)
     return 0;
@@ -346,13 +378,20 @@ static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
              !S->OnlyFunctionEntries.count(FuncEntry)) {
       S->selectFunction(FuncEntry);
     }
-    return S->ensurePipeline(NeedHighIR) ? 1 : 0;
+    return S->ensurePipeline(Depth) ? 1 : 0;
   } catch (const std::exception &Error) {
     S->setError(std::string("function analysis failed: ") + Error.what());
   } catch (...) {
     S->setError("unexpected function analysis failure");
   }
   return 0;
+}
+
+static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
+                           bool NeedHighIR) {
+  return prepareFunction(Sess, FuncEntry,
+                         NeedHighIR ? Session::PipelineDepth::HighIR
+                                    : Session::PipelineDepth::Analysis);
 }
 
 const char *neverd_warm_functions_json(neverd_session_t Sess,
@@ -384,6 +423,8 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
       // The function list as the first selection reads it, built here, where
       // nothing waits, rather than in that selection.
       S->refreshFunctionList();
+      // So is the index its C view's names are resolved in.
+      (void)S->functionIndexNamed({});
       // The C view of the first function opened reads the widths of the
       // image's data accesses, which scanning every function finds.  Scan
       // them here, where nothing waits, as that view would; the session
@@ -439,14 +480,20 @@ int neverd_prepare_function_view(neverd_session_t Sess, neverd_va_t FuncEntry,
   if (!S)
     return 0;
   const llvm::StringRef Stage = Representation ? Representation : "";
-  if (Stage != "low" && Stage != "med" && Stage != "high" && Stage != "llvm" &&
-      Stage != "llvmc" && Stage != "source" && !sourceDialectFromKey(Stage)) {
+  if (Stage != "cfg" && Stage != "low" && Stage != "med" && Stage != "high" &&
+      Stage != "llvm" && Stage != "llvmc" && Stage != "source" &&
+      !sourceDialectFromKey(Stage)) {
     S->setError("invalid function view");
     return 0;
   }
+  // The control-flow graph reads LowIR alone; the other IR views share the
+  // analysis the source views take before HighIR.
   return prepareFunction(Sess, FuncEntry,
-                         /*NeedHighIR=*/Stage != "low" && Stage != "med" &&
-                             Stage != "llvm" && Stage != "llvmc");
+                         Stage == "cfg" ? Session::PipelineDepth::LowIR
+                         : Stage == "low" || Stage == "med" ||
+                                 Stage == "llvm" || Stage == "llvmc"
+                             ? Session::PipelineDepth::Analysis
+                             : Session::PipelineDepth::HighIR);
 }
 
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
@@ -1710,11 +1757,11 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
       auto Page = llvmViewPage(*View, FuncEntry, Offset, Limit);
       return dupStr(jsonToString(llvm::json::Value(std::move(Page))));
     }
-    if (Stage != "low" && Stage != "med") {
+    if (Stage != "low" && Stage != "med" && Stage != "high") {
       Result["mapping_status"] = "unsupported_representation";
       return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
     }
-    if (!S->ensurePipeline(/*NeedHighIR=*/false))
+    if (!S->ensurePipeline(/*NeedHighIR=*/Stage == "high"))
       return nullptr;
     if (S->PipeResult.EVM || S->PipeResult.SBF) {
       Result["mapping_status"] = "unsupported_architecture";
@@ -1728,7 +1775,10 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
           Med = &F;
           break;
         }
-    if ((Stage == "low" && !Low) || (Stage == "med" && !Med)) {
+    const HighFunc *High =
+        Stage == "high" ? S->findHighFunc(FuncEntry) : nullptr;
+    if ((Stage == "low" && !Low) || (Stage == "med" && !Med) ||
+        (Stage == "high" && !High)) {
       S->setError("function not found in requested IR stage");
       return nullptr;
     }
@@ -1772,8 +1822,10 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
     };
     if (Stage == "low")
       emitLowView(*Low, Sink, true);
-    else
+    else if (Stage == "med")
       emitMedView(*Med, Low, Sink);
+    else
+      emitHighView(*High, Low, S->PipeResult.HighSources, Sink);
     if (!llvm::json::isUTF8(Text)) {
       S->setError("IR view page text is not valid UTF-8");
       return nullptr;
@@ -1802,6 +1854,8 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
 
 const char *neverd_ir_high(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
   S->clearError();
 
   if (!S->ensurePipeline())
@@ -1820,11 +1874,14 @@ const char *neverd_ir_high(neverd_session_t Sess, neverd_va_t FuncEntry) {
 
   std::string Out;
   llvm::raw_string_ostream OS(Out);
-  OS << "; HighIR: " << HF->Name << " @ " << vaHex(HF->Entry) << "\n";
-  OS << "; Params: " << HF->Params.size() << ", Locals: " << HF->Locals.size()
-     << "\n\n";
-  for (const auto &Stmt : HF->Body)
-    OS << Stmt.str(0) << "\n";
+  try {
+    emitHighView(
+        *HF, nullptr, S->PipeResult.HighSources,
+        [&](llvm::StringRef Text, const IRRowOrigin &) { OS << Text; });
+  } catch (const std::exception &Error) {
+    S->setError(Error.what());
+    return nullptr;
+  }
 
   return dupStr(Out);
 }

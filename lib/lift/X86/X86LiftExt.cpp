@@ -128,7 +128,7 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch) {
     const bool Write = (Encoding.P1 & 3) == 2;
     if (!Write && (Encoding.P1 & 3) != 3)
       return std::nullopt;
-    BNumber = ((~Encoding.P0 & 0x20) >> 2) | (Encoding.ModRM & 7);
+    BNumber = Encoding.rmIndex();
     Immediate = readImmediate32(&Insn->bytes[Encoding.Offset + 5]);
     Kind = Write ? X86MsrAccessKind::UwrmsrVexImmediate
                  : X86MsrAccessKind::UrdmsrVexImmediate;
@@ -273,6 +273,8 @@ void writeEdxEax(X86Lifter::LiftState &S, Arch TargetArch, NdVar Value) {
 } // namespace
 
 bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
+  if (liftVirtualization(*this, S, Insn, X86))
+    return true;
   unsigned InsnId = Insn->id;
   auto LiftOuts = [&](Intrinsic Id, unsigned ElemSz) {
     const uint16_t AddrSz = S.AddressSize;
@@ -585,12 +587,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         NdMemoryOrdering::None, LiftState::memoryAddressSpace(Descriptor));
     break;
   }
-  // VMX invalidation requires VMCS/VMX state that LowIR does not model.  Keep
-  // these instructions unlifted instead of collapsing them into INVPCID or a
-  // generic system placeholder.
-  case X86_INS_INVEPT:
-  case X86_INS_INVVPID:
-    return false;
   // Explicit-operand MSR forms retain their exact encoding family so an
   // authenticated executor can apply the correct feature, privilege, bitmap,
   // interception, and exception-order rules. The legacy operand-free RDMSR
@@ -776,40 +772,28 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
   }
 
-  // The rest need processor state LowIR does not model: virtual-machine and
-  // enclave control, segment and FS/GS base registers, SMX, user waits.
-  // Keep them unlifted rather than collapsing them into another instruction.
   case X86_INS_RDPID:
   case X86_INS_RDFSBASE:
   case X86_INS_RDGSBASE:
   case X86_INS_WRFSBASE:
   case X86_INS_WRGSBASE:
-  case X86_INS_VMRUN:
-  case X86_INS_VMSAVE:
-  case X86_INS_VMLOAD:
-  case X86_INS_VMLAUNCH:
-  case X86_INS_VMRESUME:
-  case X86_INS_VMXOFF:
-  case X86_INS_VMXON:
-  case X86_INS_VMCLEAR:
-  case X86_INS_VMPTRLD:
-  case X86_INS_VMPTRST:
-  case X86_INS_VMREAD:
-  case X86_INS_VMWRITE:
-  case X86_INS_VMFUNC:
-  case X86_INS_STGI:
-  case X86_INS_CLGI:
-  case X86_INS_SKINIT:
   case X86_INS_LAR:
   case X86_INS_ARPL:
   case X86_INS_CLTS:
+  case X86_INS_TPAUSE:
+  case X86_INS_UMONITOR:
+  case X86_INS_UMWAIT:
+    return liftSystemState(*this, S, Insn, X86);
+
+  // Machine transitions need a complete-state continuation contract. SGX
+  // supervisor/VMM leaves also still need explicit register/flag completion
+  // and enclave-memory contracts; a bare mnemonic would lose those effects.
+  case X86_INS_VMRUN:
+  case X86_INS_SKINIT:
   case X86_INS_GETSEC:
   case X86_INS_ENCLS:
   case X86_INS_ENCLU:
   case X86_INS_ENCLV:
-  case X86_INS_TPAUSE:
-  case X86_INS_UMONITOR:
-  case X86_INS_UMWAIT:
     return false;
 
   // These change processor state only; none of them produces a value, so

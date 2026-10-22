@@ -15,6 +15,7 @@
 
 #include "neverd/symbolic/SymExpr.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -135,7 +136,7 @@ SymContext::substituteAll(llvm::ArrayRef<SymRef> Roots,
   // Rebuild bottom-up over a topological order.  Going through the builders
   // means the result is canonical, so a substitution that makes two subterms
   // equal has that equality recognised immediately.
-  std::unordered_map<uint32_t, SymRef> Done;
+  llvm::DenseMap<uint32_t, SymRef> Done;
 
   llvm::SmallVector<std::pair<SymRef, bool>, 32> Work;
   for (SymRef R : OwnedRoots)
@@ -147,7 +148,7 @@ SymContext::substituteAll(llvm::ArrayRef<SymRef> Roots,
 
     auto Hit = Map.find(Cur.index());
     if (Hit != Map.end()) {
-      Done.emplace(Cur.index(), Hit->second);
+      Done.try_emplace(Cur.index(), Hit->second);
       continue;
     }
 
@@ -162,21 +163,21 @@ SymContext::substituteAll(llvm::ArrayRef<SymRef> Roots,
     llvm::SmallVector<SymRef, 8> NewOps;
     bool Changed = false;
     for (SymRef C : operands(Cur)) {
-      SymRef NC = Done.at(C.index());
+      SymRef NC = Done.find(C.index())->second;
       Changed |= (NC != C);
       NewOps.push_back(NC);
     }
     if (!Changed) {
-      Done.emplace(Cur.index(), Cur);
+      Done.try_emplace(Cur.index(), Cur);
       continue;
     }
-    Done.emplace(Cur.index(), rebuild(Cur, NewOps));
+    Done.try_emplace(Cur.index(), rebuild(Cur, NewOps));
   }
 
   std::vector<SymRef> Results;
   Results.reserve(OwnedRoots.size());
   for (SymRef R : OwnedRoots)
-    Results.push_back(Done.at(R.index()));
+    Results.push_back(Done.find(R.index())->second);
   return Results;
 }
 

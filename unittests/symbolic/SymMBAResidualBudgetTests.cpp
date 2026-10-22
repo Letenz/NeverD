@@ -17,6 +17,7 @@
 #include <array>
 #include <random>
 #include <string>
+#include <vector>
 
 using namespace neverd::symbolic;
 
@@ -206,6 +207,72 @@ void checkResidual(SymContext &C, SymRef Input, SymRef Output, unsigned Width,
   }
 }
 
+TEST(SymMBAResidualBudget, IndependentLinearTailsKeepCompleteWordSemantics) {
+  std::mt19937_64 Random(0x616666696e65);
+  for (unsigned Width : {1u, 3u, 8u, 64u, 257u})
+    for (bool Opaque : {false, true})
+      for (bool Perturbed : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(Opaque);
+        SCOPED_TRACE(Perturbed);
+        SymContext C;
+        llvm::SmallVector<SymRef, 6> Atoms;
+        for (const char *Name : {"a", "b", "c", "d", "e", "f"})
+          Atoms.push_back(C.mkVar(Name, Width));
+        if (Opaque)
+          Atoms[0] =
+              C.mkMul(C.mkConst(llvm::APInt(Width, 2, false, true)), Atoms[0]);
+        std::array<llvm::APInt, 6> Coefficients{
+            llvm::APInt(Width, 1),
+            -llvm::APInt(Width, 1),
+            llvm::APInt(Width, 2, false, true),
+            llvm::APInt::getSignMask(Width),
+            llvm::APInt(Width, 0),
+            llvm::APInt(Width, 13, false, true)};
+        std::vector<llvm::APInt> Weights(64, llvm::APInt(Width, 0));
+        for (unsigned M = 0; M != 64; ++M)
+          for (unsigned I = 0; I != 6; ++I)
+            if (M & (1u << I))
+              Weights[M] += Coefficients[I];
+        // Keep every singleton weight unchanged. A complete check must still
+        // retain the extra minterm instead of treating this as an affine sum.
+        if (Perturbed)
+          Weights[45] += 1;
+        llvm::SmallVector<SymRef, 4> Candidates;
+        auto Limits = detail::resolveLimits(MBAOptions{});
+        detail::linearCandidates(C, Weights, Atoms, 512, Limits, Candidates);
+        ASSERT_FALSE(Candidates.empty());
+        for (unsigned Sample = 0; Sample != 160; ++Sample) {
+          llvm::SmallVector<llvm::APInt, 6> Values;
+          for (unsigned I = 0; I != 6; ++I) {
+            std::array<uint64_t, 5> Words;
+            for (auto &Word : Words)
+              Word = Random();
+            Values.push_back(Sample < 64 ? (Sample & (1u << I)
+                                                ? llvm::APInt::getAllOnes(Width)
+                                                : llvm::APInt(Width, 0))
+                                         : llvm::APInt(Width, Words));
+          }
+          auto Inputs = Values;
+          if (Opaque)
+            Inputs[0] = Inputs[0].shl(1);
+          llvm::APInt Expected(Width, 0),
+              Minterm = llvm::APInt::getAllOnes(Width);
+          for (unsigned I = 0; I != 6; ++I) {
+            Expected += Coefficients[I] * Inputs[I];
+            Minterm &= 45 & (1u << I) ? Inputs[I] : ~Inputs[I];
+          }
+          if (Perturbed)
+            Expected += Minterm;
+          for (SymRef Candidate : Candidates)
+            EXPECT_EQ(C.eval(Candidate, Values), Expected);
+        }
+        llvm::SmallVector<SymRef, 4> Refused;
+        detail::linearCandidates(C, Weights, Atoms, 0, Limits, Refused);
+        EXPECT_TRUE(Refused.empty());
+      }
+}
+
 TEST(SymMBAResidualBudget, RetainsLinearTailInCompletedCandidate) {
   for (unsigned Width : {3u, 8u, 32u, 64u, 257u}) {
     SymContext C;
@@ -282,7 +349,16 @@ TEST(SymMBAResidualBudget, BulkCommonPowersFitTheSameAllowance) {
       detail::WorkBudget Tight(Limit);
       detail::SolveReport Check;
       auto R = detail::solveArithmetic(C, Input, Options, Tight, Check);
-      EXPECT_EQ(R, Limit == Required ? Expected : Input);
+      if (Limit == Required)
+        EXPECT_EQ(R, Expected);
+      else if (!Limit)
+        EXPECT_EQ(R, Input);
+      else
+        // Extracting the complete common monomial is already a proof even
+        // when a later optional quotient search runs out of work.
+        EXPECT_TRUE(R == Input || R == Expected);
+      if (R != Input)
+        EXPECT_EQ(Check.Evidence, MBAEvidence::Derivation);
       EXPECT_LE(Tight.used(), Limit);
     }
     Options.MaxTableBytes = 128;

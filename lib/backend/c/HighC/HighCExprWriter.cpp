@@ -14,6 +14,8 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86SystemState.h"
+#include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -2012,6 +2014,12 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
            exprStr(*E.Operands[0]) + "); __asm__ volatile(\"" + Op +
            "\" : \"+r\"(" + Temp + ") :: \"memory\"); " + Result + "; })";
   }
+  if (isX86SystemStateIntrinsic(E.IntrinsicId)) {
+    std::vector<std::string> Arguments;
+    for (const auto &Operand : E.Operands)
+      Arguments.push_back(Operand ? exprStr(*Operand) : "");
+    return renderX86SystemStateExpression(Opts.TheArch, E, Arguments);
+  }
   if (E.SourceCallHint)
     return renderSourceCallExpr(E);
   if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
@@ -2147,6 +2155,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // Operands added for the intrinsic's spelling have no width.
     if (OpBytes.size() != OpStrs.size())
       OpBytes.clear();
+    if (isX86VirtualizationIntrinsic(E.IntrinsicId))
+      return renderX86VirtualizationExpression(Opts.TheArch, E, OpStrs);
     auto Rendered = renderIntrinsicCall(
         E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
         HasCIntrinsics, Opts.Format != BinaryFormat::COFF, OpBytes);
@@ -4462,7 +4472,7 @@ TypeRef HighCWriter::debugParamType(const MedVar &V) const {
       debugParamBinding(*CurrentFunc, static_cast<size_t>(V.Id));
   if (B.Index < 0 || !B.Whole)
     return nullptr;
-  auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+  const auto &FS = resolvedFunction(CurrentFunc->Entry);
   if (!FS || static_cast<size_t>(B.Index) >= FS->Params.size())
     return nullptr;
   TypeRef Ty = FS->Params[B.Index].second;
@@ -4611,8 +4621,14 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
   }
   if (Printed.empty() || !CurrentFunc)
     return nullptr;
+  // Only the parameter declarations remain after the local and forwarded
+  // types above. Without a record among them, their names cannot name one.
+  // Avoid formatting every parameter name for every untyped memory base.
+  bindParams(*CurrentFunc);
+  if (!HasRecordParamTypes)
+    return nullptr;
   if (Dbg) {
-    if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry); FS) {
+    if (const auto &FS = resolvedFunction(CurrentFunc->Entry); FS) {
       for (const auto &Param : FS->Params) {
         if (Param.first == Printed)
           return RecordFrom(Param.second);
@@ -4877,9 +4893,13 @@ std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
   return Path;
 }
 
+bool canHaveInteriorFields(const TypeRef &Ty) {
+  return Ty && Ty->Kind == NdTypeKind::Struct && !Ty->IsEnum;
+}
+
 std::optional<std::string> interiorFieldPath(const TypeRef &Ty, uint64_t Rel,
                                              uint16_t AccessSize = 0) {
-  if (!Ty || Ty->Kind != NdTypeKind::Struct || Ty->IsEnum)
+  if (!canHaveInteriorFields(Ty))
     return std::nullopt;
   if (Rel == 0)
     return std::nullopt;
@@ -4907,10 +4927,16 @@ HighCWriter::frameTypedMemberAccess(int64_t Disp, uint16_t AccessSize) const {
   for (const auto &[SlotDisp, Slot] : FrameSlots) {
     if (Slot.Name.empty() || SlotDisp > Disp)
       continue;
+    const bool Record = canHaveInteriorFields(Slot.Type);
+    const bool CallRecord = canHaveInteriorFields(Slot.CallType);
+    if (!Record && !CallRecord)
+      continue;
     const uint64_t Rel = static_cast<uint64_t>(Disp - SlotDisp);
     if (Dbg) {
-      Dbg->completeType(Slot.Type);
-      Dbg->completeType(Slot.CallType);
+      if (Record)
+        Dbg->completeType(Slot.Type);
+      if (CallRecord)
+        Dbg->completeType(Slot.CallType);
     }
     auto Canon = interiorFieldPath(Slot.Type, Rel, AccessSize);
     if (!Canon)
@@ -5189,10 +5215,16 @@ TypeRef HighCWriter::frameTypedMemberType(int64_t Disp,
   for (const auto &[SlotDisp, Slot] : FrameSlots) {
     if (Slot.Name.empty() || SlotDisp > Disp)
       continue;
+    const bool Record = canHaveInteriorFields(Slot.Type);
+    const bool CallRecord = canHaveInteriorFields(Slot.CallType);
+    if (!Record && !CallRecord)
+      continue;
     const uint64_t Rel = static_cast<uint64_t>(Disp - SlotDisp);
     if (Dbg) {
-      Dbg->completeType(Slot.Type);
-      Dbg->completeType(Slot.CallType);
+      if (Record)
+        Dbg->completeType(Slot.Type);
+      if (CallRecord)
+        Dbg->completeType(Slot.CallType);
     }
     TypeRef FieldTy = interiorFieldType(Slot.Type, Rel, AccessSize);
     if (!FieldTy)
@@ -7213,17 +7245,18 @@ std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
 bool isImageDataAt(const BinaryImage &Img, va_t Addr) {
   if (Addr == 0 || Addr == InvalidVA)
     return false;
-  if (Img.findImportAt(Addr))
-    return false;
   const Segment *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
     return false;
   // Instruction bytes are not data objects.  Read-only constants live in
   // .rdata / .rodata (readable, not writable, not executable), and where
   // the debug information places data among the code.
-  if (Seg->isExecutable() && !Seg->isWritable())
-    return isCodeSectionData(&Img, Addr);
-  return true;
+  if (Seg->isExecutable() && !Seg->isWritable() &&
+      !isCodeSectionData(&Img, Addr))
+    return false;
+  // An import's slot or stub is no data object either.  Asked last: a code
+  // address asks whether a function starts there, which reads the symbols.
+  return !Img.findImportAt(Addr);
 }
 
 bool HighCWriter::isImageDataAddress(va_t Addr) const {
@@ -7712,6 +7745,14 @@ bool HighCWriter::namesFileScope(llvm::StringRef Name) const {
          RecordTypedefs.count(Key);
 }
 
+const std::optional<FunctionSym> &
+HighCWriter::resolvedFunction(va_t Entry) const {
+  auto [It, Added] = ResolvedFunctions.try_emplace(Entry);
+  if (Added && Dbg)
+    It->second = Dbg->resolveFunction(Entry);
+  return It->second;
+}
+
 bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
   if (Name.empty())
     return false;
@@ -7726,7 +7767,7 @@ bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
     if (!Display.empty() && Name == Display)
       return true;
   if (Dbg && CurrentFunc) {
-    if (const auto FS = Dbg->resolveFunction(CurrentFunc->Entry); FS) {
+    if (const auto &FS = resolvedFunction(CurrentFunc->Entry); FS) {
       if (isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format) &&
           Name == "result")
         return true;
@@ -7735,9 +7776,11 @@ bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
           return true;
     }
     // The names the debug signature gives the parameters where they arrive,
-    // such as `p_8` for a record's second register.
-    for (size_t I = 0; I < CurrentFunc->Params.size(); ++I)
-      if (Name == debugParamName(*CurrentFunc, I))
+    // such as `p_8` for a record's second register.  Compared in place:
+    // copying each one for every slot of a large function is the same test.
+    bindParams(*CurrentFunc);
+    for (const std::string &DebugName : ParamDebugNames)
+      if (!DebugName.empty() && Name == DebugName)
         return true;
   }
   return false;
@@ -8233,11 +8276,14 @@ std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
 }
 
 bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
+  // The name of the variable an assignment writes, which several tests read.
+  std::string DstName;
   if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
-      (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
-      (AmbiguousFrameAliases.count(varName(Stmt.Dst->Var)) ||
-       JoinPhiNames.count(varName(Stmt.Dst->Var))))
-    return false;
+      (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
+    DstName = varName(Stmt.Dst->Var);
+    if (AmbiguousFrameAliases.count(DstName) || JoinPhiNames.count(DstName))
+      return false;
+  }
   if (Analysis.DeadStmts.count(&Stmt) || Stmt.Kind == StmtKind::Nop)
     return true;
   if (vaStartStatement(Stmt))
@@ -8311,7 +8357,7 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     if (isHiddenCopyForwardAssign(Stmt))
       return true;
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
-      const std::string Name = varName(Stmt.Dst->Var);
+      const std::string &Name = DstName;
       if (!JoinPhiNames.count(Name) &&
           (FieldForward.count(Name) || ValueForward.count(Name) ||
            (UnknownOnlyNames.count(Name) &&
@@ -8320,7 +8366,7 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     }
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
         Stmt.Val) {
-      const std::string Name = varName(Stmt.Dst->Var);
+      const std::string &Name = DstName;
       if (!AmbiguousFrameAliases.count(Name)) {
         auto Alias = FrameAliases.find(Name);
         if (Alias != FrameAliases.end()) {

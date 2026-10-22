@@ -40,6 +40,9 @@ public:
   void requireUsable() const;
   void verifyLoadedState(const Json &state);
   static Json normalizedState(Json state);
+  /// Read and validate committed user tables without loading edit history or
+  /// mutating the project. This does not replay a pending transaction.
+  static Json readState(const std::filesystem::path &binary);
   /// The state table a history command kind changes (UserStateTables.def),
   /// or null for an unknown kind.
   static const char *tableOfKind(std::string_view kind);

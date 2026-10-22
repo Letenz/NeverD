@@ -186,3 +186,11 @@ A(Intrinsic::X87Fnstenv, "fnstenv");
 A(Intrinsic::X87Frstor, "frstor");
 A(Intrinsic::X87Fnsave, "fnsave");
 A(Intrinsic::DebugService, "int 2Dh");
+
+#define NEVERD_X86_VIRTUALIZATION(Id, Mnemonic, ...) A(Intrinsic::Id, Mnemonic);
+#include "neverd/ir/intrinsics/X86Virtualization.def"
+#undef NEVERD_X86_VIRTUALIZATION
+
+#define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, ...) A(Intrinsic::Id, Mnemonic);
+#include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_SYSTEM_STATE

@@ -5,6 +5,39 @@ analysis and comparison output belong outside the repository.
 
 ## Open
 
+Windows provider declarations now include NDIS, filter manager, NETIO,
+storage, USB and HID APIs, with explicit x86/x64 layout and SDK HighC/LLVMC
+coverage. User libraries include more networking, security and device APIs.
+An export inventory is only a coverage audit; undocumented and ordinal-only
+exports still require authenticated declarations. ARM64 kernel headers remain
+unavailable in the MinGW DDK input.
+
+The shared call-read summary excludes register copies proved overwritten before
+observation, including CPUID scratch exchanges. Calls, exits, partial writes
+and exceptional edges keep their incoming evidence. A VM entry that stores
+registers into an escaping machine-state frame can still have genuine inputs
+unknown after earlier calls; never erase those inputs or replace them with zero.
+Readonly scalar loads among instruction bytes reuse the immutable code reader's
+mapping and relocation checks. Default source cleanup also folds exact integer
+idempotence and absorption without symbolic search. Runtime-indexed memory and
+unresolved relocatable code identities remain separate recovery requirements.
+
+Mapped LLVM C now keeps array and record allocations out of scalar variable
+typing, including frames larger than the supported integer width. HighC and
+LLVM C annotate image blocks with the shared string scanner's text and encoding
+without changing memory accesses. `NeverDCSourcePresentationTests` covers these
+contracts, including UTF-16/UTF-32 byte orders; stack-string reconstruction and
+arbitrary runtime decoding remain separate work.
+
+LLVM C also places recognized text beside ordinary and volatile image reads
+inside the function body, which remains visible when the GUI folds image
+declarations. Dynamic pointers and disabled comments stay unannotated.
+Exact scalar branches now reconnect discontiguous and backward code while
+preserving independently known tail calls. Worker navigation uses complete
+recovered instruction ownership to select the original function when a user
+lands on a fragment; it does not invent a new callable entry or its live-ins.
+The public constant-branch and worker chunk regressions cover these boundaries.
+
 | Gap | Next check |
 |---|---|
 | LLVMC Windows EH remains goto form | Keep recovered filters, nested cleanup order, and both normal and unwind edges visible. Compare the public `seh_probe` and C++ EH corpus output with HighC. |
@@ -13,6 +46,7 @@ analysis and comparison output belong outside the repository.
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
 | Interior code-address bits have no portable C or general LLVM blockaddress contract | Preserve precise CLI refusal and existing-file protection at full/selected optimized/unoptimized emission. Other atomic functions must still emit. LLVM verification does not prove bit observation; close opaque transport versus inspected bits at the shared LLVM owner. |
+| Explicitly lifting an interior fragment still lacks its caller's machine state | Navigate through authenticated recovered ownership when available. A forced standalone fragment must not invent missing register or stack inputs; executable-section data addresses alone do not establish a relocatable function identity. |
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
 | The public x64 `xcpt4` source projection retains unresolved runtime stack values | The analysis matrix now retains the body and explicit unknown entry values. Native reconstruction still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
 | Native reconstruction of PE32 `xcpt4` nonlocal invocations remains incomplete | Source registration-state closure and local filter recovery are fixed by #920 / #859. CFG, SSA and native emitters still need to consume the source capture/resumption and invocation-exit evidence. A source receipt does not certify a replacement runtime activation. |

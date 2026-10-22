@@ -2,6 +2,7 @@
 
 #include "Address.h"
 #include "StyledText.h"
+#include "ViewSearch.h"
 
 #include <QAbstractScrollArea>
 #include <QPointer>
@@ -34,6 +35,12 @@ public:
 
   /// Show \p address with its item's first content line under the cursor.
   void jumpTo(Address address);
+  /// Reposition on a loaded item without fetching an unchanged listing.
+  /// False if its rows are stale, incomplete or a different jump is pending.
+  bool revealItem(Address address);
+  /// A function identity already confirmed by the worker for a loaded item.
+  /// No result while the listing's project, revision or generation is stale.
+  std::optional<Address> loadedFunctionAt(Address address) const;
   /// Address of the cursor line, if any line is loaded.
   std::optional<Address> currentAddress() const;
   /// Item address of the cursor line.
@@ -61,6 +68,13 @@ public:
   void clear();
   /// Find \p text forward from the cursor among the loaded lines.
   bool findInLoaded(const QString &text, bool forward);
+  /// Searchable loaded rows, including the currently visible address prefixes.
+  QString searchText() const;
+  bool searchReady() const { return rowsCurrent(); }
+  std::pair<int, int> searchSelection() const;
+  bool selectSearchRange(int begin, int length);
+  void setSearchHighlight(const ViewSearchQuery &query);
+  QString searchSeed() const;
   /// A jump was requested and its lines have not arrived yet.
   bool jumpPending() const { return pendingJump_.has_value(); }
 
@@ -74,6 +88,8 @@ signals:
   void contentPainted();
   /// The lines of a requested jump arrived (or the jump failed).
   void jumpSettled();
+  void searchDocumentChanged();
+  void cursorChanged();
 
 protected:
   void paintEvent(QPaintEvent *event) override;
@@ -90,6 +106,8 @@ protected:
   void focusOutEvent(QFocusEvent *event) override;
 
 private:
+  friend struct ListingViewTestAccess;
+  bool rowsCurrent() const;
   enum class Fetch { Jump, Before, After, Refresh };
   /// Where a refresh puts the cursor back: the line of its item at \p sub,
   /// or for a content line its place among the item's content lines, which
@@ -106,6 +124,7 @@ private:
   void accept(Fetch kind, const QJsonObject &payload, quint64 serial,
               std::optional<CursorPlace> cursor, Address jumpAddress);
   void ensureLoaded();
+  void placeJump(int anchor, Address address);
   void trim();
   void scrollLines(int delta);
   void moveCursor(int line, int column, bool extend = false);
@@ -128,13 +147,16 @@ private:
   bool atStart_ = false, atEnd_ = false;
   bool fetchingBefore_ = false, fetchingAfter_ = false;
   quint64 serial_ = 0;
+  quint64 contentSerial_ = 0;
   int top_ = 0;
   // Body-relative columns; negative positions select the address prefix.
   int cursorLine_ = 0, cursorColumn_ = 0;
   std::optional<std::pair<int, int>> anchor_; // selection anchor (line, col)
   bool selecting_ = false;
   QString highlight_;
+  ViewSearchQuery SearchHighlight;
   QString generation_;
+  QString revision_;
   bool showPrefixes_ = true;
   int opcodeBytes_ = 0;
   // Metrics.

@@ -355,11 +355,13 @@ ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
   }
 }
 
-Json ProjectHistory::diskState() const {
+Json ProjectHistory::diskState() const { return readState(binary_); }
+
+Json ProjectHistory::readState(const fs::path &binary) {
   Json state = Json::object();
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
   if (auto rows =                                                              \
-          read(sidecar(binary_, project_files::File::Id),                      \
+          read(sidecar(binary, project_files::File::Id),                       \
                ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes);    \
       rows.is_null())                                                          \
     state[Table] = Json::array();                                              \

@@ -26,6 +26,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
@@ -89,6 +90,64 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                                                                : "lift";
   LLVM_DEBUG(llvm::dbgs() << "pipeline: " << ModeName
                           << " mode -- shared machine ABI preparation\n");
+
+  // A selected parent may fail instruction admission while its automatically
+  // included cleanup bodies survive. Emitting those bodies is not a successful
+  // export of the requested entry. Analysis views retain their partial results.
+  std::set<va_t> AdmittedEntries;
+  for (const auto &Function : Result.MedFuncs)
+    AdmittedEntries.insert(
+        normalizeCodeAddress(Function.Entry, Img.Arch, Img.Mode));
+  for (va_t Requested : Opts.OnlyFunctionEntries) {
+    const va_t Entry = normalizeCodeAddress(Requested, Img.Arch, Img.Mode);
+    if (AdmittedEntries.count(Entry))
+      continue;
+    Result.Error = "selected " + std::string(ModeName) + " function 0x" +
+                   llvm::utohexstr(Requested) + " was not admitted";
+    const auto Audit =
+        std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+                     [&](const PipelineFunctionAudit &Candidate) {
+                       return normalizeCodeAddress(Candidate.Entry, Img.Arch,
+                                                   Img.Mode) == Entry;
+                     });
+    if (Audit != Result.FunctionAudits.end()) {
+      Result.Error +=
+          " (" +
+          std::string(pipelineFunctionDispositionName(Audit->Disposition)) +
+          ")";
+      if (!Audit->DecodeFailures.empty())
+        Result.Error += "; decode failure at 0x" +
+                        llvm::utohexstr(Audit->DecodeFailures.front());
+      else if (!Audit->UnsupportedInstructions.empty())
+        Result.Error += "; unsupported instruction at 0x" +
+                        llvm::utohexstr(Audit->UnsupportedInstructions.front());
+    }
+    return false;
+  }
+  if (Opts.PatchMode)
+    for (const MedFunc &Function : Result.MedFuncs) {
+      bool NeedsAdapter = Function.ConsumesX87Argument;
+      for (const MedBlock &Block : Function.Blocks)
+        for (const MedOp &Op : Block.Ops)
+          NeedsAdapter |= Op.X87ArgumentInput != 0 && !Op.X87ImportArguments;
+      if (NeedsAdapter) {
+        Result.Error =
+            "patch output requires a native x87 argument adapter for "
+            "function 0x" +
+            llvm::utohexstr(Function.Entry);
+        return false;
+      }
+    }
+  for (const MedFunc &Function : Result.MedFuncs)
+    if (Function.ConsumesX87Argument &&
+        (Img.CodeRefTargets.count(Function.Entry) ||
+         Img.findExportAt(Function.Entry) || Img.Entry == Function.Entry)) {
+      Result.Error =
+          "native entry/address use requires an x87 argument adapter for "
+          "function 0x" +
+          llvm::utohexstr(Function.Entry);
+      return false;
+    }
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
 
@@ -176,6 +235,26 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // interprocedural facts before either serial or sharded LLVM emission.
   propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
                             importCallAddresses(Img));
+
+  for (const MedFunc &Function : Result.MedFuncs)
+    for (const MedBlock &Block : Function.Blocks)
+      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+        if (!Block.Ops[I].X87ArgumentInput)
+          continue;
+        const auto Call =
+            llvm::find_if(Function.CallInfos, [&](const MedCallInfo &CI) {
+              return CI.BlockId == Block.Id && CI.OpIdx == I;
+            });
+        if (Call == Function.CallInfos.end() || Call->Args.empty() ||
+            llvm::any_of(Call->Args, [](const MedVar &Arg) {
+              return Arg.Kind == MedVar::Unspecified;
+            })) {
+          Result.Error = "checked x87 call is missing an ordinary argument in "
+                         "function 0x" +
+                         llvm::utohexstr(Function.Entry);
+          return false;
+        }
+      }
 
   if (!recordMedIRVerification(Result, "pipeline-backend-input")) {
     Result.Error = "MedIR verification failed before backend emission";

@@ -100,6 +100,46 @@ struct OmittedCalleeMemo {
     /// What the probe counts against the memo's bound.
     size_t Bytes = 0;
   };
+  /// The second regparm pass of a run's recovery (recoverModuleCallAbi) over
+  /// the body a Recovery's first pass gave: what it read under each key it
+  /// read, the body's entry first, the summaries it left at the entry, and
+  /// what bounds the run's calls to the body.  A pass that would read the
+  /// same gives the same.
+  struct SecondPass {
+    std::vector<ProbeRead> Reads;
+    std::optional<int> EntryRegArity;
+    std::optional<int> EntryTotalArity;
+    std::optional<bool> EntryIsVariadic;
+    size_t Parameters = 0;
+    bool IsVariadic = false;
+    bool SourceParametersBound = false;
+    /// What the pass counts against the memo's bound.
+    size_t Bytes = 0;
+  };
+  /// A run's recovery (recoverModuleCallAbi) of a conversion's body as an
+  /// omitted callee: what it read under each key it read, the body's entry
+  /// first, the summaries it left at the entry, what bounds the run's calls
+  /// to the body where no second pass follows, and on i386 the arities and
+  /// register order the second regparm pass reads of the body and the
+  /// second passes over the body it gave.  A recovery that would read the
+  /// same gives the same.
+  struct Recovery {
+    std::vector<ProbeRead> Reads;
+    std::optional<int> EntryRegArity;
+    std::optional<int> EntryTotalArity;
+    std::optional<bool> EntryIsVariadic;
+    size_t Parameters = 0;
+    bool IsVariadic = false;
+    bool SourceParametersBound = false;
+    int RegisterArity = 0;
+    int TotalArity = 0;
+    std::vector<uint64_t> IntegerArgumentRegisters;
+    /// The second passes under different summaries, the one used last
+    /// first; at most MaxProbes.
+    std::vector<SecondPass> Seconds;
+    /// What the passes count against the memo's bound.
+    size_t Bytes = 0;
+  };
   /// What a body's own parameters say of the calls to it before recovery
   /// finds the ones it forwards (recoverModuleCallAbi): a fact of the body
   /// and the image.
@@ -123,11 +163,14 @@ struct OmittedCalleeMemo {
     /// The call summaries the conversion read, under each key it read them
     /// under and the callee's own entry.
     std::vector<SummaryRead> Reads;
-    /// What Body and Probes count against the memo's bound.
+    /// What Body, Probes and Recoveries count against the memo's bound.
     size_t Bytes = 0;
     /// The forwarder probes of Body under different summaries, the one used
     /// last first; at most MaxProbes.
     std::vector<Probe> Probes;
+    /// The recoveries of Body under different summaries, the one used last
+    /// first; at most MaxProbes.
+    std::vector<Recovery> Recoveries;
     /// What Body says of the calls to it, and the callees it calls: their
     /// entries in the order a run reads them, and the targets of its direct
     /// calls, one for each call.  Read where the memo keeps the body.
@@ -161,8 +204,8 @@ struct OmittedCalleeMemo {
     /// null where none does.
     const Conversion *conversionFor(const PipelineResult &Result);
   };
-  /// The bodies the memo holds at most, counted by their blocks and
-  /// operations (keep): bodies of a large image's every callee would hold
+  /// The bodies the memo holds at most, counted by their blocks, operations
+  /// and external operands (keep): bodies of a large image's every callee hold
   /// most of its MedIR.  A mid-sized image's signature bodies, an Android
   /// server's 6000, fit in three quarters of it.
   static constexpr size_t MaxBytes =
@@ -175,6 +218,13 @@ struct OmittedCalleeMemo {
   /// Keeps \p Kept as \p Holder's probe used last, where its probe used
   /// longest ago makes room past MaxProbes.
   void keepProbe(Conversion &Holder, Probe Kept);
+  /// Keeps \p Kept as \p Holder's recovery used last, where its recovery
+  /// used longest ago makes room past MaxProbes.
+  Recovery &keepRecovery(Conversion &Holder, Recovery Kept);
+  /// Keeps \p Kept as the second pass \p Into, one of \p Holder's
+  /// recoveries, used last, where its pass used longest ago makes room past
+  /// MaxProbes.
+  void keepSecondPass(Conversion &Holder, Recovery &Into, SecondPass Kept);
   /// The reading of the callee at \p Entry, now the one used last.
   Callee *find(va_t Entry);
   /// Keeps \p Converted as \p Holder's conversion used last, where its

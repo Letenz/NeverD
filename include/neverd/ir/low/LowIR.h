@@ -19,6 +19,8 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86SystemState.h"
+#include "neverd/ir/intrinsics/X86Virtualization.h"
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/Support/Errc.h"
@@ -219,6 +221,14 @@ struct LowOp {
   uint8_t NumInputs = 0;
   va_t Addr = 0;
   int Seq = 0;
+  /// A checked i386 callee consumes Inputs[1], its incoming logical ST0,
+  /// and preserves the remaining register stack. Scratch slots above that
+  /// argument must be empty at this call, as proved before admission.
+  bool ConsumesX87Argument = false;
+  uint8_t X87ScratchSlots = 0;
+  /// A checked CRT import takes Inputs[1..N] in logical ST0, ST1 order and
+  /// returns one x87 value. It requires a native register-stack call adapter.
+  uint8_t X87ImportArguments = 0;
 
   void addInput(NdVar V) {
     if (NumInputs < 6)
@@ -355,6 +365,46 @@ inline ApxAtomicIntrinsicShape apxAtomicLowShape(const LowOp &Op,
       .Condition = Op.NumInputs > 4 ? Op.Inputs[4].Offset : 0,
       .ConditionSize = Op.NumInputs > 4 ? Op.Inputs[4].Size : uint16_t{0},
   };
+}
+
+inline X86VirtualizationShape x86VirtualizationLowShape(const LowOp &Op,
+                                                        Arch TargetArch) {
+  X86VirtualizationShape Shape;
+  Shape.TargetArch = TargetArch;
+  Shape.MemoryOrdering = Op.MemoryOrdering;
+  Shape.MemoryAddressSpace = Op.MemoryAddressSpace;
+  Shape.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+                  Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+                  Op.Inputs[0].Offset <= UINT16_MAX;
+  Shape.OutputSize = Op.Output.Size;
+  Shape.WritableOutput = Op.Output.isReg() || Op.Output.isTemp();
+  Shape.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (uint8_t I = 0; I < Shape.Arguments && I < Shape.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    Shape.InputSizes[I] = Input.Size;
+    Shape.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
+  }
+  return Shape;
+}
+
+inline X86SystemStateShape x86SystemStateLowShape(const LowOp &Op,
+                                                  Arch TargetArch) {
+  X86SystemStateShape Shape;
+  Shape.TargetArch = TargetArch;
+  Shape.MemoryOrdering = Op.MemoryOrdering;
+  Shape.MemoryAddressSpace = Op.MemoryAddressSpace;
+  Shape.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+                  Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+                  Op.Inputs[0].Offset <= UINT16_MAX;
+  Shape.OutputSize = Op.Output.Size;
+  Shape.WritableOutput = Op.Output.isReg() || Op.Output.isTemp();
+  Shape.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (uint8_t I = 0; I < Shape.Arguments && I < Shape.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    Shape.InputSizes[I] = Input.Size;
+    Shape.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
+  }
+  return Shape;
 }
 
 inline X86InvalidateIntrinsicShape x86InvalidateLowShape(const LowOp &Op,
@@ -1217,6 +1267,9 @@ struct LowFunc {
   uint32_t SourceLine = 0;
   std::vector<LowBlock> Blocks;
   std::vector<JumpTable> JumpTables;
+  /// Every returning path consumes one incoming x87 value, with no access
+  /// to the caller's lower stack entries. This value is a typed parameter.
+  bool ConsumesX87Argument = false;
   /// Explicit byte ranges of function-local temporaries, sorted by offset
   /// and nonoverlapping. These values start unbound and require a reaching
   /// definition on every executed path. They may cross instruction/block

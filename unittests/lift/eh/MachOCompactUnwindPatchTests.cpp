@@ -4471,13 +4471,21 @@ TEST(MachOPatchTransaction,
   MachOPatchTransactionFixture Fixture =
       makeMachOPatchTransactionFixture(/*CompactCapacity=*/0x2000, Arch::X64);
   ASSERT_FALSE(Fixture.Binary.empty());
-  // x64's five-byte branch overlaps a valid entry at +1. An ARM64 branch is
-  // one four-byte instruction and has no aligned interior entry to protect.
-  Fixture.Image.VerifiedFunctionEntries.insert(kTransactionFunctionVA + 1);
-  ASSERT_TRUE(Fixture.Image.hasAuthenticatedFunctionEntryAt(
-      kTransactionFunctionVA + 1));
-  ASSERT_FALSE(
-      sourceEntryCanHostTrampoline(Fixture.Image, kTransactionFunctionVA));
+  // Two adjacent x64 RET functions are valid independent entries, but the
+  // first cannot host a five-byte trampoline. An ARM64 byte-interior address
+  // cannot authenticate a second entry and must not force preservation.
+  auto *Header =
+      reinterpret_cast<llvm::MachO::mach_header_64 *>(Fixture.Binary.data());
+  Header->cputype = llvm::MachO::CPU_TYPE_X86_64;
+  Header->cpusubtype = llvm::MachO::CPU_SUBTYPE_X86_64_ALL;
+  auto *TextSegment =
+      reinterpret_cast<llvm::MachO::segment_command_64 *>(Header + 1);
+  auto *TextSections =
+      reinterpret_cast<llvm::MachO::section_64 *>(TextSegment + 1);
+  setMachOName(TextSections[1].sectname, "__unused_eh");
+  setMachOName(TextSections[2].sectname, "__unused_unwind");
+  std::fill_n(Fixture.Binary.begin() + kTransactionTextOff,
+              kTransactionTextSize, uint8_t{0xc3});
 
   llvm::SmallString<128> InputPath;
   llvm::SmallString<128> OutputPath;
@@ -4488,6 +4496,17 @@ TEST(MachOPatchTransaction,
   llvm::FileRemover RemoveInput(InputPath);
   llvm::FileRemover RemoveOutput(OutputPath);
   ASSERT_TRUE(writeFixtureFile(InputPath, Fixture.Binary));
+  auto Loaded = MachOLoader().load(InputPath.str().str());
+  ASSERT_TRUE(bool(Loaded));
+  Fixture.Image = std::move(*Loaded);
+  Fixture.Image.VerifiedFunctionEntries.insert(kTransactionFunctionVA);
+  Fixture.Image.VerifiedFunctionEntries.insert(kTransactionFunctionVA + 1);
+  ASSERT_TRUE(
+      Fixture.Image.hasAuthenticatedFunctionEntryAt(kTransactionFunctionVA));
+  ASSERT_TRUE(Fixture.Image.hasAuthenticatedFunctionEntryAt(
+      kTransactionFunctionVA + 1));
+  ASSERT_FALSE(
+      sourceEntryCanHostTrampoline(Fixture.Image, kTransactionFunctionVA));
 
   llvm::LLVMContext Context;
   auto Module = makeMachOPatchNoUnwindModule(Context);

@@ -124,6 +124,14 @@
         <translation>نسخ العنوان الحالي</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>نسخ الرابط(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>نسخ رابط neverd:// إلى الموضع الموجود تحت المؤشر، يفتحه NeverD هناك</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>إعادة تسمية(&amp;N)...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>اختيار إشارة مرجعية للانتقال إليها</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>الانتقال إلى رابط(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>الانتقال إلى الموضع الذي يسميه رابط neverd:// أو ida://</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -1638,6 +1654,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>تغير الجدول قبل تحديد العنوان.</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>حل تحديد عنوان آخر محل هذا التحديد.</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>لم تعثر العملية العاملة على العنوان المطلوب.</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>لا تزال المراجع قيد الفهرسة…</translation>
     </message>
@@ -1648,6 +1676,18 @@
     <message>
         <source>Down</source>
         <translation>أسفل</translation>
+    </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>تغيّرت الدوال أثناء تحديث الجدول.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>الدوال المحددة تتجاوز الحد الأقصى لصفحات الجدول.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>تغيّر التحديد مرات كثيرة أثناء تحديث الجدول.</translation>
     </message>
 </context>
 <context>
@@ -1801,6 +1841,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>يحتاج تعريف موقع الاستدعاء المحفوظ إلى مراجعة: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>تعذّر تحديث الشيفرة المصدرية: %1</translation>
     </message>
 </context>
 <context>
@@ -2207,18 +2251,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>الوصف:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>البحث في العرض</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>النص:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>لم يتم العثور على «%1» بين الأسطر المحمّلة</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -2893,6 +2925,62 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Pathfinding</source>
         <translation>إيجاد المسارات</translation>
+    </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>لا يمكن للبرامج الأخرى فتح روابط في هذه النافذة: %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>نُسخ الرابط: %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>الانتقال إلى رابط</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>الرابط (neverd:// أو ida://):</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>ليس رابطًا يمكن اتباعه: %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>لا يوجد برنامج مفتوح لاتباع الرابط فيه.</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>يسمي الرابط إصدارًا آخر من المدخل: يبدأ SHA-256 الخاص به بـ %1، ويبدأ SHA-256 الخاص بـ %2 بـ %3.</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>يسمي الرابط %1، لا %2؛ سيُتبع هنا.</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>تغيّر البرنامج قبل أن يُفتح الرابط.</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>لا يوجد نوع محلي باسم %1.</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>عنوان الرابط %1 ليس في %2.</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>لا توجد علامة مرجعية عند %1.</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>لا توجد دالة عند %1.</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>حلّ رابط آخر محل هذا الرابط.</translation>
     </message>
 </context>
 <context>
@@ -3662,6 +3750,100 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>تعذّر حفظ ملف الرموز في %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>البحث في العرض</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>نص البحث</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>مطابقة حالة الأحرف</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>كلمات كاملة</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>متابعة البحث من البداية</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>السابق</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>التالي</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>التطابق السابق (Shift+Enter أو Shift+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>التطابق التالي (Enter أو F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;النص:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>إغلاق</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: الدالة الحالية، بما في ذلك الشيفرة المطوية</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>التفكيك: الأسطر المحمّلة، بما في ذلك العناوين الظاهرة</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>نهاية نطاق البحث</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>بداية نطاق البحث</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>بانتظار الشيفرة المصدرية…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>لا يتوفر نص قابل للبحث</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>أدخل النص المراد البحث عنه</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>لا توجد تطابقات</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 من %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n تطابق</numerusform>
+            <numerusform>%n تطابق</numerusform>
+            <numerusform>%n تطابقان</numerusform>
+            <numerusform>%n تطابقات</numerusform>
+            <numerusform>%n تطابقًا</numerusform>
+            <numerusform>%n تطابق</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -5247,6 +5429,151 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Copy</source>
         <translation>نسخ</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>يبدأ الرابط بـ neverd:// أو ida://.</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>يسمي رابط Knowledge Exchange ملفًا للتنزيل، لا موضعًا في برنامج.</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>يسمي الرابط مدخله قبل مورده.</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>يسمي الرابط موردًا واحدًا، بعد اسم مدخله إن كان له اسم.</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>يسمي الرابط functions أو addresses أو strings أو segments أو names أو imports أو exports أو types أو bookmarks، وليس "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>يعطي الرابط %1 مرة واحدة.</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 رقم، عشري أو بعد 0x، وليس "%2".</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>لا يوجد في الروابط عرض "%1".</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 هو من 8 إلى 64 رقمًا ست عشريًا من SHA-256 الخاص بالمدخل، وليس "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>يعطي الرابط rva أو ea، لا كليهما.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>يسمي رابط types نوعه بـ name=، لا بعنوان.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>يسمي رابط types نوعه بـ name=.</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>تعطي روابط %1 عنوانها بـ rva= أو ea=.</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>تسمي روابط %1 عنوانًا، لا نوعًا.</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>تُعرض روابط %1 في %2، لا في %3.</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>لدى %n نسخة جارية من NeverD برامج مفتوحة، والرابط لا يسمي أيًا منها؛ أضف إليه اسم المدخل.</numerusform>
+            <numerusform>لدى %n نسخة جارية من NeverD برامج مفتوحة، والرابط لا يسمي أيًا منها؛ أضف إليه اسم المدخل.</numerusform>
+            <numerusform>لدى %n نسختين جاريتين من NeverD برامج مفتوحة، والرابط لا يسمي أيًا منها؛ أضف إليه اسم المدخل.</numerusform>
+            <numerusform>لدى %n نسخ جارية من NeverD برامج مفتوحة، والرابط لا يسمي أيًا منها؛ أضف إليه اسم المدخل.</numerusform>
+            <numerusform>لدى %n نسخة جارية من NeverD برامج مفتوحة، والرابط لا يسمي أيًا منها؛ أضف إليه اسم المدخل.</numerusform>
+            <numerusform>لدى %n نسخة جارية من NeverD برامج مفتوحة، والرابط لا يسمي أيًا منها؛ أضف إليه اسم المدخل.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>لم يُجب NeverD الذي فتح %1.</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>فُتح في NeverD الذي فتح %1 (العملية %2).</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(لا يجيب)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(لا يوجد برنامج مفتوح)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>اكتمل التحليل</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>جارٍ التحليل</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD لا يعمل.</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>لم تعد روابط neverd:// تُفتح في NeverD.</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>لم يقبل السجل معالج neverd://.</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>تُفتح روابط neverd:// الآن في %1.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>على macOS يعلن تطبيق NeverD عن روابط neverd://؛ وتُفتح فيه بمجرد وجوده في Applications.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>على macOS يعلن تطبيق NeverD عن روابط neverd://؛ أزل التطبيق لإيقاف ذلك.</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>تعذّرت إزالة %1.</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>تعذّرت كتابة %1.</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>كُتب %1، لكن xdg-mime لم يجعله معالج روابط neverd://.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>لا يوجد NeverD جارٍ فتح برنامج الرابط.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>لا يوجد NeverD جارٍ فتح برنامج الرابط، ولا ملف فُتح مؤخرًا هو هذا البرنامج؛ سمِّ الملف أيضًا: neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>

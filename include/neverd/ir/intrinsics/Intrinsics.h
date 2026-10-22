@@ -373,8 +373,81 @@ enum class Intrinsic : uint16_t {
   X86SEHRegisterRead,
   X86SEHRegisterWrite,
 
+// Append after every existing family: serialized intrinsic IDs are stable.
+#define NEVERD_X86_VIRTUALIZATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86Virtualization.def"
+#undef NEVERD_X86_VIRTUALIZATION
+
+#define NEVERD_X86_SYSTEM_STATE(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_SYSTEM_STATE
+
   _Count = 16000
 };
+
+enum class X86SystemStateKind : uint8_t {
+  ReadPid,
+  ReadBase,
+  WriteBase,
+  Void,
+  Monitor,
+  Wait,
+  AccessRights,
+  AdjustRpl
+};
+
+struct X86SystemStateContract {
+  const char *Mnemonic = nullptr;
+  X86SystemStateKind Kind = X86SystemStateKind::Void;
+  int8_t MemoryArgument = -1;
+};
+
+constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, Kind, MemoryArgument)            \
+  case Intrinsic::Id:                                                          \
+    return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
+#include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_SYSTEM_STATE
+  default:
+    return {};
+  }
+}
+
+constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
+  return x86SystemStateContract(Id).Mnemonic != nullptr;
+}
+
+enum class X86VirtualizationResult : uint8_t { None, Flags, Read };
+
+struct X86VirtualizationContract {
+  const char *Mnemonic = nullptr;
+  X86VirtualizationResult Result = X86VirtualizationResult::None;
+  uint8_t Arguments = 0;
+  int8_t MemoryArgument = -1;
+  uint16_t MemoryBytes = 0;
+  bool PhysicalAddress = false;
+};
+
+constexpr X86VirtualizationContract x86VirtualizationContract(Intrinsic Id) {
+  using R = X86VirtualizationResult;
+  switch (Id) {
+#define NEVERD_X86_VIRTUALIZATION(Id, Mnemonic, Result, Arguments,             \
+                                  MemoryArgument, MemoryBytes,                 \
+                                  PhysicalAddress)                             \
+  case Intrinsic::Id:                                                          \
+    return {Mnemonic,       R::Result,   Arguments,                            \
+            MemoryArgument, MemoryBytes, PhysicalAddress};
+#include "neverd/ir/intrinsics/X86Virtualization.def"
+#undef NEVERD_X86_VIRTUALIZATION
+  default:
+    return {};
+  }
+}
+
+constexpr bool isX86VirtualizationIntrinsic(Intrinsic Id) {
+  return x86VirtualizationContract(Id).Mnemonic != nullptr;
+}
 
 /// True for the complete architectural AMX state surface represented in
 /// LowIR.  Keep this classification centralized: AMX operations mix ordinary
@@ -650,6 +723,10 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 /// value so a new or unsupported opcode cannot accidentally drop FS/GS
 /// semantics in a backend fallback.
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
+  if (isX86VirtualizationIntrinsic(Id))
+    return x86VirtualizationContract(Id).MemoryArgument >= 0;
+  if (isX86SystemStateIntrinsic(Id))
+    return x86SystemStateContract(Id).MemoryArgument >= 0;
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
   case Intrinsic::X86FPMaskCompareMemoryState:

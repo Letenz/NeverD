@@ -111,6 +111,11 @@ NEVERD_VIEW_ACTION(EditCopy, QT_TRANSLATE_NOOP("Actions", "&Copy"), "Ctrl+C",
 NEVERD_VIEW_ACTION(EditCopyAddress,
                    QT_TRANSLATE_NOOP("Actions", "Copy &address"), "", "copy",
                    QT_TRANSLATE_NOOP("Actions", "Copy the current address"))
+NEVERD_ACTION(EditCopyLink, QT_TRANSLATE_NOOP("Actions", "Copy &link"), "",
+              "link",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Copy a neverd:// link to the place under the "
+                                "cursor, which NeverD opens there"))
 NEVERD_VIEW_ACTION(EditRename, QT_TRANSLATE_NOOP("Actions", "Re&name..."), "N",
                    "rename",
                    QT_TRANSLATE_NOOP("Actions", "Rename the current address"))
@@ -316,6 +321,11 @@ NEVERD_ACTION(JumpMark,
               QT_TRANSLATE_NOOP("Actions", "Jump to mar&ked position..."),
               "Ctrl+M", "bookmark",
               QT_TRANSLATE_NOOP("Actions", "Choose a bookmark to jump to"))
+NEVERD_ACTION(JumpLink, QT_TRANSLATE_NOOP("Actions", "Jump to &link..."), "",
+              "link",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Go to the place a neverd:// or ida:// link "
+                                "names"))
 
 // Search.
 NEVERD_ACTION(SearchImmediate, QT_TRANSLATE_NOOP("Actions", "Immediate..."),

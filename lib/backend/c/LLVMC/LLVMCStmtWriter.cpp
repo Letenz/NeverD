@@ -15,6 +15,8 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
+#include "../render/X86SystemState.h"
+#include "../render/X86Virtualization.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
 #include "LLVMCScalarUnary.h"
@@ -1467,7 +1469,17 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       SourceRecorder ? SourceRecorder->instruction(Inst) : std::nullopt;
   if (Event)
     OS << SourceRecorder->begin(*Event);
+  const auto *Load =
+      Opts.EmitComments ? llvm::dyn_cast<llvm::LoadInst>(&Inst) : nullptr;
+  const auto Begin = Load ? OS.stream().tell() : 0;
   writeInstructionImpl(Inst, Indent);
+  // Annotate only a read that emitted code. Forwarded or inlined reads must
+  // not leave an orphan comment where their old instruction used to be.
+  if (Load && OS.stream().tell() != Begin)
+    if (const auto Comment = imageLoadComment(*Load); !Comment.empty()) {
+      emitIndent(Indent);
+      OS << "/* " << Comment << " */\n";
+    }
   if (Event)
     OS << SourceRecorder->end(*Event);
 }
@@ -4829,6 +4841,20 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto SystemState = renderX86SystemStateCall(Opts.TheArch, Call, Name,
+                                                  ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *SystemState;
+    return true;
+  }
+
+  if (auto Virtualization = renderX86VirtualizationCall(
+          Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *Virtualization;
+    return true;
+  }
+
   auto Render =
       renderInlineAsm(Opts.TheArch, AsmStr, Call.getType()->isStructTy(), Name,
                       ResultLive, ArgStrs);
@@ -5026,7 +5052,9 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   // nothing reads, is called alone.
   if (ResultLive && !valueFeedsPrintedUse(&Call)) {
     const LibraryCallee Library = libraryCallee(Call);
-    if (calleeReturnsNothing(Call) ||
+    const auto *Source = sourceImportCallee(Call);
+    if ((Source && Source->ReturnType->Kind == NdTypeKind::Void) ||
+        calleeReturnsNothing(Call) ||
         (Library && libc::libcResult(Library.Name, libcVariant()) ==
                         libc::LibCResult::Void))
       ResultLive = false;
@@ -5326,6 +5354,16 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
     const bool Integer = Operand->getType()->isIntegerTy();
+    if (const auto *Source = sourceImportCallee(Call)) {
+      const auto &Type = Source->Params[ArgIdx].second;
+      const std::string Bridge =
+          Integer || PointerSpelling || Operand->getType()->isPointerTy()
+              ? "(uintptr_t)"
+              : "";
+      Expr += "(" + declarationToC(cDisplayType(Type), "") + ")" + Bridge +
+              "(" + Argument + ")";
+      continue;
+    }
     const bool HeaderInteger = Library && !Library.Prototype && Integer;
     const libc::LibCPrototype *Prototype =
         Library.Prototype && ArgIdx < Library.Prototype->ParamCount

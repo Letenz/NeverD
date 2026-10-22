@@ -32,14 +32,18 @@
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <queue>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -64,6 +68,17 @@ omittedCalleeArgumentCounts(const PipelineResult &Result) {
              ? *Result.OmittedCalleeArgumentCounts
              : Result.CallEntryArgumentCounts;
 }
+
+const std::map<va_t, int> &
+omittedCalleeStackArgs(const PipelineResult &Result) {
+  return Result.OmittedCalleeStackArgs ? *Result.OmittedCalleeStackArgs
+                                       : Result.CallEntryStackArgs;
+}
+
+const std::set<va_t> &omittedCalleeStackSlots(const PipelineResult &Result) {
+  return Result.OmittedCalleeStackSlots ? *Result.OmittedCalleeStackSlots
+                                        : Result.CallEntryStackSlots;
+}
 } // namespace
 
 OmittedCalleeMemo::SummaryRead
@@ -76,10 +91,10 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   if (const auto It = Result.CallEntryReadGPRs.find(Key);
       It != Result.CallEntryReadGPRs.end())
     Read.EntryReads = It->second;
-  if (const auto It = Result.CallEntryStackArgs.find(Key);
-      It != Result.CallEntryStackArgs.end())
+  const auto &StackArgs = omittedCalleeStackArgs(Result);
+  if (const auto It = StackArgs.find(Key); It != StackArgs.end())
     Read.StackArgs = It->second;
-  Read.StackSlot = Result.CallEntryStackSlots.count(Key) != 0;
+  Read.StackSlot = omittedCalleeStackSlots(Result).count(Key) != 0;
   const std::map<va_t, int> &Counts = omittedCalleeArgumentCounts(Result);
   if (const auto It = Counts.find(Key); It != Counts.end())
     Read.ArgumentCount = It->second;
@@ -161,16 +176,24 @@ OmittedCalleeMemo::conversionOf(const MedFunc &Body) {
   return nullptr;
 }
 
+namespace {
+/// What \p Reads count against the memo's bound.
+size_t readBytes(llvm::ArrayRef<OmittedCalleeMemo::ProbeRead> Reads) {
+  size_t Bytes = Reads.size() * sizeof(OmittedCalleeMemo::ProbeRead);
+  for (const OmittedCalleeMemo::ProbeRead &Read : Reads)
+    Bytes += (Read.Name ? Read.Name->size() : 0) +
+             ((Read.FPRegs ? Read.FPRegs->size() : 0) +
+              (Read.IntRegs ? Read.IntRegs->size() : 0)) *
+                 sizeof(uint64_t);
+  return Bytes;
+}
+} // namespace
+
 void OmittedCalleeMemo::keepProbe(Conversion &Holder, Probe Kept) {
   Kept.Bytes =
-      sizeof(Probe) + Kept.Reads.size() * sizeof(ProbeRead) +
+      sizeof(Probe) + readBytes(Kept.Reads) +
       (Kept.Gives.FPRegs.size() + Kept.Gives.IntegerArgumentRegisters.size()) *
           sizeof(uint64_t);
-  for (const ProbeRead &Read : Kept.Reads)
-    Kept.Bytes += (Read.Name ? Read.Name->size() : 0) +
-                  ((Read.FPRegs ? Read.FPRegs->size() : 0) +
-                   (Read.IntRegs ? Read.IntRegs->size() : 0)) *
-                      sizeof(uint64_t);
   if (Holder.Probes.size() == MaxProbes) {
     Holder.Bytes -= Holder.Probes.back().Bytes;
     Bytes -= Holder.Probes.back().Bytes;
@@ -179,6 +202,36 @@ void OmittedCalleeMemo::keepProbe(Conversion &Holder, Probe Kept) {
   Holder.Bytes += Kept.Bytes;
   Bytes += Kept.Bytes;
   Holder.Probes.insert(Holder.Probes.begin(), std::move(Kept));
+}
+
+OmittedCalleeMemo::Recovery &OmittedCalleeMemo::keepRecovery(Conversion &Holder,
+                                                             Recovery Kept) {
+  Kept.Seconds.clear();
+  Kept.Bytes = sizeof(Recovery) + readBytes(Kept.Reads) +
+               Kept.IntegerArgumentRegisters.size() * sizeof(uint64_t);
+  if (Holder.Recoveries.size() == MaxProbes) {
+    Holder.Bytes -= Holder.Recoveries.back().Bytes;
+    Bytes -= Holder.Recoveries.back().Bytes;
+    Holder.Recoveries.pop_back();
+  }
+  Holder.Bytes += Kept.Bytes;
+  Bytes += Kept.Bytes;
+  return *Holder.Recoveries.insert(Holder.Recoveries.begin(), std::move(Kept));
+}
+
+void OmittedCalleeMemo::keepSecondPass(Conversion &Holder, Recovery &Into,
+                                       SecondPass Kept) {
+  Kept.Bytes = sizeof(SecondPass) + readBytes(Kept.Reads);
+  if (Into.Seconds.size() == MaxProbes) {
+    Into.Bytes -= Into.Seconds.back().Bytes;
+    Holder.Bytes -= Into.Seconds.back().Bytes;
+    Bytes -= Into.Seconds.back().Bytes;
+    Into.Seconds.pop_back();
+  }
+  Into.Bytes += Kept.Bytes;
+  Holder.Bytes += Kept.Bytes;
+  Bytes += Kept.Bytes;
+  Into.Seconds.insert(Into.Seconds.begin(), std::move(Kept));
 }
 
 OmittedCalleeMemo::Callee *OmittedCalleeMemo::find(va_t Entry) {
@@ -191,9 +244,14 @@ const OmittedCalleeMemo::Conversion &
 OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
   if (Converted.Body) {
     Converted.Bytes = sizeof(MedFunc);
-    for (const MedBlock &Block : Converted.Body->Blocks)
+    for (const MedBlock &Block : Converted.Body->Blocks) {
       Converted.Bytes += sizeof(MedBlock) + Block.Ops.size() * sizeof(MedOp) +
                          Block.Phis.size() * sizeof(PhiNode);
+      // Expanded operand storage remains allocated when an operation shrinks.
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Inputs.capacity() > MedOp::InlineInputs)
+          Converted.Bytes += Op.Inputs.capacity() * sizeof(MedVar);
+    }
     if (const auto &Summary = Converted.Summary)
       Converted.Bytes +=
           sizeof(CalleeSummary) +
@@ -378,8 +436,8 @@ public:
       Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
       Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
       Converter.setCallArgumentSources(&Result.CallArgumentSources);
-      Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
-      Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
+      Converter.setCallEntryStackArgs(&omittedCalleeStackArgs(Result));
+      Converter.setCallEntryStackSlots(&omittedCalleeStackSlots(Result));
       Converter.setCallEntryArgumentCounts(
           &omittedCalleeArgumentCounts(Result));
       Converter.setCallSummaryKeysRead(&Keys);
@@ -522,6 +580,57 @@ int callRecoveryTotalArity(const MedFunc &Func, int MaxParamIndex) {
   return Func.IsVariadic ? limits::kMaxCallArgs : MaxParamIndex + 1;
 }
 
+int integerParameterIndex(const MedVar &Param,
+                          const IntegerArgumentLayout &Layout) {
+  if (Param.RegOff != kNoParamReg)
+    return Layout.registerIndex(Param.RegOff);
+  return Param.Kind == MedVar::Param ? Param.Id : -1;
+}
+
+/// An ordinary cached recovery needs only its final arity. A binary80
+/// consumer also needs its parameter carriers to preserve the last argument
+/// and materialize explicit unknowns for a missing ordinary prefix.
+struct RecoveredArgumentBound {
+  size_t Parameters = 0;
+  llvm::ArrayRef<MedVar> X87Parameters;
+};
+
+std::optional<RecoveredArgumentBound> argumentBoundOf(const MedFunc &Callee) {
+  if (Callee.IsVariadic || Callee.SourceParametersBound)
+    return std::nullopt;
+  return RecoveredArgumentBound{Callee.Params.size(),
+                                Callee.ConsumesX87Argument
+                                    ? llvm::ArrayRef<MedVar>(Callee.Params)
+                                    : llvm::ArrayRef<MedVar>{}};
+}
+
+/// Recovery may collect local spills beyond a callee's final ordinary
+/// signature. A checked x87 argument follows that entire recovered prefix:
+/// remove surplus ordinary arguments before it, never the argument itself.
+void boundRecoveredArguments(MedCallInfo &Call, RecoveredArgumentBound Bound) {
+  if (Call.Args.size() == Bound.Parameters)
+    return;
+  if (!Bound.X87Parameters.empty() && !Call.Args.empty()) {
+    if (Call.Args.size() > Bound.Parameters)
+      Call.Args.erase(Call.Args.begin() + Bound.Parameters - 1,
+                      Call.Args.end() - 1);
+    // A missing ordinary value cannot move the x87 argument into its slot.
+    // Keep the missing value explicit for source views and native refusal.
+    while (Call.Args.size() < Bound.Parameters) {
+      const MedVar &Param = Bound.X87Parameters[Call.Args.size() - 1];
+      Call.Args.insert(Call.Args.end() - 1,
+                       MedVar::makeUnspecified(Param.Size, Param.TheArch));
+    }
+  } else if (Call.Args.size() > Bound.Parameters) {
+    Call.Args.resize(Bound.Parameters);
+  }
+}
+
+void boundRecoveredArguments(MedCallInfo &Call, const MedFunc &Callee) {
+  if (const auto Bound = argumentBoundOf(Callee))
+    boundRecoveredArguments(Call, *Bound);
+}
+
 /// The integer register arguments a call to \p Func passes through: its
 /// register parameters through \p MaxRegisterIndex, but only the named ones
 /// of a variadic function whose save area spills the rest.
@@ -588,14 +697,11 @@ OmittedCalleeMemo::CalleeSummary summarizeCallee(const MedFunc &MF,
                TRI.isFPArgReg(P.RegOff, Img.abiFormat())) {
       // Floating-point/vector argument register: counted separately.
       FPRegs.push_back(P.RegOff);
-    } else if (P.RegOff != kNoParamReg) {
-      if (int Idx = IntegerLayout.registerIndex(P.RegOff); Idx > MaxRegIdx)
-        MaxRegIdx = Idx;
-      MaxIdx = std::max(MaxIdx, IntegerLayout.registerIndex(P.RegOff));
-    } else if (P.Kind == MedVar::Param) {
-      // Stack parameter (detectStackParams / detectCdeclStackParams): its
-      // Id is the argument index.
-      MaxIdx = std::max(MaxIdx, P.Id);
+    } else {
+      const int Index = integerParameterIndex(P, IntegerLayout);
+      if (P.RegOff != kNoParamReg)
+        MaxRegIdx = std::max(MaxRegIdx, Index);
+      MaxIdx = std::max(MaxIdx, Index);
     }
   }
   for (const auto &Blk : MF.Blocks)
@@ -667,6 +773,113 @@ std::optional<Value> valueAt(const std::map<va_t, Value> &Map, va_t Key) {
   return Found->second;
 }
 
+/// The callee summaries, user prototypes and names a run's recovery reads
+/// (recoverCallAbi) under the keys it notes.
+struct SummaryView {
+  const std::map<va_t, std::string> &Names;
+  const std::map<va_t, int> &RegArity;
+  const std::map<va_t, int> &TotalArity;
+  const std::map<va_t, int> &FPArity;
+  const std::map<va_t, uint16_t> &FPReturnSize;
+  const std::map<va_t, std::vector<uint64_t>> &FPRegs;
+  const std::map<va_t, bool> &HasSret;
+  const std::map<va_t, bool> &IsVariadic;
+  const std::map<va_t, bool> &ConsumesVaList;
+  const std::map<va_t, std::vector<uint64_t>> &IntRegs;
+  const std::set<va_t> &VectorArguments;
+  const std::set<va_t> &PrototypeArguments;
+
+  /// Everything the view holds under \p Key.
+  OmittedCalleeMemo::ProbeRead read(va_t Key) const {
+    OmittedCalleeMemo::ProbeRead Read;
+    Read.Key = Key;
+    Read.Name = valueAt(Names, Key);
+    Read.RegArity = valueAt(RegArity, Key);
+    Read.TotalArity = valueAt(TotalArity, Key);
+    Read.FPArity = valueAt(FPArity, Key);
+    Read.FPReturnSize = valueAt(FPReturnSize, Key);
+    Read.FPRegs = valueAt(FPRegs, Key);
+    Read.HasSret = valueAt(HasSret, Key);
+    Read.IsVariadic = valueAt(IsVariadic, Key);
+    Read.ConsumesVaList = valueAt(ConsumesVaList, Key);
+    Read.IntRegs = valueAt(IntRegs, Key);
+    Read.VectorArguments = VectorArguments.count(Key) != 0;
+    Read.PrototypeArguments = PrototypeArguments.count(Key) != 0;
+    return Read;
+  }
+  /// Whether the view holds what \p Read read under its key: read(Key) ==
+  /// Read, without copying what the view holds.
+  bool holds(const OmittedCalleeMemo::ProbeRead &Read) const {
+    const va_t Key = Read.Key;
+    auto same = [Key](const auto &Map, const auto &Value) {
+      const auto Found = Map.find(Key);
+      return Found == Map.end() ? !Value : Value && *Value == Found->second;
+    };
+    return same(RegArity, Read.RegArity) && same(TotalArity, Read.TotalArity) &&
+           same(IsVariadic, Read.IsVariadic) && same(FPArity, Read.FPArity) &&
+           same(FPReturnSize, Read.FPReturnSize) &&
+           same(HasSret, Read.HasSret) &&
+           same(ConsumesVaList, Read.ConsumesVaList) &&
+           same(FPRegs, Read.FPRegs) && same(IntRegs, Read.IntRegs) &&
+           (VectorArguments.count(Key) != 0) == Read.VectorArguments &&
+           (PrototypeArguments.count(Key) != 0) == Read.PrototypeArguments &&
+           same(Names, Read.Name);
+  }
+  /// Whether the view holds what each of \p Reads read.
+  bool holds(llvm::ArrayRef<OmittedCalleeMemo::ProbeRead> Reads) const {
+    return llvm::all_of(Reads,
+                        [this](const auto &Read) { return holds(Read); });
+  }
+  /// What a recovery that noted \p Keys and \p Entry, which it read before it
+  /// ran, read: the entry first.  The recovery wrote summaries only at the
+  /// entry, so the view holds what it read under the others.
+  std::vector<OmittedCalleeMemo::ProbeRead>
+  reads(OmittedCalleeMemo::ProbeRead Entry, std::vector<va_t> Keys) const {
+    std::vector<OmittedCalleeMemo::ProbeRead> Reads{std::move(Entry)};
+    llvm::sort(Keys);
+    Keys.erase(std::unique(Keys.begin(), Keys.end()), Keys.end());
+    for (const va_t Key : Keys)
+      if (Key != Reads.front().Key)
+        Reads.push_back(read(Key));
+    return Reads;
+  }
+};
+
+/// The summaries a recovery read, held on their own: a recovery under them
+/// reads what it read, since it reads only under the keys it notes.
+struct ReadSummaries {
+  std::map<va_t, std::string> Names;
+  std::map<va_t, int> RegArity, TotalArity, FPArity;
+  std::map<va_t, uint16_t> FPReturnSize;
+  std::map<va_t, std::vector<uint64_t>> FPRegs, IntRegs;
+  std::map<va_t, bool> HasSret, IsVariadic, ConsumesVaList;
+  std::set<va_t> VectorArguments, PrototypeArguments;
+
+  explicit ReadSummaries(llvm::ArrayRef<OmittedCalleeMemo::ProbeRead> Reads) {
+    for (const OmittedCalleeMemo::ProbeRead &Read : Reads) {
+      const va_t Key = Read.Key;
+      auto put = [Key](auto &Map, const auto &Value) {
+        if (Value)
+          Map.emplace(Key, *Value);
+      };
+      put(Names, Read.Name);
+      put(RegArity, Read.RegArity);
+      put(TotalArity, Read.TotalArity);
+      put(FPArity, Read.FPArity);
+      put(FPReturnSize, Read.FPReturnSize);
+      put(FPRegs, Read.FPRegs);
+      put(IntRegs, Read.IntRegs);
+      put(HasSret, Read.HasSret);
+      put(IsVariadic, Read.IsVariadic);
+      put(ConsumesVaList, Read.ConsumesVaList);
+      if (Read.VectorArguments)
+        VectorArguments.insert(Key);
+      if (Read.PrototypeArguments)
+        PrototypeArguments.insert(Key);
+    }
+  }
+};
+
 /// Reach a fixed point for parameters forwarded only through direct calls.
 ///
 /// Optimized wrappers can consume an incoming argument solely by passing the
@@ -722,46 +935,12 @@ void propagateForwardedCallArities(
     Work.push(I);
 
   const auto &TRI = getTargetRegInfo(TheArch);
-  // Every summary, user prototype and name the run holds under \p Key.
-  auto readAt = [&](va_t Key) {
-    OmittedCalleeMemo::ProbeRead Read;
-    Read.Key = Key;
-    Read.Name = valueAt(FuncNames, Key);
-    Read.RegArity = valueAt(CalleeRegArity, Key);
-    Read.TotalArity = valueAt(CalleeTotalArity, Key);
-    Read.FPArity = valueAt(CalleeFPArity, Key);
-    Read.FPReturnSize = valueAt(CalleeFPReturnSize, Key);
-    Read.FPRegs = valueAt(CalleeFPRegs, Key);
-    Read.HasSret = valueAt(CalleeHasSret, Key);
-    Read.IsVariadic = valueAt(CalleeIsVariadic, Key);
-    Read.ConsumesVaList = valueAt(CalleeConsumesVaList, Key);
-    Read.IntRegs = valueAt(CalleeIntRegs, Key);
-    Read.VectorArguments = VectorArgumentCallees.count(Key) != 0;
-    Read.PrototypeArguments = PrototypeArgumentCallees.count(Key) != 0;
-    return Read;
-  };
-  // Whether the run holds what \p Read read under its key: readAt(Key) ==
-  // Read, without copying what the run holds.
-  auto holds = [&](const OmittedCalleeMemo::ProbeRead &Read) {
-    const va_t Key = Read.Key;
-    auto same = [Key](const auto &Map, const auto &Value) {
-      const auto Found = Map.find(Key);
-      return Found == Map.end() ? !Value : Value && *Value == Found->second;
-    };
-    return same(CalleeRegArity, Read.RegArity) &&
-           same(CalleeTotalArity, Read.TotalArity) &&
-           same(CalleeIsVariadic, Read.IsVariadic) &&
-           same(CalleeFPArity, Read.FPArity) &&
-           same(CalleeFPReturnSize, Read.FPReturnSize) &&
-           same(CalleeHasSret, Read.HasSret) &&
-           same(CalleeConsumesVaList, Read.ConsumesVaList) &&
-           same(CalleeFPRegs, Read.FPRegs) &&
-           same(CalleeIntRegs, Read.IntRegs) &&
-           (VectorArgumentCallees.count(Key) != 0) == Read.VectorArguments &&
-           (PrototypeArgumentCallees.count(Key) != 0) ==
-               Read.PrototypeArguments &&
-           same(FuncNames, Read.Name);
-  };
+  // Every summary, user prototype and name the run holds.
+  const SummaryView View{
+      FuncNames,     CalleeRegArity,        CalleeTotalArity,
+      CalleeFPArity, CalleeFPReturnSize,    CalleeFPRegs,
+      CalleeHasSret, CalleeIsVariadic,      CalleeConsumesVaList,
+      CalleeIntRegs, VectorArgumentCallees, PrototypeArgumentCallees};
   // What recovering a copy of Funcs[I] under the summaries gives, and the
   // summaries the recovery leaves at its entry, or a kept probe's where
   // they read the same.
@@ -770,7 +949,7 @@ void propagateForwardedCallArities(
     OmittedCalleeMemo::Conversion *Holder = I < Kept.size() ? Kept[I] : nullptr;
     if (Holder)
       for (auto It = Holder->Probes.begin(); It != Holder->Probes.end(); ++It) {
-        if (!std::all_of(It->Reads.begin(), It->Reads.end(), holds))
+        if (!View.holds(It->Reads))
           continue;
         std::rotate(Holder->Probes.begin(), It, std::next(It));
         const OmittedCalleeMemo::ProbeSignature &Gives =
@@ -784,7 +963,7 @@ void propagateForwardedCallArities(
         return Gives;
       }
     // The recovery writes summaries at the entry: read them before it runs.
-    const OmittedCalleeMemo::ProbeRead EntryRead = readAt(Body.Entry);
+    OmittedCalleeMemo::ProbeRead EntryRead = View.read(Body.Entry);
     MedFunc Probe = Body;
     std::vector<va_t> Keys;
     recoverCallAbi(Probe, TheArch, FuncNames, &Img, &CalleeRegArity,
@@ -806,12 +985,11 @@ void propagateForwardedCallArities(
       if (P.RegOff != kNoParamReg &&
           TRI.isFPArgReg(P.RegOff, Img.abiFormat())) {
         Gives.FPRegs.push_back(P.RegOff);
-      } else if (P.RegOff != kNoParamReg) {
-        const int ArgIdx = ProbeLayout.registerIndex(P.RegOff);
-        MaxRegIdx = std::max(MaxRegIdx, ArgIdx);
-        MaxIdx = std::max(MaxIdx, ArgIdx);
-      } else if (P.Kind == MedVar::Param) {
-        MaxIdx = std::max(MaxIdx, P.Id);
+      } else {
+        const int Index = integerParameterIndex(P, ProbeLayout);
+        if (P.RegOff != kNoParamReg)
+          MaxRegIdx = std::max(MaxRegIdx, Index);
+        MaxIdx = std::max(MaxIdx, Index);
       }
     }
     std::sort(Gives.FPRegs.begin(), Gives.FPRegs.end());
@@ -823,17 +1001,9 @@ void propagateForwardedCallArities(
     Gives.EntryRegArity = valueAt(CalleeRegArity, Body.Entry);
     Gives.EntryTotalArity = valueAt(CalleeTotalArity, Body.Entry);
     Gives.EntryIsVariadic = valueAt(CalleeIsVariadic, Body.Entry);
-    if (Holder) {
-      // The recovery wrote summaries only at the entry, read before it ran:
-      // the others hold what it read.
-      OmittedCalleeMemo::Probe Recorded{{EntryRead}, Gives};
-      std::sort(Keys.begin(), Keys.end());
-      Keys.erase(std::unique(Keys.begin(), Keys.end()), Keys.end());
-      for (const va_t Key : Keys)
-        if (Key != Body.Entry)
-          Recorded.Reads.push_back(readAt(Key));
-      Memo->keepProbe(*Holder, std::move(Recorded));
-    }
+    if (Holder)
+      Memo->keepProbe(
+          *Holder, {View.reads(std::move(EntryRead), std::move(Keys)), Gives});
     return Gives;
   };
   while (!Work.empty()) {
@@ -1163,22 +1333,23 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       Convention && Convention->TargetSpillsSurviveLeafCalls
           ? findFrameLocalLeafCallees(Result.MedFuncs, Img.Arch)
           : std::set<va_t>{};
-  auto recover = [&](MedFunc &MF) {
+  auto recover = [&](MedFunc &MF, std::vector<va_t> *Keys = nullptr) {
     recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CalleeRegArity,
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &Result.CallPrototypeArguments, &RelocationSymbols);
+                   &Result.CallPrototypeArguments, &RelocationSymbols, Keys);
   };
   for (MedFunc &F : Result.MedFuncs)
     recover(F);
+  const bool Regparm = Convention && Convention->RegparmOnlyForInternalCalls;
   // An omitted body's recovery gives the bound below on the run's direct
   // calls to it, and the bodies after it read the arities and variadic
   // marks it leaves.  Past the last body those calls reach, only the second
   // regparm pass, which reads every body, reads what recovery gives.
   size_t Recovered = OmittedCallees.size();
-  if (!Convention || !Convention->RegparmOnlyForInternalCalls) {
+  if (!Regparm) {
     std::set<va_t> Called;
     for (const MedFunc &F : Result.MedFuncs)
       for (const MedCallInfo &CI : F.CallInfos)
@@ -1187,76 +1358,251 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     while (Recovered && !Called.count(OmittedCallees[Recovered - 1]->Entry))
       --Recovered;
   }
-  // Recovery changes the bodies it recovers: copies of the kept ones.
-  std::vector<MedFunc> RecoveredCallees;
-  RecoveredCallees.reserve(Recovered);
-  for (size_t I = 0; I < Recovered; ++I) {
-    RecoveredCallees.push_back(*OmittedCallees[I]);
-    recover(RecoveredCallees.back());
-  }
-  // The bodies as recovery left them.
-  std::vector<MedFunc *> RecoveredBodies;
-  for (MedFunc &F : Result.MedFuncs)
-    RecoveredBodies.push_back(&F);
-  for (MedFunc &F : RecoveredCallees)
-    RecoveredBodies.push_back(&F);
-
   // Regparm two-pass call recovery (i386): the first pass promotes forwarder
   // register params (PromoteParams).  Recompute CalleeRegArity from the
   // now-promoted params and re-run: forwarders now have CalleeRegArgs > 0, so
   // the cdecl clearing (CalleeRegArgs == 0) no longer fires for them, while
   // true cdecl callees remain at 0 and get their stack arguments correctly
   // indexed.
-  if (Convention && Convention->RegparmOnlyForInternalCalls) {
-    const auto &TRI2 = getTargetRegInfo(Img.Arch);
+  const auto &TRI2 = getTargetRegInfo(Img.Arch);
+  auto secondPassArities = [&](const MedFunc &MF) {
+    int MaxRI = -1, MaxI = -1;
+    const IntegerArgumentLayout Layout = integerArgumentLayoutOf(MF, TRI2);
+    for (const auto &P : MF.Params) {
+      const int Index = integerParameterIndex(P, Layout);
+      if (P.RegOff != kNoParamReg)
+        MaxRI = std::max(MaxRI, Index);
+      MaxI = std::max(MaxI, Index);
+    }
+    return std::make_pair(MaxRI + 1, callRecoveryTotalArity(MF, MaxI));
+  };
+  // Recovery changes the bodies it recovers: copies of the kept ones.  The
+  // memo keeps what each recovery of a kept body read and gave, which one
+  // that reads the same takes instead; a run's leaf callees, which only
+  // Darwin's recovery reads, are not among what it keeps.
+  const bool Remembers = Memo && FrameLocalLeafCallees.empty();
+  const SummaryView FirstSummaries{
+      AllFuncNames,  CalleeRegArity,        CalleeTotalArity,
+      CalleeFPArity, CalleeFPReturnSize,    CalleeFPRegs,
+      CalleeHasSret, CalleeIsVariadic,      CalleeConsumesVaList,
+      CalleeIntRegs, VectorArgumentCallees, Result.CallPrototypeArguments};
+  struct OmittedRecovery {
+    /// The memo's conversion of the body and its record of the recovery,
+    /// where the memo keeps them.
+    OmittedCalleeMemo::Conversion *Holder = nullptr;
+    OmittedCalleeMemo::Recovery *Kept = nullptr;
+    /// The body as the recovery left it, where this run recovered a copy.
+    std::optional<MedFunc> Body;
+    /// What bounds the run's calls to the body.
+    size_t Parameters = 0;
+    bool Bounds = false;
+  };
+  std::vector<OmittedRecovery> Omitted(Recovered);
+  for (size_t I = 0; I < Recovered; ++I) {
+    const MedFunc &KeptBody = *OmittedCallees[I];
+    const va_t Entry = KeptBody.Entry;
+    OmittedRecovery &Callee = Omitted[I];
+    // The cached recovery retains ordinary arity, not the final binary80
+    // parameter carriers and types needed by the argument-binding boundary.
+    // Preserve the complete recovery for these consumers.
+    Callee.Holder = Remembers && !KeptBody.ConsumesX87Argument
+                        ? KeptBodies[Result.MedFuncs.size() + I]
+                        : nullptr;
+    if (OmittedCalleeMemo::Conversion *Holder = Callee.Holder)
+      for (auto It = Holder->Recoveries.begin(); It != Holder->Recoveries.end();
+           ++It) {
+        if (!FirstSummaries.holds(It->Reads))
+          continue;
+        std::rotate(Holder->Recoveries.begin(), It, std::next(It));
+        Callee.Kept = &Holder->Recoveries.front();
+        if (Callee.Kept->EntryRegArity)
+          CalleeRegArity[Entry] = *Callee.Kept->EntryRegArity;
+        if (Callee.Kept->EntryTotalArity)
+          CalleeTotalArity[Entry] = *Callee.Kept->EntryTotalArity;
+        if (Callee.Kept->EntryIsVariadic)
+          CalleeIsVariadic[Entry] = *Callee.Kept->EntryIsVariadic;
+        Callee.Parameters = Callee.Kept->Parameters;
+        Callee.Bounds =
+            !Callee.Kept->IsVariadic && !Callee.Kept->SourceParametersBound;
+        break;
+      }
+    if (Callee.Kept)
+      continue;
+    // The recovery writes summaries at the entry: read them before it runs.
+    OmittedCalleeMemo::ProbeRead EntryRead;
+    if (Callee.Holder)
+      EntryRead = FirstSummaries.read(Entry);
+    std::vector<va_t> Keys;
+    MedFunc &Body = Callee.Body.emplace(KeptBody);
+    recover(Body, Callee.Holder ? &Keys : nullptr);
+    Callee.Parameters = Body.Params.size();
+    Callee.Bounds = !Body.IsVariadic && !Body.SourceParametersBound;
+    if (!Callee.Holder)
+      continue;
+    OmittedCalleeMemo::Recovery Kept;
+    Kept.Reads = FirstSummaries.reads(std::move(EntryRead), std::move(Keys));
+    Kept.EntryRegArity = valueAt(CalleeRegArity, Entry);
+    Kept.EntryTotalArity = valueAt(CalleeTotalArity, Entry);
+    Kept.EntryIsVariadic = valueAt(CalleeIsVariadic, Entry);
+    Kept.Parameters = Body.Params.size();
+    Kept.IsVariadic = Body.IsVariadic;
+    Kept.SourceParametersBound = Body.SourceParametersBound;
+    if (Regparm) {
+      std::tie(Kept.RegisterArity, Kept.TotalArity) = secondPassArities(Body);
+      Kept.IntegerArgumentRegisters = Body.IntegerArgumentRegisters;
+    }
+    Callee.Kept = &Memo->keepRecovery(*Callee.Holder, std::move(Kept));
+  }
+
+  if (Regparm) {
     // Omitted support bodies retain the same contract in both passes.
     auto CRA2 = CalleeRegArity, CTA2 = CalleeTotalArity;
     auto CalleeIntRegs2 = CalleeIntRegs;
-    for (const MedFunc *Body : RecoveredBodies) {
-      const MedFunc &MF = *Body;
-      int MaxRI = -1, MaxI = -1;
-      const IntegerArgumentLayout Layout = integerArgumentLayoutOf(MF, TRI2);
-      for (const auto &P : MF.Params) {
-        const int Index =
-            P.RegOff != kNoParamReg ? Layout.registerIndex(P.RegOff) : -1;
-        if (Index >= 0) {
-          MaxRI = std::max(MaxRI, Index);
-          MaxI = std::max(MaxI, Index);
-        } else if (P.Kind == MedVar::Param)
-          MaxI = std::max(MaxI, P.Id);
-      }
-      CRA2[MF.Entry] = MaxRI + 1;
-      CTA2[MF.Entry] = callRecoveryTotalArity(MF, MaxI);
+    for (const MedFunc &MF : Result.MedFuncs) {
+      std::tie(CRA2[MF.Entry], CTA2[MF.Entry]) = secondPassArities(MF);
       if (!MF.IntegerArgumentRegisters.empty())
         CalleeIntRegs2[MF.Entry] = MF.IntegerArgumentRegisters;
     }
-    for (MedFunc *Body : RecoveredBodies) {
-      MedFunc &MF = *Body;
+    for (size_t I = 0; I < Recovered; ++I) {
+      const OmittedRecovery &Callee = Omitted[I];
+      const va_t Entry = OmittedCallees[I]->Entry;
+      if (Callee.Body) {
+        std::tie(CRA2[Entry], CTA2[Entry]) = secondPassArities(*Callee.Body);
+        if (!Callee.Body->IntegerArgumentRegisters.empty())
+          CalleeIntRegs2[Entry] = Callee.Body->IntegerArgumentRegisters;
+      } else {
+        CRA2[Entry] = Callee.Kept->RegisterArity;
+        CTA2[Entry] = Callee.Kept->TotalArity;
+        if (!Callee.Kept->IntegerArgumentRegisters.empty())
+          CalleeIntRegs2[Entry] = Callee.Kept->IntegerArgumentRegisters;
+      }
+    }
+    auto recoverAgain = [&](MedFunc &MF, std::vector<va_t> *Keys) {
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CRA2, &CTA2,
                      &CalleeFPArity, &CalleeFPReturnSize, &CalleeFPRegs,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
                      /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2,
                      &VectorArgumentCallees, &PointerCallees,
-                     &Result.CallPrototypeArguments, &RelocationSymbols);
+                     &Result.CallPrototypeArguments, &RelocationSymbols, Keys);
+    };
+    for (MedFunc &F : Result.MedFuncs)
+      recoverAgain(F, nullptr);
+    const SummaryView SecondSummaries{AllFuncNames,
+                                      CRA2,
+                                      CTA2,
+                                      CalleeFPArity,
+                                      CalleeFPReturnSize,
+                                      CalleeFPRegs,
+                                      CalleeHasSret,
+                                      CalleeIsVariadic,
+                                      CalleeConsumesVaList,
+                                      CalleeIntRegs2,
+                                      VectorArgumentCallees,
+                                      Result.CallPrototypeArguments};
+    for (size_t I = 0; I < Recovered; ++I) {
+      OmittedRecovery &Callee = Omitted[I];
+      const MedFunc &KeptBody = *OmittedCallees[I];
+      const va_t Entry = KeptBody.Entry;
+      if (Callee.Kept) {
+        auto &Seconds = Callee.Kept->Seconds;
+        const auto Found =
+            std::find_if(Seconds.begin(), Seconds.end(), [&](const auto &Pass) {
+              return SecondSummaries.holds(Pass.Reads);
+            });
+        if (Found != Seconds.end()) {
+          std::rotate(Seconds.begin(), Found, std::next(Found));
+          const OmittedCalleeMemo::SecondPass &Gives = Seconds.front();
+          if (Gives.EntryRegArity)
+            CRA2[Entry] = *Gives.EntryRegArity;
+          if (Gives.EntryTotalArity)
+            CTA2[Entry] = *Gives.EntryTotalArity;
+          if (Gives.EntryIsVariadic)
+            CalleeIsVariadic[Entry] = *Gives.EntryIsVariadic;
+          Callee.Parameters = Gives.Parameters;
+          Callee.Bounds = !Gives.IsVariadic && !Gives.SourceParametersBound;
+          continue;
+        }
+      }
+      // The body as the first pass left it: this run's copy, else what a
+      // first pass over the kept body gives under the summaries the kept
+      // one read, since a recovery reads only under the keys it notes.
+      if (!Callee.Body) {
+        ReadSummaries Read(Callee.Kept->Reads);
+        recoverCallAbi(
+            Callee.Body.emplace(KeptBody), Img.Arch, Read.Names, &Img,
+            &Read.RegArity, &Read.TotalArity, &Read.FPArity, &Read.FPReturnSize,
+            &Read.FPRegs, &Read.HasSret, &Read.IsVariadic, &Read.ConsumesVaList,
+            &FrameLocalLeafCallees, &Read.IntRegs, &Read.VectorArguments,
+            &PointerCallees, &Read.PrototypeArguments, &RelocationSymbols);
+      }
+      MedFunc &Body = *Callee.Body;
+      OmittedCalleeMemo::ProbeRead EntryRead;
+      if (Callee.Kept)
+        EntryRead = SecondSummaries.read(Entry);
+      std::vector<va_t> Keys;
+      recoverAgain(Body, Callee.Kept ? &Keys : nullptr);
+      Callee.Parameters = Body.Params.size();
+      Callee.Bounds = !Body.IsVariadic && !Body.SourceParametersBound;
+      if (!Callee.Kept)
+        continue;
+      OmittedCalleeMemo::SecondPass Gives;
+      Gives.Reads =
+          SecondSummaries.reads(std::move(EntryRead), std::move(Keys));
+      Gives.EntryRegArity = valueAt(CRA2, Entry);
+      Gives.EntryTotalArity = valueAt(CTA2, Entry);
+      Gives.EntryIsVariadic = valueAt(CalleeIsVariadic, Entry);
+      Gives.Parameters = Body.Params.size();
+      Gives.IsVariadic = Body.IsVariadic;
+      Gives.SourceParametersBound = Body.SourceParametersBound;
+      Memo->keepSecondPass(*Callee.Holder, *Callee.Kept, std::move(Gives));
     }
   }
+  // Forwarder promotion can insert ordinary parameters before the explicit
+  // binary80 parameter. Refresh the typed signature after its order settles;
+  // otherwise an emitter falls back to an integer type for the i80 payload.
+  std::vector<MedFunc *> RecoveredBodies;
+  for (MedFunc &Body : Result.MedFuncs)
+    RecoveredBodies.push_back(&Body);
+  for (OmittedRecovery &Callee : Omitted)
+    if (Callee.Body)
+      RecoveredBodies.push_back(&*Callee.Body);
+  for (MedFunc *Body : RecoveredBodies)
+    if (Body->ConsumesX87Argument &&
+        Body->TypedParams.size() != Body->Params.size())
+      inferMedTypes(*Body, Img.Arch);
   // An omitted definition cannot give the emitter its parameter count.
   // Apply the same final signature bound used for an emitted callee after
   // forwarder promotion, so incidental live registers do not become extra
   // arguments merely because output was restricted to its caller.
-  std::map<va_t, const MedFunc *> OmittedByEntry;
+  std::map<va_t, RecoveredArgumentBound> SignatureBounds;
   for (size_t I = 0; I < OmittedCallees.size(); ++I) {
-    const MedFunc &F = I < Recovered ? RecoveredCallees[I] : *OmittedCallees[I];
-    if (!F.IsVariadic && !F.SourceParametersBound)
-      OmittedByEntry.emplace(F.Entry, &F);
+    const MedFunc &F = *OmittedCallees[I];
+    if (I < Recovered) {
+      const OmittedRecovery &Callee = Omitted[I];
+      if (Callee.Body) {
+        if (const auto Bound = argumentBoundOf(*Callee.Body))
+          SignatureBounds.emplace(F.Entry, *Bound);
+      } else if (Callee.Bounds) {
+        SignatureBounds.emplace(F.Entry,
+                                RecoveredArgumentBound{Callee.Parameters, {}});
+      }
+    } else if (const auto Bound = argumentBoundOf(F)) {
+      SignatureBounds.emplace(F.Entry, *Bound);
+    }
   }
+  // Consumers have an explicit final argument outside the ordinary ABI
+  // scan. Bind it after forwarder promotion has settled ordinary parameters,
+  // before either the LLVM or HighIR emitter sees a truncated prefix.
+  for (const MedFunc &F : Result.MedFuncs)
+    if (F.ConsumesX87Argument)
+      if (const auto Bound = argumentBoundOf(F))
+        SignatureBounds.emplace(F.Entry, *Bound);
   for (MedFunc &F : Result.MedFuncs)
     for (MedCallInfo &CI : F.CallInfos) {
-      auto It = CI.IsIndirect ? OmittedByEntry.end()
-                              : OmittedByEntry.find(CI.TargetAddr);
-      if (It != OmittedByEntry.end() &&
-          CI.Args.size() > It->second->Params.size())
-        CI.Args.resize(It->second->Params.size());
+      auto It = CI.IsIndirect ? SignatureBounds.end()
+                              : SignatureBounds.find(CI.TargetAddr);
+      if (It != SignatureBounds.end())
+        boundRecoveredArguments(CI, It->second);
     }
 }
 
@@ -1275,8 +1621,7 @@ void matchCallsToCalleeSignatures(const BinaryImage &Img,
       if (Callee.IsVariadic || Callee.SourceParametersBound ||
           Img.findImportAt(Callee.Entry))
         continue;
-      if (CI.Args.size() > Callee.Params.size())
-        CI.Args.resize(Callee.Params.size());
+      boundRecoveredArguments(CI, Callee);
       // The callee reads the scalar in an argument register's low lane: an
       // SSE register's other bytes, which a scalar instruction leaves as they
       // were, pass nothing.

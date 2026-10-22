@@ -1991,10 +1991,10 @@ llvm::StringRef debugCallConvAttribute(DebugCallConv CC) {
 }
 
 void HighCWriter::collectFieldLoadTypes(const HighFunc &Func) {
-  FieldForwardTypes.clear();
   // A cursor can acquire its pointer type through bins[i] and a copy before
   // its fields become recognizable. Discover those types without replacing
   // any value: the forwarding proof below must see the original definitions.
+  // Retain types already proved when the frame layout supplies more members.
   bool Changed = true;
   unsigned Iteration = 0;
   while (Changed && Iteration++ < limits::kMaxIntegerViewUnwrapDepth) {
@@ -4687,12 +4687,23 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
   ParamDebugNames.assign(Func.Params.size(), {});
   ParamsPlaced = false;
   EmittedParamTypes.clear();
+  const auto MayBeRecord = [](const TypeRef &Type) {
+    return Type && (Type->Kind == NdTypeKind::Struct ||
+                    (Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+                     Type->Pointee->Kind == NdTypeKind::Struct));
+  };
+  HasRecordParamTypes = false;
   for (const HighParam &Param : Func.Params)
     EmittedParamTypes.push_back(Param.Type);
+  for (const HighParam &Param : Func.Params)
+    HasRecordParamTypes |= MayBeRecord(Param.Type);
   // A bound source ABI spells its own parameters (sourceParameterType).  A
   // function of a language with conventions of its own, such as Go, has no
   // rules that say where its parameters arrive.
   const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  if (DebugFn)
+    for (const auto &Param : DebugFn->Params)
+      HasRecordParamTypes |= MayBeRecord(Param.second);
   if (!DebugFn || Func.SourceTypeHint || !DebugFn->PlatformConvention)
     return;
   const size_t Count = DebugFn->Params.size();
@@ -6267,6 +6278,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
                              NdType::makeInt(PointerBytes, /*Signed=*/false));
   }
   RewriteStorageViews();
+  // The shared frame layout may have proved a slot holds an out parameter's
+  // record pointer. Publish that type through its loads and copies before
+  // declaring locals and projecting their fields; keep the earlier value
+  // forwarding proofs, so a later call cannot change a saved pointer's value.
+  if (!FrameRecordMembers.empty())
+    collectFieldLoadTypes(Func);
   std::set<std::string> PrintedAddrSlots;
   std::set<std::string> PrintedSlotStores;
   std::set<std::string> PrintedSlotLoads;

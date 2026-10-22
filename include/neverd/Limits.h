@@ -33,6 +33,10 @@ namespace limits {
 /// real .bss, so legitimate binaries are unaffected.
 constexpr uint64_t kMaxSegmentZeroFill = 1ull << 30; // 1 GiB
 
+/// Work for proving that PE initialization leaves mapped header bytes intact.
+/// Counts section-owner queries and visited import/configuration/fixup bytes.
+constexpr size_t kMaxPEHeaderInitializationWork = 4 * 1024 * 1024;
+
 /// Most bytes the compressed sections of one debug file expand to: a crafted
 /// header cannot ask for more, and the largest real debug files stay well
 /// under it.
@@ -50,6 +54,11 @@ constexpr uint64_t kMaxObjectExternStatedReach = 0x10000;
 //===----------------------------------------------------------------------===//
 // Jump-table resolution
 //===----------------------------------------------------------------------===//
+
+/// Total scalar-operation and operand-byte work for exact constant branches
+/// in one CFG build, including revalidation after new paths are discovered.
+/// Exhaustion preserves the original indirect transfers.
+constexpr size_t kMaxScalarBranchEvidenceWork = 262144;
 
 /// Hard upper bound on jump-table entries.  Tables exceeding this are
 /// almost certainly false positives.

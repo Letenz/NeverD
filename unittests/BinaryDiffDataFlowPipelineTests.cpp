@@ -181,10 +181,10 @@ TEST(BinaryDiffDataFlowPipeline, AnalysisRejectsVMsAndConflictingOutputModes) {
     EXPECT_FALSE(Result.Error.empty());
   }
   Image.Arch = Arch::X64;
-  for (auto Mode :
-       {&PipelineOptions::PatchMode, &PipelineOptions::LiftMode,
-        &PipelineOptions::DeferHighIR, &PipelineOptions::DumpHigh,
-        &PipelineOptions::DumpLlvm, &PipelineOptions::SourceProjection}) {
+  for (auto Mode : {&PipelineOptions::PatchMode, &PipelineOptions::LiftMode,
+                    &PipelineOptions::DeferHighIR, &PipelineOptions::DeferMedIR,
+                    &PipelineOptions::DumpHigh, &PipelineOptions::DumpLlvm,
+                    &PipelineOptions::SourceProjection}) {
     auto Conflict = Options;
     Conflict.*Mode = true;
     const auto Result = Pipeline().run(Image, Context, Conflict);

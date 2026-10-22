@@ -1,0 +1,21 @@
+//===- X86SystemState.def - System instruction inventory ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, Kind, MemoryArgument).
+// Intentionally no include guard. Completion and widths live in the contract.
+
+NEVERD_X86_SYSTEM_STATE(X86ReadPid, "rdpid", ReadPid, -1)
+NEVERD_X86_SYSTEM_STATE(X86ReadFsBase, "rdfsbase", ReadBase, -1)
+NEVERD_X86_SYSTEM_STATE(X86ReadGsBase, "rdgsbase", ReadBase, -1)
+NEVERD_X86_SYSTEM_STATE(X86WriteFsBase, "wrfsbase", WriteBase, -1)
+NEVERD_X86_SYSTEM_STATE(X86WriteGsBase, "wrgsbase", WriteBase, -1)
+NEVERD_X86_SYSTEM_STATE(X86ClearTaskSwitched, "clts", Void, -1)
+NEVERD_X86_SYSTEM_STATE(X86UserMonitor, "umonitor", Monitor, 0)
+NEVERD_X86_SYSTEM_STATE(X86UserWait, "umwait", Wait, -1)
+NEVERD_X86_SYSTEM_STATE(X86TimedPause, "tpause", Wait, -1)
+NEVERD_X86_SYSTEM_STATE(X86LoadAccessRights, "lar", AccessRights, -1)
+NEVERD_X86_SYSTEM_STATE(X86LoadAccessRightsMemory, "lar", AccessRights, 0)
+NEVERD_X86_SYSTEM_STATE(X86AdjustRpl, "arpl", AdjustRpl, -1)
+NEVERD_X86_SYSTEM_STATE(X86AdjustRplMemory, "arpl", AdjustRpl, 0)

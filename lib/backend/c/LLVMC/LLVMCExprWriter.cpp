@@ -330,15 +330,16 @@ std::string LLVMCWriter::resolveNdDataName(llvm::StringRef Name) const {
 bool LLVMCWriter::isImageDataAddress(va_t Addr) const {
   if (!Img || Addr == 0 || Addr == InvalidVA)
     return false;
-  if (Img->findImportAt(Addr))
-    return false;
   const Segment *Seg = Img->getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
     return false;
   // Data the debug information places among the code is data.
-  if (Seg->isExecutable() && !Seg->isWritable())
-    return isCodeSectionData(Img, Addr);
-  return true;
+  if (Seg->isExecutable() && !Seg->isWritable() &&
+      !isCodeSectionData(Img, Addr))
+    return false;
+  // An import's slot or stub is no data object.  Asked last: a code address
+  // asks whether a function starts there, which reads the symbols.
+  return !Img->findImportAt(Addr);
 }
 
 std::optional<va_t>
@@ -458,7 +459,26 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (!Spelling.empty())
     if (std::string Comment = symbolComment(Spelling, Name); !Comment.empty())
       ImageObjectSymbols[Name] = std::move(Comment);
+  if (Opts.EmitComments)
+    if (const auto Text = imageStringComment(Img, Addr)) {
+      ImageObjectStrings[Addr] = *Text;
+      auto &Comment = ImageObjectSymbols[Name];
+      if (!Comment.empty())
+        Comment += "; ";
+      Comment += *Text;
+    }
   return Name;
+}
+
+std::string LLVMCWriter::imageLoadComment(const llvm::LoadInst &Load) const {
+  if (!Opts.EmitComments || Load.getPointerAddressSpace() != 0)
+    return {};
+  const auto Addr = imageDataVA(Load.getPointerOperand());
+  if (!Addr)
+    return {};
+  namedImageObject(*Addr);
+  const auto It = ImageObjectStrings.find(*Addr);
+  return It == ImageObjectStrings.end() ? std::string() : It->second;
 }
 
 std::string LLVMCWriter::imageObjectSymbolLine(llvm::StringRef Name) const {
@@ -693,9 +713,13 @@ std::string LLVMCWriter::getName(const llvm::Value *V) {
     Variable.Id = SourceValueIds.at(V);
     Variable.Name = Name;
     Variable.Bytes = llvmAccessSize(Type);
-    Variable.Type = Type->isFloatingPointTy()
-                        ? NdType::makeFloat(Variable.Bytes)
-                        : NdType::makeInt(Variable.Bytes);
+    if (Type->isFloatingPointTy())
+      Variable.Type = NdType::makeFloat(Variable.Bytes);
+    else if (Type->isIntegerTy() || Type->isPointerTy())
+      Variable.Type = NdType::makeInt(Variable.Bytes);
+    // Aggregate allocations retain their extent, but do not have a scalar
+    // edit type. Treating a whole frame as an integer also makes otherwise
+    // valid mapped source fail when its byte size exceeds a C integer.
     Variable.Parameter = llvm::isa<llvm::Argument>(V);
     Variable.Ambiguous =
         !Variable.Bytes || (!Type->isIntegerTy() && !Type->isPointerTy() &&
@@ -3951,6 +3975,9 @@ std::string LLVMCWriter::aggregateMemberPath(llvm::Type *Ty,
 
 std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
   std::string Text = renderInlineImpl(Inst);
+  if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst))
+    if (const auto Comment = imageLoadComment(*Load); !Comment.empty())
+      Text += " /* " + Comment + " */";
   return SourceRecorder ? SourceRecorder->expression(Inst, std::move(Text))
                         : Text;
 }

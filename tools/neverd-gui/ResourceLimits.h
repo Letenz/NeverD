@@ -14,6 +14,7 @@
 #define NEVERD_TOOLS_NEVERD_GUI_RESOURCELIMITS_H
 
 #include "../common/symbols/ResourceLimits.h"
+#include "../common/transport/ResourceLimits.h"
 
 #include "neverd/diff/Limits.h"
 #include "neverd/sdk/Limits.h"
@@ -68,12 +69,21 @@ inline constexpr qsizetype kEngineClientMaxPartialLine = 65536;
 // tools/neverd-gui/app/ChooserView.cpp
 inline constexpr int kChooserViewPageSize = 256;
 inline constexpr int kChooserViewMaxCachedPages = 64;
+/// Bound address lookups needed when discovery moves selected rows off-page.
+inline constexpr int kChooserViewMaxRefreshLookups = kChooserViewMaxCachedPages;
 inline constexpr int kChooserViewMaxPendingPages = 4;
 inline constexpr int kChooserViewFilterDebounceMs = 150;
 inline constexpr int kChooserViewChooserModelRequestPageTextLimit = 400;
 
 // tools/neverd-gui/app/CodeView.cpp
 inline constexpr int kCodeViewPageLines = 256;
+/// A completed function's display-name refresh can batch existing text. Keep
+/// the interactive first load small, and retry it if a batch exceeds bytes.
+inline constexpr int kCodeViewNameRefreshPageLines =
+    ::neverd::sdk::kMaxCodeViewPageLines;
+
+// tools/neverd-gui/app/FindInViewDialog.cpp
+inline constexpr int kFindInViewDebounceMs = 120;
 
 // tools/neverd-gui/app/DisassemblyView.cpp
 inline constexpr std::size_t kDisassemblyViewMaxHistory = 512;
@@ -85,6 +95,8 @@ inline constexpr int kHexViewMaxChunks = 256;
 // tools/neverd-gui/app/InteractionMetrics.cpp
 /// Functions sampled for jumps, graphs and pseudocode, spread over the list.
 inline constexpr int kInteractionMetricsMaxSamples = 24;
+/// Passes over the sampled functions for each painted deep-link series.
+inline constexpr int kInteractionMetricsLinkPasses = 8;
 /// How long one sample may take before it counts as missed.
 inline constexpr int kInteractionMetricsSampleTimeoutMs = 60000;
 
@@ -95,6 +107,9 @@ inline constexpr int kJumpDialogSearchDebounceMs = 90;
 
 // tools/neverd-gui/app/ListingView.cpp
 inline constexpr int kListingViewPageLines = 240;
+/// Bound each side of a refresh to the listing protocol's per-side budget.
+inline constexpr int kListingViewRefreshContextLines =
+    ::neverd::limits::transport::kListingMaxPageLines;
 inline constexpr int kListingViewMaxLoadedLines = 6000;
 inline constexpr int kListingViewScrollDebounceMs = 15;
 inline constexpr int kListingViewMaxArrowLevels = 10;
@@ -281,6 +296,23 @@ inline constexpr int kMaxPathfinderDepth =
 inline constexpr int kMaxPathfinderWaypoints =
     static_cast<int>(::neverd::sdk::kMaxCallPathWaypoints);
 inline constexpr int kPathfinderSearchDelayMs = 150;
+
+// tools/neverd-gui/app/InstanceServer.cpp
+/// The most a request to a workbench may hold, and a reply its client reads:
+/// get_info's, with its paths.
+inline constexpr int kInstanceServerMaxRequestBytes = 64 * 1024;
+inline constexpr qint64 kInstanceServerMaxReplyBytes = 1024 * 1024;
+/// How long a client waits for a workbench to answer.
+inline constexpr int kInstanceServerRequestTimeoutMs = 2000;
+/// Concurrent probes share one discovery deadline.
+inline constexpr int kInstanceProbeConcurrency = 8;
+
+// tools/neverd-gui/app/LinkDispatch.cpp
+/// How long a workbench may take to open a link, which resolves through its
+/// worker.
+inline constexpr int kLinkDispatchOpenTimeoutMs = 30000;
+/// The desktop's scheme registration helper must not block indefinitely.
+inline constexpr int kLinkHandlerCommandTimeoutMs = 5000;
 
 } // namespace neverd::limits::gui
 

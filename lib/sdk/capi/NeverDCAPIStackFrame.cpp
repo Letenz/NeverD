@@ -5,6 +5,7 @@
 #include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/SHA256.h"
 
 #include <cctype>
 
@@ -15,6 +16,7 @@ std::string neverd::sdk::sourceStackSnapshot(const LowFunc &F) {
   std::string Text = sourceCallSnapshot(F);
   if (Text.empty())
     return {};
+  llvm::SHA256 Hash;
   llvm::raw_string_ostream OS(Text);
   OS << ":stack-v1:";
   for (auto Root : F.ModuleAnalysisRoots)
@@ -24,14 +26,27 @@ std::string neverd::sdk::sourceStackSnapshot(const LowFunc &F) {
   for (const auto &T : F.FunctionTemporaries)
     OS << 'T' << T.Offset << ':' << T.Bytes;
   for (const auto &B : F.Blocks) {
-    for (const auto &E : B.ExceptionalSuccs)
+    for (const auto &E : B.ExceptionalSuccs) {
       OS << 'E' << E.BlockId << ':' << E.TargetVA << ':' << unsigned(E.Kind)
-         << ':' << E.SourceVA << ':' << E.RegionIndex << ':' << E.State;
+         << ':' << E.SourceVA;
+      if (const auto *Context = E.singleContext())
+        OS << ':' << Context->RegionIndex << ':' << Context->State;
+      else
+        OS << ":contexts:" << E.contexts().size() << ':'
+           << llvm::toHex(E.SharedContexts->digest(), true);
+    }
     for (const auto &I : B.InstructionBoundaries)
       OS << 'I' << I.Address << ':' << I.Size << ':' << unsigned(I.Mode) << ':'
          << unsigned(I.Control) << ':' << I.FirstOp << ':' << I.OpCount;
+    // Keep the sourceVariableSnapshot byte protocol, but do not materialize
+    // every block's edge references in one unbounded temporary string.
+    OS.flush();
+    Hash.update(Text);
+    Text.clear();
   }
-  return sourceVariableSnapshot(Text);
+  OS.flush();
+  Hash.update(Text);
+  return "source-variable-v1:" + llvm::toHex(Hash.final(), true);
 }
 
 SourceStackFrame

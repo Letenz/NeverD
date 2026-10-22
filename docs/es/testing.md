@@ -2234,3 +2234,18 @@ Las regresiones de memoria absoluta cubren lotes acotados contiguos y dispersos,
 `NativeQueryTrace.*` cubre respuestas independientes, cuatro extensiones con cero, cambios de selectores/cantidad/orden, selectores indefinidos, lecturas intercaladas, todas las ramas, estado preservado, auditorías de codificación/detalles, grupos inválidos, presupuestos, huellas y rechazos estáticos/inductivos. `NativeScalarQueryDescriptor.*` comprueba límites genéricos y vinculación de recibos reales.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+Las regresiones comprueban la conservación exacta de CC, F1 y CD 03, el rechazo de metadatos falsificados, salidas sin sucesor y presupuestos de operaciones exactos o insuficientes. Una trampa proporcionada como operación ordinaria no puede continuar hasta un RETURN en la misma instrucción o en la siguiente. La prueba original también cubre UD2: las trampas inalcanzables conservan la auditoría Missing y se rechazan diferencias de excepción, bytes o auditoría. Las trampas alcanzables impiden la prueba original y el refinamiento frente a un candidato con retorno ordinario.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+Estas comprobaciones validan regiones declaradas, sin demostrar el manejo de excepciones ni la equivalencia fuente/nativa.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+Las regresiones de objetos de entrada comprueban copias simbólicas, guardados y ranuras copiadas, bucles en ejecución, enlaces perdidos y uniones, alias, escrituras anchas/atómicas/segmentadas completas, límites relativos, declaraciones inválidas, mutaciones de recibos y presupuestos exactos o insuficientes de preparación y operaciones, y límites de nodos agotados. Oráculos independientes de bytes y registros comprueban los efectos retenidos. Ejecutar juntas las suites responsables y los rechazos de consumidores raw; estas comprobaciones no generan un certificado de función completa, C compilado o ABI ordinaria.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

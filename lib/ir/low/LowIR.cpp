@@ -2,6 +2,8 @@
 
 #include "neverd/ir/low/LowIR.h"
 
+#include "LowInstructionSlice.h"
+
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
@@ -71,6 +73,20 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
                                         apxAtomicLowShape(Op, Arch::Unknown)))
       return invalid(
           "APX atomic intrinsic has an invalid operand/output contract");
+    return llvm::Error::success();
+  }
+  if (isX86VirtualizationIntrinsic(Id)) {
+    if (!x86VirtualizationShapeIsValid(
+            Id, x86VirtualizationLowShape(Op, Arch::Unknown)))
+      return invalid("x86 virtualization intrinsic has an invalid "
+                     "operand/output contract");
+    return llvm::Error::success();
+  }
+  if (isX86SystemStateIntrinsic(Id)) {
+    if (!x86SystemStateShapeIsValid(Id,
+                                    x86SystemStateLowShape(Op, Arch::Unknown)))
+      return invalid("x86 system state intrinsic has an invalid "
+                     "operand/output contract");
     return llvm::Error::success();
   }
   if (Id == Intrinsic::X86Invalidate) {
@@ -465,11 +481,10 @@ llvm::Error validateLowInstructionBoundaries(
     if (Boundary.OpCount > NumOps - ExpectedFirstOp)
       return invalid("instruction boundary op slice is out of range");
     const uint64_t OpEnd = ExpectedFirstOp + Boundary.OpCount;
-    for (uint64_t I = ExpectedFirstOp; I < OpEnd; ++I) {
-      const LowOp &Op = Block.Ops[static_cast<size_t>(I)];
-      if (Op.Addr != Boundary.Address)
-        return invalid(
-            "instruction boundary covers an op from another address");
+    const auto Ops = detail::checkedInstructionOperations(Block, Boundary);
+    if (!Ops)
+      return invalid("instruction boundary covers an op from another address");
+    for (const LowOp &Op : *Ops) {
       if (llvm::Error Error = validateMemoryAddressSpace(Op))
         return Error;
     }

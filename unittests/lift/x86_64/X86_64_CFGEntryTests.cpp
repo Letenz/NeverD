@@ -2620,7 +2620,7 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofIntersectsEveryPredecessor) {
       Arm.Ops = {
           MakeOp(NdOp::COPY, NdVar::reg(x86reg::RSP, 4), {NdVar::cst(0, 4)})};
     if (Mutation == 15)
-      Arm.ExceptionalPreds.push_back({.BlockId = 10});
+      Arm.ExceptionalPreds.push_back({10, 0});
     if (Mutation == 17)
       Arm.Ops = {MakeOp(NdOp::INT_ADD, SP, {SP, NdVar::cst(40, 8)}),
                  MakeOp(NdOp::INT_SUB, SP, {SP, NdVar::cst(40, 8)})};
@@ -2889,11 +2889,11 @@ TEST(CFGBuilderCoverage,
     }
     if (Mutation == 17) {
       for (auto &E : H->ExceptionalPreds)
-        ++E.RegionIndex;
+        ++E.ExplicitContext.RegionIndex;
       for (auto &B : Low.Blocks)
         for (auto &E : B.ExceptionalSuccs)
           if (E.TargetVA == Handler)
-            ++E.RegionIndex;
+            ++E.ExplicitContext.RegionIndex;
     }
     if (Mutation == 19)
       H->ExceptionalPreds.front().BlockId = H->Id;
@@ -2960,7 +2960,7 @@ TEST(CFGBuilderCoverage,
         if (Edit == 6)
           Edge.Kind = ExceptionalEdgeKind::SEHFinally;
         if (Edit == 7)
-          ++Edge.RegionIndex;
+          ++Edge.ExplicitContext.RegionIndex;
         if (Edit == 8)
           Edge.SourceVA = Entry + 4;
         EXPECT_NE(Proof.DependencyDigest, lowSEHFrameDependencyDigest(Changed));

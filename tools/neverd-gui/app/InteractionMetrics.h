@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Address.h"
+#include "DeepLink.h"
 
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QVector>
 #include <functional>
+#include <optional>
 
 class QWidget;
 
@@ -18,9 +19,10 @@ class MainWindow;
 class Session;
 
 /// Opt-in measurement of interaction on the production workbench, over the
-/// opened file: listing scrolling, jumps, pseudocode and graphs, each first
-/// over content the worker has not served yet and then once more. A sample
-/// ends at the backing-store flush after the view painted the content.
+/// opened file: listing scrolling, jumps, deep links, pseudocode and graphs.
+/// Deep links repeat over warmed functions; the other phases run first over
+/// unserved content and then once more. A sample ends at the backing-store
+/// flush after the view painted the content.
 class InteractionMetrics final : public QObject {
 public:
   InteractionMetrics(MainWindow &window, Session &session,
@@ -42,7 +44,8 @@ private:
   void begin();
   void runSteps(QVector<Step> steps);
   Step scrollStep(const char *name, int direction);
-  Step jumpStep(const char *name);
+  Step jumpStep(const char *name,
+                std::optional<LinkResource> resource = std::nullopt);
   Step pseudocodeStep(const char *name);
   void measurePseudocode(const char *name, Done done);
   Step graphStep(const char *name);

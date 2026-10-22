@@ -223,6 +223,13 @@ bool Session::indexReady() const {
   return background_.value("state").toString() == QLatin1String("ready");
 }
 
+bool Session::analysisComplete() const {
+  return loaded_ && !opening_ &&
+         (indexReady() || (background_.value("state").toString() ==
+                               QLatin1String("unavailable") &&
+                           queries_.analysisComplete()));
+}
+
 bool Session::busy() const {
   const auto state = background_.value("state").toString();
   return opening_ || queries_.hasPending() ||
@@ -1297,6 +1304,14 @@ void Session::rename(Address function, const QString &name,
             if (then)
               then();
           });
+}
+
+void Session::prepareCodeName(const QJsonObject &edit, quint64 epoch) {
+  if (!acceptsEdit(epoch) ||
+      !capabilities_.contains(QStringLiteral("code_edit_prepare")))
+    return;
+  read(QStringLiteral("code_edit_prepare"), edit, this, {},
+       [](const QString &, const QString &) {});
 }
 
 void Session::editCode(const QJsonObject &edit, quint64 epoch) {

@@ -818,7 +818,8 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
             TRI.hasFPReturnReg() && Rit2->Output.RegOff == TRI.FPReturnReg;
         // The x87 TOP rotates, so the physical slot carrying the logical ST0
         // return may be any ST0..ST7 register after stack fixup.
-        const bool IsX87Return = TRI.isX87ReturnReg(Rit2->Output.RegOff) &&
+        const bool IsX87Return = !Func.ConsumesX87Argument &&
+                                 TRI.isX87ReturnReg(Rit2->Output.RegOff) &&
                                  !isX87StackSelfCopy(*Rit2, TRI);
         if (IsFPRegReturn || IsX87Return) {
           if (IsFPRegReturn && !FPRegWriteOp)

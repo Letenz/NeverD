@@ -4,6 +4,8 @@
 #include "Address.h"
 #include "AddressSpace.h"
 #include "ChooserView.h"
+#include "DeepLink.h"
+#include "InstanceServer.h"
 #include "Session.h"
 
 #include "neverd/support/IntegerLiterals.h"
@@ -13,6 +15,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QTimer>
+#include <functional>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <optional>
@@ -34,6 +37,7 @@ class ComparisonDialog;
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
+class FindInViewDialog;
 class LocalTypesView;
 class PathfinderView;
 class TypeLibrariesView;
@@ -80,6 +84,23 @@ public:
   void runAfterOpen(const QStringList &commands) {
     pendingCommands_ = commands;
   }
+  /// The link to the place the focused view shows (Copy link): the
+  /// function or line of a code window, a list's row, a local type, or the
+  /// disassembly's or hex view's address.  None without a program or a
+  /// place.
+  std::optional<DeepLink> linkHere() const;
+  /// Shows the place \p link names in the view it asks for, as IDA's
+  /// open_ida_link does, then calls \p done with nothing, or the reason it
+  /// could not, which the output window shows too: another build of the
+  /// input, no such function, type or bookmark, or no such address.
+  void openLink(const DeepLink &link,
+                std::function<void(const QString &error)> done = {});
+  /// Report a link failure from a native URL event or local navigation.
+  void reportLinkError(const QString &error);
+  /// The link to open once the next file opens, as the command line asks.
+  void openLinkAfterOpen(const DeepLink &link) { pendingLink_ = {link, {}}; }
+  /// What other programs reach this window by.
+  InstanceServer &instanceServer() { return instances_; }
   /// The active disassembly view; Alt+Enter can open independent views.
   DisassemblyView *disassembly() const { return disassembly_; }
   ActionRegistry &actions() { return actions_; }
@@ -141,6 +162,16 @@ private:
   /// focused code window shows, a list window's row, else the disassembly's
   /// location, which the Pathfinder takes as its function or import.
   std::optional<Address> pathfinderTarget() const;
+  /// The image base links count relative addresses from, and the input's
+  /// SHA-256 they name it by.
+  std::optional<Address> imageBase() const;
+  QString inputSha256() const;
+  /// What get_info tells another program of this window.
+  QJsonObject instanceInfo() const;
+  void copyLink();
+  void jumpToLink();
+  /// Shows \p address in \p view, a link's.
+  void showLinkedAddress(Address address, LinkView view);
   /// Open the Pathfinder below the views, raised.
   PathfinderView *showPathfinder();
   /// Open a function in the code window used before the chooser took focus.
@@ -275,6 +306,9 @@ private:
   QHash<QString, QByteArray> projectState() const;
   void restoreProjectState();
   void navigateInitialAddress();
+  /// Opens the link the command line gave, once the program's addresses are
+  /// known, in place of the project's last place.
+  void openPendingLink();
   const QJsonArray &bookmarks() const { return bookmarks_; }
   /// Show \p rows as the project's bookmarks.
   void showBookmarks(const QJsonArray &rows);
@@ -310,6 +344,11 @@ private:
   LocalTypesView *localTypes_ = nullptr;
   TypeLibrariesView *typeLibraries_ = nullptr;
   PathfinderView *pathfinder_ = nullptr;
+  InstanceServer instances_;
+  /// A link to open once the program's addresses are known, and what to
+  /// tell its sender then.
+  std::optional<std::pair<DeepLink, std::function<void(const QString &)>>>
+      pendingLink_;
   /// The project's waypoints and exclusions for a Pathfinder not made yet.
   QJsonObject pathfinderState_;
   ChooserView *functions_ = nullptr;
@@ -324,6 +363,7 @@ private:
   bool restoreGraph_ = false;
   QJsonArray bookmarks_;
   QPointer<QDialog> quickStart_;
+  QPointer<FindInViewDialog> FindDialog;
   QPointer<web::PackageReviewDialog> packageReview_;
   QPointer<ComparisonDialog> comparison_;
   bool startupQuickStartPending_ = false;

@@ -127,7 +127,7 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         Block->EndAddr != Capture.EndAddress ||
         Call->Operation->DoesNotReturn || State == BlockStates.end() ||
         State->second->Unknown || State->second->CallbackOnly ||
-        State->second->Levels != Capture.Levels)
+        State->second->levels() != Capture.Levels)
       return std::nullopt;
     Call->Capture = &Capture;
   }
@@ -186,11 +186,11 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         return std::nullopt;
       const auto State = BlockStates.find(Handler->second->Id);
       if (State != BlockStates.end())
-        Work += State->second->Levels.size();
+        Work += State->second->levels().size();
       if (Work > limits::kMaxRegistrationEHStateWork ||
           State == BlockStates.end() || !State->second->Reached ||
           State->second->Unknown || State->second->CallbackOnly ||
-          !llvm::is_contained(State->second->Levels, Scope.EnclosingLevel))
+          !llvm::is_contained(State->second->levels(), Scope.EnclosingLevel))
         return std::nullopt;
     }
     auto &Plan = ResumeLevels[Resume.CaptureCall];

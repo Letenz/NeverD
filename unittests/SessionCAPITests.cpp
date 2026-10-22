@@ -5929,7 +5929,15 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   // so passes the one it was given on.
   const std::string Owner = takeString(neverd_decompile(Session, 0x180001000));
   EXPECT_NE(Owner.find("Owner(int64_t arg0) {"), std::string::npos) << Owner;
-  EXPECT_NE(Owner.find("IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0)"),
+  // ntifs.h's official public aliases name _KTHREAD/_KPROCESS; the bundled
+  // compatibility headers name _ETHREAD/_EPROCESS. Both are opaque pointers.
+  const std::string ThreadType =
+      takeString(neverd_local_type_json(Session, "PETHREAD", nullptr));
+  const std::string Thread = ThreadType.find("_KTHREAD") != std::string::npos
+                                 ? "_KTHREAD"
+                                 : "_ETHREAD";
+  const std::string Process = Thread == "_KTHREAD" ? "_KPROCESS" : "_EPROCESS";
+  EXPECT_NE(Owner.find("IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0)"),
             std::string::npos)
       << Owner;
   // The calls take what the prototypes declare and return what they
@@ -5938,18 +5946,55 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   ASSERT_GE(Index, 0);
   const std::string Probe =
       takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
-  EXPECT_NE(Probe.find("extern _EPROCESS* IoThreadToProcess(_ETHREAD* "
-                       "Thread);"),
+  EXPECT_NE(Probe.find("extern " + Process + "* IoThreadToProcess(" + Thread +
+                       "* Thread);"),
             std::string::npos)
       << Probe;
   EXPECT_NE(Probe.find("extern void ExFreePoolWithTag(void* P, uint32_t "
                        "Tag);"),
             std::string::npos)
       << Probe;
-  EXPECT_NE(Probe.find(" = IoThreadToProcess((_ETHREAD*)(uintptr_t)arg0);"),
-            std::string::npos)
+  EXPECT_NE(
+      Probe.find(" = IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0);"),
+      std::string::npos)
       << Probe;
   EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
+}
+
+TEST_F(SessionCAPITest, DriverProviderImportsUseTheirDeclaredSourceABI) {
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const char *File :
+       {"driver_provider_imports.sys", "driver_provider_imports_arm64.sys"}) {
+    SCOPED_TRACE(File);
+    std::ifstream Input(Fixtures / File, std::ios::binary);
+    ASSERT_TRUE(Input.good());
+    const std::string Driver =
+        write(File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    ASSERT_EQ(neverd_session_load(Session, Driver.c_str()), 1);
+    ASSERT_GE(neverd_session_discover_functions(Session), 0);
+    const int Index = neverd_func_find_by_name(Session, "ReadConfiguration");
+    ASSERT_GE(Index, 0);
+    const auto Entry = neverd_func_entry(Session, Index);
+    for (const char *View : {"c", "llvmc"}) {
+      SCOPED_TRACE(View);
+      const std::string Text =
+          takeString(neverd_ir_view_json(Session, Entry, View, 0, 2048));
+      auto Parsed = llvm::json::parse(Text);
+      ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+      const auto Source = Parsed->getAsObject()->getString("text");
+      ASSERT_TRUE(Source.has_value()) << Text;
+      EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
+      EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
+      EXPECT_TRUE(Source->contains("extern void NdisCloseConfiguration(void*"))
+          << Source->str();
+      EXPECT_TRUE(Source->contains("extern int32_t NdisOpenConfigurationEx("))
+          << Source->str();
+      if (std::string_view(View) == "c") {
+        EXPECT_TRUE(Source->contains("NdisParameterString")) << Source->str();
+      }
+    }
+  }
 }
 
 TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
@@ -6007,16 +6052,19 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
       Session,
       neverd_func_entry(Session, neverd_func_find_by_name(Session, "Probe")),
       0));
-  EXPECT_NE(Lowered.find("extern uint64_t GetLastError();"), std::string::npos)
+  EXPECT_NE(Lowered.find("extern uint32_t GetLastError(void);"),
+            std::string::npos)
       << Lowered;
-  EXPECT_NE(Lowered.find("extern uint64_t ZwClose();"), std::string::npos)
+  EXPECT_NE(Lowered.find("extern int32_t ZwClose(void* Handle);"),
+            std::string::npos)
       << Lowered;
   EXPECT_NE(Lowered.find("(GetLastError())"), std::string::npos) << Lowered;
   // A definition named as a routine the headers declare that reads none of
   // its parameters shows those the prototype declares.
   const std::string Atoms = decompile("InitAtomTable");
-  EXPECT_NE(Atoms.find("WINBOOL InitAtomTable(DWORD nSize) {"),
-            std::string::npos)
+  // Microsoft spells the Win32 boolean BOOL, mingw-w64 spells it WINBOOL.
+  EXPECT_TRUE(std::regex_search(
+      Atoms, std::regex(R"(\b(BOOL|WINBOOL) InitAtomTable\(DWORD nSize\) \{)")))
       << Atoms;
   // ExitProcess returns to no caller: Finish ends at its call, where it
   // would run on into the trap after it and the function after that.
@@ -6105,15 +6153,16 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
       << takeString(neverd_last_error(Session));
   ASSERT_GE(neverd_session_discover_functions(Session), 0)
       << takeString(neverd_last_error(Session));
-  // It joins the ARM64 user mode headers alone: no kernel library describes
-  // ARM64.
+  // Native calls use the ARM64 kernel declarations after the user library.
   auto Parsed =
       llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
   ASSERT_TRUE(static_cast<bool>(Parsed));
   const llvm::json::Array *Headers = Parsed->getAsObject()->getArray("headers");
-  ASSERT_TRUE(Headers && Headers->size() == 1u);
+  ASSERT_TRUE(Headers && Headers->size() == 2u);
   EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"),
             "windows-user-arm64");
+  EXPECT_EQ((*Headers)[1].getAsObject()->getString("name"),
+            "windows-kernel-arm64");
   EXPECT_EQ(Parsed->getAsObject()->getString("dataModel"), "LLP64");
   const auto decompile = [&](const char *Name) {
     const int Index = neverd_func_find_by_name(Session, Name);
@@ -6145,6 +6194,23 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
             std::string::npos)
       << Finish;
   EXPECT_NE(Finish.find("ExitProcess(arg0);"), std::string::npos) << Finish;
+  // LLVM C uses the same import contracts, including the zero-argument call.
+  for (const char *Name : {"Open", "Probe", "Window"}) {
+    SCOPED_TRACE(Name);
+    const int Index = neverd_func_find_by_name(Session, Name);
+    ASSERT_GE(Index, 0);
+    const auto Entry = neverd_func_entry(Session, Index);
+    const std::string JSON =
+        takeString(neverd_ir_view_json(Session, Entry, "llvmc", 0, 2048));
+    auto View = llvm::json::parse(JSON);
+    ASSERT_TRUE(static_cast<bool>(View)) << JSON;
+    const auto Source = View->getAsObject()->getString("text");
+    ASSERT_TRUE(Source.has_value()) << JSON;
+    EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
+    EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
+    if (std::string_view(Name) == "Probe")
+      EXPECT_TRUE(Source->contains("GetLastError()")) << Source->str();
+  }
   // CreateWindowExW takes twelve: the last four are on the stack.
   const std::string Window = decompile("Window");
   EXPECT_NE(Window.find("0x10000000, 1, 2, 3, 4, (HWND__*)(uintptr_t)arg0, 0, "
@@ -7455,6 +7521,69 @@ TEST_F(SessionCAPITest, NativeAnalysisPublishesRecoveredFunctions) {
   }
 }
 
+TEST_F(SessionCAPITest, MachOFunctionLookupAcceptsOneABIDecoration) {
+  for (bool AArch64 : {false, true}) {
+    for (const std::string Name : {"_entry", "__entry"}) {
+      SCOPED_TRACE(AArch64);
+      SCOPED_TRACE(Name);
+      const std::string Path =
+          write("named.macho", makeObservedMachO(AArch64, Name));
+      ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+      const int Index = neverd_func_find_by_name(Session, Name.c_str());
+      ASSERT_GE(Index, 0);
+      EXPECT_EQ(takeString(neverd_func_name(Session, Index)), Name);
+      EXPECT_EQ(neverd_func_find_by_name(Session, Name.c_str() + 1), Index);
+      const std::string Disassembly =
+          takeString(neverd_disasm_text(Session, Name.c_str(), 0));
+      ASSERT_FALSE(Disassembly.empty());
+      EXPECT_EQ(takeString(neverd_disasm_text(Session, Name.c_str() + 1, 0)),
+                Disassembly);
+      EXPECT_EQ(neverd_func_find_by_name(Session, ("_" + Name).c_str()), -1);
+      EXPECT_EQ(neverd_func_find_by_name(Session, ""), -1);
+      if (Name == "__entry")
+        EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), -1);
+    }
+  }
+}
+
+TEST_F(SessionCAPITest, MachOFunctionLookupPrefersExactNamesAndExports) {
+  const std::string Path =
+      write("lookup.macho", makeObservedMachO(false, "_entry"));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  const neverd_va_t Entry = neverd_session_entry_addr(Session);
+  State.Functions = {{Entry, 6, "_entry"}, {Entry + 0x20, 6, "entry"}};
+  State.Img.Exports.clear();
+  State.functionListChanged();
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), 1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "_entry"), 0);
+
+  State.Functions[1].Name = "other";
+  State.Img.Exports = {{"entry", 0, Entry + 0x20},
+                       {"_alias", 0, Entry + 0x20},
+                       {"_entry", 0, Entry + 0x20}};
+  State.functionListChanged();
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), 1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "alias"), 1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "_entry"), 0);
+
+  State.Img.Exports.clear();
+  State.Functions[0].Name = "_renamed";
+  State.functionListChanged();
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), -1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "alias"), -1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "renamed"), 0);
+}
+
+TEST_F(SessionCAPITest, ELFFunctionLookupKeepsLeadingUnderscores) {
+  const std::string Path = write("named.elf", makeNamedNativeELF("_entry"));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  EXPECT_GE(neverd_func_find_by_name(Session, "_entry"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), -1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "__entry"), -1);
+  EXPECT_TRUE(takeString(neverd_disasm_text(Session, "entry", 0)).empty());
+}
+
 TEST_F(SessionCAPITest, LazyNativeAnalysisRetainsRecoveredNamesAcrossReload) {
   const std::string Path = write("recovered.elf", makeNativeELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
@@ -7717,11 +7846,12 @@ TEST_F(SessionCAPITest,
         << takeString(neverd_last_error(Session));
     const auto Entry = neverd_session_entry_addr(Session);
     const uint64_t ReturnAddress = Entry + (AArch64 ? 4 : 5);
-    for (const char *Stage : {"low", "med"}) {
+    for (const char *Stage : {"low", "med", "high"}) {
       SCOPED_TRACE(Stage);
       const std::string Legacy = takeString(
-          std::strcmp(Stage, "low") == 0 ? neverd_ir_low(Session, Entry)
-                                         : neverd_ir_med(Session, Entry));
+          std::strcmp(Stage, "low") == 0   ? neverd_ir_low(Session, Entry)
+          : std::strcmp(Stage, "med") == 0 ? neverd_ir_med(Session, Entry)
+                                           : neverd_ir_high(Session, Entry));
       ASSERT_FALSE(Legacy.empty()) << takeString(neverd_last_error(Session));
       size_t Offset = 0, Anchors = 0;
       std::string Reassembled;
@@ -7827,6 +7957,51 @@ TEST_F(SessionCAPITest, CSourcePagesRetainCanonicalReturnAnchors) {
       EXPECT_EQ(Text, Original);
       EXPECT_GT(Mapped, 0u);
     }
+  }
+}
+
+TEST_F(SessionCAPITest, IntrinsicSourcePagesKeepTheExecutedInstruction) {
+  // Preserve RBX, query leaf 7/subleaf 1, and return EBX. The packed primary
+  // result is dead: navigation must follow the CPUID itself after cleanup.
+  // CLI/STI have no value output but must keep their own effect anchors.
+  const std::string Code("\x53\xb8\x07\0\0\0\xb9\x01\0\0\0\x0f\xa2"
+                         "\x89\xd8\xfa\xfb\x5b\xc3",
+                         19);
+  const auto Path =
+      write("cpuid-navigation.elf", makeNativeELF(false, 0x400000, {}, Code));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const uint64_t Entry = neverd_session_entry_addr(Session);
+  for (const char *Stage : {"c", "llvmc", "source", "high"}) {
+    SCOPED_TRACE(Stage);
+    auto Page = takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 1000));
+    const auto Text = Page.getString("text");
+    ASSERT_TRUE(Text);
+    ASSERT_NE(Text->find("cpuid"), llvm::StringRef::npos);
+    const auto *Rows = Page.getArray("rows");
+    ASSERT_NE(Rows, nullptr);
+    bool QueryMapped = false, CliMapped = false, StiMapped = false;
+    size_t Begin = 0;
+    for (const auto &Value : *Rows) {
+      const size_t End = Text->find('\n', Begin);
+      const auto Line = Text->slice(Begin, End);
+      Begin = End == llvm::StringRef::npos ? Text->size() : End + 1;
+      const auto *Row = Value.getAsObject();
+      ASSERT_NE(Row, nullptr);
+      const auto *Addresses = Row->getArray("addresses");
+      ASSERT_NE(Addresses, nullptr);
+      for (const auto &Address : *Addresses)
+        if (const auto Hex = Address.getAsString()) {
+          const auto Address = std::stoull(Hex->str(), nullptr, 16);
+          QueryMapped |= Line.contains("cpuid") && Address == Entry + 11;
+          CliMapped |= (Line.contains("cli") || Line.contains("_disable")) &&
+                       Address == Entry + 15;
+          StiMapped |= (Line.contains("sti") || Line.contains("_enable")) &&
+                       Address == Entry + 16;
+        }
+    }
+    EXPECT_TRUE(QueryMapped) << Text->str();
+    EXPECT_TRUE(CliMapped) << Text->str();
+    EXPECT_TRUE(StiMapped) << Text->str();
   }
 }
 
@@ -8040,7 +8215,7 @@ TEST_F(SessionCAPITest,
   EXPECT_TRUE(VM.getArray("rows")->empty());
   EXPECT_FALSE(VM.getString("text"));
   auto High = takeView(neverd_ir_view_json(Session, 0, "high", 0, 2));
-  EXPECT_EQ(High.getString("mapping_status"), "unsupported_representation");
+  EXPECT_EQ(High.getString("mapping_status"), "unsupported_architecture");
   EXPECT_TRUE(High.getArray("rows")->empty());
   // Bytecode shows its whole LLVM module (neverd_ir_llvm); only native code
   // pages one function's.
@@ -8211,17 +8386,46 @@ TEST_F(SessionCAPITest,
       EXPECT_NE(State.findLowFunc(Entry + 0x10), nullptr);
     }
     // The CFG API can be the first analysis request without explicit view
-    // preparation, and a later HighIR view must still finish the projection.
+    // preparation. It reads LowIR alone, and a later HighIR view must still
+    // finish the analysis and the projection.
     neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
     EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
-    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedFuncs.empty());
     EXPECT_TRUE(State.PipeResult.HighFuncs.empty());
     const auto *Low = State.findLowFunc(Entry);
     ASSERT_FALSE(takeString(neverd_ir_high(Session, Entry)).empty());
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
     EXPECT_FALSE(State.PipeResult.HighIRDeferred);
     EXPECT_FALSE(State.PipeResult.HighFuncs.empty());
     EXPECT_EQ(State.findLowFunc(Entry), Low);
     EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+
+    // The graph's own view prepares the same LowIR. Every deeper view of
+    // the selection continues that run and reads what a full run gives.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    ASSERT_EQ(neverd_prepare_function_view(Session, Entry, "cfg"), 1);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedFuncs.empty());
+    const auto *Graphed = State.findLowFunc(Entry);
+    ASSERT_NE(Graphed, nullptr);
+    EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_EQ(analysisViews(), AnalysisViews);
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_EQ(State.findLowFunc(Entry), Graphed);
+    EXPECT_EQ(takeString(neverd_ir_llvm(Session, Entry)), IR);
+    EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), LLVM);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    // A source view straight after the graph's continues it to HighIR too.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    ASSERT_EQ(neverd_prepare_function_view(Session, Entry, "cfg"), 1);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    EXPECT_EQ(analysisViews(), AnalysisViews);
   }
 }
 
@@ -8466,6 +8670,104 @@ TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {
   EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
             Facts);
   EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+}
+
+TEST_F(SessionCAPITest, AnalysisCacheRecoversASharedOmittedCalleeOnce) {
+  // Two callers call the routine at +0x40, which returns an argument and
+  // which neither selection emits.  Their calls take their arguments from the
+  // setup the caller writes, so a run recovers that callee's ABI too, on i386
+  // in two regparm passes.  The second selection takes the recovery the first
+  // kept, and decompiles as a fresh session does.
+  struct Case {
+    const char *Name;
+    std::string Image;
+    unsigned CallerBytes, CalleeBytes;
+    size_t SecondPasses;
+  };
+  // AArch64: stp x29, x30, [sp, #-16]!; bl +0x40; ldp x29, x30, [sp], #16;
+  // ret, and a callee mov x0, x1; ret.
+  std::string AArch64(0x48, '\0');
+  const auto Word = [&](size_t At, uint32_t Insn) {
+    for (unsigned I = 0; I != 4; ++I)
+      AArch64[At + I] = static_cast<char>(Insn >> (I * 8));
+  };
+  for (const size_t From : {size_t{0}, size_t{0x10}}) {
+    Word(From, 0xa9bf7bfd);
+    Word(From + 4, 0x94000000 | static_cast<uint32_t>((0x40 - From - 4) >> 2));
+    Word(From + 8, 0xa8c17bfd);
+    Word(From + 12, 0xd65f03c0);
+  }
+  Word(0x40, 0xaa0103e0);
+  Word(0x44, 0xd65f03c0);
+  // i386: push imm8; call +0x40; add esp, 4; ret, and a callee
+  // mov eax, [esp+4]; ret.
+  std::string I386(0x48, '\xcc');
+  for (const size_t From : {size_t{0}, size_t{0x10}}) {
+    const uint32_t Rel = static_cast<uint32_t>(0x40 - (From + 7));
+    const char Caller[] = {'\x6a',
+                           static_cast<char>(5 + From),
+                           '\xe8',
+                           static_cast<char>(Rel),
+                           static_cast<char>(Rel >> 8),
+                           static_cast<char>(Rel >> 16),
+                           static_cast<char>(Rel >> 24),
+                           '\x83',
+                           '\xc4',
+                           '\x04',
+                           '\xc3'};
+    I386.replace(From, sizeof(Caller), Caller, sizeof(Caller));
+  }
+  I386.replace(0x40, 5, "\x8b\x44\x24\x04\xc3", 5);
+  const Case Cases[] = {
+      {"aarch64.elf", makeNativeELF(true, 0x400000, {}, AArch64), 16, 8, 0},
+      {"i386.exe", makePE32(I386, std::string(16, '\0'), {}), 11, 5, 1}};
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Name);
+    const auto Path = write(C.Name, C.Image);
+    const auto Seed = [&](neverd_session_t Target) {
+      auto &State = *neverd::sdk::toSession(Target);
+      const auto Entry = neverd_session_entry_addr(Target);
+      for (const auto &[Offset, Size] : {std::pair{0x0u, C.CallerBytes},
+                                         {0x10u, C.CallerBytes},
+                                         {0x40u, C.CalleeBytes}})
+        State.Img.Symbols.push_back(
+            neverd::Symbol::makeFunc(Entry + Offset, Size));
+      neverd::sdk::SessionTestAccess::resetFunctions(State);
+      return Entry;
+    };
+    neverd_session_t Kept = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Kept, Path.c_str()), 1);
+    const auto Entry = Seed(Kept);
+    auto &State = *neverd::sdk::toSession(Kept);
+    ASSERT_FALSE(takeString(neverd_decompile(Kept, Entry)).empty())
+        << takeString(neverd_last_error(Kept));
+    const auto *Memo =
+        neverd::PipelineTestPeer::calleeSignatures(State.AnalysisCache);
+    ASSERT_NE(Memo, nullptr);
+    // The recoveries and second passes the memo keeps of the shared callee.
+    const auto Recoveries = [&] {
+      std::pair<size_t, size_t> Count;
+      if (const auto Found = Memo->Callees.find(Entry + 0x40);
+          Found != Memo->Callees.end())
+        for (const auto &Conversion : Found->second.Conversions)
+          for (const auto &Recovery : Conversion.Recoveries) {
+            ++Count.first;
+            Count.second += Recovery.Seconds.size();
+          }
+      return Count;
+    };
+    EXPECT_EQ(Recoveries(), std::make_pair(size_t{1}, C.SecondPasses));
+    const auto Second = takeString(neverd_decompile(Kept, Entry + 0x10));
+    ASSERT_FALSE(Second.empty()) << takeString(neverd_last_error(Kept));
+    EXPECT_EQ(Recoveries(), std::make_pair(size_t{1}, C.SecondPasses));
+    neverd_session_destroy(Kept);
+
+    neverd_session_t Fresh = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Fresh, Path.c_str()), 1);
+    ASSERT_EQ(Seed(Fresh), Entry);
+    EXPECT_EQ(takeString(neverd_decompile(Fresh, Entry + 0x10)), Second);
+    neverd_session_destroy(Fresh);
+  }
 }
 
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesSelectingAnEntryNoSymbolStarts) {
@@ -9358,7 +9660,7 @@ TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {
   EXPECT_EQ(neverd_ir_view_json(Session, 0, "\xff", 0, 1), nullptr);
   EXPECT_NE(takeString(neverd_last_error(Session)).find("UTF-8"),
             std::string::npos);
-  auto Unsupported = takeView(neverd_ir_view_json(Session, 0, "high", 0, 1));
+  auto Unsupported = takeView(neverd_ir_view_json(Session, 0, "unknown", 0, 1));
   EXPECT_EQ(Unsupported.getString("mapping_status"),
             "unsupported_representation");
   EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
@@ -9471,11 +9773,12 @@ TEST_F(SessionCAPITest, IRViewPreservesMultibyteUTF8AcrossPhysicalPages) {
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
       << takeString(neverd_last_error(Session));
   const auto Entry = neverd_session_entry_addr(Session);
-  for (const char *Stage : {"low", "med"}) {
+  for (const char *Stage : {"low", "med", "high"}) {
     SCOPED_TRACE(Stage);
-    const std::string Legacy = takeString(std::strcmp(Stage, "low") == 0
-                                              ? neverd_ir_low(Session, Entry)
-                                              : neverd_ir_med(Session, Entry));
+    const std::string Legacy = takeString(
+        std::strcmp(Stage, "low") == 0   ? neverd_ir_low(Session, Entry)
+        : std::strcmp(Stage, "med") == 0 ? neverd_ir_med(Session, Entry)
+                                         : neverd_ir_high(Session, Entry));
     ASSERT_NE(Legacy.find(Name), std::string::npos);
     size_t Offset = 0;
     std::string Reassembled;

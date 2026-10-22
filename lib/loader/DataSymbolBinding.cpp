@@ -34,20 +34,9 @@ bool isAbsoluteSymbol(Arch Target, uint32_t Type) {
 }
 
 bool immutableSlot(const BinaryImage &Image, va_t Slot) {
-  const auto *Segment = Image.getSegmentFor(Slot);
   const unsigned Width = Image.getPointerSize();
-  if (!Segment || !Image.readVA(Slot, Width))
-    return false;
-  if (!Segment->isWritable() || Segment->ReadOnlyAfterRelocations)
-    return true;
-  if (Image.ELFMetadata)
-    for (const auto &Header : Image.ELFMetadata->ProgramHeaders)
-      if (Header.Type == llvm::ELF::PT_GNU_RELRO &&
-          Slot >= Header.VirtualAddress &&
-          Slot - Header.VirtualAddress <= Header.MemorySize &&
-          Width <= Header.MemorySize - (Slot - Header.VirtualAddress))
-        return true;
-  return false;
+  return Image.readVA(Slot, Width) &&
+         Image.readOnlyAfterRelocations(Slot, Width);
 }
 } // namespace
 

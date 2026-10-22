@@ -9,6 +9,7 @@
 #include "OperandFormat.h"
 #include "ProjectHistory.h"
 #include "ResourceLimits.h"
+#include "TablePage.h"
 #include "TextFold.h"
 
 #include "neverd/sdk/Limits.h"
@@ -475,12 +476,13 @@ std::size_t namedViewJsonBytes(const Json &value, unsigned depth = 0) {
   return bytes;
 }
 
+enum class PageAddressMatch { Exact, SegmentRange, RegionRange };
+
 /// A page of \p items; a filter keeps the rows where one of \p searchFields
 /// contains it, ignoring the case of ASCII letters.
 Json page(const Json &items, const Json &payload,
-          std::initializer_list<const char *> searchFields = {}) {
-  const auto offset =
-      sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
+          std::initializer_list<const char *> searchFields = {},
+          PageAddressMatch addressMatch = PageAddressMatch::Exact) {
   const auto limit =
       sizeField(payload, "limit",
                 ::neverd::limits::worker::kEnginePageLimitSizeFieldDefault,
@@ -489,8 +491,13 @@ Json page(const Json &items, const Json &payload,
     throw Error("invalid_request", "limit must be at least 1");
   const auto filter = folded(stringField(payload, "filter"));
   Json selected = Json::array();
+  std::vector<std::size_t> order;
+  const bool locating = payload.contains("seek_address");
+  const auto requestedOffset =
+      sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
   std::size_t total = 0;
-  for (const auto &item : items) {
+  for (std::size_t index = 0; index < items.size(); ++index) {
+    const auto &item = items[index];
     if (!filter.empty() &&
         std::none_of(searchFields.begin(), searchFields.end(),
                      [&](const char *field) {
@@ -500,16 +507,51 @@ Json page(const Json &items, const Json &payload,
                                   std::string::npos;
                      }))
       continue;
-    if (total >= offset && selected.size() < limit)
+    if (locating)
+      order.push_back(index);
+    else if (total >= requestedOffset && selected.size() < limit)
       selected.push_back(item);
     ++total;
   }
+  const auto position = tablePagePosition(
+      payload, total, limit,
+      [&](std::size_t index) -> std::optional<TableRowRange> {
+        const auto &item = items[order[index]];
+        const char *key =
+            addressMatch == PageAddressMatch::RegionRange ? "start" : "address";
+        if (!item.contains(key) || !item[key].is_string())
+          return std::nullopt;
+        TableRowRange row{parseAddress(item[key].get<std::string>())};
+        if (addressMatch == PageAddressMatch::RegionRange) {
+          const auto end = parseAddress(item.at("end").get<std::string>());
+          if (end < row.start)
+            throw Error("invalid_image", "A region has an invalid end");
+          row.size = end - row.start;
+        } else if (addressMatch == PageAddressMatch::SegmentRange) {
+          const auto &size = item.at("size");
+          if (size.is_number_unsigned() ||
+              (size.is_number_integer() && size.get<std::int64_t>() >= 0))
+            row.size = size.get<std::uint64_t>();
+          else if (size.is_string())
+            row.size = parseAddress(size.get<std::string>());
+          else
+            throw Error("invalid_image", "A segment has an invalid size");
+        }
+        return row;
+      });
+  const auto offset = position.offset;
+  if (locating)
+    for (auto index = std::min(offset, total);
+         index < total && selected.size() < limit; ++index)
+      selected.push_back(items[order[index]]);
   const bool complete = offset >= total || selected.size() >= total - offset;
-  return {{"items", std::move(selected)},
-          {"total", total},
-          {"offset", offset},
-          {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
-          {"complete", complete}};
+  Json result{{"items", std::move(selected)},
+              {"total", total},
+              {"offset", offset},
+              {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
+              {"complete", complete}};
+  position.annotate(result);
+  return result;
 }
 
 /// Sort table rows by {"sort": field, "descending": bool}.  Hex address
@@ -782,7 +824,9 @@ void Engine::namesChanged() {
   functionOrder_.clear();
 }
 Json Engine::functionGraph(std::uint64_t address) {
-  prepareFunction(address, "low");
+  // A graph reads the function's LowIR alone; a source or IR view of the
+  // same function then continues its analysis.
+  prepareFunction(address, "cfg");
   return backendJson(neverd_cfg_json(session_, address), true);
 }
 void Engine::commentsChanged() {
@@ -885,6 +929,15 @@ void Engine::forgetNamedViews() {
   namedViews_.clear();
   namedViewBytes_ = 0;
   encodedPageBytes_ = 0;
+}
+
+void Engine::localNamesChanged() {
+  // Local display names do not change instructions, functions or the prepared
+  // pipeline. Keep original documents for checked, lazy redecoration; encoded
+  // pages and already decorated documents still belong to their old revision.
+  ++revision_;
+  namedViewsRevision_ = revision_;
+  forgetEncodedPages();
 }
 
 void Engine::forgetEncodedPages() {
@@ -1022,9 +1075,19 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       namedViews_.splice(namedViews_.begin(), namedViews_, it);
       return namedViews_.front();
     }
+  const auto sourceKey = hexAddress(address) + ":" + representation + ":" +
+                         std::to_string(listing().generation()) + ":" +
+                         optionText;
+  Json original;
+  for (const auto &cached : namedViews_)
+    if (cached->sourceKey == sourceKey && !cached->original.empty()) {
+      original = Json::parse(cached->original);
+      break;
+    }
   // A hit answers from its finished document without pretending the mutable
   // Session still holds this function. Graph/IR requests prepare it normally.
-  prepareFunction(address, representation);
+  if (original.is_null())
+    prepareFunction(address, representation);
   // Whole-program VM preparation can analyze(), invalidating the listing and
   // advancing the revision. Rebuild aliases and stamp the prepared context;
   // never keep an alias reference across that invalidation.
@@ -1038,9 +1101,10 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
   {
     // The whole function, from as many engine pages as it fills: the engine
     // emits it once and pages it from there.
-    Json full;
+    Json full = std::move(original);
     auto backendRepresentation = representation;
-    for (std::size_t next = 0;;) {
+    for (std::size_t next = 0;
+         full.is_null() || !full.value("complete", false);) {
       auto page = backendJson(
           sourceView && extended && !engineOptions.empty()
               ? extended(session_, address, backendRepresentation.c_str(), next,
@@ -1094,13 +1158,15 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       next = following.get<std::size_t>();
     }
     full["complete"] = true;
-    for (const auto &reason : staleVariableTypes)
-      full["stale_variable_types"].push_back(reason);
     full["next_offset"] = nullptr;
     full["representation"] = representation;
     full["source_options"] = options;
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
+    if (sourceView)
+      document->original = full.dump();
+    for (const auto &reason : staleVariableTypes)
+      full["stale_variable_types"].push_back(reason);
     if (sourceView)
       CodeEdits::spellIdentifierSymbols(full);
     // The resolver below runs other operations, so the decoration names
@@ -1217,13 +1283,15 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                    document->orderedCodeNames);
     document->value = std::move(full);
     document->key = key;
+    document->sourceKey = sourceKey;
     // If resolving source names changed the listing while decorating this
     // document, it remains usable for this response but is not reusable yet.
     if (cacheKey() != key)
       return document;
     const auto jsonBytes = namedViewJsonBytes(document->value);
     auto overhead =
-        sizeof(NamedView) + 8 * sizeof(void *) + document->key.capacity() + 1;
+        sizeof(NamedView) + 8 * sizeof(void *) + document->key.capacity() + 1 +
+        document->sourceKey.capacity() + 1 + document->original.capacity() + 1;
     for (const auto *bounds :
          {&document->rowBounds, &document->referenceBounds,
           &document->sourceNameBounds, &document->codeNameBounds}) {
@@ -1244,6 +1312,14 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                 sizeof(std::size_t)) {
       document->bytes = jsonBytes + overhead +
                         document->lines.capacity() * sizeof(std::size_t);
+      for (auto it = namedViews_.begin(); it != namedViews_.end();) {
+        if ((*it)->sourceKey == sourceKey) {
+          namedViewBytes_ -= (*it)->bytes;
+          encodedPageBytes_ -= (*it)->pageBytes;
+          it = namedViews_.erase(it);
+        } else
+          ++it;
+      }
       while (!namedViews_.empty() &&
              (namedViews_.size() >=
                   ::neverd::limits::worker::kEngineMaxNamedViews ||
@@ -1280,7 +1356,15 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   const auto &text = namedView_["text"].get_ref<const std::string &>();
   const std::size_t total = text.empty() ? 0 : namedViewLines_.size();
   const auto start = std::min(offset, total);
-  const auto end = start + std::min(limit, total - start);
+  auto end = start + std::min(limit, total - start);
+  const auto byteAt = [&](std::size_t line) {
+    return line < namedViewLines_.size() ? namedViewLines_[line] : text.size();
+  };
+  while (end > start && byteAt(end) - byteAt(start) >
+                            ::neverd::limits::worker::kEngineMaxCodePageBytes)
+    --end;
+  if (end == start && start < total)
+    throw Error("budget_exceeded", "A code line exceeds the page byte budget");
   if (encoded)
     for (auto it = document->pages.begin(); it != document->pages.end(); ++it)
       if (it->start == start && it->end == end) {
@@ -1401,9 +1485,13 @@ void Engine::prepareFunction(std::uint64_t address,
   if (prepare || prepareView) {
     const std::string view =
         representation.empty() ? "source" : std::string(representation);
-    const bool ready = prepareView
-                           ? prepareView(session_, address, view.c_str())
-                           : prepare(session_, address);
+    bool ready = prepareView ? prepareView(session_, address, view.c_str())
+                             : prepare(session_, address);
+    // An engine that predates the graph's own view prepares the analysis
+    // the IR views share.
+    if (!ready && prepareView && view == "cfg" &&
+        error() == "invalid function view")
+      ready = prepareView(session_, address, "low");
     if (!ready) {
       const auto message = error();
       throw Error("analysis_failed",
@@ -1602,6 +1690,8 @@ Json Engine::metadata() const {
           {"format", ownedString(neverd_session_format_name(session_))},
           {"bitness", neverd_session_bitness(session_)},
           {"file_size", std::to_string(neverd_session_file_size(session_))},
+          // The input's identity, which links name it by.
+          {"sha256", inputHash()},
           // The project folder beside the input, and which build its files
           // describe: a project made for another build may not match.
           {"project", projectJson()},
@@ -1900,10 +1990,73 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
                   "Signatures changed during analysis restore");
   }
   execute("string_options", snapshot.at("string_options"));
+  // Automatic companions are also inputs, even when the owner did not choose
+  // them through pdb_load/dwarf_load. Keep their loaded-file stamps too.
+  restoredDebugInputs_ = Json::array();
+  if (headersFunction())
+    for (const auto &file : backendJson(headersFunction()(session_))
+                                .value("debug_info", Json::object())
+                                .value("files", Json::array()))
+      if (file.contains("path") && file.at("path").is_string() &&
+          !file.at("path").get_ref<const std::string &>().empty()) {
+        const auto path = file.at("path").get<std::string>();
+        restoredDebugInputs_.push_back(
+            {{"path", path}, {"stamp", signatureStamp(utf8Path(path))}});
+      }
+  restoredSnapshot_ = snapshot;
   return metadata();
 }
 
 bool Engine::comparesBinaries() { return ComparisonService::supported(); }
+
+Json Engine::updateAnalysisNames(const Json &snapshot) {
+  requireLoaded();
+  if (!readOnly_ || restoredSnapshot_.is_null())
+    throw Error("invalid_request",
+                "Only a restored analysis replica can update names");
+  auto before = restoredSnapshot_;
+  auto after = snapshot;
+  for (auto *value : {&before, &after}) {
+    auto &state = value->at("state");
+    state["code_edits"] =
+        CodeEdits::analysisState(state.value("code_edits", Json::array()));
+  }
+  if (before != after)
+    throw Error("stale_snapshot", "Analysis changed; restore a fresh replica");
+  // Check the retained inputs as well as the new writer-owned sidecar before
+  // changing anything. This operation never writes owner files or history.
+  (void)analysisSnapshot();
+  for (const auto &input : restoredDebugInputs_)
+    if (signatureStamp(utf8Path(input.at("path").get<std::string>())) !=
+        input.at("stamp"))
+      throw Error("input_changed",
+                  "A loaded debug file changed; restore analysis again");
+  const auto path = ownedString(neverd_session_file_path(session_));
+  if (fs::file_size(utf8Path(path)) != loadedSize_ ||
+      fs::last_write_time(utf8Path(path)) != loadedTime_)
+    throw Error("input_changed", "The analysis input changed; reopen it");
+  if (ProjectHistory::recoveryPending(utf8Path(path)))
+    throw Error("stale_snapshot", "Project edits require transaction recovery");
+  auto committed = ProjectHistory::readState(utf8Path(path));
+  if (committed.at("code_edits").size() >
+      ::neverd::limits::worker::kEngineReadCodeEditsRowsSizeLimit)
+    throw Error("invalid_request", "Invalid code edit table");
+  auto expected = ProjectHistory::normalizedState(snapshot.at("state"));
+  // Local declarations are loaded from disk when a replica opens. They must
+  // still match that analysis even though the snapshot has no types table.
+  expected["types"] =
+      declaresLocalTypes() ? typeDeclarationRows() : committed.at("types");
+  for (auto *state : {&committed, &expected})
+    for (auto &rename : state->at("renames"))
+      rename.erase("original");
+  if (committed != expected || typeLibrariesChanged())
+    throw Error("stale_snapshot",
+                "Project edits changed while updating analysis");
+  codeEdits_ = snapshot.at("state").value("code_edits", Json::array());
+  restoredSnapshot_ = snapshot;
+  localNamesChanged();
+  return {{"updated", true}};
+}
 
 Json Engine::execute(const std::string &operation, const Json &p) {
   return executeImpl(operation, p, nullptr);
@@ -1958,6 +2111,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return analysisSnapshot();
   if (operation == "analysis_restore")
     return restoreAnalysis(p);
+  if (operation == "analysis_update_names")
+    return updateAnalysisNames(p);
   if (operation == "identify") {
     // How each loader would read a file, before it is opened.
     const auto identify = identifyFunction();
@@ -2365,6 +2520,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     invalidate();
     ++revision_;
     projectId_ = "project-" + std::to_string(revision_);
+    restoredSnapshot_ = nullptr;
+    restoredDebugInputs_ = Json::array();
     Json warnings = Json::array();
     if (ProjectHistory::recoveryPending(path)) {
       try {
@@ -2830,8 +2987,6 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       operation == "disasm")
     analyzeBeforeFunctionQueries();
   if (operation == "functions") {
-    const auto offset =
-        sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
     const auto limit = sizeField(
         p, "limit",
         ::neverd::limits::worker::
@@ -2903,6 +3058,14 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     const auto start = std::size_t(first - functionOrder_.begin());
     const auto total = functionOrder_.size() - start;
+    const auto position = tablePagePosition(
+        p, total, limit,
+        [&](std::size_t index) -> std::optional<TableRowRange> {
+          return TableRowRange{
+              parseAddress(rows[functionOrder_[start + index]]["address"]
+                               .get<std::string>())};
+        });
+    const auto offset = position.offset;
     Json items = Json::array();
     for (auto i = std::min(offset, total); i < total && items.size() < limit;
          ++i) {
@@ -2923,12 +3086,14 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       items.push_back(std::move(item));
     }
     const bool complete = offset >= total || items.size() >= total - offset;
-    return {{"items", items},
-            {"offset", offset},
-            {"total", total},
-            {"complete", complete},
-            {"next_offset",
-             complete ? Json(nullptr) : Json(offset + items.size())}};
+    Json result{{"items", items},
+                {"offset", offset},
+                {"total", total},
+                {"complete", complete},
+                {"next_offset",
+                 complete ? Json(nullptr) : Json(offset + items.size())}};
+    position.annotate(result);
+    return result;
   }
   if (operation == "resolve") {
     const auto query = stringField(p, "query");
@@ -2939,20 +3104,6 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (query.starts_with("0x") || query.starts_with("0X")) {
       address = parseAddress(query);
       index = neverd_func_find_by_addr(session_, address);
-      if (index < 0) {
-        const auto count = neverd_func_count(session_);
-        for (int i = 0; i < count; ++i) {
-          const auto entry = neverd_func_entry(session_, i);
-          const int size = neverd_func_size(session_, i);
-          if (entry <= address && size > 0 &&
-              address - entry < static_cast<std::uint64_t>(size)) {
-            index = i;
-            break;
-          }
-        }
-      }
-      // Code a function keeps apart from its body, such as a cold path,
-      // belongs to that function.
       if (index < 0)
         if (const auto owner = listing().chunkOwner(address))
           index = neverd_func_find_by_addr(session_, *owner);
@@ -3298,7 +3449,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       item["address"] = item.at("va");
       item.erase("va");
     }
-    return page(items, p, {"name"});
+    return page(items, p, {"name"}, PageAddressMatch::SegmentRange);
   }
   if (operation == "listing")
     return listing().page(p);
@@ -3314,7 +3465,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   if (operation == "regions") {
     auto items = listing().regions();
     sortItems(items, p);
-    return page(items, p, {"name"});
+    return page(items, p, {"name"}, PageAddressMatch::RegionRange);
   }
   if (operation == "imports") {
     Json items = Json::array();
@@ -3544,6 +3695,19 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       result["type"] = backendJson(reply).at("type");
     }
     return result;
+  }
+  if (operation == "code_edit_prepare") {
+    requireLoaded();
+    if (p.value("kind", std::string()) != "name")
+      throw Error("invalid_request", "Only a local name can be prepared");
+    const auto document = namedView(parseAddress(stringField(p, "address")),
+                                    stringField(p, "representation"),
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported",
+                  "The engine does not expose editable source targets");
+    CodeEdits::validateChange(document->value, p);
+    return {{"ready", true}};
   }
   if (operation == "code_edit") {
     requireWriter();
@@ -3788,9 +3952,16 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       throw;
     }
     codeEdits_ = std::move(rows);
-    invalidate();
-    ++revision_;
-    return {{"saved", true}, {"address", hexAddress(address)}};
+    const bool localName = p.value("kind", std::string()) == "name";
+    if (localName)
+      localNamesChanged();
+    else {
+      invalidate();
+      ++revision_;
+    }
+    return {{"saved", true},
+            {"address", hexAddress(address)},
+            {"local_names_only", localName}};
   }
   if (operation == "save") {
     requireWriter();
@@ -4179,7 +4350,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
               {"kind", CodeItemKind},
               {"size", at.at("size")},
               {"saved", false}};
-    if (kind == "instruction" &&
+    if (kind == "instruction" && action != "undefine" &&
         at.value("user", std::string()) != CodeItemKind)
       throw Error("invalid_request",
                   "Code belongs to its function; delete the function to "
@@ -4603,8 +4774,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // An engine that pages no LLVM IR answers without text; its whole text
     // follows below.
     if (representation == "low" || representation == "med" ||
-        representation == "llvm" || representation == "c" ||
-        representation == "llvmc" || spelled) {
+        representation == "high" || representation == "llvm" ||
+        representation == "c" || representation == "llvmc" || spelled) {
       if (auto named = namedViewPage(address, representation, offset, limit,
                                      options, encoded))
         return std::move(*named);

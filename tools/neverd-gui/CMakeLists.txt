@@ -222,8 +222,9 @@ if(BUILD_TESTING)
     qt_add_executable(neverd-gui-tests tests/WorkbenchTests.cpp)
     target_link_libraries(neverd-gui-tests PRIVATE neverd_gui_app Qt6::Test)
     target_compile_definitions(neverd-gui-tests PRIVATE
-      TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>")
-    add_dependencies(neverd-gui-tests neverd-worker-test-server)
+      TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>"
+      TEST_GUI="$<TARGET_FILE:neverd-gui>")
+    add_dependencies(neverd-gui-tests neverd-worker-test-server neverd-gui)
     add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
       ${_neverd_controller_test_log_args})
     # Over a minute on a Linux runner, about twice that on macOS and Windows.
@@ -250,6 +251,9 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME NeverDGuiSmoke COMMAND neverd-gui --smoke-test)
   set_tests_properties(NeverDGuiSmoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
+  add_test(NAME NeverDGuiLinksCLI COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/link_cli_test.py" "$<TARGET_FILE:neverd-gui>")
+  set_tests_properties(NeverDGuiLinksCLI PROPERTIES TIMEOUT 120)
   if(NEVERD_TRANSLATIONS)
     qt_add_executable(neverd-gui-language-tests tests/LanguageSwitchTests.cpp)
     target_link_libraries(neverd-gui-language-tests PRIVATE neverd_gui_app Qt6::Test)

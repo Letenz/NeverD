@@ -124,6 +124,14 @@
         <translation>Копировать текущий адрес</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>Копировать ссы&amp;лку</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>Скопировать ссылку neverd:// на место под курсором, которую NeverD открывает там</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>Пере&amp;именовать...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>Выбрать закладку для перехода</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>Перейти по ссы&amp;лке...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>Перейти к месту, на которое указывает ссылка neverd:// или ida://</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -1638,6 +1654,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>Таблица изменилась до выбора адреса.</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>Этот выбор адреса заменён другим.</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>Рабочий процесс не нашёл запрошенный адрес.</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>Ссылки ещё индексируются…</translation>
     </message>
@@ -1648,6 +1676,18 @@
     <message>
         <source>Down</source>
         <translation>Вниз</translation>
+    </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>Функции изменились во время обновления таблицы.</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>Выбранные функции превышают лимит страниц таблицы.</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>Слишком много изменений выбора во время обновления таблицы.</translation>
     </message>
 </context>
 <context>
@@ -1786,6 +1826,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved call-site declaration needs review: </source>
         <translation>Сохранённое объявление места вызова требует проверки: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>Не удалось обновить исходный код: %1</translation>
     </message>
 </context>
 <context>
@@ -2189,18 +2233,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>Описание:</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>Найти в представлении</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>Текст:</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>Текст «%1» не найден среди загруженных строк</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -2875,6 +2907,62 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Pathfinding</source>
         <translation>Поиск путей</translation>
+    </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>Другие программы не могут открывать ссылки в этом окне: %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>Ссылка скопирована: %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>Переход по ссылке</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>Ссылка (neverd:// или ida://):</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>Это не ссылка для перехода: %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>Нет открытой программы, в которой можно перейти по ссылке.</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>Ссылка указывает другую сборку входного файла: её SHA-256 начинается с %1, а у %2 — с %3.</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>Ссылка указывает %1, а не %2; переход выполняется здесь.</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>Программа изменилась до перехода по ссылке.</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>Нет локального типа с именем %1.</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>Адрес ссылки %1 не входит в %2.</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>По адресу %1 нет закладки.</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>По адресу %1 нет функции.</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>Эту ссылку заменила другая.</translation>
     </message>
 </context>
 <context>
@@ -3641,6 +3729,97 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Не удалось сохранить файл символов в %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>Найти в представлении</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>Текст для поиска</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>Учитывать регистр</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>Слова целиком</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>Поиск по кругу</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Назад</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Далее</translation>
+    </message>
+    <message>
+        <source>Previous match (Shift+Enter or Shift+F3)</source>
+        <translation>Предыдущее совпадение (Shift+Enter или Shift+F3)</translation>
+    </message>
+    <message>
+        <source>Next match (Enter or F3)</source>
+        <translation>Следующее совпадение (Enter или F3)</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>&amp;Текст:</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Закрыть</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: текущая функция, включая свёрнутый код</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>Дизассемблер: загруженные строки, включая видимые адреса</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>Конец области поиска</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>Начало области поиска</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>Ожидание исходного кода…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>Нет текста для поиска</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>Введите текст для поиска</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>Совпадений нет</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 из %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n совпадение</numerusform>
+            <numerusform>%n совпадения</numerusform>
+            <numerusform>%n совпадений</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -5145,6 +5324,148 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Copy</source>
         <translation>Копировать</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>Ссылка начинается с neverd:// или ida://.</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>Ссылка Knowledge Exchange указывает файл для загрузки, а не место в программе.</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>Ссылка указывает входной файл перед ресурсом.</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>Ссылка указывает один ресурс, после имени входного файла, если оно есть.</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>Ссылка указывает functions, addresses, strings, segments, names, imports, exports, types или bookmarks, а не "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>Ссылка задаёт %1 только один раз.</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 — число, десятичное или после 0x, а не "%2".</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>У ссылки нет представления "%1".</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 — это от 8 до 64 шестнадцатеричных цифр SHA-256 входного файла, а не "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>Ссылка задаёт rva или ea, но не оба.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>Ссылка types указывает тип через name=, а не адресом.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>Ссылка types указывает тип через name=.</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>Ссылки %1 задают адрес через rva= или ea=.</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>Ссылки %1 указывают адрес, а не тип.</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>Ссылки %1 показываются в %2, а не в %3.</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>У %n запущенного NeverD открыты программы, но ссылка не указывает ни одну из них; добавьте имя входного файла.</numerusform>
+            <numerusform>У %n запущенных NeverD открыты программы, но ссылка не указывает ни одну из них; добавьте имя входного файла.</numerusform>
+            <numerusform>У %n запущенных NeverD открыты программы, но ссылка не указывает ни одну из них; добавьте имя входного файла.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>NeverD, в котором открыт %1, не ответил.</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>Открыто в NeverD, в котором открыт %1 (процесс %2).</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(не отвечает)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(программа не открыта)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>анализ завершён</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>идёт анализ</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD не запущен.</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>Ссылки neverd:// больше не открываются в NeverD.</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>Реестр не принял обработчик neverd://.</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>Ссылки neverd:// теперь открываются в %1.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>В macOS приложение NeverD само объявляет ссылки neverd://; они открываются в нём, когда оно находится в «Программах».</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>В macOS приложение NeverD само объявляет ссылки neverd://; чтобы прекратить это, удалите приложение.</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>Не удалось удалить %1.</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>Не удалось записать %1.</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>%1 записан, но xdg-mime не сделал его обработчиком ссылок neverd://.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>Ни в одном запущенном NeverD не открыта программа этой ссылки.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>Ни в одном запущенном NeverD не открыта программа ссылки, и среди недавно открытых файлов её нет; укажите и файл: neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>

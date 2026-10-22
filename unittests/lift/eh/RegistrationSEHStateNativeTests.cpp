@@ -505,7 +505,7 @@ TEST(RegistrationSEHStateNative, NarrowLogicalStoresUseFullPhysicalStates) {
       auto &Chain = *F.Source.ExceptionMetadata->Registration;
       auto &States = *F.Source.RegistrationStates;
       Chain.Scopes[1].EnclosingLevel = 0;
-      States.Blocks[2].Levels = {0};
+      States.Blocks[2].ExplicitLevels = {0};
       Chain.TryLevelStores[2].Width = Width;
       States.SEHStateStores[0].Width = Width;
       States.SEHStateStores[0].Transitions = {{0, 0}};
@@ -544,8 +544,8 @@ TEST(RegistrationSEHStateNative, NarrowSentinelDoesNotUseItsByteLiteral) {
     auto &Chain = *F.Source.ExceptionMetadata->Registration;
     auto &States = *F.Source.RegistrationStates;
     Chain.Scopes[1].EnclosingLevel = 0;
-    States.Blocks[2].Levels = {0};
-    States.Blocks[4].Levels = {-1};
+    States.Blocks[2].ExplicitLevels = {0};
+    States.Blocks[4].ExplicitLevels = {-1};
     Chain.TryLevelStores[2].Level = -1;
     States.SEHStateStores[0].Value = UINT32_MAX;
     States.SEHStateStores[0].Transitions = {{0, -1}};

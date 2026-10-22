@@ -717,6 +717,40 @@ integerValue(const ExprPtr &E, uint64_t X, uint64_t Y = 0,
   }
 }
 
+TEST(HighSymSimplify, PreservesSupportedAndRefusedSubByteProjections) {
+  uint64_t Random = 0x737562627974;
+  for (uint16_t Bytes : {1, 2, 4, 8})
+    for (unsigned Bits : {1u, 3u, 7u})
+      for (unsigned Low : {0u, 1u, unsigned(Bytes * 8 - Bits)}) {
+        SCOPED_TRACE(std::to_string(Bytes) + ":" + std::to_string(Bits) + ":" +
+                     std::to_string(Low));
+        auto X = HighExpr::makeVar(tempOfSize(1, Bytes));
+        auto Y = HighExpr::makeVar(tempOfSize(2, Bytes));
+        auto Before = HighExpr::makeBinop(
+            NdOp::INT_AND,
+            HighExpr::makeBinop(NdOp::INT_RIGHT, carrySum(X, Y),
+                                HighExpr::makeConst(Low, Bytes)),
+            HighExpr::makeConst((uint64_t(1) << Bits) - 1, Bytes));
+        auto After = simplified(Before);
+        // Some projections additionally require non-byte-width arithmetic;
+        // unsupported interiors must retain the original semantics as well.
+        for (unsigned I = 0; I < 512; ++I) {
+          Random ^= Random << 13;
+          Random ^= Random >> 7;
+          Random ^= Random << 17;
+          const auto A = Random;
+          Random ^= Random << 13;
+          Random ^= Random >> 7;
+          Random ^= Random << 17;
+          const auto B = Random;
+          auto Expected = llvm::APInt(Bytes * 8, A) + llvm::APInt(Bytes * 8, B);
+          Expected = Expected.lshr(Low) & ((uint64_t(1) << Bits) - 1);
+          EXPECT_EQ(integerValue(Before, A, B), Expected);
+          EXPECT_EQ(integerValue(After, A, B), Expected);
+        }
+      }
+}
+
 TEST(HighSymSimplify, SourceToggleReachesProvedAffineSynthesis) {
   for (uint16_t Bytes : {1, 2, 4, 8, 16, 32}) {
     SCOPED_TRACE(Bytes);
@@ -1389,6 +1423,59 @@ TEST(HighSymSimplify, EffectBoundariesInvalidateAvailableDefinitions) {
   simplifyExprSemantics(Body);
   EXPECT_EQ(Body[1].CallExpr.get(), Call.get());
   EXPECT_NE(Body.back().RetVal->str().find('|'), std::string::npos);
+}
+
+TEST(HighSymSimplify, ReusesLiveAffineWordInNonzeroResidueLookups) {
+  constexpr uint64_t Units[] = {0x9E3779B1, 0x85EBCA77, 0xC2B2AE3D, 0x27D4EB2F,
+                                0x165667B1, 0xD3A2646D, 0xA24BAED5, 0x9FB21C65};
+  for (uint16_t Bytes : {1, 2, 4, 8})
+    for (unsigned Extended : {0u, 1u, 2u}) {
+      if (Extended && Bytes == 8)
+        continue;
+      SCOPED_TRACE(std::to_string(Bytes) + ":" + std::to_string(Extended));
+      auto X = HighExpr::makeVar(tempOfSize(1, Bytes));
+      auto Y = HighExpr::makeVar(tempOfSize(2, Bytes));
+      auto T = HighExpr::makeVar(tempOfSize(3, Extended ? 8 : Bytes));
+      auto View = Extended ? integerCast(T, Bytes) : T;
+      auto C = [&](uint64_t V) { return HighExpr::makeConst(V, Bytes); };
+      auto Base = HighExpr::makeBinop(
+          NdOp::INT_ADD, X, HighExpr::makeBinop(NdOp::INT_MULT, C(3), Y));
+      auto Product = C(uint64_t(1) << (8 * Bytes - 7));
+      for (unsigned I = 0; I < 8; ++I) {
+        auto Factor = HighExpr::makeBinop(
+            NdOp::INT_ADD,
+            HighExpr::makeBinop(NdOp::INT_MULT, C(Units[I]), View),
+            C(Units[I] * (I == 7 ? 6 : I)));
+        Product = HighExpr::makeBinop(NdOp::INT_MULT, Product, Factor);
+      }
+      auto Original = HighExpr::makeBinop(
+          NdOp::INT_ADD, Product, HighExpr::makeBinop(NdOp::INT_ADD, X, Y));
+      std::vector<HighStmt> Body{
+          assignValue(T,
+                      Extended ? extendInteger(Base, 8, Extended == 2) : Base),
+          returnValue(Original)};
+      simplifyExprSemantics(Body);
+      EXPECT_NE(Body.back().RetVal->str().find(">>"), std::string::npos)
+          << Body.back().RetVal->str();
+      EXPECT_NE(Body.back().RetVal->str().find(T->str()), std::string::npos);
+      for (uint64_t I = 0; I < 512; ++I) {
+        const unsigned Width = Bytes * 8;
+        auto A = llvm::APInt(Width, I * 0x9e3779b97f4a7c15ULL);
+        auto B = llvm::APInt(Width, (I + 17) * 0xd1b54a32d192ed03ULL);
+        auto Word = A + 3 * B;
+        auto Want = llvm::APInt(Width, 1).shl(Width - 7);
+        for (unsigned J = 0; J < 8; ++J)
+          Want *= Units[J] * (Word + (J == 7 ? 6 : J));
+        Want += A + B;
+        std::unordered_map<int, uint64_t> Values{
+            {1, A.getZExtValue()},
+            {2, B.getZExtValue()},
+            {3, (Extended == 2 ? Word.sextOrTrunc(64) : Word.zextOrTrunc(64))
+                    .getZExtValue()}};
+        EXPECT_EQ(integerValue(Original, 0, 0, &Values), Want);
+        EXPECT_EQ(integerValue(Body.back().RetVal, 0, 0, &Values), Want);
+      }
+    }
 }
 
 TEST(HighSymSimplify, DefinitionBindingsPreserveAssignmentWidthAndSignedness) {

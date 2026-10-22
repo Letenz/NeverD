@@ -33,6 +33,8 @@
 
 namespace neverd {
 
+struct X86RegistrationCxxPhysicalFrame;
+
 /// Sentinel RegOff for a stack-passed parameter (Kind==Param with no backing
 /// register).  The emitter must not enter such a param into its register->arg
 /// map; a stack parameter is wired to the body purely by its display name.
@@ -212,9 +214,11 @@ struct MedOp {
   /// the definition on the intrinsic so SSA does not invent a live-in value
   /// when those transport operations are later propagated away.
   std::vector<MedVar> IntrinsicOutputs;
-  // Ordinary operations retain six inline slots. Source-bound calls may carry
-  // their full scalar argument list through the same SSA/liveness operands.
-  llvm::SmallVector<MedVar, 6> Inputs = llvm::SmallVector<MedVar, 6>(6);
+  // Unary and binary operations keep their inputs inline. Larger operations
+  // and source-bound calls grow through addInput, retaining every operand.
+  static constexpr unsigned InlineInputs = 2;
+  using InputStorage = llvm::SmallVector<MedVar, InlineInputs>;
+  InputStorage Inputs = InputStorage(InlineInputs);
   uint8_t NumInputs = 0;
   va_t Addr = 0;
   /// Sequence number of the original LowOp.  Synthetic MedOps keep -1, so a
@@ -253,6 +257,16 @@ struct MedOp {
   /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
   /// when the convention publishes none.
   int8_t CalleeVectorArgs = -1;
+  /// First operand carrying a checked callee's incoming x87 argument, or
+  /// zero when there is none. Internal consumers append it after ordinary
+  /// arguments; CRT stack calls use only their explicit x87 arguments.
+  uint8_t X87ArgumentInput = 0;
+  /// Number of x87 arguments beginning at X87ArgumentInput for a native CRT
+  /// import, or zero for the internal integer-returning consumer contract.
+  uint8_t X87ImportArguments = 0;
+  /// Physical slots whose retained payload the checked consumer may change:
+  /// its argument and its temporary stack space. Other ST values survive.
+  uint8_t X87ClobberedSlots = 0;
   /// The vector register count the call's own setup loads for a variadic
   /// callee (CallArgumentConvention::VariadicVectorCountRegister), or -1
   /// where it loads no constant one.
@@ -498,6 +512,9 @@ struct MedFunc {
   /// The operand remains the result after SSA propagation changes its carrier
   /// to a temporary or constant; this is independent of heuristic typing.
   bool ExplicitX87ReturnValue = false;
+  /// The final parameter is the checked incoming logical ST0 consumed by
+  /// every returning path. Its complete binary80 payload is transported.
+  bool ConsumesX87Argument = false;
   /// Bytes of the result every return path defines when that is fewer than
   /// the return register holds (a `bool` left in AL over an undefined RAX);
   /// 0 otherwise.  The bytes above belong to no result.
@@ -624,6 +641,10 @@ struct MedFunc {
   /// common SEH invocation frame. This function cannot be lowered to LLVM.
   bool HasUnresolvedSEHFrame = false;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
+  /// Independent replay of expanded shared helpers. The source states above
+  /// retain their original call occurrences and prologue receipt.
+  std::shared_ptr<const X86RegistrationCxxPhysicalFrame>
+      RegistrationPhysicalFrame;
 
   bool hasTypeInfo() const { return ReturnType != nullptr; }
 

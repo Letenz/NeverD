@@ -2098,3 +2098,18 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeQueryTrace.*` 覆盖独立查询结果、四个零扩展、参数/次数/顺序变异、未定义参数、与普通读取交错、全部分支、未受影响状态、严格编码/细节审计、损坏组合、预算、摘要绑定及静态/归纳拒绝。`NativeScalarQueryDescriptor.*` 验证通用描述限制和实际凭据绑定。
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+陷阱回归覆盖 CC、F1 和 CD 03 的精确保留、伪造元数据拒绝、无后继区域出口，以及精确和不足的操作预算。普通提供者中的陷阱不能继续到同指令或下一指令的 RETURN。原始证明还覆盖 UD2：不可达陷阱保留 Missing 审计，异常身份、字节或审计不匹配必须拒绝；可达陷阱阻止原始证明和相对普通返回候选的精化。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+这些检查验证声明区域，不证明异常处理或源码／原生等价。
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+入口对象回归检查符号复制、溢出槽及槽复制、运行时循环、丢失绑定与汇合、对象别名、完整宽／原子／分段写入、相对边界、无效声明、凭据变异，以及准备和操作预算的精确或不足边界及节点预算耗尽。独立的字节和寄存器判定器检查保留效果。须同时运行所属测试集及 raw 消费者拒绝测试；这些检查不提供整函数、编译后 C 或普通 ABI 证书。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

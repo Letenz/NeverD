@@ -190,8 +190,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   PipelineResult Result;
   Result.SourceImage = &Img;
   if (Opts.MedAnalysisOnly &&
-      (Opts.PatchMode || Opts.LiftMode || Opts.DeferHighIR || Opts.DumpHigh ||
-       Opts.DumpLlvm || Opts.SourceProjection ||
+      (Opts.PatchMode || Opts.LiftMode || Opts.DeferHighIR || Opts.DeferMedIR ||
+       Opts.DumpHigh || Opts.DumpLlvm || Opts.SourceProjection ||
        Opts.InterpreterSpecialization || Img.Arch == Arch::EVM ||
        Img.Arch == Arch::SBF)) {
     Result.Error = "MedIR analysis requires a native input and no output mode";
@@ -493,6 +493,17 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   if (Opts.DumpLow && Opts.EmitDumpOutput)
     dumpLowIR(Result.LowFuncs);
 
+  // A native view of the control-flow graphs alone reads nothing after
+  // LowIR.  A deeper view of the same run takes the stages below then
+  // (resumeMedIR), which keep this order.
+  if (Opts.DeferMedIR && !Opts.DumpLow && !Opts.DumpMed && !Opts.DumpHigh &&
+      !Opts.PatchMode && !Opts.LiftMode && !Opts.InterpreterSpecialization) {
+    Result.MedIRDeferred = true;
+    Result.Success = true;
+    Trace.finish(true);
+    return Result;
+  }
+
   // Phase 2: LowIR -> MedIR (parallel).
   Trace.start(NativePipelineTrace::Stage::MedIR);
   buildMedIR(Img, Opts, Result);
@@ -544,16 +555,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // consume HighIR postpone only that projection, retaining those proofs.
   if (Opts.DeferHighIR && !Opts.DumpHigh) {
     Trace.start(NativePipelineTrace::Stage::HighIR);
-    try {
-      prepareSourceMedIR(Img, Result, Dbg);
-      Result.HighIRDeferred = true;
-      Result.Success = true;
-    } catch (const std::exception &Error) {
-      Result.Error =
-          std::string("source MedIR preparation failed: ") + Error.what();
-    } catch (...) {
-      Result.Error = "source MedIR preparation failed: unknown exception";
-    }
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
     Trace.finish(Result.Success);
     return Result;
   }
@@ -576,6 +578,54 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   Result.Success = true;
   Trace.finish(true);
   return Result;
+}
+
+void Pipeline::prepareDeferredSource(const BinaryImage &Img,
+                                     PipelineResult &Result, DebugContext *Dbg,
+                                     PipelineAnalysisCache *Cache) {
+  try {
+    prepareSourceMedIR(Img, Result, Dbg, Cache);
+    Result.HighIRDeferred = true;
+    Result.Success = true;
+  } catch (const std::exception &Error) {
+    Result.Error =
+        std::string("source MedIR preparation failed: ") + Error.what();
+  } catch (...) {
+    Result.Error = "source MedIR preparation failed: unknown exception";
+  }
+}
+
+bool Pipeline::resumeMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
+                           PipelineResult &Result, DebugContext *Dbg) {
+  if (!Result.Success || !Result.MedIRDeferred)
+    return Result.Success;
+  if (Result.SourceImage != &Img) {
+    Result.Success = false;
+    Result.Error = "deferred MedIR belongs to a different image";
+    return false;
+  }
+  Result.MedIRDeferred = false;
+  Result.Success = false;
+  // The stages run() takes after LowIR for a native source or analysis view.
+  NativePipelineTrace Trace;
+  Trace.start(NativePipelineTrace::Stage::MedIR);
+  buildMedIR(Img, Opts, Result);
+  if (!Result.Error.empty()) {
+    Trace.finish(false);
+    return false;
+  }
+  Trace.start(NativePipelineTrace::Stage::NoReturnVerify);
+  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
+                            importCallAddresses(Img));
+  recognizeLibraries(Img, Opts, Result, Dbg);
+  Trace.start(NativePipelineTrace::Stage::HighIR);
+  if (Opts.DeferHighIR)
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
+  else
+    Result.Success = pipeline_detail::runHighIRStage(
+        Result, [&] { buildHighIR(Img, Opts, Result, Dbg); });
+  Trace.finish(Result.Success);
+  return Result.Success;
 }
 
 } // namespace neverd

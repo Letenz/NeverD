@@ -252,6 +252,9 @@ bool RegistrationStateSolver::frameObjectIsDisjointFromAdministration(
         (GSCookieSlot && Overlaps(*GSCookieSlot, 4)))
       return false;
   }
+  for (const auto &Condition : CxxCookieConditions)
+    if (Overlaps(Condition.FrameOffset, 4))
+      return false;
   return true;
 }
 

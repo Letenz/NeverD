@@ -45,6 +45,9 @@ def run(executable):
             opened = ok(client, "open", {"path": str(binary), "warm": False, "step_discovery": True})
             state = ready(client, opened)
             assert state["state"] == "pending", state
+            # No listing is built yet, so no count is published: a client
+            # would read 0 as every function gone and reload its lists.
+            assert "functions" not in state, state
             # Simulate the frontend event-loop round trip. The fixture's
             # blocking rebuild must not start before this waiting snapshot.
             time.sleep(0.02)

@@ -648,6 +648,28 @@ TEST(InterpreterSpecialization, UnknownIndirectAndOpaqueEffectsPublishNothing) {
 }
 
 TEST(InterpreterSpecialization,
+     TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit) {
+  for (Intrinsic Trap : {Intrinsic::Int3, Intrinsic::Int1})
+    for (bool SameInstruction : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Trap));
+      SCOPED_TRACE(SameInstruction);
+      Provider P;
+      const auto Effect =
+          op(NdOp::INTRINSIC, {}, {NdVar::cst(static_cast<uint64_t>(Trap), 2)});
+      if (SameInstruction)
+        P.add(0x100, {Effect, ret()});
+      else {
+        P.add(0x100, {Effect}, 0x101);
+        P.add(0x101, {ret()});
+      }
+      const auto Result = specializeInterpreter(P, {0x100});
+      EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+      EXPECT_TRUE(Result.Residual.Blocks.empty());
+      EXPECT_TRUE(Result.ExternalExits.empty());
+    }
+}
+
+TEST(InterpreterSpecialization,
      RuntimeFlagSnapshotsRetainEffectsAndBoundFiniteDispatch) {
   Provider P;
   defineModelledFlags(P);
@@ -1091,6 +1113,50 @@ TEST(InterpreterSpecialization, EntryConstantsCannotBindLifterTemporaries) {
   auto Result = specializeInterpreter(P, {0x100}, Options);
   EXPECT_EQ(Result.Status, SpecializationStatus::InvalidInput);
   EXPECT_TRUE(Result.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, EntryObjectsRequirePreparedProviderEvidence) {
+  Provider P;
+  SpecializationOptions O;
+  O.ExplicitMachineState = O.NormalNonfaultingExecution = O.X64CetDisabled =
+      true;
+  O.FrameBaseRegister = SymRegisterRange{x86reg::RSP, 8};
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};
+  O.EntryFrameExcludedObjects = {{{x86reg::RCX, 8}, 0, 32}};
+  O.RequireRestoredFrameAtReturn = true;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(R.Status, SpecializationStatus::InvalidInput);
+  EXPECT_EQ(R.EvaluatedOperations, 0U);
+  EXPECT_NE(R.Diagnostic.find("prepared provider"), std::string::npos);
+  EXPECT_TRUE(R.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, EntryObjectPreparationAccountsForEveryRecord) {
+  SpecializationOptions O;
+  O.ExplicitMachineState = O.NormalNonfaultingExecution = O.X64CetDisabled =
+      true;
+  O.FrameBaseRegister = SymRegisterRange{x86reg::RSP, 8};
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};
+  O.EntryFrameExcludedObjects = {{{x86reg::RCX, 8}, 0, 32},
+                                 {{x86reg::RDX, 8}, -16, 16}};
+  O.RequireRestoredFrameAtReturn = true;
+  auto Cost = x64::validateRawEnvironmentDeclarations(O);
+  ASSERT_TRUE(bool(Cost)) << llvm::toString(Cost.takeError());
+  ASSERT_GT(Cost->Bytes, 0U);
+  ASSERT_GT(Cost->Records, 0U);
+  O.MaxImagePreparationBytes = Cost->Bytes;
+  O.MaxImagePreparationRecords = Cost->Records;
+  auto Exact = x64::validateRawEnvironmentDeclarations(O);
+  ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+  for (auto Member : {&SpecializationOptions::MaxImagePreparationBytes,
+                      &SpecializationOptions::MaxImagePreparationRecords}) {
+    auto Short = O;
+    --(Short.*Member);
+    auto Refused = x64::validateRawEnvironmentDeclarations(Short);
+    ASSERT_FALSE(bool(Refused));
+    EXPECT_NE(llvm::toString(Refused.takeError()).find("budget exhausted"),
+              std::string::npos);
+  }
 }
 
 void imageWord(Provider &P, va_t Address, uint64_t Value, unsigned Bytes = 8) {

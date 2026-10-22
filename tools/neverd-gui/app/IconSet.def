@@ -92,6 +92,7 @@ NEVERD_ICON("jump_pseudocode", Navigation, "braces with an arrow")
 NEVERD_ICON("jump_disassembly", Navigation, "a listing with an arrow")
 NEVERD_ICON("jump_name", Navigation, "a name tag with an arrow")
 NEVERD_ICON("jump_segment", Navigation, "segment bars with an arrow")
+NEVERD_ICON("link", Navigation, "two links of a chain")
 NEVERD_ICON("sync", Navigation, "two opposed arrows")
 
 // Search.

@@ -399,11 +399,14 @@ void PathfinderView::choose(Role role) {
     dialog.accept();
   });
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  for (ChooserView *view : {functions, imports})
+  // These lists are created after the session's initial load notification.
+  for (ChooserView *view : {functions, imports}) {
+    view->model().reload();
     connect(view, &ChooserView::activated, &dialog, [&](Address address) {
       chosen = address;
       dialog.accept();
     });
+  }
   functions->focusFilter();
   if (dialog.exec() != QDialog::Accepted || !chosen)
     return;

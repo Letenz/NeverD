@@ -2201,3 +2201,18 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeQueryTrace.*` проверяет независимые ответы, четыре нулевых расширения, изменения селекторов/числа/порядка, неопределённые селекторы, чередование чтений, все ветви, сохранённое состояние, аудит кодировки/деталей, неверные пакеты, бюджеты, хеши и отказ статических/индуктивных API. `NativeScalarQueryDescriptor.*` проверяет общие ограничения описаний и привязку фактических квитанций.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+Регрессии проверяют точное сохранение CC, F1 и CD 03, отказ при поддельных метаданных, выходы без преемников и точные либо недостаточные бюджеты операций. Ловушка, предоставленная как обычная операция, не может продолжиться до RETURN в той же или следующей инструкции. Доказательство оригинала также охватывает UD2: недостижимые ловушки сохраняют аудит Missing, а несовпадения исключения, байтов или аудита отвергаются. Достижимые ловушки препятствуют доказательству оригинала и уточнению относительно кандидата с обычным возвратом.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+Эти проверки подтверждают заявленные области, но не обработку исключений и не эквивалентность исходного и машинного кода.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+Регрессии входных объектов проверяют символические копии, сохранённые и скопированные слоты, циклы времени выполнения, потерянные привязки и слияния, алиасы объектов, полные широкие/атомарные/сегментированные записи, относительные границы, неверные объявления, изменения квитанций и точные либо недостаточные бюджеты подготовки и операций, а также исчерпание бюджета узлов. Независимые байтовые и регистровые оракулы проверяют сохранённые эффекты. Запускать вместе профильные наборы и проверки отказа raw-потребителей; это не даёт сертификата целой функции, скомпилированного C или обычного ABI.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

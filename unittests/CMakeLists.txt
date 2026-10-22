@@ -172,6 +172,7 @@ add_neverd_unittest(NeverDItaniumHandlerTests
   LINK_COMPONENTS BackendC
 )
 add_neverd_unittest(NeverDSourceAnchorTests
+  lift/core/HighIRSourceMapTests.cpp
   lift/core/CSourceAnchorTests.cpp
   lift/core/CSourceDefinitionTests.cpp
   LINK_COMPONENTS Pipeline BackendC
@@ -292,6 +293,12 @@ if(TARGET neverd_shared)
     SessionCAPITests.cpp
     LINK_LIBS neverd_shared
   )
+  add_neverd_unittest(NeverDFunctionDisasmCAPITests
+    FunctionDisasmCAPITests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDFunctionDisasmCAPITests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDSearchCAPITests
     SearchCAPITests.cpp
     LINK_LIBS neverd_shared LLVMSupport

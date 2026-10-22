@@ -2248,3 +2248,18 @@ Les régressions de mémoire absolue couvrent des lots bornés contigus et dispe
 `NativeQueryTrace.*` couvre réponses indépendantes, quatre extensions par zéro, mutations des sélecteurs/nombres/ordres, sélecteurs indéfinis, lectures entrelacées, toutes les branches, état préservé, audits de codage/détails, groupes malformés, budgets, empreintes et refus statiques/inductifs. `NativeScalarQueryDescriptor.*` vérifie les limites génériques et les reçus effectifs.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+Les régressions couvrent la conservation exacte de CC, F1 et CD 03, le refus des métadonnées forgées, les sorties sans successeur et les budgets d’opérations exacts ou insuffisants. Un piège fourni comme opération ordinaire ne peut pas continuer vers un RETURN dans la même instruction ou la suivante. La preuve originale couvre aussi UD2 : les pièges inaccessibles gardent l’audit Missing et les divergences d’exception, d’octets ou d’audit sont refusées. Un piège accessible empêche la preuve originale et le raffinement vers un candidat à retour ordinaire.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+Ces vérifications qualifient les régions déclarées, sans prouver la gestion des exceptions ni l’équivalence source/native.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+Les régressions des objets d’entrée vérifient copies symboliques, sauvegardes et cases copiées, boucles à l’exécution, liaisons perdues et jonctions, alias, écritures larges/atomiques/segmentées complètes, bornes relatives, déclarations malformées, mutations des reçus et budgets exacts ou insuffisants de préparation et d’opérations, ainsi que l’épuisement des budgets de nœuds. Des oracles indépendants d’octets et de registres vérifient les effets conservés. Exécuter ensemble les suites propriétaires et les refus des consommateurs raw ; aucun certificat de fonction entière, C compilé ou ABI ordinaire n’en découle.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.

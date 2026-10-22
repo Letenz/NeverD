@@ -558,7 +558,7 @@ TEST(RegistrationSEHParentExit, RetainsOnlyAnAuthenticatedOrdinaryCallback) {
   Chain.SeededTryLevel = -1;
   Chain.Scopes = {{-1, 0x1700, 0x1750, false}, {0, 0, 0x1800, true}};
   for (auto &State : Function.RegistrationStates->Blocks)
-    State.Levels = {0};
+    State.ExplicitLevels = {0};
   ASSERT_TRUE(getRegistrationSEHNonlocalCalls(Function));
   EXPECT_EQ(getX86RegistrationSEHRetainedScopes(Function),
             std::optional<std::vector<uint32_t>>({1}));

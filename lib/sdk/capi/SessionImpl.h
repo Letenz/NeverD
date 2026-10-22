@@ -450,6 +450,8 @@ struct Session {
   /// The first function listed under \p Name, else the first listed at an
   /// address the image exports under it, taking the exports in order: a
   /// linker that folds identical functions exports several names for one.
+  /// On Mach-O only, a C spelling also finds its ABI-decorated symbol after
+  /// both exact-name lookups fail.
   std::optional<size_t> functionIndexNamed(llvm::StringRef Name);
   /// Emits the session's C (cEmitter()), keeping the image's function names
   /// from one emission to the next.  Those name the symbol table Symbols
@@ -1002,19 +1004,35 @@ struct Session {
     resetFunctionsFromImage();
   }
 
+  /// What a selected function's pipeline must have prepared for a view:
+  /// its control-flow graphs alone, the analysis every IR and source view
+  /// shares, or that with the HighIR source emission reads.
+  enum class PipelineDepth { LowIR, Analysis, HighIR };
+
   bool ensurePipeline(bool NeedHighIR = true) {
+    return ensurePipeline(NeedHighIR ? PipelineDepth::HighIR
+                                     : PipelineDepth::Analysis);
+  }
+
+  bool ensurePipeline(PipelineDepth Depth) {
     if (!Loaded) {
       setError("no binary loaded");
       return false;
     }
     if (PipelineFeatureGeneration != SigDB.featureGeneration())
       clearPipeline();
-    if (!PipeRan) {
-      LLVMCtx = std::make_unique<llvm::LLVMContext>();
+    // A deeper view of the same run resumes it with the run's own options.
+    const auto runOptions = [&] {
       PipelineOptions Opts;
       applyAnalysisOptions(Opts);
-      Opts.DeferHighIR = !NeedHighIR;
+      Opts.DeferMedIR = Depth == PipelineDepth::LowIR;
+      Opts.DeferHighIR = Depth != PipelineDepth::HighIR;
       Opts.AnalysisCache = &AnalysisCache;
+      return Opts;
+    };
+    if (!PipeRan) {
+      LLVMCtx = std::make_unique<llvm::LLVMContext>();
+      PipelineOptions Opts = runOptions();
       Pipeline ThePipeline;
       // Debug names already reached Img.Symbols at load time; handing the
       // context to the pipeline also carries source locations, declared sizes,
@@ -1023,7 +1041,11 @@ struct Session {
       PipelineFeatureGeneration = SigDB.featureGeneration();
       PipeRan = true;
     }
-    if (NeedHighIR && PipeResult.Success && PipeResult.HighIRDeferred) {
+    if (Depth != PipelineDepth::LowIR && PipeResult.Success &&
+        PipeResult.MedIRDeferred)
+      Pipeline().resumeMedIR(Img, runOptions(), PipeResult, decompileDebug());
+    if (Depth == PipelineDepth::HighIR && PipeResult.Success &&
+        PipeResult.HighIRDeferred) {
       PipelineOptions Opts;
       applyAnalysisOptions(Opts);
       Pipeline().resumeHighIR(Img, Opts, PipeResult, decompileDebug());
