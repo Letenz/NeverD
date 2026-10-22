@@ -65,6 +65,8 @@ struct Fixture {
         F &= Mask;
       else if (Kind == 8)
         F = F.trunc(Bits).sextOrTrunc(Width);
+      else if (Kind == 9)
+        F += (V[3] * V[4]).shl(Bits);
       Result *= F;
     }
     return Result;
@@ -72,13 +74,17 @@ struct Fixture {
 };
 
 Fixture fixture(SymContext &Ctx, unsigned Width, unsigned Degree, unsigned Kind,
-                unsigned Control = 0) {
+                unsigned Control = 0, unsigned PrefixBits = 0) {
   std::mt19937_64 Random(0x505245464958 + Width + 17 * Degree + 31 * Kind);
   auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
   auto Z = Ctx.mkVar("z", Width), U = Ctx.mkVar("u", Width);
   auto V = Ctx.mkVar("v", Width);
-  const unsigned Bits = std::min(Width, unsigned(std::bit_width(Degree - 1)));
-  const unsigned Zeros = Degree - std::popcount(Degree);
+  const unsigned Bits =
+      PrefixBits ? PrefixBits
+                 : std::min(Width, unsigned(std::bit_width(Degree - 1)));
+  unsigned Zeros = 0;
+  for (unsigned B = 1; B <= Bits; ++B)
+    Zeros += Degree >> B;
   auto Base = Ctx.mkAdd({X, Ctx.mkMul(Ctx.mkConst(Width, 3), Y),
                          Ctx.mkMul(Ctx.mkConst(Width, 5), Z)});
   const auto Mask = Ctx.mkConst(llvm::APInt::getLowBitsSet(Width, Bits));
@@ -116,6 +122,8 @@ Fixture fixture(SymContext &Ctx, unsigned Width, unsigned Degree, unsigned Kind,
       F = Ctx.mkZExt(Ctx.mkExtract(F, 0, Bits), Width);
     else if (Kind == 8)
       F = Ctx.mkSExt(Ctx.mkExtract(F, 0, Bits), Width);
+    else if (Kind == 9)
+      F = Ctx.mkAdd(F, Ctx.mkShl(Ctx.mkMul(U, V), Ctx.mkConst(Width, Bits)));
     Factors.push_back(F);
     Out.Factors.emplace_back(std::move(A), std::move(B));
   }
@@ -176,6 +184,132 @@ TEST(SymMBAPrefixResidue, RetainsNonzeroOffsetsAndCoefficientNeighbors) {
         }
         EXPECT_TRUE(Nonzero) << Width << ':' << Kind << ':' << Control;
       }
+}
+
+TEST(SymMBAPrefixResidue, ProvesCoarsePrefixesWithoutAssumingTheHigherBits) {
+  std::mt19937_64 Random(0x434f415253455052);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Degree : {4u, 16u, 64u, 256u})
+      for (unsigned Bits : {1u, 2u, 3u}) {
+        if (Bits >= std::bit_width(Degree - 1))
+          continue;
+        for (unsigned Kind = 0; Kind < 10; ++Kind) {
+          SymContext Ctx;
+          auto F = fixture(Ctx, Width, Degree, Kind, 0, Bits);
+          detail::WorkBudget Budget(65536);
+          size_t Storage = 1 << 24;
+          auto Output =
+              detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
+          ASSERT_TRUE(Ctx.isConstZero(Output))
+              << Width << ':' << Degree << ':' << Bits << ':' << Kind;
+          EXPECT_LT(Budget.used(), 65536u);
+          for (unsigned Trial = 0; Trial < 8; ++Trial) {
+            std::array<llvm::APInt, 5> V;
+            for (auto &Value : V)
+              Value = word(Width, Random);
+            const auto Want = F.oracle(V);
+            ASSERT_TRUE(Want.isZero());
+            EXPECT_EQ(Ctx.eval(F.Input, V), Want);
+          }
+        }
+      }
+}
+
+TEST(SymMBAPrefixResidue, RereadsEvenZeroPrefixesAndKeepsNonzeroNeighbors) {
+  std::mt19937_64 Random(0x4556454e50524546);
+  const std::array<unsigned, 4> Units{2, 3, 10, 7};
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Control = 0; Control < 3; ++Control) {
+      SymContext Ctx;
+      auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      auto U = Ctx.mkVar("u", Width);
+      auto Base = Ctx.mkAdd(X, Ctx.mkMul(Ctx.mkConst(Width, 3), Y));
+      auto Scale = llvm::APInt(Width, 1).shl(Width - 4);
+      if (Control == 2)
+        ++Scale;
+      llvm::SmallVector<SymRef, 8> Factors{Ctx.mkConst(Scale)};
+      for (unsigned I = 0; I < 4; ++I) {
+        auto Offset = Control == 1 && I == 3 ? 2 : I;
+        auto F = Ctx.mkMul(Ctx.mkConst(Width, Units[I]),
+                           Ctx.mkAdd(Base, Ctx.mkConst(Width, Offset)));
+        Factors.push_back(
+            Ctx.mkXor(F, Ctx.mkShl(U, Ctx.mkConst(Width, 1 + (I % 2 == 0)))));
+      }
+      auto Input = Ctx.mkMul(Factors);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      auto Output =
+          detail::foldProjectedProductResidues(Ctx, Input, Budget, Storage);
+      if (!Control)
+        ASSERT_TRUE(Ctx.isConstZero(Output)) << Width;
+      bool Nonzero = false;
+      for (unsigned Trial = 0; Trial < 256; ++Trial) {
+        std::array<llvm::APInt, 3> V;
+        for (auto &Value : V)
+          Value = word(Width, Random);
+        auto B = V[0] + 3 * V[1];
+        auto Want = Scale;
+        for (unsigned I = 0; I < 4; ++I) {
+          const auto Offset = Control == 1 && I == 3 ? 2 : I;
+          Want *= (Units[I] * (B + Offset)) ^ V[2].shl(1 + (I % 2 == 0));
+        }
+        Nonzero |= !Want.isZero();
+        EXPECT_EQ(Ctx.eval(Input, V), Want);
+        EXPECT_EQ(Ctx.eval(Output, V), Want);
+      }
+      EXPECT_EQ(Nonzero, Control != 0) << Width << ':' << Control;
+      if (Control || Width != 64)
+        continue;
+      const size_t Work = Budget.used(), Bytes = (1 << 24) - Storage;
+      for (unsigned Short = 0; Short < 3; ++Short) {
+        detail::WorkBudget Exact(Work - (Short == 1));
+        size_t Remaining = Bytes - (Short == 2);
+        auto Repeated =
+            detail::foldProjectedProductResidues(Ctx, Input, Exact, Remaining);
+        EXPECT_EQ(Repeated, Short ? Input : Output);
+      }
+    }
+}
+
+TEST(SymMBAPrefixResidue, KeepsNativeNonzeroAffineRecoveryWithinBudget) {
+  std::mt19937_64 Random(0x414646494e454e5a);
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SymContext Ctx;
+    auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+    auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+    auto Scale = llvm::APInt(Width, 1).shl(Width - 8);
+    std::vector<llvm::APInt> Units;
+    llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Scale)};
+    for (unsigned I = 0; I < 8; ++I) {
+      auto A = (word(Width, Random) | 1).shl(I == 0);
+      auto B = I ? A * I : llvm::APInt(Width, 1);
+      Units.push_back(A);
+      Factors.push_back(
+          Ctx.mkAdd(Ctx.mkMul(Ctx.mkConst(A), X), Ctx.mkConst(B)));
+    }
+    auto Input = Ctx.mkAdd({Ctx.mkMul(Factors), Ctx.mkXor(X, Y),
+                            Ctx.mkMul(Ctx.mkConst(Width, 2), Ctx.mkAnd(X, Y)),
+                            Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+    MBAOptions Opts;
+    Opts.MaxWork = 65536;
+    Opts.VerifySamples = 0;
+    auto Output = simplifyMBADeep(Ctx, Input, Opts);
+    EXPECT_LT(Output.Work, Opts.MaxWork) << Width;
+    bool Nonzero = false;
+    for (unsigned Trial = 0; Trial < 128; ++Trial) {
+      std::array<llvm::APInt, 4> V;
+      for (auto &Value : V)
+        Value = word(Width, Random);
+      auto Product = Scale;
+      for (unsigned I = 0; I < 8; ++I)
+        Product *= Units[I] * V[0] + (I ? Units[I] * I : llvm::APInt(Width, 1));
+      Nonzero |= !Product.isZero();
+      auto Want = Product + V[0] + V[1] + V[2] + V[3];
+      EXPECT_EQ(Ctx.eval(Input, V), Want);
+      EXPECT_EQ(Ctx.eval(Output.Expr, V), Want);
+    }
+    EXPECT_TRUE(Nonzero) << Width;
+  }
 }
 
 TEST(SymMBAPrefixResidue, ExhaustsSmallWordSlopesMasksAndPerturbations) {
@@ -367,17 +501,19 @@ TEST(SymMBAPrefixResidue, HasIndependentFullWidthSMTProofs) {
   if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
     GTEST_SKIP() << "Z3 unavailable";
   for (unsigned Width : {8u, 16u, 32u, 64u})
-    for (unsigned Kind : {0u, 2u, 5u, 8u}) {
-      SymContext Ctx;
-      auto F = fixture(Ctx, Width, 4, Kind);
-      detail::WorkBudget Budget(65536);
-      size_t Storage = 1 << 24;
-      auto Output = detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
-      ASSERT_TRUE(Ctx.isConstZero(Output)) << Width << ':' << Kind;
-      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
-      EXPECT_EQ(Verifier(Ctx, F.Input, Output), SynthVerification::Equivalent)
-          << Width << ':' << Kind;
-    }
+    for (unsigned Kind : {0u, 2u, 5u, 8u})
+      for (unsigned Prefix : {0u, 1u}) {
+        SymContext Ctx;
+        auto F = fixture(Ctx, Width, 4, Kind, 0, Prefix);
+        detail::WorkBudget Budget(65536);
+        size_t Storage = 1 << 24;
+        auto Output =
+            detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
+        ASSERT_TRUE(Ctx.isConstZero(Output)) << Width << ':' << Kind;
+        solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
+        EXPECT_EQ(Verifier(Ctx, F.Input, Output), SynthVerification::Equivalent)
+            << Width << ':' << Kind;
+      }
 }
 
 } // namespace

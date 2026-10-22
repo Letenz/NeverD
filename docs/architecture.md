@@ -1455,6 +1455,17 @@ remain exact opaque atoms. These products try prefix maps before full-width
 affine recovery. Even factors can request additional precision individually,
 so removing their fixed zeros does not discard the needed observed bits. A
 zero prefix contributes only its proven width, never a full-word zero.
+Residue proofs try the precision suggested by the number of factors and the
+required zeros, then the remaining bounded prefixes if needed. This estimate
+only orders work: each attempt needs complete coefficient maps and a residue
+bound. It applies to arithmetic coefficients as well as bitwise wrappers,
+including scalar products retained around offset sums. Zero-valued prefixes
+of even factors can be reread at higher precision before removing their fixed
+zeros. Completed prefix queries are cached by handle and precision, while all
+attempts share cumulative work and scratch charges.
+Native scalar affine coordinates retain their cheap complete-map path; the
+extra projected read is reserved for wrappers, nonlinear monomials and wide
+coefficients, avoiding duplicated searches on ordinary nonzero residuals.
 For a nonzero product, a shared low-zero prefix can be factored through bitwise
 operations. Their remaining scalar units are reduced modulo the observed
 prefix under a bounded operand/work/storage charge. The opaque operands keep
@@ -1474,6 +1485,10 @@ and its normalized factored form, preserving simpler existing recovery paths.
 All candidates, wide constants and scratch consume the existing work/storage
 budgets; refusal retains the original product. These are shared symbolic-core
 rules, so CLI and GUI source optimization use them through their existing switches.
+The expression evaluation plan uses a compact handle-to-slot table and gathers
+its sorted, unique variable IDs during lowering. It avoids per-node hash
+allocations and a second reachable-DAG walk without changing evaluation steps,
+operand order, arbitrary-width semantics or the solver's work charges.
 HighC lowers a zero-extended sub-byte extract as a masked native-word operation
 with the exact extraction offset. The fragment is never materialized as a byte
 for signed extension, which would change its sign bit. Other unsupported

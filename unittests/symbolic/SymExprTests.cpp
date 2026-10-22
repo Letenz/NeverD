@@ -980,6 +980,46 @@ TEST(SymExpr, EvaluationPlanReportsTheVariablesItReads) {
   EXPECT_GT(Plan.numSteps(), 0u);
 }
 
+TEST(SymExpr, EvaluationPlanKeepsSharedInputsAfterContextGrowth) {
+  for (unsigned Width : {8u, 64u, 65u, 257u}) {
+    SymContext Ctx;
+    auto X = Ctx.mkVar("x", Width);
+    Ctx.mkVar("unused", Width);
+    auto Y = Ctx.mkVar("y", Width);
+    auto Shared = Ctx.mkAdd(X, Ctx.mkMul(Ctx.mkConst(Width, 3), Y));
+    auto Root = Shared;
+    for (unsigned I = 0; I < 40; ++I)
+      Root = Ctx.mkXor(Ctx.mkAdd(Root, Ctx.mkConst(Width, I)), Shared);
+    SymEvalPlan Plan(Ctx, Root);
+    // A plan uses reachable handles, not a prefix of the growing context.
+    for (unsigned I = 0; I < 1024; ++I)
+      Ctx.mkAdd(X, Ctx.mkConst(Width, I));
+    ASSERT_EQ(Plan.vars().size(), 2u);
+    EXPECT_EQ(Plan.vars()[0], Ctx.varId(X));
+    EXPECT_EQ(Plan.vars()[1], Ctx.varId(Y));
+    std::vector<llvm::APInt> Values{llvm::APInt(Width, 197),
+                                    llvm::APInt::getAllOnes(Width),
+                                    llvm::APInt(Width, 211)};
+    const auto Base = Values[0] + 3 * Values[2];
+    auto Want = Base;
+    for (unsigned I = 0; I < 40; ++I)
+      Want = (Want + I) ^ Base;
+    EXPECT_EQ(Plan.eval(Values), Want);
+    unsigned Reads = 0;
+    EXPECT_EQ(Plan.evalWith([&](uint32_t Id) {
+      EXPECT_NE(Id, 1u);
+      ++Reads;
+      return &Values[Id];
+    }),
+              Want);
+    EXPECT_EQ(Reads, 2u);
+    if (Width <= 64) {
+      std::vector<uint64_t> Narrow{197, ~uint64_t(0), 211};
+      EXPECT_EQ(Plan.evalU64(Narrow), Want.getZExtValue());
+    }
+  }
+}
+
 TEST(SymExpr, U64ArithmeticShiftByZeroKeepsTheWholeWord) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", 64);
