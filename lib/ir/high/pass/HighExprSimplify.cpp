@@ -22,6 +22,8 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
+#include "llvm/ADT/SmallVector.h"
+
 #include <optional>
 #include <unordered_set>
 
@@ -169,6 +171,98 @@ static ExprPtr asIntegerType(const ExprPtr &V, const TypeRef &Ty) {
   Cast->Type = Cast->CastTo = Ty;
   Cast->Operands = {V};
   return Cast;
+}
+
+/// Exact word identities that need no search. Require equal integer widths
+/// and discardable operands: identical-looking loads or calls are separate
+/// observations, and a narrowing conversion cannot be erased by absorption.
+static ExprPtr foldWordIdentity(const ExprPtr &E) {
+  if (!E || E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
+      (E->Op != NdOp::INT_OR && E->Op != NdOp::INT_AND &&
+       E->Op != NdOp::INT_XOR && E->Op != NdOp::INT_SUB &&
+       E->Op != NdOp::INT_ADD) ||
+      !E->Type || E->Type->Kind != NdTypeKind::Int || !E->Type->Size ||
+      E->Type->Size > 8 || !isEffectFree(E))
+    return nullptr;
+  // Undef occurrences do not name one stable word. Also bound the expanded
+  // tree, not just distinct DAG nodes, before recursive equality checks.
+  size_t Budget = ::neverd::limits::ir::kHighExprSimplifyIsEffectFreeBudget;
+  llvm::SmallVector<const HighExpr *, 8> Pending{E.get()};
+  while (!Pending.empty()) {
+    const auto *V = Pending.pop_back_val();
+    if (!V || !Budget-- || V->Kind == ExprKind::Undef || V->IndirectTarget ||
+        (V->Kind == ExprKind::Var && V->Var.Kind == MedVar::Unspecified))
+      return nullptr;
+    for (const auto &Operand : V->Operands)
+      Pending.push_back(Operand.get());
+  }
+  const auto Word = [&](const ExprPtr &V) {
+    return V && V->Type && V->Type->Kind == NdTypeKind::Int &&
+           V->Type->Size == E->Type->Size;
+  };
+  const auto Bits = [&](ExprPtr V) {
+    while (Word(V) && V->Kind == ExprKind::Cast && V->CastTo &&
+           V->CastTo->Kind == NdTypeKind::Int &&
+           V->CastTo->Size == E->Type->Size && V->Operands.size() == 1 &&
+           Word(V->Operands[0]))
+      V = V->Operands[0];
+    return V;
+  };
+  const auto Same = [&](const ExprPtr &A, const ExprPtr &B) {
+    return Word(A) && Word(B) && Bits(A)->structuralEq(*Bits(B));
+  };
+  const auto &A = E->Operands[0], &B = E->Operands[1];
+  if (!Word(A) || !Word(B))
+    return nullptr;
+  if (Same(A, B)) {
+    if (E->Op == NdOp::INT_OR || E->Op == NdOp::INT_AND)
+      return asIntegerType(A, E->Type);
+    if (E->Op == NdOp::INT_XOR || E->Op == NdOp::INT_SUB) {
+      auto Zero = HighExpr::makeConst(0, E->Type->Size,
+                                      ConstantAddressProvenance::Scalar);
+      Zero->Type = E->Type;
+      return Zero;
+    }
+  }
+  if (E->Op == NdOp::INT_OR || E->Op == NdOp::INT_AND) {
+    const NdOp Inner = E->Op == NdOp::INT_OR ? NdOp::INT_AND : NdOp::INT_OR;
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto &Nested = E->Operands[I], &Value = E->Operands[1 - I];
+      if (Nested->Kind == ExprKind::BinOp && Nested->Op == Inner &&
+          Nested->Operands.size() == 2 &&
+          (Same(Nested->Operands[0], Value) ||
+           Same(Nested->Operands[1], Value)) &&
+          Word(Nested->Operands[0]) && Word(Nested->Operands[1]))
+        return asIntegerType(Value, E->Type);
+    }
+  }
+  const auto Pair = [&](const ExprPtr &V, NdOp Op) {
+    return Word(V) && V->Kind == ExprKind::BinOp && V->Op == Op &&
+           V->Operands.size() == 2 && Word(V->Operands[0]) &&
+           Word(V->Operands[1]);
+  };
+  const auto SamePair = [&](const ExprPtr &L, const ExprPtr &R) {
+    return (Same(L->Operands[0], R->Operands[0]) &&
+            Same(L->Operands[1], R->Operands[1])) ||
+           (Same(L->Operands[0], R->Operands[1]) &&
+            Same(L->Operands[1], R->Operands[0]));
+  };
+  for (unsigned I = 0; I < 2; ++I) {
+    const auto L = Bits(E->Operands[I]), R = Bits(E->Operands[1 - I]);
+    // (a | b) + (a & b) = a + b, modulo the word width.
+    if (E->Op == NdOp::INT_ADD && Pair(L, NdOp::INT_OR) &&
+        Pair(R, NdOp::INT_AND) && SamePair(L, R)) {
+      auto Sum =
+          HighExpr::makeBinop(NdOp::INT_ADD, L->Operands[0], L->Operands[1]);
+      Sum->Type = E->Type;
+      return Sum;
+    }
+    // XOR's set bits are already contained in OR of the same words.
+    if (E->Op == NdOp::INT_AND && Pair(L, NdOp::INT_OR) &&
+        Pair(R, NdOp::INT_XOR) && SamePair(L, R))
+      return asIntegerType(R, E->Type);
+  }
+  return nullptr;
 }
 
 /// A constant mask observes only these bits. In particular, a masked status
@@ -865,6 +959,11 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
 
   if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2)
     return;
+
+  if (ExprPtr Identity = foldWordIdentity(E)) {
+    Replace(std::move(Identity));
+    return;
+  }
 
   // Two constants compare to a constant, at their width.
   if (E->Operands[0] && E->Operands[1] &&

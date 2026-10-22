@@ -71,6 +71,66 @@ void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
     Into[I] = std::max(Into[I], From[I]);
 }
 
+/// Copies whose destination is overwritten before any observation in this
+/// block. A syntactic read is not an argument use when, for example, XCHG
+/// copies an incoming scratch register into RBX just before CPUID defines
+/// EBX. Keep all bytes live at block exits and calls: this local proof never
+/// assumes a return convention or an omitted callee's register contract.
+std::set<size_t>
+overwrittenRegisterCopies(Arch A, const LowBlock &Block,
+                          const std::map<size_t, uint8_t> &MergeWrites) {
+  std::set<size_t> Copies;
+  if (A != Arch::X64 || !Block.ExceptionalSuccs.empty())
+    return Copies;
+  std::array<uint8_t, kX64GPRBytes / 8> Dead{};
+  auto Slice =
+      [&](const NdVar &V) -> std::optional<std::pair<unsigned, uint8_t>> {
+    const auto Family = V.isReg() ? gprFamilyOf(A, V.Offset) : std::nullopt;
+    if (!Family || !V.Size || V.Size > 8 || V.Offset % 8 + V.Size > 8)
+      return std::nullopt;
+    return std::pair{
+        *Family, static_cast<uint8_t>(((1u << V.Size) - 1) << (V.Offset % 8))};
+  };
+  for (size_t I = Block.Ops.size(); I-- > 0;) {
+    const LowOp &Op = Block.Ops[I];
+    switch (Op.Opcode) {
+    case NdOp::CALL:
+    case NdOp::INDIR_CALL:
+    case NdOp::BRANCH:
+    case NdOp::COND_BR:
+    case NdOp::INDIR_BR:
+    case NdOp::RETURN:
+      Dead.fill(0);
+      continue;
+    default:
+      break;
+    }
+    const auto Output = Slice(Op.Output);
+    const bool Unobserved =
+        Output && Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+        Op.Inputs[0].isReg() && Op.Output.Size == Op.Inputs[0].Size &&
+        Op.MemoryOrdering == NdMemoryOrdering::None &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !MergeWrites.count(I) &&
+        (Dead[Output->first] & Output->second) == Output->second;
+    if (Unobserved)
+      Copies.insert(I);
+    if (Output) {
+      uint8_t Written = Output->second;
+      if (const auto Merge = MergeWrites.find(I); Merge != MergeWrites.end())
+        Written = static_cast<uint8_t>((1u << Merge->second) - 1);
+      else if (Op.Output.Offset % 8 == 0 && Op.Output.Size == 4)
+        Written = 0xFF; // x86-64's 32-bit writes also define the high half.
+      Dead[Output->first] |= Written;
+    }
+    if (!Unobserved)
+      for (unsigned In = 0; In < Op.NumInputs; ++In)
+        if (const auto Input = Slice(Op.Inputs[In]))
+          Dead[Input->first] &= ~Input->second;
+  }
+  return Copies;
+}
+
 // MSVC 19.44 crashes when these helper types are function-local. Keep their
 // definitions private here without changing the save-area recognition.
 // An address as a base register family, how often that family had been
@@ -975,6 +1035,8 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     std::set<size_t> MergeReads;
     findMaskedMerges(Block, MergeWrites, MergeReads);
     findLaneMerges(Img.Arch, Block, MergeWrites, MergeReads);
+    const std::set<size_t> OverwrittenCopies =
+        overwrittenRegisterCopies(Img.Arch, Block, MergeWrites);
     const std::map<size_t, llvm::ArrayRef<uint64_t>> UnreadArguments =
         unreadSyscallArguments(Img, Block);
     auto ControlOf = [&](size_t OpIndex) {
@@ -1043,7 +1105,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
            ++In) {
         if (!Op.Inputs[In].isReg() || (In == 0 && MergeReads.count(I)) ||
             (In == 1 && SaveAreaSpills.count({BI, I})) ||
-            (In == 0 && Step.VectorCopy))
+            (In == 0 && (Step.VectorCopy || OverwrittenCopies.count(I))))
           continue;
         if (const auto Unread = UnreadArguments.find(I);
             Unread != UnreadArguments.end() &&

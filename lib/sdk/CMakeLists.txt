@@ -295,6 +295,21 @@ add_custom_command(TARGET neverd_shared POST_BUILD
         "${NEVERD_STAGED_SDK_DIRECTORY}"
     COMMENT "Copying SDK headers and legal notices next to libneverd")
 
+foreach(_neverd_windows_type_notices_dir
+    "$<TARGET_FILE_DIR:neverd_shared>/licenses/windows-types"
+    "${NEVERD_STAGED_SDK_DIRECTORY}/licenses/windows-types")
+  add_custom_command(TARGET neverd_shared POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${_neverd_windows_type_notices_dir}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSES/mingw-w64-headers.txt"
+        "${CMAKE_SOURCE_DIR}/LICENSES/phnt.txt"
+        "${CMAKE_SOURCE_DIR}/LICENSES/reactos-ddk.txt"
+        "${_neverd_windows_type_notices_dir}"
+    COMMENT "Copying Windows type library notices"
+    VERBATIM)
+endforeach()
+
 if(NEVERD_ENABLE_Z3)
   foreach(_neverd_z3_notices_dir
       "$<TARGET_FILE_DIR:neverd_shared>/licenses/z3"
