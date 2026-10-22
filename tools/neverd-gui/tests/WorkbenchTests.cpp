@@ -311,6 +311,18 @@ private slots:
              QVector<int>({3, 8}));
   }
 
+  void viewSearchWholeWordsRecognizesSupplementaryCharacters() {
+    const ViewSearchQuery query{QStringLiteral("v7"), Qt::CaseSensitive, true};
+    // Supplementary letters and combining marks remain part of a word on
+    // either side of a match. Emoji still delimit words.
+    QCOMPARE(query.matches(u"\U00010400v7 v7\U00010400 v7"),
+             QVector<int>({10}));
+    QCOMPARE(query.matches(u"\U0001D165v7 v7\U0001D165 v7"),
+             QVector<int>({10}));
+    QCOMPARE(query.matches(u"\U0001F600v7 v7\U0001F600 v7"),
+             QVector<int>({2, 5, 10}));
+  }
+
   void findInViewSearchesPseudocode_data() {
     QTest::addColumn<QString>("representation");
     QTest::newRow("pseudocode") << QStringLiteral("source");

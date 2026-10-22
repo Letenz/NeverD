@@ -1207,6 +1207,9 @@ complete multipage source, independent panes and retiring a source snapshot on
 function replacement or project close. Search must not issue a decompilation or
 move another pane merely to select a match. `viewSearchLiteralMatching*` checks
 the shared renderer/dialog matching rules without involving the worker.
+`viewSearchWholeWordsRecognizesSupplementaryCharacters` verifies that UTF-16
+surrogate pairs preserve letter and combining-mark word boundaries while emoji
+remain delimiters.
 The large-source case selects among 20,000 hits without replacing the document.
 The optional native-input case uses NEVERD_FIND_WORKER, NEVERD_FIND_INPUT,
 NEVERD_FIND_TARGET and optional NEVERD_FIND_PDB / NEVERD_FIND_TEXT. It copies
