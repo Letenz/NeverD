@@ -1988,11 +1988,15 @@ struct Listing::Impl {
     bool recovered = functionDisasm && native;
     bool complete = true;
     if (recovered) {
+      // A distant chunk projects its owner's recovered CFG. Selecting the
+      // chunk as an entry can publish a transient independent function and
+      // invalidate the listing again on the next owner selection.
+      const auto entry = ownerOf(index).entry;
       cursor = 0; // A continuation may precede its function's entry.
       std::optional<std::uint64_t> previousAddress;
       for (;;) {
         const char *raw = functionDisasm(
-            session, function.entry, cursor,
+            session, entry, cursor,
             ::neverd::limits::worker::kListingMaxDecodeChunk,
             NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK | NEVERD_DISASM_OPERANDS);
         if (!raw) {

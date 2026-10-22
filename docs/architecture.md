@@ -131,6 +131,12 @@ Cached and fetched jumps share cursor-placement rules; pending refreshes and
 partial item prefixes require a worker query.
 Function links can reuse a loaded item's worker-supplied function identity
 under the same context check; other addresses still resolve through the worker.
+The worker recovers distant function chunks through their owner's entry while
+keeping the decode cursor and cached projection inside the chunk. Reading a
+chunk must not register it as another function and churn the listing generation.
+GUI refreshes retain loaded context within the per-side query budget and keep a
+prefetch margin, so replacing unchanged rows does not shrink and regrow the
+window used to route branch arrows. Revision and navigation fences still apply.
 
 ## Checked alignment recovery
 
@@ -449,7 +455,15 @@ and `WindowsKernelX86.h`, and what a program's `<windows.h>`, the headers of
 the libraries programs most often call and phnt's native API (the `Nt`,
 `Zw`, `Rtl` and `Ldr` routines ntdll exports, the PEB and the TEB) declare
 into `WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`;
-mingw-w64's DDK declares no ARM64 kernel. phnt is read with mingw-w64's SDK
+ARM64 drivers join `WindowsKernelARM64.h`, generated for AArch64 from the
+hash-pinned public-domain ReactOS core DDK and MinGW provider headers.
+The generator corrects checked ARM64 context and record alignment without
+defining x86 architecture macros. Microsoft C anonymous typedef members keep
+their storage and promoted members in the shared type parser. ARM64 records
+whose pinned layouts disagree with the independent WDK comparison remain
+opaque, along with their by-value dependents; pointers and import declarations
+remain available. Image-specific symbols can supply complete layouts.
+phnt is read with mingw-w64's SDK
 for Windows 11 24H2, in place of `<winternl.h>`; `scripts/windows_types`
 supplies what it takes from Microsoft's SDK that mingw-w64 lacks or spells
 otherwise. Kernel generation also reads a hash-pinned, public-domain ReactOS
@@ -1211,8 +1225,29 @@ revision, listing generation and source transformation options identify a
 document. A hit can answer before preparing the mutable single-function Session;
 it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
+Background function discovery similarly stages cached chooser pages before
+replacing them, remapping persistent indexes by image address when rows move.
+Explicit filters, sorts, semantic edits and session changes still retire those
+reads through their normal invalidation paths.
 Documents own text, rows and edit anchors, and project or presentation changes
-invalidate them. After decoration, a document checks whether its row numbers
+invalidate their decorated pages. A confirmed local display-name edit retains
+the original source document within that same byte allowance and redecorates it
+without rerunning analysis or rebuilding the listing. Types, variable
+associations, stack corrections, image names and other edits keep their existing
+invalidation rules. An idle replica can consume `analysis_update_names` only
+when every snapshot input and non-name edit is unchanged and the committed
+code sidecar still matches; otherwise the GUI restores a fresh replica. Busy
+replicas retain the normal cancellation and retirement path. The optional
+`code_edit_prepare` read validates the owner's local target while the name
+dialog is open, without saving or changing revision. A GUI name refresh buffers
+all replacement pages before publishing them. The
+painted document remains intact during the read, and occurrence metadata maps
+the cursor and selection across changed spelling lengths. Folding and scroll
+positions survive publication. Cancellation, navigation and unload discard the
+buffer; a failed refresh keeps the old text readable but unavailable for edits
+or export. Settled assembly/list and graph views do not reload for a local name.
+After decoration, a
+document checks whether its row numbers
 and both ends of its name spans are monotone. Pages seek directly through those
 arrays when they are ordered; other producer orders and nested spans keep their
 original filtering order. Oversized documents remain readable without being

@@ -134,6 +134,10 @@ private:
   /// committed sidecars before any expensive operation is admitted.
   Json analysisSnapshot();
   Json restoreAnalysis(const Json &snapshot);
+  Json updateAnalysisNames(const Json &snapshot);
+  Json restoredSnapshot_;
+  Json restoredDebugInputs_ = Json::array();
+  void localNamesChanged();
   Json userState() const;
   Json codeEdits_ = Json::array();
   void reloadCodeEdits();
@@ -176,6 +180,8 @@ private:
   /// another function may replace the restricted pipeline while this survives.
   struct NamedView {
     std::string key;
+    std::string sourceKey;
+    Json original;
     Json value;
     std::vector<std::size_t> lines;
     // Decide once after decoration. Older engines may return unsorted rows

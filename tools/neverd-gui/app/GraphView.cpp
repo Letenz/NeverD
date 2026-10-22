@@ -51,7 +51,7 @@ GraphView::GraphView(Session &session, QWidget *parent)
     update();
   });
   connect(&session_, &Session::revisionChanged, this, [this] {
-    if (function_)
+    if (function_ && (!session_.queries().localNamesOnly() || waiting_))
       showFunction(*function_, pendingCursor_);
   });
   connect(&session_, &Session::generationChanged, this, [this] {

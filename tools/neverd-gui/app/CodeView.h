@@ -308,6 +308,10 @@ private:
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
   bool complete_ = false;
+  int pageLines_ = 0;
+  /// A checked name-only refresh keeps the painted document until every
+  /// replacement page arrives. Cancellation discards these pages together.
+  std::optional<QVector<QJsonObject>> refreshPages_;
   bool interrupted_ = false;
   bool foldPreludeAfterLoad_ = true;
   QSet<QString> blocksAfterLoad_;

@@ -138,6 +138,7 @@ struct MockSession {
            path.ends_with("source-export-fail.bin") ||
            path.ends_with("source-cache.bin") ||
            path.ends_with("source-cache-budget.bin") ||
+           path.ends_with("source-cache-refresh-budget.bin") ||
            path.ends_with("source-cache-prepare-fail.bin") ||
            path.ends_with("source-cache-ordered.bin") ||
            path.ends_with("source-cache-unordered.bin") ||
@@ -666,6 +667,15 @@ const char *neverd_dashboard_json(neverd_session_t s) {
   return copy(Json{{"hashes", {{"sha256", fixtureDigest(s)}}}}.dump());
 }
 int neverd_func_count(neverd_session_t s) {
+  auto &state = *session(s);
+  if (state.path.ends_with("chooser-refresh.bin") &&
+      std::filesystem::exists(
+          std::filesystem::u8path(state.path + ".discover")) &&
+      std::find(state.functions.begin(), state.functions.end(), Base + 8) ==
+          state.functions.end())
+    state.functions.insert(std::upper_bound(state.functions.begin(),
+                                            state.functions.end(), Base + 8),
+                           Base + 8);
   return static_cast<int>(session(s)->functions.size());
 }
 // The ordering fixture publishes one new identity. Its first listing rebuild
@@ -739,6 +749,8 @@ int neverd_func_size(neverd_session_t s, int index) {
 }
 const char *neverd_func_name(neverd_session_t s, int index) {
   const auto address = neverd_func_entry(s, index);
+  if (address == Base + 8 && session(s)->path.ends_with("chooser-refresh.bin"))
+    return copy("function_discovered");
   auto it = session(s)->names.find(address);
   if (it == session(s)->names.end() && address == Base + 0x150 &&
       session(s)->path.ends_with("pseudocode-navigation.bin"))
@@ -2399,13 +2411,17 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   }
   if (session(s)->sourceCacheFixture()) {
     auto &state = *session(s);
+    static const auto Instance =
+        std::chrono::steady_clock::now().time_since_epoch().count();
     if (!state.wholeProgramPrepared && state.preparedEntry != address) {
       state.error = "fixture source read used another function's pipeline";
       return nullptr;
     }
     ++state.sourcePages;
+    const bool refreshBudget =
+        state.path.ends_with("source-cache-refresh-budget.bin");
     const bool large = state.path.ends_with("source-cache-budget.bin");
-    const std::size_t total = large ? 9000 : 4;
+    const std::size_t total = refreshBudget ? 600 : large ? 9000 : 4;
     const auto first = std::min(offset, total);
     const auto end = first + std::min(limit, total - first);
     std::string text;
@@ -2420,7 +2436,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
         return std::string("  return value;\n");
       if (index == 3)
         return std::string("}\n");
-      return "// " + std::string(512, 'x') + "\n";
+      return "// " + std::string(refreshBudget ? 4096 : 512, 'x') + "\n";
     };
     std::size_t begin = 0;
     for (std::size_t i = 0; i < first; ++i)
@@ -2476,6 +2492,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                      {"code_names", names},
                      {"references", references},
                      {"fixture_prepares", state.sourcePrepares},
+                     {"fixture_instance", std::to_string(Instance)},
                      {"fixture_prepared_view", state.preparedView},
                      {"fixture_pages", state.sourcePages},
                      {"fixture_renders", state.sourceRenders}}

@@ -103,7 +103,15 @@ ListingView::ListingView(Session &session, const AddressSpace &space,
   connect(&session_, &Session::generationChanged, this, &ListingView::refresh);
   connect(&session_, &Session::opened, this, &ListingView::clear);
   connect(&session_, &Session::unloaded, this, &ListingView::clear);
-  connect(&session_, &Session::revisionChanged, this, &ListingView::refresh);
+  connect(&session_, &Session::revisionChanged, this, [this] {
+    // Local pseudocode names do not change assembly. Adopt the new revision
+    // only for settled rows; a pending semantic refresh must still complete.
+    if (session_.queries().localNamesOnly() && !pendingJump_ &&
+        contentSerial_ == serial_ && generation_ == session_.generation())
+      revision_ = session_.revision();
+    else
+      refresh();
+  });
   updateMetrics();
 }
 
@@ -222,8 +230,16 @@ void ListingView::refresh() {
         cursor->content += contentKind(lines_[i].kind);
     }
   }
-  request(Fetch::Refresh, top.item, top.sub, JumpContextBefore,
-          ::neverd::limits::gui::kListingViewPageLines, cursor);
+  // Keep the loaded context instead of shrinking to a jump-sized window and
+  // immediately prefetching it again. Both paints would route the same visible
+  // branches through different gutter columns. A bounded refresh can discard
+  // distant cached rows, but must leave a prefetch margin around the viewport.
+  const int margin = ::neverd::limits::gui_config::kListingViewPrefetchMargin;
+  const int limit = ::neverd::limits::gui::kListingViewRefreshContextLines;
+  const int before = std::clamp(top_, margin, limit);
+  const int after = std::clamp(int(lines_.size()) - top_,
+                               std::min(visibleLines() + margin, limit), limit);
+  request(Fetch::Refresh, top.item, top.sub, before, after, cursor);
 }
 
 void ListingView::request(Fetch kind, Address address, int sub, int before,

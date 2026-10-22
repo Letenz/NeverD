@@ -2695,6 +2695,15 @@ void MainWindow::rename() {
         return;
       bool ok = false;
       const auto current = target.value("name").toString();
+      if (!address)
+        session_.prepareCodeName({{"address", hexAddress(function)},
+                                  {"representation", representation},
+                                  {"source_options", sourceOptions},
+                                  {"kind", "name"},
+                                  {"original", target.value("original")},
+                                  {"name", target.value("original")},
+                                  {"identity", target.value("identity")}},
+                                 epoch);
       const auto name =
           QInputDialog::getText(this, tr("Rename"), tr("New name:"),
                                 QLineEdit::Normal, current, &ok)

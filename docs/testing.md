@@ -1139,6 +1139,51 @@ canonical-address and exact legacy-text checks. The GUI controller's `high-ir`
 row verifies both Tab directions; the optional `native-high-ir` row uses CPUID
 from a real worker and native file. The worker native-mapping test includes HighIR.
 
+`NeverDWorkerLocalNameCache` checks unchanged preparation/page counters through
+repeated local renames, clearing aliases, readonly replica updates, rejected
+collisions and obsolete targets. Changed input identities, annotations and
+source comments cannot enter the name-only refresh path, and a stale committed
+sidecar is refused without changing the replica. The workbench's
+`localNameEditsReuseTheIdleAnalysisReplica` also checks the process identity,
+unchanged preparation counters and full retirement after a source comment.
+`localNameLatencyOnOptionalNativeInput` accepts `NEVERD_RENAME_BENCH_WORKER`,
+`NEVERD_RENAME_BENCH_INPUT`, optional `NEVERD_RENAME_BENCH_PDB`, the function's
+`NEVERD_RENAME_BENCH_TARGET` and selected `NEVERD_RENAME_BENCH_LOCAL`. It reports
+dialog preparation separately from confirmed rename to complete code refresh;
+absent external inputs are skipped, not native performance evidence.
+Completed local-name refreshes use larger bounded pages. The worker and
+workbench checks also request a document larger than one page's byte allowance
+and verify every line survives its returned continuations.
+The workbench observes that refresh throughout the read: it must never expose a
+partial document or move either scrollbar. It checks the cursor and complete
+selection after changing identifier length, and cancellation, function switches
+and closing a project must retire buffered pages. The optional native rename
+case selects the GS-based thread lookup, preserving the folded prelude and its
+place through successive renames.
+Local name edits leave settled assembly and graph views alone; source comments
+retain semantic invalidation.
+
+`functionsClicksKeepTheLoadedListAndDocument` checks selection and activation
+against a fixture and optional native input, including revisiting a function.
+`backgroundFunctionDiscoveryKeepsSelection` inserts a function before loaded rows
+and checks persistent selection, sorting, filtering and retiring an obsolete
+background refresh.
+
+`listingRefreshKeepsItsContextAndArrows` observes every viewport paint through
+repeated refreshes, checks retained context, branch-gutter pixels and cursor
+placement, then verifies a real comment update and superseding navigation.
+`NeverDWorkerPEFunctionParts` checks a chained cold part's owner, recovered
+instructions, references and stable function inventory across repeated reads.
+`NeverDWorkerCLIPEFunctionParts` additionally checks CLI entry inventories,
+linear disassembly by name, export alias and entry address, cold-part references
+and a CLI function rename reopened in the worker under its original owner.
+`NeverDWorkerListingStability` is an optional large native-input regression:
+set `NEVERD_LISTING_STABILITY_INPUT`, `NEVERD_LISTING_STABILITY_ADDRESS` near a
+chunk boundary and optionally `NEVERD_LISTING_STABILITY_PDB`. It copies those
+inputs to a temporary directory, disables background analysis and alternates
+refresh/prefetch requests, requiring a stable inventory and listing generation
+after warmup. Missing external inputs are skips, not native qualification.
+
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
 It also checks that statement navigation without library or call-expression
@@ -1575,6 +1620,19 @@ Run these external-input checks with `--gtest_filter=SessionCAPIKernelInputs.*`.
 Without the two inputs they remain explicit skips. The Linux Lift qualification
 requires every `SessionCAPITest.*` case to execute and pass using repository
 fixtures; it does not claim Windows kernel input coverage.
+
+`HeaderLibrary.Arm64KernelKeepsItsOwnContextAndRecordAlignment` checks ARM64
+CONTEXT register offsets/alignment, lookaside records, I/O stack layout and
+provider alignment. `DriverProvidersHaveExactConfigurationCallContracts`
+checks x86, x64 and ARM64 declarations.
+`SessionCAPITest.DriverProviderImportsUseTheirDeclaredSourceABI` loads linked
+x64 and ARM64 driver fixtures through both HighC and LLVM C;
+`ARM64ImportsPassWhatTheirPrototypesCount` covers user-mode imports, including
+stack parameters and LLVM C. Run these with `NeverDAAPCS64CallContractTests`
+and `TypeParse.*`. Microsoft C anonymous typedef-member tests cover both
+pointer widths, packed records, promoted members and incomplete-type refusal.
+These are declaration, layout and source-generation checks, not execution of
+a driver on native Windows ARM64 hardware.
 `LocalTypesDebugContext.TypesTheFunctionsDebugInformationLeavesUntyped` covers
 the conversion and which functions take a prototype without a program.
 `LocalTypesDebugContext.TypesTheFunctionsByTheNamesTheyAreShownUnder` covers
