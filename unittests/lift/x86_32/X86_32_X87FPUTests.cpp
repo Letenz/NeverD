@@ -1624,6 +1624,56 @@ TEST(X87CallStack, SelectedCallerKeepsTheConsumerDeclarationBinary80) {
     }
 }
 
+TEST(X87CallStack, CachedSelectionsKeepMissingPrefixBeforeBinary80) {
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      SCOPED_TRACE(NoOpt);
+      auto Image =
+          x87ConsumingCallImage(Format,
+                                {0x83, 0xec, 4, 0xdb, 0x1c, 0x24, 0x58, 0x01,
+                                 0xc8, 0x01, 0xd0, 0x03, 0x44, 0x24, 4, 0xc3},
+                                false, true);
+      auto &Bytes = Image.Segments[0].Data;
+      const std::array<uint8_t, 4> OutgoingStore{0x89, 0x04, 0x24, 0xb9};
+      const auto At = std::search(Bytes.begin(), Bytes.end(),
+                                  OutgoingStore.begin(), OutgoingStore.end());
+      ASSERT_NE(At, Bytes.end());
+      std::fill(At, At + 3, 0x90);
+      PipelineAnalysisCache Cache;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.NoOpt = NoOpt;
+      Options.AnalysisCache = &Cache;
+      llvm::LLVMContext Context;
+      for (const va_t Entry : {va_t(0x1000), va_t(0x1100), va_t(0x1000)}) {
+        Options.OnlyFunctionEntries = {Entry};
+        auto Source = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Source.Success) << Source.Error;
+        if (Entry != 0x1000)
+          continue;
+        const auto Caller =
+            llvm::find_if(Source.MedFuncs,
+                          [](const MedFunc &F) { return F.Entry == 0x1000; });
+        ASSERT_NE(Caller, Source.MedFuncs.end());
+        ASSERT_EQ(Caller->CallInfos.size(), 1u);
+        const auto &Args = Caller->CallInfos.front().Args;
+        ASSERT_EQ(Args.size(), 4u);
+        EXPECT_EQ(Args[2].Kind, MedVar::Unspecified);
+        EXPECT_EQ(Args[3].Size, 10u);
+        EXPECT_NE(Args[3].Kind, MedVar::Unspecified);
+      }
+      Options.OnlyFunctionEntries = {0x1000};
+      Options.LiftMode = true;
+      const auto Lift = Pipeline().run(Image, Context, Options);
+      EXPECT_FALSE(Lift.Success);
+      EXPECT_NE(Lift.Error.find("missing an ordinary argument"),
+                std::string::npos)
+          << Lift.Error;
+    }
+}
+
 TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
   for (auto [Architecture, Format] :
        {std::pair{Arch::X86, BinaryFormat::ELF},
