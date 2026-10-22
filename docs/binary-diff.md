@@ -28,6 +28,13 @@ Progress goes to stderr. `--list` supports `all`, `matched`, `changed`,
 primary entry address or an unambiguous name and returns paired original bytes,
 operands, instruction alignment, CFG and matching evidence.
 
+Ctrl+C cooperatively stops input loading as well as comparison work. Loading
+reports per-side stages on stderr. A stop before comparison publication exits
+with code 3, writes no JSON result, and leaves an existing `--save` file intact.
+Individual file reads, allocations and metadata helpers can delay the next stop
+checkpoint; this is not a hard stop deadline. Ordinary load failures exit with
+code 1.
+
 Function inventories support `--list-side primary|secondary`, `--list-search`
 (name or hexadecimal address), `--list-sort` (address, name, size, similarity,
 confidence or changes), and `--list-descending`. To inspect every retained

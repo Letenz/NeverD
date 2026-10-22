@@ -982,6 +982,10 @@ uses authored raw bodies. The real Qt picker test uses 417 raw functions to
 cross the page boundary, then checks search, selection, address zero, displaced
 pairs, undo, cancellation and revision invalidation. These are UI and inventory
 contracts, not matching-quality or throughput measurements.
+The CLI regression sends SIGINT during each input's actual hashing phase,
+requires exit 3 with empty result output, preserves an existing saved report,
+then runs an ordinary comparison again. Child SIGINT delivery is tested on
+POSIX hosts; Windows reports this specific delivery check as skipped.
 Function-detail tests cancel a real large native alignment while polling status,
 check its cached stop state and unclassified CFG, then refresh and time out a new
 calculation. The real Qt/worker test verifies that a stopped page exposes Retry

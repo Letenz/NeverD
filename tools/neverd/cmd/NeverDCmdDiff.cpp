@@ -29,8 +29,11 @@
 
 namespace neverd::cli {
 namespace {
-volatile std::sig_atomic_t Interrupted = 0;
-void interrupt(int) { Interrupted = 1; }
+// The signal handler and joined loader/monitor threads share only this
+// lock-free atomic. No allocation, I/O or SDK operation runs in the handler.
+static_assert(std::atomic<bool>::is_always_lock_free);
+std::atomic<bool> Interrupted{false};
+void interrupt(int) { Interrupted.store(true, std::memory_order_relaxed); }
 std::string take(const char *Text) {
   const std::string Result = Text ? Text : "";
   neverd_free_string(Text);
@@ -128,6 +131,26 @@ void progress(void *Context, const char *Phase, neverd_va_t Done,
     S.Last = Now;
   }
 }
+struct InputProgress {
+  const char *Side;
+  ProgressState Output;
+  std::atomic<bool> Failed{false};
+  static void report(void *User, const char *Stage, neverd_va_t Done,
+                     neverd_va_t Total, const char *) noexcept {
+    auto &State = *static_cast<InputProgress *>(User);
+    try {
+      const auto Phase = std::string(State.Side) + ":load:" + Stage;
+      progress(&State.Output, Phase.c_str(), Done, Total);
+    } catch (...) {
+      State.Failed.store(true, std::memory_order_relaxed);
+    }
+  }
+  static int cancelled(void *User) noexcept {
+    const auto &State = *static_cast<InputProgress *>(User);
+    return Interrupted.load(std::memory_order_relaxed) ||
+           State.Failed.load(std::memory_order_relaxed);
+  }
+};
 } // namespace
 
 int runStructuralDiff() {
@@ -267,16 +290,31 @@ int runStructuralDiff() {
         !DiffFlowRegionAnchor.getNumOccurrences())
       throw std::runtime_error(
           "--flow-region-coordinates requires --flow-region-anchor");
+    Interrupted.store(false, std::memory_order_relaxed);
+    const auto Previous = std::signal(SIGINT, interrupt);
+    if (Previous == SIG_ERR)
+      throw std::runtime_error("cannot install comparison interrupt handler");
+    const auto RestoreSignal =
+        llvm::scope_exit([&] { std::signal(SIGINT, Previous); });
     for (const auto &[S, Path] :
          {std::pair{A, &DiffFileA}, std::pair{B, &DiffFileB}}) {
       llvm::errs() << "diff: loading " << Path->getValue() << '\n';
-      if (!neverd_session_load(S, Path->c_str()))
+      InputProgress Load{S == A ? "primary" : "secondary", {}};
+      neverd_session_set_load_progress(S, InputProgress::report, &Load);
+      const auto ClearProgress = llvm::scope_exit(
+          [&] { neverd_session_set_load_progress(S, nullptr, nullptr); });
+      const int Loaded = neverd_session_load_cancellable(
+          S, Path->c_str(), InputProgress::cancelled, &Load);
+      if (Load.Failed.load(std::memory_order_relaxed))
+        throw std::runtime_error("could not report input loading progress");
+      if (Loaded == -2 || Interrupted.load(std::memory_order_relaxed)) {
+        llvm::errs()
+            << "diff: input loading stopped; no comparison was published\n";
+        return 3;
+      }
+      if (Loaded != 1)
         throw std::runtime_error("input load failed: " + takeLastError(S));
     }
-    Interrupted = 0;
-    const auto Previous = std::signal(SIGINT, interrupt);
-    const auto RestoreSignal =
-        llvm::scope_exit([&] { std::signal(SIGINT, Previous); });
     std::atomic<bool> StopMonitor = false;
     std::thread Monitor([&] {
       while (!StopMonitor.load(std::memory_order_relaxed)) {

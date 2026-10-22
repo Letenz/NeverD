@@ -3,9 +3,14 @@
 import argparse
 import ctypes
 import json
+import os
 import pathlib
+import queue
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 
 
 def run(args, expected):
@@ -17,6 +22,61 @@ def run(args, expected):
 def stable(document):
     document.pop("timings", None)
     return document
+
+
+def cancel_input_loading(args, root, small):
+    if os.name != "posix":
+        print("SKIP: CLI loading interrupt requires POSIX child SIGINT delivery")
+        return
+    large = root / "loading.bin"
+    with large.open("wb") as stream:
+        stream.truncate(64 * 1024 * 1024)
+    project = pathlib.Path(str(large) + ".neverd")
+    project.mkdir()
+    (project / "load.json").write_text(json.dumps({
+        "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": "0x1000"}))
+    saved = root / "interrupted-review.nddiff"
+    saved.write_text("existing review must survive\n")
+    for side in ("primary", "secondary"):
+        paths = (str(large), small) if side == "primary" else (small, str(large))
+        output = root / f"stopped-{side}.json"
+        with output.open("w") as stdout:
+            process = subprocess.Popen([args.neverd, "diff", "--structural", "-a", paths[0],
+                                        "-b", paths[1], "--json", "--save", str(saved)],
+                                       stdout=stdout, stderr=subprocess.PIPE, text=True)
+            messages, captured = queue.Queue(), []
+
+            def drain():
+                for line in process.stderr:
+                    captured.append(line)
+                    messages.put(line)
+                messages.put(None)
+
+            reader = threading.Thread(target=drain, daemon=True)
+            reader.start()
+            try:
+                deadline = time.monotonic() + 15
+                while True:
+                    remaining = deadline - time.monotonic()
+                    assert remaining > 0, captured
+                    line = messages.get(timeout=remaining)
+                    assert line is not None, captured
+                    if line.startswith(f"diff: {side}:load:hash "):
+                        process.send_signal(signal.SIGINT)
+                        break
+                process.wait(timeout=15)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=15)
+                reader.join(timeout=5)
+                process.stderr.close()
+        assert process.returncode == 3, (side, process.returncode, captured)
+        assert "input loading stopped; no comparison was published" in "".join(captured), captured
+        assert output.read_text() == "", output.read_text()
+        assert saved.read_text() == "existing review must survive\n"
+    # An ordinary failed load remains an error, rather than a requested stop.
+    run([args.neverd, "diff", "--structural", "-a", str(root / "missing.exe"), "-b", small], {1})
 
 
 def ambiguity_pages(args, root):
@@ -77,6 +137,7 @@ def main():
             run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",
                  f"-DPATCH_LIMIT={limit}", args.fixture, "-o", str(root / f"{limit}.o")], {0})
         a, b = str(root / "17.o"), str(root / "9.o")
+        cancel_input_loading(args, root, a)
         base = [args.neverd, "diff", "--structural", "-a", a, "-b", b]
         saved = root / "review.nddiff"
         result = run(base + ["--json", "--save", str(saved)], {2, 3})
