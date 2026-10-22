@@ -750,7 +750,12 @@ ctest --test-dir build-release/unittests/allocator --output-on-failure
 
 `NeverDMimallocConfigure` checks explicit opt-out and suppression for combined,
 configuration-specific and LLVM sanitizer settings, plus Windows CRT/toolchain
-rejections, without fetching dependencies.
+rejections, without fetching dependencies. It also checks that upstream THP
+defaults and explicit `MI_ALLOW_THP` selections (`OFF`, `ON`, `FULL` and
+`DEFAULT`) survive reconfiguration. `NeverDWorkerTHPPolicy` checks the Linux
+worker's `MIMALLOC_ALLOW_THP` runtime overrides, complete C output and the SDK
+host's unchanged process policy. Kernels without `THP_enabled` in
+`/proc/PID/status` explicitly skip this check.
 Repeat the standalone runtime check with `-DNEVERD_ENABLE_MIMALLOC=OFF` and with
 `-DCMAKE_C_FLAGS=-fsanitize=address -DCMAKE_CXX_FLAGS=-fsanitize=address` to check
 the system-allocator paths.
@@ -790,7 +795,16 @@ timings. Check function counts, instruction counts and rejection/audit records
 for equality before attributing a speed difference to the allocator. Use
 `MIMALLOC_VERBOSE=1` for a separate activation check, not during timed runs.
 Decode-only results do not measure the allocation-heavy IR stages; an allocator
-change does not guarantee an improvement for every workload.
+change does not guarantee an improvement for every workload. For Linux THP
+comparisons, also record the process's `THP_enabled` state and the kernel's THP
+and defrag settings. Separate user CPU, system CPU and minor/major page faults
+in diagnostic runs: similar user CPU can conceal expensive kernel allocation
+work. Hold purge settings constant when isolating THP; do not change global
+kernel settings or mix instrumented and uninstrumented timings. Setting
+`-DMI_ALLOW_THP=OFF` at configure time or `MIMALLOC_ALLOW_THP=0` at runtime can
+reduce memory and allocation stalls, but can also slow hot decompilation.
+Qualify both cold and warm workloads before selecting it; NeverD retains the
+upstream default and preserves explicit choices.
 
 The mimalloc worker collects free pages after a request-free interval matching
 its configured purge delay. Check full source output after idle collection,

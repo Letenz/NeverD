@@ -1260,7 +1260,11 @@ analysis allocations use the executable's process allocator. Windows MSVC ABI
 executables instead import a shared mimalloc before their other dependencies;
 the matching redirection DLL overrides the dynamic CRT (`/MD` or `/MDd`),
 including later-loaded plugins. Both runtime DLLs travel with the executable.
-Applications embedding the SDK continue to own their allocator policy. On macOS, dependency
+Applications embedding the SDK continue to own their allocator policy.
+Linux executables preserve mimalloc's `MI_ALLOW_THP` build setting and the
+runtime `MIMALLOC_ALLOW_THP` override. Disabling transparent huge pages acts
+on that executable's process; loading the SDK does not impose this policy
+on its host or change system-wide kernel settings. On macOS, dependency
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
