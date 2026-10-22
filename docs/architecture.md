@@ -1106,7 +1106,7 @@ Older engines retain `neverd_prepare_function` and the decompiler-based
 preparation fallback. A failed switch
 clears the worker's prepared-entry marker before another view can reuse it.
 
-Consecutive restricted x64, AArch64 and ARM analyses may share a
+Consecutive restricted x64, i386, AArch64 and ARM analyses may share a
 session-owned `PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
 relocation-root and executable-owner indexes borrowed by the bounded raw x87
 graph and machine-body caches. Each selection owns independent output IR,
@@ -1166,6 +1166,14 @@ publication follows both fixed points; budget refusals and proof requirements
 remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
+
+`importPrototypeArguments` owns import counts and exact stack-slot placement.
+Omitted i386 callees read those facts for all imports in the image, retained by
+the existing import-count cache. The selected function still reads the
+summaries of its own calls. Omitted conversion, memo validation and warming
+share the same complete import view, so an unrelated import in another
+selection cannot change a cached callee's inputs. Declaration changes retire
+that view through `forgetDeclarations`; reuse still checks the values read.
 
 Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
 The workspace reuses only the temporary LowOp vector's storage: operations
@@ -1504,11 +1512,16 @@ slots promoted to SSA only. It preserves the lifted control flow without the
 LLVMC optimization pipeline; the module cache distinguishes these inspection
 modules from optimized source modules. Native CFG, ABI and exception recovery
 still precede emission. EVM and SBF keep their own LLVM emission paths.
-Native LowIR, MedIR, CFG and LLVM views postpone HighIR construction after the
+Native LowIR, MedIR and LLVM views postpone HighIR construction after the
 shared source MedIR call/return recovery. A later HighIR or HighC request resumes
 only that projection through the ordinary HighIR completion boundary; it does
-not relift instructions or mutate the MedIR retained by LLVM emission. Opening
-the worker's native CFG therefore does not build discarded pseudocode.
+not relift instructions or mutate the MedIR retained by LLVM emission. The CFG
+(`neverd_cfg_json`, the `cfg` function view and the worker's graphs) reads the
+selected function's LowIR alone, so its run also postpones MedIR and the source
+analysis (`Pipeline::resumeMedIR`). Any other view of the same selection
+resumes that run from its LowIR, through the stages and options a straight run
+takes; a graph therefore neither builds discarded pseudocode nor the callee
+signatures only source recovery reads.
 
 The LLVM IR view of a function (`neverd_ir_llvm`, and the `llvm` pages of
 `neverd_ir_view_json`) is that function moved into a module of its own, as
@@ -4899,7 +4912,14 @@ keeps its forwarder probes (`propagateForwardedCallArities`): a later run
 takes one where the callee summaries, user prototypes and names hold what the
 probe read under every key `recoverCallAbi` noted, so a new summary read in
 `recoverCallAbi` must note its key, and it may write summaries only at the
-recovered function's entry. Every normal
+recovered function's entry. The body keeps its recoveries as an omitted
+callee the same way (`recoverModuleCallAbi`): a later run whose summaries hold
+what a recovery read takes the summaries it left at the entry and the
+parameter count that bounds the run's calls, and on i386 what the second
+regparm pass reads of the body and gives. Where only that second pass reads
+differently, the body is recovered again from the summaries the first pass
+read. A Darwin run, whose recovery also reads the leaf callees of its own
+selection, keeps none. Every normal
 return must agree on the stack change, and a pushed result must be initialized
 without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges

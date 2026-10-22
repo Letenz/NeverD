@@ -1,10 +1,15 @@
-//===- InstructionRelocationsX86.cpp - x86 relocation fields -------------===//
+//===- X86InstructionRelocations.cpp - x86 relocation fields -------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Instruction relocation fields for X86.
+///
+//===----------------------------------------------------------------------===//
 
-#include "InstructionRelocationsDetail.h"
+#include "../InstructionRelocationsDetail.h"
 
 #include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
@@ -137,6 +142,23 @@ void addI386ELFFields(const BinaryImage &Img, const DecodedInsn &DI,
 }
 
 } // namespace
+
+bool isX86NarrowMemoryDisplacement(const BinaryImage &Img,
+                                   const DecodedInsn &DI, va_t FieldVA) {
+  // A sub-pointer memory operand cannot read a code pointer. Its relocated
+  // displacement names data even when it points into an executable segment.
+  if (!DI.Raw || !DI.Raw->detail)
+    return false;
+  const cs_x86 &X86 = DI.Raw->detail->x86;
+  if (X86.encoding.disp_size == 0 ||
+      DI.Addr + X86.encoding.disp_offset != FieldVA)
+    return false;
+  const unsigned PtrSize = Img.getPointerSize();
+  for (uint8_t I = 0; I < X86.op_count; ++I)
+    if (X86.operands[I].type == X86_OP_MEM)
+      return X86.operands[I].size != 0 && X86.operands[I].size < PtrSize;
+  return false;
+}
 
 std::optional<unsigned> maxAdjacentX86RelocatedFields(Arch A, unsigned Width) {
   // A four-byte displacement and immediate sit back to back in

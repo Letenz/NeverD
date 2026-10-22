@@ -28,6 +28,19 @@ regression executes generated C at O0/O2 for ELF and Mach-O; conflicting joins,
 narrowing and overflowing arithmetic retain negative coverage. ARM32 record
 placement and native non-x64 record-call execution remain unqualified.
 
+`I386CallContract.OmittedImportStackFactsDoNotDependOnTheSelection` switches
+between callers with different direct imports, with and without warming,
+across ELF, COFF and Mach-O. The omitted callee keeps its single stack
+parameter and reuses one conversion. Run `NeverDI386CallContractTests` with
+`NeverDPipelineOutcomeTests` and the other call-contract owners after changing
+these shared import facts.
+
+`HighCStoreForwarding.IncompleteFrameRecordsKeepTheirInteriorFields` checks
+lazy display-field completion for frame records and call-type overlays among
+scalar slots. Both member names and types retain ambiguous-owner refusal.
+Run the store-forwarding, source-dialect and local-types debug-context owners
+after changing frame-member queries.
+
 `AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
 terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
 calls. Independent O0/O2 fixtures run across relocation packing and available
@@ -866,6 +879,12 @@ The GUI unit cases `deepLinksTakeIdasFormAndRefuseWhatTheyCannotName` and
 instance selection. Controller cases `linksCopyAndOpenTheirPlaces` and
 `otherProgramsFindTheWorkbenchAndOpenLinksInIt` exercise copying, navigation,
 refusal without moving the cursor and the real local socket protocol.
+Discovery connects through the returned endpoint, including the full Windows
+pipe path. `laterLinksSupersedeWhileTheProgramOpens` checks replacement while
+the address space is pending; `laterLinksSupersedeAQueuedGraphView` first
+completes a link, then checks that a later accepted link retires the queued
+graph switch. Source-folding checks keep gutter folding separate from a focused
+mapped-reference selection, which must synchronize the assembly cursor.
 `instanceRequestsRespectTheirByteLimit` checks complete and incomplete requests
 at the request-size boundary, including requests without a newline and multiple
 bounded messages on one connection. `instanceServingCanBeDisabled` checks the
@@ -1013,6 +1032,11 @@ unchanged, keeps a cache built for other entries, and stops at the cache bound
 without evicting. `NeverDWorkerWarmFunctions` checks the worker's `warm` open
 option against the mock engine: off by default, a running pass, a restart
 after an edit, a full cache and an engine without preparation.
+
+`NeverDMedStackDeltaTests` checks shared stack-offset queries through PHI joins,
+the original depth boundary in both query orders, definition invalidation and
+distinct target stack-pointer references. Build that target for the focused
+check; `NeverDLiftTests` also includes the same cases.
 
 `MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
 DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on

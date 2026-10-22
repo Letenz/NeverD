@@ -97,6 +97,7 @@ void appendPEHeaderMapping(BinaryImage &Image, const PEHeaderMapping &Mapping,
   Region.Size = Region.FileSz = Header.Size;
   Region.Flags = Header.Flags;
   Region.Alignment = Mapping.FileAlignment;
+  Region.IsImageHeader = true;
   if (Image.LoadOnlyFunctionEntries.empty())
     Region.Data = Header.Data;
   // Retain every real COFF section's existing index.
@@ -127,8 +128,8 @@ bool matchesPEHeaderMapping(const BinaryImage &Image, size_t Index,
   const auto &Segment = Image.Segments[Index];
   const auto &Section = Image.Sections[Index];
   return Matches(Segment) && Matches(Section) &&
-         !Segment.ReadOnlyAfterRelocations && Section.Type == 0 &&
-         Section.SegmentName.empty() &&
+         !Segment.ReadOnlyAfterRelocations && Section.IsImageHeader &&
+         Section.Type == 0 && Section.SegmentName.empty() &&
          Section.Alignment == Mapping.FileAlignment;
 }
 } // namespace neverd::coff_loader

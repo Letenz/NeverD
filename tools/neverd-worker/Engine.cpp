@@ -823,7 +823,9 @@ void Engine::namesChanged() {
   functionOrder_.clear();
 }
 Json Engine::functionGraph(std::uint64_t address) {
-  prepareFunction(address, "low");
+  // A graph reads the function's LowIR alone; a source or IR view of the
+  // same function then continues its analysis.
+  prepareFunction(address, "cfg");
   return backendJson(neverd_cfg_json(session_, address), true);
 }
 void Engine::commentsChanged() {
@@ -1442,9 +1444,13 @@ void Engine::prepareFunction(std::uint64_t address,
   if (prepare || prepareView) {
     const std::string view =
         representation.empty() ? "source" : std::string(representation);
-    const bool ready = prepareView
-                           ? prepareView(session_, address, view.c_str())
-                           : prepare(session_, address);
+    bool ready = prepareView ? prepareView(session_, address, view.c_str())
+                             : prepare(session_, address);
+    // An engine that predates the graph's own view prepares the analysis
+    // the IR views share.
+    if (!ready && prepareView && view == "cfg" &&
+        error() == "invalid function view")
+      ready = prepareView(session_, address, "low");
     if (!ready) {
       const auto message = error();
       throw Error("analysis_failed",
