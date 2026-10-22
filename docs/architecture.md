@@ -1391,6 +1391,9 @@ coefficient difference still participates in the independent equality check.
 The shared expression builder inserts a nonconstant operand into an existing
 canonical product's sorted factors, preserving its leading coefficient and
 multiplicities. It snapshots operands before interning can relocate the arena.
+Batch substitution stores completed DAG replacements in a compact hash table,
+retaining simultaneous override semantics and sharing rebuilt subexpressions
+across all roots without allocating a separate hash node for each result.
 Both parsing and source expression reconstruction avoid re-flattening and
 re-sorting every growing product prefix; the resulting canonical node is
 unchanged. Canonical flat products and coefficient changes retain the same
@@ -1471,9 +1474,38 @@ including scalar products retained around offset sums. Zero-valued prefixes
 of even factors can be reread at higher precision before removing their fixed
 zeros. Completed prefix queries are cached by handle and precision, while all
 attempts share cumulative work and scratch charges.
+Prefix queries retain both known-zero and known-one bits through arithmetic
+and bitwise nodes. Multiplication combines the guaranteed zero prefixes of
+its operands; addition keeps only the common known low prefix, including its
+carry. Unknown bits remain unknown, and the affine reader accepts a constant
+only when every bit of the requested prefix is proved. This lets independently
+masked factors establish a high-bit disturbance without assuming any relation
+between their inputs. Partial results use the same bounded request cache and
+cumulative work/storage charges. Nonlinear atoms with a fully known prefix can
+contribute a constant to an additive factor without expanding their product.
+Nonzero residue branches may keep an exact opaque factor. Every factor's
+complete coefficient map must first agree with the common modular base. In
+each base residue, the known low values give conservative trailing-zero bounds
+for all cofactors. A factor becomes a constant only when those bounds hide
+all of its unobserved bits; at most one remaining factor is retained. Its
+coefficient table can use a narrower proved reading without assuming the
+factor's upper bits are zero. The emitter compares retained factors with
+combined coefficient tables for shared atoms. Known low bits also reduce an
+atom's coefficient precision, with the discarded coefficient times its known
+value retained in the constant table. Disjoint residue branches can share
+arithmetic and bitwise structure while selecting their differing literals;
+complete table enumeration proves any affine lookup and its wrap period.
+Unsupported operations stay opaque. The complete-affine recovery runs first;
+once a full common base is proved, an unprofitable table leaves the remaining
+allowance for polynomial recovery instead of starting another residue search.
+The residual search shares the remaining work/storage allowance and accepts
+only a smaller completed result.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.
+Products of unrestricted variables skip partial-bit queries that cannot add
+facts, retaining the existing affine work bound across independently scaled
+occurrences of the same monomial.
 For a nonzero product, a shared low-zero prefix can be factored through bitwise
 operations. Their remaining scalar units are reduced modulo the observed
 prefix under a bounded operand/work/storage charge. The opaque operands keep
@@ -7780,6 +7812,10 @@ carry identity removes a wide constant offset before proof. The HighIR and
 LLVM bridges translate exact concatenation and defined carry predicates into
 the shared expression; the LLVM bridge admits a disjoint packed OR and a
 widened no-wrap shift only when operand widths prove the flags for every input.
+For masked addition and multiplication, the LLVM bridge independently bounds
+both inputs before admitting no-wrap flags. Signed multiplication checks all
+four interval corners. The bounded range walk ignores annotations as evidence;
+hidden poison and unproved overflow still prevent translation.
 Unknown operators, incomplete proofs, and unprofitable output leave the
 original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities

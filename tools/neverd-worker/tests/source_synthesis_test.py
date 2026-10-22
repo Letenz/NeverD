@@ -208,12 +208,14 @@ def affine_residue_elf(degree, neighbor=False):
     return elf(code), expected
 
 
-def prefix_residue_elf(degree, neighbor=False, *, prefix_bits=None):
+def prefix_residue_elf(degree, neighbor=False, *, prefix_bits=None,
+                       distributed_zeros=False):
     # Independently authored x64 words. Each factor changes its high bits;
     # only the common low-prefix relation justifies removing the product.
     units = (0x9E3779B1, 0x85EBCA77, 0xC2B2AE3D, 0x27D4EB2F,
              0x165667B1, 0xD3A2646D, 0xA24BAED5, 0x9FB21C65)
-    bits = prefix_bits or (degree - 1).bit_length()
+    bits = prefix_bits or (2 if distributed_zeros else (degree - 1).bit_length())
+    assert not distributed_zeros or bits == 2
     zeros = sum(degree >> bit for bit in range(1, bits + 1))
     scale = 1 << (32 - zeros)
     code = bytearray.fromhex("4189f8 448d0c76 4501c8 448d0c92 4501c8 b8")
@@ -224,17 +226,27 @@ def prefix_residue_elf(degree, neighbor=False, *, prefix_bits=None):
         constant = unit * offset & 0xFFFFFFFF
         code += bytes.fromhex("4169c8") + struct.pack("<I", unit)
         code += bytes.fromhex("81c1") + struct.pack("<I", constant)
-        # r9d=(x*(2*i+1))<<bits, r10d=z<<bits. Preserve ABI inputs.
+        # Preserve ABI inputs while building the independent disturbance.
         code += bytes.fromhex("4469cf") + struct.pack("<I", 2 * i + 1)
-        code += bytes.fromhex("41c1e1") + bytes((bits,))
-        code += bytes.fromhex("4189d2 41c1e2") + bytes((bits,))
-        code += bytes.fromhex("4509d1")
+        if distributed_zeros:
+            # r9d=(x*(2*i+1))&~1, r10d=(z+2*i+1)&~1. Each is only
+            # known even; their product supplies the complete two-bit prefix.
+            code += bytes.fromhex("4183e1fe 4189d2 4181c2")
+            code += struct.pack("<I", 2 * i + 1)
+            code += bytes.fromhex("4183e2fe 450fafca")
+            high = f"(((x*{2*i+1}U)&0xfffffffeU)*((z+{2*i+1}U)&0xfffffffeU))"
+        else:
+            # r9d=(x*(2*i+1))<<bits, r10d=z<<bits.
+            code += bytes.fromhex("41c1e1") + bytes((bits,))
+            code += bytes.fromhex("4189d2 41c1e2") + bytes((bits,))
+            code += bytes.fromhex("4509d1")
+            high = f"(((x*{2*i+1}U)<<{bits})|(z<<{bits}))"
         if neighbor:
             code += bytes.fromhex("4401c9")  # ecx += high
-            factor = f"({unit}U*(x+3U*y+5U*z)+{constant}U+(((x*{2*i+1}U)<<{bits})|(z<<{bits})))"
+            factor = f"({unit}U*(x+3U*y+5U*z)+{constant}U+{high})"
         else:
             code += bytes.fromhex("4431c9")  # ecx ^= high
-            factor = f"(({unit}U*(x+3U*y+5U*z)+{constant}U)^(((x*{2*i+1}U)<<{bits})|(z<<{bits})))"
+            factor = f"(({unit}U*(x+3U*y+5U*z)+{constant}U)^{high})"
         code += bytes.fromhex("0fafc1")
         factors.append(factor)
     code += bytes.fromhex("01f8 01f0 01d0 c3")
@@ -326,6 +338,10 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             # its original product oracle; allow the lookup's literal scale.
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert code.count("*") <= 1 and "<<" not in code, text
+        elif kind == "distributed-residue-neighbor":
+            # The original-product execution oracle checks the retained
+            # nonzero residual without prescribing a particular spelling.
+            pass
         elif kind.startswith("residue-"):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert "*" not in code and "<<" not in code, text
@@ -382,7 +398,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith("residue-") or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor"):
+                    if kind.startswith("residue-") or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -401,7 +417,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
-                    assert enhanced != ordinary
+                    if kind != "distributed-residue-neighbor":
+                        assert enhanced != ordinary
                 # Turning the menu off restores its independent ordinary page.
                 assert source(client, representation, False) == ordinary
                 assert source(client, representation, True) == enhanced
@@ -447,6 +464,9 @@ if __name__ == "__main__":
             ("residue-coarse-octic", *prefix_residue_elf(8, prefix_bits=1)),
             ("coarse-residue-neighbor", *prefix_residue_elf(4, True, prefix_bits=1)),
             ("prefix-residue-neighbor", *prefix_residue_elf(4, True)),
+            ("residue-distributed-quartic", *prefix_residue_elf(4, distributed_zeros=True)),
+            ("residue-distributed-octic", *prefix_residue_elf(8, distributed_zeros=True)),
+            ("distributed-residue-neighbor", *prefix_residue_elf(4, True, distributed_zeros=True)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),
