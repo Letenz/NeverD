@@ -1234,7 +1234,11 @@ invalidate their decorated pages. A confirmed local display-name edit retains
 the original source document within that same byte allowance and redecorates it
 without rerunning analysis or rebuilding the listing. Types, variable
 associations, stack corrections, image names and other edits keep their existing
-invalidation rules. An idle replica can consume `analysis_update_names` only
+invalidation rules. The original is retained as serialized JSON and parsed only
+when redecorating; its string capacity counts toward the same byte allowance.
+Paging keeps one parsed display tree, so duplicate row allocations cannot force
+an otherwise fitting document to regenerate on every page.
+An idle replica can consume `analysis_update_names` only
 when every snapshot input and non-name edit is unchanged and the committed
 code sidecar still matches; otherwise the GUI restores a fresh replica. Busy
 replicas retain the normal cancellation and retirement path. The optional

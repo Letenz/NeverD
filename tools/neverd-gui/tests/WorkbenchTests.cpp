@@ -2706,11 +2706,17 @@ private slots:
     functions->table()->setCurrentIndex(functions->model().index(20, 0));
     const auto selectedFunction = functions->currentAddress();
     auto *listing = bench.window->disassembly()->listing();
-    QSignalSpy listResets(&functions->model(), &QAbstractItemModel::modelReset);
-    QSignalSpy listingMoves(listing, &ListingView::jumpSettled);
     GraphView graph(bench.session);
     graph.showFunction(Base);
     QTRY_VERIFY_WITH_TIMEOUT(graph.loaded(), OpenTimeoutMs);
+    // Count only changes caused by the rename. The initial listing can still
+    // settle after the function model and graph have answered.
+    QTRY_VERIFY_WITH_TIMEOUT(listing->currentItem().has_value() &&
+                                 !listing->jumpPending() &&
+                                 !bench.session.queries().hasPending(),
+                             OpenTimeoutMs);
+    QSignalSpy listResets(&functions->model(), &QAbstractItemModel::modelReset);
+    QSignalSpy listingMoves(listing, &ListingView::jumpSettled);
     QSignalSpy graphChanges(&graph, &GraphView::viewChanged);
     for (const auto &name :
          {QStringLiteral("current_thread"), QStringLiteral("thread_state")}) {

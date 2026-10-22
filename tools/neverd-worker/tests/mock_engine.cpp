@@ -2741,20 +2741,22 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                       {"mapping_status", "unmapped"},
                       {"addresses", Json::array()}});
     }
-    return copy(Json{{"schema_version", 1},
-                     {"address", hexAddress(address)},
-                     {"representation", representation},
-                     {"mapping_status", "library_regions"},
-                     {"text", text},
-                     {"rows", rows},
-                     {"library_regions", Json::array()},
-                     {"offset", first},
-                     {"byte_offset", byteOffset},
-                     {"total_lines", total},
-                     {"complete", end == total},
-                     {"next_offset", end == total ? Json(nullptr) : Json(end)},
-                     {"prelude", {{"lines", 7}, {"end_byte", prelude.size()}}}}
-                    .dump());
+    Json result{{"schema_version", 1},
+                {"address", hexAddress(address)},
+                {"representation", representation},
+                {"mapping_status", "library_regions"},
+                {"text", text},
+                {"rows", rows},
+                {"library_regions", Json::array()},
+                {"offset", first},
+                {"byte_offset", byteOffset},
+                {"total_lines", total},
+                {"complete", end == total},
+                {"next_offset", end == total ? Json(nullptr) : Json(end)},
+                {"prelude", {{"lines", 7}, {"end_byte", prelude.size()}}}};
+    if (large)
+      result["fixture_pages"] = ++session(s)->sourcePages;
+    return copy(result.dump());
   }
   // Otherwise this mock represents an older page API that maps Low/Med only;
   // C requests exercise the worker's legacy fallback.

@@ -181,7 +181,9 @@ private:
   struct NamedView {
     std::string key;
     std::string sourceKey;
-    Json original;
+    // Retain the exact undecorated document in wire form. A second parsed
+    // row tree can exceed the cache budget before the displayed one does.
+    std::string original;
     Json value;
     std::vector<std::size_t> lines;
     // Decide once after decoration. Older engines may return unsorted rows

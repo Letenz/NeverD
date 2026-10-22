@@ -1121,6 +1121,14 @@ escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
 Timing-independent cache tests complement
 `source_revisit_bench.py`, which measures complete real source pages.
 
+The same cache test checks a 20,008-line document across later pages using SDK
+call counters. The undecorated copy is retained as serialized JSON, with its
+string capacity counted in the existing cache budget; local-name refresh
+reconstructs that exact source without rerunning the engine. The GUI's
+20,000-line responsiveness check retains its 15-second loading and 500-ms event
+gap limits. Rename isolation checks wait for initial navigation to settle before
+observing signals caused by the edit.
+
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and
 strict scalar-emulator refusal. `NeverDX86VirtualizationSourceTests` covers both

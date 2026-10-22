@@ -1079,8 +1079,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                          optionText;
   Json original;
   for (const auto &cached : namedViews_)
-    if (cached->sourceKey == sourceKey && !cached->original.is_null()) {
-      original = cached->original;
+    if (cached->sourceKey == sourceKey && !cached->original.empty()) {
+      original = Json::parse(cached->original);
       break;
     }
   // A hit answers from its finished document without pretending the mutable
@@ -1163,7 +1163,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
     if (sourceView)
-      document->original = full;
+      document->original = full.dump();
     for (const auto &reason : staleVariableTypes)
       full["stale_variable_types"].push_back(reason);
     if (sourceView)
@@ -1287,11 +1287,10 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     // document, it remains usable for this response but is not reusable yet.
     if (cacheKey() != key)
       return document;
-    const auto jsonBytes = namedViewJsonBytes(document->value) +
-                           namedViewJsonBytes(document->original);
-    auto overhead = sizeof(NamedView) + 8 * sizeof(void *) +
-                    document->key.capacity() + 1 +
-                    document->sourceKey.capacity() + 1;
+    const auto jsonBytes = namedViewJsonBytes(document->value);
+    auto overhead =
+        sizeof(NamedView) + 8 * sizeof(void *) + document->key.capacity() + 1 +
+        document->sourceKey.capacity() + 1 + document->original.capacity() + 1;
     for (const auto *bounds :
          {&document->rowBounds, &document->referenceBounds,
           &document->sourceNameBounds, &document->codeNameBounds}) {
