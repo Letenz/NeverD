@@ -245,6 +245,17 @@ encodings. Generated on 2026-10-06.
 
 ## Windows type libraries
 
+Local builds may use Microsoft's SDK/WDK declarations as the primary ARM64
+libraries. `scripts/generate_microsoft_windows_types.py` uses the official
+NuGet packages and hashes in `scripts/WDKDriverFixtures.def`. The original
+headers, generated declarations and Microsoft licenses remain outside this
+repository, in the selected local directory. They retain Microsoft's terms;
+they are not ReactOS or MIT-licensed headers. The build records their hashes
+and copies their notices beside the local SDK. The bundled compatibility
+libraries below supply only declarations absent from the official inputs,
+without replacing official types or prototypes. See
+[local Microsoft type libraries](docs/microsoft-windows-types.md).
+
 `lib/types/headers/WindowsKernelX64.h` and `WindowsKernelX86.h` hold the
 types and prototypes that `<ntifs.h>`, `<ntddk.h>`, `<wdm.h>` and the NDIS,
 storage, USB, HID, filter and NETIO provider headers declare for

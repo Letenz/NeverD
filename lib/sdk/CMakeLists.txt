@@ -310,6 +310,21 @@ foreach(_neverd_windows_type_notices_dir
     VERBATIM)
 endforeach()
 
+if(NEVERD_WINDOWS_TYPES_DIRECTORY)
+  foreach(_neverd_microsoft_type_dir
+      "$<TARGET_FILE_DIR:neverd_shared>" "${NEVERD_STAGED_SDK_DIRECTORY}")
+  add_custom_command(TARGET neverd_shared POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${NEVERD_WINDOWS_TYPES_DIRECTORY}/licenses"
+        "${_neverd_microsoft_type_dir}/licenses/microsoft-windows-types"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_BINARY_DIR}/neverd-windows-types-inputs.json"
+        "${_neverd_microsoft_type_dir}/neverd-windows-types-inputs.json"
+    COMMENT "Copying the local Microsoft type library provenance and notices"
+    VERBATIM)
+  endforeach()
+endif()
+
 if(NEVERD_ENABLE_Z3)
   foreach(_neverd_z3_notices_dir
       "$<TARGET_FILE_DIR:neverd_shared>/licenses/z3"

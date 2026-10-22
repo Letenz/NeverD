@@ -360,37 +360,42 @@ private:
           return Macro->second.front().Value;
         return std::nullopt;
       };
-      bool HasNumber = false;
-      for (llvm::StringRef Part : Parts)
-        HasNumber |= number(Part.trim()).has_value();
-      for (llvm::StringRef Part : Parts) {
+      for (llvm::StringRef &Part : Parts)
         Part = Part.trim();
-        if (Part == "push") {
-          Action = PackAction::Push;
-        } else if (Part == "pop") {
-          Action = PackAction::Pop;
-        } else if (Part == "show") {
-          continue;
-        } else if (std::optional<uint64_t> Number = number(Part)) {
+      if (Parts.size() == 1 && Parts.front() == "show")
+        return;
+      std::string Label;
+      const bool Stack =
+          !Parts.empty() && (Parts.front() == "push" || Parts.front() == "pop");
+      if (Parts.size() > (Stack ? 3u : 1u)) {
+        problem(L, Col, "#pragma pack has too many arguments");
+        return;
+      }
+      for (size_t I = 0; I < Parts.size(); ++I) {
+        const llvm::StringRef Part = Parts[I];
+        if (I == 0 && Stack) {
+          Action = Part == "push" ? PackAction::Push : PackAction::Pop;
+        } else if (std::optional<uint64_t> Number = number(Part);
+                   Number && I + 1 == Parts.size()) {
           Value = *Number;
+          if (!Value || Value > 16 || (Value & (Value - 1))) {
+            problem(L, Col, "#pragma pack takes 1, 2, 4, 8 or 16");
+            return;
+          }
           Action = Action == PackAction::Push  ? PackAction::PushSet
                    : Action == PackAction::Pop ? PackAction::PopSet
                                                : PackAction::Set;
-        } else if (Action == PackAction::Push && HasNumber) {
-          // push, label, n: the label names the push, which this reads
-          // without.
-          continue;
+        } else if (Stack && I == 1 && !Part.empty() &&
+                   (llvm::isAlpha(Part.front()) || Part.front() == '_') &&
+                   llvm::all_of(Part, [](char C) {
+                     return llvm::isAlnum(C) || C == '_';
+                   })) {
+          Label = Part.str();
         } else {
-          // An identifier alone may be a label or a macro this source does
-          // not define; the packing is not known either way.
           problem(L, Col,
                   "'" + Part.str() +
                       "' in #pragma pack is no packing this knows; define it "
                       "as a number");
-          return;
-        }
-        if (Value && (Value > 16 || (Value & (Value - 1)))) {
-          problem(L, Col, "#pragma pack takes 1, 2, 4, 8 or 16");
           return;
         }
       }
@@ -398,7 +403,7 @@ private:
         Action = PackAction::Reset;
       Token Pragma;
       Pragma.Kind = TokenKind::Pragma;
-      Pragma.Text = "pack";
+      Pragma.Text = std::move(Label);
       Pragma.Value = packToken(Action, Value);
       Pragma.Line = L;
       Pragma.Column = Col;
@@ -749,7 +754,11 @@ private:
 
   // The pack in force.
   uint32_t Pack = 0;
-  std::vector<uint32_t> PackStack;
+  struct PackEntry {
+    uint32_t Value;
+    std::string Label;
+  };
+  std::vector<PackEntry> PackStack;
   // The system header the declarations come from (#pragma neverd_header).
   std::string Header;
   // The names `typedef struct X X` gives a record, enumeration or union.
@@ -761,6 +770,25 @@ private:
     }
     const auto Action = PackAction(Pragma.Value >> 32);
     const auto Value = uint32_t(Pragma.Value);
+    const auto pop = [&] {
+      if (!Pragma.Text.empty()) {
+        for (size_t I = PackStack.size(); I; --I) {
+          if (PackStack[I - 1].Label != Pragma.Text)
+            continue;
+          Pack = PackStack[I - 1].Value;
+          PackStack.resize(I - 1);
+          return;
+        }
+        // Microsoft pack(pop, label) ignores a label not on the stack.
+        return;
+      }
+      if (PackStack.empty()) {
+        fail(Pragma, "#pragma pack(pop) has no push to return to");
+        return;
+      }
+      Pack = PackStack.back().Value;
+      PackStack.pop_back();
+    };
     switch (Action) {
     case PackAction::Set:
       Pack = Value;
@@ -769,26 +797,17 @@ private:
       Pack = 0;
       break;
     case PackAction::Push:
-      PackStack.push_back(Pack);
+      PackStack.push_back({Pack, Pragma.Text});
       break;
     case PackAction::PushSet:
-      PackStack.push_back(Pack);
+      PackStack.push_back({Pack, Pragma.Text});
       Pack = Value;
       break;
     case PackAction::Pop:
-      if (PackStack.empty()) {
-        fail(Pragma, "#pragma pack(pop) has no push to return to");
-        return;
-      }
-      Pack = PackStack.back();
-      PackStack.pop_back();
+      pop();
       break;
     case PackAction::PopSet:
-      if (PackStack.empty()) {
-        fail(Pragma, "#pragma pack(pop) has no push to return to");
-        return;
-      }
-      PackStack.pop_back();
+      pop();
       Pack = Value;
       break;
     }
@@ -1170,6 +1189,21 @@ private:
       } else if (volatileWord(W)) {
         take();
         Spec.Volatile = true;
+      } else if ((W == "__ptr32" || W == "__ptr64") && Spec.Type) {
+        const TypeExpr *Pointer = Spec.Type.get();
+        if (Pointer->Kind == TypeExprKind::Named) {
+          const LocalType *Resolved = Library.resolve(Pointer->Name);
+          Pointer = Resolved ? Resolved->Target.get() : nullptr;
+        }
+        if (!Pointer || Pointer->Kind != TypeExprKind::Pointer) {
+          fail(T, "a pointer width annotation requires a pointer type");
+          return false;
+        }
+        auto Sized = std::make_shared<TypeExpr>(*Pointer);
+        Sized->PointerBytes = W == "__ptr32" ? 4 : 8;
+        Spec.Type = std::move(Sized);
+        Spec.TypeName = false;
+        take();
       } else if (ignoredWord(W) || W == "typename") {
         take();
       } else if (W == "_Noreturn" || W == "DECLSPEC_NORETURN" ||
@@ -1612,16 +1646,17 @@ private:
       if (!specifiers(Spec))
         return;
       if (accept(";")) {
-        // An anonymous record; a definition alone adds no member.
+        // An anonymous record, including Microsoft's named C extensions.
         if (Spec.Type->Kind == TypeExprKind::Record)
           Draft.Members.push_back({"", Spec.Type, false, 0, ""});
-        else if (!Cpp && !Spec.Typedef && !Spec.Defines && Spec.TypeName &&
+        else if (!Cpp && !Spec.Typedef && (Spec.Defines || Spec.TypeName) &&
                  libraryRecordABIOf(Library.recordABI()) ==
                      RecordABI::Microsoft &&
                  Spec.Type->Kind == TypeExprKind::Named) {
-          // Microsoft's C also admits an anonymous member named by a
-          // typedef. Preserve its storage and promoted members, rather
-          // than treating it as a tag-only declaration such as struct S;.
+          // Microsoft's C also admits an anonymous member defined with a
+          // tag or named by a typedef. Preserve its storage and promoted
+          // members, rather than treating it as a tag-only declaration such as
+          // struct S;.
           if (const LocalType *Named = Library.resolve(Spec.Type->Name)) {
             if (Named->Record) {
               if (!Named->Record->Defined) {
@@ -1810,6 +1845,11 @@ private:
 
   std::function<TypeExprRef(TypeExprRef)>
   parseDeclarator(std::string &Name, Token &NameToken, bool Abstract) {
+    // Microsoft places this access annotation before the pointer too,
+    // including after a comma in a list of typedef declarators.
+    while (isWord("__unaligned") &&
+           (isPunct("*", 1) || isWord("__unaligned", 1)))
+      take();
     struct Pointer {
       bool Const = false, Volatile = false, Reference = false;
       uint32_t Bytes = 0;
@@ -2289,9 +2329,13 @@ private:
   std::optional<int64_t> memberSize(const Token &At) {
     take();
     take();
-    const TypeExprRef Pointer = typeInParentheses();
+    TypeExprRef Pointer = typeInParentheses();
     if (!Pointer)
       return std::nullopt;
+    if (Pointer->Kind == TypeExprKind::Named)
+      if (const LocalType *Named = Library.resolve(Pointer->Name);
+          Named && Named->Kind == TypeKind::Typedef && Named->Target)
+        Pointer = Named->Target;
     if (Pointer->Kind != TypeExprKind::Pointer || !Pointer->Element ||
         peek().Kind != TokenKind::Number || peek().Value != 0) {
       fail(peek(), "expected a null pointer to a record");

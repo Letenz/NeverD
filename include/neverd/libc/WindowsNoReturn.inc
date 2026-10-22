@@ -40,6 +40,7 @@ LIBC_NO_RETURN_SYMBOL("RtlRaiseNoncontinuableException")
 // __fastfail, end the process as a copy a build leaves uninlined does.
 LIBC_NO_RETURN_SYMBOL("RtlFailFast")
 LIBC_NO_RETURN_SYMBOL("RtlFatalListEntryError")
+LIBC_NO_RETURN_SYMBOL("fastfail")
 // Windows kernel routines the WDK declares DECLSPEC_NORETURN.  Routines that
 // can return (RtlRaiseException when the exception is continued,
 // PsTerminateSystemThread on failure) are deliberately absent.
