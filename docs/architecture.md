@@ -1227,6 +1227,9 @@ it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Background function discovery similarly stages cached chooser pages before
 replacing them, remapping persistent indexes by image address when rows move.
+Selected addresses that move beyond those pages use bounded address lookups
+before publication. Additional pages stay within the chooser cache allowance;
+an incomplete refresh preserves the previous inventory and selection.
 Explicit filters, sorts, semantic edits and session changes still retire those
 reads through their normal invalidation paths.
 Documents own text, rows and edit anchors, and project or presentation changes
@@ -1240,7 +1243,9 @@ Paging keeps one parsed display tree, so duplicate row allocations cannot force
 an otherwise fitting document to regenerate on every page.
 An idle replica can consume `analysis_update_names` only
 when every snapshot input and non-name edit is unchanged and the committed
-code sidecar still matches; otherwise the GUI restores a fresh replica. Busy
+user tables still match, with no pending recovery transaction; otherwise the
+GUI restores a fresh replica. Committed-table parsing and validation remain
+owned by `ProjectHistory`, without loading its command log on each rename. Busy
 replicas retain the normal cancellation and retirement path. The optional
 `code_edit_prepare` read validates the owner's local target while the name
 dialog is open, without saving or changing revision. A GUI name refresh buffers

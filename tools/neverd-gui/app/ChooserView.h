@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QKeySequence>
+#include <QSet>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -96,10 +97,15 @@ private:
   /// identities and selections instead of emptying the table between reads.
   void refreshFunctions();
   void refreshNextPage(quint64 serial);
+  void publishFunctionRefresh(quint64 serial);
+  void seekRefreshAddress(quint64 serial, Address address,
+                          const QSet<Address> &selected);
   struct Refresh {
     QVector<int> pending;
     QHash<int, QJsonArray> pages;
     int total = -1;
+    int lookups = 0;
+    QSet<Address> missing;
   };
   std::optional<Refresh> refresh_;
   std::optional<Address> itemAddress(const QJsonObject &object) const;

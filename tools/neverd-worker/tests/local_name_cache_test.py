@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local display names reuse analysis; obsolete and semantic edits do not."""
 import copy
+import json
 from contextlib import ExitStack
 from pathlib import Path
 import sys
@@ -42,6 +43,34 @@ def run(executable):
             assert current["fixture_pages"] == original["fixture_pages"]
             assert (name or "value") + " = 1" in current["text"]
             snapshot = ok(owner, "analysis_snapshot")
+            if name == "current_thread":
+                # A different committed table can change after the owner
+                # exports its snapshot, without touching code.json.
+                for file, rows in (
+                    ("renames.json", [{"addr": A, "original": "function_0",
+                                       "renamed": "foreign_name"}]),
+                    ("functions.json", [{"addr": B, "state": "deleted"}]),
+                    ("annotations.json", [{"addr": A, "text": "foreign comment"}]),
+                    ("types.json", [{"language": "c",
+                                     "source": "typedef unsigned int ReviewWord;"}]),
+                    ("libraries.json", {"added": ["foreign"], "removed": []}),
+                    ("local/journal.json", {}),
+                ):
+                    sidecar = Path(str(binary) + ".neverd") / file
+                    previous = sidecar.read_bytes() if sidecar.exists() else None
+                    try:
+                        sidecar.write_text(json.dumps(rows))
+                        files = durable_files(directory)
+                        response = replica.call("analysis_update_names", snapshot)
+                        assert response["status"] == "error", (file, response)
+                        assert response["error"]["code"] == "stale_snapshot", response
+                        assert source(replica)["text"] == first["text"]
+                        assert durable_files(directory) == files
+                    finally:
+                        if previous is None:
+                            sidecar.unlink()
+                        else:
+                            sidecar.write_bytes(previous)
             before_files = durable_files(directory)
             assert ok(replica, "analysis_update_names", snapshot)["updated"]
             updated = source(replica)

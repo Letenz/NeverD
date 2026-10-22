@@ -1,5 +1,6 @@
 // Workbench controller tests against the fixture worker: the session, the
 // production main window and its views, edits and session transitions.
+#include "AddressSpace.h"
 #include "ChooserView.h"
 #include "CodeView.h"
 #include "DeepLink.h"
@@ -2775,6 +2776,77 @@ private slots:
     QTest::addColumn<bool>("sorted");
     QTest::newRow("address-order") << false;
     QTest::newRow("sorted-filtered") << true;
+  }
+
+  void backgroundDiscoveryKeepsSelectionBeyondCachedPages_data() {
+    QTest::addColumn<bool>("sorted");
+    QTest::addColumn<bool>("retire");
+    QTest::newRow("address-order") << false << false;
+    QTest::newRow("sorted-filtered") << true << false;
+    QTest::newRow("filter-retires-address-refresh") << false << true;
+  }
+
+  void backgroundDiscoveryKeepsSelectionBeyondCachedPages() {
+    QFETCH(bool, sorted);
+    QFETCH(bool, retire);
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    LoadOptions options;
+    options.analysis = false;
+    session.open(writeFixture(directory, "chooser-refresh.bin"), options);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AddressSpace space;
+    ChooserModel model(session, space, ChooserKind::Functions);
+    model.reload();
+    QTRY_COMPARE(model.total(), 600);
+    QTRY_VERIFY(!model.loading());
+    if (sorted) {
+      model.setFilter("function_");
+      model.sort(0, Qt::DescendingOrder);
+      QTRY_COMPARE(model.total(), 600);
+      QTRY_VERIFY(!model.loading());
+    }
+    // Only page zero is loaded. Discovery moves its final row onto page one.
+    QPersistentModelIndex selected(model.index(255, 0));
+    QItemSelectionModel selection(&model);
+    selection.setCurrentIndex(model.index(5, 0), QItemSelectionModel::Select);
+    selection.select(model.index(255, 0), QItemSelectionModel::Select);
+    const auto address = model.addressAt(selected.row());
+    QVERIFY(address);
+    QVERIFY(model.rowObject(256).isEmpty());
+    QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+    bool retired = false;
+    if (retire)
+      connect(&model, &QAbstractItemModel::layoutChanged, this, [&] {
+        if (!retired) {
+          retired = true;
+          model.setFilter("function_599");
+        }
+      });
+    QVERIFY(!writeFixture(directory, "chooser-refresh.bin.discover").isEmpty());
+    auto background = session.background();
+    background["functions"] = 601;
+    SessionTestAccess::receive(session,
+                               {{"type", "heartbeat"},
+                                {"project_id", session.queries().projectId()},
+                                {"background", background}});
+    if (retire) {
+      QTRY_VERIFY(retired);
+      QTRY_COMPARE(model.total(), 1);
+      QTRY_VERIFY(!model.loading());
+      QCOMPARE(model.addressAt(0), std::optional<Address>(Base + 599 * 16));
+      return;
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(model.total(), 601, OpenTimeoutMs);
+    QTRY_VERIFY(!model.loading());
+    QVERIFY(selected.isValid());
+    QCOMPARE(selected.row(), 256);
+    QCOMPARE(model.addressAt(selected.row()), address);
+    QCOMPARE(selection.currentIndex().row(), 6);
+    QVERIFY(selection.isSelected(model.index(6, 0)));
+    QVERIFY(selection.isSelected(model.index(256, 0)));
+    QCOMPARE(selection.selectedIndexes().size(), 2);
+    QCOMPARE(resets.count(), 0);
   }
 
   void backgroundFunctionDiscoveryKeepsSelection() {

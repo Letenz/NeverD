@@ -34,6 +34,8 @@ inline constexpr qsizetype kEngineClientMaxPartialLine = 65536;
 // tools/neverd-gui/app/ChooserView.cpp
 inline constexpr int kChooserViewPageSize = 256;
 inline constexpr int kChooserViewMaxCachedPages = 64;
+/// Bound address lookups needed when discovery moves selected rows off-page.
+inline constexpr int kChooserViewMaxRefreshLookups = kChooserViewMaxCachedPages;
 inline constexpr int kChooserViewMaxPendingPages = 4;
 inline constexpr int kChooserViewFilterDebounceMs = 150;
 inline constexpr int kChooserViewChooserModelRequestPageTextLimit = 400;

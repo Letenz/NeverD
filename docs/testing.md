@@ -1176,6 +1176,12 @@ against a fixture and optional native input, including revisiting a function.
 `backgroundFunctionDiscoveryKeepsSelection` inserts a function before loaded rows
 and checks persistent selection, sorting, filtering and retiring an obsolete
 background refresh.
+`backgroundDiscoveryKeepsSelectionBeyondCachedPages` checks an insertion that
+moves a selected address into an unloaded page, both in address order and with
+sorting/filtering. It also verifies the selection model's other selected row.
+`NeverDWorkerLocalNameCache` rejects foreign function names, function edits and
+annotations committed after the owner's snapshot, retaining the prior replica
+document and all files on refusal.
 
 `listingRefreshKeepsItsContextAndArrows` observes every viewport paint through
 repeated refreshes, checks retained context, branch-gutter pixels and cursor

@@ -2032,11 +2032,24 @@ Json Engine::updateAnalysisNames(const Json &snapshot) {
   if (fs::file_size(utf8Path(path)) != loadedSize_ ||
       fs::last_write_time(utf8Path(path)) != loadedTime_)
     throw Error("input_changed", "The analysis input changed; reopen it");
-  const auto rows = readCodeEdits(path);
-  if (rows != snapshot.at("state").value("code_edits", Json::array()))
+  if (ProjectHistory::recoveryPending(utf8Path(path)))
+    throw Error("stale_snapshot", "Project edits require transaction recovery");
+  auto committed = ProjectHistory::readState(utf8Path(path));
+  if (committed.at("code_edits").size() >
+      ::neverd::limits::worker::kEngineReadCodeEditsRowsSizeLimit)
+    throw Error("invalid_request", "Invalid code edit table");
+  auto expected = ProjectHistory::normalizedState(snapshot.at("state"));
+  // Local declarations are loaded from disk when a replica opens. They must
+  // still match that analysis even though the snapshot has no types table.
+  expected["types"] =
+      declaresLocalTypes() ? typeDeclarationRows() : committed.at("types");
+  for (auto *state : {&committed, &expected})
+    for (auto &rename : state->at("renames"))
+      rename.erase("original");
+  if (committed != expected || typeLibrariesChanged())
     throw Error("stale_snapshot",
                 "Project edits changed while updating analysis");
-  codeEdits_ = rows;
+  codeEdits_ = snapshot.at("state").value("code_edits", Json::array());
   restoredSnapshot_ = snapshot;
   localNamesChanged();
   return {{"updated", true}};
