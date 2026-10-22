@@ -5,6 +5,10 @@ This audit starts from `f17f944a7` (the merge of virtualization support in
 `1d29fa3c00c916e62e23c3da7bc0cc35d2cf4c44`. It covers NeverD's 32-bit x86 and
 64-bit x86 targets, not a 16-bit real-mode target.
 
+The `dev` integration also adopts the decoder update in `cb6678521`, using
+Capstone `b9048c860493ce8511f4d535526495ff273c7641`. The original audit baseline
+above and the integration verification below are recorded separately.
+
 ## Support is a pipeline property
 
 Decoder recognition, strict LowIR lifting, executable LLVM/C output and
@@ -31,7 +35,7 @@ complete instruction support or semantic test coverage.
 | ARPL | 32-bit target only; actual ZF and adjusted selector; conditional memory write remains inside the instruction. |
 | VSHA512MSG1, VSHA512MSG2, VSHA512RNDS2 | Integer LowIR, independent scalar oracle, source aliasing, upper-lane clearing and executable LLVM/HighC/LLVMC tests without SHA512 hardware. |
 | VMASKMOVPS/PD and VPMASKMOVD/Q stores | A void output replaces an invalid zero-width RAX result. Tests cover both vector widths, both architectures and inactive lanes over unmapped memory. |
-| 32-bit VEX/EVEX register and address forms | Mode-aware register-bank selection shared by the encoding validators, including F16C, FMA4, SHA512 and EVEX integer/vector families. Ignored extension fields select the low bank; reserved fields still fail clearly. |
+| Shared 32-bit VEX3/EVEX register and address validators | Mode-aware register-bank selection for their callers, including F16C, FMA4, SHA512 and EVEX integer/vector families. Ignored extension fields select the low bank; reserved fields still fail clearly. Separate floating-point prefix parsers still have gaps listed below. |
 
 `X86SystemState.def` and `X86SystemState.h` own the system-instruction inventory
 and operand/completion shapes. LowIR, Low-to-Med conversion, Med verification,
@@ -67,8 +71,16 @@ Tests retain the 32-bit BOUND/LES disambiguation and reserved-field checks.
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
 | ENCLS, ENCLV | Leaf-specific implicit register/flag completion, enclave memory and exception contracts. These supervisor/VMM operations should not be conflated with ENCLU's context transitions. |
 | AMX native LLVM output | Versioned TILECFG/tile-state ownership, restartable strided memory, partial progress and fault continuation. Existing strict LowIR support is not native code-generation support. |
+| ENQCMD/ENQCMDS and WRSSD/Q, WRUSSD/Q native LLVM output | The backend explicitly refuses these system-memory effects. Their existing LowIR/concrete-executor contracts do not provide native lowering. |
+| Explicit-operand RDMSR/WRMSRNS, URDMSR and UWRMSR native LLVM output | The `X86MsrAccess` backend guard remains explicit. Operand-free legacy RDMSR uses a separate existing intrinsic. |
 | ENQCMD, ENQCMDS, MOVDIR64B in 32-bit mode | Implicit ES destination base/limit ownership. Existing 64-bit support does not prove these forms. |
-| REX2 ADDPD with an extended address register | The decoder recognizes `66 d5 d0 58 08` as `addpd xmm1, [r16]`, but the floating-point encoding validator still refuses this form. |
+| REX2 floating-point forms | Thirteen decoded examples still fail strict lifting across arithmetic, comparison, conversion and approximation, including `66 d5 d0 58 08` (`addpd xmm1, [r16]`), extended GPR conversions, SIB addressing and ignored vector extension bits. |
+| Separate 32-bit VEX floating-point validators | Nine decoded examples still fail because local prefix parsers reject ignored B or used-vvvv extension bits. These include arithmetic, comparison, conversion, approximation and ROUND. |
+
+MOVDIRI and MOVDIR64B also need a native direct-store review: their current
+lowering uses ordinary memory operations or a full-mask store. Concrete
+emulator tests for an indivisible destination update do not establish native
+direct-store atomicity and ordering.
 
 The six system mnemonics above still fail strict lifting explicitly. The
 existing AMX LLVM guard remains explicit. Adding an opaque helper declaration,
@@ -112,9 +124,10 @@ cmake --build build-x86 --target \
   NeverDX86InstructionCoverageTests NeverDX86SystemStateTests \
   NeverDX86SHA512Tests NeverDX86VectorEncodingModeTests \
   NeverDX86VirtualizationTests NeverDX86VirtualizationSourceTests \
-  NeverDX86SystemSideeffectTests NeverDX86F16CStateTests NeverDLLVMCVectorTests
+  NeverDX86SystemSideeffectTests NeverDX86F16CStateTests \
+  NeverDX86EncodingAccuracyTests NeverDLLVMCVectorTests
 ctest --test-dir build-x86 --output-on-failure \
-  -L '^(NeverDX86(InstructionCoverage|SystemState|SHA512|VectorEncodingMode|Virtualization|VirtualizationSource|SystemSideeffect|F16CState)Tests|NeverDLLVMCVectorTests)$'
+  -L '^(NeverDX86(InstructionCoverage|SystemState|SHA512|VectorEncodingMode|Virtualization|VirtualizationSource|SystemSideeffect|F16CState|EncodingAccuracy)Tests|NeverDLLVMCVectorTests)$'
 ```
 
 The real-encoding corpus test reads the pinned Capstone `suite/MC/X86` fixtures:
@@ -123,7 +136,7 @@ VMASKMOVPS/PD store samples failed; after it all 2,745 strictly lift. The test
 records sample and ID counts in its GTest XML properties. Its denominator is
 the fixture corpus, not all 1,652 IDs or all x86 forms.
 
-A separate diagnostic scan of the decoder's C unit-test byte arrays found 298
+The original diagnostic scan of the decoder's C unit-test byte arrays found 298
 fully consumed x86/x64 candidates. Five newly reproduced VEX/EVEX form failures
 now lift; ten candidates still fail in the REX2 and 32-bit ES families listed
 above. These arrays also contain negative decoder fixtures: this diagnostic
@@ -140,10 +153,11 @@ EVEX integer fixture have executable regressions in all three routes. The last
 uses a freestanding i386 executable and requires Linux x86-64 with i386 execution
 support; it does not require host AVX-512 instructions.
 
-The local verification profile is Release, with the repository-pinned LLVM
-23.0.0-r6 and shared library enabled; GUI, worker and CPU/driver emulation are
-disabled. The expanded `NeverDLiftTests` x86/x64/x87, Med, Low-to-Med and LLVMC
-selection passes 1,825 tests. Seventeen tests are skipped: four require native
+The original batch's local verification profile is Release, with the
+repository-pinned LLVM 23.0.0-r6 and shared library enabled; GUI, worker and
+CPU/driver emulation are disabled. The expanded `NeverDLiftTests` x86/x64/x87,
+Med, Low-to-Med and LLVMC selection passes 1,825 tests. Seventeen tests are
+skipped: four require native
 Mach-O patch execution and thirteen require unavailable Windows EH corpus
 fixtures. A further 417 EVEX/APX, undefined-effect, memory/boundary and AMX guard
 tests pass. The 124 focused system, SHA512, vector-mode, source-route, F16C and
@@ -155,9 +169,21 @@ test take 143 seconds, exceeding CTest's 120-second limit. It also passes in
 0.09 seconds with dumpability disabled in the test process. No product behavior
 or global crash-reporting setting was changed to obtain that result.
 
+After merging `dev` through `cb6678521` and updating the isolated Capstone
+checkout to `b9048c86`, the same Release profile rebuilds successfully. The
+broad selection passes 1,827 of 1,844 tests; the same 17 platform/corpus checks
+are skipped. The focused selection above, now including encoding-accuracy
+tests, passes 130 of 131 tests with the same Windows-only F16C skip. Neither
+run has a failure. The 417-test EVEX/APX result above belongs to the original
+batch and was not rerun for this integration. The 13 REX2 and nine 32-bit VEX
+floating-point diagnostic failures were also reproduced with the new decoder.
+
 The architectural references are Intel's
 [Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 and the SHA512 entries in the
 [March 2024 ISA extensions reference](https://cdrdv2-public.intel.com/819680/architecture-instruction-set-extensions-programming-reference.pdf).
 The 32-bit EVEX register mapping is also tabulated in section 2.7.2 of Intel's
 [SDM updates](https://cdrdv2-public.intel.com/835748/252046-sdm-change-document.pdf).
+REX2 map selection and the different GPR/vector extension rules are specified
+in section 3.1.2.1 of Intel's
+[APX architecture specification](https://cdrdv2-public.intel.com/861610/355828-007-intel-apx-spec.pdf).
