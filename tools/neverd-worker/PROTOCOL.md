@@ -855,11 +855,13 @@ owns one image snapshot and publishes its result on the executor; the owner
 continues serving reads while that snapshot computes. Older engines use the
 synchronous `neverd_session_discover_functions` fallback.
 `discovery_complete` lets clients defer large analysis replica startups until
-that snapshot is released. `functions` is the listed function count,
-which clients compare to refresh function lists. It then builds the reference
-index: `pending`, `building`, `ready` or `unavailable`. Its generation changes
-when finished references can add labels and cross-reference comments to listing
-text; clients refresh visible lines then. Function-level analysis runs only for
+that snapshot is released. `functions` is the listed function count, which
+clients compare to refresh function lists. It is absent until the listing is
+first built, because discovery does not build the listing. The worker then
+builds the reference index: `pending`, `building`, `ready` or `unavailable`.
+Its generation changes when finished references can add labels and
+cross-reference comments to listing text; clients refresh visible lines then.
+Function-level analysis runs only for
 the function a decompile, CFG or IR request names; `analyze` remains the
 explicit whole-program pipeline. Discovery failures carry `error` and an
 `unavailable` state rather than claiming a complete reference index.
