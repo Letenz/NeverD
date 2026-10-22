@@ -602,6 +602,11 @@ bool productCoefficientsFitScale(const HigherCoefficients &Higher,
                                  unsigned Degree, const llvm::APInt &Scale,
                                  WorkBudget &Budget);
 
+/// Prove modular zero products from complete low-bit residue partitions of
+/// factors sharing an additive base. Opaque bases need no independent inputs.
+SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                           size_t &Storage);
+
 /// Only the low product bit survives a highest-bit scale.
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                              size_t &Storage);

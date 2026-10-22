@@ -975,6 +975,7 @@ SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                              size_t &Storage) {
+  Root = foldProductResidues(Ctx, Root, Budget, Storage);
   if (Ctx.op(Root) != SymOp::Add)
     return foldZeroProduct(Ctx, Root, Budget, Storage);
   const size_t N = Ctx.numOperands(Root);
@@ -1016,6 +1017,10 @@ SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage) {
   if (Budget.exhausted() || !Budget.canConsume(1) || Storage < 128)
     return Root;
+  if (Ctx.op(Root) == SymOp::Mul)
+    if (auto Zero = foldProductResidues(Ctx, Root, Budget, Storage);
+        Zero != Root)
+      return Zero;
   if (auto Zero = foldZeroProduct(Ctx, Root, Budget, Storage); Zero != Root)
     return Zero;
   if (Ctx.op(Root) == SymOp::Mul && Ctx.numOperands(Root) >= 3 &&

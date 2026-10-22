@@ -367,7 +367,10 @@ and disturbed coefficients. Keep the same 65,536-work allowance and compare
 all previous families; independent modular evaluation checks every result.
 Use `--family extreme-frontier --count 6` for degree-192/256 products,
 three mixed-degree blocks, complemented nonlinear powers, missing corners and
-multiple coefficient disturbances. Run all fourteen families at 8/16/32/64 bits
+multiple coefficient disturbances. Use `--family residue-product --count 80`
+for correlated factor residues through degree 256, odd strides, wrapped
+offsets, multiple opaque bases and nearby nonzero controls. Run all fifteen
+families at 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
 with no output-cost regression against the frozen baseline. Keep both the CLI
@@ -382,6 +385,16 @@ retry, parity-slot saturation and local fallback, repeated factors and nearby
 nonidentities. Small Boolean recipes exhaust all 256 three-input functions at
 1/8/64/65/257 bits; regenerate them with
 `python3 scripts/generate_bitwise_recipes.py`.
+`SymMBAResidue` runs in the full symbolic and quadratic owners. It checks
+offset products through 256 factors and 257-bit words against independent
+arithmetic, exhausts four-factor multisets and every four-bit input, and retains
+missing factors, changed offsets and neighboring coefficients. Exact/one-short
+work and absent storage refuse incomplete proofs. Byte-domain exhaustions
+cover partial results with unrelated summands; separate Z3 checks prove the
+full-width zero replacements at 8/16/32/64 bits. The real worker/CLI source
+synthesis test includes original x64 quartic and octic machine code, requires
+product removal in both source modes, tests toggle/cache isolation, and
+executes every generated C output at O0/O2.
 Interleaved residual tests cover the completed-product traversal boundary at
 15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
 nonzero odd-factor assignments, reject leaked temporary inputs, and require
