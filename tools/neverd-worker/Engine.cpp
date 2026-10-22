@@ -2989,20 +2989,6 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (query.starts_with("0x") || query.starts_with("0X")) {
       address = parseAddress(query);
       index = neverd_func_find_by_addr(session_, address);
-      if (index < 0) {
-        const auto count = neverd_func_count(session_);
-        for (int i = 0; i < count; ++i) {
-          const auto entry = neverd_func_entry(session_, i);
-          const int size = neverd_func_size(session_, i);
-          if (entry <= address && size > 0 &&
-              address - entry < static_cast<std::uint64_t>(size)) {
-            index = i;
-            break;
-          }
-        }
-      }
-      // Code a function keeps apart from its body, such as a cold path,
-      // belongs to that function.
       if (index < 0)
         if (const auto owner = listing().chunkOwner(address))
           index = neverd_func_find_by_addr(session_, *owner);
@@ -4229,7 +4215,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
               {"kind", CodeItemKind},
               {"size", at.at("size")},
               {"saved", false}};
-    if (kind == "instruction" &&
+    if (kind == "instruction" && action != "undefine" &&
         at.value("user", std::string()) != CodeItemKind)
       throw Error("invalid_request",
                   "Code belongs to its function; delete the function to "

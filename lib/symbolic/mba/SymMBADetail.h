@@ -36,11 +36,13 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -89,6 +91,10 @@ struct SolverLimits {
 };
 
 SolverLimits resolveLimits(const MBAOptions &Opts);
+
+/// Work bound for the complete small recipe lookup, or the larger runtime
+/// table construction when explicitly requested.
+size_t bitwiseSynthesisWork(unsigned NumVars);
 
 //===----------------------------------------------------------------------===//
 // Traversal and classification
@@ -270,6 +276,11 @@ SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates);
 /// reason to reject a particular degree.  Exhaustive mode passes the largest
 /// size_t and therefore removes the budget without changing the representation
 /// or the set of degrees it can express.
+struct ArithmeticMemo;
+struct RegionMemo;
+struct AbstractionMemo;
+struct ParityMemo;
+
 class WorkBudget {
 public:
   explicit WorkBudget(size_t Limit)
@@ -300,6 +311,16 @@ public:
   bool canConsume(size_t Units) const {
     return Unlimited || Units <= Remaining;
   }
+
+  // Enabled only by the deep entry point, whose context outlives this budget.
+  // The implementation retains completed arithmetic results, never refusals.
+  const SymContext *MemoOwner = nullptr;
+  size_t MemoCapacity = 0;
+  std::shared_ptr<ArithmeticMemo> Arithmetic;
+  std::shared_ptr<RegionMemo> Regions;
+  std::shared_ptr<AbstractionMemo> Abstractions;
+  std::shared_ptr<ParityMemo> Parities;
+  size_t IncompleteAbstractions = 0;
 
 private:
   size_t Remaining;
@@ -580,6 +601,11 @@ SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
 bool productCoefficientsFitScale(const HigherCoefficients &Higher,
                                  unsigned Degree, const llvm::APInt &Scale,
                                  WorkBudget &Budget);
+
+/// Prove modular zero products from complete low-bit residue partitions of
+/// factors sharing an additive base. Opaque bases need no independent inputs.
+SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                           size_t &Storage);
 
 /// Only the low product bit survives a highest-bit scale.
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,

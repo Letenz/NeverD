@@ -454,4 +454,82 @@ TEST(NativeStackControl, FreshMemoryCallBindsPreservationAndTargetBeforePush) {
   }
 }
 
+const std::vector<uint8_t> TrapEncodings[] = {{0xcc}, {0xf1}, {0xcd, 0x03}};
+
+SpecializationInstruction trapInstruction(llvm::ArrayRef<uint8_t> Bytes) {
+  Decoder Decode;
+  Decode.init(Arch::X64);
+  Decode.setStrict(true);
+  SpecializationInstruction Result;
+  Result.NativeBytes.assign(Bytes.begin(), Bytes.end());
+  Result.Origin.Address = 0x100;
+  Result.Origin.Size = Bytes.size();
+  Result.Origin.Control = LowInstructionControl::Terminator;
+  Result.Origin.ControlFlags = LowInstructionControlFlag::Terminator |
+                               LowInstructionControlFlag::Resumable;
+  Result.Fallthrough.Address = Result.Origin.Address + Bytes.size();
+  DecodedInsn Decoded{};
+  EXPECT_TRUE(Decode.decodeOneForLift(Result.NativeBytes.data(),
+                                      Result.NativeBytes.size(),
+                                      Result.Origin.Address, Decoded));
+  Decode.liftToLow(Decoded, Result.Ops, {}, {}, &Result.UndefinedEffects);
+  Result.Origin.OpCount = Result.Ops.size();
+  return Result;
+}
+
+TEST(NativeStackControl, TrapExitRetainsExactUnauditedInstruction) {
+  for (const auto &Bytes : TrapEncodings) {
+    SCOPED_TRACE(unsigned(Bytes.front()));
+    const auto Insn = trapInstruction(Bytes);
+    const SpecializationX64MachineExit Exit{
+        1, Insn.Origin.Address, SpecializationX64MachineExitKind::Trap};
+    auto Result = expandX64MachineExit(Insn, Exit, Scratch);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    validBoundary(*Result);
+    EXPECT_EQ(Result->Boundary.Control, LowInstructionControl::Terminator);
+    EXPECT_EQ(Result->Boundary.ControlFlags, Insn.Origin.ControlFlags);
+    EXPECT_EQ(Result->UndefinedEffects.Coverage, LowUndefinedCoverage::Missing);
+    EXPECT_TRUE(Result->UndefinedEffects.Effects.empty());
+    EXPECT_EQ(Result->Receipt.ExpandedOperationDigest,
+              lowUndefinedOperationDigest(Insn.Ops));
+    EXPECT_FALSE(Result->ExpandedReturn);
+    EXPECT_FALSE(Result->ExpandedIndirectCall);
+    EXPECT_TRUE(Result->RetainedTerminator);
+  }
+}
+
+TEST(NativeStackControl, TrapExitRejectsForgedArchitectureEvidence) {
+  for (const auto &Bytes : TrapEncodings)
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      SCOPED_TRACE(unsigned(Bytes.front()));
+      SCOPED_TRACE(Mutation);
+      auto Insn = trapInstruction(Bytes);
+      const SpecializationX64MachineExit Exit{
+          1, Insn.Origin.Address, SpecializationX64MachineExitKind::Trap};
+      switch (Mutation) {
+      case 0:
+        Insn.UndefinedEffects.Effects.push_back(
+            {0, NdVar::reg(0, 8), 0, 64, std::nullopt});
+        break;
+      case 1:
+        Insn.PreservedState.StateSet =
+            LowPreservedStateSet::LegacyIntegerOpaqueV1;
+        break;
+      case 2:
+        Insn.Origin.ControlFlags = LowInstructionControlFlag::Terminator;
+        break;
+      case 3:
+        Insn.Origin.Immediate = 0x200;
+        break;
+      case 4:
+        Insn.UndefinedEffects.Coverage = LowUndefinedCoverage::Complete;
+        break;
+      }
+      auto Result = expandX64MachineExit(Insn, Exit, Scratch);
+      EXPECT_FALSE(bool(Result));
+      if (!Result)
+        llvm::consumeError(Result.takeError());
+    }
+}
+
 } // namespace

@@ -1356,7 +1356,14 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
 
   rebuildBlocks(Func);
 
+  size_t ScalarBranchWork = limits::kMaxScalarBranchEvidenceWork;
+  recoverScalarConstantBranches(Img, Dec, Func, ScalarBranchWork);
   multiStageResolve(Img, Dec, Func);
+  // Jump-table exploration may add an incoming edge between a constant's
+  // definition and its use. Revalidate against that completed graph, and let
+  // the ordinary resolver reconsider any transfers whose proof was withdrawn.
+  while (recoverScalarConstantBranches(Img, Dec, Func, ScalarBranchWork))
+    multiStageResolve(Img, Dec, Func);
 
   // PAGEOFF output provenance is consumed only after lifting, so authenticate
   // it on the final resolver CFG rather than during linear instruction
@@ -1369,6 +1376,22 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   completeExactI386GOTBaseModels(Img);
   JumpTableProofContextComplete = false;
 
+  // Scalar proofs have reached their fixed point. An exact independent
+  // target gets the original transfer's call site, as a decoded direct tail
+  // branch does, instead of a synthetic block at the callee's entry. Earlier
+  // CFG changes can withdraw a proof only while it remains a branch.
+  bool ScalarTailCalls = false;
+  for (auto &[Addr, Rec] : Insns)
+    if (Rec.ScalarBranchInput && Rec.IsBranch && !Rec.IsIndirect &&
+        isTailCallTarget(Rec.BranchTarget) &&
+        !isBackwardSharedEpilogue(Img, CurrentFuncEntry, Addr, Rec.BranchTarget,
+                                  KnownFuncEntries)) {
+      rewriteAsTailCall(Rec);
+      Rec.ScalarBranchInput.reset();
+      ScalarTailCalls = true;
+    }
+  if (ScalarTailCalls)
+    rebuildBlocks(Func);
   convertIndirectTailCalls(Func);
   closeRegistrationCxxContinuations(Img, Dec, Func);
 
@@ -1958,6 +1981,9 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   PublishFailures(UnsupportedInstructionAddresses,
                   Func.UnsupportedInstructionAddresses);
   PublishFailures(TruncatedPathAddresses, Func.TruncatedPathAddresses);
+  for (const auto &[Addr, Rec] : Insns)
+    if (Rec.RejectedScalarBranch && ReachableInsnAddrs.count(Addr))
+      Func.UnsafeIndirectBranchAddresses.insert(Addr);
   if (UnsafeJumpTableBranches)
     for (va_t Addr : *UnsafeJumpTableBranches)
       if (Insns.count(Addr))

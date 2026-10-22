@@ -91,6 +91,7 @@ add_neverd_component_library(NeverDIRLow
   CFGBuilderBlocks.cpp
   CFGBuilderException.cpp
   CFGBuilderInsn.cpp
+  CFGBuilderScalarBranch.cpp
   CFGBuilderX86Fpu.cpp
   CFGBuilderX86GetPc.cpp
   CFGBuilderX86PLT.cpp

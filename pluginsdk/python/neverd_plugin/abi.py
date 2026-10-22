@@ -1357,6 +1357,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_function_disasm_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "neverd_va_t", "int", "unsigned"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_code_refs_json",
     "const char *",
     ["neverd_session_t", "neverd_va_t", "int"],

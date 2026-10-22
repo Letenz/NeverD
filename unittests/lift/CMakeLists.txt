@@ -7,6 +7,11 @@ add_neverd_unittest(NeverDDirectTailCallMetadataTests
   LINK_COMPONENTS IRLow Lift
 )
 
+add_neverd_unittest(NeverDConstantBranchTests
+  core/ConstantBranchTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
 add_neverd_unittest(NeverDResumableTrapBoundaryTests
   core/ResumableTrapBoundaryTests.cpp
   core/ResumableTrapIdentityTests.cpp
@@ -324,6 +329,7 @@ add_neverd_unittest(NeverDLiftTests
   core/HighCDemandedBytesTests.cpp
   core/CSourceDefinitionTests.cpp
   core/CStringCommentTests.cpp
+  core/CSourcePresentationTests.cpp
   core/CImageObjectTests.cpp
   core/CSymbolNameTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
@@ -4202,6 +4208,16 @@ endif()
 add_neverd_unittest(NeverDLLVMCAllocaTests
   core/LLVMCAllocaTests.cpp
   LINK_COMPONENTS BackendC
+)
+
+add_neverd_unittest(NeverDCSourcePresentationTests
+  core/CSourcePresentationTests.cpp
+  core/CStringCommentTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDCSourcePresentationTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
 )
 target_include_directories(NeverDLLVMCAllocaTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include

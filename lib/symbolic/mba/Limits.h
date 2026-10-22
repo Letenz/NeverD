@@ -39,10 +39,31 @@ inline constexpr unsigned kMaxCubicCofactorSearchAtoms = 3;
 inline constexpr unsigned kMinQuadraticRowAtoms = 4;
 inline constexpr unsigned kMaxQuadraticRowAtoms = 8;
 inline constexpr std::size_t kMaxQuadraticRowTerms = 8;
-inline constexpr std::size_t kMinCompletedRegionCacheWork = 256;
+inline constexpr std::size_t kMinCompletedRegionCacheWork = 64;
+inline constexpr std::size_t kCompletedMemoEntryBytes = 256;
+inline constexpr std::size_t kCompletedMemoStorageDivisor = 8;
+inline constexpr std::size_t kMinArithmeticMemoTerms = 3;
+inline constexpr std::size_t kMinArithmeticPartitionTerms = 3;
+inline constexpr std::size_t kMinArithmeticCommonFactors = 3;
+inline constexpr std::size_t kMinArithmeticCommonProductOperands = 4;
+inline constexpr std::size_t kMinFlatArithmeticSumTerms = 8;
+inline constexpr std::size_t kMinUnitProductOperands = 3;
+inline constexpr std::size_t kMaxUnitProductCoordinates = 64;
+inline constexpr std::size_t kMaxBooleanBoundaryNodes = 128;
+inline constexpr unsigned kMinCanonicalAffineAtoms = 4;
+inline constexpr unsigned kMinProductCofactorDegree = 4;
+inline constexpr unsigned kMaxPartitionCubeAxes = 3;
+inline constexpr unsigned kMinCompressedCommonFactors = 3;
+inline constexpr std::size_t kMinParityMemoCapacity = 8;
 inline constexpr unsigned kMinQuadraticCongruenceAtoms = 4;
 inline constexpr unsigned kMinPackedPolynomialAtoms = 4;
 inline constexpr unsigned kMinPackedPolynomialWidth = 8;
+
+inline constexpr std::size_t kMinResidueProductFactors = 4;
+inline constexpr unsigned kMinResidueShiftedFactors = 2;
+inline constexpr std::size_t kMaxResidueProductFactors = 512;
+inline constexpr std::size_t kMaxResidueBaseTerms = 16;
+inline constexpr std::size_t kMaxResidueProductSummands = 128;
 
 // lib/symbolic/mba/SymBitwise.cpp
 /// The most inputs the exhaustive search will ever tabulate.
@@ -111,7 +132,7 @@ inline constexpr int kMaxProjectedBitWindowOperands = 32;
 inline constexpr int kSymMBATryFastComplementarySumCtxNumOperandsALimit = 8;
 
 // lib/symbolic/mba/SymMBAArithmetic.cpp
-inline constexpr int kSymMBAArithmeticNormalizeCtxNumOperandsRLimit = 6;
+inline constexpr int kSymMBAArithmeticNormalizeCtxNumOperandsRLimit = 2;
 inline constexpr int
     kSymMBAArithmeticReduceDistributionProofCtxNumOperandsBeforeLimit = 6;
 inline constexpr int

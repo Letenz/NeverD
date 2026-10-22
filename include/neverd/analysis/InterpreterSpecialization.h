@@ -501,11 +501,13 @@ struct SpecializationReadWitness {
   std::string Evidence;
 };
 
-/// An exact native transfer ending the declared analysis region. A terminal
-/// import retains its physical CALL; MachineExit additionally admits declared
-/// CALL/JMP/RET boundaries. The actual next PC and physical stack effects stay
-/// in the final INDIR_BR span. No ordinary successor or callee state summary is
-/// implied. Synthetic residual labels never supply native return addresses.
+/// An exact native transfer or trap ending the declared analysis region. A
+/// terminal import retains its physical CALL; MachineExit additionally admits
+/// declared CALL/JMP/RET and resumable trap boundaries. Transfers retain the
+/// actual next PC and physical stack effects in the final INDIR_BR span. A
+/// trap retains its authenticated final intrinsic without a continuation
+/// contract. No ordinary successor or callee state summary is implied.
+/// Synthetic residual labels never supply native return addresses.
 struct SpecializationExternalExit {
   uint32_t Version = 1;
   va_t ResidualAddress = 0;
@@ -550,7 +552,7 @@ struct SpecializationResult {
   bool complete() const { return Status == SpecializationStatus::Complete; }
 };
 
-/// Validate every remaining indirect transfer against its complete exit
+/// Validate every declared external transfer or trap against its complete exit
 /// receipt and the explicit domain. Stripping or altering a receipt invalidates
 /// this interface; the LowFunc alone is not an ordinary call-free function.
 /// Raw machine regions additionally require

@@ -51,11 +51,44 @@ as literal bits, including values that coincide with image string or function
 addresses. Scalars, arrays, records and vector lanes share this rule. Explicit
 pointer constant expressions retain their symbolic addresses and relocations.
 
+Both C routes use the shared string scanner to annotate image objects read
+as scalar or vector blocks. Comments show the encoding and text without
+changing the load width, stored bits, alignment checks or pointer identity.
+Big-endian Unicode can be annotated even when a host C literal cannot replace
+its bytes. LLVM C's source-variable inventory separately distinguishes scalar
+edit types from aggregate allocation extents; an array or record is never
+registered as an integer whose width is the whole allocation.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## GUI project and search ownership
+
+`CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
+LowIR facts without reading memory or inventing live-in register values, then
+revalidates the producer's basic block after discovering new paths. Lost or
+incomplete proofs retain the original indirect transfer. The native function
+disassembly API publishes these same instruction boundaries and targets; raw
+disassembly remains linear. The worker uses recovered bodies for function
+listings and replaces their linear reference-scan results, so skipped bytes do
+not swallow real code targets. Analyst Undefine overrides presentation inside
+a function without deleting the function or changing the original bytes.
+
+Exact scalar transfers may reach backward or discontiguous blocks beyond a
+next-entry search bound. Known independent entries retain tail-call ownership
+and the original transfer's instruction address. The worker indexes complete
+recovered instruction ranges separately from contiguous listing extents;
+explicit metadata chunks keep their own headers and share their parent's
+identity. Cold address navigation probes a bounded set of nearby entries and
+accepts only recovered instruction evidence, never proximity alone. Ambiguous
+ownership stays unresolved. The index survives display-cache eviction and is
+cleared when function discovery or edits rebuild the listing. Reference
+overlays cover recovered bytes without erasing unrelated functions in the gaps.
+New GUI jumps and invalidated cursors request this bounded lookup through the
+listing's optional `recover_address` when that cursor is not a known instruction
+start. Paging and scrolling reuse the existing presentation cache; explicit
+analyst items remain authoritative for display.
 
 The GUI owns the relationship between a packed `.nddb` and its unpacked working
 copy; the worker owns edit journals and their replay. Before a database opens a
@@ -1298,12 +1331,28 @@ unchanged. Canonical flat products and coefficient changes retain the same
 fast path when no unary shift fold can apply. Sum collection reuses an original
 scaled addend only while its coefficient is unchanged; merging another addend
 invalidates that reuse before modular cancellation or reconstruction.
-Arithmetic normalization reads flat monomials directly and skips multiplication
-by unit coefficients. Completed polynomials can be reused only within one
-normalizer with a fixed context, width and complement policy. Candidate emission
-cannot mutate these tables; new roots still require normalization and complete
-coefficient equality. Returned references remain local to that normalizer, and
-later independent verifiers start with fresh state.
+Arithmetic normalization reads flat monomials directly, preserves repeated
+complement coordinates and skips multiplication by unit coefficients. A deep
+request owns bounded caches of completed polynomial expansions, abstractions,
+region results and parity tables. Homogeneous high-degree partitions share that
+same request and work account, then undergo a final common-factor recovery.
+Refusals and unfinished results are not cached. Polynomial reuse requires the
+same context, width and coordinate meaning; an opaque-complement expansion may
+cross into another basis only after checking every retained coordinate.
+Candidate construction cannot mutate these tables, and emitted arithmetic
+candidates still require a separately expanded, complete coefficient equality.
+Factor-discovery fingerprints only propose candidates: full polynomial equality
+must succeed before reuse. All retained tables disappear with the request.
+Small binary partition cubes also factor their complete modular coefficient
+tensors, including absent corners and disturbed coefficients. A separate raw
+circuit retains the original partition sums for the distribution proof; only
+individually proved partition identities enter the value circuit. Quadratic
+row recovery groups corners with identical source-factor membership, while
+checking all diagonal and off-diagonal coefficients before synthesis.
+Complete optimal Boolean recipes through three inputs are generated from the
+same fixed-point search and stored as immutable data. Runtime work charges
+cover table interpretation and emitted nodes; larger explicitly requested
+truth-table searches retain their existing bounds.
 Already allocated monomial keys and coefficients move into polynomial tables;
 copying callers retain separate storage charges. This avoids allocating the
 same product entry twice without sharing mutable proof state.
@@ -1318,6 +1367,19 @@ Early sum pruning requires every long product to vanish, preserving incomplete
 factor bases. Generated products and residuals can use the proof after their
 complete distribution is established. No additional CLI or GUI switch is
 required: both source routes use the shared symbolic core.
+An additional residue proof groups factors with the same complete additive
+base and different literal offsets. It partitions all offsets by successive
+low bits, accumulating the number of matching factors on each path. The
+minimum over both branches bounds the product's trailing zeros for every value
+of the base; smaller branches can exclude larger branches without enumerating
+a Cartesian residue table. Bounds from different bases add without assuming
+those bases are independent. A zero replacement requires the sum of these
+bounds and the enclosing literal's trailing zeros to cover the full word width.
+This proof accepts opaque nonlinear bases, retains multiplicities and wrapped
+offsets, and never expands the product. Traversal, comparison, wide constants,
+scratch storage and final emission use the same request budgets. Partial
+proofs leave their products intact, while already proved zero summands can be
+removed safely before ordinary MBA recovery.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient
@@ -5611,7 +5673,7 @@ The explicit native `DeferNativeConditionalEdges` contract collects conditional 
 
 Native immutable loads also accept exhaustively proved finite address sets, bounded by `MaxImmutableLoadAddresses`. Two-execution address equality is required before enumeration. Every candidate needs immutable bytes, mapping evidence and separation from the mutable frame; the selected value remains input-dependent. Missing candidates, writable or relocated data and exhausted enumeration refuse a certificate. Read witnesses and the address limit are bound into the certificate. Dynamic frame offsets and arbitrary external memory remain unsupported.
 
-The following behavior uses the default strict audit contract. `checkBinaryUndefinedIndependence` checks complete finite native x64 paths under the declared observations, collecting both arms of original direct branches before feasibility pruning. Physical near CALL pushes the real fallthrough address; internal RET loads the current stack word, including modified return targets. Indirect targets require exhaustive finite enumeration and two-execution equality before path restriction. Exact immutable loads require evidence and proven separation from the mutable frame. Every collected instruction, including untaken arms, needs immutable original bytes; apart from the strictly lifted `INT3`/`UD2` terminal boundaries and the explicit RDSSP/INCSSP profile projection described below, every instruction also requires complete architecture metadata. Strictly lifted `INT3`/`UD2` may remain as `Terminator` boundaries with their full original bytes and LowIR operation digest, without promoting a `Missing` undefined-output sidecar to `Complete`. A certificate may retain these traps only when symbolic execution proves them unreachable; any feasible path reaching one returns `ContractViolation`, with no certificate or residual code. This rule models neither fallthrough after a trap nor exception recovery, uses no `codeFollowsTrap` heuristic, and does not extend the static LowIR API’s support. Certificates bind bytes, mappings, effects, read witnesses, execution profile and proof limits. The explicit normal, nonfaulting, CET-disabled profile excludes every image mapping from the entry frame. Every feasible path must reach an outer return that preserves entry RSP and the original return slot before the native pop; an exhausted prefix proves nothing. Direct and indirect loops are accepted only by complete finite unrolling; nonterminating or over-budget paths and all other unaudited effects refuse a certificate. `specializeBinaryInterpreterWithIndependence` runs this proof before recovery and returns no residual on failure. Ordinary recovery does not enable the gate by default; loop invariants, exception dispatch, CET-enabled execution and native-to-C equivalence remain outside this certificate.
+The following behavior uses the default strict audit contract. `checkBinaryUndefinedIndependence` checks complete finite native x64 paths under the declared observations, collecting both arms of original direct branches before feasibility pruning. Physical near CALL pushes the real fallthrough address; internal RET loads the current stack word, including modified return targets. Indirect targets require exhaustive finite enumeration and two-execution equality before path restriction. Exact immutable loads require evidence and proven separation from the mutable frame. Every collected instruction, including untaken arms, needs immutable original bytes; apart from the strictly lifted `INT3`/`INT1`/`UD2` terminal boundaries and the explicit RDSSP/INCSSP profile projection described below, every instruction also requires complete architecture metadata. Strictly lifted `INT3`/`INT1`/`UD2` (including two-byte `INT 3`) may remain as `Terminator` boundaries with their full original bytes and LowIR operation digest, without promoting a `Missing` undefined-output sidecar to `Complete`. The x64 proof owner uses the shared decoder classification and relifts the full bytes to authenticate the operation, flags and missing audit; a self-consistent provider digest alone is insufficient. A certificate may retain these traps only when symbolic execution proves them unreachable; any feasible path reaching one returns `ContractViolation`, with no certificate or residual code. This rule models neither fallthrough after a trap nor exception recovery, uses no `codeFollowsTrap` heuristic, and does not extend the static LowIR API’s support. Certificates bind bytes, mappings, effects, read witnesses, execution profile and proof limits. The explicit normal, nonfaulting, CET-disabled profile excludes every image mapping from the entry frame. Every feasible path must reach an outer return that preserves entry RSP and the original return slot before the native pop; an exhausted prefix proves nothing. Direct and indirect loops are accepted only by complete finite unrolling; nonterminating or over-budget paths and all other unaudited effects refuse a certificate. `specializeBinaryInterpreterWithIndependence` runs this proof before recovery and returns no residual on failure. Ordinary recovery does not enable the gate by default; loop invariants, exception dispatch, CET-enabled execution and native-to-C equivalence remain outside this certificate.
 
 Native collection treats a CALL continuation as a stored return value, not an immediate edge. Direct callees and both conditional branch arms keep eager audits; actual RET destinations are collected after complete finite enumeration. Skipped inline bytes carry no instruction-evidence claim. Reached decode failures, traps, incomplete targets, nonterminating cycles and exhausted budgets still prevent certification.
 
@@ -9133,7 +9195,7 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `X64CodeRegions` and `X64ImportBindings` add an explicit raw environment to binary specialization. The complete fixed PE owns its full image extent; supplemental immutable code must be disjoint and uses the existing strict decoder, symbolic executor and solver with physical CALL/RET semantics. Writable external data remains unknown. The caller supplies all machine, stack and stable-binding preconditions. An owned receipt binds the original options, image identity, exact graph and evidence to the entry requirement, including unused declarations. Preparation shares one allowance with the primary image; result validation uses independent expected limits. Integrity does not prove a live environment or grant source/native certification.
 
-`X64MachineExits` declares exact CALL, unconditional JMP and canonical near RET boundaries for a raw machine region. `NativeStackControl` strictly relifts the original bytes and retains the complete transfer: CALL captures its target before pushing the original fallthrough address; RET loads the actual stack word before advancing RSP by eight plus any unsigned cleanup. The final target remains a value, including for direct transfers. This domain requires explicit nonfaulting CET-disabled x64 state and excludes the ordinary restored-return-slot and terminal-import contracts. Unknown stores retain their alias effects; every unlisted transfer still needs exhaustive internal analysis. The existing bounded raw requirement and receipt bind the declarations, graph and physical exit spans. Complete describes the declared region only. Callee effects, reentry, continuation composition, whole-function recovery and source/native certificates remain separate obligations; ordinary consumers reject this domain even when its declarations are unused.
+`X64MachineExits` declares exact CALL, unconditional JMP, canonical near RET and resumable INT3/INT1 trap boundaries (including the two-byte INT 3 encoding) for a raw machine region. `NativeStackControl` strictly relifts the original bytes and retains the complete transfer: CALL captures its target before pushing the original fallthrough address; RET loads the actual stack word before advancing RSP by eight plus any unsigned cleanup. The final target remains a value, including for direct transfers. A trap instead retains its authenticated final intrinsic and ends the region without a next-PC or exception-continuation contract. Its missing exception-state audit stays missing; invented undefined effects or preservation claims are rejected. The architecture owner grants this terminal behavior, and ordinary trap intrinsics remain unsupported by the generic executor. This domain requires explicit nonfaulting CET-disabled x64 state and excludes the ordinary restored-return-slot and terminal-import contracts. Unknown stores retain their alias effects; every unlisted transfer still needs exhaustive internal analysis. The existing bounded raw requirement and receipt bind the declarations, graph and physical exit spans. Complete describes the declared region only. Callee effects, reentry, continuation composition, whole-function recovery and source/native certificates remain separate obligations; ordinary consumers reject this domain even when its declarations are unused.
 
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 

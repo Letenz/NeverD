@@ -159,6 +159,23 @@ validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct
 jump, ordinary calls and indirect tail calls.
 
+`NeverDConstantBranchTests` checks arithmetic indirect branches, unreachable
+opcode bytes, repeated transfers, flags, unknown live-ins, partial registers,
+call clobbers, overlapping reachable streams and late incoming edges that
+invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
+ownership and an AArch64 scalar transfer. Discontiguous and backward targets
+retain the original frame across another entry's search bound; independently
+known targets remain tail calls with their original instruction address.
+
+`NeverDWorkerConstantBranch` also checks cold expression resolution and literal
+GUI listing jumps into forward and backward fragments, both C routes, retained
+stack names, chunk headers/footers, bytecode ownership, and reference overlays
+that preserve an intervening independent call. Rename invalidation and paging
+from either direction must retain the cursor's recovered instruction even when
+an independent decode stream overlaps it.
+Run it with `NeverDWorkerPEFunctionParts` to retain explicit unwind-metadata
+chunks and their parent identity alongside recovered fragments.
+
 `NeverDSymMBAKnownFactTests` checks reuse of existing known-bit facts at
 mask and predicate consumers, including independent sign-extension and
 unbounded-value counterexamples. The shared deep-work budget remains in force.
@@ -378,6 +395,36 @@ Use `--family mixed-frontier --count 24` for degree-12/36/72/108/144
 products with odd nonlinear common powers, mixed degrees, missing corners
 and disturbed coefficients. Keep the same 65,536-work allowance and compare
 all previous families; independent modular evaluation checks every result.
+Use `--family extreme-frontier --count 6` for degree-192/256 products,
+three mixed-degree blocks, complemented nonlinear powers, missing corners and
+multiple coefficient disturbances. Use `--family residue-product --count 80`
+for correlated factor residues through degree 256, odd strides, wrapped
+offsets, multiple opaque bases and nearby nonzero controls. Run all fifteen
+families at 8/16/32/64 bits
+with the same 65,536-unit **benchmark** allowance; the public default work
+budget is unchanged. Every result must pass the independent modular evaluator,
+with no output-cost regression against the frozen baseline. Keep both the CLI
+executable and its matching shared library when freezing a comparison engine.
+Measure per-query SDK CPU time in alternating baseline/candidate processes,
+including parsing, proof and rendering; compare identical outputs and work
+counts to the CLI report before computing latency percentiles.
+The mixed-degree C++ regression adds an independently generated three-block
+variant and a full-word arithmetic oracle through 257 bits. Cache regressions
+cover compatible and incompatible complement bases, storage refusal followed by
+retry, parity-slot saturation and local fallback, repeated factors and nearby
+nonidentities. Small Boolean recipes exhaust all 256 three-input functions at
+1/8/64/65/257 bits; regenerate them with
+`python3 scripts/generate_bitwise_recipes.py`.
+`SymMBAResidue` runs in the full symbolic and quadratic owners. It checks
+offset products through 256 factors and 257-bit words against independent
+arithmetic, exhausts four-factor multisets and every four-bit input, and retains
+missing factors, changed offsets and neighboring coefficients. Exact/one-short
+work and absent storage refuse incomplete proofs. Byte-domain exhaustions
+cover partial results with unrelated summands; separate Z3 checks prove the
+full-width zero replacements at 8/16/32/64 bits. The real worker/CLI source
+synthesis test includes original x64 quartic and octic machine code, requires
+product removal in both source modes, tests toggle/cache isolation, and
+executes every generated C output at O0/O2.
 Interleaved residual tests cover the completed-product traversal boundary at
 15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
 nonzero odd-factor assignments, reject leaked temporary inputs, and require
@@ -2340,6 +2387,14 @@ ctest --test-dir build-release \
 ```
 
 ## LLVM C object storage
+
+`NeverDCSourcePresentationTests` covers mapped array/record allocations through
+248 bytes and image text reached through wide reads in HighC and LLVM C.
+ASCII, UTF-8, both byte orders of UTF-16/UTF-32 and GBK retain readable comments
+beside ordinary and volatile reads in the function body, even when the GUI
+folds declarations. Unknown pointers have no guessed text; disabling comments
+leaves the original storage representation. It also checks
+comment escaping and that aggregate storage cannot become a scalar edit type.
 
 `NeverDMedLLVMDirectDataTests` covers finite native data accesses in pointer-bearing
 segments, unrelated code/data relocations, exact byte values, partial overlap,
@@ -9452,6 +9507,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 `NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
 
 `MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
+`NativeStackControl.TrapExit*` checks exact INT3/INT1 retention, including the two-byte INT 3 encoding, and rejects forged effect, preservation and control metadata without upgrading the missing exception-state audit. `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` rejects traps presented as ordinary provider operations, with same-instruction and following-instruction returns. `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` checks all three native encodings, raw receipts, absent continuation and exact/short operation budgets; `UndeclaredTrapRemainsUnsupported` and `MachineTrapExitRejectsNonTrapInstruction` retain the rejection boundaries. Build and run `NeverDInterpreterSpecializationTests` and `NeverDPEFixedImageTests` for these checks. They qualify declared regions, not exception delivery or source/native equivalence. `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence` also checks UD2 and rejects wrong exception identities, byte/operation mismatches and forged audits even on untaken paths. `NeverDOriginalBinaryUndefinedIndependenceTests` checks that every supported trap form retains its missing audit when proved unreachable and still prevents certification when feasible; `NeverDLowIRRefinementTests` rejects the same feasible native traps against an ordinary-return candidate.
 
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 

@@ -648,6 +648,28 @@ TEST(InterpreterSpecialization, UnknownIndirectAndOpaqueEffectsPublishNothing) {
 }
 
 TEST(InterpreterSpecialization,
+     TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit) {
+  for (Intrinsic Trap : {Intrinsic::Int3, Intrinsic::Int1})
+    for (bool SameInstruction : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Trap));
+      SCOPED_TRACE(SameInstruction);
+      Provider P;
+      const auto Effect =
+          op(NdOp::INTRINSIC, {}, {NdVar::cst(static_cast<uint64_t>(Trap), 2)});
+      if (SameInstruction)
+        P.add(0x100, {Effect, ret()});
+      else {
+        P.add(0x100, {Effect}, 0x101);
+        P.add(0x101, {ret()});
+      }
+      const auto Result = specializeInterpreter(P, {0x100});
+      EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+      EXPECT_TRUE(Result.Residual.Blocks.empty());
+      EXPECT_TRUE(Result.ExternalExits.empty());
+    }
+}
+
+TEST(InterpreterSpecialization,
      RuntimeFlagSnapshotsRetainEffectsAndBoundFiniteDispatch) {
   Provider P;
   defineModelledFlags(P);

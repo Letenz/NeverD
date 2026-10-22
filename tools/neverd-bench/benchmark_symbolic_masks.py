@@ -514,6 +514,79 @@ def mixed_frontier_corpus(width, count):
     return rows
 
 
+
+def extreme_frontier_corpus(width, count):
+    """Degree 192/256, three mixed blocks and multiple changed coefficients."""
+    rng = random.Random(0x4D42413E + width)
+    words = ("((x+y)^z)", "((y*z)|w)", "((x+z)&(y|v))", "((w+v)^x)")
+    common = ("((x+y)|1)", "((z*w)|1)", "~((x^v)&z)", "((y+v)|1)")
+    layouts = ((192,), (256,), (96, 128), (48, 64, 80), (128,), (112,))
+    rows = []
+    for index in range(count):
+        kind = index % len(layouts)
+        axes = ("x", "z", "v", "y")[:4 if kind == 4 else 3]
+        terms = []
+        for block, degree in enumerate(layouts[kind]):
+            prefix = [common[(i + block) % len(common)]
+                      for i in range(degree - len(axes))]
+            choices = [(f"({words[(i + block) % len(words)]}&{axis})",
+                        f"({words[(i + block) % len(words)]}&~{axis})")
+                       for i, axis in enumerate(axes)]
+            scale = (37, -11, 182, 1 << (width - 2))[(index + block) % 4]
+            for corner, factors in enumerate(itertools.product(*choices)):
+                if corner in (0, (1 << len(axes)) - 1):
+                    continue
+                coefficient = scale
+                if corner == 1:
+                    coefficient += 13
+                if corner == 4:
+                    coefficient -= 2 * scale
+                if corner == 2 and kind % 2:
+                    coefficient += 1 << (width - 1)
+                terms.append(f"({coefficient}*{'*'.join(prefix + list(factors))})")
+        rng.shuffle(terms)
+        rows.append("+".join(terms)
+                    + "+(x^y)+2*(x&y)+(z|w)+(z&w)+19*x*y*z")
+    return rows
+
+def residue_product_corpus(width, count):
+    """Correlated factor residues, modular annihilation and nearby nonzeros."""
+    bases = ("x", "((x+y)^z)", "(x+y)")
+    tail = "+(x^y)+2*(x&y)+(z|w)+(z&w)"
+    rows = []
+    for index in range(count):
+        kind = index % 80
+        if kind < 63:
+            degree = (4, 8, 16, 32, 64, 128, 256)[kind // 9]
+            base = bases[kind % 3]
+            variant = kind % 9 // 3
+            start, step = ((0, 1), (11, 5),
+                           ((1 << (width - 1)) - 7, -3))[variant]
+            zeros = degree - degree.bit_count()
+            scale = (1 << max(width - zeros, 0)) * (1, 37, -11)[variant]
+            factors = [f"({base}+({start + step * i}))" for i in range(degree)]
+        elif kind < 66:
+            degree = (4, 8, 16)[kind - 63]
+            zeros = 2 * (degree - degree.bit_count())
+            scale = 1 << max(width - zeros, 0)
+            factors = [f"({base}+{i})" for base in ("(x+y)", "((x*z)^w)")
+                       for i in range(degree)]
+        else:
+            degree = (4, 8)[kind % 2]
+            base = bases[(kind // 2) % 3]
+            zeros = degree - degree.bit_count()
+            scale = 1 << max(width - zeros, 0)
+            control = (kind - 66) % 3
+            offsets = list(range(degree - (control == 0)))
+            if control == 1:
+                offsets[-1] -= 1
+            if control == 2:
+                scale += 1
+            factors = [f"({base}+{offset})" for offset in offsets]
+        rows.append(f"({scale}*{'*'.join(factors)})" + tail)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -608,7 +681,8 @@ def main():
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
-                 "row-residual", "mixed-frontier"),
+                 "row-residual", "mixed-frontier", "extreme-frontier",
+                 "residue-product"),
         default="complement",
     )
     args = parser.parse_args()
@@ -638,6 +712,8 @@ def main():
                 "deep-residual": deep_residual_corpus,
                 "row-residual": row_residual_corpus,
                 "mixed-frontier": mixed_frontier_corpus,
+                "extreme-frontier": extreme_frontier_corpus,
+                "residue-product": residue_product_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")
