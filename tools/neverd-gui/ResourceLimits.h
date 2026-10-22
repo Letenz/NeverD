@@ -50,6 +50,8 @@ inline constexpr int kHexViewMaxChunks = 256;
 // tools/neverd-gui/app/InteractionMetrics.cpp
 /// Functions sampled for jumps, graphs and pseudocode, spread over the list.
 inline constexpr int kInteractionMetricsMaxSamples = 24;
+/// Passes over the sampled functions for each painted deep-link series.
+inline constexpr int kInteractionMetricsLinkPasses = 8;
 /// How long one sample may take before it counts as missed.
 inline constexpr int kInteractionMetricsSampleTimeoutMs = 60000;
 
