@@ -6731,6 +6731,76 @@ private slots:
                               std::optional<Address>(Base), OpenTimeoutMs);
   }
 
+  void disassemblyLinksLeaveTheGraphAtTheirOwnTarget_data() {
+    QTest::addColumn<QString>("resource");
+    QTest::addColumn<quint64>("expectedRva");
+    QTest::newRow("address") << QStringLiteral("addresses") << quint64(0x44);
+    QTest::newRow("function") << QStringLiteral("functions") << quint64(0x40);
+  }
+
+  void disassemblyLinksLeaveTheGraphAtTheirOwnTarget() {
+    QFETCH(QString, resource);
+    QFETCH(quint64, expectedRva);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address origin = Base + 0x50;
+    assembly->navigate(origin);
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(origin));
+    assembly->setGraphMode(true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        assembly->graphMode() && assembly->graph()->loaded(), OpenTimeoutMs);
+    QCOMPARE(assembly->currentFunction(), std::optional<Address>(Base + 0x50));
+    QCOMPARE(assembly->currentAddress(), std::optional<Address>(origin));
+    const auto link = parseDeepLink(
+        QStringLiteral("ida:///%1?rva=0x44&view=disasm").arg(resource));
+    QVERIFY(link.link);
+    QString result = QStringLiteral("pending");
+    bench.window->openLink(*link.link,
+                           [&](const QString &error) { result = error; });
+    QTRY_COMPARE_WITH_TIMEOUT(result, QString(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!assembly->graphMode() &&
+                                 !assembly->listing()->jumpPending(),
+                             OpenTimeoutMs);
+    QCOMPARE(assembly->currentItem(),
+             std::optional<Address>(Base + expectedRva));
+    assembly->goBack();
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(origin));
+  }
+
+  void laterLinksSupersedeAQueuedGraphView() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x50);
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x50));
+    QStringList results;
+    for (const auto &text :
+         {QStringLiteral("ida:///addresses?rva=0x50&view=graph"),
+          QStringLiteral("ida:///addresses?rva=0x44&view=disasm")}) {
+      const auto link = parseDeepLink(text);
+      QVERIFY(link.link);
+      bench.window->openLink(*link.link,
+                             [&](const QString &error) { results << error; });
+    }
+    bool queued = false;
+    QTimer::singleShot(0, this, [&] { queued = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(queued && results.size() == 2 &&
+                                 !assembly->listing()->jumpPending(),
+                             OpenTimeoutMs);
+    QCOMPARE(results, (QStringList{QString(), QString()}));
+    QVERIFY(!assembly->graphMode());
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x44));
+  }
+
   void repeatedFunctionLinksReuseOnlyTheCurrentListingRevision() {
     QTemporaryDir directory;
     Workbench bench;
