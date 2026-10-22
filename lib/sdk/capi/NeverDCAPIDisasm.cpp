@@ -129,6 +129,90 @@ llvm::BitVector functionSlots(const sbf::SBFProgram &Program,
   return Slots;
 }
 
+template <typename Visitor>
+void visitInstructionReferences(const BinaryImage &Img,
+                                const InstructionFlow &Flow, Visitor Visit) {
+  for (const InstructionRef &Ref : Flow.Refs)
+    Visit(Ref);
+  // A transfer through a slot the loader relocated to code reaches the
+  // slot's pointer as loaded. Raw and recovered views share this authority.
+  if (Flow.Kind == "icall" || Flow.Kind == "ijump")
+    for (const InstructionRef &Ref : Flow.Refs)
+      if (Ref.Kind == "read" && Img.CodePtrRelocSlots.count(Ref.To))
+        if (const auto Target = relocatedPointer(Img, Ref.To))
+          Visit(InstructionRef{*Target, Flow.Kind, 0});
+}
+
+llvm::json::Object nativeInstructionRow(Session *S, const DecodedInsn &DI,
+                                        const uint8_t *Bytes, int Sz,
+                                        unsigned Options,
+                                        InstructionFlowScratch &Scratch) {
+  const TargetRegInfo &Registers = getTargetRegInfo(S->Img.Arch);
+  std::string BytesHex;
+  for (int J = 0; J < Sz; ++J) {
+    char Buf[4];
+    snprintf(Buf, sizeof(Buf), "%02x", Bytes[J]);
+    BytesHex += Buf;
+  }
+
+  llvm::json::Object Obj;
+  Obj["addr"] = vaHex(DI.Addr);
+  Obj["size"] = Sz;
+  Obj["mnemonic"] = std::string(DI.Raw ? DI.Raw->mnemonic : "");
+  Obj["op_str"] = std::string(DI.Raw ? DI.Raw->op_str : "");
+  const auto Display = displayOperands(*S, S->Dec, DI);
+  if (DI.Raw && Display != DI.Raw->op_str)
+    Obj["display_op_str"] = Display;
+  Obj["bytes"] = BytesHex;
+  if ((Options & NEVERD_DISASM_OPERANDS) &&
+      (S->Img.Arch == Arch::X86 || S->Img.Arch == Arch::X64) && DI.Raw &&
+      DI.Raw->detail) {
+    llvm::json::Array Bits;
+    const auto &Operands = DI.Raw->detail->x86;
+    for (unsigned I = 0; I < Operands.op_count; ++I)
+      Bits.push_back(Operands.operands[I].size * 8);
+    Obj["operand_bits"] = std::move(Bits);
+  }
+  if (Options & (NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)) {
+    const InstructionFlow Flow =
+        Scratch.summarize(S->Img, S->Dec, DI,
+                          Options & NEVERD_DISASM_STACK ? &Registers : nullptr);
+    if (Options & NEVERD_DISASM_FLOW) {
+      if (!Flow.Kind.empty())
+        Obj["flow"] = Flow.Kind.str();
+      if (Flow.Target != InvalidVA)
+        Obj["target"] = vaHex(Flow.Target);
+      if (!Flow.Refs.empty()) {
+        llvm::json::Array Refs;
+        visitInstructionReferences(
+            S->Img, Flow, [&](const InstructionRef &Ref) {
+              llvm::json::Object Row{{"to", vaHex(Ref.To)},
+                                     {"kind", Ref.Kind.str()}};
+              if (Ref.Bytes)
+                Row["size"] = static_cast<int64_t>(Ref.Bytes);
+              Refs.push_back(std::move(Row));
+            });
+        Obj["refs"] = std::move(Refs);
+      }
+    }
+    if (Options & NEVERD_DISASM_STACK) {
+      const char *Base =
+          Flow.Stack.Base && Registers.GetRegName
+              ? Registers.GetRegName(*Flow.Stack.Base, Registers.PointerSize)
+              : nullptr;
+      if (Flow.Stack.Unknown || (Flow.Stack.Base && !Base)) {
+        Obj["sp"] = nullptr;
+      } else {
+        Obj["sp"] = Flow.Stack.Delta;
+        // Spelled like the operand text.
+        if (Base)
+          Obj["sp_base"] = llvm::StringRef(Base).lower();
+      }
+    }
+  }
+  return Obj;
+}
+
 } // namespace
 
 // ===--------------------------------------------------------------------===//
@@ -228,72 +312,11 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
                       : ::neverd::sdk::
                             kNeverDCAPIDisasmNeverdDisasmJsonExLimitDefault);
 
-  const TargetRegInfo &Registers = getTargetRegInfo(S->Img.Arch);
   InstructionFlowScratch Scratch;
   const bool ModeKnown = decodeNativeRange(
       S->Img, S->Dec, Addr, Span, Limit,
       [&](const DecodedInsn &DI, const uint8_t *Bytes, int Sz) {
-        std::string BytesHex;
-        for (int J = 0; J < Sz; ++J) {
-          char Buf[4];
-          snprintf(Buf, sizeof(Buf), "%02x", Bytes[J]);
-          BytesHex += Buf;
-        }
-
-        llvm::json::Object Obj;
-        Obj["addr"] = vaHex(DI.Addr);
-        Obj["size"] = Sz;
-        Obj["mnemonic"] = std::string(DI.Raw ? DI.Raw->mnemonic : "");
-        Obj["op_str"] = std::string(DI.Raw ? DI.Raw->op_str : "");
-        const auto Display = displayOperands(*S, S->Dec, DI);
-        if (DI.Raw && Display != DI.Raw->op_str)
-          Obj["display_op_str"] = Display;
-        Obj["bytes"] = BytesHex;
-        if ((Options & NEVERD_DISASM_OPERANDS) &&
-            (S->Img.Arch == Arch::X86 || S->Img.Arch == Arch::X64) && DI.Raw &&
-            DI.Raw->detail) {
-          llvm::json::Array Bits;
-          const auto &Operands = DI.Raw->detail->x86;
-          for (unsigned I = 0; I < Operands.op_count; ++I)
-            Bits.push_back(Operands.operands[I].size * 8);
-          Obj["operand_bits"] = std::move(Bits);
-        }
-        if (Options & (NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)) {
-          const InstructionFlow Flow = Scratch.summarize(
-              S->Img, S->Dec, DI,
-              Options & NEVERD_DISASM_STACK ? &Registers : nullptr);
-          if (Options & NEVERD_DISASM_FLOW) {
-            if (!Flow.Kind.empty())
-              Obj["flow"] = Flow.Kind.str();
-            if (Flow.Target != InvalidVA)
-              Obj["target"] = vaHex(Flow.Target);
-            if (!Flow.Refs.empty()) {
-              llvm::json::Array Refs;
-              for (const InstructionRef &Ref : Flow.Refs) {
-                llvm::json::Object Row{{"to", vaHex(Ref.To)},
-                                       {"kind", Ref.Kind.str()}};
-                if (Ref.Bytes)
-                  Row["size"] = static_cast<int64_t>(Ref.Bytes);
-                Refs.push_back(std::move(Row));
-              }
-              Obj["refs"] = std::move(Refs);
-            }
-          }
-          if (Options & NEVERD_DISASM_STACK) {
-            const char *Base = Flow.Stack.Base && Registers.GetRegName
-                                   ? Registers.GetRegName(*Flow.Stack.Base,
-                                                          Registers.PointerSize)
-                                   : nullptr;
-            if (Flow.Stack.Unknown || (Flow.Stack.Base && !Base)) {
-              Obj["sp"] = nullptr;
-            } else {
-              Obj["sp"] = Flow.Stack.Delta;
-              // Spelled like the operand text.
-              if (Base)
-                Obj["sp_base"] = llvm::StringRef(Base).lower();
-            }
-          }
-        }
+        auto Obj = nativeInstructionRow(S, DI, Bytes, Sz, Options, Scratch);
         Arr.push_back(std::move(Obj));
         return true;
       });
@@ -306,6 +329,74 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
 // ===--------------------------------------------------------------------===//
 // Direct references (JSON object)
 // ===--------------------------------------------------------------------===//
+
+const char *neverd_function_disasm_json(neverd_session_t Sess,
+                                        neverd_va_t Entry,
+                                        neverd_va_t FirstAddress, int MaxInsns,
+                                        unsigned Options) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded || S->Img.Arch == Arch::EVM || S->Img.Arch == Arch::SBF) {
+    S->setError("function disassembly requires a loaded native image");
+    return nullptr;
+  }
+  if (!neverd_prepare_function_view(Sess, Entry, "low") &&
+      !S->findLowFunc(Entry))
+    return nullptr;
+  const LowFunc *Function = S->findLowFunc(Entry);
+  if (!Function) {
+    S->setError("no recovered native function at " + vaHex(Entry));
+    return nullptr;
+  }
+  std::map<va_t, const LowInstructionBoundary *> Boundaries;
+  for (const LowBlock &Block : Function->Blocks)
+    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
+      Boundaries.emplace(Boundary.Address, &Boundary);
+  const size_t Limit = std::clamp(MaxInsns, 1, kMaxFunctionDisasmPage);
+  llvm::json::Array Rows;
+  InstructionFlowScratch Scratch;
+  auto At = Boundaries.lower_bound(FirstAddress);
+  for (; At != Boundaries.end() && Rows.size() < Limit; ++At) {
+    const auto &Boundary = *At->second;
+    const auto *Bytes = S->Img.readVA(Boundary.Address, Boundary.Size);
+    if (!Bytes || !Boundary.Size ||
+        !S->Dec.selectMode(S->Img, Boundary.Address, Boundary.Mode)) {
+      S->setError(
+          "recovered instruction has no matching readable bytes or mode");
+      return nullptr;
+    }
+    DecodedInsn Instruction;
+    if (S->Dec.decodeOne(Bytes, Boundary.Size, Boundary.Address, Instruction) !=
+        Boundary.Size) {
+      S->setError("recovered instruction boundary disagrees with the decoder");
+      return nullptr;
+    }
+    auto Row = nativeInstructionRow(S, Instruction, Bytes, Boundary.Size,
+                                    Options, Scratch);
+    if ((Options & NEVERD_DISASM_FLOW) &&
+        Boundary.Control == LowInstructionControl::Branch &&
+        Boundary.Immediate &&
+        !hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                      LowInstructionControlFlag::Indirect)) {
+      Row["flow"] =
+          hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                       LowInstructionControlFlag::Conditional)
+              ? "cjump"
+              : "jump";
+      Row["target"] = vaHex(*Boundary.Immediate);
+    }
+    Rows.push_back(std::move(Row));
+  }
+  S->clearError();
+  return dupStr(jsonToString(llvm::json::Object{
+      {"instructions", std::move(Rows)},
+      {"next_address", At == Boundaries.end()
+                           ? llvm::json::Value(nullptr)
+                           : llvm::json::Value(vaHex(At->first))},
+      {"lift_complete", Function->hasCompleteInstructionLift()}}));
+}
 
 const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
                                   int MaxFunctions) {
@@ -340,15 +431,9 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
         if (Flow.Target != InvalidVA && !Flow.Kind.empty() &&
             Flow.Kind != UnliftedFlow)
           Out.push_back({DI.Addr, Flow.Target, Flow.Kind});
-        for (const InstructionRef &R : Flow.Refs)
+        visitInstructionReferences(S->Img, Flow, [&](const InstructionRef &R) {
           Out.push_back({DI.Addr, R.To, R.Kind, R.Bytes});
-        // A transfer through a slot the loader relocated to code reaches
-        // the slot's pointer as loaded.
-        if (Flow.Kind == "icall" || Flow.Kind == "ijump")
-          for (const InstructionRef &R : Flow.Refs)
-            if (R.Kind == "read" && S->Img.CodePtrRelocSlots.count(R.To))
-              if (const auto Target = relocatedPointer(S->Img, R.To))
-                Out.push_back({DI.Addr, *Target, Flow.Kind});
+        });
       });
   if (!Decoded) {
     S->setError("failed to initialize a decoder for the image");

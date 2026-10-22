@@ -106,6 +106,22 @@ NEVERD_API const char *neverd_disasm_json_ex(neverd_session_t Sess,
                                              neverd_va_t Addr, int MaxInsns,
                                              unsigned Options);
 
+/// Native instructions recovered for one function, in address order, starting
+/// at FirstAddress. Uses the same CFG and recovery checks as the decompiler;
+/// skipped bytes are absent, even inside a sized function. Prepares the low
+/// function view on demand. Options select the same additive fields as raw
+/// disassembly; recovered direct branch targets replace instruction-local
+/// indirect targets. Raw neverd_disasm_json[_ex] remains a linear decode.
+/// Returns {"instructions":[...],"next_address":"0x..."|null,
+/// "lift_complete":bool}. Completeness describes reachable instruction lifting,
+/// not proof that every indirect target is known. MaxInsns is clamped to
+/// 1..4096. NULL with an error for non-native images or unavailable analysis.
+NEVERD_API const char *neverd_function_disasm_json(neverd_session_t Sess,
+                                                   neverd_va_t Entry,
+                                                   neverd_va_t FirstAddress,
+                                                   int MaxInsns,
+                                                   unsigned Options);
+
 /// Direct references of up to \p MaxFunctions native functions whose entries
 /// are at or above \p FirstEntry, in ascending entry order, from the same
 /// LowIR lift as NEVERD_DISASM_FLOW.  The address cursor stays valid when lazy

@@ -146,6 +146,12 @@ validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct
 jump, ordinary calls and indirect tail calls.
 
+`NeverDConstantBranchTests` checks arithmetic indirect branches, unreachable
+opcode bytes, repeated transfers, flags, unknown live-ins, partial registers,
+call clobbers, overlapping reachable streams and late incoming edges that
+invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
+ownership and an AArch64 scalar transfer.
+
 `NeverDSymMBAKnownFactTests` checks reuse of existing known-bit facts at
 mask and predicate consumers, including independent sign-extension and
 unbounded-value counterexamples. The shared deep-work budget remains in force.

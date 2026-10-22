@@ -1203,6 +1203,11 @@ private:
     LowInstructionTargetMode TargetMode = LowInstructionTargetMode::Preserve;
     std::vector<va_t> JumpTableTargets;
 
+    /// Original operand of an exact scalar branch. Keep it for revalidation
+    /// when newly decoded paths split the producer's basic block.
+    std::optional<NdVar> ScalarBranchInput;
+    bool RejectedScalarBranch = false;
+
     /// x87 stack-top (TOP) at this instruction's entry/exit in lift (worklist)
     /// order, and whether it absolute-resets TOP (FNINIT/FNCLEX). fixupFpuStack
     /// uses these to re-base ST(i) references into control-flow order.
@@ -1233,6 +1238,10 @@ private:
   /// target has a dominating constant definition in the decoded prefix.
   bool resolveConstantIndirectBranch(const BinaryImage &Img, uint32_t InsnId,
                                      InsnRecord &Rec);
+  /// Close exact, memory-independent constant branches on the completed CFG.
+  /// Every new path revalidates earlier proofs before the graph is published.
+  bool recoverScalarConstantBranches(const BinaryImage &Img, Decoder &Dec,
+                                     LowFunc &Func, size_t &RemainingWork);
   /// Resolve an immutable relocation-proven scalar label pointer that reaches
   /// an indirect branch through a unique frame spill/reload relay.  Unlike a
   /// jump table, the exact slot has one fixed target, so the safe model is a

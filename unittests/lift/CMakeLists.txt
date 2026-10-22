@@ -7,6 +7,11 @@ add_neverd_unittest(NeverDDirectTailCallMetadataTests
   LINK_COMPONENTS IRLow Lift
 )
 
+add_neverd_unittest(NeverDConstantBranchTests
+  core/ConstantBranchTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
 add_neverd_unittest(NeverDResumableTrapBoundaryTests
   core/ResumableTrapBoundaryTests.cpp
   core/ResumableTrapIdentityTests.cpp
