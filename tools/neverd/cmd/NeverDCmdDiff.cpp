@@ -267,14 +267,19 @@ int runStructuralDiff() {
     const auto Previous = std::signal(SIGINT, interrupt);
     const auto RestoreSignal =
         llvm::scope_exit([&] { std::signal(SIGINT, Previous); });
-    std::jthread Monitor([&](std::stop_token Stop) {
-      while (!Stop.stop_requested()) {
+    std::atomic<bool> StopMonitor = false;
+    std::thread Monitor([&] {
+      while (!StopMonitor.load(std::memory_order_relaxed)) {
         if (Interrupted) {
           neverd_comparison_cancel(C);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(
             limits::diff::kCancellationPollMilliseconds));
       }
+    });
+    const auto JoinMonitor = llvm::scope_exit([&] {
+      StopMonitor.store(true, std::memory_order_relaxed);
+      Monitor.join();
     });
     ProgressState Progress;
     const auto OptionsText = render(std::move(Value));
@@ -527,8 +532,6 @@ int runStructuralDiff() {
       if (Partial)
         llvm::outs() << "Coverage is incomplete; inspect the reported gaps.\n";
     }
-    Monitor.request_stop();
-    Monitor.join();
     return Partial ? 3 : (Changed || Unresolved) ? 2 : 0;
   } catch (const std::exception &E) {
     llvm::WithColor::error() << E.what() << '\n';

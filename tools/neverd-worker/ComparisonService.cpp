@@ -18,6 +18,7 @@
 #include "neverd/sdk/NeverDCAPIDiff.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <thread>
@@ -73,6 +74,40 @@ const API &api() {
   static const API Functions;
   return Functions;
 }
+
+// Keep cancellation forwarding joined on every return and exception path,
+// including standard libraries that do not yet provide std::jthread.
+class CancellationMonitor {
+  std::atomic<bool> Done = false;
+  std::thread Thread;
+
+public:
+  CancellationMonitor(neverd_comparison_t Handle,
+                      const ComparisonService::Cancellation &Cancelled,
+                      bool StopAfterCancel = false) {
+    if (!Handle)
+      return;
+    Thread = std::thread([this, Handle, &Cancelled, StopAfterCancel] {
+      while (!Done.load(std::memory_order_relaxed)) {
+        if (Cancelled && Cancelled()) {
+          api().cancel(Handle);
+          if (StopAfterCancel)
+            return;
+        }
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(limits::kCancellationPollMilliseconds));
+      }
+    });
+  }
+  ~CancellationMonitor() { stop(); }
+
+  void stop() {
+    Done.store(true, std::memory_order_relaxed);
+    if (Thread.joinable())
+      Thread.join();
+  }
+};
+
 std::string take(const char *Text) {
   const std::unique_ptr<const char, decltype(&neverd_free_string)> Owned(
       Text, neverd_free_string);
@@ -261,16 +296,8 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
     };
     if (Cancelled && Cancelled())
       api().cancel(Next.get());
-    std::jthread Monitor([&](std::stop_token Stop) {
-      while (!Stop.stop_requested()) {
-        if (Cancelled && Cancelled()) {
-          api().cancel(Next.get());
-          return;
-        }
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(limits::kCancellationPollMilliseconds));
-      }
-    });
+    CancellationMonitor Monitor(Next.get(), Cancelled,
+                                /*StopAfterCancel=*/true);
     auto AHandle = Primary.get(), BHandle = Secondary.get();
     const int OK =
         api().run_owned(Next.get(), &AHandle, &BHandle, Options.c_str(),
@@ -279,8 +306,7 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
       Primary.release();
     if (!BHandle)
       Secondary.release();
-    Monitor.request_stop();
-    Monitor.join();
+    Monitor.stop();
     if (!OK)
       throw Error("comparison_failed", take(api().last_error(Next.get())));
     if (AS->changed() || BS->changed())
@@ -330,16 +356,8 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
   if (S.stale())
     throw Error("stale_input",
                 "A comparison input changed; reload the comparison");
-  std::jthread Monitor;
-  if (cancellable(Operation))
-    Monitor = std::jthread([&](std::stop_token Stop) {
-      while (!Stop.stop_requested()) {
-        if (Cancelled && Cancelled())
-          api().cancel(S.Handle);
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(limits::kCancellationPollMilliseconds));
-      }
-    });
+  CancellationMonitor Monitor(cancellable(Operation) ? S.Handle : nullptr,
+                              Cancelled);
   if (Operation == "comparison_functions")
     return S.result(api().functions_json(S.Handle, Payload.dump().c_str()));
   if (Operation == "comparison_function_page")
