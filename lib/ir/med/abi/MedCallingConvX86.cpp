@@ -20,7 +20,6 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
-#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -109,8 +108,8 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   // number of distinct SSA vars, so the depth cap only guards genuinely long
   // acyclic chains.
   std::set<std::tuple<int, int, int, uint64_t>> VisitedDef;
-  std::function<std::optional<int64_t>(const MedVar &, int)> traceOff =
-      [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
+  auto traceOff = [&](auto &&Self, const MedVar &V,
+                      int Depth) -> std::optional<int64_t> {
     if (Depth == 0) {
       VisitedPhi.clear();
       VisitedDef.clear();
@@ -141,7 +140,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
         if (!VisitedPhi.insert({V.Id, V.SSAVer, V.RegOff}).second)
           return std::nullopt;
         for (const auto &[Pred, AV] : Phi->Args)
-          if (auto O = traceOff(AV, Depth + 1))
+          if (auto O = Self(Self, AV, Depth + 1))
             return O;
         return std::nullopt;
       }
@@ -161,32 +160,32 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
         if (In.Kind == MedVar::Reg && In.RegOff == SpOff && In.Id == V.Id &&
             In.SSAVer == V.SSAVer)
           return 0; // identity self-copy of the entry stack pointer
-        return traceOff(In, Depth + 1);
+        return Self(Self, In, Depth + 1);
       }
       return std::nullopt;
     case NdOp::INT_ZEXT:
     case NdOp::INT_SEXT:
-      return Def->NumInputs == 1 ? traceOff(Def->Inputs[0], Depth + 1)
+      return Def->NumInputs == 1 ? Self(Self, Def->Inputs[0], Depth + 1)
                                  : std::nullopt;
     case NdOp::SUBBYTES:
       if (Def->NumInputs >= 2 && Def->Inputs[1].Kind == MedVar::Const &&
           Def->Inputs[1].ConstVal == 0)
-        return traceOff(Def->Inputs[0], Depth + 1);
+        return Self(Self, Def->Inputs[0], Depth + 1);
       return std::nullopt;
     case NdOp::INT_ADD:
       if (Def->NumInputs >= 2) {
         if (auto C = constOf(Def->Inputs[1]))
-          if (auto B = traceOff(Def->Inputs[0], Depth + 1))
+          if (auto B = Self(Self, Def->Inputs[0], Depth + 1))
             return *B + *C;
         if (auto C = constOf(Def->Inputs[0]))
-          if (auto B = traceOff(Def->Inputs[1], Depth + 1))
+          if (auto B = Self(Self, Def->Inputs[1], Depth + 1))
             return *B + *C;
       }
       return std::nullopt;
     case NdOp::INT_SUB:
       if (Def->NumInputs >= 2)
         if (auto C = constOf(Def->Inputs[1]))
-          if (auto B = traceOff(Def->Inputs[0], Depth + 1))
+          if (auto B = Self(Self, Def->Inputs[0], Depth + 1))
             return *B - *C;
       return std::nullopt;
     default:
@@ -204,7 +203,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   auto stackArgOffset = [&](const MedVar &AddrVar) -> std::optional<int64_t> {
     if (AddrVar.Kind != MedVar::Temp)
       return std::nullopt;
-    auto Off = traceOff(AddrVar, 0);
+    auto Off = traceOff(traceOff, AddrVar, 0);
     if (!Off || *Off < 4 || *Off > 0x400 || (*Off % 4) != 0)
       return std::nullopt;
     // A detected variadic callee recovers only its named prefix here.  Values
@@ -226,7 +225,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       [&](const MedVar &AddrVar) -> std::optional<int64_t> {
     if (AddrVar.Kind != MedVar::Temp)
       return std::nullopt;
-    auto Off = traceOff(AddrVar, 0);
+    auto Off = traceOff(traceOff, AddrVar, 0);
     if (!Off || *Off < 4 || *Off > 0x400)
       return std::nullopt;
     if (isVariadicOverflowOffset(*Off))
@@ -270,7 +269,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       for (size_t J = I; J-- > 0 && !Written;)
         if (const MedVar &Out = Blk.Ops[J].Output;
             Out.Kind == MedVar::Reg && Out.RegOff == SpOff && Out.Size > 0) {
-          CallOff = traceOff(Out, 0);
+          CallOff = traceOff(traceOff, Out, 0);
           Written = true;
         }
       if (!Written && Blk.Preds.empty())

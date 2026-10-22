@@ -7744,9 +7744,11 @@ bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {
           return true;
     }
     // The names the debug signature gives the parameters where they arrive,
-    // such as `p_8` for a record's second register.
-    for (size_t I = 0; I < CurrentFunc->Params.size(); ++I)
-      if (Name == debugParamName(*CurrentFunc, I))
+    // such as `p_8` for a record's second register.  Compared in place:
+    // copying each one for every slot of a large function is the same test.
+    bindParams(*CurrentFunc);
+    for (const std::string &DebugName : ParamDebugNames)
+      if (!DebugName.empty() && Name == DebugName)
         return true;
   }
   return false;
