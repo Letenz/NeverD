@@ -125,6 +125,9 @@ struct RawByteOracle {
         case NdOp::INT_SUB:
           write(Op.Output, read(Op.Inputs[0]) - read(Op.Inputs[1]));
           break;
+        case NdOp::INT_MULT:
+          write(Op.Output, read(Op.Inputs[0]) * read(Op.Inputs[1]));
+          break;
         case NdOp::INT_AND:
           write(Op.Output, read(Op.Inputs[0]) & read(Op.Inputs[1]));
           break;
