@@ -1010,6 +1010,10 @@ const char *neverd_warm_functions_json(neverd_session_t s,
 const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
                                   int maxFunctions) {
   session(s)->error.clear();
+  if (session(s)->path.ends_with("source-cache-evm.bin")) {
+    session(s)->error = "Reference indexing is unsupported for EVM";
+    return nullptr;
+  }
   maxFunctions = std::clamp(maxFunctions, 1, 4096);
   Json refs = Json::array();
   int first =

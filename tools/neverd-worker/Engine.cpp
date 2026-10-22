@@ -8,6 +8,7 @@
 #include "OperandFormat.h"
 #include "ProjectHistory.h"
 #include "ResourceLimits.h"
+#include "TablePage.h"
 #include "TextFold.h"
 
 #include "neverd/sdk/Limits.h"
@@ -474,12 +475,13 @@ std::size_t namedViewJsonBytes(const Json &value, unsigned depth = 0) {
   return bytes;
 }
 
+enum class PageAddressMatch { Exact, SegmentRange, RegionRange };
+
 /// A page of \p items; a filter keeps the rows where one of \p searchFields
 /// contains it, ignoring the case of ASCII letters.
 Json page(const Json &items, const Json &payload,
-          std::initializer_list<const char *> searchFields = {}) {
-  const auto offset =
-      sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
+          std::initializer_list<const char *> searchFields = {},
+          PageAddressMatch addressMatch = PageAddressMatch::Exact) {
   const auto limit =
       sizeField(payload, "limit",
                 ::neverd::limits::worker::kEnginePageLimitSizeFieldDefault,
@@ -488,8 +490,13 @@ Json page(const Json &items, const Json &payload,
     throw Error("invalid_request", "limit must be at least 1");
   const auto filter = folded(stringField(payload, "filter"));
   Json selected = Json::array();
+  std::vector<std::size_t> order;
+  const bool locating = payload.contains("seek_address");
+  const auto requestedOffset =
+      sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
   std::size_t total = 0;
-  for (const auto &item : items) {
+  for (std::size_t index = 0; index < items.size(); ++index) {
+    const auto &item = items[index];
     if (!filter.empty() &&
         std::none_of(searchFields.begin(), searchFields.end(),
                      [&](const char *field) {
@@ -499,16 +506,51 @@ Json page(const Json &items, const Json &payload,
                                   std::string::npos;
                      }))
       continue;
-    if (total >= offset && selected.size() < limit)
+    if (locating)
+      order.push_back(index);
+    else if (total >= requestedOffset && selected.size() < limit)
       selected.push_back(item);
     ++total;
   }
+  const auto position = tablePagePosition(
+      payload, total, limit,
+      [&](std::size_t index) -> std::optional<TableRowRange> {
+        const auto &item = items[order[index]];
+        const char *key =
+            addressMatch == PageAddressMatch::RegionRange ? "start" : "address";
+        if (!item.contains(key) || !item[key].is_string())
+          return std::nullopt;
+        TableRowRange row{parseAddress(item[key].get<std::string>())};
+        if (addressMatch == PageAddressMatch::RegionRange) {
+          const auto end = parseAddress(item.at("end").get<std::string>());
+          if (end < row.start)
+            throw Error("invalid_image", "A region has an invalid end");
+          row.size = end - row.start;
+        } else if (addressMatch == PageAddressMatch::SegmentRange) {
+          const auto &size = item.at("size");
+          if (size.is_number_unsigned() ||
+              (size.is_number_integer() && size.get<std::int64_t>() >= 0))
+            row.size = size.get<std::uint64_t>();
+          else if (size.is_string())
+            row.size = parseAddress(size.get<std::string>());
+          else
+            throw Error("invalid_image", "A segment has an invalid size");
+        }
+        return row;
+      });
+  const auto offset = position.offset;
+  if (locating)
+    for (auto index = std::min(offset, total);
+         index < total && selected.size() < limit; ++index)
+      selected.push_back(items[order[index]]);
   const bool complete = offset >= total || selected.size() >= total - offset;
-  return {{"items", std::move(selected)},
-          {"total", total},
-          {"offset", offset},
-          {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
-          {"complete", complete}};
+  Json result{{"items", std::move(selected)},
+              {"total", total},
+              {"offset", offset},
+              {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
+              {"complete", complete}};
+  position.annotate(result);
+  return result;
 }
 
 /// Sort table rows by {"sort": field, "descending": bool}.  Hex address
@@ -2824,8 +2866,6 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       operation == "disasm")
     analyzeBeforeFunctionQueries();
   if (operation == "functions") {
-    const auto offset =
-        sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
     const auto limit = sizeField(
         p, "limit",
         ::neverd::limits::worker::
@@ -2897,6 +2937,14 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     const auto start = std::size_t(first - functionOrder_.begin());
     const auto total = functionOrder_.size() - start;
+    const auto position = tablePagePosition(
+        p, total, limit,
+        [&](std::size_t index) -> std::optional<TableRowRange> {
+          return TableRowRange{
+              parseAddress(rows[functionOrder_[start + index]]["address"]
+                               .get<std::string>())};
+        });
+    const auto offset = position.offset;
     Json items = Json::array();
     for (auto i = std::min(offset, total); i < total && items.size() < limit;
          ++i) {
@@ -2917,12 +2965,14 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       items.push_back(std::move(item));
     }
     const bool complete = offset >= total || items.size() >= total - offset;
-    return {{"items", items},
-            {"offset", offset},
-            {"total", total},
-            {"complete", complete},
-            {"next_offset",
-             complete ? Json(nullptr) : Json(offset + items.size())}};
+    Json result{{"items", items},
+                {"offset", offset},
+                {"total", total},
+                {"complete", complete},
+                {"next_offset",
+                 complete ? Json(nullptr) : Json(offset + items.size())}};
+    position.annotate(result);
+    return result;
   }
   if (operation == "resolve") {
     const auto query = stringField(p, "query");
@@ -3292,7 +3342,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       item["address"] = item.at("va");
       item.erase("va");
     }
-    return page(items, p, {"name"});
+    return page(items, p, {"name"}, PageAddressMatch::SegmentRange);
   }
   if (operation == "listing")
     return listing().page(p);
@@ -3308,7 +3358,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   if (operation == "regions") {
     auto items = listing().regions();
     sortItems(items, p);
-    return page(items, p, {"name"});
+    return page(items, p, {"name"}, PageAddressMatch::RegionRange);
   }
   if (operation == "imports") {
     Json items = Json::array();

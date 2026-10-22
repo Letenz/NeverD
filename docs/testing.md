@@ -365,6 +365,23 @@ Use `--family mixed-frontier --count 24` for degree-12/36/72/108/144
 products with odd nonlinear common powers, mixed degrees, missing corners
 and disturbed coefficients. Keep the same 65,536-work allowance and compare
 all previous families; independent modular evaluation checks every result.
+Use `--family extreme-frontier --count 6` for degree-192/256 products,
+three mixed-degree blocks, complemented nonlinear powers, missing corners and
+multiple coefficient disturbances. Run all fourteen families at 8/16/32/64 bits
+with the same 65,536-unit **benchmark** allowance; the public default work
+budget is unchanged. Every result must pass the independent modular evaluator,
+with no output-cost regression against the frozen baseline. Keep both the CLI
+executable and its matching shared library when freezing a comparison engine.
+Measure per-query SDK CPU time in alternating baseline/candidate processes,
+including parsing, proof and rendering; compare identical outputs and work
+counts to the CLI report before computing latency percentiles.
+The mixed-degree C++ regression adds an independently generated three-block
+variant and a full-word arithmetic oracle through 257 bits. Cache regressions
+cover compatible and incompatible complement bases, storage refusal followed by
+retry, parity-slot saturation and local fallback, repeated factors and nearby
+nonidentities. Small Boolean recipes exhaust all 256 three-input functions at
+1/8/64/65/257 bits; regenerate them with
+`python3 scripts/generate_bitwise_recipes.py`.
 Interleaved residual tests cover the completed-product traversal boundary at
 15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
 nonzero odd-factor assignments, reject leaked temporary inputs, and require
@@ -785,6 +802,30 @@ refusal without moving the cursor and the real local socket protocol.
 at the request-size boundary, including requests without a newline and multiple
 bounded messages on one connection. `instanceServingCanBeDisabled` checks the
 opt-out setting. Run these through `NeverDGuiUnits` and `NeverDGuiController`.
+
+Link regressions also cover RVA overflow and numeric whitespace, hash-based
+renamed recent inputs and packed databases, exact resource validation, interior
+segment addresses, and selection beyond cached pages in a filtered, descending
+20,000-function table. `nativeUrlEventsReachTheWindowThatOwnsTheirProgram`
+launches a second GUI process and routes URL events both to that process and
+back to the receiver. Probe tests include unresponsive endpoints, early matching
+and malformed replies, including a healthy endpoint behind an entire stalled
+wave; framing tests fragment quoted braces, escapes and UTF-8.
+`NeverDGuiLinksCLI` removes display environment variables. On Linux with `gio`
+and `desktop-file-validate`, it also launches an isolated generated desktop entry
+from a path containing special characters and checks a hung registration helper.
+It never registers a handler in the real user's desktop configuration.
+Worker functional regressions locate functions and strings in both sort
+directions and exercise the distinct segment and region row schemas.
+`analysisCompletionDoesNotRequireAnUnsupportedReferenceIndex` checks the IPC
+completion flag against confirmed VM analysis while reference indexing remains
+explicitly unavailable.
+`repeatedFunctionLinksReuseOnlyTheCurrentListingRevision` checks that repeated
+links retain the current listing without a reload and that an edit invalidates
+that reuse before the refreshed rows arrive.
+See the [deep-link benchmark](../tools/neverd-gui/benchmarks/README.md#deep-link-forwarding)
+for a paired comparison with actual IDA instances; acknowledgements do not measure
+painted frames or decompilation throughput.
 
 `SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
 restoration of ordinary output, reuse of prepared IR, navigation invalidation

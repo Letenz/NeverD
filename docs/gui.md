@@ -567,6 +567,11 @@ IDA's `ida://`, offering the one on the clipboard. A function link opens the
 function that holds its address, and a link that names another file is
 followed with a warning, as in IDA; a malformed link, another build, or an
 address, type or bookmark the program lacks is refused in the output window.
+String, import, export and name links require an actual row of that kind;
+segment links accept an address inside a mapped region and select that region.
+Numeric addresses reject embedded whitespace and overflowing relative addresses.
+Table links clear a filter hiding their destination and select the row even
+when its page has not been loaded yet, preserving the current sort order.
 
 Each workbench answers other programs, as IDA 9.4's IPC server answers hcli.
 `neverd-gui --list-instances` lists the running workbenches and their
@@ -589,6 +594,16 @@ and SHA-256, its analysis state and the cursor; `open_link` with `uri`; and
 `is_analysis_complete`. Running instances share places this way, not edits,
 in IDA as in NeverD: a team shares a project's edits through git (see
 *Working in a team through git*).
+
+A supplied hash also finds a renamed recent input. For a recent `.nddb`, the
+lookup uses the stored program's name and hash; unpacking still verifies its
+bytes before the link can open. Instance listing and `--no-launch` forwarding
+work without a display service. Instance probes run concurrently with one
+bounded deadline, and a named link stops probing once a matching window answers.
+Native operating-system URL events use the same routing while the receiving
+window continues serving requests, including requests routed back to itself.
+NeverD accepts IDA location links; it does not read IDA databases or download
+Knowledge Exchange assets, and it registers only the `neverd://` scheme.
 
 ## Keyboard
 
