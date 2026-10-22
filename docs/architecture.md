@@ -51,11 +51,29 @@ as literal bits, including values that coincide with image string or function
 addresses. Scalars, arrays, records and vector lanes share this rule. Explicit
 pointer constant expressions retain their symbolic addresses and relocations.
 
+Both C routes use the shared string scanner to annotate image objects read
+as scalar or vector blocks. Comments show the encoding and text without
+changing the load width, stored bits, alignment checks or pointer identity.
+Big-endian Unicode can be annotated even when a host C literal cannot replace
+its bytes. LLVM C's source-variable inventory separately distinguishes scalar
+edit types from aggregate allocation extents; an array or record is never
+registered as an integer whose width is the whole allocation.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## GUI project and search ownership
+
+`CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
+LowIR facts without reading memory or inventing live-in register values, then
+revalidates the producer's basic block after discovering new paths. Lost or
+incomplete proofs retain the original indirect transfer. The native function
+disassembly API publishes these same instruction boundaries and targets; raw
+disassembly remains linear. The worker uses recovered bodies for function
+listings and replaces their linear reference-scan results, so skipped bytes do
+not swallow real code targets. Analyst Undefine overrides presentation inside
+a function without deleting the function or changing the original bytes.
 
 The GUI owns the relationship between a packed `.nddb` and its unpacked working
 copy; the worker owns edit journals and their replay. Before a database opens a
@@ -1326,6 +1344,19 @@ Early sum pruning requires every long product to vanish, preserving incomplete
 factor bases. Generated products and residuals can use the proof after their
 complete distribution is established. No additional CLI or GUI switch is
 required: both source routes use the shared symbolic core.
+An additional residue proof groups factors with the same complete additive
+base and different literal offsets. It partitions all offsets by successive
+low bits, accumulating the number of matching factors on each path. The
+minimum over both branches bounds the product's trailing zeros for every value
+of the base; smaller branches can exclude larger branches without enumerating
+a Cartesian residue table. Bounds from different bases add without assuming
+those bases are independent. A zero replacement requires the sum of these
+bounds and the enclosing literal's trailing zeros to cover the full word width.
+This proof accepts opaque nonlinear bases, retains multiplicities and wrapped
+offsets, and never expands the product. Traversal, comparison, wide constants,
+scratch storage and final emission use the same request budgets. Partial
+proofs leave their products intact, while already proved zero summands can be
+removed safely before ordinary MBA recovery.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient

@@ -59,6 +59,12 @@ inline constexpr unsigned kMinQuadraticCongruenceAtoms = 4;
 inline constexpr unsigned kMinPackedPolynomialAtoms = 4;
 inline constexpr unsigned kMinPackedPolynomialWidth = 8;
 
+inline constexpr std::size_t kMinResidueProductFactors = 4;
+inline constexpr unsigned kMinResidueShiftedFactors = 2;
+inline constexpr std::size_t kMaxResidueProductFactors = 512;
+inline constexpr std::size_t kMaxResidueBaseTerms = 16;
+inline constexpr std::size_t kMaxResidueProductSummands = 128;
+
 // lib/symbolic/mba/SymBitwise.cpp
 /// The most inputs the exhaustive search will ever tabulate.
 ///
