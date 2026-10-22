@@ -900,8 +900,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                       .SetIntrinsics;
             } catch (const std::runtime_error &) {
             }
-            if (PrintsIntrinsic &&
-                (Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64))
+            // Follow the renderer on every architecture: x86 hardware fences
+            // printed as _mm_* also need the ISA header on ELF and Mach-O.
+            if (PrintsIntrinsic)
               HasCIntrinsics = true;
             if (PrintsIntrinsic && Opts.Format == BinaryFormat::COFF &&
                 (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64))

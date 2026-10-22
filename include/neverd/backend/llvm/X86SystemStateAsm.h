@@ -103,6 +103,12 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   case K::Enqueue:
     P.Text += " " + Memory(0) + ", " + Input(1) + "\n\tsetz $0";
     break;
+  case K::DirectStore:
+    P.Text += " " + Input(1) + ", " + Memory(0);
+    break;
+  case K::DirectStore64B:
+    P.Text += " " + Memory(0) + ", " + Input(1);
+    break;
   }
   auto Constraint = [&](const std::string &Text) {
     if (!P.Constraints.empty())

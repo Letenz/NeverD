@@ -87,6 +87,7 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width) {
       return X86SystemStateLayout{1, 2, {8, 2}, 0, true};
     return X86SystemStateLayout{4, 2, {2, 2}, 2, true};
   case K::ShadowWrite:
+  case K::DirectStore:
     if ((Width != 4 && Width != 8) || (TargetArch == Arch::X86 && Width != 4))
       return std::nullopt;
     return X86SystemStateLayout{0, 2, {8, Width}};
@@ -95,6 +96,10 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width) {
     if (TargetArch == Arch::X86)
       return std::nullopt;
     return X86SystemStateLayout{1, 2, {8, 8}, 0, true};
+  case K::DirectStore64B:
+    if (TargetArch == Arch::X86)
+      return std::nullopt;
+    return X86SystemStateLayout{0, 2, {8, 8}};
   }
   return std::nullopt;
 }
@@ -103,6 +108,7 @@ inline uint16_t x86SystemStateWidth(Intrinsic Id,
                                     const X86SystemStateShape &Shape) {
   switch (x86SystemStateContract(Id).Kind) {
   case X86SystemStateKind::ShadowWrite:
+  case X86SystemStateKind::DirectStore:
     return Shape.InputSizes[1];
   case X86SystemStateKind::WriteBase:
     return Shape.InputSizes[0];
@@ -118,8 +124,10 @@ inline uint16_t x86SystemStateMemoryBytes(Intrinsic Id, uint16_t Width) {
   case X86SystemStateKind::Monitor:
     return 1;
   case X86SystemStateKind::ShadowWrite:
+  case X86SystemStateKind::DirectStore:
     return Width;
   case X86SystemStateKind::Enqueue:
+  case X86SystemStateKind::DirectStore64B:
     return 64;
   default:
     return 2;
