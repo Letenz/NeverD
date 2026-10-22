@@ -2079,3 +2079,11 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeQueryTrace.*` 涵蓋獨立結果、四個零擴展、參數/次數/順序變異、未定義參數、一般讀取交錯、全部分支、未受影響狀態、嚴格編碼/細節審計、損壞組合、預算、摘要綁定及靜態/歸納拒絕。`NativeScalarQueryDescriptor.*` 驗證通用描述限制與實際憑據綁定。
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+陷阱回歸涵蓋 CC、F1 與 CD 03 的精確保留、偽造中繼資料拒絕、無後繼區域出口，以及精確與不足的操作預算。一般提供者中的陷阱不能繼續至同指令或下一指令的 RETURN。原始證明也涵蓋 UD2：不可達陷阱保留 Missing 審計，例外身分、位元組或審計不符必須拒絕；可達陷阱阻止原始證明與相對一般返回候選的精化。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+這些檢查驗證宣告區域，不證明例外處理或原始碼／原生等價。

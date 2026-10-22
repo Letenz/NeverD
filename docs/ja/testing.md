@@ -2133,3 +2133,11 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeQueryTrace.*` は独立結果、四つのゼロ拡張、引数・回数・順序の変更、未定義引数、通常読み取りとの交錯、全分岐、非変更状態、符号化・詳細監査、不正操作列、予算、ダイジェスト、静的・帰納 API の拒否を検証します。`NativeScalarQueryDescriptor.*` は共通記述の制限と実際の記録の結合を検証します。
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+トラップ回帰は CC、F1、CD 03 の正確な保持、偽造メタデータの拒否、後続のない領域出口、ちょうど足りる操作予算と不足する予算を検証します。通常のプロバイダーにあるトラップは、同じ命令や次の命令の RETURN に継続できません。元の命令の証明は UD2 も含み、到達不能なトラップの Missing 監査を保持し、例外の種類、バイト列、監査の不一致を拒否します。到達可能なトラップは元の証明と通常の戻り候補への精化を拒否します。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+これらの検査が検証するのは宣言された領域であり、例外処理やソース/native 等価性は証明しません。
