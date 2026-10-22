@@ -578,14 +578,7 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
     return x64::runtimeFlagsIntrinsic(Op, Options.X64FlagsProfile) ||
            detail::stringTransferShape(Op) ||
            supportsRuntimeControlOperation(Op, Options) ||
-           (Options.X64CR8State && detail::taskPriorityOperation(Op)) ||
-           // A resumable-trap side effect (INT3/INT1) is retained verbatim as a
-           // declared Trap machine exit's final op; it has no modelled state
-           // effect. Only a declared Trap exit reaches evaluation, since an
-           // undeclared trap terminator fails the opaque-terminator gate first.
-           (NoOutput && Op.NumInputs >= 1 && Op.Inputs[0].isConst() &&
-            (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int3) ||
-             Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int1)));
+           (Options.X64CR8State && detail::taskPriorityOperation(Op));
   default:
     return false;
   }
@@ -2417,6 +2410,7 @@ bool Specializer::evaluate(int Id) {
     }
     bool ExpandedReturn = false;
     bool ExpandedIndirectCall = false;
+    bool RetainedTerminator = false;
     size_t NativeCallPrefixSize = 0;
     if (ExternalExit && ExternalExit->MachineExit) {
       const bool IsReturn = ExternalExit->MachineExit->Kind ==
@@ -2440,6 +2434,7 @@ bool Specializer::evaluate(int Id) {
       Operations = std::move(Expanded->Ops);
       ExpandedReturn = Expanded->ExpandedReturn;
       ExpandedIndirectCall = Expanded->ExpandedIndirectCall;
+      RetainedTerminator = Expanded->RetainedTerminator;
       NativeCallPrefixSize = Expanded->OriginalPrefixSize;
     } else if (Instruction.NativeStackControl !=
                SpecializationNativeStackControl::None) {
@@ -2568,7 +2563,10 @@ bool Specializer::evaluate(int Id) {
                     "specialization symbolic-node budget exhausted");
       LowOp Original = Operations[I];
       const bool RuntimeReadOperation = RuntimeRead && I == 0;
-      if (!RuntimeReadOperation && !supported(Original, Options))
+      const bool TerminalOperation =
+          RetainedTerminator && I + 1 == Operations.size();
+      if (!RuntimeReadOperation && !TerminalOperation &&
+          !supported(Original, Options))
         return fail(SpecializationStatus::Unsupported,
                     std::string("unsupported specialization operation: ") +
                         ndOpName(Original.Opcode));
@@ -3444,6 +3442,9 @@ bool Specializer::evaluate(int Id) {
                         "CR8 write may set reserved bits");
         }
         TaskPriority = Exec.operandValue(PrioritySlot);
+      } else if (TerminalOperation) {
+        // The architecture authenticated this region boundary. Its effect
+        // stays in the residual; execution beyond it is outside the domain.
       } else if (Original.Opcode == NdOp::INTRINSIC) {
         // The architecture admits the runtime flag operation. Keep the
         // original operation in the residual while using a fresh
@@ -3607,9 +3608,7 @@ bool Specializer::evaluate(int Id) {
     // A trap exit retains its trap op as the region's last effect; there is no
     // physical transfer to drive the ExternalExit finish path above, so the
     // declared trap boundary ends the region here.
-    if (!Finished && ExternalExit && ExternalExit->MachineExit &&
-        ExternalExit->MachineExit->Kind ==
-            SpecializationX64MachineExitKind::Trap)
+    if (RetainedTerminator)
       Finished = true;
     Slice.OpCount = Draft.Block.Ops.size() - Slice.FirstOp;
     Slice.ExternalExit = std::move(ExternalExit);
@@ -4112,9 +4111,8 @@ bool Specializer::publish() {
           Boundary.Immediate = Slice.Origin.Immediate;
         }
       }
-      if (Slice.ExternalExit && Slice.ExternalExit->MachineExit &&
-          Slice.ExternalExit->MachineExit->Kind ==
-              SpecializationX64MachineExitKind::Trap) {
+      if (Slice.ExternalExit &&
+          Slice.Origin.Control == LowInstructionControl::Terminator) {
         // No transfer op set the boundary above; the retained trap op ends the
         // region, so reflect the native terminator on the residual boundary.
         Boundary.Control = Slice.Origin.Control;

@@ -2787,8 +2787,13 @@ TEST(BinaryLowIRRefinement, TrapsAndUnauditedOriginalArmsAreNotPruned) {
   const auto Recovery = P.recover();
   ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
   refused(P.check(Recovery.Residual), Status::Unsupported);
-  Program Trap({0xcc});
-  refused(Trap.check(Recovery.Residual), Status::ContractViolation);
+  const std::initializer_list<uint8_t> Encodings[] = {
+      {0xcc}, {0xf1}, {0xcd, 0x03}};
+  for (const auto Bytes : Encodings) {
+    SCOPED_TRACE(unsigned(*Bytes.begin()));
+    Program Trap(Bytes);
+    refused(Trap.check(Recovery.Residual), Status::ContractViolation);
+  }
 }
 
 TEST(BinaryLowIRRefinement, CandidateMustRestoreStackAndOriginalReturnSlot) {
