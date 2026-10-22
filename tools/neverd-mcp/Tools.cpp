@@ -382,11 +382,15 @@ bool bookkeeping(const std::string &Key) {
 }
 
 Ordered metadata(const Json &Payload, Ordered Out) {
+  // The input's hash, which the worker names beside the project's and an
+  // older worker only with it, shows once, last.
   const auto &Hash =
-      member(member(member(Payload, "project"), "input"), "sha256");
+      truthy(member(Payload, "sha256"))
+          ? member(Payload, "sha256")
+          : member(member(member(Payload, "project"), "input"), "sha256");
   Ordered Kept = Ordered::object();
   for (const auto &[Key, Value] : Payload.items())
-    if (!bookkeeping(Key))
+    if (!bookkeeping(Key) && Key != "sha256")
       Kept[Key] = Ordered(Value);
   const auto Shown = pruned(Kept);
   for (const auto &[Key, Value] : Shown.items())

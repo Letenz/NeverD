@@ -3255,8 +3255,13 @@ only without section headers.
 
 ELF GOT data identities come from the exact relocation symbol snapshot through
 `collectDataSymbolBindings`, shared by HighC and LLVM emission. The loader's
-relocation inventory owns addend rules; complete PT_GNU_RELRO coverage owns
-whether a slot load can become a symbolic address. Writable slots retain
+relocation inventory owns addend rules; whether the slot is read-only once
+relocated owns whether a slot load can become a symbolic address, as
+`BinaryImage::readOnlyAfterRelocations` decides by the address: a read-only
+segment, a segment or section of relocated constants (`.data.rel.ro`,
+`__DATA_CONST`), or complete PT_GNU_RELRO coverage. An ELF load segment keeps
+its `LOAD_n` name, since it holds sections of both kinds; no decision reads a
+linked image's segment name. Writable slots retain
 addressable storage and a symbolic initializer. Undefined data uses an opaque
 assembly-name alias in C, avoiding invented types and system-header conflicts.
 Defined data uses its existing image backing. TLS and IFUNC records are excluded.

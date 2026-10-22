@@ -776,6 +776,16 @@ checks working-copy preservation and explicit discard when the packed state
 changes. Run these with the native Windows Qt platform when checking Windows
 file dialogs and view shortcuts.
 
+The GUI unit cases `deepLinksTakeIdasFormAndRefuseWhatTheyCannotName` and
+`aLinkGoesToTheWorkbenchThatHasItsProgram` check link syntax, hash prefixes and
+instance selection. Controller cases `linksCopyAndOpenTheirPlaces` and
+`otherProgramsFindTheWorkbenchAndOpenLinksInIt` exercise copying, navigation,
+refusal without moving the cursor and the real local socket protocol.
+`instanceRequestsRespectTheirByteLimit` checks complete and incomplete requests
+at the request-size boundary, including requests without a newline and multiple
+bounded messages on one connection. `instanceServingCanBeDisabled` checks the
+opt-out setting. Run these through `NeverDGuiUnits` and `NeverDGuiController`.
+
 `SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and

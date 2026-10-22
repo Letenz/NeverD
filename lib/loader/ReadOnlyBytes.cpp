@@ -4,11 +4,35 @@
 #include "neverd/loader/Limits.h"
 
 #include "llvm/BinaryFormat/COFF.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Endian.h"
 
 #include <set>
 
 namespace neverd {
+
+bool BinaryImage::readOnlyAfterRelocations(va_t Addr, uint64_t Width) const {
+  const Segment *Seg = getSegmentFor(Addr);
+  if (!Seg || !Width || Width > Seg->Size - (Addr - Seg->VA))
+    return false;
+  if (!Seg->isWritable() || Seg->ReadOnlyAfterRelocations ||
+      section_names::isReadOnlyAfterRelocSectionName(Seg->Name))
+    return true;
+  if (const Section *Sec = getSectionFor(Addr);
+      Sec && Width <= Sec->Size - (Addr - Sec->VA) &&
+      (section_names::isReadOnlyAfterRelocSectionName(Sec->Name) ||
+       section_names::isReadOnlyAfterRelocSectionName(Sec->SegmentName)))
+    return true;
+  if (ELFMetadata)
+    for (const ELFProgramHeader &Header : ELFMetadata->ProgramHeaders)
+      if (Header.Type == llvm::ELF::PT_GNU_RELRO &&
+          Addr >= Header.VirtualAddress &&
+          Addr - Header.VirtualAddress <= Header.MemorySize &&
+          Width <= Header.MemorySize - (Addr - Header.VirtualAddress))
+        return true;
+  return false;
+}
+
 namespace {
 bool supportedImage(const BinaryImage &Image) {
   return Image.Format == BinaryFormat::MachO && Image.Bits == Bitness::Bits64 &&
