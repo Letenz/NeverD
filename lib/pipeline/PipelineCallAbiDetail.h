@@ -204,8 +204,8 @@ struct OmittedCalleeMemo {
     /// null where none does.
     const Conversion *conversionFor(const PipelineResult &Result);
   };
-  /// The bodies the memo holds at most, counted by their blocks and
-  /// operations (keep): bodies of a large image's every callee would hold
+  /// The bodies the memo holds at most, counted by their blocks, operations
+  /// and external operands (keep): bodies of a large image's every callee hold
   /// most of its MedIR.  A mid-sized image's signature bodies, an Android
   /// server's 6000, fit in three quarters of it.
   static constexpr size_t MaxBytes =

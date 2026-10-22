@@ -90,6 +90,36 @@ void addLiveIn(MedBlock &Entry, const MedVar &LiveIn) {
   Entry.Ops.push_back(unary(NdOp::COPY, LiveIn, LiveIn));
 }
 
+TEST(MedCallABI, BodyCopiesRetainEveryWideCallOperand) {
+  for (unsigned Count : {1u, 2u, 3u, 6u, 7u, 65u}) {
+    SCOPED_TRACE(Count);
+    MedFunc Function;
+    Function.Blocks.resize(1);
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    std::vector<MedVar> Expected;
+    for (unsigned I = 0; I < Count; ++I) {
+      const auto Value =
+          MedVar::makeConst(0x4000 + 16 * I, I % 2 ? 4 : 8,
+                            I ? ConstantAddressProvenance::DataAddress
+                              : ConstantAddressProvenance::CodeAddress,
+                            0x2000 + 8 * I);
+      Call.addInput(Value);
+      Expected.push_back(Value);
+    }
+    Function.Blocks[0].Ops.push_back(std::move(Call));
+    const MedFunc Copy = Function;
+    const MedFunc Moved = std::move(Function);
+    for (const MedFunc *Body : {&Copy, &Moved}) {
+      const auto &Kept = Body->Blocks[0].Ops[0];
+      ASSERT_EQ(Kept.NumInputs, Count);
+      ASSERT_GE(Kept.Inputs.size(), Count);
+      for (unsigned I = 0; I < Count; ++I)
+        EXPECT_EQ(Kept.Inputs[I], Expected[I]);
+    }
+  }
+}
+
 TEST(MedCallABI, CallbackTableAddressDoesNotReplaceTheActualFirstArgument) {
   for (Arch A : {Arch::X64, Arch::ARM, Arch::AArch64})
     for (BinaryFormat Format :

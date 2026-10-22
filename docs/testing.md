@@ -720,6 +720,13 @@ high-risk pull request.
 
 `PipelineOutcome.ResolvedCalls*` checks register banks, call/invoke identity, packed and split stack bytes, narrow values in their own slots, and refusal of missing bytes. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` checks the recorded offsets. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` covers x64, ARM32 and AArch64 in ELF, PE and Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` checks all three formats and rejects clobbered lengths, writable or oversized spans, local names, wrong source registers, alternate entries and relocatable images. Host C differentials compile the source reference independently at O0 and emitted C at O2, preserving an independent oracle when a host optimizer miscompiles a recurrence. The AArch64 FMA check requests `-mfma` only on x86 hosts.
 
+`MedCallABI.BodyCopiesRetainEveryWideCallOperand` checks growing operand lists
+through 65 inputs and preservation of values, widths and occurrence-sensitive
+address provenance when function bodies are copied and moved.
+`CalleeSignatureMemo.WideOperandsCountAgainstTheBodyBudget` checks that expanded
+operand storage counts against the memo's byte budget, including retained
+allocations after the active operand list shrinks.
+
 ## Acceleration libraries
 
 The bounded byte/Unicode, JSON and scheduler contracts can be checked without
