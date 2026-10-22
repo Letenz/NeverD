@@ -16,6 +16,7 @@
 #include "neverd/ir/med/MedCallingConvDetail.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -58,8 +59,8 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   auto keyOf = [](const MedVar &V) {
     return SSAKey{static_cast<int>(V.Kind), V.Id, V.SSAVer};
   };
-  std::map<SSAKey, const MedOp *> DefIndex;
-  std::map<SSAKey, const PhiNode *> PhiIndex;
+  llvm::DenseMap<SSAKey, const MedOp *> DefIndex;
+  llvm::DenseMap<SSAKey, const PhiNode *> PhiIndex;
   bool Indexed = false;
   auto indexDefinitions = [&] {
     if (Indexed)
@@ -68,9 +69,9 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
     PhiIndex.clear();
     for (const auto &Blk : Func.Blocks) {
       for (const auto &Op : Blk.Ops)
-        DefIndex.emplace(keyOf(Op.Output), &Op);
+        DefIndex.try_emplace(keyOf(Op.Output), &Op);
       for (const auto &Phi : Blk.Phis)
-        PhiIndex.emplace(keyOf(Phi.Output), &Phi);
+        PhiIndex.try_emplace(keyOf(Phi.Output), &Phi);
     }
     Indexed = true;
   };
@@ -107,7 +108,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   // Cutting a re-entry of any already-seen def bounds the walk to the (small)
   // number of distinct SSA vars, so the depth cap only guards genuinely long
   // acyclic chains.
-  std::set<std::tuple<int, int, int, uint64_t>> VisitedDef;
+  llvm::SmallDenseSet<std::tuple<int, int, int, uint64_t>, 8> VisitedDef;
   auto traceOff = [&](auto &&Self, const MedVar &V,
                       int Depth) -> std::optional<int64_t> {
     if (Depth == 0) {
