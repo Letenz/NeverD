@@ -41,6 +41,7 @@
 #include "neverd/symbolic/SymBitwise.h"
 
 #include "Limits.h"
+#include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -90,6 +91,8 @@ struct Recipe {
   uint32_t B = 0;
 };
 
+#include "SymBitwiseRecipes.inc"
+
 constexpr unsigned kUnreachable = ~0u;
 
 /// A lower bound on the work needed to settle the optimal table.
@@ -102,6 +105,9 @@ constexpr unsigned kUnreachable = ~0u;
 size_t optimalTableWork(unsigned NumVars) {
   assert(NumVars <=
          ::neverd::symbolic::detail::limits::kSymBitwiseMaxTabulatedAtoms);
+  if (NumVars < std::size(SmallRecipeMaxNodes))
+    return (size_t(1) << NumVars) * NumVars + 2 * SmallRecipeMaxNodes[NumVars] +
+           NumVars + 2;
   const size_t NumFunctions = size_t(1) << (size_t(1) << NumVars);
   return saturatingMul(NumFunctions, NumFunctions);
 }
@@ -114,6 +120,8 @@ size_t optimalTableWork(unsigned NumVars) {
 class SynthTable {
 public:
   explicit SynthTable(unsigned NumVars);
+  explicit SynthTable(llvm::ArrayRef<Recipe> Prepared)
+      : Recipes(Prepared.begin(), Prepared.end()) {}
 
   const Recipe &recipe(uint32_t Packed) const { return Recipes[Packed]; }
 
@@ -183,8 +191,9 @@ const SynthTable &synthTable(unsigned NumVars) {
   }
   // Built once on first use and shared thereafter: the search is cheap but not
   // free, and the simplifier calls into it in a loop.
-  static const SynthTable Tables[] = {SynthTable(0), SynthTable(1),
-                                      SynthTable(2), SynthTable(3)};
+  static const SynthTable Tables[] = {
+      SynthTable(SmallRecipes0), SynthTable(SmallRecipes1),
+      SynthTable(SmallRecipes2), SynthTable(SmallRecipes3)};
   return Tables[NumVars];
 }
 
@@ -731,6 +740,10 @@ uint32_t truthTableSupport(const TruthTable &Table) {
     }
   }
   return Support;
+}
+
+size_t detail::bitwiseSynthesisWork(unsigned NumVars) {
+  return optimalTableWork(NumVars);
 }
 
 std::optional<SymRef> synthesizeBitwise(SymContext &Ctx,

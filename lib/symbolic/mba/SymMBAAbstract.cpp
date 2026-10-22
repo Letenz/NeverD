@@ -34,6 +34,11 @@
 
 namespace neverd::symbolic::detail {
 
+struct AbstractionMemo {
+  llvm::DenseMap<uint64_t, Abstraction> Entries;
+  size_t Bytes = 0;
+};
+
 namespace {
 
 /// What part an operator plays in the linear theory.
@@ -247,6 +252,11 @@ class AffineResources {
 public:
   AffineResources(WorkBudget *Budget, size_t MaxBytes)
       : Work(Budget ? *Budget : Fallback), Bytes(MaxBytes) {}
+
+  ~AffineResources() {
+    if (!Complete)
+      ++Work.IncompleteAbstractions;
+  }
 
   bool charge(size_t Units, size_t Storage = 0) {
     if (!Complete || Storage > Bytes || !Work.consume(Units))
@@ -1087,10 +1097,9 @@ std::vector<uint32_t> reachableInOrder(const SymContext &Ctx, SymRef Root) {
   return Order;
 }
 
-std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
-                                         bool AllowProducts, WorkBudget *Budget,
-                                         size_t MaxBytes,
-                                         bool CoarsenMaskedXors) {
+static std::optional<Abstraction>
+abstractToMBAImpl(SymContext &Ctx, SymRef Root, bool AllowProducts,
+                  WorkBudget *Budget, size_t MaxBytes, bool CoarsenMaskedXors) {
   std::vector<uint32_t> Order = reachableInOrder(Ctx, Root);
   llvm::DenseSet<uint32_t> ForcedAtoms;
   llvm::DenseMap<uint32_t, Role> Roles;
@@ -1300,6 +1309,47 @@ std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
       restoreAffineRelations(Ctx, Out.IndependentBody, Order, ForcedAtoms,
                              Roles, Rewritten, AllowProducts, Budget, MaxBytes);
   return Out;
+}
+
+std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
+                                         bool AllowProducts, WorkBudget *Budget,
+                                         size_t MaxBytes,
+                                         bool CoarsenMaskedXors) {
+  const bool Cacheable =
+      Budget && Budget->MemoOwner == &Ctx && Budget->MemoCapacity;
+  const uint64_t Key = (uint64_t(Root.index()) << 2) |
+                       (unsigned(AllowProducts) << 1) |
+                       unsigned(CoarsenMaskedXors);
+  if (Cacheable && Budget->Abstractions) {
+    auto Found = Budget->Abstractions->Entries.find(Key);
+    if (Found != Budget->Abstractions->Entries.end()) {
+      const size_t Count = Found->second.Hidden.size();
+      if (MaxBytes >= 128 && Count <= (MaxBytes - 128) / 64 &&
+          Budget->canConsume(Count + 1)) {
+        Budget->consume(Count + 1);
+        return Found->second;
+      }
+    }
+  }
+  const size_t Start = Budget ? Budget->used() : 0;
+  const size_t Incomplete = Budget ? Budget->IncompleteAbstractions : 0;
+  auto Result = abstractToMBAImpl(Ctx, Root, AllowProducts, Budget, MaxBytes,
+                                  CoarsenMaskedXors);
+  if (!Cacheable || !Result || Budget->exhausted() ||
+      Budget->IncompleteAbstractions != Incomplete ||
+      Budget->used() - Start < limits::kMinCompletedRegionCacheWork)
+    return Result;
+  const size_t Limit = Budget->MemoCapacity * limits::kCompletedMemoEntryBytes;
+  const size_t Used = Budget->Abstractions ? Budget->Abstractions->Bytes : 0;
+  const size_t Bytes = 128 + Result->Hidden.size() * 64;
+  if (Bytes > Limit - Used || !Budget->canConsume(Result->Hidden.size() + 1))
+    return Result;
+  Budget->consume(Result->Hidden.size() + 1);
+  if (!Budget->Abstractions)
+    Budget->Abstractions = std::make_shared<AbstractionMemo>();
+  Budget->Abstractions->Bytes += Bytes;
+  Budget->Abstractions->Entries.try_emplace(Key, *Result);
+  return Result;
 }
 
 } // namespace neverd::symbolic::detail

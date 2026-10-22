@@ -32,6 +32,23 @@
 
 namespace neverd::symbolic::detail {
 
+// Bit patterns use stable input slots for this one request. Appending a slot
+// leaves every older pattern unchanged: each already covers all 64 assignments.
+struct ParityMemo {
+  llvm::DenseMap<uint32_t, uint64_t> Values;
+  llvm::DenseMap<uint32_t, unsigned> Inputs;
+  llvm::DenseMap<uint32_t, SymRef> Products;
+};
+
+struct RegionMemo {
+  struct Entry {
+    SymRef Result;
+    SolveReport Report;
+    MBAOptions Options;
+  };
+  llvm::DenseMap<uint32_t, Entry> Entries;
+};
+
 namespace {
 
 /// A rewrite, and how many inputs the reading that produced it was over.  The
@@ -98,6 +115,22 @@ bool isMinimalVariableSum(const SymContext &Ctx, SymRef E,
   // binary operation per additional leaf. This sum meets that lower bound.
   return std::all_of(Terms.begin(), Terms.end(),
                      [&](SymRef Term) { return Ctx.op(Term) == SymOp::Var; });
+}
+
+// A canonical affine sum already is its sparse conjunction-basis form:
+// only the constant and singleton coefficients are nonzero. Read those
+// coefficients structurally instead of allocating all 2^N Boolean corners.
+// The exact body remains the candidate; restoring opaque inputs and the
+// arithmetic pass retain coefficient factoring opportunities.
+bool isCanonicalAffineSum(const SymContext &Ctx, SymRef R, size_t Atoms) {
+  if (Atoms < limits::kMinCanonicalAffineAtoms || Ctx.op(R) != SymOp::Add)
+    return false;
+  return llvm::all_of(Ctx.operands(R), [&](SymRef Term) {
+    return Ctx.isVar(Term) || Ctx.isConst(Term) ||
+           (Ctx.op(Term) == SymOp::Mul && Ctx.numOperands(Term) == 2 &&
+            Ctx.isConst(Ctx.operand(Term, 0)) &&
+            Ctx.isVar(Ctx.operand(Term, 1)));
+  });
 }
 
 std::optional<Region> readRegion(SymContext &Ctx, SymRef E,
@@ -191,14 +224,18 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     auto NumAtoms = static_cast<unsigned>(Linear->AtomIds.size());
     TryCoarseMasks = NumAtoms > std::min(3u, Limits.MaxOptimalSynthesisAtoms);
     std::optional<size_t> Corners = cornerCount(Linear->AtomIds.size());
-    if (!Corners || !Budget.consume(*Corners)) {
+    const bool Direct =
+        isCanonicalAffineSum(Ctx, Linear->Abstract.Body, NumAtoms);
+    if (!Corners ||
+        !Budget.consume(Direct ? Ctx.numOperands(Linear->Abstract.Body)
+                               : *Corners)) {
       Rep.BudgetExhausted = true;
     } else {
       llvm::SmallVector<SymRef, 4> Forms;
       // Exact abstraction can eliminate every input. The literal is already
       // the candidate; bitwise synthesis requires at least one atom. Keep the
       // one-corner budget charge and the same proof and selection gates below.
-      if (Linear->AtomIds.empty())
+      if (Direct || Linear->AtomIds.empty())
         Forms.push_back(Linear->Abstract.Body);
       else {
         std::vector<llvm::APInt> Weights =
@@ -273,10 +310,14 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       const size_t WordBytes =
           sizeof(llvm::APInt) +
           (Width / 64 + (Width % 64 != 0)) * sizeof(uint64_t);
-      if (Corners && *Corners <= Opts.MaxTableBytes / 8 / WordBytes &&
-          Budget.consume(*Corners)) {
+      const bool Direct = isCanonicalAffineSum(Ctx, Coarse->Abstract.Body,
+                                               Coarse->AtomIds.size());
+      if (Corners &&
+          (Direct || *Corners <= Opts.MaxTableBytes / 8 / WordBytes) &&
+          Budget.consume(Direct ? Ctx.numOperands(Coarse->Abstract.Body)
+                                : *Corners)) {
         llvm::SmallVector<SymRef, 4> Forms;
-        if (Coarse->AtomIds.empty())
+        if (Direct || Coarse->AtomIds.empty())
           Forms.push_back(Coarse->Abstract.Body);
         else
           linearCandidates(
@@ -313,15 +354,18 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
           (Width / 64 + (Width % 64 != 0)) * sizeof(uint64_t);
       // Cover measurement and basis-transform scratch before allocating the
       // additional reading. The opaque-input map remains owned by LinearRegion.
+      const bool Direct =
+          isCanonicalAffineSum(Ctx, Abstract.IndependentBody, AtomIds.size());
       const bool StorageFits =
-          Corners && *Corners <= Opts.MaxTableBytes / 8 / WordBytes;
+          Corners && (Direct || *Corners <= Opts.MaxTableBytes / 8 / WordBytes);
       if (AtomIds.size() <= Limits.MaxAtoms && StorageFits &&
-          Budget.consume(*Corners)) {
+          Budget.consume(Direct ? Ctx.numOperands(Abstract.IndependentBody)
+                                : *Corners)) {
         llvm::SmallVector<SymRef, 16> Atoms;
         for (uint32_t Id : AtomIds)
           Atoms.push_back(Ctx.varRef(Id));
         llvm::SmallVector<SymRef, 4> Forms;
-        if (AtomIds.empty())
+        if (Direct || AtomIds.empty())
           Forms.push_back(Abstract.IndependentBody);
         else
           linearCandidates(Ctx, measure(Ctx, Abstract.IndependentBody, AtomIds),
@@ -658,13 +702,20 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 // Enumerate the complete parity domain (up to six independent opaque inputs)
 // in parallel, then find whether every assignment supplies enough zeros.
 SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
-                       size_t &Storage) {
+                       size_t &Storage, bool Share = true) {
   if (Ctx.op(Root) != SymOp::Mul || Ctx.numOperands(Root) < 8 ||
       Ctx.numOperands(Root) >
           ::neverd::symbolic::detail::limits::
               kSymMBARegionFoldZeroProductCtxNumOperandsRootLimit ||
       Budget.exhausted())
     return Root;
+  if (Share && Budget.MemoOwner == &Ctx && Budget.Parities) {
+    auto Found = Budget.Parities->Products.find(Root.index());
+    if (Found != Budget.Parities->Products.end() && Budget.canConsume(1)) {
+      Budget.consume();
+      return Found->second;
+    }
+  }
   auto Factors = Ctx.operands(Root);
   unsigned Needed = Ctx.width(Root);
   if (Ctx.isConst(Factors.front())) {
@@ -692,6 +743,16 @@ SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor ||
            Op == SymOp::Not || Op == SymOp::Add || Op == SymOp::Mul;
   };
+  ParityMemo *Cache = nullptr;
+  if (Share && Budget.MemoOwner == &Ctx &&
+      Budget.MemoCapacity >= limits::kMinParityMemoCapacity) {
+    if (!Budget.Parities) {
+      if (!Charge(1, sizeof(ParityMemo)))
+        return Root;
+      Budget.Parities = std::make_shared<ParityMemo>();
+    }
+    Cache = Budget.Parities.get();
+  }
   std::array<SymRef, 256> Pending;
   size_t Top = Factors.size();
   if (!Charge(Top, Top * sizeof(SymRef)))
@@ -709,7 +770,7 @@ SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
         !Charge(1, 128))
       return Root;
     Nodes.insert(R.index());
-    if (!Transparent(R))
+    if ((Cache && Cache->Values.contains(R.index())) || !Transparent(R))
       continue;
     auto Children = Ctx.operands(R);
     if (Children.size() > Pending.size() - Top || !Charge(Children.size()))
@@ -728,15 +789,37 @@ SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     auto R = SymRef(Id);
     uint64_t Value;
     auto Op = Ctx.op(R);
-    if (Ctx.isConst(R)) {
+    auto Cached = Cache ? Cache->Values.find(Id)
+                        : llvm::DenseMap<uint32_t, uint64_t>::iterator{};
+    if (Cache && Cached != Cache->Values.end()) {
+      Value = Cached->second;
+    } else if (Ctx.isConst(R)) {
       const size_t Words = (size_t(Ctx.width(R)) + 63) / 64;
       if (!Charge(Words, Words * sizeof(uint64_t)))
         return Root;
       Value = Ctx.constValue(R)[0] ? ~uint64_t(0) : 0;
     } else if (!Transparent(R)) {
-      if (Atoms == Variables.size())
-        return Root;
-      Value = Variables[Atoms++];
+      if (Cache) {
+        auto Found = Cache->Inputs.find(Id);
+        if (Found == Cache->Inputs.end()) {
+          // The current product may still fit a smaller local domain when
+          // unrelated earlier products filled the shared domain. Retry it
+          // without memoization; do not turn cache capacity into a refusal.
+          if (Cache->Inputs.size() == Variables.size() ||
+              Cache->Inputs.size() + Cache->Products.size() +
+                      Cache->Values.size() >=
+                  Budget.MemoCapacity)
+            return foldZeroProduct(Ctx, Root, Budget, Storage, false);
+          if (!Charge(1, 64))
+            return Root;
+          Found = Cache->Inputs.try_emplace(Id, Cache->Inputs.size()).first;
+        }
+        Value = Variables[Found->second];
+      } else {
+        if (Atoms == Variables.size())
+          return Root;
+        Value = Variables[Atoms++];
+      }
     } else if (Op == SymOp::Not) {
       Value = ~Values.at(Ctx.operand(R, 0).index());
     } else {
@@ -754,18 +837,38 @@ SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       }
     }
     Values.emplace(Id, Value);
+    if (Cache && Cached == Cache->Values.end() &&
+        Cache->Values.size() + Cache->Products.size() + Cache->Inputs.size() <
+            Budget.MemoCapacity &&
+        Budget.canConsume(1)) {
+      Budget.consume();
+      Cache->Values.try_emplace(Id, Value);
+    }
   }
   // Bit-sliced counters count even factors for all 64 assignments together.
   // Repeated factors count repeatedly; their parity is never made independent.
   std::array<uint64_t, 7> Counts{};
-  for (auto Factor : Factors) {
-    uint64_t Carry = ~Values.at(Factor.index());
-    for (size_t I = 0; Carry && I != Counts.size(); ++I) {
-      if (!Charge(1))
-        return Root;
-      auto Next = Carry & Counts[I];
-      Counts[I] ^= Carry;
-      Carry = Next;
+  for (size_t F = 0; F != Factors.size();) {
+    const SymRef Factor = Factors[F++];
+    unsigned Multiplicity = 1;
+    while (F != Factors.size() && Factors[F] == Factor) {
+      ++Multiplicity;
+      ++F;
+    }
+    if (!Charge(Multiplicity))
+      return Root;
+    const uint64_t Even = ~Values.at(Factor.index());
+    while (Multiplicity) {
+      const unsigned Bit = std::countr_zero(Multiplicity);
+      Multiplicity &= Multiplicity - 1;
+      uint64_t Carry = Even;
+      for (size_t I = Bit; Carry && I != Counts.size(); ++I) {
+        if (!Charge(1))
+          return Root;
+        const uint64_t Next = Carry & Counts[I];
+        Counts[I] ^= Carry;
+        Carry = Next;
+      }
     }
   }
   if (!Charge(Counts.size()))
@@ -779,7 +882,16 @@ SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       Equal &= ~Counts[I];
     }
   }
-  return (Greater | Equal) == ~uint64_t(0) ? Ctx.mkZero(Ctx.width(Root)) : Root;
+  const SymRef Result =
+      (Greater | Equal) == ~uint64_t(0) ? Ctx.mkZero(Ctx.width(Root)) : Root;
+  if (Cache &&
+      Cache->Products.size() + Cache->Values.size() + Cache->Inputs.size() <
+          Budget.MemoCapacity &&
+      Budget.canConsume(1)) {
+    Budget.consume();
+    Cache->Products.try_emplace(Root.index(), Result);
+  }
+  return Result;
 }
 
 } // namespace
@@ -946,8 +1058,9 @@ SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   return Root;
 }
 
-SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                      WorkBudget &Budget, SolveReport &Rep) {
+static SymRef solveOneRegionImpl(SymContext &Ctx, SymRef E,
+                                 const MBAOptions &Opts, WorkBudget &Budget,
+                                 SolveReport &Rep) {
   SolveReport ArithmeticRep;
   SymRef Arithmetic = solveArithmetic(Ctx, E, Opts, Budget, ArithmeticRep);
   if (Budget.exhausted() || Ctx.isConst(Arithmetic) ||
@@ -1049,6 +1162,47 @@ SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
   }
   return Solved;
+}
+
+SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                      WorkBudget &Budget, SolveReport &Rep) {
+  const bool Cacheable = Budget.MemoOwner == &Ctx && Budget.MemoCapacity &&
+                         Rep.Outcome == MBAOutcome::NotApplicable &&
+                         Rep.Evidence == MBAEvidence::None &&
+                         !Rep.BudgetExhausted && !Rep.TooWide &&
+                         Rep.NumAtoms == 0;
+  auto Compatible = [&](const MBAOptions &Previous) {
+    return Previous.MaxTableBytes >= Opts.MaxTableBytes &&
+           Previous.MaxAtoms == Opts.MaxAtoms &&
+           Previous.MaxSynthesisAtoms == Opts.MaxSynthesisAtoms &&
+           Previous.MaxOptimalSynthesisAtoms == Opts.MaxOptimalSynthesisAtoms &&
+           Previous.VerifySamples == Opts.VerifySamples &&
+           Previous.AllowGrowth == Opts.AllowGrowth &&
+           Previous.MaxWork == Opts.MaxWork;
+  };
+  if (Cacheable && Budget.Regions) {
+    auto Found = Budget.Regions->Entries.find(E.index());
+    if (Found != Budget.Regions->Entries.end() &&
+        Compatible(Found->second.Options) && Budget.canConsume(1)) {
+      Budget.consume();
+      Rep = Found->second.Report;
+      return Found->second.Result;
+    }
+  }
+  const size_t Start = Budget.used();
+  SymRef Result = solveOneRegionImpl(Ctx, E, Opts, Budget, Rep);
+  if (Cacheable && !Budget.exhausted() && !Rep.BudgetExhausted &&
+      Budget.used() - Start >= limits::kMinCompletedRegionCacheWork &&
+      (!Budget.Regions ||
+       Budget.Regions->Entries.size() < Budget.MemoCapacity) &&
+      Budget.canConsume(1)) {
+    Budget.consume();
+    if (!Budget.Regions)
+      Budget.Regions = std::make_shared<RegionMemo>();
+    Budget.Regions->Entries.insert_or_assign(
+        E.index(), RegionMemo::Entry{Result, Rep, Opts});
+  }
+  return Result;
 }
 
 } // namespace neverd::symbolic::detail
