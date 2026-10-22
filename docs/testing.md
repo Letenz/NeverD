@@ -406,7 +406,11 @@ perturbations and nonzero neighbors through degree 256.
 Use `--family prefix-residue --count 128` for degree-4–256 products with
 independent high-bit XOR/OR/AND disturbances, masked and signed/unsigned narrow
 views, nested wrappers, even factors and nonlinear/correlated bases. Sixteen
-nearby controls retain a nonzero product. Run all seventeen families at
+nearby controls retain a nonzero product. Use
+`--family residue-frontier --count 128` for degree-4–256 products whose
+usable congruence stops at one to three bits, below the degree-based precision.
+These include even factors, arithmetic disturbances, correlated and nonlinear
+bases, narrow views and sixteen nonzero quartic controls. Run all eighteen families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -427,6 +431,15 @@ synthesis through narrowing and widening. Run it in both the focused MBA and
 full symbolic owners. Worker prefix-quartic/octic and nonzero-neighbor fixtures
 execute both C backends through CLI whole/function requests and GUI worker
 requests at O0/O2, including toggle/cache isolation.
+Coarse-prefix oracles additionally cover arithmetic high-bit products through
+257 bits, even zero-prefix rereading, nonzero offset/scale neighbors and exact
+versus one-short cumulative work/storage. Independent full-width Z3 checks
+include the one-bit frontier. The worker also executes coarse quartic/octic
+and nonzero-neighbor fixtures through all six source routes.
+`SymExpr.EvaluationPlanKeepsSharedInputsAfterContextGrowth` checks shared DAG
+operands, sorted sparse input IDs, callback reads and reusable plans through
+257 bits against separate word arithmetic. Existing evaluation and full
+symbolic tests remain required when optimizing plan construction.
 The mixed-degree C++ regression adds an independently generated three-block
 variant and a full-word arithmetic oracle through 257 bits. Cache regressions
 cover compatible and incompatible complement bases, storage refusal followed by

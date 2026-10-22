@@ -83,6 +83,32 @@ struct Resources {
   }
 };
 
+// Precision is a search order, never evidence. An even factor or a correlated
+// subgroup can make a smaller prefix useful even when the balanced estimate
+// misses it, so retain the other bounded precisions after the first attempt.
+template <typename Prover>
+bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
+                              Resources &Res, Prover Prove) {
+  unsigned First = MaxBits;
+  size_t Potential = 0;
+  for (unsigned Bits = 1; Bits < MaxBits; ++Bits) {
+    Potential += Count >> Bits;
+    if (Potential >= Needed) {
+      First = Bits;
+      break;
+    }
+  }
+  if (Prove(First))
+    return true;
+  for (unsigned Bits = 1; Bits <= MaxBits; ++Bits) {
+    if (Res.Failed || Res.Budget.exhausted())
+      break;
+    if (Bits != First && Prove(Bits))
+      return true;
+  }
+  return false;
+}
+
 // Cache completed prefix queries, including conservative unknown results.
 // Exhausted queries never enter the cache. An unknown prefix remains opaque;
 // neither a random sample nor an unproved known bit enters a coefficient map.
@@ -706,12 +732,19 @@ bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root) {
       return false;
     if (Offset(R)) {
       for (auto Child : Ctx.operands(R))
-        if (isBitwise(Ctx.op(Child)))
+        if (isBitwise(Ctx.op(Child)) ||
+            (Ctx.op(Child) == SymOp::Mul && Ctx.isConst(Ctx.operand(Child, 0))))
           return true;
       return false;
     }
+    // Reassociation may leave A*(B+c) under a bitwise wrapper. A literal
+    // scale/shift is transparent to this hint; the reader still proves every
+    // coefficient and accounts for any fixed zeros before using its prefix.
+    const bool Scaled = Ctx.numOperands(R) == 2 &&
+                        ((Op == SymOp::Mul && Ctx.isConst(Ctx.operand(R, 0))) ||
+                         (Op == SymOp::Shl && Ctx.isConst(Ctx.operand(R, 1))));
     if (!isBitwise(Op) && Op != SymOp::ZExt && Op != SymOp::SExt &&
-        Op != SymOp::Extract)
+        Op != SymOp::Extract && !Scaled)
       return false;
     for (auto Child : Ctx.operands(R))
       if (Offset(Child) || (Depth && Self(Self, Child, Depth - 1, Remaining)))
@@ -748,58 +781,70 @@ SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
   }
   if (!Needed)
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
-  const unsigned Bits =
+  const unsigned MaxBits =
       std::min(Width, unsigned(std::bit_width(Operands.size() - 1)));
-  if (!Bits || !Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
-    return Root;
+  // A balanced set of offsets can already establish enough zeros at a much
+  // coarser precision. Start there so unrelated higher bits cannot obscure
+  // the useful congruence. This estimate only orders attempts: every rewrite
+  // still requires complete coefficient maps and an exact residue bound.
   PrefixConstants Prefixes{Ctx, Res, {}};
-  std::vector<Factor> Factors;
-  Factors.reserve(Operands.size());
-  unsigned Available = Bits;
-  for (auto R : Operands) {
-    if (!Res.scalar(1))
-      return Root;
-    Factor F{{}, llvm::APInt(Bits, 0)};
-    size_t Edges = 0;
-    if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0, &Prefixes))
-      return Root;
-    auto SetValuation = [&]() {
-      unsigned CoeffZeros = F.Offset.getBitWidth();
-      for (const auto &[Key, Coeff] : F.Terms) {
-        (void)Key;
-        if (!Res.charge(1))
+  auto Prove = [&](unsigned Bits, unsigned Needed) {
+    if (!Bits || !Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
+      return false;
+    std::vector<Factor> Factors;
+    Factors.reserve(Operands.size());
+    unsigned Available = Bits;
+    for (auto R : Operands) {
+      if (!Res.scalar(1))
+        return false;
+      Factor F{{}, llvm::APInt(Bits, 0)};
+      size_t Edges = 0;
+      if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0,
+                      &Prefixes))
+        return false;
+      auto SetValuation = [&]() {
+        unsigned CoeffZeros = F.Offset.getBitWidth();
+        for (const auto &[Key, Coeff] : F.Terms) {
+          (void)Key;
+          if (!Res.charge(1))
+            return false;
+          CoeffZeros = std::min(CoeffZeros, Coeff.countr_zero());
+        }
+        const unsigned OffsetZeros = F.Offset.countr_zero();
+        F.Zeros = std::min(CoeffZeros, OffsetZeros);
+        F.FixedValuation = F.Terms.empty() || OffsetZeros < CoeffZeros;
+        return true;
+      };
+      if (!SetValuation())
+        return false;
+      // Removing fixed zeros also removes observed bits. Widen just this
+      // factor, leaving odd factors at their original (provable) precision.
+      const unsigned ExtraBits =
+          std::min({Width, Bits + F.Zeros, limits::kMaxResiduePrefixBits});
+      if ((!F.FixedValuation || F.Offset.isZero()) && ExtraBits > Bits) {
+        F = Factor{{}, llvm::APInt(ExtraBits, 0)};
+        Edges = 0;
+        if (!Res.scalar(1) ||
+            !readFactor(Ctx, R, llvm::APInt(ExtraBits, 1), F, Res, Edges, 0,
+                        &Prefixes) ||
+            !SetValuation())
           return false;
-        CoeffZeros = std::min(CoeffZeros, Coeff.countr_zero());
       }
-      const unsigned OffsetZeros = F.Offset.countr_zero();
-      F.Zeros = std::min(CoeffZeros, OffsetZeros);
-      F.FixedValuation = F.Terms.empty() || OffsetZeros < CoeffZeros;
-      return true;
-    };
-    if (!SetValuation())
-      return Root;
-    // Removing fixed zeros also removes observed bits. Widen just this
-    // factor, leaving odd factors at their original (provable) precision.
-    const unsigned ExtraBits =
-        std::min({Width, Bits + F.Zeros, limits::kMaxResiduePrefixBits});
-    if (!F.FixedValuation && ExtraBits > Bits) {
-      F = Factor{{}, llvm::APInt(ExtraBits, 0)};
-      Edges = 0;
-      if (!Res.scalar(1) ||
-          !readFactor(Ctx, R, llvm::APInt(ExtraBits, 1), F, Res, Edges, 0,
-                      &Prefixes) ||
-          !SetValuation())
-        return Root;
+      if (F.Zeros >= Needed)
+        return true;
+      Needed -= F.Zeros;
+      // A zero prefix guarantees only Bits zeros, not a zero full-width factor.
+      if (!F.FixedValuation)
+        Available = std::min(Available, F.Offset.getBitWidth() - F.Zeros);
+      Factors.push_back(std::move(F));
     }
-    if (F.Zeros >= Needed)
-      return Res.charge(1) ? Ctx.mkZero(Width) : Root;
-    Needed -= F.Zeros;
-    // A zero prefix guarantees only Bits zeros, not a zero full-width factor.
-    if (!F.FixedValuation)
-      Available = std::min(Available, F.Offset.getBitWidth() - F.Zeros);
-    Factors.push_back(std::move(F));
-  }
-  if (proveAffineResidues(Factors, Available, Needed, Res))
+    return proveAffineResidues(Factors, Available, Needed, Res);
+  };
+  // Failed precision attempts share the same cumulative resource account;
+  // the cache only contains completed queries keyed by their exact width.
+  if (proveAtResiduePrecisions(
+          Operands.size(), MaxBits, Needed, Res,
+          [&](unsigned Bits) { return Prove(Bits, Needed); }))
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
   return Root;
 }
@@ -870,7 +915,9 @@ foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   // Examining only this prefix avoids full-width inversions. It can decline
   // a proof that needs deeper residues; it never overstates a valuation.
   const unsigned Bits = std::min(Needed, unsigned(std::bit_width(N)));
-  if (proveAffineResidues(Factors, Bits, Needed, Res))
+  if (proveAtResiduePrecisions(N, Bits, Needed, Res, [&](unsigned Precision) {
+        return proveAffineResidues(Factors, Precision, Needed, Res);
+      }))
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
   // Reassociation can absorb the enclosing scale into one additive factor.
   // Once all fixed zeros are known, normalize the exact coefficient maps at

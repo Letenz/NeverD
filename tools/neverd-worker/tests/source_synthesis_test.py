@@ -208,13 +208,14 @@ def affine_residue_elf(degree, neighbor=False):
     return elf(code), expected
 
 
-def prefix_residue_elf(degree, neighbor=False):
+def prefix_residue_elf(degree, neighbor=False, *, prefix_bits=None):
     # Independently authored x64 words. Each factor changes its high bits;
     # only the common low-prefix relation justifies removing the product.
     units = (0x9E3779B1, 0x85EBCA77, 0xC2B2AE3D, 0x27D4EB2F,
              0x165667B1, 0xD3A2646D, 0xA24BAED5, 0x9FB21C65)
-    bits = (degree - 1).bit_length()
-    scale = 1 << (32 - (degree - degree.bit_count()))
+    bits = prefix_bits or (degree - 1).bit_length()
+    zeros = sum(degree >> bit for bit in range(1, bits + 1))
+    scale = 1 << (32 - zeros)
     code = bytearray.fromhex("4189f8 448d0c76 4501c8 448d0c92 4501c8 b8")
     code += struct.pack("<I", scale)
     factors = []
@@ -320,6 +321,11 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
         if kind in ("affine-residue-neighbor", "prefix-residue-neighbor"):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert ">>" in code, text
+        elif kind == "coarse-residue-neighbor":
+            # A nonzero frontier can become a predicate or a lookup. Execute
+            # its original product oracle; allow the lookup's literal scale.
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert code.count("*") <= 1 and "<<" not in code, text
         elif kind.startswith("residue-"):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert "*" not in code and "<<" not in code, text
@@ -376,7 +382,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith("residue-") or kind in ("affine-residue-neighbor", "prefix-residue-neighbor"):
+                    if kind.startswith("residue-") or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor"):
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -437,6 +443,9 @@ if __name__ == "__main__":
         for kind, image, expected in (
             ("residue-prefix-quartic", *prefix_residue_elf(4)),
             ("residue-prefix-octic", *prefix_residue_elf(8)),
+            ("residue-coarse-quartic", *prefix_residue_elf(4, prefix_bits=1)),
+            ("residue-coarse-octic", *prefix_residue_elf(8, prefix_bits=1)),
+            ("coarse-residue-neighbor", *prefix_residue_elf(4, True, prefix_bits=1)),
             ("prefix-residue-neighbor", *prefix_residue_elf(4, True)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),

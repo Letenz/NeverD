@@ -34,6 +34,13 @@ class WordOracleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.equivalent("x", "unknown(x)")
 
+    def test_frontier_controls_have_nonzero_witnesses(self):
+        for width in (8, 16, 32, 64):
+            rows = bench.residue_frontier_corpus(width, 128)
+            for expression in rows[112:]:
+                with self.assertRaises(AssertionError):
+                    self.equivalent(expression, "x+y+z+w", width)
+
 
 if __name__ == "__main__":
     unittest.main()
