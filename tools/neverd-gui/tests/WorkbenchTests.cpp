@@ -15,6 +15,7 @@
 #include "LinkDispatch.h"
 #include "LinkOpener.h"
 #include "ListingView.h"
+#include "ListingViewTestAccess.h"
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
 #include "MainWindow.h"
@@ -96,6 +97,7 @@
 #include <QTreeWidget>
 #include <QUrl>
 #include <cmath>
+#include <functional>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <memory>
 
@@ -119,6 +121,15 @@ QString writeFixture(const QTemporaryDir &directory, const QString &name) {
     return {};
   return path;
 }
+
+struct ListingPaintObserver : QObject {
+  std::function<void()> Observe;
+  bool eventFilter(QObject *, QEvent *event) override {
+    if (event->type() == QEvent::Paint)
+      Observe();
+    return false;
+  }
+};
 
 /// The production window over the fixture worker.
 struct Workbench {
@@ -7302,6 +7313,67 @@ private slots:
     QCOMPARE(results, (QStringList{QString(), QString()}));
     QVERIFY(!assembly->graphMode());
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x44));
+  }
+
+  void listingRefreshKeepsItsContextAndArrows() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *listing = bench.window->disassembly()->listing();
+    const Address address = Base + 0x1400;
+    bench.window->disassembly()->navigate(address);
+    QTRY_COMPARE(listing->currentItem(), std::optional<Address>(address));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.indexReady() &&
+                                 !bench.session.busy() &&
+                                 ListingViewTestAccess::settled(*listing),
+                             OpenTimeoutMs);
+    const auto first = ListingViewTestAccess::first(*listing);
+    const auto last = ListingViewTestAccess::last(*listing);
+    const auto top = listing->topItem();
+    const auto arrows = ListingViewTestAccess::arrows(*listing);
+    QVERIFY(ListingViewTestAccess::rows(*listing) >
+            ::neverd::limits::gui::kListingViewPageLines * 2);
+    bool keptContext = true, keptArrows = true;
+    int paints = 0;
+    ListingPaintObserver observer;
+    observer.Observe = [&] {
+      ++paints;
+      keptContext &= ListingViewTestAccess::rows(*listing) > 0 &&
+                     ListingViewTestAccess::first(*listing) <= first &&
+                     ListingViewTestAccess::last(*listing) >= last;
+      keptArrows &= ListingViewTestAccess::arrows(*listing) == arrows;
+    };
+    listing->viewport()->installEventFilter(&observer);
+    for (int pass = 0; pass < 3; ++pass) {
+      const int previous = paints;
+      listing->refresh();
+      QTRY_VERIFY_WITH_TIMEOUT(ListingViewTestAccess::settled(*listing) &&
+                                   paints > previous,
+                               OpenTimeoutMs);
+      QCOMPARE(listing->currentItem(), std::optional<Address>(address));
+      QCOMPARE(listing->topItem(), top);
+      QVERIFY(keptContext);
+      QVERIFY(keptArrows);
+    }
+    listing->viewport()->removeEventFilter(&observer);
+    // A real revision still replaces the rows, and navigation supersedes a
+    // refresh instead of letting its late completion move the cursor back.
+    bench.session.setComment(address,
+                             QStringLiteral("updated without a flash"));
+    QTRY_VERIFY_WITH_TIMEOUT(listing->currentLineText().contains(
+                                 QStringLiteral("updated without a flash")),
+                             OpenTimeoutMs);
+    listing->refresh();
+    bench.window->disassembly()->navigate(Base + 0x1500);
+    QTRY_COMPARE_WITH_TIMEOUT(listing->currentItem(),
+                              std::optional<Address>(Base + 0x1500),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(ListingViewTestAccess::settled(*listing),
+                             OpenTimeoutMs);
+    QCOMPARE(listing->currentItem(), std::optional<Address>(Base + 0x1500));
   }
 
   void laterLinksSupersedeWhileTheProgramOpens() {

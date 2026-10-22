@@ -96,6 +96,7 @@ protected:
   void focusOutEvent(QFocusEvent *event) override;
 
 private:
+  friend struct ListingViewTestAccess;
   bool rowsCurrent() const;
   enum class Fetch { Jump, Before, After, Refresh };
   /// Where a refresh puts the cursor back: the line of its item at \p sub,

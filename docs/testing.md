@@ -1151,6 +1151,21 @@ against a fixture and optional native input, including revisiting a function.
 and checks persistent selection, sorting, filtering and retiring an obsolete
 background refresh.
 
+`listingRefreshKeepsItsContextAndArrows` observes every viewport paint through
+repeated refreshes, checks retained context, branch-gutter pixels and cursor
+placement, then verifies a real comment update and superseding navigation.
+`NeverDWorkerPEFunctionParts` checks a chained cold part's owner, recovered
+instructions, references and stable function inventory across repeated reads.
+`NeverDWorkerCLIPEFunctionParts` additionally checks CLI entry inventories,
+linear disassembly by name, export alias and entry address, cold-part references
+and a CLI function rename reopened in the worker under its original owner.
+`NeverDWorkerListingStability` is an optional large native-input regression:
+set `NEVERD_LISTING_STABILITY_INPUT`, `NEVERD_LISTING_STABILITY_ADDRESS` near a
+chunk boundary and optionally `NEVERD_LISTING_STABILITY_PDB`. It copies those
+inputs to a temporary directory, disables background analysis and alternates
+refresh/prefetch requests, requiring a stable inventory and listing generation
+after warmup. Missing external inputs are skips, not native qualification.
+
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
 It also checks that statement navigation without library or call-expression
