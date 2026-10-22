@@ -436,7 +436,11 @@ odd-product residues, carry propagation and nested bitwise/width projections.
 Its degree-4–256 products include a useful consecutive offset block and an odd
 residual tail, so the higher-degree cases still require more than parity.
 Sixteen nearby controls per width must retain their nonzero behavior.
-Run all nineteen families at
+Use `--family multiple-residual --count 128` for nonzero degree-4–64 products
+with simultaneous independent high-bit disturbances and nearby cases with
+observable cross terms. Keep the previous nineteen families frozen when
+checking performance and output cost.
+Run all twenty families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -469,6 +473,20 @@ domains, check independent 8–257-bit arithmetic, and verify that a short budge
 can return only a completed equivalent candidate. Distributed quartic/octic
 source fixtures and a
 nonzero neighbor execute through both C backends and all CLI/worker routes.
+Multiple-residual tests cover independent arithmetic through 257 bits,
+exhaustive small domains, full-width Z3 checks and exact/short cumulative
+resources. Quartic/octic machine-code fixtures and an observable-cross-term
+neighbor execute through all six CLI/worker source routes and both C
+optimization levels, including ordinary/enhanced cache isolation.
+Decision-word tests cover complemented odd/even branches, sparse Boolean
+reconstruction, casts, shifted constant tables with overshifts and opaque
+division inputs. Zero words must preserve their original width. Attempt-cache
+tests cover context isolation, storage refusal and reuse under larger scratch
+allowances when storage did not limit the preceding search.
+Generated-reading regressions require the deep walk to simplify an original
+opaque division's numerator and propagate it through the emitted proof.
+Mixed quartic and degree-24 residuals must also leave work for the surrounding
+linear tail within a fixed 65,536-work request.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.

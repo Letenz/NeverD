@@ -42,7 +42,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="neverd-diff-cli-") as folder:
         root = pathlib.Path(folder)
         for limit in (17, 9):
-            run([args.compiler, "-c", "-O1", "-fno-asynchronous-unwind-tables",
+            run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",
                  f"-DPATCH_LIMIT={limit}", args.fixture, "-o", str(root / f"{limit}.o")], {0})
         a, b = str(root / "17.o"), str(root / "9.o")
         base = [args.neverd, "diff", "--structural", "-a", a, "-b", b]
@@ -155,7 +155,7 @@ def main():
         # Owned assembly gives exact split boundaries independent of compiler heuristics.
         region_fixture = pathlib.Path(args.fixture).with_name("region_fixture.S")
         for label, flags in (("whole", []), ("split", ["-DREGION_SPLIT=1"])):
-            run([args.compiler, "-c", *flags, str(region_fixture), "-o", str(root / f"{label}.o")], {0})
+            run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", *flags, str(region_fixture), "-o", str(root / f"{label}.o")], {0})
         regions_base = [args.neverd, "diff", "--structural", "-a", str(root / "whole.o"), "-b", str(root / "split.o")]
         regions_saved = root / "regions.nddiff"
         regions = json.loads(run(regions_base + ["--regions", "--json", "--save", str(regions_saved)], {2, 3}).stdout)
