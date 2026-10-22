@@ -102,7 +102,8 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
 | ENCLS, ENCLV | Leaf-specific implicit register/flag completion, enclave memory and exception contracts. These supervisor/VMM operations should not be conflated with ENCLU's context transitions. |
 | AMX native LLVM output | Versioned TILECFG/tile-state ownership, restartable strided memory, partial progress and fault continuation. Existing strict LowIR support is not native code-generation support. |
-| Operand-free WRMSRNS | Its ECX selector and EDX:EAX value need a distinct nonserializing native contract for both word sizes. Explicit-operand WRMSRNS is now covered separately. |
+| Operand-free WRMSRNS | Decoder/lifter admission and a distinct nonserializing native contract for ECX and EDX:EAX in both word sizes. Explicit-operand WRMSRNS is covered separately. |
+| RDMSRLIST, WRMSRLIST | No decoder IDs or lifter admission in the pinned fork. These are outside the 1,652-ID census and need explicit list-processing state; RDMSRLIST also requires restartable partial completion. |
 | ENQCMD, ENQCMDS, MOVDIR64B in 32-bit mode | Implicit ES destination base/limit ownership. Existing 64-bit support does not prove these forms. |
 
 The direct-store execution checks cover ordinary memory. Native instructions
@@ -119,6 +120,13 @@ contract for transitions and AMX, implementing the bounded SGX leaves, and
 testing the remaining instruction forms. The bounded system contract added
 here is deliberately not a replacement for a complete machine-state boundary.
 This audit does **not** certify every encoding of the other decoder IDs.
+The newer MSRLIST extension is enumerated in Intel's
+[June 2026 ISA reference](https://cdrdv2.intel.com/v1/dl/getContent/671368);
+[SDM 093 Volume 2B](https://cdrdv2.intel.com/v1/dl/getContent/671241)
+defines RDMSRLIST's memory tables, RCX mask and partial-completion behavior.
+Neither instruction has a public ID in the pinned decoder, and the documented
+RDMSRLIST bytes `F2 0F 01 C6` fail decoding. The instruction-ID census must
+therefore be expanded before it can establish current architectural coverage.
 
 ## Work needed for complete coverage
 
@@ -330,6 +338,9 @@ Intel-defined RAX destination and RCX selector require `c8`. The EVEX register
 form has the same discrepancy. Tests inspect generated machine bytes rather
 than accepting successful assembly as proof of operand identity.
 
+Both C routes use GNU extended assembly, including COFF sources; this does
+not qualify MSVC `cl` compilation.
+
 The CPU owns feature/CPL checks, USER_MSR_CTL and bitmap accesses, interception,
 MSR-specific checks, and faults. The software emulator still refuses execution
 without that environment. The native probes use CPL3 and out-of-range USER_MSR
@@ -347,3 +358,18 @@ all 76 x86 Capstone unit executables pass after it. The source matrix covers
 routes, LLVM IR at O0/O2 and the repository LLVM object. Its malformed-assembly
 matrix contains 134 valid/rejected contract cases. Recovered register arguments
 add 24 source fixtures, with ELF compilation through every route.
+
+After merging `dev` through `b6313798a` (integration `702c3464b`), all 450
+focused system/source, type, ABI and SDK checks finish with 447 passes and
+three skips: the Windows x64 CPUID single-step observer and two kernel-PDB
+fixtures. This includes all 29 source-route tests and all four new MSR tests.
+The broader x86/IR/LLVM-to-C/SourceABI selection runs 1,963 checks: 1,941 pass,
+21 skip, and one old declaration-text expectation fails after the upstream
+stdcall placement correction. The test now recognizes the correct placement
+and adds real i686 Windows compiler assertions for pointer, signed integer and
+void-return function types. Its affected 63-check rerun passes 59 and skips
+four native Darwin Swift execution cases; no unresolved failure remains.
+The broad skips are four native Mach-O patch executions, thirteen Windows EH
+corpus cases and those four Darwin Swift cases. The test correction changes
+no product code. The binary-diff CLI integration and six Windows type-generator
+Python checks also pass. GUI and worker targets remain disabled in this build.
