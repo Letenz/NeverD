@@ -51,7 +51,7 @@ bool hasOffsetFactors(const SymContext &Ctx, SymRef Root) {
 // A common exact base needs only one offset vector. Avoid constructing one
 // coefficient map per factor when the original unit-offset proof suffices.
 SymRef foldCommonOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
-                               size_t &Storage) {
+                               size_t &Storage, bool &CompleteBase) {
   auto Factors = Ctx.operands(Root);
   const auto Scale = Ctx.isConst(Factors.front()) ? Factors.front() : SymRef{};
   if (Scale)
@@ -69,6 +69,7 @@ SymRef foldCommonOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   for (auto F : Factors)
     if (!llvm::equal(Base, BaseOf(F)))
       return Root;
+  CompleteBase = true;
   const unsigned Width = Ctx.width(Root);
   const size_t Words = (size_t(Width) - 1) / 64 + 1;
   const size_t Bytes = sizeof(llvm::APInt) + 2 * Words * sizeof(uint64_t);
@@ -100,8 +101,10 @@ SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
     return Root;
   const bool OffsetHint = hasOffsetFactors(Ctx, Root);
+  bool CommonBase = false;
   if (OffsetHint) {
-    auto Common = foldCommonOffsetProduct(Ctx, Root, Budget, Storage);
+    auto Common =
+        foldCommonOffsetProduct(Ctx, Root, Budget, Storage, CommonBase);
     if (Common != Root || Budget.exhausted())
       return Common;
   }
@@ -114,11 +117,27 @@ SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     if (Projected != Root || Budget.exhausted())
       return Projected;
   }
+  if (OffsetHint) {
+    bool AffineBase = false;
+    if (auto Affine = foldAffineProductResidues(Ctx, Root, Budget, Storage,
+                                                ProjectedHint, &AffineBase)) {
+      // Complete affine products already have a cheaper authoritative path.
+      // Keep the remaining allowance for polynomial recovery if its residue
+      // candidates were not smaller; there is no unobserved cofactor to find.
+      if (*Affine != Root || Budget.exhausted() || AffineBase || CommonBase)
+        return *Affine;
+      return ProjectedHint
+                 ? foldResidualProductResidues(Ctx, Root, Budget, Storage)
+                 : Root;
+    }
+  }
+  if (ProjectedHint && !CommonBase) {
+    auto Residual = foldResidualProductResidues(Ctx, Root, Budget, Storage);
+    if (Residual != Root || Budget.exhausted())
+      return Residual;
+  }
   if (!OffsetHint)
     return Root;
-  if (auto Affine =
-          foldAffineProductResidues(Ctx, Root, Budget, Storage, ProjectedHint))
-    return *Affine;
   const unsigned Width = Ctx.width(Root);
   const size_t Words = (size_t(Width) - 1) / 64 + 1;
   using Groups = std::map<std::vector<uint32_t>, std::vector<llvm::APInt>>;

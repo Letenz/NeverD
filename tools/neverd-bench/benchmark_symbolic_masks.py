@@ -791,6 +791,83 @@ def residue_frontier_corpus(width, count):
     return rows
 
 
+def distributed_prefix_corpus(width, count):
+    """Low-prefix proofs requiring information from several partial operands.
+
+    Each disturbance is divisible by 2**bits, although its individual operands
+    need not have a constant low prefix. A consecutive useful block supplies
+    sum(block >> bit) guaranteed zeros. The remaining odd factors make degrees
+    up to 256 without supplying a stronger parity-only proof. Controls either
+    repeat an offset or halve the enclosing scale and have nonzero witnesses.
+    """
+    rng = random.Random(0x44505246 + width)
+    rows = []
+    for index in range(count):
+        kind = index % 128
+        control = kind >= 112
+        flavor = kind % 16
+        degree = 4 if control else (4, 8, 16, 32, 64, 128, 256)[kind // 16]
+        block = min(degree, max(4, width // 2))
+        bits = 2 + (flavor % 3 == 2)
+        low = (1 << bits) - 1
+        zeros = sum(block >> bit for bit in range(1, bits + 1))
+        scale = 1 << max(width - zeros - (control and flavor >= 8), 0)
+        factors = []
+        for i in range(block):
+            offset = i - (control and flavor < 8 and i + 1 == block)
+            u, v = f"(u+{2*i})", f"(v+{4*i})"
+            distributed = f"(({u}&-2)*({v}&{-1 << (bits-1)}))"
+            odd_product = f"(({u}|{low})*({v}|{low}))"
+            if flavor == 0:
+                high = distributed
+            elif flavor == 1:
+                high = f"({distributed}*(w|1))"
+            elif flavor == 2:
+                high = f"({odd_product}-1)"
+            elif flavor == 3:
+                high = f"({odd_product}+{low})"
+            elif flavor == 4:
+                high = f"({distributed}^((v&-2)*(w&{-1 << (bits-1)})))"
+            elif flavor == 5:
+                high = f"({distributed}|((v&-2)*(w&{-1 << (bits-1)})))"
+            elif flavor == 6:
+                high = f"({distributed}&(w|{low}))"
+            elif flavor == 7:
+                high = f"((({u}|{low})+({v}|{low})+2)*(w|1))"
+            elif flavor == 8:
+                high = f"(({u}&-2)*({v}&-2)*(w&-2))"
+            elif flavor == 9:
+                high = f"(-{distributed})"
+            elif flavor == 10:
+                high = f"({distributed}+({odd_product}-1))"
+            elif flavor == 11:
+                high = f"((({u}&-2)*(v|1)+(w&-2))*({v}&-4))"
+            elif flavor == 12:
+                high = f"zext(extract({distributed},0,{bits}),{width})"
+            elif flavor == 13:
+                high = f"({distributed}<<1)"
+            elif flavor == 14:
+                high = f"(({odd_product}&{low})-1)"
+            else:
+                high = f"(({distributed}*(w|1))|({odd_product}-1))"
+            base = "(x+3*y)" if flavor % 4 else "((x+3*y)^(z*w))"
+            unit = (rng.getrandbits(width) | 1)
+            affine = f"({unit}*({base}+{offset}))"
+            if flavor % 4 == 1:
+                factor = f"({affine}|{high})"
+            elif flavor % 4 == 2:
+                factor = f"({affine}&({high}|{low}))"
+            elif flavor % 4 == 3:
+                factor = f"({affine}+{high})"
+            else:
+                factor = f"({affine}^{high})"
+            factors.append(factor)
+        factors.extend(f"((w+{2*i})|1)" for i in range(block, degree))
+        rows.append(f"({scale}*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -932,7 +1009,8 @@ def main():
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
                  "row-residual", "mixed-frontier", "extreme-frontier",
-                 "residue-product", "affine-residue", "prefix-residue", "residue-frontier"),
+                 "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
+                 "distributed-prefix"),
         default="complement",
     )
     args = parser.parse_args()
@@ -967,6 +1045,7 @@ def main():
                 "affine-residue": affine_residue_corpus,
                 "prefix-residue": prefix_residue_corpus,
                 "residue-frontier": residue_frontier_corpus,
+                "distributed-prefix": distributed_prefix_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

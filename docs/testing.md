@@ -410,7 +410,13 @@ nearby controls retain a nonzero product. Use
 `--family residue-frontier --count 128` for degree-4–256 products whose
 usable congruence stops at one to three bits, below the degree-based precision.
 These include even factors, arithmetic disturbances, correlated and nonlinear
-bases, narrow views and sixteen nonzero quartic controls. Run all eighteen families at
+bases, narrow views and sixteen nonzero quartic controls. Use
+`--family distributed-prefix --count 128` for independent partial-bit factors,
+odd-product residues, carry propagation and nested bitwise/width projections.
+Its degree-4–256 products include a useful consecutive offset block and an odd
+residual tail, so the higher-degree cases still require more than parity.
+Sixteen nearby controls per width must retain their nonzero behavior.
+Run all nineteen families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -436,8 +442,22 @@ Coarse-prefix oracles additionally cover arithmetic high-bit products through
 versus one-short cumulative work/storage. Independent full-width Z3 checks
 include the one-bit frontier. The worker also executes coarse quartic/octic
 and nonzero-neighbor fixtures through all six source routes.
+Partial-bit proof tests cover 8–257-bit independent arithmetic oracles,
+nonzero offset/scale neighbors, exact and one-short work/storage allowances,
+and full-width Z3 checks. Nonzero cofactor-table tests exhaust small input
+domains, check independent 8–257-bit arithmetic, and verify that a short budget
+can return only a completed equivalent candidate. Distributed quartic/octic
+source fixtures and a
+nonzero neighbor execute through both C backends and all CLI/worker routes.
+`SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
+shared roots, complete subgraph overrides and simultaneous variable replacement
+against word arithmetic through 257 bits, including division by zero.
 Native nonzero affine controls retain their recovered polynomial within the
 original work allowance, guarding against duplicated projection searches.
+Complete opaque affine bases also retain polynomial recovery after an
+unprofitable full residue table, including scaled and unit-offset byte cases.
+`VariableMonomialsKeepTheirAffineFastPath` checks 256 scaled factors under an
+18,000-unit deep-simplification allowance and an independent modular oracle.
 `SymExpr.EvaluationPlanKeepsSharedInputsAfterContextGrowth` checks shared DAG
 operands, sorted sparse input IDs, callback reads and reusable plans through
 257 bits against separate word arithmetic. Existing evaluation and full
@@ -490,6 +510,10 @@ before consuming the budget needed to simplify their shared child.
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
 checks nested additions through 257 bits and rejects masked hidden poison.
+`MaskedMultiplyAdmissionMatchesExhaustiveByteDomains` exhausts signed and
+unsigned multiplication domains, including negative endpoint overflow.
+`MaskedMultiplyPreservesPoisonAndBoundedAdmission` checks masked sums through
+512 bits, hidden poison, annotations, and width/depth refusal.
 `MaskedDisjointOrMatchesExhaustiveByteDomains` and `NestedOrAdmission*` check
 OR-to-addition admission independently of compiler flags, including exhaustive
 byte domains, wrapping carries, nested ORs, hidden poison, and width/depth

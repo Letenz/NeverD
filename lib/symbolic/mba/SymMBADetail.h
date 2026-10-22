@@ -615,10 +615,13 @@ minimumProductResidueZeros(llvm::MutableArrayRef<llvm::APInt> Offsets,
 
 /// No value means the cheap affine hint declined; a value is a complete
 /// result or the original product when proof resources were insufficient.
+/// CompleteBase reports whether all factors share a proved full affine word,
+/// even when none of its candidate readings improves the product.
 std::optional<SymRef>
 foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                           size_t &Storage,
-                          std::optional<bool> ProjectedHint = std::nullopt);
+                          std::optional<bool> ProjectedHint = std::nullopt,
+                          bool *CompleteBase = nullptr);
 
 /// Cheap admission only; no equality follows from this structural hint.
 bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root);
@@ -628,6 +631,11 @@ bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root);
 SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
                                     WorkBudget &Budget, size_t &Storage,
                                     bool Admitted = false);
+
+/// Recover nonzero products from complete cofactor precision proofs after
+/// the cheaper full-affine and projected-zero paths have declined.
+SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
+                                   WorkBudget &Budget, size_t &Storage);
 
 /// Only the low product bit survives a highest-bit scale.
 SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
