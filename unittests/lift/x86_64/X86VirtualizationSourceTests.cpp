@@ -33,6 +33,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <algorithm>
@@ -407,7 +408,8 @@ namespace {
 // fixtures additionally link and execute against an independent expected value.
 void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                    llvm::StringRef Mnemonic,
-                   std::optional<uint64_t> Expected = std::nullopt) {
+                   std::optional<uint64_t> Expected = std::nullopt,
+                   bool OriginalBytes = false) {
 #if !defined(__linux__) || !defined(__x86_64__)
   if (Expected)
     GTEST_SKIP() << "Native execution fixture requires Linux x86-64";
@@ -497,6 +499,10 @@ void _start(void) {
           Input,
           "-o",
           Output};
+      // Match Codegen's x86 SSE2 baseline. Clang's plain i386 target has no
+      // XMM register class for the emitted floating-point assembly operands.
+      if (Image.Arch == Arch::X86)
+        Arguments.push_back("-msse2");
       if (!IR)
         Arguments.insert(Arguments.end(),
                          {"-std=gnu11", "-ffreestanding",
@@ -539,9 +545,79 @@ void _start(void) {
                   Compiler, LinkArguments(Driver, Object, Executable)),
               0);
     EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0);
+    if (OriginalBytes) {
+      llvm::SmallString<128> Assembly(Directory);
+      llvm::sys::path::append(Assembly, "original.s");
+      llvm::raw_fd_ostream Original(Assembly, Error);
+      ASSERT_FALSE(Error);
+      Original << ".text\n.globl virtualization_test\nvirtualization_test:\n";
+      for (const auto Byte : Image.Segments.front().Data)
+        Original << ".byte " << unsigned(Byte) << '\n';
+      Original << ".section .note.GNU-stack,\"\",@progbits\n";
+      Original.close();
+      ASSERT_FALSE(Original.has_error());
+      ASSERT_EQ(llvm::sys::ExecuteAndWait(
+                    Compiler, LinkArguments(Driver, Assembly, Executable)),
+                0);
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0);
+    }
   }
 }
+
+std::vector<uint8_t> fpEncodingFunction(Arch A) {
+  if (A == Arch::X86)
+    return {0xb8, 3, 0, 0, 0, 0xf2, 0x0f, 0x2a, 0xc8, 0xb8, 7, 0, 0, 0, 0xf2,
+            0x0f, 0x2a, 0xd0, 0xc4, 0xc1, 0x33, 0x58, 0xc2, // VADDSD;
+                                                            // ignored
+                                                            // B/vvvv[3].
+            0xc4, 0xc1, 0x7b, 0x2c, 0xc0, // VCVTTSD2SI; ignored B.
+            0xc3};
+  return {0x48, 0x83, 0xec, 0x28, // SUB rsp,40.
+          0x48, 0xb8, 0,    0,    0,    0,    0,    0,
+          0xf0, 0x3f, 0x48, 0x89, 0x04, 0x24, // [rsp] = 1.0.
+          0x48, 0xb8, 0,    0,    0,    0,    0,    0,
+          0,    0x40, 0x48, 0x89, 0x44, 0x24, 0x08, // [rsp+8] = 2.0.
+          0x66, 0x0f, 0x10, 0x04, 0x24,             // MOVUPD xmm0,[rsp].
+          0xd5, 0x48, 0x8d, 0x04, 0x24,             // LEA r16,[rsp].
+          0x66, 0xd5, 0xd0, 0x58, 0x00,             // ADDPD xmm0,[r16].
+          0xf2, 0xd5, 0xc8, 0x2c, 0xc8,             // CVTTSD2SI r17,xmm0.
+          0xd5, 0x48, 0x89, 0xc8,                   // MOV rax,r17.
+          0x48, 0x83, 0xc4, 0x28, 0xc3};
+}
 } // namespace
+
+TEST(X86FPEncodingSource, BothModesSurviveEveryFormatAndSourceRoute) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (const bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(NoOpt);
+        auto Image = image(A, Format, fpEncodingFunction(A));
+        ASSERT_NO_FATAL_FAILURE(sourceRoutes(Image, NoOpt, Entry, {}));
+      }
+}
+
+TEST(X86FPEncodingSource, Rex2ExecutesThroughEveryRouteWithoutAPXHardware) {
+  for (const bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    auto Image =
+        image(Arch::X64, BinaryFormat::ELF, fpEncodingFunction(Arch::X64));
+    ASSERT_NO_FATAL_FAILURE(compileRoutes(Image, NoOpt, Entry, {}, 2));
+  }
+}
+
+TEST(X86FPEncodingSource, Mode32IgnoredFieldsAgreeWithOriginalNativeBytes) {
+  if (!llvm::sys::getHostCPUFeatures().lookup("avx"))
+    GTEST_SKIP() << "Original VEX instruction oracle requires AVX";
+  for (const bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    auto Image =
+        image(Arch::X86, BinaryFormat::ELF, fpEncodingFunction(Arch::X86));
+    ASSERT_NO_FATAL_FAILURE(compileRoutes(Image, NoOpt, Entry, {}, 10, true));
+  }
+}
 
 TEST(X86VectorEncodingSource, Mode32IgnoredExtensionsExecuteThroughEveryRoute) {
   for (const bool NoOpt : {false, true}) {

@@ -5124,6 +5124,19 @@ SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.
 
+`X86FPEncoding` owns legacy, REX/REX2 and VEX floating-point prefix admission
+and raw-byte/decoder-detail agreement. Instruction families retain opcode,
+width and reserved-field rules. Register selection distinguishes GPRs,
+vectors and addresses: REX2 extends GPR/address banks while ignoring R4/B4 for
+XMM operands; 32-bit VEX ignores the documented B and used-vvvv extension
+bits without relaxing unused-vvvv or LES/LDS disambiguation. The shared address
+tail validator retains wrapping and segment ownership.
+
+LLVM-to-C's i386 scalar carriers use signed/unsigned `_BitInt(128)` aliases
+when the target compiler has bit-precise integers but no native 128-bit aliases.
+This preserves 65..128-bit value operations, including packed numerical/MXCSR
+results. It does not establish every wide-integer runtime or calling convention.
+
 `IntrinsicValueEffects` defines positive, shape-validated contracts for operations
 whose effects are entirely explicit values. `LowIntrinsicEffects` additionally
 validates LowIR operands and memory annotations. Jump-table consumer analysis and

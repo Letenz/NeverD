@@ -582,6 +582,10 @@ add_neverd_unittest(NeverDX86VectorEncodingModeTests
   x86_64/X86VectorEncodingModeTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
+add_neverd_unittest(NeverDX86FPEncodingTests
+  x86_64/X86FPEncodingTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
 add_neverd_unittest(NeverDX86SystemStateTests
   x86_64/X86SystemStateTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
