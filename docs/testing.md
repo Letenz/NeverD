@@ -146,6 +146,12 @@ validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct
 jump, ordinary calls and indirect tail calls.
 
+`NeverDConstantBranchTests` checks arithmetic indirect branches, unreachable
+opcode bytes, repeated transfers, flags, unknown live-ins, partial registers,
+call clobbers, overlapping reachable streams and late incoming edges that
+invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
+ownership and an AArch64 scalar transfer.
+
 `NeverDSymMBAKnownFactTests` checks reuse of existing known-bit facts at
 mask and predicate consumers, including independent sign-extension and
 unbounded-value counterexamples. The shared deep-work budget remains in force.
@@ -2352,6 +2358,12 @@ ctest --test-dir build-release \
 ```
 
 ## LLVM C object storage
+
+`NeverDCSourcePresentationTests` covers mapped array/record allocations through
+248 bytes and image text reached through wide reads in HighC and LLVM C.
+ASCII, UTF-8, both byte orders of UTF-16/UTF-32 and GBK retain readable comments;
+disabling comments leaves the original storage representation. It also checks
+comment escaping and that aggregate storage cannot become a scalar edit type.
 
 `NeverDMedLLVMDirectDataTests` covers finite native data accesses in pointer-bearing
 segments, unrelated code/data relocations, exact byte values, partial overlap,

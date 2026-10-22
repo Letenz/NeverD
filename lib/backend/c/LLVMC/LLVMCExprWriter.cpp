@@ -458,6 +458,13 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (!Spelling.empty())
     if (std::string Comment = symbolComment(Spelling, Name); !Comment.empty())
       ImageObjectSymbols[Name] = std::move(Comment);
+  if (Opts.EmitComments)
+    if (const auto Text = imageStringComment(Img, Addr)) {
+      auto &Comment = ImageObjectSymbols[Name];
+      if (!Comment.empty())
+        Comment += "; ";
+      Comment += *Text;
+    }
   return Name;
 }
 
@@ -693,9 +700,13 @@ std::string LLVMCWriter::getName(const llvm::Value *V) {
     Variable.Id = SourceValueIds.at(V);
     Variable.Name = Name;
     Variable.Bytes = llvmAccessSize(Type);
-    Variable.Type = Type->isFloatingPointTy()
-                        ? NdType::makeFloat(Variable.Bytes)
-                        : NdType::makeInt(Variable.Bytes);
+    if (Type->isFloatingPointTy())
+      Variable.Type = NdType::makeFloat(Variable.Bytes);
+    else if (Type->isIntegerTy() || Type->isPointerTy())
+      Variable.Type = NdType::makeInt(Variable.Bytes);
+    // Aggregate allocations retain their extent, but do not have a scalar
+    // edit type. Treating a whole frame as an integer also makes otherwise
+    // valid mapped source fail when its byte size exceeds a C integer.
     Variable.Parameter = llvm::isa<llvm::Argument>(V);
     Variable.Ambiguous =
         !Variable.Bytes || (!Type->isIntegerTy() && !Type->isPointerTy() &&

@@ -51,11 +51,29 @@ as literal bits, including values that coincide with image string or function
 addresses. Scalars, arrays, records and vector lanes share this rule. Explicit
 pointer constant expressions retain their symbolic addresses and relocations.
 
+Both C routes use the shared string scanner to annotate image objects read
+as scalar or vector blocks. Comments show the encoding and text without
+changing the load width, stored bits, alignment checks or pointer identity.
+Big-endian Unicode can be annotated even when a host C literal cannot replace
+its bytes. LLVM C's source-variable inventory separately distinguishes scalar
+edit types from aggregate allocation extents; an array or record is never
+registered as an integer whose width is the whole allocation.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## GUI project and search ownership
+
+`CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
+LowIR facts without reading memory or inventing live-in register values, then
+revalidates the producer's basic block after discovering new paths. Lost or
+incomplete proofs retain the original indirect transfer. The native function
+disassembly API publishes these same instruction boundaries and targets; raw
+disassembly remains linear. The worker uses recovered bodies for function
+listings and replaces their linear reference-scan results, so skipped bytes do
+not swallow real code targets. Analyst Undefine overrides presentation inside
+a function without deleting the function or changing the original bytes.
 
 The GUI owns the relationship between a packed `.nddb` and its unpacked working
 copy; the worker owns edit journals and their replay. Before a database opens a

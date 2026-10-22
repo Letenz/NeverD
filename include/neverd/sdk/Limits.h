@@ -208,6 +208,7 @@ inline constexpr int
 
 // lib/sdk/capi/NeverDCAPIDisasm.cpp
 inline constexpr int kNeverDCAPIDisasmNeverdDisasmJsonExLimitDefault = 256;
+inline constexpr int kMaxFunctionDisasmPage = 4096;
 
 // lib/sdk/capi/NeverDCAPIInfo.cpp
 inline constexpr int kNeverDCAPIInfoNeverdResolveAddrLenLimit = 256;
