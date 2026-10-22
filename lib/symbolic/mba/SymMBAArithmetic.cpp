@@ -1719,7 +1719,8 @@ static SymRef solveArithmeticImpl(SymContext &Ctx, SymRef E,
       }
     }
   }
-  if (Ctx.op(E) == SymOp::Add && Ctx.numOperands(E) >= 3 &&
+  if (Ctx.op(E) == SymOp::Add &&
+      Ctx.numOperands(E) >= limits::kMinArithmeticPartitionTerms &&
       llvm::any_of(Ctx.operands(E), [&](SymRef Term) {
         return Ctx.op(Term) == SymOp::Mul &&
                llvm::any_of(Ctx.operands(Term), [&](SymRef Factor) {

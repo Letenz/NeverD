@@ -1377,7 +1377,7 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
       const bool Higher =
           Ctx.op(Term) == SymOp::Mul &&
           Ctx.numOperands(Term) - unsigned(Ctx.isConst(Ctx.operand(Term, 0))) >=
-              4;
+              detail::limits::kMinProductCofactorDegree;
       if (Higher)
         Term = foldProductParity(Ctx, Term, Budget, Storage);
       (Higher ? Products : Tail).push_back(Term);
@@ -1392,7 +1392,7 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
       auto SharedMonomial = [&](SymRef R) {
         return Ctx.op(R) == SymOp::Mul &&
                Ctx.numOperands(R) - unsigned(Ctx.isConst(Ctx.operand(R, 0))) >=
-                   4 &&
+                   detail::limits::kMinProductCofactorDegree &&
                llvm::any_of(Ctx.operands(R),
                             [&](SymRef F) { return Ctx.op(F) == SymOp::Add; });
       };

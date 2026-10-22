@@ -43,6 +43,7 @@ inline constexpr std::size_t kMinCompletedRegionCacheWork = 64;
 inline constexpr std::size_t kCompletedMemoEntryBytes = 256;
 inline constexpr std::size_t kCompletedMemoStorageDivisor = 8;
 inline constexpr std::size_t kMinArithmeticMemoTerms = 3;
+inline constexpr std::size_t kMinArithmeticPartitionTerms = 3;
 inline constexpr std::size_t kMinArithmeticCommonFactors = 3;
 inline constexpr std::size_t kMinArithmeticCommonProductOperands = 4;
 inline constexpr std::size_t kMinFlatArithmeticSumTerms = 8;
