@@ -817,6 +817,8 @@ private:
     Attributes Asked;
     /// Whether the specifiers define the record or enumeration they name.
     bool Defines = false;
+    /// An existing type name rather than a struct/union tag declaration.
+    bool TypeName = false;
     bool NoReturn = false;
   };
 
@@ -1286,6 +1288,7 @@ private:
           // A typedef the declarations made, such as glibc's size_t, keeps
           // its name.
           Spec.Type = named(W);
+          Spec.TypeName = true;
         } else if (W == "size_t" || W == "uintptr_t")
           Spec.Type = makeBuiltin(pointerSize() == 8 ? Builtin::ULongLong
                                                      : Builtin::UInt);
@@ -1604,6 +1607,7 @@ private:
         continue;
       }
       // An unnamed bitfield without specifiers is not C.
+      const Token MemberAt = peek();
       Specifiers Spec;
       if (!specifiers(Spec))
         return;
@@ -1611,6 +1615,28 @@ private:
         // An anonymous record; a definition alone adds no member.
         if (Spec.Type->Kind == TypeExprKind::Record)
           Draft.Members.push_back({"", Spec.Type, false, 0, ""});
+        else if (!Cpp && !Spec.Typedef && !Spec.Defines && Spec.TypeName &&
+                 libraryRecordABIOf(Library.recordABI()) ==
+                     RecordABI::Microsoft &&
+                 Spec.Type->Kind == TypeExprKind::Named) {
+          // Microsoft's C also admits an anonymous member named by a
+          // typedef. Preserve its storage and promoted members, rather
+          // than treating it as a tag-only declaration such as struct S;.
+          if (const LocalType *Named = Library.resolve(Spec.Type->Name)) {
+            if (Named->Record) {
+              if (!Named->Record->Defined) {
+                fail(MemberAt, "an anonymous member needs a complete record");
+                return;
+              }
+              DraftMember Field;
+              Field.Type = qualified(makeRecord(Named->Record),
+                                     Spec.Type->Const, Spec.Type->Volatile);
+              Field.Alignment = Spec.Asked.Alignment;
+              Field.Packed = Spec.Asked.Packed;
+              Draft.Members.push_back(std::move(Field));
+            }
+          }
+        }
         continue;
       }
       while (!Failed) {

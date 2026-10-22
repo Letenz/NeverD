@@ -449,7 +449,15 @@ and `WindowsKernelX86.h`, and what a program's `<windows.h>`, the headers of
 the libraries programs most often call and phnt's native API (the `Nt`,
 `Zw`, `Rtl` and `Ldr` routines ntdll exports, the PEB and the TEB) declare
 into `WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`;
-mingw-w64's DDK declares no ARM64 kernel. phnt is read with mingw-w64's SDK
+ARM64 drivers join `WindowsKernelARM64.h`, generated for AArch64 from the
+hash-pinned public-domain ReactOS core DDK and MinGW provider headers.
+The generator corrects checked ARM64 context and record alignment without
+defining x86 architecture macros. Microsoft C anonymous typedef members keep
+their storage and promoted members in the shared type parser. ARM64 records
+whose pinned layouts disagree with the independent WDK comparison remain
+opaque, along with their by-value dependents; pointers and import declarations
+remain available. Image-specific symbols can supply complete layouts.
+phnt is read with mingw-w64's SDK
 for Windows 11 24H2, in place of `<winternl.h>`; `scripts/windows_types`
 supplies what it takes from Microsoft's SDK that mingw-w64 lacks or spells
 otherwise. Kernel generation also reads a hash-pinned, public-domain ReactOS

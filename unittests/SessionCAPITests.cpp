@@ -5955,33 +5955,36 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
 TEST_F(SessionCAPITest, DriverProviderImportsUseTheirDeclaredSourceABI) {
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
-  std::ifstream Input(Fixtures / "driver_provider_imports.sys",
-                      std::ios::binary);
-  ASSERT_TRUE(Input.good());
-  const std::string Driver =
-      write("driver_provider_imports.sys",
-            std::string(std::istreambuf_iterator<char>(Input), {}));
-  ASSERT_EQ(neverd_session_load(Session, Driver.c_str()), 1);
-  ASSERT_GE(neverd_session_discover_functions(Session), 0);
-  const int Index = neverd_func_find_by_name(Session, "ReadConfiguration");
-  ASSERT_GE(Index, 0);
-  const auto Entry = neverd_func_entry(Session, Index);
-  for (const char *View : {"c", "llvmc"}) {
-    SCOPED_TRACE(View);
-    const std::string Text =
-        takeString(neverd_ir_view_json(Session, Entry, View, 0, 2048));
-    auto Parsed = llvm::json::parse(Text);
-    ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
-    const auto Source = Parsed->getAsObject()->getString("text");
-    ASSERT_TRUE(Source.has_value()) << Text;
-    EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
-    EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
-    if (std::string_view(View) == "c") {
-      EXPECT_TRUE(Source->contains("extern void NdisCloseConfiguration(void*"))
-          << Source->str();
-      EXPECT_TRUE(Source->contains("extern int32_t NdisOpenConfigurationEx("))
-          << Source->str();
-      EXPECT_TRUE(Source->contains("NdisParameterString")) << Source->str();
+  for (const char *File :
+       {"driver_provider_imports.sys", "driver_provider_imports_arm64.sys"}) {
+    SCOPED_TRACE(File);
+    std::ifstream Input(Fixtures / File, std::ios::binary);
+    ASSERT_TRUE(Input.good());
+    const std::string Driver =
+        write(File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    ASSERT_EQ(neverd_session_load(Session, Driver.c_str()), 1);
+    ASSERT_GE(neverd_session_discover_functions(Session), 0);
+    const int Index = neverd_func_find_by_name(Session, "ReadConfiguration");
+    ASSERT_GE(Index, 0);
+    const auto Entry = neverd_func_entry(Session, Index);
+    for (const char *View : {"c", "llvmc"}) {
+      SCOPED_TRACE(View);
+      const std::string Text =
+          takeString(neverd_ir_view_json(Session, Entry, View, 0, 2048));
+      auto Parsed = llvm::json::parse(Text);
+      ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+      const auto Source = Parsed->getAsObject()->getString("text");
+      ASSERT_TRUE(Source.has_value()) << Text;
+      EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
+      EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
+      if (std::string_view(View) == "c") {
+        EXPECT_TRUE(
+            Source->contains("extern void NdisCloseConfiguration(void*"))
+            << Source->str();
+        EXPECT_TRUE(Source->contains("extern int32_t NdisOpenConfigurationEx("))
+            << Source->str();
+        EXPECT_TRUE(Source->contains("NdisParameterString")) << Source->str();
+      }
     }
   }
 }
@@ -6139,15 +6142,16 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
       << takeString(neverd_last_error(Session));
   ASSERT_GE(neverd_session_discover_functions(Session), 0)
       << takeString(neverd_last_error(Session));
-  // It joins the ARM64 user mode headers alone: no kernel library describes
-  // ARM64.
+  // Native calls use the ARM64 kernel declarations after the user library.
   auto Parsed =
       llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
   ASSERT_TRUE(static_cast<bool>(Parsed));
   const llvm::json::Array *Headers = Parsed->getAsObject()->getArray("headers");
-  ASSERT_TRUE(Headers && Headers->size() == 1u);
+  ASSERT_TRUE(Headers && Headers->size() == 2u);
   EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"),
             "windows-user-arm64");
+  EXPECT_EQ((*Headers)[1].getAsObject()->getString("name"),
+            "windows-kernel-arm64");
   EXPECT_EQ(Parsed->getAsObject()->getString("dataModel"), "LLP64");
   const auto decompile = [&](const char *Name) {
     const int Index = neverd_func_find_by_name(Session, Name);
@@ -6179,6 +6183,23 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
             std::string::npos)
       << Finish;
   EXPECT_NE(Finish.find("ExitProcess(arg0);"), std::string::npos) << Finish;
+  // LLVM C uses the same import contracts, including the zero-argument call.
+  for (const char *Name : {"Open", "Probe", "Window"}) {
+    SCOPED_TRACE(Name);
+    const int Index = neverd_func_find_by_name(Session, Name);
+    ASSERT_GE(Index, 0);
+    const auto Entry = neverd_func_entry(Session, Index);
+    const std::string JSON =
+        takeString(neverd_ir_view_json(Session, Entry, "llvmc", 0, 2048));
+    auto View = llvm::json::parse(JSON);
+    ASSERT_TRUE(static_cast<bool>(View)) << JSON;
+    const auto Source = View->getAsObject()->getString("text");
+    ASSERT_TRUE(Source.has_value()) << JSON;
+    EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
+    EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
+    if (std::string_view(Name) == "Probe")
+      EXPECT_TRUE(Source->contains("GetLastError()")) << Source->str();
+  }
   // CreateWindowExW takes twelve: the last four are on the stack.
   const std::string Window = decompile("Window");
   EXPECT_NE(Window.find("0x10000000, 1, 2, 3, 4, (HWND__*)(uintptr_t)arg0, 0, "

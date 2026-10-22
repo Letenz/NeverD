@@ -40,6 +40,9 @@ The kernel also reads the pinned public-domain ReactOS fltkernel.h from
 and phnt's SYSTEM_INFORMATION_CLASS enum. Both kernel and user generation
 require --phnt. The output starts with where it came from. Run it again when
 the headers or reader change, and check with scripts/check_type_renders.py.
+ARM64 kernel generation additionally needs --reactos-xdk, the source root
+at the pinned revision. Its core DDK inputs and local header tool are hash
+checked before use; --host-cc selects the compiler for that tool.
 """
 from __future__ import annotations
 
@@ -49,6 +52,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -203,7 +207,6 @@ def user(triple, model, arch, output):
         HEADERS / output, phnt=True)
 
 
-# mingw-w64's DDK declares no ARM64 kernel ("Unknown Architecture").
 TARGETS = {
     "kernel-x64": kernel("x86_64-w64-mingw32", "LLP64", "x64",
                          "WindowsKernelX64.h"),
@@ -213,6 +216,8 @@ TARGETS = {
     "user-x86": user("i686-w64-mingw32", "ILP32", "x86", "WindowsUserX86.h"),
     "user-arm64": user("aarch64-w64-mingw32", "LLP64", "ARM64",
                        "WindowsUserARM64.h"),
+    "kernel-arm64": kernel("aarch64-w64-mingw32", "LLP64", "ARM64",
+                           "WindowsKernelARM64.h"),
 }
 
 # What the reader may refuse: the compiler's vector and tile types, and what
@@ -229,6 +234,156 @@ def run(command, **options):
     if result.returncode:
         sys.exit(f"{command[0]} failed:\n{result.stderr.strip()}")
     return result.stdout
+
+
+def replace_exact(text, before, after, count=1):
+    """Refuse changed inputs rather than applying an architecture fix loosely."""
+    if text.count(before) != count:
+        sys.exit("ARM64 DDK input no longer matches its checked adaptation")
+    return text.replace(before, after)
+
+
+def arm64_kernel_headers(arguments, work):
+    """Build pinned ReactOS core headers for the actual ARM64 target.
+
+    MinGW's core DDK rejects ARM64. Do not define an x86 macro to get past
+    that guard: CONTEXT, processor records and conditional layouts differ.
+    The hpp build tool is used locally; its code is not part of the library.
+    """
+    root = Path(arguments.reactos_xdk)
+    manifest = PHNT_SHIMS / "reactos-arm64.sha256"
+    inputs = {}
+    for line in manifest.read_text().splitlines():
+        digest, name = line.split()
+        source = root / name
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+            sys.exit(f"{name} does not match the pinned ARM64 ReactOS input")
+        inputs[name] = source
+    xdk = work / "xdk"
+    xdk.mkdir()
+    overlay = work / "arm64-ddk"
+    overlay.mkdir()
+    for name, source in inputs.items():
+        if name.startswith("sdk/include/xdk/"):
+            target = xdk / name.removeprefix("sdk/include/xdk/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        elif name.startswith("sdk/include/"):
+            shutil.copy2(source, overlay / source.name)
+
+    # Public ARM64 CONTEXT has 16-byte alignment. The pinned ReactOS ARM64
+    # branch omits it; its ARM64_NT_CONTEXT declaration already has it.
+    changes = {
+        "arm64/ke.h": [("typedef struct _CONTEXT {",
+                         "typedef struct DECLSPEC_ALIGN(16) _CONTEXT {", 1)],
+        "extypes.h": [("#if !defined(_AMD64_) && !defined(_IA64_)",
+                        "#if !defined(_AMD64_) && !defined(_IA64_) && !defined(_ARM64_)", 2)],
+        "iotypes.h": [("#if !defined(_AMD64_) && !defined(_ARM_)",
+                        "#if !defined(_AMD64_) && !defined(_ARM_) && !defined(_ARM64_)", 2)],
+        "setypes.h": [('#include <pshpack4.h>\ntypedef struct _TOKEN_STATISTICS {',
+                        'typedef struct _TOKEN_STATISTICS {', 1),
+                       ('} TOKEN_STATISTICS, *PTOKEN_STATISTICS;\n#include <poppack.h>',
+                        '} TOKEN_STATISTICS, *PTOKEN_STATISTICS;', 1)],
+    }
+    # WHEA's public serialized error records are byte packed. The pinned
+    # core declarations have the correct field offsets but omit packing.
+    changes["wheatypes.h"] = [
+        (f"typedef {kind} _{name}\n", f"typedef {kind} __attribute__((packed)) _{name}\n", 1)
+        for kind, name in (
+            ("union", "WHEA_REVISION"),
+            ("union", "WHEA_ERROR_RECORD_SECTION_DESCRIPTOR_FLAGS"),
+            ("union", "WHEA_ERROR_RECORD_SECTION_DESCRIPTOR_VALIDBITS"),
+            ("struct", "WHEA_ERROR_RECORD_SECTION_DESCRIPTOR"),
+            ("union", "WHEA_PROCESSOR_GENERIC_ERROR_SECTION_VALIDBITS"),
+            ("struct", "WHEA_PROCESSOR_GENERIC_ERROR_SECTION"))
+    ]
+    for name, replacements in changes.items():
+        source = xdk / name
+        text = source.read_text()
+        for before, after, count in replacements:
+            text = replace_exact(text, before, after, count)
+        source.write_text(text)
+
+    # This provider field has pointer alignment on all 64-bit Windows
+    # targets; the old MinGW declaration omits the annotation.
+    ndis = (Path(arguments.mingw) / "ddk" / "ndis.h").read_text()
+    (overlay / "ndis.h").write_text(replace_exact(
+        ndis, "CO_SPECIFIC_PARAMETERS  MediaSpecific;",
+        "CO_SPECIFIC_PARAMETERS POINTER_ALIGNMENT MediaSpecific;"))
+    hpp = work / "hpp"
+    run([arguments.host_cc, "-O2", str(root / "sdk/tools/hpp/hpp.c"),
+         "-o", str(hpp)])
+    for name in ("ntdef", "wdm", "ntddk", "ntifs"):
+        run([str(hpp), name + ".template.h", str(overlay / (name + ".h"))],
+            cwd=xdk)
+    return overlay
+
+
+def rendered_records(body):
+    """Top-level definitions in the canonical C renderer's output."""
+    records = []
+    for match in re.finditer(r"^(struct|union) ([^\n]+)\n\{", body, re.MULTILINE):
+        name = match[2].split()[-1]
+        end = body.find("\n};", match.end())
+        if end < 0:
+            sys.exit(f"unterminated rendered record {name}")
+        start = match.start()
+        previous = body.rfind("\n", 0, start - 1) + 1
+        if body[previous:start].startswith(f"// {name}:"):
+            start = previous
+        records.append((start, end + len("\n};"), name, match[1]))
+    return records
+
+
+def opaque_record_layouts(body, names):
+    """Retain pointer declarations without publishing an unproved layout."""
+    records = rendered_records(body)
+    found = {name for _, _, name, _ in records}
+    if names - found:
+        sys.exit(f"opaque record has no rendered definition: {sorted(names - found)}")
+    for start, end, name, kind in reversed(records):
+        if name in names:
+            body = (body[:start] + f"// {name}: opaque; requires image-specific types.\n"
+                    f"{kind} {name};" + body[end:])
+    return body
+
+
+def arm64_checked_layouts(neverd, body, work):
+    """Propagate opaque layouts through by-value containment, retaining pointers."""
+    names = {line.split()[0] for line in
+             (PHNT_SHIMS / "kernel_arm64_opaque.txt").read_text().splitlines()
+             if line.strip() and not line.startswith("#")}
+    body = opaque_record_layouts(body, names)
+    source = work / "checked-arm64.h"
+    # Each failing round must remove a complete record, so the finite input
+    # bounds this propagation. No guesses or partial layouts are retained.
+    while True:
+        source.write_text(body)
+        result = json.loads(run([neverd, "types", "--data-model", "LLP64",
+                                 "--declare", str(source), "--keep-going",
+                                 "--json"]))
+        if not result["problems"]:
+            print(f"ARM64: {len(names)} records remain opaque; import declarations retained")
+            return body, sorted(names)
+        starts = [0]
+        for line in body.splitlines(keepends=True):
+            starts.append(starts[-1] + len(line))
+        records = rendered_records(body)
+        dependent = set()
+        for problem in result["problems"]:
+            if not re.fullmatch(r"the size of .+ is unknown", problem["message"]):
+                sys.exit(f"ARM64 layout verification failed: {problem}")
+            offset = starts[problem["line"] - 1]
+            for start, end, name, _ in records:
+                if start <= offset < end:
+                    dependent.add(name)
+                    break
+            else:
+                sys.exit(f"unknown layout outside a record: {problem}")
+        if not dependent or dependent & names:
+            sys.exit("ARM64 opaque-layout propagation made no progress")
+        body = opaque_record_layouts(body, dependent)
+        names.update(dependent)
 
 
 def macros(clang, target, include, unit):
@@ -355,11 +510,17 @@ def generate(arguments, name, target, version):
     else:
         include = ["-I", str(PHNT_SHIMS)] + include
     output = Path(arguments.output) if arguments.output else target.output
+    opaque = []
     with tempfile.TemporaryDirectory(prefix="neverd-windows-types-") as scratch:
         work = Path(scratch)
+        unit_lines = list(target.unit)
+        if name == "kernel-arm64":
+            overlay = arm64_kernel_headers(arguments, work)
+            include = ["-I", str(overlay)] + include
+            unit_lines.insert(0, '#include "kernel_arm64_prelude.h"')
         unit = work / "system.c"
         additions = [] if target.phnt else kernel_additions(arguments, work)
-        unit.write_text("\n".join(target.unit + additions) + "\n", encoding="utf-8")
+        unit.write_text("\n".join(unit_lines + additions) + "\n", encoding="utf-8")
         text = run([arguments.clang, f"--target={target.triple}", "-E",
                     *include, *target.defines, str(unit)])
         if not target.phnt:
@@ -372,6 +533,8 @@ def generate(arguments, name, target, version):
              "--prototypes", "--spelling", "windows", "--no-offsets", "-o",
              str(rendered)])
         body = rendered.read_text(encoding="utf-8")
+        if name == "kernel-arm64":
+            body, opaque = arm64_checked_layouts(arguments.neverd, body, work)
     for routine in RETURNING if target.phnt else ():
         body, count = re.subn(rf"^_Noreturn ((?:.*\W)?{routine}\()", r"\1",
                               body, flags=re.MULTILINE)
@@ -411,6 +574,13 @@ def generate(arguments, name, target, version):
             f"// classes: phnt at {commit} (LICENSES/phnt.txt).\n"
             "// scripts/windows_types supplies declarations the DDK omits.\n"
             "// Do not edit; generate it again.\n")
+        if name == "kernel-arm64":
+            header += (f"// ARM64 core DDK: ReactOS at {REACTOS_REVISION};\n"
+                       "// verified inputs: scripts/windows_types/reactos-arm64.sha256.\n"
+                       "// The generator corrects ARM64 context/record alignment;\n"
+                       "// no x64 architecture macro or x64 context layout is used.\n")
+            header += (f"// {len(opaque)} records with incompatible source layouts or by-value\n"
+                       "// dependencies remain opaque (kernel_arm64_opaque.txt).\n")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(header + body, encoding="utf-8")
     shown = (output.relative_to(REPOSITORY)
@@ -432,6 +602,11 @@ def main():
     parser.add_argument("--reactos-ddk", type=Path,
                         help="directory containing fltkernel.h from ReactOS "
                              f"{REACTOS_REVISION} (sdk/include/ddk)")
+    parser.add_argument("--reactos-xdk", type=Path,
+                        help="ReactOS source root at the pinned revision; "
+                             "required for kernel-arm64")
+    parser.add_argument("--host-cc", default="cc",
+                        help="host C compiler for ReactOS's header preprocessor")
     parser.add_argument("--target", action="append", choices=sorted(TARGETS),
                         help="the library to generate; repeat for more "
                              "(default: every library)")
@@ -446,6 +621,8 @@ def main():
         parser.error("Windows libraries read phnt declarations: give --phnt")
     if not arguments.reactos_ddk and any(not TARGETS[name].phnt for name in names):
         parser.error("kernel libraries read the filter DDK: give --reactos-ddk")
+    if "kernel-arm64" in names and not arguments.reactos_xdk:
+        parser.error("ARM64 kernel libraries read the core DDK: give --reactos-xdk")
     version = run(["dpkg-query", "-W", "-f=${Version}", "mingw-w64-common"]
                   ).strip() if Path("/usr/bin/dpkg-query").exists() else "?"
     for name in names:

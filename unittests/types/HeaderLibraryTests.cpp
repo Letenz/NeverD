@@ -85,7 +85,8 @@ TEST(HeaderLibrary, TheKernelsReadsAsADriverDeclaresIt) {
 
 TEST(HeaderLibrary, DriverProvidersHaveExactConfigurationCallContracts) {
   for (auto Id :
-       {HeaderLibrary::WindowsKernelX64, HeaderLibrary::WindowsKernelX86}) {
+       {HeaderLibrary::WindowsKernelX64, HeaderLibrary::WindowsKernelX86,
+        HeaderLibrary::WindowsKernelARM64}) {
     const TypeLibrary *Kernel = headerLibrary(Id);
     ASSERT_NE(Kernel, nullptr);
     const bool X86 = Id == HeaderLibrary::WindowsKernelX86;
@@ -94,6 +95,7 @@ TEST(HeaderLibrary, DriverProvidersHaveExactConfigurationCallContracts) {
     EXPECT_EQ(sizeOf(*Kernel, "NDIS_CONFIGURATION_PARAMETER"), X86 ? 12u : 24u);
     EXPECT_EQ(sizeOf(*Kernel, "NDIS_STATUS"), 4u);
     EXPECT_EQ(sizeOf(*Kernel, "SOCKADDR_STORAGE"), 128u);
+    EXPECT_EQ(sizeOf(*Kernel, "PCI_COMMON_CONFIG"), 256u);
     for (auto [Name, Count] : {std::pair{"NdisCloseConfiguration", 1u},
                                {"NdisOpenConfigurationEx", 2u},
                                {"NdisReadConfiguration", 5u},
@@ -125,6 +127,51 @@ TEST(HeaderLibrary, DriverProvidersHaveExactConfigurationCallContracts) {
         Builtin::WChar);
     EXPECT_EQ(Kernel->findPrototype("NdisReadConfiguration")->Params[4].Name,
               "ParameterType");
+  }
+}
+
+TEST(HeaderLibrary, Arm64KernelKeepsItsOwnContextAndRecordAlignment) {
+  const auto *Kernel = headerLibrary(HeaderLibrary::WindowsKernelARM64);
+  ASSERT_NE(Kernel, nullptr);
+  EXPECT_EQ(Kernel->dataModel(), DataModel::LLP64);
+  EXPECT_GT(Kernel->prototypes().size(), 2200u);
+  EXPECT_EQ(sizeOf(*Kernel, "CONTEXT"), 912u);
+  EXPECT_EQ(Kernel->alignOf(*makeNamed("CONTEXT", TypeKind::Typedef)), 16u);
+  EXPECT_EQ(sizeOf(*Kernel, "PAGED_LOOKASIDE_LIST"), 128u);
+  EXPECT_EQ(sizeOf(*Kernel, "NPAGED_LOOKASIDE_LIST"), 128u);
+  EXPECT_EQ(sizeOf(*Kernel, "IO_STACK_LOCATION"), 72u);
+  EXPECT_EQ(sizeOf(*Kernel, "CO_MEDIA_PARAMETERS"), 32u);
+  EXPECT_EQ(Kernel->alignOf(*makeNamed("TOKEN_STATISTICS", TypeKind::Typedef)),
+            8u);
+  for (const char *Name :
+       {"WHEA_REVISION", "WHEA_ERROR_RECORD_SECTION_DESCRIPTOR",
+        "WHEA_PROCESSOR_GENERIC_ERROR_SECTION"})
+    EXPECT_EQ(Kernel->alignOf(*makeNamed(Name, TypeKind::Typedef)), 1u) << Name;
+  const auto *Context = Kernel->resolve("CONTEXT");
+  ASSERT_NE(Context, nullptr);
+  ASSERT_NE(Context->Record, nullptr);
+  bool HasSp = false, HasPc = false;
+  for (const auto &Field : Context->Record->Members) {
+    if (Field.Name == "Sp") {
+      HasSp = true;
+      EXPECT_EQ(Field.BitOffset, 256u * 8);
+    }
+    if (Field.Name == "Pc") {
+      HasPc = true;
+      EXPECT_EQ(Field.BitOffset, 264u * 8);
+    }
+    EXPECT_NE(Field.Name, "Rip");
+    EXPECT_NE(Field.Name, "Rsp");
+  }
+  EXPECT_TRUE(HasSp);
+  EXPECT_TRUE(HasPc);
+  for (const char *Name : {"KUSER_SHARED_DATA", "NDIS_OFFLOAD",
+                           "PHYSICAL_COUNTER_RESOURCE_LIST"}) {
+    const auto *Type = Kernel->resolve(Name);
+    ASSERT_NE(Type, nullptr) << Name;
+    ASSERT_NE(Type->Record, nullptr) << Name;
+    EXPECT_FALSE(Type->Record->Defined) << Name;
+    EXPECT_FALSE(Kernel->sizeOf(*makeNamed(Name, TypeKind::Typedef))) << Name;
   }
 }
 

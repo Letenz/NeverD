@@ -7,6 +7,8 @@
 // driver_provider_imports.obj ndis.lib. ndis.lib is a /machine:x64 /lib import
 // library for NDIS.sys exporting the three routines declared below. No driver
 // is installed or executed.
+// For driver_provider_imports_arm64.sys use --target=aarch64-pc-windows-msvc
+// and a /machine:arm64 import library, keeping the same source and link flags.
 
 __declspec(dllimport) int NdisOpenConfigurationEx(void *Config, void **Handle);
 __declspec(dllimport) void NdisReadConfiguration(int *Status, void **Parameter,
