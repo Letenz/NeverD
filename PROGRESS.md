@@ -1,5 +1,67 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-22
+
+- Source cutoff: **2026-10-22T01:03:00Z**. Reviewed dev: [4f9394ed17bf5da84d194d2592e9825d89bc1d30](https://github.com/NeverSight/NeverD/commit/4f9394ed17bf5da84d194d2592e9825d89bc1d30).
+- Range from [2c04bd1451b9688a0a81011df6c1747c9efaf880](https://github.com/NeverSight/NeverD/commit/2c04bd1451b9688a0a81011df6c1747c9efaf880): **187 commits and 1,051 changed non-directory paths** (97 added, 948 modified, 6 removed). Commit pages contained 100 + 87 entries. Complete non-truncated recursive trees supplied the path inventory because the comparison file list caps at 300. This is an inventory, not a whole-repository audit.
+- **One statically confirmed test-fixture build defect repaired** in [40fedfd8](https://github.com/NeverSight/NeverD/commit/40fedfd8c31d73f961af8621540addad8b2b1960), proposed on a topic branch, not entered into dev. No production behavior, dependency, permission, workflow or issue metadata is changed.
+- Read the current root AGENTS.md (the only AGENTS.md in the complete tree), CONTRIBUTING.md, SECURITY.md, relevant architecture/testing sections and prior PROGRESS.md. Contributor build/test requirements remain unperformed under this review's stricter static-only constraint.
+
+### Bounded source review
+
+Reviewed all nine file patches of the current head, then traced:
+- Native name lookup and synchronization in [NeverDCAPI.cpp](lib/sdk/capi/NeverDCAPI.cpp), name-index ownership/revision declarations in [SessionImpl.h](lib/sdk/capi/SessionImpl.h), public lookup declarations, [SymbolDecoration.h](include/neverd/loader/SymbolDecoration.h) and its definition table, native disassembly lookup in [NeverDCAPIDisasm.cpp](lib/sdk/capi/NeverDCAPIDisasm.cpp), and selected rename/rollback paths in NeverDCAPIPersist.cpp.
+- Exact listed names precede exact exports; Mach-O adds exactly one ABI underscore only after those fail. Native disassembly retains original-symbol fallback after renames. Index rebuild guards and inspected rename paths advance the function-list revision. The new Mach-O/ELF fixture patches cover exact precedence, aliases, one-underscore behavior and rename invalidation; they were not executed.
+- [FlowLayout.cpp](tools/neverd-gui/app/FlowLayout.cpp) and the odd/even-height fixture patch. Placement uses the inclusive rectangle's integer center while retaining row wrapping, margins and item dimensions. This source trace is not native GUI verification.
+- Selected HighCFuncWriter.cpp type-collection and function-reset paths plus the new saved out-pointer test patch. FieldForwardTypes is still cleared per function; the second type-discovery pass does not itself replace saved values. Complete alias/SSA and generated-C correctness were not proved.
+- Rotated into worker test-fixture linkage after reading the failed Windows GUI job. Read the helper namespace, its two API consumers, relevant NeverDCAPIQuery.h declarations, and worker CMake target registration.
+
+### Confirmed defect and minimal repair
+
+In [mock_engine.cpp](tools/neverd-worker/tests/mock_engine.cpp), the internal call-graph helper namespace was nested inside the file's outer extern "C" block. Its mockPaths function returns a C++ vector. The exact-head Windows [job 119436489984](https://github.com/NeverSight/NeverD/actions/runs/39661810740/job/119436489984) reports MSVC C2526 at original line 1089, followed by cascading errors and a failed test-only C ABI fixture build.
+
+The repair closes C linkage before this internal namespace and reopens it before neverd_call_paths_json. The helper algorithms, calls, public declarations and exported C entry points remain unchanged. Static review verified the balanced linkage boundaries and complete remote file against the intended text; the source commit changes only that file, adding five lines. Existing fixture targets provide the affected compilation coverage, but **no compiler, test, project or repository script was run here**. The Windows failure is not declared resolved until normal CI verifies the new head.
+
+Unconfirmed: macOS discovery readiness failed with "Listing rebuild preceded the readiness consumer" in the existing GUI log. The read test uses a delayed consumer and marker check; this review did not prove whether production scheduling or fixture timing is responsible. No speculative change is proposed. Previous partial-register and #1189 resource questions remain unproved, not closed by this review.
+
+Not covered: the remaining changed implementations, every PR discussion, all loaders/architectures, complete HighC data-flow/alias semantics, full discovery concurrency, ABI execution, performance, or release readiness. Commit-author validation claims are reports, not this review's measurements.
+
+### Issues, PRs and reviews
+
+- Pre-publication counts: **55 open ordinary issues and 1 open PR**, unchanged numerically from the previous snapshot. The open issue endpoint returned 56 mixed items then an empty page; the separate PR endpoint returned one then empty.
+- Window: 2026-10-21T01:09:00Z through the cutoff. Updated items returned 40 PRs then empty, with no ordinary issue created, closed or updated. An all-state PR page sorted by update time crossed the previous cutoff and reconciled those items: **39 PRs created, 39 merged, zero closed without merge**.
+- Prior reporting [#1594](https://github.com/NeverSight/NeverD/pull/1594) merged externally at 2026-10-21T02:02:06Z; it is included in gross merges but excluded from implementation progress. [#1590](https://github.com/NeverSight/NeverD/pull/1590) also merged externally at 2026-10-21T02:01:53Z. Merge status does not retroactively prove yesterday's failed/pending checks passed.
+- The sole open implementation PR is [#1632](https://github.com/NeverSight/NeverD/pull/1632), non-draft, head **386d9999f83e129cd4d87f6c7a93273f9b562853**, base **claude/native-exit-lookup**, not dev. Its predecessor #1629 is merged; maintainers should reconcile the stacked base and integration diff. Requested reviewers, submitted reviews, inline comments and issue discussion were empty. Its author-reported test counts were not rerun.
+- The new repair/report draft is excluded from pre-publication counts. No issues, reviewers, labels, assignees or merge settings were changed.
+
+### Existing CI observations
+
+Sampled **2026-10-22T01:00:55Z–2026-10-22T01:02:17Z**, for exact dev **4f9394ed17bf5da84d194d2592e9825d89bc1d30** (nine workflow records, next page empty):
+
+- [Desktop GUI](https://github.com/NeverSight/NeverD/actions/runs/39661810740): failure. Ubuntu succeeded; macOS failed NeverDWorkerDiscoveryReady (24 of 25 tests passed in that job); Windows failed fixture compilation with the linkage diagnostic above. Subsequent missing GUI binary/diagnostic steps are downstream symptoms, not proof of a native-frame product defect.
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/39661810872): in progress. All 13 jobs were read, followed by an empty page: four success, one failure, two running, six skipped. macOS failed "Preserve completed focused test passes" and "Audit selected test outcomes"; its underlying full-log cause was not established.
+- [Native pipeline compatibility](https://github.com/NeverSight/NeverD/actions/runs/39661811060), [Lift native qualification](https://github.com/NeverSight/NeverD/actions/runs/39661810772), [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/39661810713), [Python Plugin SDK](https://github.com/NeverSight/NeverD/actions/runs/39661810716) and [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/39661810736): success.
+- Mobile Real Applications: [39661820644](https://github.com/NeverSight/NeverD/actions/runs/39661820644) skipped and [39687247503](https://github.com/NeverSight/NeverD/actions/runs/39687247503) cancelled, not qualified.
+
+For #1632's exact head above (three runs, next page empty): [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/39661844637) failed the changed-C/C++ formatting step; [CI](https://github.com/NeverSight/NeverD/actions/runs/39661844607) was running; [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/39661844831) succeeded.
+
+These are existing GitHub results, not tests performed by this review. Workflow lists do not establish all external checks or release acceptance. Automatically scheduled draft-head checks are separate from dev evidence. No manual dispatch or rerun occurred.
+
+### Suggested priorities (not delivery commitments)
+
+1. Review the fixture linkage repair and obtain exact-head Windows fixture/GUI results from normal CI. Dependency: maintainer review and available Windows CI. Acceptance: the existing C2526 failure no longer occurs, exported C APIs remain unchanged, and downstream suites have explicit results. Do not weaken gates.
+2. Diagnose macOS discovery-readiness and main-CI outcome failures separately. Dependency: exact-head logs, retained artifacts and maintained fixtures. Acceptance: establish a source-supported cause and bounded regression without treating sleeps or an unverified retry as proof.
+3. Reconcile #1632's stacked base and trap-exit contract before integration. Dependency: #1629's merged state, maintainer semantic review and normal CI. Acceptance: intended dev diff only, preserved fail-closed behavior, formatting fixed, required checks terminal, and remaining emitter/C-API limitations explicit.
+
+## Daily log — 2026-10-22
+
+Inventoried 187 commits / 1,051 changed paths; inspected native lookup, layout, selected HighC typing and fixture linkage. Proposed the five-line internal-linkage repair above and preserved all prior history verbatim. Recorded unchanged 55/1 open counts, 39 gross merges, the external merges of #1590/#1594, and exact-head failed/pending CI. Static source and remote publication checks only; no builds, tests, formatters, repository scripts, benchmarks, manual CI, merges or deployments.
+
+<details>
+<summary>Previous snapshots and daily history (preserved verbatim)</summary>
+
+# NeverD Daily Progress
+
 ## Current snapshot — 2026-10-21
 
 - Snapshot cutoff and CI sample: **2026-10-21T01:09:00Z**. Reviewed source: dev [2c04bd1451b9688a0a81011df6c1747c9efaf880](https://github.com/NeverSight/NeverD/commit/2c04bd1451b9688a0a81011df6c1747c9efaf880).
@@ -2688,5 +2750,7 @@ them are author reports unless separately confirmed by linked workflow results.
 
 </details>
 
+
+</details>
 
 </details>
