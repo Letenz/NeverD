@@ -1382,7 +1382,10 @@ a Cartesian residue table. Bounds from different bases add without assuming
 those bases are independent. A zero replacement requires the sum of these
 bounds and the enclosing literal's trailing zeros to cover the full word width.
 This proof accepts opaque nonlinear bases, retains multiplicities and wrapped
-offsets, and never expands the product. Traversal, comparison, wide constants,
+offsets, and never expands the product.
+A product whose complete bases are already identical uses one offset vector
+and avoids per-factor coefficient maps. Structural admission is reused across
+the zero proof and nonzero recovery for the same immutable product. Traversal, comparison, wide constants,
 scratch storage and final emission use the same request budgets. Partial
 proofs leave their products intact, while already proved zero summands can be
 removed safely before ordinary MBA recovery.
@@ -1393,12 +1396,28 @@ low-bit coefficients and offsets. Only identical complete projected maps share
 a residue group. Prefix truncation weakens a bound and cannot invent equality
 of the original full-width factors. Unit copies and native scalar multiplies
 avoid unnecessary wide multiplication work.
+High-bit disturbances can preserve a common low-prefix relation through
+AND/OR/XOR, constant shifts, complements, low extracts and widening casts.
+Bounded constant-prefix queries peel only proved identities; unknown terms
+remain exact opaque atoms. These products try prefix maps before full-width
+affine recovery. Even factors can request additional precision individually,
+so removing their fixed zeros does not discard the needed observed bits. A
+zero prefix contributes only its proven width, never a full-word zero.
+For a nonzero product, a shared low-zero prefix can be factored through bitwise
+operations. Their remaining scalar units are reduced modulo the observed
+prefix under a bounded operand/work/storage charge. The opaque operands keep
+native widths, so source synthesis does not need sub-byte bitwise operations.
+Atoms exposed by casts regain the output word width before synthesis. All factor multiplicities and coefficient coordinates still
+participate in the proof; no sampled equality authorizes a replacement.
 When a nonzero product observes at most eight bits, the same maps can establish
 one common affine word by checking every present and absent coordinate. Its
 entire observed domain is then enumerated. Per-bit periodic lookups may widen
 byte-sized inputs to native 64-bit words; a common low-bit support condition
-also permits an exact lower-degree polynomial. The enclosing power of two
-restores full-width semantics. Candidates must beat both the original product
+also permits an exact lower-degree polynomial. If reassociation absorbs the
+scale into an additive factor, its complete coefficient map establishes the
+fixed zeros first. Re-reading the normalized maps at the remaining precision
+then recovers the same proof. The enclosing power of two restores full-width
+semantics. Candidates must beat both the original product
 and its normalized factored form, preserving simpler existing recovery paths.
 All candidates, wide constants and scratch consume the existing work/storage
 budgets; refusal retains the original product. These are shared symbolic-core
