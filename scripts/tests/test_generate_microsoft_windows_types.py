@@ -84,11 +84,31 @@ class MicrosoftWindowsTypes(unittest.TestCase):
         self.assertEqual(windows.verify_layouts(original, original), 1)
         for changed in (original.replace("align=4", "align=8"),
                         original.replace("4 |", "8 |"),
+                        original.replace("Length", "MissingField"),
                         original.replace("sizeof=8", "sizeof=16")):
             with self.assertRaisesRegex(ValueError, "Record"):
                 windows.verify_layouts(original, changed)
         with self.assertRaisesRegex(ValueError, "no shared"):
             windows.verify_layouts(original, "")
+
+    def test_provider_layouts_follow_renames_and_require_the_needed_records(self):
+        original = ("*** Dumping AST Record Layout\n"
+                    "         0 | struct URL\n"
+                    "         0 |   unsigned short * Text\n"
+                    "           | [sizeof=8, align=8]\n"
+                    "*** Dumping AST Record Layout\n"
+                    "         0 | struct Unused\n"
+                    "         0 |   int Value\n"
+                    "           | [sizeof=4, align=4]\n")
+        generated = original.replace("struct URL", "struct Wide_URL")
+        renamed = {"URL": "Wide_URL"}
+        self.assertEqual(windows.verify_layouts(original, generated, renamed, ["URL"]), 1)
+        self.assertEqual(windows.verify_layouts(original, generated, renamed, ["COUNT"]), 0)
+        with self.assertRaisesRegex(ValueError, "missing: URL -> Wide_URL"):
+            windows.verify_layouts(original, original, renamed, ["URL"])
+        with self.assertRaisesRegex(ValueError, "layout changed: URL"):
+            windows.verify_layouts(original, generated.replace("align=8", "align=4"),
+                                   renamed, ["URL"])
 
     def test_failed_update_cannot_certify_stale_headers(self):
         with tempfile.TemporaryDirectory() as directory:

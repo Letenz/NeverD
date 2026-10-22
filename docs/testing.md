@@ -1660,6 +1660,14 @@ and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
 
+`TypeImport.*` checks independent prototype providers with equal-size but
+different pointees, recursive dependencies, callback conventions and
+transactional refusal. `SessionCAPITypeConversion.*` exercises the same owner
+through `neverd_types_convert`, including provider provenance and rejection of
+partial providers even with `keepGoing`. The optional Microsoft generator
+checks original and imported record layouts for x86, x64 and ARM64; these local
+SDK/WDK inputs are not required by the synthetic unit tests.
+
 To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
 `ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,
 and every nesting must hold. `TypeParseKernel.ReadsBackEveryKernelTypeAsRendered`

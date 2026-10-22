@@ -291,6 +291,8 @@ if(TARGET neverd_shared)
     "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
+    TypeConversionCAPITests.cpp
+    LINK_COMPONENTS Types
     LINK_LIBS neverd_shared
   )
   add_neverd_unittest(NeverDFunctionDisasmCAPITests

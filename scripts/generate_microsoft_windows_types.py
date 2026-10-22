@@ -46,6 +46,15 @@ LIBRARIES = {
     "WindowsUser": (USER_HEADERS, ["um", "shared", "km/crt"],
                          ["-DSECURITY_WIN32=1"]),
 }
+# These official headers have incompatible same-named types (for example,
+# WinHTTP's UTF-16 URL_COMPONENTS versus WinINet's ANSI default). Parse each
+# provider on its own and import only the missing prototypes and their types.
+ISOLATED_PROVIDERS = {
+    "WindowsUser": (
+        ("WinHTTP", ("winsock2", "winhttp")),
+        ("HTTPServer", ("winsock2", "windows", "http")),
+    ),
+}
 TARGETS = {
     "x64": ("X64", "x86_64-pc-windows-msvc", "LLP64", "_AMD64_"),
     "x86": ("X86", "i686-pc-windows-msvc", "ILP32", "_X86_"),
@@ -98,18 +107,97 @@ def record_layouts(text: str) -> dict:
     return {name: record for name, record in records.items() if "size" in record}
 
 
-def verify_layouts(original: str, generated: str) -> int:
+def verify_layouts(original: str, generated: str,
+                   renamed: dict[str, str] | None = None,
+                   required: list[str] | None = None) -> int:
     source, rendered = record_layouts(original), record_layouts(generated)
-    shared = source.keys() & rendered.keys()
-    if not shared:
+    renamed = renamed or {}
+    selected = (source.keys() & set(required) if required is not None
+                else source.keys() & rendered.keys())
+    if not selected and required is None:
         raise ValueError("Clang produced no shared named record layouts")
-    for name in sorted(shared):
-        a, b = source[name], rendered[name]
-        fields = a["fields"].keys() & b["fields"].keys()
+    for name in sorted(selected):
+        imported = renamed.get(name, name)
+        if imported not in rendered:
+            raise ValueError(f"imported record layout is missing: {name} -> {imported}")
+        a, b = source[name], rendered[imported]
         if (a["size"] != b["size"] or a["alignment"] != b["alignment"] or
-                any(a["fields"][field] != b["fields"][field] for field in fields)):
+                any(offset != b["fields"].get(field)
+                    for field, offset in a["fields"].items())):
             raise ValueError(f"official record layout changed: {name}: {a} != {b}")
-    return len(shared)
+    return len(selected)
+
+
+def merge_providers(base: str, primary: Path, output: Path,
+                    arguments: list[str], common: list[str], neverd: str,
+                    model: str, primary_layouts: str) -> list[dict]:
+    providers = ISOLATED_PROVIDERS.get(base, ())
+    if not providers:
+        return []
+    directory = output / (base + "-providers")
+    directory.mkdir(exist_ok=True)
+    units = []
+    dump = ["-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete"]
+    for name, headers in providers:
+        source = directory / (name + ".c")
+        source.write_text(include_headers(headers), encoding="utf-8")
+        # The CLI uses this file's stem as the provider prefix.
+        preprocessed = directory / (name + ".h")
+        command = arguments + ["-E", str(source)]
+        run(command, directory / (name + ".pre.log"), preprocessed)
+        parsed = checked_types(neverd, preprocessed, directory / (name + ".parse.log"), model)
+        layouts = run(arguments + dump + [str(source)],
+                      directory / (name + ".official-clang.log"),
+                      directory / (name + ".official-layouts.log"))
+        units.append({"name": name, "source": preprocessed, "headers": headers,
+                      "layouts": layouts, "parsed": parsed, "command": command})
+    command = [neverd, "types", "--data-model", model, "--record-abi", "microsoft",
+               "--declare", str(primary), "--merge-prototypes", "--all",
+               "--prototypes", "--spelling", "windows", "--no-offsets", "--json"]
+    for unit in units:
+        command += ["--declare", str(unit["source"])]
+    result = json.loads(run(command, directory / "merge.log", directory / "merge.json"))
+    if result.get("error") or result.get("problems"):
+        raise ValueError(f"official provider merge was refused; see {directory / 'merge.json'}")
+    imported = result.get("imports", [])
+    if len(imported) != len(units):
+        raise ValueError("official provider merge did not report every input")
+    with tempfile.TemporaryDirectory(dir=directory, prefix="merged-") as scratch:
+        temporary = Path(scratch) / primary.name
+        temporary.write_text(result["source"], encoding="utf-8")
+        reread = checked_types(neverd, temporary, directory / "roundtrip.log", model)
+        if (set(result["types"]) - set(reread["types"]) or
+                set(result["prototypes"]) - set(reread["prototypes"])):
+            raise ValueError("official provider declarations disappeared on round trip")
+        layouts = directory / "merged.layouts.h"
+        run([neverd, "types", "--data-model", model, "--record-abi", "microsoft",
+             "--declare", str(temporary), "--all", "--asserts", "--spelling",
+             "windows", "--no-offsets", "-o", str(layouts)], directory / "layouts-render.log")
+        generated_layouts = run(common + dump + ["-x", "c", str(layouts)],
+                                directory / "generated-clang.log",
+                                directory / "generated-layouts.log")
+        verify_layouts(primary_layouts, generated_layouts)
+        records = []
+        for index, (unit, report) in enumerate(zip(units, imported), 1):
+            if report["declaration"] != index or report["prefix"] != unit["name"]:
+                raise ValueError("official provider provenance does not match its input")
+            renamed = {entry["original"]: entry["name"] for entry in report["renamed"]}
+            count = verify_layouts(unit["layouts"], generated_layouts,
+                                   renamed, report["dependencies"])
+            records.append({"name": unit["name"], "headers": unit["headers"],
+                            "input_sha256": wdk.digest(unit["source"]),
+                            "parsed_prototypes": len(unit["parsed"]["prototypes"]),
+                            "verified_records": count, "import": report,
+                            "commands": [unit["command"], command]})
+        # Replace the primary only after the complete merge and compiler
+        # checks pass. The manifest remains absent until both libraries pass.
+        temporary.write_text(
+            "// Local declarations generated from Microsoft SDK/WDK.\n"
+            "// Source packages, commands and hashes: manifest.json.\n"
+            "// Original Microsoft notices: licenses/.\n" + result["source"],
+            encoding="utf-8")
+        temporary.replace(primary)
+    return records
 
 
 def include_headers(headers: tuple[str, ...]) -> str:
@@ -288,11 +376,17 @@ def generate(output: Path, cache: Path, neverd: str, clang: str,
                                     output / (name + ".generated-layouts.log"))
             count = verify_layouts(original_layouts, generated_layouts)
             temporary.replace(generated)
+        providers = merge_providers(base, generated, output, arguments, common,
+                                     neverd, model, original_layouts)
+        final = checked_types(neverd, generated, output / (name + ".final.log"), model)
         built.append({"name": name, "sha256": wdk.digest(generated),
-                      "types": len(read["types"]), "verified_records": count,
+                      "types": len(final["types"]),
+                      "prototypes": len(final["prototypes"]),
+                      "verified_records": count, "providers": providers,
                       "default_calling_convention": convention,
                       "commands": [command, render]})
-        print(f"Generated {name}: {body.splitlines()[0]}", flush=True)
+        print(f"Generated {name}: {len(final['types'])} types, "
+              f"{len(final['prototypes'])} prototypes", flush=True)
     record = {
         "provider": "Microsoft SDK/WDK", "architecture": architecture,
         "schema": 1, "libraries": built,
