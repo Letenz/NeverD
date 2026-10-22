@@ -131,6 +131,12 @@ Cached and fetched jumps share cursor-placement rules; pending refreshes and
 partial item prefixes require a worker query.
 Function links can reuse a loaded item's worker-supplied function identity
 under the same context check; other addresses still resolve through the worker.
+The worker recovers distant function chunks through their owner's entry while
+keeping the decode cursor and cached projection inside the chunk. Reading a
+chunk must not register it as another function and churn the listing generation.
+GUI refreshes retain loaded context within the per-side query budget and keep a
+prefetch margin, so replacing unchanged rows does not shrink and regrow the
+window used to route branch arrows. Revision and navigation fences still apply.
 
 ## Checked alignment recovery
 

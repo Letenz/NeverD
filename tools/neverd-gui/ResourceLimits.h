@@ -14,6 +14,7 @@
 #define NEVERD_TOOLS_NEVERD_GUI_RESOURCELIMITS_H
 
 #include "../common/symbols/ResourceLimits.h"
+#include "../common/transport/ResourceLimits.h"
 
 #include "neverd/sdk/Limits.h"
 #include "neverd/support/Limits.h"
@@ -62,6 +63,9 @@ inline constexpr int kJumpDialogSearchDebounceMs = 90;
 
 // tools/neverd-gui/app/ListingView.cpp
 inline constexpr int kListingViewPageLines = 240;
+/// Bound each side of a refresh to the listing protocol's per-side budget.
+inline constexpr int kListingViewRefreshContextLines =
+    ::neverd::limits::transport::kListingMaxPageLines;
 inline constexpr int kListingViewMaxLoadedLines = 6000;
 inline constexpr int kListingViewScrollDebounceMs = 15;
 inline constexpr int kListingViewMaxArrowLevels = 10;

@@ -13,6 +13,8 @@
 #ifndef NEVERD_TOOLS_NEVERD_WORKER_RESOURCELIMITS_H
 #define NEVERD_TOOLS_NEVERD_WORKER_RESOURCELIMITS_H
 
+#include "../common/transport/ResourceLimits.h"
+
 #include "neverd/Limits.h"
 #include "neverd/sdk/Limits.h"
 #include "neverd/support/Limits.h"
@@ -73,7 +75,8 @@ inline constexpr std::size_t kListingMaxXrefLines = 2;
 /// The strings one neverd_strings_page_json call reads.
 inline constexpr int kListingStringPageRows =
     ::neverd::sdk::kMaxStringRowsPerPage;
-inline constexpr std::size_t kListingMaxPageLines = 2000;
+inline constexpr std::size_t kListingMaxPageLines =
+    ::neverd::limits::transport::kListingMaxPageLines;
 inline constexpr std::size_t kListingMaxOpcodeBytes = 12;
 inline constexpr std::size_t kListingMaxDecodeChunk = 2048;
 inline constexpr std::size_t kListingFirstUnsizedChunk = 64;
