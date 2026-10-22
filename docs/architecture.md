@@ -4896,6 +4896,17 @@ around the query. Microsoft's
 [intrinsic documentation](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex)
 distinguishes this from `__cpuid`, which clears ECX.
 
+`X86SystemState.def` and `X86SystemState.h` own the bounded system-instruction
+inventory, scalar operand widths, memory roles and completion shapes. LowIR,
+Low-to-Med conversion, Med verification and emitters use this same authority.
+LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints.
+LAR preserves its destination on failure; ARPL retains conditional memory
+writes; WAITPKG carries its deadline, address space and flag completion.
+Environment-dependent results remain unavailable to the scalar emulator.
+SHA512 message and round instructions instead lower to integer LowIR and need
+no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
+separates tested encodings, native output and remaining machine-state gaps.
+
 `IntrinsicValueEffects` defines positive, shape-validated contracts for operations
 whose effects are entirely explicit values. `LowIntrinsicEffects` additionally
 validates LowIR operands and memory annotations. Jump-table consumer analysis and

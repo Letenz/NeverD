@@ -8,18 +8,22 @@
 /// formats. These synthetic fixtures never execute privileged host operations.
 //===----------------------------------------------------------------------===//
 
+#include "X86SHA512Reference.h"
+#include "X86SystemStateFixtures.h"
 #include "X86VirtualizationFixtures.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -29,8 +33,10 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -74,7 +80,9 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                   llvm::StringRef Mnemonic, std::string *HighOutput = nullptr,
                   std::string *LLVMOutput = nullptr,
                   llvm::StringRef HighMnemonic = {},
-                  llvm::StringRef LLVMMnemonic = {}) {
+                  llvm::StringRef LLVMMnemonic = {},
+                  std::string *NativeOutput = nullptr,
+                  std::vector<uint8_t> *NativeObject = nullptr) {
   if (HighMnemonic.empty())
     HighMnemonic = Mnemonic;
   if (LLVMMnemonic.empty())
@@ -98,7 +106,8 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   std::string High;
   llvm::raw_string_ostream HighOS(High);
   ASSERT_TRUE(HighCEmitter().emit(R.HighFuncs, HighOS, Options));
-  EXPECT_TRUE(anchored(HighMap, Address, High, HighMnemonic)) << High;
+  if (!Mnemonic.empty())
+    EXPECT_TRUE(anchored(HighMap, Address, High, HighMnemonic)) << High;
   if (Image.Format == BinaryFormat::COFF && Mnemonic == "cpuid") {
     EXPECT_NE(High.find("__cpuidex("), std::string::npos) << High;
     EXPECT_NE(High.find("_ReadWriteBarrier();"), std::string::npos) << High;
@@ -122,7 +131,19 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   std::string LLVM;
   llvm::raw_string_ostream LLVMOS(LLVM);
   ASSERT_TRUE(LLVMCEmitter().emit(*Module, LLVMOS, Options));
-  EXPECT_TRUE(anchored(LLVMMap, Address, LLVM, LLVMMnemonic)) << LLVM;
+  if (!Mnemonic.empty())
+    EXPECT_TRUE(anchored(LLVMMap, Address, LLVM, LLVMMnemonic)) << LLVM;
+  if (NativeOutput) {
+    llvm::raw_string_ostream OS(*NativeOutput);
+    Module->print(OS, nullptr);
+  }
+  if (NativeObject) {
+    auto Copy = llvm::CloneModule(*Module);
+    auto Object = Codegen().compile(*Copy, Image.Arch, Image.Format);
+    ASSERT_TRUE(Object.Success);
+    ASSERT_FALSE(Object.ObjectData.empty());
+    *NativeObject = std::move(Object.ObjectData);
+  }
   if (HighOutput)
     *HighOutput = High;
   if (LLVMOutput)
@@ -380,72 +401,409 @@ int main(void) {
     }
 }
 
-TEST(X86VirtualizationSource,
-     GeneratedAssemblyCompilesForBothWordSizesAtO0AndO2) {
+namespace {
+// Compile the actual LLVM assembly and both emitted C routes, including all
+// output constraints. Privileged fixtures are only compiled. Integer SHA512
+// fixtures additionally link and execute against an independent expected value.
+void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
+                   llvm::StringRef Mnemonic,
+                   std::optional<uint64_t> Expected = std::nullopt) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  if (Expected)
+    GTEST_SKIP() << "Native execution fixture requires Linux x86-64";
+#endif
   const std::string Compiler = NEVERD_TEST_CLANG;
   if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
     GTEST_SKIP() << "Clang is unavailable";
+  auto LinkArguments = [&](llvm::StringRef Driver, llvm::StringRef Object,
+                           llvm::StringRef Executable) {
+    std::vector<llvm::StringRef> Args = {Compiler, Driver, Object, "-o",
+                                         Executable};
+    if (Image.Arch == Arch::X86)
+      Args.insert(Args.end(), {"--target=i386-unknown-linux-gnu", "-nostdlib",
+                               "-no-pie", "-fno-builtin", "-Wl,-e,_start"});
+    return Args;
+  };
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(
-      llvm::sys::fs::createUniqueDirectory("neverd-vmx-source", Directory));
+      llvm::sys::fs::createUniqueDirectory("neverd-x86-source", Directory));
   auto Cleanup = llvm::scope_exit(
       [&] { (void)llvm::sys::fs::remove_directories(Directory); });
-  for (const auto A : {Arch::X86, Arch::X64})
-    for (const auto &Encoding : Encodings) {
-      const auto C = x86VirtualizationContract(Encoding.Id);
-      SCOPED_TRACE(C.Mnemonic);
-      size_t Offset;
-      auto Image =
-          image(A, BinaryFormat::ELF, function(A, Encoding.Bytes, Offset));
-      std::string High, LLVM;
-      sourceRoutes(Image, false, Entry + Offset, C.Mnemonic, &High, &LLVM);
-      if (::testing::Test::HasFailure())
-        return;
-      for (auto Source : {High, LLVM}) {
-        // Freestanding Clang supplies stdint and the instruction headers for
-        // the requested x86 target on every host. Avoid a host's 32-bit libc
-        // dependency for the generated byte-copy declarations.
-        const std::string Include = "#include <string.h>";
-        if (const auto At = Source.find(Include); At != std::string::npos)
-          Source.replace(
-              At, Include.size(),
-              "extern void *memcpy(void *, const void *, __SIZE_TYPE__);\n"
-              "extern void *memset(void *, int, __SIZE_TYPE__);");
-        llvm::SmallString<128> Input(Directory), Output(Directory),
-            ErrorFile(Directory);
-        llvm::sys::path::append(Input, "source.c");
-        llvm::sys::path::append(Output, "source.o");
-        llvm::sys::path::append(ErrorFile, "clang.err");
-        std::error_code Error;
-        llvm::raw_fd_ostream OS(Input, Error);
-        ASSERT_FALSE(Error);
-        OS << Source;
-        OS.close();
-        ASSERT_FALSE(OS.has_error());
-        for (const char *Optimization : {"-O0", "-O2"}) {
-          const std::vector<llvm::StringRef> Arguments = {
-              Compiler,
-              A == Arch::X86 ? "--target=i386-unknown-linux-gnu"
-                             : "--target=x86_64-unknown-linux-gnu",
-              "-std=gnu11",
-              "-ffreestanding",
-              "-fno-strict-aliasing",
-              "-Werror=implicit-function-declaration",
-              Optimization,
-              "-c",
-              Input,
-              "-o",
-              Output};
-          const std::optional<llvm::StringRef> Redirects[] = {
-              std::nullopt, std::nullopt, ErrorFile.str()};
-          const int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments,
-                                                       std::nullopt, Redirects);
-          const auto Diagnostics = llvm::MemoryBuffer::getFile(ErrorFile);
-          ASSERT_EQ(Status, 0)
-              << Optimization << '\n'
-              << (Diagnostics ? (*Diagnostics)->getBuffer().str() : "")
-              << Source;
-        }
+  std::string High, LLVM, Native;
+  std::vector<uint8_t> NativeObject;
+  sourceRoutes(Image, NoOpt, Address, Mnemonic, &High, &LLVM, {}, {}, &Native,
+               &NativeObject);
+  if (::testing::Test::HasFailure())
+    return;
+  unsigned Route = 0;
+  for (auto Source : {High, LLVM, Native}) {
+    SCOPED_TRACE(Route);
+    const bool IR = Route++ == 2;
+    const std::string Include = "#include <string.h>";
+    if (const auto At = Source.find(Include); At != std::string::npos)
+      Source.replace(
+          At, Include.size(),
+          "extern void *memcpy(void *, const void *, __SIZE_TYPE__);\n"
+          "extern void *memset(void *, int, __SIZE_TYPE__);");
+    llvm::SmallString<128> Input(Directory), Output(Directory),
+        ErrorFile(Directory), Driver(Directory), Executable(Directory);
+    llvm::sys::path::append(Input, IR ? "source.ll" : "source.c");
+    llvm::sys::path::append(Output, "source.o");
+    llvm::sys::path::append(ErrorFile, "clang.err");
+    llvm::sys::path::append(Driver, "driver.c");
+    llvm::sys::path::append(Executable, "check");
+    std::error_code Error;
+    llvm::raw_fd_ostream OS(Input, Error);
+    ASSERT_FALSE(Error);
+    OS << Source;
+    OS.close();
+    ASSERT_FALSE(OS.has_error());
+    if (Expected) {
+      llvm::raw_fd_ostream DriverOS(Driver, Error);
+      ASSERT_FALSE(Error);
+      if (Image.Arch == Arch::X86) {
+        DriverOS << R"C(
+void *memcpy(void *d, const void *s, unsigned n) {
+  for (unsigned i = 0; i < n; ++i) ((unsigned char *)d)[i] = ((const unsigned char *)s)[i];
+  return d;
+}
+void *memset(void *d, int c, unsigned n) {
+  for (unsigned i = 0; i < n; ++i) ((unsigned char *)d)[i] = c;
+  return d;
+}
+extern unsigned virtualization_test(void);
+void _start(void) {
+  unsigned status = virtualization_test() != )C"
+                 << *Expected << R"C(U;
+  __asm__ volatile("int $0x80" : : "a"(1), "b"(status) : "memory");
+  __builtin_unreachable();
+}
+)C";
+      } else
+        DriverOS << "extern unsigned long long virtualization_test(void);\n"
+                    "int main(void) { return virtualization_test() != "
+                 << *Expected << "ULL; }\n";
+      DriverOS.close();
+      ASSERT_FALSE(DriverOS.has_error());
+    }
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      std::vector<llvm::StringRef> Arguments = {
+          Compiler,
+          Image.Arch == Arch::X86 ? "--target=i386-unknown-linux-gnu"
+                                  : "--target=x86_64-unknown-linux-gnu",
+          Optimization,
+          "-c",
+          Input,
+          "-o",
+          Output};
+      if (!IR)
+        Arguments.insert(Arguments.end(),
+                         {"-std=gnu11", "-ffreestanding",
+                          "-fno-strict-aliasing",
+                          "-Werror=implicit-function-declaration"});
+      const std::optional<llvm::StringRef> Redirects[] = {
+          std::nullopt, std::nullopt, ErrorFile.str()};
+      const int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments,
+                                                   std::nullopt, Redirects);
+      const auto Diagnostics = llvm::MemoryBuffer::getFile(ErrorFile);
+      ASSERT_EQ(Status, 0) << (Diagnostics ? (*Diagnostics)->getBuffer().str()
+                                           : "")
+                           << Source;
+      if (Expected) {
+        ASSERT_EQ(llvm::sys::ExecuteAndWait(
+                      Compiler, LinkArguments(Driver, Output, Executable),
+                      std::nullopt, Redirects),
+                  0);
+        EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0)
+            << Source;
       }
     }
+  }
+  if (Expected) {
+    // The repository's LLVM fork is the native oracle. The system Clang above
+    // independently checks emitted IR compatibility and compiles generated C.
+    llvm::SmallString<128> Object(Directory), Driver(Directory),
+        Executable(Directory);
+    llvm::sys::path::append(Object, "neverd.o");
+    llvm::sys::path::append(Driver, "driver.c");
+    llvm::sys::path::append(Executable, "neverd-check");
+    std::error_code Error;
+    llvm::raw_fd_ostream OS(Object, Error);
+    ASSERT_FALSE(Error);
+    OS.write(reinterpret_cast<const char *>(NativeObject.data()),
+             NativeObject.size());
+    OS.close();
+    ASSERT_FALSE(OS.has_error());
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(
+                  Compiler, LinkArguments(Driver, Object, Executable)),
+              0);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0);
+  }
+}
+} // namespace
+
+TEST(X86VectorEncodingSource, Mode32IgnoredExtensionsExecuteThroughEveryRoute) {
+  for (const bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    auto Image =
+        image(Arch::X86, BinaryFormat::ELF,
+              {0xb8, 7,    0,    0,    0,    0x66, 0x0f, 0x6e, 0xc8, 0xb8,
+               11,   0,    0,    0,    0x66, 0x0f, 0x6e, 0xd0, 0x62, 0xc1,
+               0x35, 0x08, 0xfe, 0xc2, 0x66, 0x0f, 0x7e, 0xc0, 0xc3});
+    // vpaddd xmm0, xmm1, xmm2: R', B and vvvv[3] are ignored in this mode.
+    // No host AVX-512 feature is needed for the lifted integer arithmetic.
+    compileRoutes(Image, NoOpt, Entry + 18, {}, 18);
+    if (::testing::Test::HasFailure())
+      return;
+  }
+}
+
+TEST(X86VirtualizationSource,
+     GeneratedAssemblyCompilesForBothWordSizesAtO0AndO2) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : Encodings) {
+      const auto C = x86VirtualizationContract(E.Id);
+      SCOPED_TRACE(C.Mnemonic);
+      size_t Offset;
+      auto Image = image(A, BinaryFormat::ELF, function(A, E.Bytes, Offset));
+      compileRoutes(Image, false, Entry + Offset, C.Mnemonic);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+}
+
+TEST(X86SystemStateSource, EveryOwnedInstructionSurvivesBothSourceRoutes) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true})
+        for (const auto &E : systemEncodings(A)) {
+          SCOPED_TRACE(E.Mnemonic);
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(NoOpt);
+          size_t Offset;
+          auto Image = image(A, Format, function(A, E.Bytes, Offset));
+          sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic);
+          if (::testing::Test::HasFailure())
+            return;
+        }
+}
+
+TEST(X86SystemStateSource, GeneratedAssemblyCompilesForBothWordSizesAtO0AndO2) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : systemEncodings(A)) {
+      SCOPED_TRACE(E.Mnemonic);
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      size_t Offset;
+      auto Image = image(A, BinaryFormat::ELF, function(A, E.Bytes, Offset));
+      compileRoutes(Image, false, Entry + Offset, E.Mnemonic);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+}
+
+TEST(X86SHA512Source, BothCAndLLVMExecuteWithoutSHA512Hardware) {
+  const Words D = {0x0123456789abcdef, 0x8899aabbccddeeff, 0x1020304050607080,
+                   0xfedcba9876543210};
+  const Words S = {0xa1b2c3d4e5f60718, 0xf1e2d3c4b5a69788, 0x1122334455667788,
+                   0x9988776655443322};
+  const Words W = {0xffffffffffffffff, 0x55555555aaaaaaaa};
+  for (const unsigned Opcode : {0xcc, 0xcd, 0xcb})
+    for (const bool NoOpt : {false, true}) {
+      SCOPED_TRACE(Opcode);
+      SCOPED_TRACE(NoOpt);
+      std::vector<uint8_t> Bytes = {0x48, 0x83, 0xec, 0x50};
+      unsigned Offset = 0;
+      for (const auto V :
+           {D[0], D[1], D[2], D[3], S[0], S[1], S[2], S[3], W[0], W[1]}) {
+        Bytes.insert(Bytes.end(), {0x48, 0xb8}); // movabs rax, value
+        for (unsigned I = 0; I != 8; ++I)
+          Bytes.push_back(V >> (8 * I));
+        Bytes.insert(Bytes.end(),
+                     {0x48, 0x89, 0x44, 0x24, static_cast<uint8_t>(Offset)});
+        Offset += 8;
+      }
+      Bytes.insert(Bytes.end(),
+                   {0xc5, 0xfe, 0x6f, 0x14, 0x24,         // ymm2 <- D
+                    0xc5, 0xfe, 0x6f, 0x5c, 0x24, 0x20,   // ymm3 <- S
+                    0xc5, 0xfa, 0x6f, 0x64, 0x24, 0x40}); // xmm4 <- W
+      Bytes.insert(Bytes.end(),
+                   {0xc4, 0xe2,
+                    static_cast<uint8_t>(Opcode == 0xcb ? 0x67 : 0x7f),
+                    static_cast<uint8_t>(Opcode),
+                    static_cast<uint8_t>(Opcode == 0xcb ? 0xd4 : 0xd3), 0xc5,
+                    0xfe, 0x7f, 0x14, 0x24,   // store ymm2
+                    0x48, 0x8b, 0x04, 0x24}); // rax <- lane 0
+      for (const uint8_t Disp : {8, 16, 24})
+        Bytes.insert(Bytes.end(), {0x48, 0x33, 0x44, 0x24, Disp});
+      Bytes.insert(Bytes.end(), {0x48, 0x83, 0xc4, 0x50, 0xc3});
+      const auto R = sha512Reference(Opcode, D, S, W);
+      auto Image = image(Arch::X64, BinaryFormat::ELF, std::move(Bytes));
+      compileRoutes(Image, NoOpt, 0, {}, R[0] ^ R[1] ^ R[2] ^ R[3]);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+}
+
+TEST(X86SystemStateSource, FailedLarPreservesUpperDestinationInExecutableCode) {
+  for (const bool NoOpt : {false, true}) {
+    // A null selector fails LAR at CPL3 without touching privileged state.
+    // The 32-bit destination must preserve *all* of RAX on failure.
+    auto Image = image(Arch::X64, BinaryFormat::ELF,
+                       {0x48, 0xb8, 0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd,
+                        0xab, 0x31, 0xc9, 0x0f, 0x02, 0xc1, 0xc3});
+    compileRoutes(Image, NoOpt, Entry + 12, "lar",
+                  UINT64_C(0xabcdef0123456789));
+    if (::testing::Test::HasFailure())
+      return;
+  }
+}
+
+TEST(X86MaskedStoreSource, AllFourStoreFamiliesCompileThroughEveryRoute) {
+  for (const bool Integer : {false, true})
+    for (const bool Qword : {false, true})
+      for (const bool Wide : {false, true}) {
+        SCOPED_TRACE(Integer);
+        SCOPED_TRACE(Qword);
+        SCOPED_TRACE(Wide);
+        std::vector<uint8_t> Bytes = {0x48, 0x83, 0xec, 0x60};
+        for (unsigned I = 0; I != 12; ++I) {
+          const uint64_t Value = I < 4 ? UINT64_C(0xa5a5a5a5a5a5a5a5)
+                                 : I == 4
+                                     ? (Qword ? UINT64_C(0x8000000000000000)
+                                              : UINT64_C(0x80000000))
+                                 : I < 8 ? 0
+                                         : UINT64_C(0x5555555555555555);
+          Bytes.insert(Bytes.end(), {0x48, 0xb8});
+          for (unsigned J = 0; J != 8; ++J)
+            Bytes.push_back(Value >> (8 * J));
+          Bytes.insert(Bytes.end(),
+                       {0x48, 0x89, 0x44, 0x24, static_cast<uint8_t>(8 * I)});
+        }
+        for (const std::vector<uint8_t> &Load :
+             {std::vector<uint8_t>{0xc5,
+                                   static_cast<uint8_t>(Wide ? 0xfe : 0xfa),
+                                   0x6f, 0x14, 0x24},
+              std::vector<uint8_t>{0xc5,
+                                   static_cast<uint8_t>(Wide ? 0xfe : 0xfa),
+                                   0x6f, 0x6c, 0x24, 0x20}})
+          Bytes.insert(Bytes.end(), Load.begin(), Load.end());
+        Bytes.insert(Bytes.end(),
+                     {0xc4, 0xe2,
+                      static_cast<uint8_t>(0x51 | (Wide ? 4 : 0) |
+                                           (Integer && Qword ? 0x80 : 0)),
+                      static_cast<uint8_t>(Integer ? 0x8e
+                                           : Qword ? 0x2f
+                                                   : 0x2e),
+                      0x54, 0x24, 0x40, 0x48, 0x8b, 0x44, 0x24, 0x40, 0x48,
+                      0x83, 0xc4, 0x60, 0xc3});
+        auto Image = image(Arch::X64, BinaryFormat::ELF, std::move(Bytes));
+        compileRoutes(Image, false, 0, {});
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+TEST(X86MaskedStoreSource,
+     DynamicInactiveLanesNeitherAccessMemoryNorReadPoison) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "Native execution fixture requires Linux x86-64";
+#endif
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "Clang is unavailable";
+  llvm::LLVMContext Context;
+  llvm::Module Module("masked-memory", Context);
+  Module.setDataLayout("e-p:64:64-i64:64-n8:16:32:64-S128");
+  llvm::IRBuilder<> B(Context);
+  auto *F = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy(), B.getInt1Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "masked_memory_test", Module);
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+  auto *Data = llvm::ConstantVector::get(
+      {B.getInt64(0x123456789abcdef0), llvm::PoisonValue::get(B.getInt64Ty())});
+  auto *Mask =
+      B.CreateInsertElement(llvm::Constant::getNullValue(
+                                llvm::FixedVectorType::get(B.getInt1Ty(), 2)),
+                            F->getArg(1), B.getInt32(0));
+  B.CreateMaskedStore(Data, F->getArg(0), llvm::Align(1), Mask);
+  B.CreateRetVoid();
+  auto *Load = llvm::Function::Create(
+      llvm::FunctionType::get(B.getInt64Ty(), {B.getPtrTy(), B.getInt1Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "masked_memory_load", Module);
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Load));
+  auto *LoadMask =
+      B.CreateInsertElement(llvm::Constant::getNullValue(
+                                llvm::FixedVectorType::get(B.getInt1Ty(), 2)),
+                            Load->getArg(1), B.getInt32(0));
+  auto *Passthrough = llvm::ConstantVector::get(
+      {B.getInt64(0x77), llvm::PoisonValue::get(B.getInt64Ty())});
+  auto *Value = B.CreateMaskedLoad(Passthrough->getType(), Load->getArg(0),
+                                   llvm::Align(1), LoadMask, Passthrough);
+  B.CreateRet(B.CreateExtractElement(Value, B.getInt32(0)));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Original;
+  llvm::raw_string_ostream OriginalOS(Original);
+  Module.print(OriginalOS, nullptr);
+  CEmitterOptions O;
+  O.TheArch = Arch::X64;
+  O.Format = BinaryFormat::ELF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, O));
+  // Scalarization is private to the C projection.
+  std::string After;
+  llvm::raw_string_ostream AfterOS(After);
+  Module.print(AfterOS, nullptr);
+  EXPECT_EQ(Original, After);
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-masked-memory", Directory));
+  auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  llvm::SmallString<128> Input(Directory), Driver(Directory),
+      Executable(Directory), Errors(Directory);
+  llvm::sys::path::append(Input, "source.c");
+  llvm::sys::path::append(Driver, "driver.c");
+  llvm::sys::path::append(Executable, "check");
+  llvm::sys::path::append(Errors, "clang.err");
+  std::error_code Error;
+  llvm::raw_fd_ostream SourceOS(Input, Error);
+  ASSERT_FALSE(Error);
+  SourceOS << Source;
+  SourceOS.close();
+  llvm::raw_fd_ostream DriverOS(Driver, Error);
+  ASSERT_FALSE(Error);
+  DriverOS << R"C(
+#include <stdint.h>
+extern void masked_memory_test(void *, _Bool);
+extern uint64_t masked_memory_load(void *, _Bool);
+int main(void) {
+  masked_memory_test((void *)(uintptr_t)1, 0);
+  if (masked_memory_load((void *)(uintptr_t)1, 0) != UINT64_C(0x77)) return 1;
+  uint64_t data[2] = {0, UINT64_C(0xabcdef1234567890)};
+  masked_memory_test(data, 1);
+  return data[0] != UINT64_C(0x123456789abcdef0) ||
+         data[1] != UINT64_C(0xabcdef1234567890) ||
+         masked_memory_load(data, 1) != data[0];
+}
+)C";
+  DriverOS.close();
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, Errors.str()};
+    const int Status = llvm::sys::ExecuteAndWait(
+        Compiler,
+        {Compiler, "-std=gnu11", Optimization, Input, Driver, "-o", Executable},
+        std::nullopt, Redirects);
+    auto Diagnostics = llvm::MemoryBuffer::getFile(Errors);
+    ASSERT_EQ(Status, 0) << (Diagnostics ? (*Diagnostics)->getBuffer().str()
+                                         : "")
+                         << Source;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0) << Source;
+  }
 }

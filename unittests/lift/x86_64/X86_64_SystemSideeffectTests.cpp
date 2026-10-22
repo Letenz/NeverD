@@ -198,13 +198,14 @@ TEST(X86SystemSideeffect, SegmentRegisterMovesReadAndWriteSelectors) {
 }
 
 TEST(X86SystemSideeffect, UnmodeledSystemInstructionsStayUnlifted) {
-  // CLTS, VMFUNC, ENCLS and RDGSBASE need state LowIR does not model; none
-  // of them may become another instruction.
+  // Complete machine transitions still require an explicit state contract.
   for (const std::vector<uint8_t> &Bytes :
-       {std::vector<uint8_t>{0x0f, 0x06},
-        std::vector<uint8_t>{0x0f, 0x01, 0xd4},
-        std::vector<uint8_t>{0x0f, 0x01, 0xcf},
-        std::vector<uint8_t>{0xf3, 0x48, 0x0f, 0xae, 0xc8}}) {
+       {std::vector<uint8_t>{0x0f, 0x01, 0xd8},    // VMRUN
+        std::vector<uint8_t>{0x0f, 0x01, 0xde},    // SKINIT
+        std::vector<uint8_t>{0x0f, 0x37},          // GETSEC
+        std::vector<uint8_t>{0x0f, 0x01, 0xcf},    // ENCLS
+        std::vector<uint8_t>{0x0f, 0x01, 0xd7},    // ENCLU
+        std::vector<uint8_t>{0x0f, 0x01, 0xc0}}) { // ENCLV
     Decoder Dec;
     ASSERT_TRUE(Dec.init(Arch::X64));
     DecodedInsn Insn{};

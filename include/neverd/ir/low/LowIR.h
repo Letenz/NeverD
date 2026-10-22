@@ -19,6 +19,7 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86Virtualization.h"
 #include "neverd/loader/ExceptionInfo.h"
 
@@ -369,6 +370,26 @@ inline ApxAtomicIntrinsicShape apxAtomicLowShape(const LowOp &Op,
 inline X86VirtualizationShape x86VirtualizationLowShape(const LowOp &Op,
                                                         Arch TargetArch) {
   X86VirtualizationShape Shape;
+  Shape.TargetArch = TargetArch;
+  Shape.MemoryOrdering = Op.MemoryOrdering;
+  Shape.MemoryAddressSpace = Op.MemoryAddressSpace;
+  Shape.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+                  Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+                  Op.Inputs[0].Offset <= UINT16_MAX;
+  Shape.OutputSize = Op.Output.Size;
+  Shape.WritableOutput = Op.Output.isReg() || Op.Output.isTemp();
+  Shape.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (uint8_t I = 0; I < Shape.Arguments && I < Shape.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    Shape.InputSizes[I] = Input.Size;
+    Shape.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
+  }
+  return Shape;
+}
+
+inline X86SystemStateShape x86SystemStateLowShape(const LowOp &Op,
+                                                  Arch TargetArch) {
+  X86SystemStateShape Shape;
   Shape.TargetArch = TargetArch;
   Shape.MemoryOrdering = Op.MemoryOrdering;
   Shape.MemoryAddressSpace = Op.MemoryAddressSpace;

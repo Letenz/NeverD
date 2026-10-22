@@ -128,7 +128,7 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch) {
     const bool Write = (Encoding.P1 & 3) == 2;
     if (!Write && (Encoding.P1 & 3) != 3)
       return std::nullopt;
-    BNumber = ((~Encoding.P0 & 0x20) >> 2) | (Encoding.ModRM & 7);
+    BNumber = Encoding.rmIndex();
     Immediate = readImmediate32(&Insn->bytes[Encoding.Offset + 5]);
     Kind = Write ? X86MsrAccessKind::UwrmsrVexImmediate
                  : X86MsrAccessKind::UrdmsrVexImmediate;
@@ -772,28 +772,28 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
   }
 
-  // The rest need processor state LowIR does not model: virtual-machine and
-  // enclave control, segment and FS/GS base registers, SMX, user waits.
-  // Keep them unlifted rather than collapsing them into another instruction.
   case X86_INS_RDPID:
   case X86_INS_RDFSBASE:
   case X86_INS_RDGSBASE:
   case X86_INS_WRFSBASE:
   case X86_INS_WRGSBASE:
-  // VMRUN exposes guest changes to unsaved GPR/FPU state; SKINIT performs
-  // nonlocal machine reinitialization. Neither is an ordinary opaque effect.
-  case X86_INS_VMRUN:
-  case X86_INS_SKINIT:
   case X86_INS_LAR:
   case X86_INS_ARPL:
   case X86_INS_CLTS:
+  case X86_INS_TPAUSE:
+  case X86_INS_UMONITOR:
+  case X86_INS_UMWAIT:
+    return liftSystemState(*this, S, Insn, X86);
+
+  // Machine transitions need a complete-state continuation contract. SGX
+  // supervisor/VMM leaves also still need explicit register/flag completion
+  // and enclave-memory contracts; a bare mnemonic would lose those effects.
+  case X86_INS_VMRUN:
+  case X86_INS_SKINIT:
   case X86_INS_GETSEC:
   case X86_INS_ENCLS:
   case X86_INS_ENCLU:
   case X86_INS_ENCLV:
-  case X86_INS_TPAUSE:
-  case X86_INS_UMONITOR:
-  case X86_INS_UMWAIT:
     return false;
 
   // These change processor state only; none of them produces a value, so

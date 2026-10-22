@@ -15,6 +15,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
+#include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
@@ -4839,6 +4840,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   std::vector<std::string> ArgStrs;
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
+
+  if (auto SystemState = renderX86SystemStateCall(Opts.TheArch, Call, Name,
+                                                  ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *SystemState;
+    return true;
+  }
 
   if (auto Virtualization = renderX86VirtualizationCall(
           Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {

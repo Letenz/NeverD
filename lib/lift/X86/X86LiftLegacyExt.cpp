@@ -110,17 +110,15 @@ bool liftEvexGfni(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
 
   const unsigned DestinationRegister = vectorRegisterIndex(Destination);
   const unsigned Source1Register = vectorRegisterIndex(Source1);
-  if (decodeEvexVectorRegIndex(Encoding.P0, Encoding.ModRM) !=
-          DestinationRegister ||
-      decodeEvexVectorVvvvIndex(Encoding.P1, Encoding.P2) != Source1Register ||
+  if (Encoding.regIndex() != DestinationRegister ||
+      Encoding.vvvvIndex() != Source1Register ||
       (L.targetArch() == Arch::X86 &&
        (DestinationRegister >= 8 || Source1Register >= 8)))
     return false;
   if (RegisterSource) {
     const unsigned Source2Register = vectorRegisterIndex(Source2);
     if ((Encoding.ModRM & 0xc0) != 0xc0 || (Encoding.P2 & 0x10) != 0 ||
-        decodeEvexVectorRMIndex(Encoding.P0, Encoding.ModRM) !=
-            Source2Register ||
+        Encoding.rmIndex() != Source2Register ||
         (L.targetArch() == Arch::X86 && Source2Register >= 8))
       return false;
   } else if ((Encoding.ModRM & 0xc0) == 0xc0) {

@@ -82,6 +82,13 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
                      "operand/output contract");
     return llvm::Error::success();
   }
+  if (isX86SystemStateIntrinsic(Id)) {
+    if (!x86SystemStateShapeIsValid(Id,
+                                    x86SystemStateLowShape(Op, Arch::Unknown)))
+      return invalid("x86 system state intrinsic has an invalid "
+                     "operand/output contract");
+    return llvm::Error::success();
+  }
   if (Id == Intrinsic::X86Invalidate) {
     if (!intrinsicX86InvalidateShapeIsValid(
             Id, x86InvalidateLowShape(Op, Arch::Unknown)))

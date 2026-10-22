@@ -73,6 +73,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+#include "llvm/Transforms/Scalar/ScalarizeMaskedMemIntrin.h"
 #include "llvm/Transforms/Scalar/Scalarizer.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
@@ -2492,11 +2494,20 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
   llvm::FunctionPassManager Normalize;
   if (HasVectors) {
+    // C has no masked memory operation. Lower it to guarded lane accesses
+    // before scalarizing vectors, retaining fault suppression and avoiding
+    // reads of poison values in inactive lanes. This PassBuilder has generic
+    // target information, so native SIMD availability does not retain masks.
+    Normalize.addPass(llvm::ScalarizeMaskedMemIntrinPass());
     llvm::ScalarizerPassOptions ScalarOptions;
     // LLVM only splits simple accesses: volatile and atomic vectors still
     // reach the unsupported-instruction guard below.
     ScalarOptions.ScalarizeLoadStore = true;
     Normalize.addPass(llvm::ScalarizerPass(ScalarOptions));
+    // Vector packing can leave constant wide-integer expressions after lane
+    // projection. Simplify them before printing C, including when pipeline
+    // optimization is disabled: i386 C cannot spell a native i128 carrier.
+    Normalize.addPass(llvm::InstSimplifyPass());
   }
   Normalize.addPass(llvm::DCEPass());
   llvm::ModulePassManager Pipeline;

@@ -494,6 +494,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
       (static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
            Intrinsic::X86Invalidate ||
        static_cast<Intrinsic>(Op.Inputs[0].Offset) == Intrinsic::X86MsrAccess ||
+       isX86SystemStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)) ||
        isX86VirtualizationIntrinsic(
            static_cast<Intrinsic>(Op.Inputs[0].Offset)))) {
     // A scalar tracer has neither CPL/CR4/CPUID state nor a guest TLB.  Even a
