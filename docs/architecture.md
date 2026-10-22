@@ -4122,6 +4122,10 @@ The entry-stack proof keeps definitions, joins, ambiguity and transient active
 flags in one ordered index. Each visit still consumes its ordinary work and
 depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
 and failed queries are not memoized, and each query clears its active flags.
+Read-only offset queries lazily reuse the shared entry-register authenticator's
+answer for the canonical defining occurrence. Every use still checks exact
+register metadata; the fact lasts only for that immutable proof. Alignment
+rewrites continue to authenticate against the current entry COPY prefix.
 
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C

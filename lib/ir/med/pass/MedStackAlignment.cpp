@@ -75,6 +75,8 @@ class StackOffsetProof {
     const PhiNode *Join = nullptr;
     bool Ambiguous = false;
     bool Active = false;
+    bool EntryChecked = false;
+    bool EntryLiveIn = false;
   };
 
 public:
@@ -151,6 +153,24 @@ public:
   }
 
 private:
+  bool authenticatedEntryLiveIn(const MedVar &Value,
+                                ValueDefinition *Definition) {
+    // Alignment rewrites can change the entry COPY prefix. Only read-only
+    // offset queries reuse authentication, and only for the exact occurrence.
+    if (!FollowJoins)
+      return safety::detail::isAuthenticatedEntryRegisterLiveIn(Func, Value);
+    if (!Definition || !Definition->Op)
+      return false;
+    if (!Definition->EntryChecked) {
+      Definition->EntryLiveIn =
+          safety::detail::isAuthenticatedEntryRegisterLiveIn(
+              Func, Definition->Op->Output);
+      Definition->EntryChecked = true;
+    }
+    return Definition->EntryLiveIn && safety::detail::sameRegisterOccurrence(
+                                          Definition->Op->Output, Value);
+  }
+
   /// The offset every way into \p Phi brings.  A way back through the join
   /// itself is checked against the offset the other ways agree on.
   std::optional<int64_t> join(const PhiNode &Phi, ValueDefinition &Definition,
@@ -221,7 +241,7 @@ private:
          !Definition->Op->IntrinsicOutputs.empty()))
       return std::nullopt;
     if (Value.Kind == MedVar::Reg && Value.RegOff == TRI.StackPointer &&
-        (safety::detail::isAuthenticatedEntryRegisterLiveIn(Func, Value) ||
+        (authenticatedEntryLiveIn(Value, Definition) ||
          (FollowJoins && Value.SSAVer == 0 &&
           (!Definition || !Definition->Op))))
       return 0;

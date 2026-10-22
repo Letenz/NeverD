@@ -4,18 +4,6 @@
 
 # Testing NeverD
 
-`NeverDMedPrologueSavesTests` runs the same save, restore, overlapping-store,
-return-address and process-entry cases through separate and combined source
-annotations. It also checks a function that has both a saved register and a
-return-address read. Run it with `NeverDMedStackAlignmentTests`,
-`NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
-`NeverDPipelineOutcomeTests` after changing source stack-access analysis.
-
-`MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
-checks four architectures and three formats in both query orders. Accepted and
-moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and
-depth refusal must leave later queries correct in both batched and single use.
-
 `X86SystemMemory.*` and `X86SystemMemorySource.*` cover WRSSD/Q, WRUSSD/Q and
 long-mode ENQCMD/ENQCMDS through the shared system contract. Run
 `NeverDX86SystemStateTests`, `NeverDX86SystemSideeffectTests` and
@@ -4866,6 +4854,26 @@ include non-byte widths and every one-hot input bit. Unsupported shapes fail
 before source emission.
 
 ## Structured C control and call checks
+
+`NeverDMedPrologueSavesTests` runs the same save, restore, overlapping-store,
+return-address and process-entry cases through separate and combined source
+annotations. It also checks a function that has both a saved register and a
+return-address read. Run it with `NeverDMedStackAlignmentTests`,
+`NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
+`NeverDPipelineOutcomeTests` after changing source stack-access analysis.
+
+`MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
+checks four architectures and three formats in both query orders. Accepted and
+moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and
+depth refusal must leave later queries correct in both batched and single use.
+
+`MedStackAlignment.EntryLiveInQueriesKeepExactRegisterOccurrences` and the
+`EntryStackQueries*` cases check exact width, architecture, rename tag, physical
+register and SSA identity in both query orders. Missing, duplicate, misplaced
+and malformed entry markers must refuse; an undefined incoming SP retains its
+existing SSA rule. Mutating the marker or function entry between calls must
+invalidate authentication. Run these batched and standalone checks across
+x86, x64, ARM32 and AArch64 in COFF, ELF and Mach-O.
 
 `Win64SourceCallsKeepTheirDeclaredCarrierWidths` checks declared scalar carriers
 against whole-register scans. `NeverDWorkerCallSiteTypes` also checks explicit
