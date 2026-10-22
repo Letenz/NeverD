@@ -733,8 +733,13 @@ bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root) {
     if (Offset(R)) {
       for (auto Child : Ctx.operands(R))
         if (isBitwise(Ctx.op(Child)) ||
-            (Ctx.op(Child) == SymOp::Mul && Ctx.isConst(Ctx.operand(Child, 0))))
+            (Ctx.op(Child) == SymOp::Mul &&
+             Ctx.isConst(Ctx.operand(Child, 0)) &&
+             (Ctx.numOperands(Child) > 2 || Ctx.width(Child) > 64)))
           return true;
+      // Native scalar affine coordinates already have a cheap complete-map
+      // reader. Do not run a second projection search on their nonzero
+      // residuals; nonlinear monomials and wide coefficients benefit from it.
       return false;
     }
     // Reassociation may leave A*(B+c) under a bitwise wrapper. A literal

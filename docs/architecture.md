@@ -1463,6 +1463,9 @@ including scalar products retained around offset sums. Zero-valued prefixes
 of even factors can be reread at higher precision before removing their fixed
 zeros. Completed prefix queries are cached by handle and precision, while all
 attempts share cumulative work and scratch charges.
+Native scalar affine coordinates retain their cheap complete-map path; the
+extra projected read is reserved for wrappers, nonlinear monomials and wide
+coefficients, avoiding duplicated searches on ordinary nonzero residuals.
 For a nonzero product, a shared low-zero prefix can be factored through bitwise
 operations. Their remaining scalar units are reduced modulo the observed
 prefix under a bounded operand/work/storage charge. The opaque operands keep

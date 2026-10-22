@@ -271,6 +271,47 @@ TEST(SymMBAPrefixResidue, RereadsEvenZeroPrefixesAndKeepsNonzeroNeighbors) {
     }
 }
 
+TEST(SymMBAPrefixResidue, KeepsNativeNonzeroAffineRecoveryWithinBudget) {
+  std::mt19937_64 Random(0x414646494e454e5a);
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SymContext Ctx;
+    auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+    auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+    auto Scale = llvm::APInt(Width, 1).shl(Width - 8);
+    std::vector<llvm::APInt> Units;
+    llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Scale)};
+    for (unsigned I = 0; I < 8; ++I) {
+      auto A = (word(Width, Random) | 1).shl(I == 0);
+      auto B = I ? A * I : llvm::APInt(Width, 1);
+      Units.push_back(A);
+      Factors.push_back(
+          Ctx.mkAdd(Ctx.mkMul(Ctx.mkConst(A), X), Ctx.mkConst(B)));
+    }
+    auto Input = Ctx.mkAdd({Ctx.mkMul(Factors), Ctx.mkXor(X, Y),
+                            Ctx.mkMul(Ctx.mkConst(Width, 2), Ctx.mkAnd(X, Y)),
+                            Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+    MBAOptions Opts;
+    Opts.MaxWork = 65536;
+    Opts.VerifySamples = 0;
+    auto Output = simplifyMBADeep(Ctx, Input, Opts);
+    EXPECT_LT(Output.Work, Opts.MaxWork) << Width;
+    bool Nonzero = false;
+    for (unsigned Trial = 0; Trial < 128; ++Trial) {
+      std::array<llvm::APInt, 4> V;
+      for (auto &Value : V)
+        Value = word(Width, Random);
+      auto Product = Scale;
+      for (unsigned I = 0; I < 8; ++I)
+        Product *= Units[I] * V[0] + (I ? Units[I] * I : llvm::APInt(Width, 1));
+      Nonzero |= !Product.isZero();
+      auto Want = Product + V[0] + V[1] + V[2] + V[3];
+      EXPECT_EQ(Ctx.eval(Input, V), Want);
+      EXPECT_EQ(Ctx.eval(Output.Expr, V), Want);
+    }
+    EXPECT_TRUE(Nonzero) << Width;
+  }
+}
+
 TEST(SymMBAPrefixResidue, ExhaustsSmallWordSlopesMasksAndPerturbations) {
   for (unsigned Slope : {1u, 3u, 5u, 7u})
     for (unsigned Mask : {3u, 7u, 11u, 15u})

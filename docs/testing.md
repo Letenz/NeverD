@@ -436,6 +436,8 @@ Coarse-prefix oracles additionally cover arithmetic high-bit products through
 versus one-short cumulative work/storage. Independent full-width Z3 checks
 include the one-bit frontier. The worker also executes coarse quartic/octic
 and nonzero-neighbor fixtures through all six source routes.
+Native nonzero affine controls retain their recovered polynomial within the
+original work allowance, guarding against duplicated projection searches.
 `SymExpr.EvaluationPlanKeepsSharedInputsAfterContextGrowth` checks shared DAG
 operands, sorted sparse input IDs, callback reads and reusable plans through
 257 bits against separate word arithmetic. Existing evaluation and full
