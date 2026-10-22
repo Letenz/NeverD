@@ -610,6 +610,8 @@ private slots:
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() == 19);
     const QString original = code->allText();
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
     assembly->navigate(Base + 0x180);
     QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
 
@@ -621,8 +623,10 @@ private slots:
     const QPoint arrow(int(6 + 4.25 * metrics.horizontalAdvance('M')),
                        (4 - code->verticalScrollBar()->value()) * height +
                            height / 2);
+    QSignalSpy locations(code, &CodeText::locationChanged);
     QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, arrow);
     QCOMPARE(code->lineCount(), 18);
+    QVERIFY(locations.isEmpty());
     // The header stays visible: finding its text or clicking past the end of
     // its row neither expands the block nor offers a fold control there.
     code->setCursorLine(1);
@@ -671,12 +675,17 @@ private slots:
     QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
     code->setCursorLine(1);
     QVERIFY(code->setCurrentBlockFolded(true));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
     QVERIFY(code->selectLocalReference(*target, *hidden));
     QCOMPARE(code->lineCount(), 19);
     QCOMPARE(code->selectedText(), QStringLiteral("v7"));
     QVERIFY(code->commentTarget());
     QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
-    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+    // Selecting a mapped reference moves the source cursor and its
+    // synchronized assembly, independently of unfolding the reference.
+    QCOMPARE(code->currentAddress(), std::optional<Address>(Base + 0x142));
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x142));
 
     // A refresh preserves folds, and explicit instruction navigation expands
     // all blocks hiding its mapped original row.
@@ -6481,18 +6490,19 @@ private slots:
              QFileDevice::Permissions());
 #endif
     const auto instances = InstanceServer::discover();
-    QVERIFY(std::any_of(instances.begin(), instances.end(),
-                        [&](const InstanceServer::Instance &instance) {
-                          return instance.server == server.serverName() &&
-                                 instance.pid ==
-                                     QCoreApplication::applicationPid();
-                        }));
+    const auto instance = std::find_if(
+        instances.begin(), instances.end(),
+        [&](const InstanceServer::Instance &instance) {
+          return instance.server == server.serverName() &&
+                 instance.pid == QCoreApplication::applicationPid();
+        });
+    QVERIFY(instance != instances.end());
     bench.window->openFile(
         writeFixture(directory, QStringLiteral("fixture.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
 
     QLocalSocket socket;
-    socket.connectToServer(server.serverName());
+    socket.connectToServer(instance->server);
     QVERIFY(socket.waitForConnected(1000));
     const auto ask = [&](const QByteArray &request) {
       socket.write(request);
@@ -6830,6 +6840,15 @@ private slots:
     auto *assembly = bench.window->disassembly();
     assembly->navigate(Base + 0x50);
     QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x50));
+    // A loaded session may still be waiting for its address space. Complete
+    // one link before testing the graph switch queued by an accepted link.
+    const auto ready =
+        parseDeepLink(QStringLiteral("ida:///addresses?rva=0x50&view=disasm"));
+    QVERIFY(ready.link);
+    QString readyResult = QStringLiteral("pending");
+    bench.window->openLink(*ready.link,
+                           [&](const QString &error) { readyResult = error; });
+    QTRY_COMPARE_WITH_TIMEOUT(readyResult, QString(), OpenTimeoutMs);
     QStringList results;
     for (const auto &text :
          {QStringLiteral("ida:///addresses?rva=0x50&view=graph"),
@@ -6845,6 +6864,34 @@ private slots:
                                  !assembly->listing()->jumpPending(),
                              OpenTimeoutMs);
     QCOMPARE(results, (QStringList{QString(), QString()}));
+    QVERIFY(!assembly->graphMode());
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x44));
+  }
+
+  void laterLinksSupersedeWhileTheProgramOpens() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    QStringList results;
+    connect(&bench.session, &Session::opened, this, [&] {
+      for (const auto &text :
+           {QStringLiteral("ida:///addresses?rva=0x50&view=graph"),
+            QStringLiteral("ida:///addresses?rva=0x44&view=disasm")}) {
+        const auto link = parseDeepLink(text);
+        QVERIFY(link.link);
+        bench.window->openLink(*link.link,
+                               [&](const QString &error) { results << error; });
+      }
+    });
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_COMPARE_WITH_TIMEOUT(results.size(), 2, OpenTimeoutMs);
+    QCOMPARE(results.front(),
+             QStringLiteral("Another link took this one's place."));
+    QCOMPARE(results.back(), QString());
+    auto *assembly = bench.window->disassembly();
+    QTRY_VERIFY_WITH_TIMEOUT(!assembly->listing()->jumpPending(),
+                             OpenTimeoutMs);
     QVERIFY(!assembly->graphMode());
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x44));
   }

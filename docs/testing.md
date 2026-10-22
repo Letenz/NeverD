@@ -841,6 +841,12 @@ The GUI unit cases `deepLinksTakeIdasFormAndRefuseWhatTheyCannotName` and
 instance selection. Controller cases `linksCopyAndOpenTheirPlaces` and
 `otherProgramsFindTheWorkbenchAndOpenLinksInIt` exercise copying, navigation,
 refusal without moving the cursor and the real local socket protocol.
+Discovery connects through the returned endpoint, including the full Windows
+pipe path. `laterLinksSupersedeWhileTheProgramOpens` checks replacement while
+the address space is pending; `laterLinksSupersedeAQueuedGraphView` first
+completes a link, then checks that a later accepted link retires the queued
+graph switch. Source-folding checks keep gutter folding separate from a focused
+mapped-reference selection, which must synchronize the assembly cursor.
 `instanceRequestsRespectTheirByteLimit` checks complete and incomplete requests
 at the request-size boundary, including requests without a newline and multiple
 bounded messages on one connection. `instanceServingCanBeDisabled` checks the
