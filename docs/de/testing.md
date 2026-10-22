@@ -2249,3 +2249,11 @@ Regressionen für absoluten Speicher prüfen begrenzte zusammenhängende und ver
 `NativeQueryTrace.*` prüft unabhängige Antworten, vier Nullerweiterungen, Änderungen von Selektoren/Anzahl/Reihenfolge, undefinierte Selektoren, verschachtelte Lesezugriffe, alle Zweige, erhaltenen Zustand, Codierungs-/Detailaudits, fehlerhafte Bündel, Budgets, Digests und statische/induktive Ablehnung. `NativeScalarQueryDescriptor.*` prüft generische Beschreibungsgrenzen und tatsächliche Belegbindung.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+Die Regressionen prüfen die exakte Erhaltung von CC, F1 und CD 03, die Ablehnung gefälschter Metadaten, Regionsausgänge ohne Nachfolger sowie exakte und zu kleine Operationsbudgets. Ein gewöhnlich bereitgestellter Trap darf nicht zu einem RETURN in derselben oder der folgenden Instruktion weiterlaufen. Der Originalbeweis umfasst auch UD2: Unerreichbare Traps behalten das Missing-Audit; abweichende Ausnahmeidentität, Bytes oder Audits werden abgelehnt. Erreichbare Traps verhindern den Originalbeweis und die Verfeinerung gegen einen gewöhnlich zurückkehrenden Kandidaten.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+Diese Prüfungen qualifizieren deklarierte Regionen, nicht die Ausnahmebehandlung oder Quell-/Native-Äquivalenz.

@@ -51,6 +51,9 @@ struct NativeStackExpansion {
   size_t OriginalPrefixSize = 0;
   bool ExpandedIndirectCall = false;
   bool ExpandedReturn = false;
+  /// The authenticated final operation ends this region. Retain it without
+  /// evaluating exception-state effects or inventing a continuation.
+  bool RetainedTerminator = false;
 };
 
 /// Expand a provider-certified physical near CALL/RET, or validate an already
@@ -74,7 +77,8 @@ expandNativeStackControl(const SpecializationInstruction &Instruction,
 
 /// Strictly authenticate the complete original x64 transfer, then retain its
 /// exact physical effects and actual next PC as a terminal INDIR_BR. Direct
-/// guest addresses remain values, never residual CFG labels.
+/// guest addresses remain values, never residual CFG labels. A declared trap
+/// instead retains its exact terminal operation without a next-PC contract.
 llvm::Expected<NativeStackExpansion>
 expandX64MachineExit(const SpecializationInstruction &Instruction,
                      const SpecializationX64MachineExit &Declaration,
