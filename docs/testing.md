@@ -786,6 +786,27 @@ at the request-size boundary, including requests without a newline and multiple
 bounded messages on one connection. `instanceServingCanBeDisabled` checks the
 opt-out setting. Run these through `NeverDGuiUnits` and `NeverDGuiController`.
 
+Link regressions also cover RVA overflow and numeric whitespace, hash-based
+renamed recent inputs and packed databases, exact resource validation, interior
+segment addresses, and selection beyond cached pages in a filtered, descending
+20,000-function table. `nativeUrlEventsReachTheWindowThatOwnsTheirProgram`
+launches a second GUI process and routes URL events both to that process and
+back to the receiver. Probe tests include unresponsive endpoints, early matching
+and malformed replies, including a healthy endpoint behind an entire stalled
+wave; framing tests fragment quoted braces, escapes and UTF-8.
+`NeverDGuiLinksCLI` removes display environment variables. On Linux with `gio`
+and `desktop-file-validate`, it also launches an isolated generated desktop entry
+from a path containing special characters and checks a hung registration helper.
+It never registers a handler in the real user's desktop configuration.
+Worker functional regressions locate functions and strings in both sort
+directions and exercise the distinct segment and region row schemas.
+`analysisCompletionDoesNotRequireAnUnsupportedReferenceIndex` checks the IPC
+completion flag against confirmed VM analysis while reference indexing remains
+explicitly unavailable.
+See the [deep-link benchmark](../tools/neverd-gui/benchmarks/README.md#deep-link-forwarding)
+for a paired comparison with actual IDA instances; acknowledgements do not measure
+painted frames or decompilation throughput.
+
 `SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and

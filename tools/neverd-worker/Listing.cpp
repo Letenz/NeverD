@@ -5,6 +5,7 @@
 #include "References.h"
 #include "ResourceLimits.h"
 #include "StringReferences.h"
+#include "TablePage.h"
 #include "TextFold.h"
 
 #include "neverd/DataAccessWidths.h"
@@ -4190,8 +4191,6 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
 Json Listing::strings(const Json &payload) {
   auto &d = *impl_;
   d.build();
-  const auto offset =
-      sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
   const auto limit =
       sizeField(payload, "limit",
                 ::neverd::limits::worker::kListingStringsLimitSizeFieldDefault,
@@ -4267,6 +4266,12 @@ Json Listing::strings(const Json &payload) {
       order.push_back(entry.second);
   }
   const auto total = order.size();
+  const auto position =
+      tablePagePosition(payload, total, limit,
+                        [&](std::size_t index) -> std::optional<TableRowRange> {
+                          return TableRowRange{d.strings[order[index]].address};
+                        });
+  const auto offset = position.offset;
   for (auto i = std::min(offset, total); i < total && items.size() < limit;
        ++i) {
     const auto &string = d.strings[order[i]];
@@ -4289,11 +4294,13 @@ Json Listing::strings(const Json &payload) {
                      {"encoding", string.encoding}});
   }
   const bool complete = offset >= total || items.size() >= total - offset;
-  return {{"items", std::move(items)},
-          {"total", total},
-          {"offset", offset},
-          {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
-          {"complete", complete}};
+  Json result{{"items", std::move(items)},
+              {"total", total},
+              {"offset", offset},
+              {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
+              {"complete", complete}};
+  position.annotate(result);
+  return result;
 }
 
 Json Listing::stringReferences(const Json &payload) {

@@ -1654,6 +1654,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>La tabella è cambiata prima della selezione dell’indirizzo.</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>Un’altra selezione di indirizzo ha sostituito questa.</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>Il processo di lavoro non ha trovato l’indirizzo richiesto.</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>Indicizzazione dei riferimenti ancora in corso…</translation>
     </message>

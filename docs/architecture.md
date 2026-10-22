@@ -66,6 +66,22 @@ matcher (`neverd_search_page`, also used by the legacy search entry points).
 The worker adapts those pages to the transport. The GUI owns wraparound and
 retires results and callbacks on a new search or session change.
 
+Deep-link syntax and checked address arithmetic belong to `DeepLink`; instance
+matching and recent-input lookup belong to `LinkDispatch`. `ProjectDatabase`
+owns metadata-only identity reads as well as unpacking and authenticating the
+stored input. A metadata match is only a lookup hint. CLI clients and native
+URL events share the dispatcher. Native events dispatch off the GUI thread so
+the receiving window can answer its own local socket. Instance probes have
+bounded concurrency and one deadline; socket framing tracks incomplete JSON
+without repeatedly parsing its accumulated prefix, while Qt validates syntax.
+
+The worker owns chooser order, filtering and address-to-row resolution.
+`TablePage.h` locates `seek_address` in the final order and returns its bounded
+page, global row index and canonical row address. Segment and region queries
+match containing ranges; other tables match exact addresses. The GUI validates
+and caches that page rather than fetching every intervening row or independently
+sorting it. Navigation callbacks retire on session or navigation changes.
+
 ## Checked alignment recovery
 
 `arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.

@@ -18,6 +18,7 @@
 #include <QTreeView>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <utility>
 
 namespace neverd::gui {
 namespace {
@@ -148,6 +149,9 @@ void ChooserModel::addressSpaceChanged() {
 }
 
 void ChooserModel::reload() {
+  ++locationSerial_;
+  finishLocation(std::nullopt,
+                 tr("The table changed before the address was selected."));
   if (localRows_) {
     // Local query results belong to one open project, just like worker pages.
     if (!session_.loaded())
@@ -183,20 +187,7 @@ void ChooserModel::requestPage(int page) const {
     requestOrder_.pop_back();
     session_.queries().unsubscribe(pageRequests_.take(oldPage));
   }
-  QJsonObject payload = request_;
-  payload["offset"] = page * ::neverd::limits::gui::kChooserViewPageSize;
-  payload["limit"] = ::neverd::limits::gui::kChooserViewPageSize;
-  // Length order can start with multi-megabyte literals. The table needs a
-  // preview; filtering and sorting still use the complete text in the worker.
-  if (kind_ == ChooserKind::Strings)
-    payload["text_limit"] =
-        ::neverd::limits::gui::kChooserViewChooserModelRequestPageTextLimit;
-  if (!filter_.isEmpty())
-    payload["filter"] = filter_;
-  if (!sortField_.isEmpty()) {
-    payload["sort"] = sortField_;
-    payload["descending"] = descending_;
-  }
+  const QJsonObject payload = pagePayload(page);
   const quint64 serial = serial_;
   auto *self = const_cast<ChooserModel *>(this);
   const auto subscription = session_.read(
@@ -215,6 +206,82 @@ void ChooserModel::requestPage(int page) const {
       });
   pageRequests_.insert(page, subscription);
   requestOrder_.push_front(page);
+}
+
+QJsonObject ChooserModel::pagePayload(int page) const {
+  QJsonObject payload = request_;
+  payload["offset"] = page * ::neverd::limits::gui::kChooserViewPageSize;
+  payload["limit"] = ::neverd::limits::gui::kChooserViewPageSize;
+  // Length order can start with multi-megabyte literals. The table needs a
+  // preview; filtering and sorting still use the complete text in the worker.
+  if (kind_ == ChooserKind::Strings)
+    payload["text_limit"] =
+        ::neverd::limits::gui::kChooserViewChooserModelRequestPageTextLimit;
+  if (!filter_.isEmpty())
+    payload["filter"] = filter_;
+  if (!sortField_.isEmpty()) {
+    payload["sort"] = sortField_;
+    payload["descending"] = descending_;
+  }
+  return payload;
+}
+
+void ChooserModel::finishLocation(std::optional<int> row,
+                                  const QString &error) {
+  if (auto done = std::exchange(locationDone_, {}))
+    done(row, error);
+}
+
+void ChooserModel::locateAddress(Address address, Located done) {
+  finishLocation(std::nullopt,
+                 tr("Another address selection took this one's place."));
+  const auto request = ++locationSerial_;
+  locationDone_ = std::move(done);
+  if (localRows_) {
+    for (int row = 0; row < local_.size(); ++row)
+      if (addressAt(row) == address)
+        return finishLocation(row);
+    return finishLocation(std::nullopt);
+  }
+  for (auto page = pages_.cbegin(); page != pages_.cend(); ++page)
+    for (int index = 0; index < page->size(); ++index) {
+      const int row =
+          page.key() * ::neverd::limits::gui::kChooserViewPageSize + index;
+      if (addressAt(row) == address)
+        return finishLocation(row);
+    }
+  QJsonObject payload = pagePayload(0);
+  payload.insert(QStringLiteral("seek_address"), hexAddress(address));
+  const quint64 serial = serial_;
+  session_.read(
+      operation_, payload, this,
+      [this, serial, request, address](const QJsonObject &result) {
+        if (serial != serial_ || request != locationSerial_)
+          return;
+        const auto selected = result.value("selected_index");
+        const int offset = result.value("offset").toInt(-1);
+        const int row = selected.toInt(-1);
+        const auto items = result.value("items").toArray();
+        const auto located = addressValue(result.value("selected_address"));
+        if (!selected.isDouble() || row < offset || offset < 0 ||
+            offset % ::neverd::limits::gui::kChooserViewPageSize != 0 ||
+            row >= result.value("total").toInt() ||
+            row - offset >= items.size() || !located ||
+            itemAddress(items[row - offset].toObject()) != located ||
+            (kind_ != ChooserKind::Segments && located != address)) {
+          finishLocation(
+              std::nullopt,
+              tr("The worker did not locate the requested address."));
+          return;
+        }
+        accept(offset / ::neverd::limits::gui::kChooserViewPageSize, serial,
+               result);
+        finishLocation(row);
+      },
+      [this, serial, request](const QString &, const QString &error) {
+        if (serial == serial_ && request == locationSerial_)
+          finishLocation(std::nullopt, error);
+      });
 }
 
 void ChooserModel::accept(int page, quint64 serial,
@@ -269,7 +336,11 @@ QJsonObject ChooserModel::rowObject(int row) const {
 }
 
 std::optional<Address> ChooserModel::addressAt(int row) const {
-  const auto object = rowObject(row);
+  return itemAddress(rowObject(row));
+}
+
+std::optional<Address>
+ChooserModel::itemAddress(const QJsonObject &object) const {
   if (kind_ == ChooserKind::Segments)
     return addressValue(object.value("start"));
   return addressValue(object.value("address"));
@@ -566,17 +637,22 @@ void ChooserView::setFilterText(const QString &text) {
 }
 
 void ChooserView::revealAddress(Address address) {
-  for (int row = 0; row < model_->total(); ++row) {
-    const auto object = model_->rowObject(row);
-    if (object.isEmpty())
-      continue;
-    if (model_->addressAt(row) == address) {
-      const auto index = model_->index(row, 0);
-      table_->setCurrentIndex(index);
-      table_->scrollTo(index, QAbstractItemView::PositionAtCenter);
+  locateAddress(address, [this](std::optional<int> row, const QString &error) {
+    if (!error.isEmpty())
       return;
-    }
-  }
+    if (!row)
+      return;
+    const auto index = model_->index(*row, 0);
+    table_->setCurrentIndex(index);
+    table_->scrollTo(index, QAbstractItemView::PositionAtCenter);
+  });
+}
+
+void ChooserView::locateAddress(Address address, ChooserModel::Located done) {
+  filter_->clear();
+  filterTimer_.stop();
+  model_->setFilter({});
+  model_->locateAddress(address, std::move(done));
 }
 
 void ChooserView::updateStatus() {
