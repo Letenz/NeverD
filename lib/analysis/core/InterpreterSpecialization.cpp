@@ -172,7 +172,16 @@ std::optional<uint64_t> affineDisplacement(SymContext &Ctx, SymRef Value,
 
 /// Complete modular byte footprints, including partial/straddling overlap.
 SymRef memoryExtentsOverlap(SymContext &Ctx, SymRef Left, uint64_t LeftBytes,
-                            SymRef Right, uint64_t RightBytes) {
+                            SymRef Right, uint64_t RightBytes,
+                            SymRef NormalizedDistance = {}) {
+  // A retained root-plus-offset identity can supply the exact modular
+  // Left-Right difference. Sharing it with the reverse distance avoids asking
+  // the SAT search to rediscover two independent subtraction circuits. This
+  // changes neither complete footprint nor the overlap obligation.
+  if (NormalizedDistance)
+    return Ctx.mkOr(
+        Ctx.mkUlt(NormalizedDistance, Ctx.mkConst(64, RightBytes)),
+        Ctx.mkUlt(Ctx.mkNeg(NormalizedDistance), Ctx.mkConst(64, LeftBytes)));
   return Ctx.mkOr(
       Ctx.mkUlt(Ctx.mkSub(Left, Right), Ctx.mkConst(64, RightBytes)),
       Ctx.mkUlt(Ctx.mkSub(Right, Left), Ctx.mkConst(64, LeftBytes)));
@@ -2909,8 +2918,17 @@ bool Specializer::evaluate(int Id) {
                   Ctx.mkConst(64, static_cast<uint64_t>(Bounds.Begin)));
               const auto Bytes = static_cast<uint64_t>(Bounds.End) -
                                  static_cast<uint64_t>(Bounds.Begin);
+              SymRef Distance;
+              const auto Object = objectPointer(Ctx, Address, ObjectRoots);
+              if (Failed)
+                return false;
+              if (Object)
+                Distance = Ctx.mkAdd(
+                    Ctx.mkSub(ObjectRoots[Object->Root - 1], FrameRoot),
+                    Ctx.mkConst(64, Object->Offset -
+                                        static_cast<uint64_t>(Bounds.Begin)));
               const auto Overlap = memoryExtentsOverlap(
-                  Ctx, Address, Memory.AccessSize, First, Bytes);
+                  Ctx, Address, Memory.AccessSize, First, Bytes, Distance);
               if (Ctx.numNodes() > Options.MaxSymbolicNodes)
                 return fail(SpecializationStatus::BudgetExceeded,
                             "frame separation node budget exhausted");
