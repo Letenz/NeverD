@@ -614,8 +614,12 @@ void scanDataFuncPointers(BinaryImage &Img, const LoadProgress &Progress) {
     if (Misalignment != 0)
       Cur += PtrSize - Misalignment;
     std::optional<va_t> OwnerEnd;
+    Progress.check();
     for (; Cur <= End && End - Cur >= PtrSize; Cur += PtrSize) {
-      Progress.check();
+      // Pointer scans can visit millions of slots. Poll by covered bytes,
+      // preserving every semantic visit without calling the host per pointer.
+      if (Cur % limits::support::kLoadByteCheckpointBytes == 0)
+        Progress.check();
       if (!OwnerEnd || !OwnerPerRange)
         OwnerEnd = Img.mappedObjectOwnerEnd(Cur);
       if (!OwnerEnd || *OwnerEnd < Cur || PtrSize > *OwnerEnd - Cur)

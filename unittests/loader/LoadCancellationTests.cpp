@@ -10,12 +10,14 @@
 #include "../web/NativeFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/Limits.h"
 #include "neverd/support/LoadProgress.h"
 #include "neverd/support/SHA256.h"
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/SHA256.h"
 
@@ -133,6 +135,54 @@ TEST(NativeLoadCancellation, AReusedLoaderNeverRetainsTheStopContext) {
   }
   auto Fresh = Reader->loadBufferWithProgress(Buffer, {});
   ASSERT_TRUE(bool(Fresh)) << llvm::toString(Fresh.takeError());
+}
+
+TEST(NativeLoadCancellation, DataPointerScanningStopsAfterAPartialPrefix) {
+  const auto MakeImage = [] {
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    Segment Code;
+    Code.VA = 0x10000000;
+    Code.Size = Code.FileSz = 32;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Code.Data.resize(Code.Size, 0xcc);
+    for (const size_t Offset : {0U, 16U}) {
+      Code.Data[Offset] = 0x55;
+      Code.Data[Offset + 1] = 0x48;
+      Code.Data[Offset + 2] = 0x89;
+      Code.Data[Offset + 3] = 0xe5;
+      Code.Data[Offset + 4] = 0xc3;
+    }
+    Segment Data;
+    Data.VA = 0x20000000;
+    Data.Size = Data.FileSz = limits::support::kLoadByteCheckpointBytes * 4;
+    Data.Flags = SegmentFlags::Readable;
+    Data.Data.resize(Data.Size, 0);
+    llvm::support::endian::write64le(Data.Data.data(), Code.VA);
+    llvm::support::endian::write64le(
+        Data.Data.data() + limits::support::kLoadByteCheckpointBytes * 3,
+        Code.VA + 16);
+    Image.Segments.push_back(std::move(Code));
+    Image.Segments.push_back(std::move(Data));
+    return Image;
+  };
+  auto Fresh = MakeImage();
+  scanDataFuncPointers(Fresh);
+  ASSERT_EQ(Fresh.Symbols.size(), 2U);
+  auto Interrupted = MakeImage();
+  LoadProgress Progress;
+  Progress.StopUser = &Interrupted;
+  Progress.Stop = [](void *Context) {
+    return !static_cast<BinaryImage *>(Context)->Symbols.empty() ? 1 : 0;
+  };
+  EXPECT_THROW(scanDataFuncPointers(Interrupted, Progress), LoadCancelled);
+  ASSERT_EQ(Interrupted.Symbols.size(), 1U);
+  scanDataFuncPointers(Interrupted);
+  ASSERT_EQ(Interrupted.Symbols.size(), Fresh.Symbols.size());
+  for (size_t I = 0; I < Fresh.Symbols.size(); ++I)
+    EXPECT_EQ(Interrupted.Symbols[I].Addr, Fresh.Symbols[I].Addr);
 }
 
 TEST(NativeLoadCancellation, AStoppedFileLoadDoesNotNeedToReadThePath) {
