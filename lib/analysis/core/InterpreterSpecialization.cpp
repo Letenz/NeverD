@@ -170,23 +170,6 @@ std::optional<uint64_t> affineDisplacement(SymContext &Ctx, SymRef Value,
   return detail::frameRelativeOffset(Ctx, Value, Root);
 }
 
-/// Complete modular byte footprints, including partial/straddling overlap.
-SymRef memoryExtentsOverlap(SymContext &Ctx, SymRef Left, uint64_t LeftBytes,
-                            SymRef Right, uint64_t RightBytes,
-                            SymRef NormalizedDistance = {}) {
-  // A retained root-plus-offset identity can supply the exact modular
-  // Left-Right difference. Sharing it with the reverse distance avoids asking
-  // the SAT search to rediscover two independent subtraction circuits. This
-  // changes neither complete footprint nor the overlap obligation.
-  if (NormalizedDistance)
-    return Ctx.mkOr(
-        Ctx.mkUlt(NormalizedDistance, Ctx.mkConst(64, RightBytes)),
-        Ctx.mkUlt(Ctx.mkNeg(NormalizedDistance), Ctx.mkConst(64, LeftBytes)));
-  return Ctx.mkOr(
-      Ctx.mkUlt(Ctx.mkSub(Left, Right), Ctx.mkConst(64, RightBytes)),
-      Ctx.mkUlt(Ctx.mkSub(Right, Left), Ctx.mkConst(64, LeftBytes)));
-}
-
 Projection project(SymState &State, SymRef Root,
                    const std::set<uint64_t> &AffineCandidates,
                    const FrameOrigins &Origins, const FrameFacts &Frame) {
@@ -888,6 +871,9 @@ private:
   std::optional<uint64_t>
   frameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value, SymRef Root,
               FrameOffsetProof Proof = FrameOffsetProof::Optional);
+  SymRef memoryExtentsOverlap(SymContext &Ctx, SymRef Left, uint64_t LeftBytes,
+                              SymRef Right, uint64_t RightBytes,
+                              SymRef NormalizedDistance = {});
   bool chargeObjectWork(uint64_t Count);
   bool createObjectRoots(SymContext &Ctx, std::vector<SymRef> &Roots);
   std::optional<EntryPointer> objectPointer(SymContext &Ctx, SymRef Value,
@@ -939,6 +925,27 @@ private:
   static constexpr uint64_t FrameValueTemp = DispatchTemp + 48;
   static constexpr uint64_t DispatchTargetTemp = DispatchTemp + 56;
 };
+
+/// Complete modular byte footprints, including partial/straddling overlap.
+SymRef Specializer::memoryExtentsOverlap(SymContext &Ctx, SymRef Left,
+                                         uint64_t LeftBytes, SymRef Right,
+                                         uint64_t RightBytes,
+                                         SymRef NormalizedDistance) {
+  // Share the exact modular distance for object-domain queries, including
+  // cells outside the declared frame. Independent forward/reverse subtraction
+  // circuits can otherwise exhaust bounded SAT search for the same footprint.
+  // A retained root-plus-offset relation may already supply a shorter distance.
+  // Empty object domains retain the prior query shape.
+  if (!NormalizedDistance && !Options.EntryFrameExcludedObjects.empty())
+    NormalizedDistance = Ctx.mkSub(Left, Right);
+  if (NormalizedDistance)
+    return Ctx.mkOr(
+        Ctx.mkUlt(NormalizedDistance, Ctx.mkConst(64, RightBytes)),
+        Ctx.mkUlt(Ctx.mkNeg(NormalizedDistance), Ctx.mkConst(64, LeftBytes)));
+  return Ctx.mkOr(
+      Ctx.mkUlt(Ctx.mkSub(Left, Right), Ctx.mkConst(64, RightBytes)),
+      Ctx.mkUlt(Ctx.mkSub(Right, Left), Ctx.mkConst(64, LeftBytes)));
+}
 
 bool Specializer::chargeObjectWork(uint64_t Count) {
   if (Result.EvaluatedOperations > Options.MaxOperations ||

@@ -106,6 +106,83 @@ TEST_F(PEFixedImageTest, EntryObjectsPreserveSymbolicCopiesAndSpills) {
   EXPECT_TRUE(Short.Residual.Blocks.empty());
 }
 
+TEST_F(PEFixedImageTest, EntryObjectsProveCellsBeyondDeclaredFrameSeparately) {
+  for (bool SavedPointer : {false, true}) {
+    for (uint8_t Bias : {0U, 7U, 8U, 240U}) {
+      SCOPED_TRACE(SavedPointer);
+      SCOPED_TRACE(unsigned(Bias));
+      // The cell at +8 is outside the declared frame. Its current value needs
+      // a separate complete-footprint proof even after whole-frame separation.
+      std::vector<uint8_t> Code =
+          SavedPointer
+              ? std::vector<uint8_t>{0x48, 0x89, 0x64, 0x24, 8}
+              : std::vector<uint8_t>{0x48, 0xc7, 0x44, 0x24, 8, 42, 0, 0, 0};
+      const uint8_t Address[] = {
+          0x49, 0x89, 0xc8,                                   // mov r8,rcx
+          0x49, 0xf7, 0xd0,                                   // not r8
+          0x49, 0x89, 0xc9,                                   // mov r9,rcx
+          0x49, 0x81, 0xf1, Bias,           0,    0,    0,    // xor r9,Bias
+          0x4d, 0x89, 0xca,                                   // mov r10,r9
+          0x49, 0xf7, 0xd2,                                   // not r10
+          0x49, 0x81, 0xca, uint8_t(~Bias), 0xff, 0xff, 0xff, // or r10,~Bias
+          0x49, 0xf7, 0xd2,                                   // not r10
+          0x4d, 0x89, 0xcb,                                   // mov r11,r9
+          0x4d, 0x09, 0xd3,                                   // or r11,r10
+          0x4d, 0x89, 0xdc,                                   // mov r12,r11
+          0x49, 0xf7, 0xd4,                                   // not r12
+          0x4d, 0x09, 0xc4,                                   // or r12,r8
+          0x49, 0xf7, 0xd4,                                   // not r12
+          0x49, 0x89, 0xcd,                                   // mov r13,rcx
+          0x4d, 0x31, 0xdd,                                   // xor r13,r11
+          0x4d, 0x31, 0xe5,                                   // xor r13,r12
+          0x4d, 0x89, 0xce,                                   // mov r14,r9
+          0x4d, 0x09, 0xd6,                                   // or r14,r10
+          0x4d, 0x09, 0xee,                                   // or r14,r13
+          0x49, 0xf7, 0xd6,                                   // not r14
+          0x4d, 0x31, 0xc6,                                   // xor r14,r8
+          0x4d, 0x09, 0xc6,                                   // or r14,r8
+          0x49, 0xf7, 0xd6,                                   // not r14
+          0x4d, 0x8d, 0xb6, Bias,           0,    0,    0, // lea r14,[r14+Bias]
+          0x49, 0x89, 0x16};                               // mov [r14],rdx
+      Code.insert(Code.end(), std::begin(Address), std::end(Address));
+      if (SavedPointer)
+        Code.insert(Code.end(),
+                    {0x48, 0x8b, 0x64, 0x24, 8, 0xb8, 42, 0, 0, 0, 0xc3});
+      else
+        Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 8, 0xc3});
+      auto Loaded = load(machineExitFixture(Code));
+      ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+      auto O = entryObjectOptions();
+      O.EntryFrameBounds->Begin = -4096;
+      O.EntryFrameExcludedObjects[0].End = 256;
+      O.ProveStoreReturnSlotSeparation = true;
+      const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+      if (SavedPointer && Bias < 8) {
+        EXPECT_FALSE(R.complete());
+        EXPECT_TRUE(R.Residual.Blocks.empty());
+        continue;
+      }
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      for (uint64_t Object : {0x8008U, 0x8010U, 0x9000U, 0x6000U}) {
+        SCOPED_TRACE(Object);
+        auto Actual = machineExitState(0x8000);
+        Actual.write(NdVar::reg(x86reg::RCX, 8), Object);
+        auto Expected = Actual;
+        Expected.memory(0x8008, SavedPointer ? 0x8000 : 42, 8);
+        Expected.memory(Object + Bias, Actual.read(NdVar::reg(x86reg::RDX, 8)),
+                        8);
+        const auto Return =
+            SavedPointer ? 42 : machineExitWord(Expected, 0x8008);
+        ASSERT_TRUE(Actual.run(R, O)) << Actual.Diagnostic;
+        EXPECT_EQ(Actual.read(NdVar::reg(x86reg::RAX, 8)), Return);
+        EXPECT_EQ(Actual.read(NdVar::reg(x86reg::RSP, 8)), 0x8000U);
+        EXPECT_EQ(Actual.read(NdVar::reg(x86reg::R14, 8)), Object + Bias);
+        EXPECT_EQ(Actual.Memory, Expected.Memory);
+      }
+    }
+  }
+}
+
 TEST_F(PEFixedImageTest, EntryObjectsRejectMalformedBindingsBeforeEvaluation) {
   auto Loaded = load(machineExitFixture({0xc3}));
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
