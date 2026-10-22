@@ -5,6 +5,23 @@ analysis and comparison output belong outside the repository.
 
 ## Open
 
+Windows provider declarations now include NDIS, filter manager, NETIO,
+storage, USB and HID APIs, with explicit x86/x64 layout and SDK HighC/LLVMC
+coverage. User libraries include more networking, security and device APIs.
+An export inventory is only a coverage audit; undocumented and ordinal-only
+exports still require authenticated declarations. ARM64 kernel headers remain
+unavailable in the MinGW DDK input.
+
+The shared call-read summary excludes register copies proved overwritten before
+observation, including CPUID scratch exchanges. Calls, exits, partial writes
+and exceptional edges keep their incoming evidence. A VM entry that stores
+registers into an escaping machine-state frame can still have genuine inputs
+unknown after earlier calls; never erase those inputs or replace them with zero.
+Readonly scalar loads among instruction bytes reuse the immutable code reader's
+mapping and relocation checks. Default source cleanup also folds exact integer
+idempotence and absorption without symbolic search. Runtime-indexed memory and
+unresolved relocatable code identities remain separate recovery requirements.
+
 Mapped LLVM C now keeps array and record allocations out of scalar variable
 typing, including frames larger than the supported integer width. HighC and
 LLVM C annotate image blocks with the shared string scanner's text and encoding
