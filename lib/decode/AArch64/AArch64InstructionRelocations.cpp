@@ -1,10 +1,15 @@
-//===- InstructionRelocationsAArch64.cpp - AArch64 relocation fields -----===//
+//===- AArch64InstructionRelocations.cpp - AArch64 relocation fields -----===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Instruction relocation fields for AArch64.
+///
+//===----------------------------------------------------------------------===//
 
-#include "InstructionRelocationsDetail.h"
+#include "../InstructionRelocationsDetail.h"
 
 #include "neverd/loader/BinaryImage.h"
 
