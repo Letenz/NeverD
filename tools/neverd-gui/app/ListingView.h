@@ -2,6 +2,7 @@
 
 #include "Address.h"
 #include "StyledText.h"
+#include "ViewSearch.h"
 
 #include <QAbstractScrollArea>
 #include <QPointer>
@@ -67,6 +68,13 @@ public:
   void clear();
   /// Find \p text forward from the cursor among the loaded lines.
   bool findInLoaded(const QString &text, bool forward);
+  /// Searchable loaded rows, including the currently visible address prefixes.
+  QString searchText() const;
+  bool searchReady() const { return rowsCurrent(); }
+  std::pair<int, int> searchSelection() const;
+  bool selectSearchRange(int begin, int length);
+  void setSearchHighlight(const ViewSearchQuery &query);
+  QString searchSeed() const;
   /// A jump was requested and its lines have not arrived yet.
   bool jumpPending() const { return pendingJump_.has_value(); }
 
@@ -80,6 +88,8 @@ signals:
   void contentPainted();
   /// The lines of a requested jump arrived (or the jump failed).
   void jumpSettled();
+  void searchDocumentChanged();
+  void cursorChanged();
 
 protected:
   void paintEvent(QPaintEvent *event) override;
@@ -144,6 +154,7 @@ private:
   std::optional<std::pair<int, int>> anchor_; // selection anchor (line, col)
   bool selecting_ = false;
   QString highlight_;
+  ViewSearchQuery SearchHighlight;
   QString generation_;
   QString revision_;
   bool showPrefixes_ = true;
