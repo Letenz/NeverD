@@ -2159,3 +2159,11 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 يغطي `NativeQueryTrace.*` الإجابات المستقلة والتوسعات الصفرية الأربعة وتغيير المحددات والعدد والترتيب والمحددات غير المعرّفة وتشابك القراءات وكل الفروع والحالة المحفوظة وتدقيق الترميز والتفاصيل والحزم غير الصالحة والميزانيات والبصمات ورفض الواجهات الثابتة والاستقرائية. يفحص `NativeScalarQueryDescriptor.*` حدود الوصف العامة وربط الإيصالات الفعلية.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+تختبر حالات الانحدار الاحتفاظ الدقيق بـ CC وF1 وCD 03، ورفض البيانات الوصفية المزورة، ومخارج المنطقة دون خلفاء، وميزانيات العمليات الكافية بالضبط أو الناقصة. لا يمكن لفخ مقدم كعملية عادية أن يستمر إلى RETURN في التعليمة نفسها أو التالية. يشمل إثبات الأصل أيضًا UD2: تحتفظ الفخاخ التي يتعذر الوصول إليها بتدقيق Missing، وتُرفض اختلافات نوع الاستثناء أو البايتات أو التدقيق. تمنع الفخاخ القابلة للوصول إثبات الأصل والتنقيح مقابل مرشح ذي عودة عادية.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+تتحقق هذه الاختبارات من المناطق المعلنة، ولا تثبت معالجة الاستثناءات أو تكافؤ المصدر والتنفيذ الأصلي.

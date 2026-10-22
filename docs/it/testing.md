@@ -2229,3 +2229,11 @@ Le regressioni della memoria assoluta coprono gruppi limitati contigui e sparsi,
 `NativeQueryTrace.*` copre risposte indipendenti, quattro estensioni zero, mutazioni di selettori/numero/ordine, selettori indefiniti, letture intercalate, tutti i rami, stato preservato, audit di codifica/dettagli, gruppi errati, budget, impronte e rifiuti statici/induttivi. `NativeScalarQueryDescriptor.*` verifica limiti generici e vincolo delle ricevute effettive.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+Le regressioni verificano la conservazione esatta di CC, F1 e CD 03, il rifiuto dei metadati falsificati, le uscite senza successori e i budget di operazioni esatti o insufficienti. Un trap fornito come operazione ordinaria non può proseguire fino a un RETURN nella stessa istruzione o nella successiva. La prova originale copre anche UD2: i trap irraggiungibili conservano l’audit Missing e le differenze di eccezione, byte o audit vengono rifiutate. Un trap raggiungibile impedisce la prova originale e il raffinamento rispetto a un candidato con ritorno ordinario.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+Queste verifiche qualificano le regioni dichiarate, senza provare la gestione delle eccezioni o l’equivalenza sorgente/native.

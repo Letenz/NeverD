@@ -409,7 +409,7 @@ public:
     }
     if (Decode.isFunctionTerminator(Insn) &&
         B.Control == LowInstructionControl::None) {
-      if (Insn.Id != X86_INS_INT3 && Insn.Id != X86_INS_UD2)
+      if (!Decode.isResumableTrap(Insn) && Insn.Id != X86_INS_UD2)
         return llvm::createStringError(llvm::errc::not_supported,
                                        "unsupported machine terminator");
       // Preserve strictly lifted traps for whole-original-graph inspection.

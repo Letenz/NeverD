@@ -423,10 +423,11 @@ expandX64MachineExit(const SpecializationInstruction &Instruction,
       return invalid("machine JMP exit requires an unconditional near jump");
     break;
   case Kind::Trap:
-    if ((Insn.Id != X86_INS_INT3 && Insn.Id != X86_INS_INT1) ||
-        Instruction.IsNativeCall ||
+    if (!Decode.isResumableTrap(Insn) || Instruction.IsNativeCall ||
         Native != SpecializationNativeStackControl::None ||
-        B.Control != LowInstructionControl::Terminator)
+        B.Control != LowInstructionControl::Terminator || B.Immediate ||
+        B.ControlFlags != (LowInstructionControlFlag::Terminator |
+                           LowInstructionControlFlag::Resumable))
       return invalid("machine trap exit requires a resumable trap terminator");
     break;
   default:
@@ -443,15 +444,16 @@ expandX64MachineExit(const SpecializationInstruction &Instruction,
   }
   const auto OriginalDigest = lowUndefinedOperationDigest(Instruction.Ops);
   if (Declaration.Kind == Kind::Trap) {
-    // A trap's complete lift carries the trap's own undefined effect, so the
-    // ordinary "no undefined effects" span check does not apply. Verify the
-    // declared bytes re-lift to the same ops and that the provider's recorded
-    // effect metadata matches that fresh lift, then end the region on the
-    // retained trap without modeling any transfer, target or continuation.
+    // The trap has no exception-state audit. Authenticate the retained effect
+    // without upgrading Missing coverage or accepting invented arbitrary
+    // outputs or preservation claims from the provider.
     if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||
         Instruction.UndefinedEffects.Coverage != Effects.Coverage ||
         Instruction.UndefinedEffects.OpCount != Effects.OpCount ||
-        Instruction.UndefinedEffects.OperationDigest != OriginalDigest)
+        Instruction.UndefinedEffects.OperationDigest != OriginalDigest ||
+        !Effects.Effects.empty() ||
+        !Instruction.UndefinedEffects.Effects.empty() ||
+        Instruction.PreservedState != LowInstructionPreservedState{})
       return invalid("machine trap exit bytes differ from the complete lifted "
                      "span");
     NativeStackExpansion Result;
@@ -462,6 +464,7 @@ expandX64MachineExit(const SpecializationInstruction &Instruction,
     Result.Receipt.OriginalOperationDigest = OriginalDigest;
     Result.Receipt.ExpandedOperationDigest = OriginalDigest;
     Result.Receipt.ReturnMode = NativeReturnExpansion::OuterFunctionBoundary;
+    Result.RetainedTerminator = true;
     return Result;
   }
   if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||

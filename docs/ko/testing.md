@@ -2123,3 +2123,11 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NativeQueryTrace.*`는 독립 결과, 네 가지 0 확장, 인자·횟수·순서 변경, 미정의 인자, 일반 읽기 교차, 모든 분기, 보존 상태, 인코딩·세부 감사, 잘못된 묶음, 예산, 다이제스트, 정적·귀납 거부를 검사합니다. `NativeScalarQueryDescriptor.*`는 공통 기술 제한과 실제 기록의 결합을 검사합니다.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+트랩 회귀는 CC, F1, CD 03의 정확한 유지, 위조 메타데이터 거부, 후속 경로 없는 영역 출구, 정확한 연산 예산과 부족한 예산을 검사합니다. 일반 공급자의 트랩은 같은 명령 또는 다음 명령의 RETURN으로 진행할 수 없습니다. 원본 증명은 UD2도 포함하며, 도달 불가능한 트랩의 Missing 감사를 유지하고 예외 종류, 바이트 또는 감사 불일치를 거부합니다. 도달 가능한 트랩은 원본 증명 및 일반 반환 후보에 대한 정제를 거부하게 합니다.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+이 검사는 선언된 영역을 검증하며 예외 처리나 소스/native 동등성을 증명하지 않습니다.

@@ -372,42 +372,79 @@ TEST_F(PEFixedImageTest, MachineExitLookupUsesBoundedIndexedWork) {
 }
 
 TEST_F(PEFixedImageTest, MachineTrapExitEndsRegionAtDeclaredTrap) {
-  // NOP; NOP; INT3. A declared Trap exit ends the region at the trap: the
-  // trap effect is retained and no continuation is modeled.
-  auto Loaded = load(machineExitFixture({0x90, 0x90, 0xcc}));
-  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
-  auto O = machineExitOptions(Base + 0x1002, MachineExitKind::Trap);
-  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
-  ASSERT_TRUE(R.complete()) << R.Diagnostic;
-  ASSERT_TRUE(R.RawEnvironment);
-  ASSERT_EQ(R.ExternalExits.size(), 1u);
-  ASSERT_TRUE(R.ExternalExits.front().MachineExit);
-  EXPECT_EQ(R.ExternalExits.front().MachineExit->Address, Base + 0x1002);
-  EXPECT_EQ(R.ExternalExits.front().MachineExit->Kind, MachineExitKind::Trap);
+  const std::vector<uint8_t> Encodings[] = {{0xcc}, {0xf1}, {0xcd, 0x03}};
+  for (const auto &Trap : Encodings) {
+    SCOPED_TRACE(unsigned(Trap.front()));
+    // NOP; NOP; INT3/INT1; RET. The declared trap ends the region before RET.
+    std::vector<uint8_t> Code{0x90, 0x90};
+    Code.insert(Code.end(), Trap.begin(), Trap.end());
+    Code.push_back(0xc3);
+    auto Loaded = load(machineExitFixture(Code));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    auto O = machineExitOptions(Base + 0x1002, MachineExitKind::Trap);
+    const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    ASSERT_TRUE(R.RawEnvironment);
+    ASSERT_EQ(R.ExternalExits.size(), 1u);
+    ASSERT_TRUE(R.ExternalExits.front().MachineExit);
+    EXPECT_EQ(R.ExternalExits.front().MachineExit->Address, Base + 0x1002);
+    EXPECT_EQ(R.ExternalExits.front().MachineExit->Kind, MachineExitKind::Trap);
+    EXPECT_EQ(R.ExternalExits.front().Original.Origin.Size, Trap.size());
+    auto Error = validateSpecializationRawEnvironment(R, O);
+    EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    ASSERT_FALSE(R.Residual.Blocks.empty());
+    const auto &Terminal = R.Residual.Blocks.back();
+    EXPECT_TRUE(Terminal.Succs.empty());
+    ASSERT_FALSE(Terminal.Ops.empty());
+    EXPECT_EQ(Terminal.Ops.back().Opcode, NdOp::INTRINSIC);
+    ASSERT_EQ(Terminal.Ops.back().NumInputs, 1u);
+    EXPECT_EQ(Terminal.Ops.back().Inputs[0].Offset,
+              static_cast<uint64_t>(Trap.front() == 0xf1 ? Intrinsic::Int1
+                                                         : Intrinsic::Int3));
+    for (const auto &B : R.Residual.Blocks)
+      for (const auto &Op : B.Ops)
+        EXPECT_NE(Op.Opcode, NdOp::RETURN);
+    O.MaxOperations = R.EvaluatedOperations;
+    EXPECT_TRUE(
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
+    --O.MaxOperations;
+    const auto Short = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Short.Residual.Blocks.empty());
+    EXPECT_TRUE(Short.ExternalExits.empty());
+  }
 }
 
 TEST_F(PEFixedImageTest, UndeclaredTrapRemainsUnsupported) {
-  // The same trap, left undeclared, still fails closed.
-  auto Loaded = load(machineExitFixture({0x90, 0x90, 0xcc}));
-  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
-  SpecializationOptions O;
-  O.ExplicitMachineState = O.NormalNonfaultingExecution = O.X64CetDisabled =
-      true;
-  O.FrameBaseRegister = symbolic::SymRegisterRange{x86reg::RSP, 8};
-  O.RequireRestoredFrameAtReturn = true;
-  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
-  EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
-  EXPECT_NE(R.Diagnostic.find("opaque native terminator"), std::string::npos);
+  const std::vector<uint8_t> Encodings[] = {{0xcc}, {0xf1}, {0xcd, 0x03}};
+  for (const auto &Trap : Encodings) {
+    SCOPED_TRACE(unsigned(Trap.front()));
+    // The same trap, left undeclared, still fails closed.
+    auto Loaded = load(machineExitFixture(Trap));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    SpecializationOptions O;
+    O.ExplicitMachineState = O.NormalNonfaultingExecution = O.X64CetDisabled =
+        true;
+    O.FrameBaseRegister = symbolic::SymRegisterRange{x86reg::RSP, 8};
+    O.RequireRestoredFrameAtReturn = true;
+    const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
+    EXPECT_NE(R.Diagnostic.find("opaque native terminator"), std::string::npos);
+  }
 }
 
 TEST_F(PEFixedImageTest, MachineTrapExitRejectsNonTrapInstruction) {
-  // A Trap declaration on a non-trap instruction fails closed.
-  auto Loaded = load(machineExitFixture({0x90, 0x90, 0xcc}));
-  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
-  auto O = machineExitOptions(Base + 0x1000, MachineExitKind::Trap);
-  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
-  EXPECT_FALSE(R.complete());
-  EXPECT_EQ(R.Status, SpecializationStatus::InvalidInput);
+  const std::vector<uint8_t> Encodings[] = {{0x90}, {0x0f, 0x0b}, {0xcd, 0x02}};
+  for (const auto &Code : Encodings) {
+    SCOPED_TRACE(unsigned(Code.front()));
+    // NOP, UD2 and INT 2 do not have the declared resumable-trap contract.
+    auto Loaded = load(machineExitFixture(Code));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    auto O = machineExitOptions(Base + 0x1000, MachineExitKind::Trap);
+    const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    EXPECT_FALSE(R.complete());
+    EXPECT_EQ(R.Status, SpecializationStatus::InvalidInput);
+  }
 }
 
 TEST_F(PEFixedImageTest, MachineExitIntegrityBudgetsAndOrdinaryConsumers) {

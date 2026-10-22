@@ -10,7 +10,9 @@
 #include "X64MachineFlags.h"
 
 #include "neverd/analysis/Limits.h"
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/support/ISAEncoding.h"
 #include "neverd/symbolic/SymState.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -494,23 +496,46 @@ bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
       Insn.Origin.Immediate || Insn.IsNativeCall ||
       Insn.NativeStackControl != SpecializationNativeStackControl::None ||
       Insn.ProfileProjection != InterpreterProfileProjection::None ||
-      Insn.Ops.size() != 1 || !Insn.UndefinedEffects.Effects.empty() ||
+      Insn.TerminalImport || Insn.NativeBytes.empty() ||
+      Insn.NativeBytes.size() > x86::kMaxInstructionLen ||
+      Insn.NativeBytes.size() != Insn.Origin.Size || Insn.Ops.size() != 1 ||
+      !Insn.UndefinedEffects.Effects.empty() ||
       Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
+      Insn.UndefinedEffects.OpCount != Insn.Ops.size() ||
+      Insn.PreservedState != LowInstructionPreservedState{} ||
       Insn.UndefinedEffects.OperationDigest !=
           lowUndefinedOperationDigest(Insn.Ops))
     return false;
-  const auto &Op = Insn.Ops.front();
-  if (Op.Opcode != NdOp::INTRINSIC || Op.Output.Size || Op.NumInputs != 1 ||
-      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
-      Op.MemoryOrdering != NdMemoryOrdering::None ||
-      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+  Decoder Decode;
+  Decode.init(Arch::X64);
+  Decode.setStrict(true);
+  DecodedInsn Native{};
+  if (!Decode.decodeOneForLift(Insn.NativeBytes.data(), Insn.NativeBytes.size(),
+                               Insn.Origin.Address, Native) ||
+      Native.Size != Insn.NativeBytes.size())
     return false;
   auto Flags = LowInstructionControlFlag::Terminator;
-  if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int3))
+  if (Decode.isResumableTrap(Native))
     Flags |= LowInstructionControlFlag::Resumable;
-  else if (Op.Inputs[0].Offset != static_cast<uint64_t>(Intrinsic::Ud2))
+  else if (Native.Id != X86_INS_UD2)
     return false;
-  return Insn.Origin.ControlFlags == Flags;
+  if (Insn.Origin.ControlFlags != Flags)
+    return false;
+  // Use the decoder's trap classification and exact lift, including INT1 and
+  // both INT3 spellings. A self-consistent sidecar cannot authenticate bytes
+  // which describe a different operation or exception.
+  std::vector<LowOp> Expected;
+  LowInstructionUndefinedEffects Effects;
+  try {
+    Decode.liftToLow(Native, Expected, {}, {}, &Effects);
+  } catch (const UnliftedInstruction &) {
+    return false;
+  }
+  return lowUndefinedOperationDigest(Expected) ==
+             Insn.UndefinedEffects.OperationDigest &&
+         Effects.Coverage == Insn.UndefinedEffects.Coverage &&
+         Effects.OpCount == Insn.UndefinedEffects.OpCount &&
+         Effects.Effects.empty();
 }
 
 // Intel SDM: disabled shadow stacks make RDSSPD/RDSSPQ a NOP, including no
