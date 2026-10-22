@@ -103,7 +103,15 @@ ListingView::ListingView(Session &session, const AddressSpace &space,
   connect(&session_, &Session::generationChanged, this, &ListingView::refresh);
   connect(&session_, &Session::opened, this, &ListingView::clear);
   connect(&session_, &Session::unloaded, this, &ListingView::clear);
-  connect(&session_, &Session::revisionChanged, this, &ListingView::refresh);
+  connect(&session_, &Session::revisionChanged, this, [this] {
+    // Local pseudocode names do not change assembly. Adopt the new revision
+    // only for settled rows; a pending semantic refresh must still complete.
+    if (session_.queries().localNamesOnly() && !pendingJump_ &&
+        contentSerial_ == serial_ && generation_ == session_.generation())
+      revision_ = session_.revision();
+    else
+      refresh();
+  });
   updateMetrics();
 }
 

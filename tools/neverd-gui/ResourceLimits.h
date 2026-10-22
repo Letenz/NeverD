@@ -39,6 +39,10 @@ inline constexpr int kChooserViewChooserModelRequestPageTextLimit = 400;
 
 // tools/neverd-gui/app/CodeView.cpp
 inline constexpr int kCodeViewPageLines = 256;
+/// A completed function's display-name refresh can batch existing text. Keep
+/// the interactive first load small, and retry it if a batch exceeds bytes.
+inline constexpr int kCodeViewNameRefreshPageLines =
+    ::neverd::sdk::kMaxCodeViewPageLines;
 
 // tools/neverd-gui/app/DisassemblyView.cpp
 inline constexpr std::size_t kDisassemblyViewMaxHistory = 512;

@@ -32,6 +32,7 @@ bool cacheable(const QString &operation) {
 bool readable(const QString &operation) {
   static const QSet<QString> operations{"metadata",
                                         "analysis_snapshot",
+                                        "code_edit_prepare",
                                         "history",
                                         "annotations",
                                         "contributions",
@@ -200,6 +201,7 @@ struct QueryService::State {
   quint64 listing = 0;
   Id nextSubscription = 0;
   QString project, revision = "0";
+  bool localNamesOnly = false;
   qsizetype queuedBytes = 0;
   QHash<quint64, JobPtr> jobs;
   QHash<Id, Subscription> subscriptions;
@@ -621,6 +623,13 @@ struct QueryService::State {
       else if (changed)
         cache.clear();
       if (changed) {
+        localNamesOnly = !opening && status == "ok" &&
+                         job->spec.operation == "code_edit" &&
+                         job->spec.payload.value("kind") == "name" &&
+                         response.value("payload")
+                             .toObject()
+                             .value("local_names_only")
+                             .toBool();
         const QPointer<QueryService> guard(q);
         emit q->contextChanged();
         if (!guard || active != job || !jobs.contains(job->id))
@@ -753,6 +762,7 @@ void QueryService::resetSession() {
   state_->available = false;
   state_->project.clear();
   state_->revision = "0";
+  state_->localNamesOnly = false;
   state_->retire({}, "worker_stopped");
   const QPointer<QueryService> guard(this);
   emit contextChanged();
@@ -780,6 +790,7 @@ void QueryService::resetReadContext(const QString &project,
 bool QueryService::available() const { return state_->available; }
 QString QueryService::projectId() const { return state_->project; }
 QString QueryService::revision() const { return state_->revision; }
+bool QueryService::localNamesOnly() const { return state_->localNamesOnly; }
 quint64 QueryService::sessionEpoch() const { return state_->epoch; }
 bool QueryService::analysisComplete() const { return state_->analysisComplete; }
 bool QueryService::hasPending() const { return state_->pending(); }

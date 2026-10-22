@@ -1121,6 +1121,30 @@ escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
 Timing-independent cache tests complement
 `source_revisit_bench.py`, which measures complete real source pages.
 
+`NeverDWorkerLocalNameCache` checks unchanged preparation/page counters through
+repeated local renames, clearing aliases, readonly replica updates, rejected
+collisions and obsolete targets. Changed input identities, annotations and
+source comments cannot enter the name-only refresh path, and a stale committed
+sidecar is refused without changing the replica. The workbench's
+`localNameEditsReuseTheIdleAnalysisReplica` also checks the process identity,
+unchanged preparation counters and full retirement after a source comment.
+`localNameLatencyOnOptionalNativeInput` accepts `NEVERD_RENAME_BENCH_WORKER`,
+`NEVERD_RENAME_BENCH_INPUT`, optional `NEVERD_RENAME_BENCH_PDB`, the function's
+`NEVERD_RENAME_BENCH_TARGET` and selected `NEVERD_RENAME_BENCH_LOCAL`. It reports
+dialog preparation separately from confirmed rename to complete code refresh;
+absent external inputs are skipped, not native performance evidence.
+Completed local-name refreshes use larger bounded pages. The worker and
+workbench checks also request a document larger than one page's byte allowance
+and verify every line survives its returned continuations.
+The workbench observes that refresh throughout the read: it must never expose a
+partial document or move either scrollbar. It checks the cursor and complete
+selection after changing identifier length, and cancellation, function switches
+and closing a project must retire buffered pages. The optional native rename
+case selects the GS-based thread lookup, preserving the folded prelude and its
+place through successive renames.
+Local name edits leave settled assembly and graph views alone; source comments
+retain semantic invalidation.
+
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
 It also checks that statement navigation without library or call-expression
