@@ -1,0 +1,44 @@
+//===- DataFlowJSON.h - Persisted and paged dependency evidence -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Shared bounded records for saved SSA observations, graph/slice pages and
+/// settings. Parsing checks structure; native binding must recheck provenance.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_DIFF_DATAFLOWJSON_H
+#define NEVERD_DIFF_DATAFLOWJSON_H
+
+#include "neverd/diff/FlowEvidence.h"
+
+#include "llvm/Support/JSON.h"
+
+namespace neverd::diff {
+inline constexpr unsigned DataFlowSchemaVersion = 2;
+llvm::json::Object dataFlowOptionsJSON(const DataFlowOptions &Options);
+DataFlowOptions readDataFlowOptions(const llvm::json::Value &Value);
+llvm::json::Object dataFlowSettingsJSON(const DataFlowSettings &Settings);
+DataFlowSettings readDataFlowSettings(const llvm::json::Value &Value);
+llvm::json::Object dataFlowEvidenceSummary(const DataFlowEvidence *Evidence);
+void writeDataFlowEvidence(llvm::json::OStream &Out,
+                           const DataFlowEvidence *Evidence);
+std::shared_ptr<const DataFlowEvidence>
+readDataFlowEvidence(const llvm::json::Value &Value,
+                     const DataFlowSettings &Settings);
+llvm::json::Object dataFlowEntriesJSON(const DataFlowEvidence &Evidence,
+                                       uint64_t Offset, unsigned Limit);
+/// Stream one graph without building a second complete node inventory.
+void writeDataFlowGraph(llvm::json::OStream &Out, const DataFlowGraph &Graph);
+DataFlowGraph readDataFlowGraph(const llvm::json::Value &Value,
+                                const DataFlowOptions &Options = {});
+llvm::json::Object dataFlowNodeJSON(const DataFlowGraph &Graph, uint32_t Node);
+llvm::json::Object dataFlowPageJSON(const DataFlowGraph &Graph, bool Blocks,
+                                    uint64_t Offset, unsigned Limit);
+llvm::json::Object dataFlowSliceJSON(const DataFlowGraph &Graph,
+                                     const FlowSlice &Slice, uint64_t Offset,
+                                     unsigned Limit);
+} // namespace neverd::diff
+
+#endif // NEVERD_DIFF_DATAFLOWJSON_H

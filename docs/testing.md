@@ -923,6 +923,158 @@ skips and are failures in the main CI outcome audit.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## Structural binary comparison
+
+The region suite includes owned x86 assembly with exact split boundaries, native
+SDK span paging, persistence/tamper rejection, worker parity and a real paged Qt
+review window. Synthetic cases separately exercise overlapping clones, internal
+call evidence for inline/outline, tails, suppression and cooperative stop. These
+fixtures do not qualify arbitrary compiler transformations or cross-ISA matching.
+
+Build `NeverDBinaryDiffTests`, `NeverDBinaryDiffFlowPipelineTests`,
+`NeverDBinaryDiffSDKTests`, `neverd`,
+`neverd-worker` and, with Qt enabled, `neverd-gui-comparison-tests`.
+The core tests check matching, ambiguity, deltas, deterministic correspondence,
+manual overrides, persistence and cancellation. SDK tests exercise authored
+native machine code through the real raw loader and shared decoder. CLI/worker
+checks compile the owned `unittests/diff/patch_fixture.c` and compare the same
+saved schema across public surfaces, including failure and stale-result refusal.
+Function-detail tests cancel a real large native alignment while polling status,
+check its cached stop state and unclassified CFG, then refresh and time out a new
+calculation. The real Qt/worker test verifies that a stopped page exposes Retry
+difference and that retry restores bounded rows. These inputs are not executed.
+Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
+parameter/clobber identity, unobserved effects and bounded neighborhoods.
+Call-argument projection checks backward/forward dependencies missing from raw
+call operands, exact owner/span binding, preserved clobber inputs, absent versus
+zero-argument summaries and schema-2 round trips. The compiled CLI fixture also
+requires retained recovered argument records through the real native pipeline.
+`BinaryDiffFlowRegions` checks split/merge/inline/outline alternatives, nested
+overlap versus actual one-to-many node mappings, origin and frequency admission,
+coverage, cooperative stops and rederived saved facts. SDK/CLI/worker/Qt region
+checks inspect bounded paired nodes and original bytes and retain unclassified
+anchors after a grouping stop. These are owned local fixtures, not compiler
+family or competitive-baseline qualification.
+`BinaryDiffImpact` checks native caller/callee witnesses, tails, resolved imports,
+recursion, duplicate sites, multiple seeds, missing indirect callers, entry traits,
+depth/storage/work frontiers and cancellation. SDK integration checks original
+call bytes, input lifetime and reopen parity. CLI and worker compare shared
+records on compiled functions; Qt checks caller navigation, global unresolved
+scope, partial depth, input changes and queued cancellation. This qualifies
+possible call reachability, not interprocedural parameter/return or alias effects.
+`BinaryDiffObservations` checks literal/width/signedness separation, predicate
+and return contexts, recovered call arity, address-independent call targets,
+synthetic anchors, ambiguous origins, input ownership and bounded stops. The
+real x64 SDK fixture retains an unchanged branch's direct synthetic predicate
+alongside the changed original compare; it also checks input lifetime, cache,
+filtering, mapping edits and reopen. A large native fixture checks cancellation,
+cached stop state, refresh and a shared deadline. CLI/worker checks use the owned
+compiled patch fixture; Qt exercises native/SSA association display, context
+filters, slices, call paths, input changes and native-only fallback. These are
+local evidence contracts, not vulnerability or patch-effect qualification.
+`BinaryDiffReview` checks append-only case links, stale heads, invalid text and
+assessments, input/analysis identity binding and UTF-8/size admission before
+canonical encoding, manual versus computed evidence,
+independent mapping undo, strict JSON and schema-2 migration. SDK tests record,
+page, reopen and reject altered history without losing the live result. CLI and
+worker checks persist shared case records and reject stale append requests. Qt
+checks explicit recording, latest/history paging, save/export, mapping changes
+and preservation of draft text without rebinding it to changed inputs. These
+fixtures test record integrity and attribution, not author authentication or the
+truth of manual patch/security assessments.
+`BinaryDiffCallEffects` covers exact import identity, arity, native-origin SSA
+association, ambiguity, ABI refusal, fallible release, preserved alias/call gaps,
+bounded scope and cancellation. `NeverDBinaryDiffCallEffects` compiles an owned
+Linux x64 ELF shared image with memcpy/free/custom imports and a two-level call
+chain. It compares CLI, direct C API and available worker output, then checks
+missing SSA, pagination, limits, cache refresh and fresh reopen. The Qt fixture
+uses the same source and checks visible roles/assumptions, scope changes and
+missing-SSA display. Other hosts skip this ELF-only GUI fixture explicitly.
+No fixture is executed. These tests qualify import-site contracts and provenance,
+not cross-function argument propagation, path safety or vulnerability removal.
+`BinaryDiffScalarValidation.*` checks copied provenance, original-entry and GPR
+binding, canonical source-bound unwind-only projection, handler/LSDA and
+incomplete/unbound/noncanonical metadata refusal, poison obligations, finite budgets
+and stopped results. SDK cases lift different owned arithmetic encodings, retain
+input-width/GPR mismatches and memory as unsupported, reject stale borrowed
+sessions, cancel native rebinding, time out, retry and recompute after reopen.
+Owned-input cases check slot/handle alias refusal, transfer on admission even
+when analysis fails, invalid/reused admission without transfer, retained bytes
+after path replacement/removal, borrowed stale-side refusal against that capture,
+partial native-capture refusal, and fresh lift cancellation/deadline/retry.
+`NeverDBinaryDiffScalarValidation` compiles one owned pure-arithmetic/memory C
+family at Clang O1/O2 on Linux x64; it checks CLI/direct C API/available-worker
+parity, changed-return nonproof, ordinary DWARF frame-only admission, bounds,
+fresh reopen and source retention after failed replacement. This is a functional
+fixture, not optimizer-family or held-out qualification. The Qt case checks
+visible assumptions and input binding mode, result/report agreement, adjustable
+native/proof budgets and successful retry after exhaustion. Old results clear
+on budget/mapping/input changes, with optional light/dark minimum-window captures.
+None of these binaries
+is executed. Also build/run `NeverDLLVMScalarEquivalenceTests` when changing the
+shared importer or prover; strict noundef defaults, explicit defined-input
+preconditions and construction/proof cancellation remain independently tested.
+`NeverDBinaryDiffCompilerRegions` adds one owned unsigned-arithmetic source
+family across Clang ELF `-O0/-O1/-O2/-O3/-Os`, optional native Linux x64 GCC
+at those levels, and Clang Windows x64 COFF `-O0/-O2`. Names are disabled. The
+fixture requires retained finite neighborhoods, keeps a final-constant patch
+visible in the native delta, round-trips the patch report and refuses an ELF/COFF
+ABI mismatch. It never executes generated inputs. Each run retains source/input
+hashes, tool versions, flags, output and a status manifest under
+`unittests/bindiff-compiler-regions` in the build tree. Missing GCC is reported as
+a skipped optional profile; this small family is not held-out accuracy,
+optimization-family, LTO/PGO or competitive qualification.
+`NeverDBinaryDiffFlowPipelineTests` projects owned x64/AArch64 bytes through the
+actual strict lifter and SSA pipeline, checking native origins and that a changed
+scalar survives beyond a short fingerprint's reported open frontier. It neither
+executes those bytes nor qualifies a cross-ISA comparison profile.
+The analysis mode also checks System V call setup through an omitted callee's
+recovered summary, retains call/alias uncertainty, emits no HighIR/LLVM and
+refuses VM or conflicting output modes. It shares the machine ABI stage with
+lifting; run `PipelineOutcome` checks when changing that stage boundary.
+`FunctionDiscoveryCancellation.*` (in `NeverDImageAnalysisBoundaryTests`)
+checks x86/x64/ARM/Thumb/AArch64 scan stops with one and multiple workers,
+unchanged verified entries, decoder reuse, cancellation at the publication
+boundary and empty-complete versus cancelled results. Session discovery tests
+stop an active scan or pending snapshot, retain inventory/revision, retry and
+close an active job. SDK and real-worker comparison checks retain the discovery
+stop phase and incomplete coverage; stopped snapshots never authorize scalar
+validation. Run the image-boundary, session-discovery and comparison suites when
+changing these shared cancellation boundaries. No input instructions execute.
+Dependency integration covers graph/page/slice ownership after sessions close,
+saved SSA fact tampering, native and retained-node admission limits, and the
+CLI/worker/Qt review path. The Qt check switches input sides and disables a new
+collection to verify that old dependency rows cannot remain visible.
+`NeverDDirectTailCallMetadataTests` additionally checks that conditional-entry
+and fallthrough tail stubs retain synthetic operation provenance across x86,
+x64 and AArch64; ordinary decoded direct tails keep original provenance.
+
+```sh
+ctest --test-dir build -L 'NeverDBinaryDiff' --output-on-failure
+ctest --test-dir build -R '^(NeverDWorkerGraph|NeverDWorkerTransport|NeverDWorkerCLIInstructionFlow|SessionFunctionDiscovery\.)' --output-on-failure
+```
+
+The GUI fixture uses the actual worker and isolated settings. It exercises
+pair selection, paged evidence, undo/redo, cancellation and resizable views.
+For visual review, run `neverd-gui-comparison-tests` with
+`QT_QPA_PLATFORM=offscreen`, `NEVERD_DIFF_SCREENSHOTS` naming a disposable output
+directory and `QT_SCALE_FACTOR=1` or `1.5`; inspect the resulting light/dark
+captures. These checks do not qualify other architectures/formats, large-game
+packages or the competitive release gates of issue #1462.
+
+The opt-in `largeScalarValidationRemainsInteractive` Qt case takes
+`NEVERD_DIFF_SCALAR_PROBE_INPUT` and `NEVERD_DIFF_SCALAR_PROBE_ADDRESS` for a
+local native image containing a function supported by the scalar profile. It
+self-compares through the actual comparison window and worker, then performs
+three fresh validation requests through the validation dialog. An event-loop
+heartbeat records its largest observed gap over preparation and queries;
+millisecond timings include result presentation and a subsequent event-loop
+turn. `NEVERD_DIFF_SCALAR_PROBE_REPORT` optionally saves the JSON measurements,
+native hash, lift audit and proof work. Run this case separately from builds or
+other tests when measuring. It skips without the input/address pair and sets no
+performance threshold; offscreen local samples are not desktop, held-out or
+competitive qualification. The selected native function is never executed.
+
 ## GUI function lists and navigation
 
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial

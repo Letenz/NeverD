@@ -153,7 +153,7 @@ void Pipeline::recognizeLibraries(const BinaryImage &Img,
                                   PipelineResult &Result, DebugContext *Dbg) {
   if (!Opts.LibraryFeatures || Opts.LibraryFeatures->empty() ||
       (Img.Arch != Arch::X64 && Img.Arch != Arch::AArch64) ||
-      ((Opts.PatchMode || Opts.LiftMode) && !Opts.SourceProjection))
+      (Opts.usesMachineMedIR() && !Opts.SourceProjection))
     return;
   MedLibraryIdentityIndex Identities(Img);
   // The database owns the pack snapshot. Byte recognition uses the same

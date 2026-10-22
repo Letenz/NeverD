@@ -42,6 +42,7 @@
 #include "neverd/sdk/NeverDCAPIBytecode.h"
 #include "neverd/sdk/NeverDCAPICPU.h"
 #include "neverd/sdk/NeverDCAPIDevirtualize.h"
+#include "neverd/sdk/NeverDCAPIDiff.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIEmulation.h"
 #include "neverd/sdk/NeverDCAPIExecution.h"

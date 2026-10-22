@@ -18,9 +18,10 @@ namespace func_detect_detail {
 
 void scanSegmentCallsARM(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
-                         std::set<va_t> &Out) {
+                         std::set<va_t> &Out, const Cancellation *Control) {
   va_t Cur = Start;
   while (Cur < End) {
+    func_detect_detail::checkCancellation(Control);
     size_t Off = static_cast<size_t>(Cur - Seg->VA);
     if (Off >= Seg->Data.size())
       break;
