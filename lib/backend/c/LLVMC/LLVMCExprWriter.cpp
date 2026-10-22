@@ -460,12 +460,24 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
       ImageObjectSymbols[Name] = std::move(Comment);
   if (Opts.EmitComments)
     if (const auto Text = imageStringComment(Img, Addr)) {
+      ImageObjectStrings[Addr] = *Text;
       auto &Comment = ImageObjectSymbols[Name];
       if (!Comment.empty())
         Comment += "; ";
       Comment += *Text;
     }
   return Name;
+}
+
+std::string LLVMCWriter::imageLoadComment(const llvm::LoadInst &Load) const {
+  if (!Opts.EmitComments || Load.getPointerAddressSpace() != 0)
+    return {};
+  const auto Addr = imageDataVA(Load.getPointerOperand());
+  if (!Addr)
+    return {};
+  namedImageObject(*Addr);
+  const auto It = ImageObjectStrings.find(*Addr);
+  return It == ImageObjectStrings.end() ? std::string() : It->second;
 }
 
 std::string LLVMCWriter::imageObjectSymbolLine(llvm::StringRef Name) const {
@@ -3962,6 +3974,9 @@ std::string LLVMCWriter::aggregateMemberPath(llvm::Type *Ty,
 
 std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
   std::string Text = renderInlineImpl(Inst);
+  if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst))
+    if (const auto Comment = imageLoadComment(*Load); !Comment.empty())
+      Text += " /* " + Comment + " */";
   return SourceRecorder ? SourceRecorder->expression(Inst, std::move(Text))
                         : Text;
 }

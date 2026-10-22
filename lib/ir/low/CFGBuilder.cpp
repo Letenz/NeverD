@@ -1376,6 +1376,22 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   completeExactI386GOTBaseModels(Img);
   JumpTableProofContextComplete = false;
 
+  // Scalar proofs have reached their fixed point. An exact independent
+  // target gets the original transfer's call site, as a decoded direct tail
+  // branch does, instead of a synthetic block at the callee's entry. Earlier
+  // CFG changes can withdraw a proof only while it remains a branch.
+  bool ScalarTailCalls = false;
+  for (auto &[Addr, Rec] : Insns)
+    if (Rec.ScalarBranchInput && Rec.IsBranch && !Rec.IsIndirect &&
+        isTailCallTarget(Rec.BranchTarget) &&
+        !isBackwardSharedEpilogue(Img, CurrentFuncEntry, Addr, Rec.BranchTarget,
+                                  KnownFuncEntries)) {
+      rewriteAsTailCall(Rec);
+      Rec.ScalarBranchInput.reset();
+      ScalarTailCalls = true;
+    }
+  if (ScalarTailCalls)
+    rebuildBlocks(Func);
   convertIndirectTailCalls(Func);
   closeRegistrationCxxContinuations(Img, Dec, Func);
 

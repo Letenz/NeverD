@@ -1467,7 +1467,17 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       SourceRecorder ? SourceRecorder->instruction(Inst) : std::nullopt;
   if (Event)
     OS << SourceRecorder->begin(*Event);
+  const auto *Load =
+      Opts.EmitComments ? llvm::dyn_cast<llvm::LoadInst>(&Inst) : nullptr;
+  const auto Begin = Load ? OS.stream().tell() : 0;
   writeInstructionImpl(Inst, Indent);
+  // Annotate only a read that emitted code. Forwarded or inlined reads must
+  // not leave an orphan comment where their old instruction used to be.
+  if (Load && OS.stream().tell() != Begin)
+    if (const auto Comment = imageLoadComment(*Load); !Comment.empty()) {
+      emitIndent(Indent);
+      OS << "/* " << Comment << " */\n";
+    }
   if (Event)
     OS << SourceRecorder->end(*Event);
 }

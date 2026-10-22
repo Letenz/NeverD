@@ -72,7 +72,7 @@ TEST(CSourcePresentation, AggregateStorageIsNotAnIntegerVariable) {
 TEST(CSourcePresentation, WideImageReadsShowTextInBothCRoutes) {
   struct Case {
     std::vector<uint8_t> Bytes;
-    const char *Text;
+    std::string Text;
   };
   const std::string Long = "A copied string across vector loads";
   std::vector<Case> Cases;
@@ -84,9 +84,10 @@ TEST(CSourcePresentation, WideImageReadsShowTextInBothCRoutes) {
       for (unsigned char Ch : Long)
         for (unsigned I = 0; I < Unit; ++I)
           Bytes.push_back(I == (Big ? Unit - 1 : 0) ? Ch : 0);
+      const char *Encoding = Unit == 2 ? (Big ? "UTF-16BE" : "UTF-16LE")
+                                       : (Big ? "UTF-32BE" : "UTF-32LE");
       Cases.push_back(
-          {std::move(Bytes), Unit == 2 ? (Big ? "UTF-16BE" : "UTF-16LE")
-                                       : (Big ? "UTF-32BE" : "UTF-32LE")});
+          {std::move(Bytes), std::string(Encoding) + " \"" + Long + "\""});
     }
   }
   const std::string Unicode = "中文字符 copied string";
@@ -124,6 +125,14 @@ TEST(CSourcePresentation, WideImageReadsShowTextInBothCRoutes) {
         %value = load i128, ptr inttoptr (i64 8192 to ptr), align 16
         ret i128 %value
       }
+      define i128 @read_volatile_chunk() {
+        %value = load volatile i128, ptr inttoptr (i64 8192 to ptr), align 16
+        ret i128 %value
+      }
+      define i128 @read_unknown(ptr %address) {
+        %value = load volatile i128, ptr %address, align 16
+        ret i128 %value
+      }
     )",
                                             Diagnostic, Context);
     ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
@@ -143,6 +152,24 @@ TEST(CSourcePresentation, WideImageReadsShowTextInBothCRoutes) {
           EXPECT_NE(Text.find(Test.Text), std::string::npos) << Text;
         else
           EXPECT_EQ(Text.find(Test.Text), std::string::npos) << Text;
+        if (LLVM) {
+          for (const char *Name :
+               {"read_chunk", "read_volatile_chunk", "read_unknown"}) {
+            const size_t Function = Text.rfind(std::string(Name) + "(");
+            ASSERT_NE(Function, std::string::npos) << Text;
+            const size_t Begin = Text.find('{', Function);
+            ASSERT_NE(Begin, std::string::npos) << Text;
+            const size_t End = Text.find("\n}", Begin);
+            ASSERT_NE(End, std::string::npos) << Text;
+            // The GUI folds declarations. The load's text must survive in
+            // the visible body, including ordered accesses that cannot inline.
+            const std::string Body = Text.substr(Begin, End - Begin);
+            if (Comments && llvm::StringRef(Name) != "read_unknown")
+              EXPECT_NE(Body.find(Test.Text), std::string::npos) << Body;
+            else
+              EXPECT_EQ(Body.find(Test.Text), std::string::npos) << Body;
+          }
+        }
       }
     }
   }

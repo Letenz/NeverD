@@ -78,6 +78,10 @@ inline constexpr std::size_t kListingMaxOpcodeBytes = 12;
 inline constexpr std::size_t kListingMaxDecodeChunk = 2048;
 inline constexpr std::size_t kListingFirstUnsizedChunk = 64;
 inline constexpr std::size_t kListingDecodeCacheFunctions = 512;
+/// Nearby entries considered for an otherwise unowned navigation address.
+/// Only a recovered instruction, never proximity, establishes ownership.
+inline constexpr std::size_t kListingOwnerSearchFunctions = 16;
+inline constexpr std::uint64_t kListingOwnerSearchDistance = 0x10000;
 inline constexpr std::size_t kListingMaxStringDisplay = 400;
 inline constexpr std::size_t kListingMaxUnsizedInstructions =
     ::neverd::sdk::kMaxUnsizedInstructions;

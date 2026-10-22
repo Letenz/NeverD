@@ -116,6 +116,8 @@ TypeLibrariesView::TypeLibrariesView(Session &session, QWidget *parent)
   connect(&session_, &Session::revisionChanged, this,
           &TypeLibrariesView::reload);
   connect(&session_, &Session::unloaded, this, &TypeLibrariesView::reload);
+  // The first catalogue arrives asynchronously; no choice is available yet.
+  updateButtons();
   reload();
 }
 

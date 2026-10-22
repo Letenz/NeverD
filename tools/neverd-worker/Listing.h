@@ -65,8 +65,8 @@ public:
   /// Resolve a name the listing shows, a function's, a data item's or an
   /// automatic one, to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
-  /// The entry of the function whose chunk, a part apart from its body,
-  /// holds \p address.
+  /// The entry owning an address, including recovered noncontiguous code.
+  /// An unowned address searches a bounded set of nearby function CFGs.
   std::optional<std::uint64_t> chunkOwner(std::uint64_t address);
   /// Whether \p address is an import's slot or the entry of its thunk.
   bool isImport(std::uint64_t address);

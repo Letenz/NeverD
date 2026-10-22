@@ -25,6 +25,7 @@ protected:
   bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
+  void showRecent();
   void search();
   void accept() override;
   Session &session_;

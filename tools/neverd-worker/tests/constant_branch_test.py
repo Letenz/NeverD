@@ -52,6 +52,10 @@ def run(executable):
             assert rows()[0]["kind"] == "undefined", rows()
             assert not any(row["address"] == hex(entry) and row["kind"] == "insn"
                            for row in listing(client, entry)), listing(client, entry)
+            jumped = ok(client, "listing", {"address": hex(entry), "before": 0,
+                         "after": 12, "recover_address": hex(entry)})
+            assert not any(row["address"] == hex(entry) and row["kind"] == "insn"
+                           for row in jumped["lines"]), jumped
             assert ok(client, "functions", {"offset": 0, "limit": 1})["total"] == count
             ok(client, "undo")
             assert rows() == []
@@ -88,6 +92,99 @@ def run(executable):
                                     for row in refs["items"]}, refs
                 listing(client, entry)
 
+        # The first navigation can land on a chunk beyond another function.
+        # Follow two arithmetic transfers, including a backward one, retaining
+        # the entry's frame. Never treat the intervening independent body as
+        # part of that frame or erase its reference-index facts.
+        scattered = Path(directory) / "scattered.elf"
+        code = bytearray(b"\xcc" * 0x80)
+        start = (bytes.fromhex("554889e54883ec10897df8e820000000b8")
+                 + struct.pack("<I", entry + 0x71) + bytes.fromhex("ffe0"))
+        code[:len(start)] = start
+        code[0x30:0x36] = bytes.fromhex("e82b000000c3")
+        code[0x60:0x66] = bytes.fromhex("b84d000000c3")
+        code[0x50:0x59] = bytes.fromhex("e98b45f883c001c9c3")
+        code[0x70:0x78] = (b"\xe9\xb8" + struct.pack("<I", entry + 0x51)
+                            + bytes.fromhex("ffe0"))
+        scattered_segment = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base,
+                                        120 + len(code), 120 + len(code), 4096)
+        scattered.write_bytes(header + scattered_segment + code)
+        for first, navigation in ((entry + 0x71, "resolve"),
+                                  (entry + 0x51, "resolve"),
+                                  (entry + 0x71, "listing"),
+                                  (entry + 0x51, "listing")):
+            with Client(executable) as client:
+                ok(client, "open", {"path": str(scattered)})
+                if navigation == "listing":
+                    # A literal GUI jump bypasses the expression resolver.
+                    initial = ok(client, "listing", {"address": hex(first),
+                                 "recover_address": hex(first), "before": 0, "after": 12})
+                    assert any(row["address"] == hex(first) and row["kind"] == "insn"
+                               and row["function_address"] == hex(entry)
+                               for row in initial["lines"]), initial
+                resolved = ok(client, "resolve", {"query": hex(first)})
+                assert resolved["function_address"] == hex(entry), resolved
+                for target in (entry + 0x71, entry + 0x51):
+                    assert ok(client, "resolve", {"query": hex(target)})[
+                        "function_address"] == hex(entry)
+                    fragment_end = entry + (0x78 if target == entry + 0x71 else 0x59)
+                    fragment = [row for row in listing(client, target)
+                                if target <= int(row["address"], 16) < fragment_end]
+                    assert any(row["address"] == hex(target) and row["kind"] == "insn"
+                               for row in fragment), fragment
+                    assert sum("START OF FUNCTION CHUNK" in row["text"]
+                               for row in fragment) == 1, fragment
+                    assert sum("END OF FUNCTION CHUNK" in row["text"]
+                               for row in fragment) == 1, fragment
+                    assert not any(row["text"].endswith("endp") for row in fragment), fragment
+                for representation in ("c", "llvmc"):
+                    source = ok(client, "decompile", {"address": hex(entry),
+                                                       "representation": representation})
+                    assert source["text"] and "unknown register" not in source["text"], source
+                assert ok(client, "resolve", {"query": hex(entry + 0x30)})[
+                    "function_address"] == hex(entry + 0x30)
+                outgoing = ok(client, "xrefs", {"address": hex(entry + 0x76),
+                                                "direction": "from"})
+                assert any(row["to"] == hex(entry + 0x51) for row in outgoing["items"]), outgoing
+                independent = ok(client, "xrefs", {"address": hex(entry + 0x60)})
+                assert any(row["from"] == hex(entry + 0x30) and row["kind"] == "call"
+                           for row in independent["items"]), independent
+                # An edit rebuilds ownership. A viewport refresh starts before
+                # the cursor but must recover the cursor's original function.
+                ok(client, "rename", {"address": hex(entry), "name": "fragment_owner"})
+                refreshed = ok(client, "listing", {"address": hex(first - 1),
+                               "recover_address": hex(first), "before": 0, "after": 16})
+                assert any(row["address"] == hex(first) and row["kind"] == "insn"
+                           and row["function_address"] == hex(entry)
+                           for row in refreshed["lines"]), refreshed
+                preceding = ok(client, "listing", {"address": hex(first + (5 if first == entry + 0x71 else 3)),
+                               "before": 12, "after": 1})
+                assert any(row["address"] == hex(first) and row["kind"] == "insn"
+                           for row in preceding["lines"]), preceding
+
+        # A cold fragment before the entry must not become the stack tracker's
+        # initial block merely because its address sorts first.
+        backward = Path(directory) / "backward.elf"
+        code = bytearray(b"\xcc" * 0x50)
+        code[0:9] = bytes.fromhex("e98b45f883c001c9c3")
+        start = (bytes.fromhex("554889e54883ec10897df8b8")
+                 + struct.pack("<I", entry + 1) + bytes.fromhex("ffe0"))
+        code[0x30:0x30 + len(start)] = start
+        backward_header = bytearray(header)
+        struct.pack_into("<Q", backward_header, 24, entry + 0x30)
+        backward_segment = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base,
+                                       120 + len(code), 120 + len(code), 4096)
+        backward.write_bytes(backward_header + backward_segment + code)
+        with Client(executable) as client:
+            ok(client, "open", {"path": str(backward)})
+            resolved = ok(client, "resolve", {"query": hex(entry + 1)})
+            assert resolved["function_address"] == hex(entry + 0x30), resolved
+            lines = listing(client, entry + 1)
+            assert any(row["address"] == hex(entry + 1) and "var_" in row["text"]
+                       for row in lines), lines
+            assert sum("START OF FUNCTION CHUNK" in row["text"] for row in lines) == 1, lines
+            assert sum("END OF FUNCTION CHUNK" in row["text"] for row in lines) == 1, lines
+
         # A rejected lift must leave the native bytes inspectable, with an
         # explicit linear-view warning rather than a fabricated recovered CFG.
         broken = Path(directory) / "incomplete.elf"
@@ -101,6 +198,15 @@ def run(executable):
             assert any("control-flow recovery failed" in row["text"] for row in lines), lines
             assert any(row["address"] == hex(entry) and row["kind"] == "insn"
                        for row in lines), lines
+
+        # Native recovery must not replace ordinary bytecode ownership.
+        bytecode = Path(directory) / "arithmetic.evm"
+        bytecode.write_text("600160020100", encoding="ascii")
+        with Client(executable) as client:
+            ok(client, "open", {"path": str(bytecode)})
+            ok(client, "analyze")
+            resolved = ok(client, "resolve", {"query": "0x2"})
+            assert resolved["function_address"] == "0x0", resolved
 
 
 if __name__ == "__main__":
