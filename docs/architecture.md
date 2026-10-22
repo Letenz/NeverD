@@ -443,7 +443,8 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
-a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`
+a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
+provider headers declare into `lib/types/headers/WindowsKernelX64.h`
 and `WindowsKernelX86.h`, and what a program's `<windows.h>`, the headers of
 the libraries programs most often call and phnt's native API (the `Nt`,
 `Zw`, `Rtl` and `Ldr` routines ntdll exports, the PEB and the TEB) declare
@@ -451,7 +452,12 @@ into `WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`;
 mingw-w64's DDK declares no ARM64 kernel. phnt is read with mingw-w64's SDK
 for Windows 11 24H2, in place of `<winternl.h>`; `scripts/windows_types`
 supplies what it takes from Microsoft's SDK that mingw-w64 lacks or spells
-otherwise. `scripts/generate_linux_types.py` renders what the GNU C
+otherwise. Kernel generation also reads a hash-pinned, public-domain ReactOS
+filter header and phnt's native information-class enum. Export inventories
+identify missing declarations; names or ordinals alone never imply an ABI.
+Libraries are parsed once per process and reused, without scanning a Windows
+installation or fetching declarations while decompiling.
+`scripts/generate_linux_types.py` renders what the GNU C
 Library's headers declare for a program built with `_GNU_SOURCE` into
 `LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and `LinuxARM.h`; a routine glibc
 gives an assembler name (`__isoc23_strtol` for strtol, as glibc 2.38 names
@@ -1376,10 +1382,61 @@ a Cartesian residue table. Bounds from different bases add without assuming
 those bases are independent. A zero replacement requires the sum of these
 bounds and the enclosing literal's trailing zeros to cover the full word width.
 This proof accepts opaque nonlinear bases, retains multiplicities and wrapped
-offsets, and never expands the product. Traversal, comparison, wide constants,
+offsets, and never expands the product.
+A product whose complete bases are already identical uses one offset vector
+and avoids per-factor coefficient maps. Structural admission is reused across
+the zero proof and nonzero recovery for the same immutable product. Traversal, comparison, wide constants,
 scratch storage and final emission use the same request budgets. Partial
 proofs leave their products intact, while already proved zero summands can be
 removed safely before ordinary MBA recovery.
+Scaled affine factors are read as complete coefficient maps over exact opaque
+atoms, with bounded traversal of nested additions and scalar products. Fixed
+powers of two are removed first; checked odd inverses normalize the remaining
+low-bit coefficients and offsets. Only identical complete projected maps share
+a residue group. Prefix truncation weakens a bound and cannot invent equality
+of the original full-width factors. Unit copies and native scalar multiplies
+avoid unnecessary wide multiplication work.
+High-bit disturbances can preserve a common low-prefix relation through
+AND/OR/XOR, constant shifts, complements, low extracts and widening casts.
+Bounded constant-prefix queries peel only proved identities; unknown terms
+remain exact opaque atoms. These products try prefix maps before full-width
+affine recovery. Even factors can request additional precision individually,
+so removing their fixed zeros does not discard the needed observed bits. A
+zero prefix contributes only its proven width, never a full-word zero.
+For a nonzero product, a shared low-zero prefix can be factored through bitwise
+operations. Their remaining scalar units are reduced modulo the observed
+prefix under a bounded operand/work/storage charge. The opaque operands keep
+native widths, so source synthesis does not need sub-byte bitwise operations.
+Atoms exposed by casts regain the output word width before synthesis. All factor multiplicities and coefficient coordinates still
+participate in the proof; no sampled equality authorizes a replacement.
+When a nonzero product observes at most eight bits, the same maps can establish
+one common affine word by checking every present and absent coordinate. Its
+entire observed domain is then enumerated. Per-bit periodic lookups may widen
+byte-sized inputs to native 64-bit words; a common low-bit support condition
+also permits an exact lower-degree polynomial. If reassociation absorbs the
+scale into an additive factor, its complete coefficient map establishes the
+fixed zeros first. Re-reading the normalized maps at the remaining precision
+then recovers the same proof. The enclosing power of two restores full-width
+semantics. Candidates must beat both the original product
+and its normalized factored form, preserving simpler existing recovery paths.
+All candidates, wide constants and scratch consume the existing work/storage
+budgets; refusal retains the original product. These are shared symbolic-core
+rules, so CLI and GUI source optimization use them through their existing switches.
+HighC lowers a zero-extended sub-byte extract as a masked native-word operation
+with the exact extraction offset. The fragment is never materialized as a byte
+for signed extension, which would change its sign bit. Other unsupported
+non-byte-width operations retain the existing refusal.
+LLVM emission admits a generated variable shift only when bounded symbolic
+known-bit analysis proves every count below the operand width. The shared query
+allowance is finite, and failures retain the original IR. Existing input poison,
+opaque-leaf and instruction-profitability checks are unchanged.
+Available same-width scalar definitions also retain an exact source-local view
+for reconstruction, including the exact low view of a zero/sign-extended
+definition. Proof expansion can inspect the complete value while
+emission reuses the live local, avoiding repeated copies that erase a cost
+improvement. Existing mutation, alias and control-flow kills still determine
+which definitions are available; constants and bare input variables do not
+acquire compound aliases.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient

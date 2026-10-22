@@ -19,6 +19,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/pass/ir/simplify/common/SymSimplifyDetail.h"
 #include "SemanticConvergence.h"
 #include "gtest/gtest.h"
 
@@ -343,6 +344,41 @@ TEST(SymSimplifyGuard, RewritesMixedBooleanArithmeticWhenUnstamped) {
 
   EXPECT_GT(SymSimplifyPass::simplify(*F), 0u);
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, GeneratedVariableShiftsRequireCompleteValueBounds) {
+  namespace sym = neverd::symbolic;
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    const bool Supported = Width <= sym::SymKnownBits::MaxWidth;
+    sym::SymContext Ctx;
+    Translator Xlat(Ctx);
+    auto X = Ctx.mkVar("x", Width);
+    auto Count = Ctx.mkVar("count", Width);
+    for (auto Op : {sym::SymOp::Shl, sym::SymOp::LShr, sym::SymOp::AShr}) {
+      auto Shift = [&](sym::SymRef N) {
+        return Op == sym::SymOp::Shl    ? Ctx.mkShl(X, N)
+               : Op == sym::SymOp::LShr ? Ctx.mkLShr(X, N)
+                                        : Ctx.mkAShr(X, N);
+      };
+      auto Bounded = Ctx.mkAnd(Count, Ctx.mkConst(Width, Width - 1));
+      EXPECT_EQ(Xlat.hasCompatibleResultSemantics(Shift(Bounded)), Supported);
+      EXPECT_FALSE(Xlat.hasCompatibleResultSemantics(Shift(Count)));
+      EXPECT_FALSE(Xlat.hasCompatibleResultSemantics(
+          Shift(Ctx.mkAnd(Count, Ctx.mkConst(Width, Width)))));
+      EXPECT_FALSE(Xlat.hasCompatibleResultSemantics(
+          Shift(Ctx.mkAdd(Bounded, Ctx.mkConst(Width, 1)))));
+      for (uint64_t I = 0; I < 2 * Width; ++I)
+        EXPECT_LT(
+            Ctx.eval(Bounded, {llvm::APInt(Width, 0), llvm::APInt(Width, I)})
+                .getLimitedValue(),
+            Width);
+    }
+    auto Small = Ctx.mkVar("small", 8);
+    auto Extended = Ctx.mkZExt(Ctx.mkAnd(Small, Ctx.mkConst(8, 7)), Width);
+    EXPECT_EQ(Xlat.hasCompatibleResultSemantics(Ctx.mkLShr(X, Extended)),
+              Supported);
+  }
 }
 
 TEST(SymSimplifyGuard, RewritesCarrySaveAdditionWithAConstantLeftShift) {

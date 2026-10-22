@@ -83,6 +83,76 @@ TEST(HeaderLibrary, TheKernelsReadsAsADriverDeclaresIt) {
   EXPECT_FALSE(Kernel->findPrototype("IoCreateDevice")->NoReturn);
 }
 
+TEST(HeaderLibrary, DriverProvidersHaveExactConfigurationCallContracts) {
+  for (auto Id :
+       {HeaderLibrary::WindowsKernelX64, HeaderLibrary::WindowsKernelX86}) {
+    const TypeLibrary *Kernel = headerLibrary(Id);
+    ASSERT_NE(Kernel, nullptr);
+    const bool X86 = Id == HeaderLibrary::WindowsKernelX86;
+    SCOPED_TRACE(headerLibraryName(Id).str());
+    EXPECT_EQ(sizeOf(*Kernel, "NDIS_CONFIGURATION_OBJECT"), X86 ? 12u : 24u);
+    EXPECT_EQ(sizeOf(*Kernel, "NDIS_CONFIGURATION_PARAMETER"), X86 ? 12u : 24u);
+    EXPECT_EQ(sizeOf(*Kernel, "NDIS_STATUS"), 4u);
+    EXPECT_EQ(sizeOf(*Kernel, "SOCKADDR_STORAGE"), 128u);
+    for (auto [Name, Count] : {std::pair{"NdisCloseConfiguration", 1u},
+                               {"NdisOpenConfigurationEx", 2u},
+                               {"NdisReadConfiguration", 5u},
+                               {"FltReleaseFileNameInformation", 1u},
+                               {"FltGetFileNameInformationUnsafe", 4u},
+                               {"GetIfTable2Ex", 2u},
+                               {"MmMapIoSpaceEx", 3u},
+                               {"PsGetProcessPeb", 1u},
+                               {"RtlAnsiCharToUnicodeChar", 1u},
+                               {"ZwQuerySystemInformation", 4u}}) {
+      const auto *Function = Kernel->findPrototype(Name);
+      ASSERT_NE(Function, nullptr) << Name;
+      EXPECT_EQ(Function->Params.size(), Count) << Name;
+      EXPECT_FALSE(Function->Variadic) << Name;
+      if (X86)
+        EXPECT_EQ(Function->Convention, CallingConvention::Stdcall) << Name;
+    }
+    EXPECT_EQ(
+        Kernel->findPrototype("NdisCloseConfiguration")->Return->TheBuiltin,
+        Builtin::Void);
+    EXPECT_EQ(
+        Kernel->findPrototype("NdisReadConfiguration")->Return->TheBuiltin,
+        Builtin::Void);
+    EXPECT_EQ(Kernel->findPrototype("NdisOpenConfigurationEx")->Return->Name,
+              "NDIS_STATUS");
+    EXPECT_EQ(Kernel->findPrototype("GetIfTable2Ex")->Return->Name, "NTSTATUS");
+    EXPECT_EQ(
+        Kernel->findPrototype("RtlAnsiCharToUnicodeChar")->Return->TheBuiltin,
+        Builtin::WChar);
+    EXPECT_EQ(Kernel->findPrototype("NdisReadConfiguration")->Params[4].Name,
+              "ParameterType");
+  }
+}
+
+TEST(HeaderLibrary, UserProvidersKeepTheirOwnStatusAndParameterWidths) {
+  for (auto Id : {HeaderLibrary::WindowsUserX64, HeaderLibrary::WindowsUserX86,
+                  HeaderLibrary::WindowsUserARM64}) {
+    const auto *User = headerLibrary(Id);
+    ASSERT_NE(User, nullptr);
+    SCOPED_TRACE(headerLibraryName(Id).str());
+    for (auto [Name, Count] : {std::pair{"WlanOpenHandle", 4u},
+                               {"DwmFlush", 0u},
+                               {"WinUsb_Initialize", 2u},
+                               {"HidD_GetAttributes", 2u},
+                               {"ImmGetContext", 1u},
+                               {"FilterConnectCommunicationPort", 6u}}) {
+      const auto *Function = User->findPrototype(Name);
+      ASSERT_NE(Function, nullptr) << Name;
+      EXPECT_EQ(Function->Params.size(), Count) << Name;
+      EXPECT_FALSE(Function->Variadic) << Name;
+      if (Id == HeaderLibrary::WindowsUserX86)
+        EXPECT_EQ(Function->Convention, CallingConvention::Stdcall) << Name;
+    }
+    // NETIO's kernel status and IPHLPAPI's user status have the same width,
+    // but keep their separate declarations and signedness.
+    EXPECT_EQ(User->findPrototype("GetIfTable2Ex")->Return->Name, "DWORD");
+  }
+}
+
 TEST(HeaderLibrary, EveryLibraryReadsLaidOutForItsDataModel) {
   // A pointer, and a SIZE_T, take what each data model gives them: a 32-bit
   // library's handles and records are a 32-bit program's.

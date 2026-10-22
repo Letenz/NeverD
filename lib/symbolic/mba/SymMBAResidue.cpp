@@ -9,7 +9,9 @@
 /// A factor B+c contributes one trailing zero for each matching low-bit prefix
 /// of -B and c. Partition all offsets by these prefixes, and take the minimum
 /// count along every residue path. This covers every word value of B, including
-/// opaque nonlinear bases and correlated bases in different groups.
+/// opaque nonlinear bases and correlated bases in different groups. Scaled
+/// affine factors use the same bound and may synthesize a smaller nonzero
+/// result from their complete observed residue table.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -46,10 +48,77 @@ bool hasOffsetFactors(const SymContext &Ctx, SymRef Root) {
   return false;
 }
 
+// A common exact base needs only one offset vector. Avoid constructing one
+// coefficient map per factor when the original unit-offset proof suffices.
+SymRef foldCommonOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                               size_t &Storage) {
+  auto Factors = Ctx.operands(Root);
+  const auto Scale = Ctx.isConst(Factors.front()) ? Factors.front() : SymRef{};
+  if (Scale)
+    Factors = Factors.drop_front();
+  auto BaseOf = [&](const SymRef &R) -> llvm::ArrayRef<SymRef> {
+    if (Ctx.op(R) != SymOp::Add)
+      return {&R, 1};
+    auto Terms = Ctx.operands(R);
+    return Ctx.isConst(Terms.front()) ? Terms.drop_front() : Terms;
+  };
+  const auto First = Factors.front();
+  const auto Base = BaseOf(First);
+  if (Base.size() > limits::kMaxResidueBaseTerms)
+    return Root;
+  for (auto F : Factors)
+    if (!llvm::equal(Base, BaseOf(F)))
+      return Root;
+  const unsigned Width = Ctx.width(Root);
+  const size_t Words = (size_t(Width) - 1) / 64 + 1;
+  const size_t Bytes = sizeof(llvm::APInt) + 2 * Words * sizeof(uint64_t);
+  const size_t Work = Factors.size() * (1 + Base.size() + Words) + Words;
+  if (Factors.size() + 2 > Storage / Bytes || !Budget.canConsume(Work))
+    return Root;
+  Budget.consume(Work);
+  Storage -= (Factors.size() + 2) * Bytes;
+  unsigned Needed = Width;
+  if (Scale)
+    Needed -= Ctx.constValue(Scale).countr_zero();
+  std::vector<llvm::APInt> Offsets;
+  Offsets.reserve(Factors.size());
+  for (auto F : Factors) {
+    if (Ctx.op(F) == SymOp::Add && Ctx.isConst(Ctx.operand(F, 0)))
+      Offsets.push_back(Ctx.constValue(Ctx.operand(F, 0)));
+    else
+      Offsets.emplace_back(Width, 0);
+  }
+  auto Zeros = minimumProductResidueZeros(Offsets, Width, Needed, Budget);
+  return Zeros && *Zeros == Needed && Budget.consume() ? Ctx.mkZero(Width)
+                                                       : Root;
+}
+
 SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage) {
-  if (!hasOffsetFactors(Ctx, Root) || Budget.exhausted())
+  if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
+      Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
+      Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
     return Root;
+  const bool OffsetHint = hasOffsetFactors(Ctx, Root);
+  if (OffsetHint) {
+    auto Common = foldCommonOffsetProduct(Ctx, Root, Budget, Storage);
+    if (Common != Root || Budget.exhausted())
+      return Common;
+  }
+  // Inspect the immutable product once. The zero proof and nonzero affine
+  // recovery share this admission result, including a negative result.
+  const bool ProjectedHint = hasProjectedResidueFactors(Ctx, Root);
+  if (ProjectedHint) {
+    auto Projected = foldProjectedProductResidues(Ctx, Root, Budget, Storage,
+                                                  /*Admitted=*/true);
+    if (Projected != Root || Budget.exhausted())
+      return Projected;
+  }
+  if (!OffsetHint)
+    return Root;
+  if (auto Affine =
+          foldAffineProductResidues(Ctx, Root, Budget, Storage, ProjectedHint))
+    return *Affine;
   const unsigned Width = Ctx.width(Root);
   const size_t Words = (size_t(Width) - 1) / 64 + 1;
   using Groups = std::map<std::vector<uint32_t>, std::vector<llvm::APInt>>;
@@ -102,42 +171,7 @@ SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     (void)Base;
     if (Offsets.size() < 2)
       continue;
-    // Both children must be present to descend. The smaller child is solved
-    // first; its complete bound often excludes the other child immediately.
-    // Thus a dense 2^k-offset family takes O(k*2^k) work, not a Cartesian table
-    // of every residue against every factor. Depth is also bounded by N.
-    auto Bound = [&](auto &&Self, size_t Begin, size_t End, unsigned Bit,
-                     unsigned Ceiling) -> std::optional<unsigned> {
-      if (Bit == Width || !Ceiling)
-        return 0;
-      if (!Budget.consume(End - Begin))
-        return std::nullopt;
-      auto Middle =
-          std::partition(Offsets.begin() + Begin, Offsets.begin() + End,
-                         [&](const llvm::APInt &C) { return !C[Bit]; });
-      const size_t Split = Middle - Offsets.begin();
-      const size_t Left = Split - Begin, Right = End - Split;
-      if (!Left || !Right)
-        return 0;
-      const bool SmallLeft = Left <= Right;
-      const size_t Small = SmallLeft ? Left : Right;
-      const size_t Large = SmallLeft ? Right : Left;
-      if (Small >= Ceiling)
-        return Ceiling;
-      auto A = Self(Self, SmallLeft ? Begin : Split, SmallLeft ? Split : End,
-                    Bit + 1, Ceiling - Small);
-      if (!A)
-        return std::nullopt;
-      const unsigned SmallBound = Small + *A;
-      if (Large >= SmallBound)
-        return SmallBound;
-      auto B = Self(Self, SmallLeft ? Split : Begin, SmallLeft ? End : Split,
-                    Bit + 1, SmallBound - Large);
-      if (!B)
-        return std::nullopt;
-      return std::min<unsigned>(SmallBound, Large + *B);
-    };
-    auto Zeros = Bound(Bound, 0, Offsets.size(), 0, Needed);
+    auto Zeros = minimumProductResidueZeros(Offsets, Width, Needed, Budget);
     if (!Zeros)
       return Root;
     Needed -= *Zeros;
@@ -149,6 +183,47 @@ SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
 
 } // namespace
 
+std::optional<unsigned>
+minimumProductResidueZeros(llvm::MutableArrayRef<llvm::APInt> Offsets,
+                           unsigned Width, unsigned Ceiling,
+                           WorkBudget &Budget) {
+  // Both children must be present to descend. The smaller child is solved
+  // first; its complete bound often excludes the other child immediately.
+  // Thus a dense 2^k-offset family takes O(k*2^k) work, not a Cartesian table
+  // of every residue against every factor. Depth is also bounded by N.
+  auto Bound = [&](auto &&Self, size_t Begin, size_t End, unsigned Bit,
+                   unsigned Ceiling) -> std::optional<unsigned> {
+    if (Bit == Width || !Ceiling)
+      return 0;
+    if (!Budget.consume(End - Begin))
+      return std::nullopt;
+    auto Middle = std::partition(Offsets.begin() + Begin, Offsets.begin() + End,
+                                 [&](const llvm::APInt &C) { return !C[Bit]; });
+    const size_t Split = Middle - Offsets.begin();
+    const size_t Left = Split - Begin, Right = End - Split;
+    if (!Left || !Right)
+      return 0;
+    const bool SmallLeft = Left <= Right;
+    const size_t Small = SmallLeft ? Left : Right;
+    const size_t Large = SmallLeft ? Right : Left;
+    if (Small >= Ceiling)
+      return Ceiling;
+    auto A = Self(Self, SmallLeft ? Begin : Split, SmallLeft ? Split : End,
+                  Bit + 1, Ceiling - Small);
+    if (!A)
+      return std::nullopt;
+    const unsigned SmallBound = Small + *A;
+    if (Large >= SmallBound)
+      return SmallBound;
+    auto B = Self(Self, SmallLeft ? Split : Begin, SmallLeft ? End : Split,
+                  Bit + 1, SmallBound - Large);
+    if (!B)
+      return std::nullopt;
+    return std::min<unsigned>(SmallBound, Large + *B);
+  };
+  return Bound(Bound, 0, Offsets.size(), 0, Ceiling);
+}
+
 SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                            size_t &Storage) {
   if (Budget.exhausted())
@@ -157,8 +232,10 @@ SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     return foldOffsetProduct(Ctx, Root, Budget, Storage);
   const size_t N = Ctx.numOperands(Root);
   if (N > limits::kMaxResidueProductSummands ||
-      !llvm::any_of(Ctx.operands(Root),
-                    [&](SymRef Term) { return hasOffsetFactors(Ctx, Term); }))
+      !llvm::any_of(Ctx.operands(Root), [&](SymRef Term) {
+        return hasOffsetFactors(Ctx, Term) ||
+               hasProjectedResidueFactors(Ctx, Term);
+      }))
     return Root;
   if (N > Storage / (2 * sizeof(SymRef)) || !Budget.consume(2 * N))
     return Root;

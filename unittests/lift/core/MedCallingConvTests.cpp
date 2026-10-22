@@ -7953,6 +7953,40 @@ TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
 }
 
+TEST(CallRegisterEffects, OverwrittenCopiesDoNotConsumeIncomingArguments) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::COFF;
+  const NdVar R8 = NdVar::reg(x86reg::R8, 8);
+  const NdVar RBX = NdVar::reg(x86reg::RBX, 8);
+  const GPRFamilyMask Args = (1u << (x86reg::RCX / 8)) |
+                             (1u << (x86reg::RDX / 8)) |
+                             (1u << (x86reg::R8 / 8));
+  // An overwritten move, a live store, an intervening call, a partial
+  // overwrite, an exit, and an exceptional observation respectively.
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    LowFunc Low = makeOneBlockLow(0x1000, "scratch", [&](auto Push) {
+      Push(NdOp::COPY, RBX, {R8});
+      if (Case == 1)
+        Push(NdOp::STORE, {}, {NdVar::reg(x86reg::RDI, 8), RBX});
+      if (Case == 2)
+        Push(NdOp::INDIR_CALL, NdVar::reg(x86reg::RAX, 8),
+             {NdVar::reg(x86reg::R11, 8)});
+      if (Case != 4)
+        Push(NdOp::COPY, NdVar::reg(x86reg::RBX, Case == 3 ? 1 : 4),
+             {NdVar::cst(0, Case == 3 ? 1 : 4)});
+    });
+    if (Case == 5)
+      Low.Blocks.front().ExceptionalSuccs.push_back({-1, 0});
+    const auto Summaries = solveCallRegisterEffects(
+        {{Low.Entry, localRegisterEffect(Img, Low)}}, Args, Args);
+    ASSERT_TRUE(Summaries.EntryReads.count(Low.Entry));
+    EXPECT_EQ(Summaries.EntryReads.at(Low.Entry)[x86reg::R8 / 8],
+              Case == 0 ? 0u : 8u);
+  }
+}
+
 TEST(CallRegisterEffects, EntryReadsCrossChainsCyclesAndPointerCalls) {
   // 0x1000 calls 0x1100, which calls 0x1200: callers precede their callees
   // in address order.  0x1200 and 0x1300 call each other, and 0x1400 calls

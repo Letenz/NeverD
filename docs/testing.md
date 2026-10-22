@@ -399,15 +399,34 @@ Use `--family extreme-frontier --count 6` for degree-192/256 products,
 three mixed-degree blocks, complemented nonlinear powers, missing corners and
 multiple coefficient disturbances. Use `--family residue-product --count 80`
 for correlated factor residues through degree 256, odd strides, wrapped
-offsets, multiple opaque bases and nearby nonzero controls. Run all fifteen
-families at 8/16/32/64 bits
+offsets, multiple opaque bases and nearby nonzero controls.
+Use `--family affine-residue --count 96` for independent odd units, even
+factors, nested/distributed affine bases, correlated bases, partial-prefix
+perturbations and nonzero neighbors through degree 256.
+Use `--family prefix-residue --count 128` for degree-4–256 products with
+independent high-bit XOR/OR/AND disturbances, masked and signed/unsigned narrow
+views, nested wrappers, even factors and nonlinear/correlated bases. Sixteen
+nearby controls retain a nonzero product. Run all seventeen families at
+8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
 with no output-cost regression against the frozen baseline. Keep both the CLI
 executable and its matching shared library when freezing a comparison engine.
-Measure per-query SDK CPU time in alternating baseline/candidate processes,
-including parsing, proof and rendering; compare identical outputs and work
-counts to the CLI report before computing latency percentiles.
+Measure per-query SDK CPU time in alternating baseline/candidate calls after
+warmup, including parsing, proof and rendering. Keep both libraries independently
+bound when pairing calls in one process; compare identical outputs, costs and
+work counts to the CLI report before computing per-case medians and percentiles.
+The independent evaluator handles explicit word widths, extracts, extensions
+and modular shifts. Check it with
+`python3 tools/neverd-bench/tests/test_symbolic_masks.py`.
+`SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
+exhaustive small-word perturbations, nonzero coefficient/offset controls,
+zero-prefix versus zero-word refusal, exact/short resource budgets and Z3
+checks of full-width replacements. Mixed source widths also check nonzero
+synthesis through narrowing and widening. Run it in both the focused MBA and
+full symbolic owners. Worker prefix-quartic/octic and nonzero-neighbor fixtures
+execute both C backends through CLI whole/function requests and GUI worker
+requests at O0/O2, including toggle/cache isolation.
 The mixed-degree C++ regression adds an independently generated three-block
 variant and a full-word arithmetic oracle through 257 bits. Cache regressions
 cover compatible and incompatible complement bases, storage refusal followed by
@@ -425,6 +444,25 @@ full-width zero replacements at 8/16/32/64 bits. The real worker/CLI source
 synthesis test includes original x64 quartic and octic machine code, requires
 product removal in both source modes, tests toggle/cache isolation, and
 executes every generated C output at O0/O2.
+`SymMBAAffineResidue` checks independent factor slopes across five bases at
+8/16/32/64/65/128/257 bits, exhaustive four-bit slopes and inputs, nonzero
+neighbors, extra/missing/perturbed coordinates, exact/short work and storage,
+and independent full-width Z3 proofs. Worker fixtures add original x64 scaled
+quartic/octic products and a nonzero octic neighbor, exercising both backends,
+CLI whole/function requests, GUI worker requests and toggle/cache isolation.
+`HighSymSimplify.PreservesSupportedAndRefusedSubByteProjections` checks 1/3/7-bit
+fragments at low and high offsets in 8/16/32/64-bit words against independent
+modular arithmetic, including closed refusal of unsupported narrow arithmetic.
+`HighSymSimplify.ReusesLiveAffineWordInNonzeroResidueLookups` requires compact
+lookup output through live definitions and widened carriers at the same four
+widths. Existing
+assignment, effect, alias and control-flow tests protect definition invalidation.
+The worker neighbor also compiles and executes the native lookup lowering in
+both C routes.
+`SymSimplifyGuard.GeneratedVariableShiftsRequireCompleteValueBounds` checks
+all three shifts at 8/16/32/64/65/128/257 bits, casts, unbounded counts,
+width-valued masks and carries past the bound. Existing poison and synthesis
+refusal tests remain mandatory when changing this emission gate.
 Interleaved residual tests cover the completed-product traversal boundary at
 15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
 nonzero odd-factor assignments, reject leaked temporary inputs, and require
@@ -1420,13 +1458,23 @@ reads each pointer once;
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
 [phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
-`scripts/generate_windows_types.py --phnt <checkout>` (each generated
-header names the commit). After running it, check each library in every
-language:
+`scripts/generate_windows_types.py --phnt <checkout> --reactos-ddk <headers>`
+(each generated header names the commits). Kernel generation requires
+`fltkernel.h` from ReactOS commit `b6224c3165811265422dacd5ed0de36b1c2311c9`,
+under `sdk/include/ddk`; the generator verifies its pinned SHA-256 before
+reading it. `scripts/tests/test_generate_windows_types.py` checks this input
+boundary and the narrowly matched legacy WAN declaration repair.
+`HeaderLibrary.DriverProvidersHaveExactConfigurationCallContracts` checks x86
+and x64 parameter counts, conventions and layouts; the synthetic
+`SessionCAPITest.DriverProviderImportsUseTheirDeclaredSourceABI` checks HighC
+and LLVMC through the SDK, without loading a driver. After generation, check
+each library in every language:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsKernelX86.h --data-model ILP32
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserX64.h --data-model LLP64
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
