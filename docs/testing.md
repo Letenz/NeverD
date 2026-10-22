@@ -1559,7 +1559,11 @@ takes `EFI_IMAGE_ENTRY_POINT`;
 reads each pointer once;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
-out. The user mode libraries read a checkout of
+out. Optional [Microsoft ARM64 inputs](microsoft-windows-types.md) retain the
+official public layouts and supplement missing APIs. Their generator compares
+Clang's original and rendered record layouts; run the type tests in both source
+configurations. Named packing, nested anonymous definitions and fixed-width
+pointer round trips have synthetic parser regressions. The user mode libraries read a checkout of
 [phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
 `scripts/generate_windows_types.py --phnt <checkout> --reactos-ddk <headers>`
 (each generated header names the commits). Kernel generation requires

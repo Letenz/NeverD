@@ -13,6 +13,30 @@
 
 using namespace neverd::types;
 
+TEST(TypeRender, ForeignWidthPointersAreAddressesInOtherLanguages) {
+  for (const auto Model : {DataModel::ILP32, DataModel::LLP64}) {
+    TypeLibrary Library(Model);
+    ASSERT_TRUE(parseCTypes("struct Mixed { void * __ptr32 Small; "
+                            "void * __ptr64 Large; };",
+                            Library)
+                    .ok());
+    const auto *Type = Library.find("Mixed");
+    ASSERT_NE(Type, nullptr);
+    for (const auto Lang : {Language::Rust, Language::Go, Language::Python}) {
+      RenderOptions Options;
+      Options.Lang = Lang;
+      const std::string Text = renderType(Library, *Type, Options);
+      const bool Wide = Model == DataModel::LLP64;
+      const char *Expected =
+          Lang == Language::Rust ? (Wide ? "u32" : "u64")
+          : Lang == Language::Go
+              ? (Wide ? "uint32" : "uint64")
+              : (Wide ? "ctypes.c_uint32" : "ctypes.c_uint64");
+      EXPECT_NE(Text.find(Expected), std::string::npos) << Text;
+    }
+  }
+}
+
 namespace {
 
 std::unique_ptr<TypeLibrary> loadFixture() {

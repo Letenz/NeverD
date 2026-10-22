@@ -914,6 +914,14 @@ over automatic Darwin SDK source bindings; header record layouts retain them.
 Unsupported record carriers fail explicitly. This does not add ARM32 record
 placement or general mixed floating record-call support.
 
+LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
+signatures. Every printed call of a symbol must agree before the writer uses
+one typed declaration and matching argument/result conversions. An unused
+machine result from a declared-void import is omitted; a live result, conflicting
+arity, unsupported carrier or preserved-LLVM mode retains the machine signature.
+The type library and shared placement authority decide the contract, not an
+emitter list of Windows API names.
+
 HighC places outgoing x86 stack arguments relative to the actual call SP.
 After one stack PHI, complete pointer-width copies and checked constant
 adjustments can prove those relative distances even when its incoming paths

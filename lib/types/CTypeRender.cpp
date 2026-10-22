@@ -319,6 +319,8 @@ std::string CWriter::declare(const TypeExpr &Type,
   }
   case TypeExprKind::Pointer: {
     std::string Inner = Type.Reference ? "&" : "*";
+    if (Type.PointerBytes != pointerBytes(Library.dataModel()))
+      Inner += " __ptr" + std::to_string(Type.PointerBytes * 8) + " ";
     if (Type.Const)
       Inner += "const";
     if (Type.Volatile)

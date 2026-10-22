@@ -5044,7 +5044,9 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   // nothing reads, is called alone.
   if (ResultLive && !valueFeedsPrintedUse(&Call)) {
     const LibraryCallee Library = libraryCallee(Call);
-    if (calleeReturnsNothing(Call) ||
+    const auto *Source = sourceImportCallee(Call);
+    if ((Source && Source->ReturnType->Kind == NdTypeKind::Void) ||
+        calleeReturnsNothing(Call) ||
         (Library && libc::libcResult(Library.Name, libcVariant()) ==
                         libc::LibCResult::Void))
       ResultLive = false;
@@ -5344,6 +5346,16 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
     const bool Integer = Operand->getType()->isIntegerTy();
+    if (const auto *Source = sourceImportCallee(Call)) {
+      const auto &Type = Source->Params[ArgIdx].second;
+      const std::string Bridge =
+          Integer || PointerSpelling || Operand->getType()->isPointerTy()
+              ? "(uintptr_t)"
+              : "";
+      Expr += "(" + declarationToC(cDisplayType(Type), "") + ")" + Bridge +
+              "(" + Argument + ")";
+      continue;
+    }
     const bool HeaderInteger = Library && !Library.Prototype && Integer;
     const libc::LibCPrototype *Prototype =
         Library.Prototype && ArgIdx < Library.Prototype->ParamCount
