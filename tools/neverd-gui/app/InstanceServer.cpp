@@ -188,12 +188,26 @@ void InstanceServer::accept() {
 void InstanceServer::read(QLocalSocket *socket) {
   QByteArray buffer =
       socket->property("neverdRequest").toByteArray() + socket->readAll();
+  const auto rejectOversized = [socket] {
+    reply(socket,
+          failed(
+              QStringLiteral("Request exceeds %1 bytes")
+                  .arg(::neverd::limits::gui::kInstanceServerMaxRequestBytes)));
+    socket->disconnectFromServer();
+    socket->setProperty("neverdRequest", QByteArray());
+  };
   for (qsizetype newline; (newline = buffer.indexOf('\n')) >= 0;) {
+    if (newline > ::neverd::limits::gui::kInstanceServerMaxRequestBytes)
+      return rejectOversized();
     const QByteArray line = buffer.left(newline);
     buffer.remove(0, newline + 1);
     if (!line.trimmed().isEmpty())
       answer(socket, line);
   }
+  // Bound the request before parsing or dispatching it, including the
+  // complete objects clients send without a newline.
+  if (buffer.size() > ::neverd::limits::gui::kInstanceServerMaxRequestBytes)
+    return rejectOversized();
   // IDA's hcli writes one object without a newline and waits.
   if (!buffer.trimmed().isEmpty()) {
     QJsonParseError error;
@@ -202,14 +216,6 @@ void InstanceServer::read(QLocalSocket *socket) {
       answer(socket, buffer);
       buffer.clear();
     }
-  }
-  if (buffer.size() > ::neverd::limits::gui::kInstanceServerMaxRequestBytes) {
-    reply(socket,
-          failed(
-              QStringLiteral("Request exceeds %1 bytes")
-                  .arg(::neverd::limits::gui::kInstanceServerMaxRequestBytes)));
-    socket->disconnectFromServer();
-    buffer.clear();
   }
   socket->setProperty("neverdRequest", buffer);
 }

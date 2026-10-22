@@ -599,6 +599,17 @@ private slots:
                             "\"-1\"."));
     QVERIFY(!refusal(QStringLiteral("neverd:///functions?rva=1&sha256=12"))
                  .isEmpty());
+    for (const int digits : {8, 16, 64})
+      QVERIFY(
+          parseDeepLink(QStringLiteral("neverd:///functions?rva=1&sha256=") +
+                        QString(digits, QLatin1Char('a')))
+              .link.has_value());
+    for (const QString &hash :
+         {QString(7, QLatin1Char('a')), QString(65, QLatin1Char('a')),
+          QString(16, QLatin1Char('z'))})
+      QVERIFY(
+          !refusal(QStringLiteral("neverd:///functions?rva=1&sha256=") + hash)
+               .isEmpty());
     QVERIFY(!refusal(QStringLiteral("neverd:///code?rva=1")).isEmpty());
     QVERIFY(!refusal(QStringLiteral("ida://ke.example.com/api/v1/buckets/b/"
                                     "assets/k"))
@@ -648,6 +659,12 @@ private slots:
         choose(QStringLiteral("neverd:///c.out/functions?rva=1"), instances)
             .index,
         -1);
+    // A name match must not bypass an explicitly different build hash.
+    QCOMPARE(choose(QStringLiteral("neverd:///a.out/functions?rva=1"
+                                   "&sha256=cccccccc"),
+                    instances)
+                 .index,
+             -1);
     const InstanceChoice unnamed =
         choose(QStringLiteral("neverd:///functions?rva=1"), instances);
     QCOMPARE(unnamed.index, -1);

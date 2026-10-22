@@ -557,9 +557,10 @@ address; the output window shows it too. A link takes the form of IDA's,
 resources (`functions`, `addresses`, `strings`, `segments`, `names`,
 `imports`, `exports`, `types`, `bookmarks`) and views (`disasm`, `graph`,
 `pseudocode`, `hexdump` and the lists), and the address relative to the image
-base, so that it holds after rebasing. Beyond IDA's, `sha256=` gives sixteen
-digits of the input's SHA-256, so that a link names its input however it was
-renamed or moved and another build refuses it, and an address shows in the
+base, so that it holds after rebasing. Beyond IDA's, copied links carry sixteen
+hexadecimal digits of the input's SHA-256 in `sha256=`; parsing accepts 8–64
+hexadecimal digits. This identifies the input after it has been renamed or
+moved and lets NeverD refuse links to another build. An address shows in the
 graph or at its line of the pseudocode, where IDA's links name only
 functions there. **Jump → Jump to link…** follows a link, `neverd://` or
 IDA's `ida://`, offering the one on the clipboard. A function link opens the
@@ -570,8 +571,10 @@ address, type or bookmark the program lacks is refused in the output window.
 Each workbench answers other programs, as IDA 9.4's IPC server answers hcli.
 `neverd-gui --list-instances` lists the running workbenches and their
 programs, and `neverd-gui neverd://…` (or `--link URL`) sends the link to the
-workbench that has its program, by the link's SHA-256, else its input's name,
-else to the only one with a program open, which comes to the front there.
+workbench that has its program, matching the SHA-256 when supplied, otherwise
+the input's name, or the only workbench with a program open when neither is
+supplied. A mismatched hash does not fall back to a matching name. The selected
+workbench comes to the front.
 When none has it, a recently opened file the link names opens in a new
 workbench at the link, `neverd-gui FILE LINK` names the file, and
 `--no-launch` only sends. `neverd-gui --register-link-handler` makes a

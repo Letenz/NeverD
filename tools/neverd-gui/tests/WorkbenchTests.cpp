@@ -21,6 +21,7 @@
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
+#include "ResourceLimits.h"
 #include "Session.h"
 #include "SessionTestAccess.h"
 #include "SetTypeDialog.h"
@@ -6390,16 +6391,23 @@ private slots:
     QTRY_COMPARE(disassembly->currentFunction(),
                  std::optional<Address>(Base + 0x50));
 
+    open(QStringLiteral("neverd:///addresses?rva=0x52&view=disasm"));
+    QTRY_COMPARE_WITH_TIMEOUT(error, QString(), OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x52));
     open(QStringLiteral("neverd:///fixture.bin/functions?rva=0x40&sha256=%1")
              .arg(hash.startsWith(QLatin1String("00000000"))
                       ? QStringLiteral("ffffffff")
                       : QStringLiteral("00000000")));
     QTRY_VERIFY(error.startsWith(
         QStringLiteral("The link names another build of the input")));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
     open(QStringLiteral("neverd:///addresses?rva=0x7fffffff"));
     QTRY_VERIFY(error.startsWith(QStringLiteral("The link's address")));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
     open(QStringLiteral("neverd:///bookmarks?rva=0x40"));
     QTRY_VERIFY(error.startsWith(QStringLiteral("No bookmark is at")));
+    QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
   }
 
   void otherProgramsFindTheWorkbenchAndOpenLinksInIt() {
@@ -6450,6 +6458,9 @@ private slots:
     QVERIFY(info.value(QStringLiteral("loaded")).toBool());
     QCOMPARE(info.value(QStringLiteral("input_name")).toString(),
              QStringLiteral("fixture.bin"));
+    QCOMPARE(info.value(QStringLiteral("input")).toString(),
+             bench.session.filePath());
+    QVERIFY(info.value(QStringLiteral("analysis_complete")).isBool());
     QCOMPARE(
         info.value(QStringLiteral("sha256")).toString(),
         bench.session.metadata().value(QStringLiteral("sha256")).toString());
@@ -6468,6 +6479,13 @@ private slots:
              qPrintable(QJsonDocument(opened).toJson()));
     QTRY_COMPARE(bench.window->disassembly()->currentItem(),
                  std::optional<Address>(Base + 0x52));
+    const QJsonObject location = ask("{\"cmd\":\"get_info\"}\n")
+                                     .value(QStringLiteral("location"))
+                                     .toObject();
+    QCOMPARE(addressValue(location.value(QStringLiteral("address"))),
+             std::optional<Address>(Base + 0x52));
+    QCOMPARE(addressValue(location.value(QStringLiteral("rva"))),
+             std::optional<Address>(0x52));
     QCOMPARE(ask("{\"cmd\":\"open_link\",\"uri\":\"neverd:///types\"}\n")
                  .value(QStringLiteral("message"))
                  .toString(),
@@ -6478,6 +6496,83 @@ private slots:
              QStringLiteral("Unknown command: rename"));
     QCOMPARE(ask("[1]\n").value(QStringLiteral("message")).toString(),
              QStringLiteral("Expected a JSON object"));
+  }
+
+  void instanceRequestsRespectTheirByteLimit_data() {
+    QTest::addColumn<int>("extraBytes");
+    QTest::addColumn<bool>("newline");
+    QTest::addColumn<bool>("complete");
+    QTest::addColumn<int>("requests");
+    QTest::newRow("limit-newline") << 0 << true << true << 1;
+    QTest::newRow("limit-no-newline") << 0 << false << true << 1;
+    QTest::newRow("oversized-newline") << 1 << true << true << 1;
+    QTest::newRow("oversized-no-newline") << 1 << false << true << 1;
+    QTest::newRow("oversized-incomplete") << 1 << false << false << 1;
+    QTest::newRow("limit-per-message") << 0 << true << true << 2;
+  }
+
+  void instanceRequestsRespectTheirByteLimit() {
+    QFETCH(int, extraBytes);
+    QFETCH(bool, newline);
+    QFETCH(bool, complete);
+    QFETCH(int, requests);
+    InstanceServer server;
+    int opened = 0;
+    server.setLinkHandler([&](const DeepLink &, auto done) {
+      ++opened;
+      done({});
+    });
+    QVERIFY2(server.start(), qPrintable(server.errorString()));
+    QLocalSocket socket;
+    socket.connectToServer(server.serverName());
+    QVERIFY(socket.waitForConnected(
+        ::neverd::limits::gui::kInstanceServerRequestTimeoutMs));
+    // The same valid link at the boundary must open, while a larger JSON
+    // object must be refused before the handler sees it, with or without
+    // a newline. Multiple bounded requests may share a connection.
+    QByteArray request = "{\"cmd\":\"open_link\",\"uri\":\"neverd:///"
+                         "addresses?ea=1\",\"padding\":\"";
+    const QByteArray suffix = complete ? "\"}" : "\" ";
+    const int limit = ::neverd::limits::gui::kInstanceServerMaxRequestBytes;
+    request +=
+        QByteArray(limit + extraBytes - request.size() - suffix.size(), 'x');
+    request += suffix;
+    if (newline)
+      request += '\n';
+    const QByteArray wire = request.repeated(requests);
+    QCOMPARE(socket.write(wire), qint64(wire.size()));
+    QByteArray replies;
+    QVERIFY(QTest::qWaitFor(
+        [&] {
+          replies += socket.readAll();
+          return replies.count('\n') == requests;
+        },
+        OpenTimeoutMs));
+    const bool accepted = extraBytes == 0;
+    QCOMPARE(opened, accepted ? requests : 0);
+    for (const QByteArray &line : replies.trimmed().split('\n')) {
+      const QJsonObject reply = QJsonDocument::fromJson(line).object();
+      QCOMPARE(reply.value(QStringLiteral("status")).toString(),
+               accepted ? QStringLiteral("ok") : QStringLiteral("error"));
+      if (!accepted)
+        QCOMPARE(reply.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("Request exceeds %1 bytes").arg(limit));
+    }
+    if (!accepted)
+      QTRY_COMPARE(socket.state(), QLocalSocket::UnconnectedState);
+  }
+
+  void instanceServingCanBeDisabled() {
+    const auto restore =
+        qScopeGuard([] { QSettings().remove(settings::InstancesDisabled); });
+    QSettings().setValue(settings::InstancesDisabled, true);
+    InstanceServer server;
+    QVERIFY(!server.start());
+    QVERIFY(!server.listening());
+    QVERIFY(!server.errorString().isEmpty());
+    QSettings().setValue(settings::InstancesDisabled, false);
+    QVERIFY2(server.start(), qPrintable(server.errorString()));
+    QVERIFY(server.listening());
   }
 
   void pathfinderListsTheCallPathsBetweenWaypoints() {
