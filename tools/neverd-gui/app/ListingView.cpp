@@ -19,6 +19,7 @@
 #include <QTextLine>
 #include <QToolTip>
 #include <algorithm>
+#include <iterator>
 #include <unordered_map>
 
 namespace neverd::gui {
@@ -126,6 +127,7 @@ void ListingView::clear() {
   selecting_ = false;
   highlight_.clear();
   generation_.clear();
+  revision_.clear();
   lastEmitted_.reset();
   lastFunction_.reset();
   contentReported_ = false;
@@ -145,6 +147,50 @@ void ListingView::jumpTo(Address address) {
   pendingJump_ = address;
   request(Fetch::Jump, address, 0, JumpContextBefore,
           ::neverd::limits::gui::kListingViewPageLines);
+}
+
+bool ListingView::rowsCurrent() const {
+  return session_.loaded() && !pendingJump_ && contentSerial_ == serial_ &&
+         revision_ == session_.revision() &&
+         generation_ == session_.generation();
+}
+
+std::optional<Address> ListingView::loadedFunctionAt(Address address) const {
+  if (!rowsCurrent())
+    return std::nullopt;
+  for (const auto &line : lines_)
+    if (line.item == address && line.functionAddress)
+      return line.functionAddress;
+  return std::nullopt;
+}
+
+bool ListingView::revealItem(Address address) {
+  if (!rowsCurrent())
+    return false;
+  const auto item =
+      std::find_if(lines_.cbegin(), lines_.cend(), [address](const Line &line) {
+        return line.item == address;
+      });
+  if (item == lines_.cend())
+    return false;
+  const int anchor = int(std::distance(lines_.cbegin(), item));
+  // A page may start partway through a large item's rows. It cannot supply
+  // that item's ordinary jump position without consulting the worker.
+  if (lines_[anchor].sub != 0)
+    return false;
+  scrollJump_.stop();
+  const bool selected = anchor_.has_value();
+  const int oldTop = top_, oldLine = cursorLine_, oldColumn = cursorColumn_;
+  anchor_.reset();
+  placeJump(anchor, address);
+  updateScrollBar();
+  if (selected || oldTop != top_ || oldLine != cursorLine_ ||
+      oldColumn != cursorColumn_)
+    viewport()->update();
+  ensureLoaded();
+  emitLocation();
+  emit jumpSettled();
+  return true;
 }
 
 std::optional<Address> ListingView::topItem() const {
@@ -248,13 +294,18 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
   }
   const int anchor =
       std::clamp(payload.value("anchor").toInt(), 0, int(fresh.size()));
-  generation_ = payload.value("generation").toString();
+  const auto generation = payload.value("generation").toString();
+  if (generation != generation_ || revision_ != session_.revision())
+    contentSerial_ = 0;
   const auto identity = [](const Line &line) {
     return std::pair{line.item, line.sub};
   };
   switch (kind) {
   case Fetch::Jump:
   case Fetch::Refresh: {
+    generation_ = generation;
+    revision_ = session_.revision();
+    contentSerial_ = serial;
     lines_ = std::move(fresh);
     atStart_ = payload.value("at_start").toBool();
     atEnd_ = payload.value("at_end").toBool();
@@ -264,23 +315,7 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
       break;
     }
     if (kind == Fetch::Jump) {
-      // Put the cursor on the item's instruction or data line, keeping its
-      // header lines visible above it.
-      int content = std::min(anchor, int(lines_.size()) - 1);
-      const Address item = lines_[content].item;
-      for (int i = content; i < int(lines_.size()) && lines_[i].item == item;
-           ++i)
-        if (contentKind(lines_[i].kind) &&
-            (lines_[i].address <= jumpAddress || i == content)) {
-          content = i;
-          if (lines_[i].address >= jumpAddress)
-            break;
-        }
-      cursorLine_ = content;
-      cursorColumn_ = 0;
-      top_ = std::max(0, std::min(anchor, cursorLine_ - visibleLines() / 3));
-      if (cursorLine_ - top_ >= visibleLines() - 1)
-        top_ = std::max(0, cursorLine_ - visibleLines() / 3);
+      placeJump(anchor, jumpAddress);
     } else {
       top_ = std::min(anchor, int(lines_.size()) - 1);
       cursorLine_ = top_;
@@ -348,6 +383,25 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
   emitLocation();
   if (settledJump)
     emit jumpSettled();
+}
+
+void ListingView::placeJump(int anchor, Address address) {
+  // Put the cursor on the item's instruction or data line, keeping its
+  // header lines visible above it. Cached and fetched jumps share this rule.
+  int content = std::min(anchor, int(lines_.size()) - 1);
+  const Address item = lines_[content].item;
+  for (int i = content; i < int(lines_.size()) && lines_[i].item == item; ++i)
+    if (contentKind(lines_[i].kind) &&
+        (lines_[i].address <= address || i == content)) {
+      content = i;
+      if (lines_[i].address >= address)
+        break;
+    }
+  cursorLine_ = content;
+  cursorColumn_ = 0;
+  top_ = std::max(0, std::min(anchor, cursorLine_ - visibleLines() / 3));
+  if (cursorLine_ - top_ >= visibleLines() - 1)
+    top_ = std::max(0, cursorLine_ - visibleLines() / 3);
 }
 
 void ListingView::ensureLoaded() {

@@ -171,7 +171,8 @@ void DisassemblyView::navigate(Address address, bool record,
       emit locationChanged(address);
     }
   } else {
-    listing_->jumpTo(address);
+    if (!listing_->revealItem(address))
+      listing_->jumpTo(address);
   }
   updateStatus();
 }
