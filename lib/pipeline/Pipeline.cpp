@@ -542,7 +542,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // consume HighIR postpone only that projection, retaining those proofs.
   if (Opts.DeferHighIR && !Opts.DumpHigh) {
     Trace.start(NativePipelineTrace::Stage::HighIR);
-    prepareDeferredSource(Img, Result, Dbg);
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
     Trace.finish(Result.Success);
     return Result;
   }
@@ -568,10 +568,10 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 }
 
 void Pipeline::prepareDeferredSource(const BinaryImage &Img,
-                                     PipelineResult &Result,
-                                     DebugContext *Dbg) {
+                                     PipelineResult &Result, DebugContext *Dbg,
+                                     PipelineAnalysisCache *Cache) {
   try {
-    prepareSourceMedIR(Img, Result, Dbg);
+    prepareSourceMedIR(Img, Result, Dbg, Cache);
     Result.HighIRDeferred = true;
     Result.Success = true;
   } catch (const std::exception &Error) {
@@ -607,7 +607,7 @@ bool Pipeline::resumeMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   recognizeLibraries(Img, Opts, Result, Dbg);
   Trace.start(NativePipelineTrace::Stage::HighIR);
   if (Opts.DeferHighIR)
-    prepareDeferredSource(Img, Result, Dbg);
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
   else
     Result.Success = pipeline_detail::runHighIRStage(
         Result, [&] { buildHighIR(Img, Opts, Result, Dbg); });

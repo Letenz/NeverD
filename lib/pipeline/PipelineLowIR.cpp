@@ -4232,6 +4232,30 @@ struct PipelineAnalysisCache::Impl {
           StackProbes(Img), PointerCallees(collectPointerVariableCallees(Img)),
           Roots(Img), Owners(Img) {}
 
+    /// Import-address names (getImportAddressNames). HighIR lays a run's own
+    /// function, debug and thunk names over this map and takes them off
+    /// before returning. The fingerprint is the import storage and the counts
+    /// admission of an import stub reads. Exception metadata is not in it, so
+    /// reset the cache before changing the image.
+    struct ImportNameMemo {
+      const void *ImportData = nullptr;
+      size_t ImportCount = 0;
+      size_t StubCount = 0;
+      size_t DataInCodeCount = 0;
+      size_t ContinuationCount = 0;
+      std::shared_ptr<std::map<va_t, std::string>> Names;
+
+      bool matches(const BinaryImage &Img) const {
+        return Names &&
+               ImportData == static_cast<const void *>(Img.Imports.data()) &&
+               ImportCount == Img.Imports.size() &&
+               StubCount == Img.ImportStubIndices.size() &&
+               DataInCodeCount == Img.DataInCode.size() &&
+               ContinuationCount == Img.ContinuationCodeStarts.size();
+      }
+    };
+    ImportNameMemo ImportNames;
+
     bool matches(const BinaryImage &Img, DebugContext *Dbg,
                  const SymbolInventory *CandidateInventory) const {
       return Image == &Img && Debug == Dbg &&
@@ -4294,6 +4318,45 @@ struct PipelineAnalysisCache::Impl {
                        CandidateEntries.end()));
   }
 };
+
+std::map<va_t, std::string> *
+Pipeline::importAddressNames(const BinaryImage &Img,
+                             PipelineAnalysisCache *Cache) {
+  if (!Cache)
+    return nullptr;
+  // Facts and a selection can each hold image inputs. Prefer a memo that
+  // already names this image's imports; otherwise fill the first inputs that
+  // belong to it. HighIR removes whatever it adds before it returns.
+  using InputsPtr = std::shared_ptr<PipelineAnalysisCache::Impl::ImageInputs>;
+  InputsPtr Inputs;
+  for (const std::shared_ptr<PipelineAnalysisCache::Impl> &Kept :
+       {Cache->Facts, Cache->SelectionFacts}) {
+    if (!Kept || !Kept->Inputs || Kept->Inputs->Image != &Img)
+      continue;
+    if (!Inputs)
+      Inputs = Kept->Inputs;
+    if (Kept->Inputs->ImportNames.matches(Img)) {
+      Inputs = Kept->Inputs;
+      break;
+    }
+  }
+  if (!Inputs)
+    return nullptr;
+  PipelineAnalysisCache::Impl::ImageInputs::ImportNameMemo &Memo =
+      Inputs->ImportNames;
+  if (Memo.matches(Img))
+    return Memo.Names.get();
+  auto Built = std::make_shared<std::map<va_t, std::string>>(
+      Img.getImportAddressNames());
+  Memo.Names.reset();
+  Memo.ImportData = static_cast<const void *>(Img.Imports.data());
+  Memo.ImportCount = Img.Imports.size();
+  Memo.StubCount = Img.ImportStubIndices.size();
+  Memo.DataInCodeCount = Img.DataInCode.size();
+  Memo.ContinuationCount = Img.ContinuationCodeStarts.size();
+  Memo.Names = std::move(Built);
+  return Memo.Names.get();
+}
 
 namespace {
 /// The starts of the image's function symbols that are not boundary

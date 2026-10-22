@@ -77,6 +77,9 @@ struct ImageImportCounts;
 /// that adds its own entry, so passing through such a selection leaves them in
 /// place.  It reads that inventory from the image's symbols once for the cache.
 /// Additive CodeRefTargets publication is allowed, as for the raw graph cache.
+/// Import-address names are image facts too. A run overlays the names of the
+/// functions it lifts, and their debug and thunk names, and removes that
+/// overlay before it returns. forgetDeclarations does not drop them.
 /// Use from one pipeline invocation at a time; its internal workers join before
 /// run() returns. Other architectures and whole-image runs stay local.
 class PipelineAnalysisCache {
@@ -761,12 +764,18 @@ private:
       const SourceViewOptions &View = {});
 
   /// Shared source call/return recovery before either HighIR or LLVM emission.
+  /// \p Cache keeps the image's import-address names when this run shares one.
   void prepareSourceMedIR(const BinaryImage &Img, PipelineResult &Result,
-                          DebugContext *Dbg);
+                          DebugContext *Dbg, PipelineAnalysisCache *Cache);
   /// prepareSourceMedIR for a run that defers HighIR, which then succeeds;
   /// a failure is the run's error.
   void prepareDeferredSource(const BinaryImage &Img, PipelineResult &Result,
-                             DebugContext *Dbg);
+                             DebugContext *Dbg, PipelineAnalysisCache *Cache);
+  /// The import-address names of \p Img kept with \p Cache's image inputs, or
+  /// null when \p Cache is null or those inputs are not built yet. Additions
+  /// a run makes belong to that run and must not remain on the kept map.
+  std::map<va_t, std::string> *importAddressNames(const BinaryImage &Img,
+                                                  PipelineAnalysisCache *Cache);
 
   /// Phase 3: convert MedIR -> HighIR in parallel.
   void buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
