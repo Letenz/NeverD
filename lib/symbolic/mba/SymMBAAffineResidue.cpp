@@ -19,8 +19,10 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -731,9 +733,9 @@ bool proveAffineResidues(const std::vector<Factor> &Factors, unsigned Bits,
 
 // Each row is a complete congruence for its original factor modulo 2^Bits.
 // In a residue branch, replacing factor i by its known low word changes the
-// product by a multiple of 2^(Bits + sum_{j != i} zeros[j]). When all but at
-// most one factor meet the required precision, retain the precision that factor
-// still requires.
+// product by a multiple of 2^(Bits + sum_{j != i} zeros[j]). Retain the
+// precision of every factor that still contributes, proving separately that
+// all products of two or more unobserved remainders vanish.
 SymRef synthesizeResidualResidueTable(
     SymContext &Ctx, SymRef Root, llvm::ArrayRef<Factor> Factors,
     llvm::ArrayRef<SymRef> Originals, const llvm::APInt &Scale, unsigned Bits,
@@ -2026,13 +2028,6 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
       if (DecisionRequested && IncompatibleBase)
         break;
     }
-  }
-  if (Best == Root && DecisionRequested && !DecisionAttempted &&
-      !Budget.exhausted()) {
-    auto Exact = foldResidueDecisions(Ctx, Root, Budget, Storage, false,
-                                      Res.optionalRemaining(), &StorageLimited);
-    if (Exact != Root)
-      return Exact;
   }
   return Best;
 }
