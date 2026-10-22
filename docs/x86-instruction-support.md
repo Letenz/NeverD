@@ -9,8 +9,10 @@ The `dev` integration also adopts the decoder update in `cb6678521`, using
 Capstone `b9048c860493ce8511f4d535526495ff273c7641`. The original audit baseline
 above and the integration verification below are recorded separately.
 The floating-point follow-up also integrates `39d727a54`, with Capstone
-`ed51c6cbeb198c2a2d72412c8571f160ec37c30a`. The final integration includes
+`ed51c6cbeb198c2a2d72412c8571f160ec37c30a`. The integration includes
 the Windows type/ABI update merged in `5a3354cad`.
+Before publication, `c17776c92` also advances the decoder to
+`9d458aa76ce3b294d6ffea9f16a5b5d0cd2a6eae`.
 
 ## Support is a pipeline property
 
@@ -222,6 +224,12 @@ two optional kernel-type corpus checks. The Windows type generator's five
 Python tests pass. All these builds use the Release profile above. Native APX,
 privileged transitions, AMX completion and platform-specific skipped behavior
 remain outside this qualification.
+
+On the final `9d458aa7` decoder, the broad selection again passes 1,827 tests
+and retains the same 17 skips, with no failures. All 99 selected FP contract,
+encoding, corpus and source-route integration checks pass. This validates the
+new decoder's table lookup and instruction-byte copy changes; the full numerical
+FP matrices above were not repeated for that dependency-only merge.
 
 The architectural references are Intel's
 [Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
