@@ -134,9 +134,12 @@ class MimallocConfigureTests(unittest.TestCase):
                     with tempfile.TemporaryDirectory(prefix="neverd-worker-policy-") as temp:
                         source = pathlib.Path(temp)
                         expected = "mimalloc" if effective and legacy != "OFF" else "system"
+                        source.joinpath("worker.cpp").write_text(
+                            "int main() { return 0; }\n", encoding="utf-8"
+                        )
                         source.joinpath("CMakeLists.txt").write_text(
                             "cmake_minimum_required(VERSION 3.20)\n"
-                            "project(WorkerAllocatorPolicy NONE)\n"
+                            "project(WorkerAllocatorPolicy CXX)\n"
                             f'set(CMAKE_SYSTEM_NAME "{platform}")\n'
                             "set(NEVERD_ENABLE_MIMALLOC ON)\n"
                             f'set(NEVERD_MIMALLOC_ENABLED {"ON" if effective else "OFF"})\n'
@@ -144,7 +147,9 @@ class MimallocConfigureTests(unittest.TestCase):
                             "function(neverd_link_mimalloc target)\n"
                             "  set_property(TARGET ${target} PROPERTY TEST_ALLOCATOR_LINKED ON)\n"
                             "endfunction()\n"
-                            "add_executable(worker IMPORTED)\n"
+                            # The wrapper configures a compiled executable, including
+                            # private definitions that imported targets cannot own.
+                            "add_executable(worker worker.cpp)\n"
                             f'include("{ROOT.as_posix()}/cmake/NeverDWorkerAllocator.cmake")\n'
                             "neverd_worker_allocator(worker)\n"
                             "get_target_property(actual worker NEVERD_WORKER_ALLOCATOR)\n"
@@ -155,6 +160,16 @@ class MimallocConfigureTests(unittest.TestCase):
                             'if((actual STREQUAL "mimalloc" AND NOT linked) OR\n'
                             '   (actual STREQUAL "system" AND linked))\n'
                             '  message(FATAL_ERROR "Worker did not follow process allocator policy")\n'
+                            "endif()\n"
+                            "get_target_property(definitions worker COMPILE_DEFINITIONS)\n"
+                            'if((actual STREQUAL "mimalloc" AND NOT\n'
+                            '    definitions STREQUAL "NEVERD_WORKER_HAS_MIMALLOC=1") OR\n'
+                            '   (actual STREQUAL "system" AND definitions))\n'
+                            '  message(FATAL_ERROR "Worker allocator definition disagrees with linkage")\n'
+                            "endif()\n"
+                            "get_target_property(public_definitions worker INTERFACE_COMPILE_DEFINITIONS)\n"
+                            "if(public_definitions)\n"
+                            '  message(FATAL_ERROR "Worker allocator definition must stay private")\n'
                             "endif()\n",
                             encoding="utf-8",
                         )
