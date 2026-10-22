@@ -15,6 +15,11 @@ using namespace neverd::types;
 
 namespace {
 
+bool microsoftSource(HeaderLibrary Library) {
+  return headerLibrarySource(Library).starts_with(
+      "// Local declarations generated from Microsoft SDK/WDK.");
+}
+
 std::optional<uint64_t> sizeOf(const TypeLibrary &Library,
                                llvm::StringRef Name) {
   const LocalType *Type = Library.find(Name);
@@ -165,13 +170,19 @@ TEST(HeaderLibrary, Arm64KernelKeepsItsOwnContextAndRecordAlignment) {
   }
   EXPECT_TRUE(HasSp);
   EXPECT_TRUE(HasPc);
-  for (const char *Name : {"KUSER_SHARED_DATA", "NDIS_OFFLOAD",
-                           "PHYSICAL_COUNTER_RESOURCE_LIST"}) {
+  for (auto [Name, OfficialSize] : {std::pair{"KUSER_SHARED_DATA", 2688u},
+                                    {"NDIS_OFFLOAD", 188u},
+                                    {"PHYSICAL_COUNTER_RESOURCE_LIST", 32u}}) {
     const auto *Type = Kernel->resolve(Name);
     ASSERT_NE(Type, nullptr) << Name;
     ASSERT_NE(Type->Record, nullptr) << Name;
-    EXPECT_FALSE(Type->Record->Defined) << Name;
-    EXPECT_FALSE(Kernel->sizeOf(*makeNamed(Name, TypeKind::Typedef))) << Name;
+    if (microsoftSource(HeaderLibrary::WindowsKernelARM64)) {
+      EXPECT_TRUE(Type->Record->Defined) << Name;
+      EXPECT_EQ(sizeOf(*Kernel, Name), OfficialSize) << Name;
+    } else {
+      EXPECT_FALSE(Type->Record->Defined) << Name;
+      EXPECT_FALSE(Kernel->sizeOf(*makeNamed(Name, TypeKind::Typedef))) << Name;
+    }
   }
 }
 
@@ -294,11 +305,17 @@ TEST(HeaderLibrary, TheUserLibrariesDeclareNtdllsNativeAPI) {
 
     const bool Wide = headerLibraryModel(Library) != DataModel::ILP32;
     std::string Assertions;
-    for (const Offset &O : Offsets)
+    for (const Offset &O : Offsets) {
+      // The SDK's public TEB keeps this field reserved. A supplement must
+      // not replace its official definition with a private, larger record.
+      if (microsoftSource(Library) &&
+          llvm::StringRef(O.Member) == "LastErrorValue")
+        continue;
       Assertions += std::string("_Static_assert(__builtin_offsetof(") +
                     O.Record + ", " + O.Member +
                     ") == " + std::to_string(Wide ? O.Wide : O.Narrow) +
                     ", \"" + O.Record + "." + O.Member + "\");\n";
+    }
     // A copy, which the assertions read without changing the library.
     TypeLibrary Layout = *Types;
     const ParseResult Laid = parseCTypes(Assertions, Layout);
@@ -699,6 +716,41 @@ TEST(HeaderLibrary, JoinsWhereTheProgramHasNoTypeOfTheName) {
   // The program's own prototype stays.
   EXPECT_EQ(Program.findPrototype("Use")->Return->TheBuiltin, Builtin::ULong);
   EXPECT_EQ(Merge.Prototypes, 0u);
+}
+
+TEST(HeaderLibrary, SupplementsPreservePrimaryDeclarationsAndRejectChangedABI) {
+  TypeLibrary Primary;
+  TypeLibrary Supplement;
+  ASSERT_TRUE(parseCTypes(R"(
+    struct Base { char Bytes[8]; };
+    void Existing(void *Object);
+  )",
+                          Primary)
+                  .ok());
+  ASSERT_TRUE(parseCTypes(R"(
+    struct Base { unsigned long long Value; };
+    struct Holder { char Prefix; struct Base Value; };
+    int Existing(int Extra, int Argument);
+    void Missing(void *Object);
+    void ByValue(struct Base Value);
+    void ByPointer(struct Base *Value);
+    void BadHolder(struct Holder Value);
+  )",
+                          Supplement)
+                  .ok());
+  const auto Merge = mergeHeaderTypes(Primary, Supplement);
+  ASSERT_NE(Primary.findPrototype("Existing"), nullptr);
+  EXPECT_EQ(Primary.findPrototype("Existing")->Params.size(), 1u);
+  EXPECT_EQ(Primary.findPrototype("Existing")->Return->TheBuiltin,
+            Builtin::Void);
+  EXPECT_EQ(Primary.find("Base")->Record->Members[0].Name, "Bytes");
+  EXPECT_NE(Primary.findPrototype("Missing"), nullptr);
+  EXPECT_NE(Primary.findPrototype("ByPointer"), nullptr);
+  EXPECT_EQ(Primary.findPrototype("ByValue"), nullptr);
+  EXPECT_EQ(Primary.findPrototype("BadHolder"), nullptr);
+  EXPECT_EQ(Merge.Prototypes, 2u);
+  EXPECT_EQ(Merge.Conflicts, (std::vector<std::string>{"Holder"}));
+  EXPECT_FALSE(Primary.find("Holder")->Record->Defined);
 }
 
 TEST(HeaderLibrary, DeclaresTheKernelRoutinesTheCallAnalysisFixes) {

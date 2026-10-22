@@ -34,6 +34,25 @@ class WordOracleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.equivalent("x", "unknown(x)")
 
+    def test_frontier_controls_have_nonzero_witnesses(self):
+        for width in (8, 16, 32, 64):
+            rows = bench.residue_frontier_corpus(width, 128)
+            for expression in rows[112:]:
+                with self.assertRaises(AssertionError):
+                    self.equivalent(expression, "x+y+z+w", width)
+
+
+    def test_distributed_prefix_identities_and_controls(self):
+        for width in (8, 16, 32, 64):
+            rows = bench.distributed_prefix_corpus(width, 128)
+            self.assertEqual(len(rows), 128)
+            self.assertEqual(rows, bench.distributed_prefix_corpus(width, 128))
+            for expression in rows[:16]:
+                self.equivalent(expression, "x+y+z+w", width)
+            for expression in rows[112:]:
+                with self.assertRaises(AssertionError):
+                    self.equivalent(expression, "x+y+z+w", width)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,6 +34,8 @@ inline constexpr qsizetype kEngineClientMaxPartialLine = 65536;
 // tools/neverd-gui/app/ChooserView.cpp
 inline constexpr int kChooserViewPageSize = 256;
 inline constexpr int kChooserViewMaxCachedPages = 64;
+/// Bound address lookups needed when discovery moves selected rows off-page.
+inline constexpr int kChooserViewMaxRefreshLookups = kChooserViewMaxCachedPages;
 inline constexpr int kChooserViewMaxPendingPages = 4;
 inline constexpr int kChooserViewFilterDebounceMs = 150;
 inline constexpr int kChooserViewChooserModelRequestPageTextLimit = 400;
@@ -44,6 +46,9 @@ inline constexpr int kCodeViewPageLines = 256;
 /// the interactive first load small, and retry it if a batch exceeds bytes.
 inline constexpr int kCodeViewNameRefreshPageLines =
     ::neverd::sdk::kMaxCodeViewPageLines;
+
+// tools/neverd-gui/app/FindInViewDialog.cpp
+inline constexpr int kFindInViewDebounceMs = 120;
 
 // tools/neverd-gui/app/DisassemblyView.cpp
 inline constexpr std::size_t kDisassemblyViewMaxHistory = 512;

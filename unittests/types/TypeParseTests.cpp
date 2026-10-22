@@ -291,6 +291,38 @@ TEST(TypeParse, KeepsADeclaredAlignmentUnderPack) {
   EXPECT_EQ(recordOf(Library, "P4n").Size, 12u);
 }
 
+TEST(TypeParse, NamedPackingRestoresTheMatchingStackEntry) {
+  TypeLibrary Library(DataModel::LLP64);
+  const char *Source = R"(
+    #pragma pack(8)
+    #pragma pack(push, outer, 1)
+    #pragma pack(push, inner, 2)
+    #pragma pack(push, outer, 4)
+    #pragma pack(show)
+    struct Four { char c; long long value; };
+    #pragma pack(pop, outer)
+    struct Two { char c; long long value; };
+    #pragma pack(pop, missing)
+    struct StillTwo { char c; long long value; };
+    #pragma pack(pop, outer)
+    struct Eight { char c; long long value; };
+    #pragma pack(push, saved)
+    #pragma pack(1)
+    #pragma pack(pop, saved, 4)
+    struct Override { char c; long long value; };
+    #pragma pack(pop, absent, 2)
+    struct MissingOverride { char c; long long value; };
+  )";
+  ParseResult Read = parseCTypes(Source, Library);
+  ASSERT_TRUE(Read.ok()) << Read.Problems.front().Message;
+  EXPECT_EQ(recordOf(Library, "Four").Size, 12u);
+  EXPECT_EQ(recordOf(Library, "Two").Size, 10u);
+  EXPECT_EQ(recordOf(Library, "StillTwo").Size, 10u);
+  EXPECT_EQ(recordOf(Library, "Eight").Size, 16u);
+  EXPECT_EQ(recordOf(Library, "Override").Size, 12u);
+  EXPECT_EQ(recordOf(Library, "MissingOverride").Size, 10u);
+}
+
 TEST(TypeParse, ReadsEnumerationsWithConstants) {
   const TypeLibrary Library = parsed(R"(
     enum E { A, B = 5, C, D = B << 2, F = -1, G = (int)0x80000000, H = C | 1 };
@@ -403,6 +435,47 @@ TEST(TypeParse, ReadsWhatGnuPreprocessedHeadersHold) {
   EXPECT_EQ(Log.Params[1].Type->Kind, TypeExprKind::Pointer);
 }
 
+TEST(TypeParse, MicrosoftFixedWidthPointerAliasesKeepTheirWidths) {
+  for (const auto Model : {DataModel::ILP32, DataModel::LLP64}) {
+    const auto Library = parsed(R"(
+      typedef void *P;
+      typedef P ALIAS;
+      struct Mixed {
+        long long Flags;
+        void * __ptr32 Small;
+        unsigned int Length;
+        ALIAS __ptr32 Other;
+        ALIAS __ptr64 Wide;
+      };
+      _Static_assert(sizeof(((Mixed *)0)->Small) == 4, "small pointer");
+      _Static_assert(sizeof(((Mixed *)0)->Other) == 4, "alias pointer");
+      _Static_assert(sizeof(((Mixed *)0)->Wide) == 8, "wide pointer");
+      _Static_assert(__builtin_offsetof(Mixed, Length) == 12, "length");
+      _Static_assert(__builtin_offsetof(Mixed, Other) == 16, "other");
+      _Static_assert(__builtin_offsetof(Mixed, Wide) == 24, "wide");
+      _Static_assert(sizeof(Mixed) == 32, "record");
+    )",
+                                {}, Model, RecordABI::Microsoft);
+    EXPECT_EQ(Library.sizeOf(*makeNamed("P", TypeKind::Typedef)),
+              Model == DataModel::ILP32 ? 4u : 8u);
+    for (const auto Lang : {Language::C, Language::Cpp}) {
+      RenderOptions Options;
+      Options.Lang = Lang;
+      const LocalType *Roots[] = {Library.find("Mixed")};
+      ParseOptions Parse;
+      Parse.Lang = Lang;
+      const auto RoundTrip = parsed(renderTypes(Library, Roots, Options), Parse,
+                                    Model, RecordABI::Microsoft);
+      const auto &Fields = recordOf(RoundTrip, "Mixed").Members;
+      ASSERT_EQ(Fields.size(), 5u);
+      EXPECT_EQ(RoundTrip.sizeOf(*Fields[1].Type), 4u);
+      EXPECT_EQ(RoundTrip.sizeOf(*Fields[3].Type), 4u);
+      EXPECT_EQ(RoundTrip.sizeOf(*Fields[4].Type), 8u);
+      EXPECT_EQ(recordOf(RoundTrip, "Mixed").Size, 32u);
+    }
+  }
+}
+
 TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
   for (auto [Model, ABI] : {std::pair{DataModel::ILP32, RecordABI::Microsoft},
                             {DataModel::LLP64, RecordABI::Microsoft},
@@ -414,6 +487,7 @@ TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
       typedef union { unsigned int Code; unsigned short Parts[2]; } VALUE;
       struct Packet { char Prefix; HEADER_ALIAS; unsigned char Payload[3]; };
       struct Promoted { VALUE; unsigned char Tail; };
+      struct Nested { struct Inner { unsigned int Value; void *Link; }; void *Tail; };
       #pragma pack(push, 1)
       struct Packed { char Prefix; HEADER_ALIAS; unsigned char Payload[3]; };
       #pragma pack(pop)
@@ -423,6 +497,8 @@ TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
       _Static_assert(__builtin_offsetof(Packet, Payload) == 3 * sizeof(void *), "Payload");
       _Static_assert(__builtin_offsetof(Promoted, Tail) == 4, "anonymous union");
       _Static_assert(sizeof(Declaration) == 1, "a tag declaration has no storage");
+      _Static_assert(sizeof(Nested) == 3 * sizeof(void *), "named definition has storage in C");
+      _Static_assert(__builtin_offsetof(Nested, Tail) == 2 * sizeof(void *), "nested storage");
     )",
                                        {}, Model, ABI);
     const uint64_t Pointer = Model == DataModel::LLP64 ? 8 : 4;
@@ -445,7 +521,9 @@ TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
   const auto Declaration = parsed(R"(
     typedef struct H { unsigned short Tag; void *Link; } Header;
     struct P { char Prefix; Header; unsigned char Payload[3]; };
+    struct N { struct Inner { void *Value; }; unsigned int Value; };
     static_assert(sizeof(P) == 4, "C++ typedef declaration has no storage");
+    static_assert(sizeof(N) == 4, "C++ named record declaration has no storage");
   )",
                                   Cpp);
   EXPECT_EQ(recordOf(Declaration, "P").Size, 4u);
@@ -553,7 +631,7 @@ TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   TypeLibrary Library;
   // A #pragma pack of an unknown name leaves every layout after it unknown.
   ParseResult Pack =
-      parseCTypes("#pragma pack(push, UNKNOWN)\nstruct A { int a; };", Library);
+      parseCTypes("#pragma pack(UNKNOWN)\nstruct A { int a; };", Library);
   ASSERT_EQ(Pack.Problems.size(), 1u);
   EXPECT_NE(Pack.Problems[0].Message.find("UNKNOWN"), std::string::npos);
 
@@ -972,7 +1050,12 @@ TEST(TypeParse, SizesAMemberReachedThroughANullPointer) {
       struct { short s; long long q; };
       struct { int i; char b[3]; } n;
     } A;
+    typedef A __unaligned *PA, __unaligned *OTHER_PA;
+    typedef PA ALIAS_PA;
     _Static_assert(sizeof(((A *)0)->q) == 8, "A.q");
+    _Static_assert(sizeof(((PA)0)->q) == 8, "PA.q");
+    _Static_assert(sizeof(((ALIAS_PA)0)->n.b) == 3, "ALIAS_PA.n.b");
+    _Static_assert(sizeof(((OTHER_PA)0)->n.b) == 3, "OTHER_PA.n.b");
     _Static_assert(sizeof(((A *)0)->n.b) == 3, "A.n.b");
     _Static_assert(__builtin_offsetof(A, q) + sizeof(((A *)0)->q) == 24,
                    "A through q");

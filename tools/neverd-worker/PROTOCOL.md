@@ -556,7 +556,9 @@ Other code edits continue through full invalidation.
 `analysis_update_names` accepts an owner `analysis_snapshot` only in an existing
 readonly replica created by `analysis_restore`. Every input, option and
 non-name state must match the restored snapshot. The worker also checks input
-stamps and the committed code sidecar before replacing display-name state.
+stamps, committed user tables, loaded type declarations and library choices
+before replacing display-name state. A pending recovery transaction also
+refuses reuse.
 Success returns `{updated:true}` and advances the replica's local revision;
 retained source is redecorated without rerunning the pipeline. This operation
 never writes sidecars or history. A changed snapshot or racing sidecar is

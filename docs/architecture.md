@@ -105,6 +105,14 @@ sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
 
+Find in view is a GUI text operation. Its modeless dialog captures the originating
+pane before taking keyboard focus; pseudocode/IR supplies its complete source
+and fold projection, while assembly supplies its bounded loaded rows and visible
+address prefixes. Both renderers and the dialog share literal case/word matching.
+Selecting a source match expands its enclosing folds without navigating another
+pane or asking the worker to analyze the function again. Function replacement,
+project closure and target destruction retire the old search snapshot.
+
 Binary search matching and cursor semantics are owned by the SDK's shared
 matcher (`neverd_search_page`, also used by the legacy search entry points).
 The worker adapts those pages to the transport. The GUI owns wraparound and
@@ -906,6 +914,14 @@ over automatic Darwin SDK source bindings; header record layouts retain them.
 Unsupported record carriers fail explicitly. This does not add ARM32 record
 placement or general mixed floating record-call support.
 
+LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
+signatures. Every printed call of a symbol must agree before the writer uses
+one typed declaration and matching argument/result conversions. An unused
+machine result from a declared-void import is omitted; a live result, conflicting
+arity, unsupported carrier or preserved-LLVM mode retains the machine signature.
+The type library and shared placement authority decide the contract, not an
+emitter list of Windows API names.
+
 HighC places outgoing x86 stack arguments relative to the actual call SP.
 After one stack PHI, complete pointer-width copies and checked constant
 adjustments can prove those relative distances even when its incoming paths
@@ -1070,6 +1086,12 @@ Applications embedding the SDK continue to own their allocator policy. On macOS,
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
+The mimalloc worker returns free allocator pages after discovery, warming and
+foreground requests have paused for the allocator's configured purge delay.
+A queued request wakes this idle wait immediately. Temporary graph pages can
+return to the OS while live SDK caches retain their ownership and lifetimes.
+`cmake/NeverDWorkerAllocator.cmake` enables that executable-only integration
+from the selected allocator backend.
 
 `cmake/NeverDPerformance.cmake` owns the acceleration providers. The shared
 `cmake/NeverDForks.cmake` boundary resolves NeverSight default branches through
@@ -1227,6 +1249,9 @@ it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Background function discovery similarly stages cached chooser pages before
 replacing them, remapping persistent indexes by image address when rows move.
+Selected addresses that move beyond those pages use bounded address lookups
+before publication. Additional pages stay within the chooser cache allowance;
+an incomplete refresh preserves the previous inventory and selection.
 Explicit filters, sorts, semantic edits and session changes still retire those
 reads through their normal invalidation paths.
 Documents own text, rows and edit anchors, and project or presentation changes
@@ -1234,9 +1259,15 @@ invalidate their decorated pages. A confirmed local display-name edit retains
 the original source document within that same byte allowance and redecorates it
 without rerunning analysis or rebuilding the listing. Types, variable
 associations, stack corrections, image names and other edits keep their existing
-invalidation rules. An idle replica can consume `analysis_update_names` only
+invalidation rules. The original is retained as serialized JSON and parsed only
+when redecorating; its string capacity counts toward the same byte allowance.
+Paging keeps one parsed display tree, so duplicate row allocations cannot force
+an otherwise fitting document to regenerate on every page.
+An idle replica can consume `analysis_update_names` only
 when every snapshot input and non-name edit is unchanged and the committed
-code sidecar still matches; otherwise the GUI restores a fresh replica. Busy
+user tables still match, with no pending recovery transaction; otherwise the
+GUI restores a fresh replica. Committed-table parsing and validation remain
+owned by `ProjectHistory`, without loading its command log on each rename. Busy
 replicas retain the normal cancellation and retirement path. The optional
 `code_edit_prepare` read validates the owner's local target while the name
 dialog is open, without saving or changing revision. A GUI name refresh buffers
@@ -1366,6 +1397,9 @@ coefficient difference still participates in the independent equality check.
 The shared expression builder inserts a nonconstant operand into an existing
 canonical product's sorted factors, preserving its leading coefficient and
 multiplicities. It snapshots operands before interning can relocate the arena.
+Batch substitution stores completed DAG replacements in a compact hash table,
+retaining simultaneous override semantics and sharing rebuilt subexpressions
+across all roots without allocating a separate hash node for each result.
 Both parsing and source expression reconstruction avoid re-flattening and
 re-sorting every growing product prefix; the resulting canonical node is
 unchanged. Canonical flat products and coefficient changes retain the same
@@ -1438,6 +1472,46 @@ remain exact opaque atoms. These products try prefix maps before full-width
 affine recovery. Even factors can request additional precision individually,
 so removing their fixed zeros does not discard the needed observed bits. A
 zero prefix contributes only its proven width, never a full-word zero.
+Residue proofs try the precision suggested by the number of factors and the
+required zeros, then the remaining bounded prefixes if needed. This estimate
+only orders work: each attempt needs complete coefficient maps and a residue
+bound. It applies to arithmetic coefficients as well as bitwise wrappers,
+including scalar products retained around offset sums. Zero-valued prefixes
+of even factors can be reread at higher precision before removing their fixed
+zeros. Completed prefix queries are cached by handle and precision, while all
+attempts share cumulative work and scratch charges.
+Prefix queries retain both known-zero and known-one bits through arithmetic
+and bitwise nodes. Multiplication combines the guaranteed zero prefixes of
+its operands; addition keeps only the common known low prefix, including its
+carry. Unknown bits remain unknown, and the affine reader accepts a constant
+only when every bit of the requested prefix is proved. This lets independently
+masked factors establish a high-bit disturbance without assuming any relation
+between their inputs. Partial results use the same bounded request cache and
+cumulative work/storage charges. Nonlinear atoms with a fully known prefix can
+contribute a constant to an additive factor without expanding their product.
+Nonzero residue branches may keep an exact opaque factor. Every factor's
+complete coefficient map must first agree with the common modular base. In
+each base residue, the known low values give conservative trailing-zero bounds
+for all cofactors. A factor becomes a constant only when those bounds hide
+all of its unobserved bits; at most one remaining factor is retained. Its
+coefficient table can use a narrower proved reading without assuming the
+factor's upper bits are zero. The emitter compares retained factors with
+combined coefficient tables for shared atoms. Known low bits also reduce an
+atom's coefficient precision, with the discarded coefficient times its known
+value retained in the constant table. Disjoint residue branches can share
+arithmetic and bitwise structure while selecting their differing literals;
+complete table enumeration proves any affine lookup and its wrap period.
+Unsupported operations stay opaque. The complete-affine recovery runs first;
+once a full common base is proved, an unprofitable table leaves the remaining
+allowance for polynomial recovery instead of starting another residue search.
+The residual search shares the remaining work/storage allowance and accepts
+only a smaller completed result.
+Native scalar affine coordinates retain their cheap complete-map path; the
+extra projected read is reserved for wrappers, nonlinear monomials and wide
+coefficients, avoiding duplicated searches on ordinary nonzero residuals.
+Products of unrestricted variables skip partial-bit queries that cannot add
+facts, retaining the existing affine work bound across independently scaled
+occurrences of the same monomial.
 For a nonzero product, a shared low-zero prefix can be factored through bitwise
 operations. Their remaining scalar units are reduced modulo the observed
 prefix under a bounded operand/work/storage charge. The opaque operands keep
@@ -1457,6 +1531,10 @@ and its normalized factored form, preserving simpler existing recovery paths.
 All candidates, wide constants and scratch consume the existing work/storage
 budgets; refusal retains the original product. These are shared symbolic-core
 rules, so CLI and GUI source optimization use them through their existing switches.
+The expression evaluation plan uses a compact handle-to-slot table and gathers
+its sorted, unique variable IDs during lowering. It avoids per-node hash
+allocations and a second reachable-DAG walk without changing evaluation steps,
+operand order, arbitrary-width semantics or the solver's work charges.
 HighC lowers a zero-extended sub-byte extract as a masked native-word operation
 with the exact extraction offset. The fragment is never materialized as a byte
 for signed extension, which would change its sign bit. Other unsupported
@@ -7751,6 +7829,10 @@ carry identity removes a wide constant offset before proof. The HighIR and
 LLVM bridges translate exact concatenation and defined carry predicates into
 the shared expression; the LLVM bridge admits a disjoint packed OR and a
 widened no-wrap shift only when operand widths prove the flags for every input.
+For masked addition and multiplication, the LLVM bridge independently bounds
+both inputs before admitting no-wrap flags. Signed multiplication checks all
+four interval corners. The bounded range walk ignores annotations as evidence;
+hidden poison and unproved overflow still prevent translation.
 Unknown operators, incomplete proofs, and unprofitable output leave the
 original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
@@ -9927,3 +10009,8 @@ A complete frame write contained in the declared nonwrapping bounds is disjoint 
 `OrderedScalarV1` explicitly enables finite native independence and native-to-LowIR refinement for architecture-described queries. Core owns shared defined inputs, complete terminal coverage and equality of identity, version, selectors, result widths, count and order, including order relative to ordinary RAM reads. Repeated queries use independent answers; selector independence is proved before writing any result. Descriptor shape, observation and node limits bound the work. Actual descriptor and operation digests bind each executed receipt and both proof inputs; disabled contracts keep their prior digest. Static APIs without a native provider and all inductive proof/inference APIs refuse the model.
 
 The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter independently audits its exact bare encoding, defined outputs and closed opaque-bank preservation. EAX/ECX select four 32-bit results and all four destination upper halves are cleared. The original query event remains observable. This supplies no host values, CPU feature profile or repeated-query correlation. CPUID's `IA32_BIOS_SIGN_ID` update is outside `LegacyIntegerOpaqueV1`; retaining the event does not assert MSR preservation. [Intel SDM, CPUID](https://cdrdv2-public.intel.com/868140/253666-089-sdm-vol-2a.pdf). RDTSC/RDMSR, source wrapping, exact LLVM proofs and concrete backends gain no new capability.
+
+
+`EntryFrameExcludedObjects` declares complete x64 entry GPR values as symbolic object roots with signed, nonempty `[Begin, End)` bounds. The x64 raw owner validates distinct bindings, excludes RSP and overlapping entry constants, and requires explicit nonfaulting, CET-disabled state with entry-frame bounds. Each complete object and the frame must be nonwrapping and disjoint. Objects may alias each other; equal object/frame root values are allowed when their relative ranges are disjoint. The declaration supplies no accessibility, initial bytes or loaded-pointer facts.
+
+Core retains exact root/offset relations through complete registers and frame spills, intersects them at joins and forgets overwritten or possibly corrupted relations. Fresh node roots restore only retained relations; lost entry bindings are never recreated. Physical frame addresses and native stack offsets remain frame-only. `ProveStoreFrameSeparation` separately proves that each complete executed write misses the frame, including wide, conditional atomic and full segmented addresses. Declarations grant no unchecked store exemption. Preparation, operations and symbolic nodes use existing budgets. Raw integrity binds every declaration field and order; an empty vector preserves the prior digest encoding. Ordinary source and native proof consumers still refuse this raw domain.

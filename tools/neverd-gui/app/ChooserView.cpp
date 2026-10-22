@@ -207,6 +207,12 @@ void ChooserModel::refreshFunctions() {
 }
 
 void ChooserModel::refreshNextPage(quint64 serial) {
+  if (serial != serial_ || !refresh_)
+    return;
+  if (refresh_->pending.isEmpty()) {
+    publishFunctionRefresh(serial);
+    return;
+  }
   const int page = refresh_->pending.takeFirst();
   session_.read(
       operation_, pagePayload(page), this,
@@ -223,57 +229,157 @@ void ChooserModel::refreshNextPage(quint64 serial) {
         }
         refresh_->total = total;
         refresh_->pages.insert(page, payload.value("items").toArray());
-        if (!refresh_->pending.isEmpty()) {
-          refreshNextPage(serial);
-          return;
-        }
-        auto replacement = std::move(*refresh_);
-        refresh_.reset();
-        if (total == total_ && replacement.pages == pages_)
-          return;
-        if (total < total_) {
-          beginResetModel();
-          total_ = total;
-          pages_ = std::move(replacement.pages);
-          endResetModel();
-        } else {
-          if (total > total_) {
-            beginInsertRows({}, total_, total - 1);
-            total_ = total;
-            endInsertRows();
-          }
-          emit layoutAboutToBeChanged();
-          const auto before = persistentIndexList();
-          QHash<Address, int> positions;
-          for (auto it = replacement.pages.cbegin();
-               it != replacement.pages.cend(); ++it)
-            for (int i = 0; i < it->size(); ++i)
-              if (const auto address = itemAddress(it->at(i).toObject()))
-                positions.insert(
-                    *address,
-                    it.key() * ::neverd::limits::gui::kChooserViewPageSize + i);
-          QModelIndexList after;
-          for (const auto &old : before) {
-            const auto address = addressAt(old.row());
-            const auto at =
-                address ? positions.constFind(*address) : positions.cend();
-            after.append(at != positions.cend() ? index(*at, old.column())
-                                                : QModelIndex());
-          }
-          pages_ = std::move(replacement.pages);
-          changePersistentIndexList(before, after);
-          emit layoutChanged();
-        }
-        pageOrder_.clear();
-        for (auto it = pages_.cbegin(); it != pages_.cend(); ++it)
-          pageOrder_.push_front(it.key());
-        emit totalChanged(total_);
+        refreshNextPage(serial);
       },
       [this, serial](const QString &, const QString &message) {
         if (serial != serial_)
           return;
         refresh_.reset();
         emit failed(message);
+      });
+}
+
+void ChooserModel::publishFunctionRefresh(quint64 serial) {
+  const int total = refresh_->total;
+  if (total == total_ && refresh_->pages == pages_) {
+    refresh_.reset();
+    return;
+  }
+  QHash<Address, int> positions;
+  for (auto it = refresh_->pages.cbegin(); it != refresh_->pages.cend(); ++it)
+    for (int i = 0; i < it->size(); ++i)
+      if (const auto address = itemAddress(it->at(i).toObject()))
+        positions.insert(
+            *address,
+            it.key() * ::neverd::limits::gui::kChooserViewPageSize + i);
+  // Selection models materialize their persistent indexes on this signal.
+  // Balance the unchanged layout before doing any asynchronous address lookup;
+  // filters, navigation and user selection remain available during that read.
+  emit layoutAboutToBeChanged();
+  if (serial != serial_ || !refresh_) {
+    emit layoutChanged();
+    return;
+  }
+  QSet<Address> selected;
+  std::optional<Address> unresolved;
+  for (const auto &index : persistentIndexList())
+    if (const auto address = addressAt(index.row())) {
+      selected.insert(*address);
+      if (!positions.contains(*address) &&
+          !refresh_->missing.contains(*address))
+        unresolved = address;
+    }
+  emit layoutChanged();
+  if (serial != serial_ || !refresh_)
+    return;
+  if (unresolved && total >= total_) {
+    seekRefreshAddress(serial, *unresolved, selected);
+    return;
+  }
+  auto replacement = std::move(*refresh_);
+  refresh_.reset();
+  if (total < total_) {
+    beginResetModel();
+    total_ = total;
+    pages_ = std::move(replacement.pages);
+    endResetModel();
+  } else {
+    if (total > total_) {
+      beginInsertRows({}, total_, total - 1);
+      total_ = total;
+      endInsertRows();
+    }
+    emit layoutAboutToBeChanged();
+    if (serial != serial_) {
+      emit layoutChanged();
+      return;
+    }
+    const auto before = persistentIndexList();
+    QModelIndexList after;
+    for (const auto &old : before) {
+      const auto address = addressAt(old.row());
+      const auto at =
+          address ? positions.constFind(*address) : positions.cend();
+      after.append(at != positions.cend() ? index(*at, old.column())
+                                          : QModelIndex());
+    }
+    pages_ = std::move(replacement.pages);
+    changePersistentIndexList(before, after);
+    emit layoutChanged();
+  }
+  pageOrder_.clear();
+  for (auto it = pages_.cbegin(); it != pages_.cend(); ++it)
+    pageOrder_.push_front(it.key());
+  emit totalChanged(total_);
+}
+
+void ChooserModel::seekRefreshAddress(quint64 serial, Address address,
+                                      const QSet<Address> &selected) {
+  if (refresh_->lookups++ >=
+      ::neverd::limits::gui::kChooserViewMaxRefreshLookups) {
+    refresh_.reset();
+    emit failed(tr("Too many selection changes while refreshing the table."));
+    return;
+  }
+  auto payload = pagePayload(0);
+  payload["seek_address"] = hexAddress(address);
+  session_.read(
+      operation_, payload, this,
+      [this, serial, address, selected](const QJsonObject &result) {
+        if (serial != serial_ || !refresh_)
+          return;
+        const int offset = result.value("offset").toInt(-1);
+        const int row = result.value("selected_index").toInt(-1);
+        const auto items = result.value("items").toArray();
+        if (result.value("total").toInt(-1) != refresh_->total || offset < 0 ||
+            offset % ::neverd::limits::gui::kChooserViewPageSize != 0 ||
+            row < offset || row >= refresh_->total ||
+            row - offset >= items.size() ||
+            addressValue(result.value("selected_address")) != address ||
+            itemAddress(items[row - offset].toObject()) != address) {
+          refresh_.reset();
+          emit failed(tr("Functions changed while refreshing the table."));
+          return;
+        }
+        const int page = offset / ::neverd::limits::gui::kChooserViewPageSize;
+        if (!refresh_->pages.contains(page) &&
+            refresh_->pages.size() >=
+                ::neverd::limits::gui::kChooserViewMaxCachedPages) {
+          // Keep selected destinations within the same cache allowance. An
+          // unselected old page can be fetched normally if it becomes visible.
+          auto discard = refresh_->pages.end();
+          for (auto it = pageOrder_.crbegin(); it != pageOrder_.crend(); ++it) {
+            auto candidate = refresh_->pages.find(*it);
+            if (candidate != refresh_->pages.end() &&
+                std::none_of(candidate->cbegin(), candidate->cend(),
+                             [&](const auto &item) {
+                               const auto at = itemAddress(item.toObject());
+                               return at && selected.contains(*at);
+                             })) {
+              discard = candidate;
+              break;
+            }
+          }
+          if (discard == refresh_->pages.end()) {
+            refresh_.reset();
+            emit failed(tr("Selected functions exceed the table page budget."));
+            return;
+          }
+          refresh_->pages.erase(discard);
+        }
+        refresh_->pages.insert(page, items);
+        publishFunctionRefresh(serial);
+      },
+      [this, serial, address](const QString &code, const QString &message) {
+        if (serial != serial_ || !refresh_)
+          return;
+        if (code == QLatin1String("not_found")) {
+          refresh_->missing.insert(address);
+          publishFunctionRefresh(serial);
+        } else {
+          refresh_.reset();
+          emit failed(message);
+        }
       });
 }
 

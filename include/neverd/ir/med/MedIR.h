@@ -214,9 +214,11 @@ struct MedOp {
   /// the definition on the intrinsic so SSA does not invent a live-in value
   /// when those transport operations are later propagated away.
   std::vector<MedVar> IntrinsicOutputs;
-  // Ordinary operations retain six inline slots. Source-bound calls may carry
-  // their full scalar argument list through the same SSA/liveness operands.
-  llvm::SmallVector<MedVar, 6> Inputs = llvm::SmallVector<MedVar, 6>(6);
+  // Unary and binary operations keep their inputs inline. Larger operations
+  // and source-bound calls grow through addInput, retaining every operand.
+  static constexpr unsigned InlineInputs = 2;
+  using InputStorage = llvm::SmallVector<MedVar, InlineInputs>;
+  InputStorage Inputs = InputStorage(InlineInputs);
   uint8_t NumInputs = 0;
   va_t Addr = 0;
   /// Sequence number of the original LowOp.  Synthetic MedOps keep -1, so a

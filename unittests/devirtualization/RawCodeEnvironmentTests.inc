@@ -125,6 +125,9 @@ struct RawByteOracle {
         case NdOp::INT_SUB:
           write(Op.Output, read(Op.Inputs[0]) - read(Op.Inputs[1]));
           break;
+        case NdOp::INT_MULT:
+          write(Op.Output, read(Op.Inputs[0]) * read(Op.Inputs[1]));
+          break;
         case NdOp::INT_AND:
           write(Op.Output, read(Op.Inputs[0]) & read(Op.Inputs[1]));
           break;
@@ -133,6 +136,16 @@ struct RawByteOracle {
           break;
         case NdOp::INT_XOR:
           write(Op.Output, read(Op.Inputs[0]) ^ read(Op.Inputs[1]));
+          break;
+        case NdOp::INT_NOT:
+          write(Op.Output, ~read(Op.Inputs[0]));
+          break;
+        case NdOp::BOOL_NOT:
+          write(Op.Output, read(Op.Inputs[0]) == 0);
+          break;
+        case NdOp::SELECT:
+          write(Op.Output,
+                read(Op.Inputs[0]) ? read(Op.Inputs[1]) : read(Op.Inputs[2]));
           break;
         case NdOp::INT_EQUAL:
         case NdOp::INT_NOTEQUAL:
@@ -183,6 +196,16 @@ struct RawByteOracle {
             }
             write(Op.Output, Value);
           }
+          break;
+        }
+        case NdOp::COND_BR: {
+          const auto Target = read(Op.Inputs[0]);
+          const bool Taken = read(Op.Inputs[1]) != 0;
+          for (int Id : B.Succs)
+            if ((F.Blocks.at(Id).StartAddr == Target) == Taken)
+              Next = Id;
+          if (Next < 0)
+            return false;
           break;
         }
         case NdOp::BRANCH: {
@@ -1331,3 +1354,6 @@ TEST_F(PEFixedImageTest, RawCodeCmpxchgReceiptBindsOrdering) {
 
 #include "MachineExitEnvironmentTests.inc"
 #include "WideImmutableImageTests.inc"
+
+// Entry-object fixtures reuse the machine-exit byte oracle above.
+#include "EntryObjectEnvironmentTests.inc"

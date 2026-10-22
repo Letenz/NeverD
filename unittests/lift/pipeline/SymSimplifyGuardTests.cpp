@@ -665,6 +665,89 @@ TEST(SymSimplifyGuard, NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains) {
   }
 }
 
+TEST(SymSimplifyGuard, MaskedMultiplyAdmissionMatchesExhaustiveByteDomains) {
+  llvm::LLVMContext C;
+  llvm::Module M("masked_mul_domains", C);
+  auto *Ty = llvm::Type::getInt8Ty(C);
+  for (unsigned A : {1u, 6u, 15u, 0x7fu, 0x80u, 0x93u, 0xffu})
+    for (unsigned B : {1u, 6u, 15u, 0x80u, 0xffu})
+      for (unsigned Flags : {1u, 2u, 3u}) {
+        SCOPED_TRACE(::testing::Message() << A << ',' << B << ',' << Flags);
+        auto *F =
+            llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                   llvm::Function::ExternalLinkage, "f", &M);
+        llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+        auto make = [&] {
+          return IR.CreateMul(IR.CreateAnd(F->getArg(0), IR.getInt8(A)),
+                              IR.CreateAnd(F->getArg(1), IR.getInt8(B)), "",
+                              Flags & 1, Flags & 2);
+        };
+        auto *Root = IR.CreateXor(make(), make());
+        IR.CreateRet(Root);
+        bool Defined = true;
+        for (unsigned X = 0; X < 256; ++X)
+          for (unsigned Y = 0; Y < 256; ++Y) {
+            const unsigned L = X & A, R = Y & B;
+            const int SL = L < 128 ? int(L) : int(L) - 256;
+            const int SR = R < 128 ? int(R) : int(R) - 256;
+            Defined &= (!(Flags & 1) || L * R < 256) &&
+                       (!(Flags & 2) || (SL * SR >= -128 && SL * SR <= 127));
+          }
+        auto Result = SymSimplifyPass::constantValueOf(Root);
+        EXPECT_EQ(Result.has_value(), Defined) << printFunction(*F);
+        if (Result)
+          EXPECT_TRUE(Result->isZero());
+      }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, MaskedMultiplyPreservesPoisonAndBoundedAdmission) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u, 512u, 513u})
+    for (unsigned Mode : {0u, 1u, 2u, 3u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Mode);
+      llvm::LLVMContext C;
+      llvm::Module M("masked_mul_bounds", C);
+      auto *Ty = llvm::IntegerType::get(C, Width);
+      auto *F =
+          llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                 llvm::Function::ExternalLinkage, "f", &M);
+      llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+      auto make = [&] {
+        llvm::Value *X = F->getArg(0);
+        if (Mode == 1)
+          X = IR.CreateNSWAdd(X, llvm::ConstantInt::get(Ty, 1));
+        auto mask = [&](llvm::Value *V, unsigned Bits) {
+          return IR.CreateAnd(V, llvm::ConstantInt::get(Ty, Bits));
+        };
+        llvm::Value *L = mask(X, 3);
+        if (Mode == 2)
+          for (unsigned I = 0; I < 32; ++I)
+            L = IR.CreateAdd(L, mask(X, 1));
+        else
+          L = IR.CreateAdd(L, mask(X, 3));
+        auto *Product = IR.CreateMul(L, mask(F->getArg(1), 7), "", true, true);
+        if (Mode == 3)
+          llvm::cast<llvm::Instruction>(Product)->setMetadata(
+              llvm::LLVMContext::MD_range,
+              llvm::MDNode::get(C, {llvm::ConstantAsMetadata::get(
+                                        llvm::ConstantInt::get(Ty, 0)),
+                                    llvm::ConstantAsMetadata::get(
+                                        llvm::ConstantInt::get(Ty, 1))}));
+        return Product;
+      };
+      auto *Root = IR.CreateXor(make(), make());
+      IR.CreateRet(Root);
+      auto Result = SymSimplifyPass::constantValueOf(Root);
+      EXPECT_EQ(Result.has_value(), Mode == 0 && Width <= 512);
+      if (Result)
+        EXPECT_TRUE(Result->isZero());
+      // Range metadata on mul is deliberately malformed; admission must
+      // refuse it before the symbolic result could erase that annotation.
+      if (Mode != 3)
+        EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+}
+
 TEST(SymSimplifyGuard, MaskedDisjointOrMatchesExhaustiveByteDomains) {
   llvm::LLVMContext C;
   llvm::Module M("masked_or_domains", C);

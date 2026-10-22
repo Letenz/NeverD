@@ -23,7 +23,9 @@ namespace neverd::types {
 namespace header_sources {
 #define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, ABI, Spelling)            \
   extern const unsigned char File[];                                           \
-  extern const std::size_t File##Size;
+  extern const std::size_t File##Size;                                         \
+  extern const unsigned char File##Supplement[];                               \
+  extern const std::size_t File##SupplementSize;
 #include "neverd/types/HeaderLibraries.def"
 } // namespace header_sources
 
@@ -52,6 +54,23 @@ std::optional<uint64_t> sizeOfNamed(const TypeLibrary &Library,
   const LocalType *Type = Library.find(Name);
   return Type ? Library.sizeOf(*makeNamed(Name.str(), Type->Kind))
               : std::nullopt;
+}
+
+uint32_t alignOfNamed(const TypeLibrary &Library, llvm::StringRef Name) {
+  const LocalType *Type = Library.find(Name);
+  return Type ? Library.alignOf(*makeNamed(Name.str(), Type->Kind)) : 0;
+}
+
+llvm::StringRef supplementSource(HeaderLibrary Library) {
+  switch (Library) {
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, ABI, Spelling)            \
+  case HeaderLibrary::Id:                                                      \
+    return llvm::StringRef(                                                    \
+        reinterpret_cast<const char *>(header_sources::File##Supplement + 1),  \
+        header_sources::File##SupplementSize);
+#include "neverd/types/HeaderLibraries.def"
+  }
+  return {};
 }
 
 } // namespace
@@ -159,6 +178,20 @@ const TypeLibrary *headerLibrary(HeaderLibrary Library, std::string *Error) {
                     std::to_string(First.Column) + ": " + First.Message;
       return;
     }
+    if (const auto Source = supplementSource(Library); !Source.empty()) {
+      TypeLibrary Supplement(headerLibraryModel(Library));
+      Supplement.setRecordABI(headerLibraryRecordABI(Library));
+      const auto Parsed = parseCTypes(Source, Supplement, Options);
+      if (!Parsed.ok()) {
+        Entry.Error = headerLibraryName(Library).str() +
+                      " supplement: " + Parsed.Problems.front().Message;
+        return;
+      }
+      // Official declarations own every existing name. Compatibility sources
+      // supply missing names only, with the same layout checks used when a
+      // program's own debug types override a system library.
+      mergeHeaderTypes(Types, Supplement);
+    }
     Entry.Types = std::move(Types);
   });
   if (!Entry.Types && Error)
@@ -178,9 +211,9 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers) {
     Added.push_back(Type->Name);
   }
   // A header record was laid out with the headers' types it holds by value;
-  // one that holds a type the program sizes otherwise goes, as does any type
-  // that names one gone.  A typedef has no layout of its own: it names the
-  // program's type, as C binds it.
+  // one that holds a type the program sizes or aligns otherwise goes, as does
+  // any type that names one gone.  A typedef has no layout of its own: it names
+  // the program's type, as C binds it.
   llvm::StringSet<> Gone;
   for (bool Changed = true; Changed;) {
     Changed = false;
@@ -192,7 +225,8 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers) {
       for (const std::string &Held : valueDependencyNames(*Type))
         if (Gone.contains(Held) ||
             (LaidOut &&
-             sizeOfNamed(Library, Held) != sizeOfNamed(Headers, Held))) {
+             (sizeOfNamed(Library, Held) != sizeOfNamed(Headers, Held) ||
+              alignOfNamed(Library, Held) != alignOfNamed(Headers, Held)))) {
           Gone.insert(Name);
           Merge.Conflicts.push_back(Name);
           Changed = true;
@@ -219,6 +253,20 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers) {
   Merge.Types = Added.size() - Merge.Conflicts.size();
   for (const auto &Entry : Headers.prototypes())
     if (!Library.findPrototype(Entry.first())) {
+      LocalType Routine;
+      Routine.Function = Entry.second;
+      bool Compatible = true;
+      for (const std::string &Name : mentionedTypeNames(Routine))
+        Compatible &= Library.find(Name) != nullptr;
+      const auto SameLayout = [&](const TypeExprRef &Type) {
+        return !Type || (Library.sizeOf(*Type) == Headers.sizeOf(*Type) &&
+                         Library.alignOf(*Type) == Headers.alignOf(*Type));
+      };
+      Compatible &= SameLayout(Entry.second->Return);
+      for (const Parameter &Param : Entry.second->Params)
+        Compatible &= SameLayout(Param.Type);
+      if (!Compatible)
+        continue;
       Library.definePrototype(Entry.first().str(), Entry.second);
       ++Merge.Prototypes;
     }

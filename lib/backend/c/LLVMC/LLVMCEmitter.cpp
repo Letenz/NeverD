@@ -52,6 +52,8 @@
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/debug/UserPrototype.h"
+#include "neverd/ir/IntegerCallArguments.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/MinGWHeaderFunctions.h"
 #include "neverd/loader/DataSymbolBinding.h"
@@ -438,6 +440,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   RecordPointerTags.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
+  prepareSourceImportPrototypes(Mod);
   collectImageDataUses(Mod);
   writeIncludes(Mod);
   OS << "\n";
@@ -1654,6 +1657,121 @@ std::string LLVMCWriter::boundImportCallee(const llvm::CallBase &Call) const {
   return resolveImportCalleeName(Call.getCalledOperand());
 }
 
+void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
+  SourceImportPrototypes.clear();
+  if (!Dbg || Opts.PreserveLLVMFunctionTypes)
+    return;
+  std::set<std::string> Rejected;
+  const unsigned PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;
+  const auto Scalar = [&](const TypeRef &Type) {
+    return Type && Type->Size && Type->Size <= PointerBytes &&
+           (Type->Kind != NdTypeKind::Ptr || Type->Size == PointerBytes) &&
+           (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+            (Type->Kind == NdTypeKind::Struct && Type->IsEnum)) &&
+           hasCSpelling(cDisplayType(Type));
+  };
+  for (const auto &Fn : Mod) {
+    if (Fn.isDeclaration() || (OnlyFunction && &Fn != OnlyFunction))
+      continue;
+    for (const auto &Block : Fn)
+      for (const auto &Inst : Block) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+        if (!Call || libraryCallee(*Call))
+          continue;
+        const auto *Direct = Call->getCalledFunction();
+        if (Direct && (!Direct->isDeclaration() || Direct->isIntrinsic()))
+          continue;
+        const std::string Name =
+            Direct ? functionIdentifier(*Direct) : boundImportCallee(*Call);
+        if (Name.empty() || Rejected.count(Name))
+          continue;
+        const auto Source = Dbg->resolvePrototype(
+            Direct ? cNameOfGlobal(Direct->getName(), true) : Name);
+        if (!Source || Source->PrototypeLibrary.empty() ||
+            Source->PrototypeLibrary == UserPrototypeLibrary ||
+            Source->PrototypeFromCLibrary)
+          continue;
+        bool Fits = Source->PlatformConvention &&
+                    Source->CallConv != DebugCallConv::Fastcall &&
+                    Source->CallConv != DebugCallConv::Thiscall &&
+                    Source->ReturnType;
+        std::vector<TypeRef> Parameters;
+        for (const auto &Param : Source->Params) {
+          Fits &= Scalar(Param.second);
+          Parameters.push_back(Param.second);
+        }
+        const auto Layout =
+            Fits ? integerCallArguments(Opts.TheArch, Opts.Format,
+                                        Source->ReturnType, Parameters)
+                 : std::nullopt;
+        Fits &= Layout && Layout->Positions == Call->arg_size() &&
+                Parameters.size() == Call->arg_size();
+        for (unsigned I = 0; Fits && I < Parameters.size(); ++I) {
+          const auto &Param = Layout->Parameters[I];
+          auto *Carrier = Call->getArgOperand(I)->getType();
+          Fits &= !Param.Indirect && Param.Pieces.size() == 1 &&
+                  Param.Pieces[0].Argument == I &&
+                  (Carrier->isIntegerTy() || Carrier->isPointerTy()) &&
+                  (!Carrier->isPointerTy() ||
+                   Carrier->getPointerAddressSpace() == 0) &&
+                  Mod.getDataLayout().getTypeStoreSize(Carrier) >=
+                      Parameters[I]->Size;
+        }
+        if (Fits && Source->ReturnType->Kind == NdTypeKind::Void)
+          Fits = Call->getType()->isVoidTy() || !valueFeedsPrintedUse(Call);
+        else if (Fits)
+          Fits =
+              Scalar(Source->ReturnType) && (Call->getType()->isIntegerTy() ||
+                                             Call->getType()->isPointerTy());
+        if (Fits)
+          SourceImportPrototypes.insert_or_assign(Name, *Source);
+        else {
+          SourceImportPrototypes.erase(Name);
+          Rejected.insert(Name);
+        }
+      }
+  }
+}
+
+const FunctionSym *
+LLVMCWriter::sourceImportCallee(const llvm::CallBase &Call) const {
+  if (SourceImportPrototypes.empty())
+    return nullptr;
+  const auto *Direct = Call.getCalledFunction();
+  const std::string Name =
+      Direct ? functionIdentifier(*Direct) : boundImportCallee(Call);
+  const auto It = SourceImportPrototypes.find(Name);
+  return It == SourceImportPrototypes.end() ? nullptr : &It->second;
+}
+
+std::string LLVMCWriter::sourceImportDeclaration(const FunctionSym &Function,
+                                                 llvm::StringRef Name) {
+  const auto NotePointers = [&](const TypeRef &Type) {
+    const NdType *Target = Type.get();
+    while (Target && Target->Kind == NdTypeKind::Ptr)
+      Target = Target->Pointee.get();
+    if (Target && Target->Kind == NdTypeKind::Struct && !Target->IsEnum)
+      recordPointerSpelling(*Target);
+  };
+  std::string Params;
+  CProjectionIdentifierAllocator Names;
+  for (const auto &[ParamName, Type] : Function.Params) {
+    if (!Params.empty())
+      Params += ", ";
+    NotePointers(Type);
+    Params +=
+        declarationToC(cDisplayType(Type), Names.allocate(ParamName, "arg"));
+  }
+  NotePointers(Function.ReturnType);
+  const std::string Convention =
+      Opts.TheArch == Arch::X86 && Function.CallConv == DebugCallConv::Stdcall
+          ? "__attribute__((stdcall)) "
+          : "";
+  return declarationToC(cDisplayType(Function.ReturnType),
+                        Convention + Name.str() + "(" +
+                            (Params.empty() ? "void" : Params) + ")");
+}
+
 LLVMCWriter::LibraryCallee
 LLVMCWriter::libraryCallee(const llvm::CallBase &Call) const {
   if (Opts.PreserveLLVMFunctionTypes)
@@ -1710,6 +1828,17 @@ std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
   if (!Type->isIntegerTy() && !Type->isPointerTy() &&
       !Type->isFloatingPointTy())
     return Expr;
+  if (const auto *Source = sourceImportCallee(Call)) {
+    if (Source->ReturnType->Kind == NdTypeKind::Void)
+      throw std::runtime_error("A void import has a live machine result");
+    // Source signedness must not sign-extend the low return-register bits
+    // into the machine carrier. Pointers similarly convert through uintptr_t.
+    const std::string Bits =
+        Source->ReturnType->Kind == NdTypeKind::Ptr
+            ? "uintptr_t"
+            : typeToC(NdType::makeInt(Source->ReturnType->Size, false));
+    return "((" + typeToCLLVM(Type) + ")(" + Bits + ")(" + Expr + "))";
+  }
   // A callee that returns nothing leaves its result register undefined, of
   // which zero is a stable choice, as an undefined value's is.
   const std::string Undefined = "(" + Expr + ", (" + typeToCLLVM(Type) + ")0)";
@@ -1825,6 +1954,12 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
       Spelled.write_escaped(
           symbolOfCName(Link->second, Opts.Format, Opts.TheArch));
       Spelled << "\")";
+    }
+    if (const auto Source = SourceImportPrototypes.find(Name);
+        Source != SourceImportPrototypes.end()) {
+      OS << Extern(Name) << sourceImportDeclaration(Source->second, Name)
+         << Label << ";\n";
+      continue;
     }
     // Unprototyped, the declaration takes the arguments the machine passed.
     if (!Calls.Params) {
@@ -2014,12 +2149,16 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     // An i386 stdcall routine pops the arguments its calls push, which a C
     // compiler leaves to it only by its declaration: where its parameters
     // fill the slots its names spell (c_library::stdcallImportPops).
-    if (Fn.isDeclaration())
+    if (Fn.isDeclaration() && !SourceImportPrototypes.count(Name))
       if (const auto Pops = StdcallPops.find(Name);
           Pops != StdcallPops.end() && Pops->second &&
           *Pops->second == argumentSlotBytes(Fn, Params))
         OS << "__attribute__((stdcall)) ";
-    OS << sourceFunctionDeclaration(Fn, Name, Params);
+    if (const auto Source = SourceImportPrototypes.find(Name);
+        Fn.isDeclaration() && Source != SourceImportPrototypes.end())
+      OS << sourceImportDeclaration(Source->second, Name);
+    else
+      OS << sourceFunctionDeclaration(Fn, Name, Params);
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string Comment;

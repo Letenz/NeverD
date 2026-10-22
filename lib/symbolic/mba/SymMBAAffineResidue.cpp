@@ -83,82 +83,146 @@ struct Resources {
   }
 };
 
+// Precision is a search order, never evidence. An even factor or a correlated
+// subgroup can make a smaller prefix useful even when the balanced estimate
+// misses it, so retain the other bounded precisions after the first attempt.
+template <typename Prover>
+bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
+                              Resources &Res, Prover Prove) {
+  unsigned First = MaxBits;
+  size_t Potential = 0;
+  for (unsigned Bits = 1; Bits < MaxBits; ++Bits) {
+    Potential += Count >> Bits;
+    if (Potential >= Needed) {
+      First = Bits;
+      break;
+    }
+  }
+  if (Prove(First))
+    return true;
+  for (unsigned Bits = 1; Bits <= MaxBits; ++Bits) {
+    if (Res.Failed || Res.Budget.exhausted())
+      break;
+    if (Bits != First && Prove(Bits))
+      return true;
+  }
+  return false;
+}
+
+// Retain partial facts while computing a prefix. Unknown bits are always zero
+// in Value; Known marks the bits that can participate in a proof. In
+// particular, two independently even operands have a product divisible by
+// four even though neither complete input prefix is constant.
+struct PrefixValue {
+  uint64_t Value = 0;
+  uint64_t Known = 0;
+};
+
 // Cache completed prefix queries, including conservative unknown results.
-// Exhausted queries never enter the cache. An unknown prefix remains opaque;
-// neither a random sample nor an unproved known bit enters a coefficient map.
+// Exhausted queries never enter the cache. Partial facts never directly enter
+// an affine coefficient map: get() still requires a complete constant prefix.
 struct PrefixConstants {
   SymContext &Ctx;
   Resources &Res;
-  std::map<std::pair<uint32_t, unsigned>, std::optional<uint64_t>> Values;
+  std::map<std::pair<uint32_t, unsigned>, PrefixValue> Values;
 
-  std::optional<uint64_t> get(SymRef R, unsigned Bits, unsigned Depth = 0) {
+  std::optional<uint64_t> get(SymRef R, unsigned Bits) {
+    auto Result = infer(R, Bits);
+    return Result.Known == (uint64_t(1) << Bits) - 1
+               ? std::optional<uint64_t>(Result.Value)
+               : std::nullopt;
+  }
+
+  PrefixValue infer(SymRef R, unsigned Bits, unsigned Depth = 0) {
     if (!Res.charge(1))
-      return std::nullopt;
+      return {};
     auto Key = std::make_pair(R.index(), Bits);
     if (auto It = Values.find(Key); It != Values.end())
       return It->second;
     if (Depth >= limits::kMaxAffineResidueDepth)
-      return std::nullopt;
+      return {};
     const uint64_t Mask = (uint64_t(1) << Bits) - 1;
     const auto Op = Ctx.op(R);
-    auto Evaluate = [&]() -> std::optional<uint64_t> {
+    auto Evaluate = [&]() -> PrefixValue {
       if (Ctx.isConst(R)) {
         const size_t Words = (size_t(Ctx.width(R)) - 1) / 64 + 1;
         if (!Res.scalar(Words, Words))
-          return std::nullopt;
-        return Ctx.constValue(R).zextOrTrunc(Bits).getZExtValue();
+          return {};
+        return {Ctx.constValue(R).zextOrTrunc(Bits).getZExtValue(), Mask};
       }
       if ((Op == SymOp::ZExt || Op == SymOp::SExt) &&
           Ctx.width(Ctx.operand(R, 0)) >= Bits)
-        return get(Ctx.operand(R, 0), Bits, Depth + 1);
+        return infer(Ctx.operand(R, 0), Bits, Depth + 1);
       if (Op == SymOp::Extract && !Ctx.node(R).Aux)
-        return get(Ctx.operand(R, 0), Bits, Depth + 1);
+        return infer(Ctx.operand(R, 0), Bits, Depth + 1);
       if (Op == SymOp::Not) {
-        auto Value = get(Ctx.operand(R, 0), Bits, Depth + 1);
-        return Value ? std::optional<uint64_t>(~*Value & Mask) : std::nullopt;
+        auto V = infer(Ctx.operand(R, 0), Bits, Depth + 1);
+        return {~V.Value & V.Known, V.Known};
       }
       if (Op == SymOp::Shl && Ctx.isConst(Ctx.operand(R, 1))) {
         if (!Res.scalar(Res.SourceWords))
-          return std::nullopt;
+          return {};
         auto Count = Ctx.constValue(Ctx.operand(R, 1)).getLimitedValue(Bits);
         if (Count >= Bits)
-          return 0;
-        auto Value = get(Ctx.operand(R, 0), Bits - Count, Depth + 1);
-        return Value ? std::optional<uint64_t>(*Value << Count) : std::nullopt;
+          return {0, Mask};
+        auto V = infer(Ctx.operand(R, 0), Bits - Count, Depth + 1);
+        return {V.Value << Count,
+                (V.Known << Count) | ((uint64_t(1) << Count) - 1)};
       }
       if (Op != SymOp::Add && Op != SymOp::Mul && Op != SymOp::And &&
           Op != SymOp::Or && Op != SymOp::Xor)
-        return std::nullopt;
+        return {};
       if (Ctx.numOperands(R) > limits::kMaxResidueBaseTerms)
-        return std::nullopt;
-      uint64_t Value = Op == SymOp::And ? Mask : Op == SymOp::Mul ? 1 : 0;
-      bool Unknown = false;
+        return {};
+      PrefixValue Result{Op == SymOp::And   ? Mask
+                         : Op == SymOp::Mul ? 1u
+                                            : 0u,
+                         Mask};
       for (auto Child : Ctx.operands(R)) {
-        auto V = get(Child, Bits, Depth + 1);
-        if (!V) {
-          Unknown = true;
-          continue;
+        auto V = infer(Child, Bits, Depth + 1);
+        if (Res.Failed)
+          return {};
+        if (Op == SymOp::And) {
+          Result.Known = (Result.Known & V.Known) |
+                         (Result.Known & ~Result.Value) | (V.Known & ~V.Value);
+          Result.Value &= V.Value;
+        } else if (Op == SymOp::Or) {
+          Result.Known = (Result.Known & V.Known) | Result.Value | V.Value;
+          Result.Value |= V.Value;
+        } else if (Op == SymOp::Xor) {
+          Result.Known &= V.Known;
+          Result.Value = (Result.Value ^ V.Value) & Result.Known;
+        } else {
+          unsigned Known = Bits;
+          if (Result.Known != Mask || V.Known != Mask) {
+            const unsigned A = std::countr_one(Result.Known);
+            const unsigned B = std::countr_one(V.Known);
+            Known = std::min(A, B);
+            if (Op == SymOp::Mul) {
+              // Write each word as its known low prefix plus 2^K times
+              // an arbitrary integer. Every unknown cross term has at
+              // least this many trailing zeros; no independence is assumed.
+              Known = std::min({Bits, A + B,
+                                A + unsigned(std::countr_zero(V.Value)),
+                                B + unsigned(std::countr_zero(Result.Value))});
+            }
+          }
+          Result.Known = (uint64_t(1) << Known) - 1;
+          Result.Value = (Op == SymOp::Add ? Result.Value + V.Value
+                                           : Result.Value * V.Value) &
+                         Result.Known;
         }
-        if (Op == SymOp::Add)
-          Value = (Value + *V) & Mask;
-        else if (Op == SymOp::Mul)
-          Value = Value * *V & Mask;
-        else if (Op == SymOp::And)
-          Value &= *V;
-        else if (Op == SymOp::Or)
-          Value |= *V;
-        else
-          Value ^= *V;
-        if (((Op == SymOp::And || Op == SymOp::Mul) && !Value) ||
-            (Op == SymOp::Or && Value == Mask))
-          return Value;
+        if (Result.Known == Mask &&
+            (((Op == SymOp::And || Op == SymOp::Mul) && !Result.Value) ||
+             (Op == SymOp::Or && Result.Value == Mask)))
+          return Result;
       }
-      return Unknown ? std::nullopt : std::optional<uint64_t>(Value);
+      return Result;
     };
     auto Value = Evaluate();
     if (Res.Failed || !Res.charge(1, sizeof(decltype(Values)::value_type) +
                                          4 * sizeof(void *)))
-      return std::nullopt;
+      return {};
     Values.emplace(Key, Value);
     return Value;
   }
@@ -335,6 +399,64 @@ bool readFactor(const SymContext &Ctx, SymRef R, const llvm::APInt &Scale,
       return readFactor(Ctx, Ops.front(), Coeff, Out, Res, Edges, Depth + 1,
                         Prefixes);
   }
+  // A nonlinear atom may have a constant prefix even though its factors
+  // only supply partial bits. Keep it opaque unless the whole queried
+  // prefix is proved; a partial mask is not an affine coefficient.
+  if (Prefixes && Product && Depth < limits::kMaxAffineResidueDepth &&
+      !std::all_of(
+          Ops.begin(), Ops.end(),
+          [&](SymRef Child) { return Ctx.op(Child) == SymOp::Var; })) {
+    // Unrestricted variable factors provide no known prefix. Keep native
+    // monomials on the complete-affine path instead of querying and caching
+    // the same unknown facts for every independently scaled occurrence.
+    auto Value = Prefixes->get(R, Scale.getBitWidth());
+    if (Res.Failed)
+      return false;
+    if (Value) {
+      Out.Offset += Scale * *Value;
+      return true;
+    }
+    const unsigned Bits = Scale.getBitWidth();
+    unsigned First = Bits, Second = Bits;
+    llvm::SmallVector<uint64_t, 16> Constants;
+    for (auto Child : Ops) {
+      auto Known = Prefixes->infer(Child, Bits);
+      if (Res.Failed)
+        return false;
+      const unsigned Precision = std::countr_one(Known.Known);
+      if (Precision < First) {
+        Second = First;
+        First = Precision;
+      } else {
+        Second = std::min(Second, Precision);
+      }
+      Constants.push_back(Known.Value);
+      if (First + Second < Bits)
+        break;
+    }
+    if (Constants.size() == Ops.size() && First + Second >= Bits) {
+      // Write each operand as C + D with D divisible by its known prefix.
+      // When every pair of D terms vanishes at this precision, the complete
+      // product is affine in its original operands. No division by C is used.
+      const size_t N = Ops.size();
+      if (!Res.charge(N * (6 + Res.Words),
+                      N * (sizeof(SymRef) + 3 * sizeof(uint64_t))))
+        return false;
+      llvm::SmallVector<SymRef, 16> Children(Ops);
+      llvm::SmallVector<uint64_t, 16> Before(N, 1), After(N, 1);
+      const uint64_t Mask = (uint64_t(1) << Bits) - 1;
+      for (size_t I = 1; I < N; ++I)
+        Before[I] = Before[I - 1] * Constants[I - 1] & Mask;
+      for (size_t I = N - 1; I > 0; --I)
+        After[I - 1] = After[I] * Constants[I] & Mask;
+      Out.Offset -= Coeff * ((N - 1) * Before.back() * Constants.back());
+      for (size_t I = 0; I < N; ++I)
+        if (!readFactor(Ctx, Children[I], Coeff * (Before[I] * After[I]), Out,
+                        Res, Edges, Depth + 1, Prefixes))
+          return false;
+      return true;
+    }
+  }
   const size_t Count = Product ? Ops.size() : 1;
   const size_t Bytes = sizeof(Coefficients::value_type) + 4 * sizeof(void *) +
                        Count * sizeof(uint32_t) + Res.Words * sizeof(uint64_t);
@@ -432,12 +554,618 @@ bool proveAffineResidues(const std::vector<Factor> &Factors, unsigned Bits,
   return false;
 }
 
+// Each row is a complete congruence for its original factor modulo 2^Bits.
+// In a residue branch, replacing factor i by its known low word changes the
+// product by a multiple of 2^(Bits + sum_{j != i} zeros[j]). When all but at
+// most one factor meet the required precision, retain the precision that factor
+// still requires.
+SymRef synthesizeResidualResidueTable(SymContext &Ctx, SymRef Root,
+                                      llvm::ArrayRef<Factor> Factors,
+                                      llvm::ArrayRef<SymRef> Originals,
+                                      const llvm::APInt &Scale, unsigned Bits,
+                                      unsigned Needed, Resources &Res) {
+  if (!Bits || Bits > limits::kMaxAffineResidueTableBits || !Needed ||
+      Needed > limits::kMaxAffineResidueTableBits ||
+      Factors.size() != Originals.size() || Factors.empty() ||
+      Factors.size() > limits::kMaxResidueProductFactors ||
+      Bits > Ctx.width(Root) || Scale.getBitWidth() != Ctx.width(Root) ||
+      Needed != Ctx.width(Root) - Scale.countr_zero())
+    return Root;
+  const unsigned Width = Ctx.width(Root);
+  const uint64_t Mask = (uint64_t(1) << Bits) - 1;
+  const uint64_t ResultMask = (uint64_t(1) << Needed) - 1;
+  auto Low = [&](const llvm::APInt &V) {
+    return V.zextOrTrunc(Bits).getZExtValue();
+  };
+  const Factor *Basis = nullptr;
+  const Atom *Pivot = nullptr;
+  for (const auto &F : Factors) {
+    if (F.Offset.getBitWidth() != Bits)
+      return Root;
+    for (const auto &[Key, Coeff] : F.Terms) {
+      if (Coeff.getBitWidth() != Bits)
+        return Root;
+      if (!Res.scalar(Res.Words))
+        return Root;
+      if (Low(Coeff) & 1) {
+        Basis = &F;
+        Pivot = &Key;
+        break;
+      }
+    }
+    if (Basis)
+      break;
+  }
+  if (!Basis)
+    return Root;
+  const uint64_t Odd = Low(Basis->Terms.at(*Pivot));
+  uint64_t Inverse = 1;
+  for (unsigned Known = 1; Known < Bits; Known *= 2) {
+    if (!Res.charge(3))
+      return Root;
+    Inverse *= 2 - Odd * Inverse;
+  }
+  if ((Odd * Inverse & Mask) != 1)
+    return Root;
+  std::map<Atom, uint64_t> Base;
+  for (const auto &[Key, Coeff] : Basis->Terms) {
+    if (!Res.scalar(Res.Words) ||
+        !Res.charge(Key.size(), sizeof(decltype(Base)::value_type) +
+                                    4 * sizeof(void *) +
+                                    Key.size() * sizeof(uint32_t)))
+      return Root;
+    const auto C = Low(Coeff) * Inverse & Mask;
+    if (C)
+      Base.emplace(Key, C);
+  }
+  std::vector<std::pair<uint64_t, uint64_t>> Rows;
+  if (!Res.charge(Factors.size(), Factors.size() * sizeof(Rows.front())))
+    return Root;
+  Rows.reserve(Factors.size());
+  for (const auto &F : Factors) {
+    if (F.Offset.getBitWidth() != Bits)
+      return Root;
+    for (const auto &[Key, C] : F.Terms) {
+      (void)Key;
+      if (C.getBitWidth() != Bits)
+        return Root;
+    }
+    if (!Res.scalar(2 * Res.Words))
+      return Root;
+    auto It = F.Terms.find(*Pivot);
+    const uint64_t A = It == F.Terms.end() ? 0 : Low(It->second);
+    for (const auto &[Key, C] : Base) {
+      if (!Res.scalar(Res.Words +
+                      Key.size() * (1 + std::bit_width(F.Terms.size()))))
+        return Root;
+      auto Term = F.Terms.find(Key);
+      const uint64_t Actual = Term == F.Terms.end() ? 0 : Low(Term->second);
+      if ((A * C & Mask) != Actual)
+        return Root;
+    }
+    for (const auto &[Key, C] : F.Terms) {
+      if (!Res.scalar(Res.Words +
+                      Key.size() * (1 + std::bit_width(Base.size()))))
+        return Root;
+      if (!Base.contains(Key) && Low(C))
+        return Root;
+    }
+    Rows.emplace_back(A, Low(F.Offset));
+  }
+
+  const size_t Count = size_t(1) << Bits;
+  const size_t N = Factors.size();
+  // One coefficient table per retained factor, plus a constant-only row.
+  const size_t Cells = (N + 1) * Count;
+  const size_t NodeBytes = sizeof(SymNode) + 4 * sizeof(SymRef) +
+                           sizeof(llvm::APInt) +
+                           Res.SourceWords * sizeof(uint64_t);
+  if (!Res.charge(
+          Count * (5 * N + 1),
+          Cells * sizeof(uint64_t) + (N + 1) * sizeof(std::vector<uint64_t>) +
+              N * (sizeof(uint64_t) + 2 * sizeof(unsigned) + sizeof(SymRef))))
+    return Root;
+  std::vector<std::vector<uint64_t>> Tables(N + 1,
+                                            std::vector<uint64_t>(Count));
+  std::vector<uint64_t> Values(N);
+  std::vector<unsigned> Zeros(N), Required(N);
+  for (size_t X = 0; X < Count; ++X) {
+    size_t Total = 0;
+    for (size_t I = 0; I < N; ++I) {
+      Values[I] = (Rows[I].first * X + Rows[I].second) & Mask;
+      Zeros[I] = Values[I] ? unsigned(std::countr_zero(Values[I])) : Bits;
+      Total += Zeros[I];
+    }
+    if (Total >= Needed)
+      continue;
+    size_t Residual = N;
+    for (size_t I = 0; I < N; ++I) {
+      // Here Total < Needed; this subtraction cannot underflow.
+      if (Needed - (Total - Zeros[I]) <= Bits)
+        continue;
+      if (Residual != N)
+        return Root;
+      Residual = I;
+    }
+    uint64_t Coefficient = 1;
+    for (size_t I = 0; I < N; ++I)
+      if (I != Residual)
+        Coefficient = Coefficient * Values[I] & ResultMask;
+    if (Residual != N) {
+      // This row also proves low zeros of the retained factor. Discard only
+      // coefficient bits whose product with those zeros is unobservable.
+      Coefficient &= (uint64_t(1) << (Needed - Zeros[Residual])) - 1;
+      Required[Residual] = std::max(
+          Required[Residual], unsigned(Needed - (Total - Zeros[Residual])));
+    }
+    Tables[Residual][X] = Coefficient;
+  }
+  size_t Active = 0;
+  for (const auto &Table : Tables)
+    Active += std::any_of(Table.begin(), Table.end(),
+                          [](uint64_t V) { return V != 0; });
+  if (!Active)
+    return Res.charge(1) ? Ctx.mkZero(Width) : Root;
+  // Reserve both bit-lookup and arithmetic decision candidates, their score
+  // walks, and the final sum before creating any expression nodes.
+  if (!Res.charge(Active * Count * (2 * Needed + 32) + Ctx.dagSize(Root),
+                  Active * Count * (sizeof(uint64_t) + 32 * NodeBytes)))
+    return Root;
+  llvm::SmallVector<SymRef, 16> Terms;
+  for (const auto &[Key, C] : Base) {
+    llvm::SmallVector<SymRef, 16> Ops;
+    for (auto Id : Key) {
+      auto Value = SymRef(Id);
+      if (Ctx.width(Value) != Width) {
+        const auto Nodes = Ctx.dagSize(Value);
+        const auto CopyWords = (size_t(Ctx.width(Value)) - 1) / 64 + 1;
+        if (!Res.charge(Nodes * (1 + CopyWords),
+                        Nodes * (4 * sizeof(SymNode) + 8 * sizeof(SymRef) +
+                                 4 * sizeof(llvm::APInt) +
+                                 4 * CopyWords * sizeof(uint64_t))))
+          return Root;
+        Value = Ctx.mkZExtOrTrunc(Value, Width);
+      }
+      Ops.push_back(Value);
+    }
+    Terms.push_back(Ctx.mkMul(
+        Ctx.mkConst(llvm::APInt(Bits, C).sextOrTrunc(Width)), Ctx.mkMul(Ops)));
+  }
+  const auto Word = Ctx.mkAdd(Terms);
+  const unsigned LookupWidth = std::max(Width, 64u);
+  auto Lookup = [&](const std::vector<uint64_t> &Table) -> SymRef {
+    auto Build = [&](auto &&Self, size_t Start, size_t Step,
+                     unsigned Bit) -> SymRef {
+      const auto V = Table[Start];
+      bool Constant = true;
+      for (size_t J = Start; J < Count; J += Step)
+        Constant &= Table[J] == V;
+      if (Constant)
+        return Ctx.mkConst(Width, V);
+      auto Lo = Self(Self, Start, 2 * Step, Bit + 1);
+      auto Hi = Self(Self, Start + Step, 2 * Step, Bit + 1);
+      if (Lo == Hi)
+        return Lo;
+      auto Input = Ctx.mkAnd(Ctx.mkLShr(Word, Ctx.mkConst(Width, Bit)),
+                             Ctx.mkConst(Width, 1));
+      return Ctx.mkAdd(Lo, Ctx.mkMul(Input, Ctx.mkAdd(Hi, Ctx.mkNeg(Lo))));
+    };
+    auto Decision = Build(Build, 0, 1, 0);
+    llvm::SmallVector<SymRef, 8> OutputBits;
+    bool Packed = true;
+    for (unsigned Bit = 0; Bit < Needed; ++Bit) {
+      size_t Period = Count;
+      auto At = [&](size_t X) { return (Table[X] >> Bit) & 1; };
+      while (Period > 1) {
+        bool Same = true;
+        for (size_t X = 0; X < Period / 2; ++X)
+          Same &= At(X) == At(X + Period / 2);
+        if (!Same)
+          break;
+        Period /= 2;
+      }
+      if (Period > LookupWidth) {
+        Packed = false;
+        break;
+      }
+      llvm::APInt Pattern(LookupWidth, 0);
+      for (size_t X = 0; X < Period; ++X)
+        if (At(X))
+          Pattern.setBit(X);
+      if (Pattern.isZero())
+        continue;
+      auto Index = Ctx.mkZExt(Ctx.mkAnd(Word, Ctx.mkConst(Width, Period - 1)),
+                              LookupWidth);
+      auto Value = Ctx.mkZExt(
+          Ctx.mkExtract(Ctx.mkLShr(Ctx.mkConst(Pattern), Index), 0, 1), Width);
+      OutputBits.push_back(
+          Ctx.mkMul(Ctx.mkConst(Width, uint64_t(1) << Bit), Value));
+    }
+    auto Coefficient = Decision;
+    if (Packed) {
+      if (OutputBits.empty())
+        return Ctx.mkZero(Width);
+      auto Lookup = Ctx.mkOr(OutputBits);
+      if (readingScore(Ctx, Lookup) < readingScore(Ctx, Coefficient))
+        Coefficient = Lookup;
+    }
+    // Fit the whole finite table, including its wrap period, before emitting
+    // an affine low-word reading. Selecting offsets often needs only -2*Word
+    // modulo eight rather than two separately reconstructed output bits.
+    for (unsigned Precision = 1; Precision <= Needed; ++Precision) {
+      const uint64_t Mask = (uint64_t(1) << Precision) - 1;
+      const uint64_t B = Table.front();
+      const uint64_t A = (Table[1] - B) & Mask;
+      bool Equal = true;
+      for (size_t X = 0; X < Count; ++X)
+        Equal &= ((A * X + B) & Mask) == Table[X];
+      if (!Equal)
+        continue;
+      auto Input = (A * Count & Mask)
+                       ? Ctx.mkAnd(Word, Ctx.mkConst(Width, Count - 1))
+                       : Word;
+      auto Affine = Ctx.mkAnd(
+          Ctx.mkAdd(Ctx.mkMul(Ctx.mkConst(
+                                  llvm::APInt(Precision, A).sextOrTrunc(Width)),
+                              Input),
+                    Ctx.mkConst(llvm::APInt(Precision, B).sextOrTrunc(Width))),
+          Ctx.mkConst(Width, Mask));
+      if (readingScore(Ctx, Affine) < readingScore(Ctx, Coefficient))
+        Coefficient = Affine;
+    }
+    return Coefficient;
+  };
+  auto EmitAtom = [&](const Atom &Key) -> SymRef {
+    llvm::SmallVector<SymRef, 16> Atoms;
+    if (!Res.charge(Key.size() * (1 + Res.SourceWords), Key.size() * NodeBytes))
+      return {};
+    for (auto Id : Key) {
+      auto Value = SymRef(Id);
+      if (Ctx.width(Value) != Width) {
+        const auto Nodes = Ctx.dagSize(Value);
+        const auto Words = (size_t(Ctx.width(Value)) - 1) / 64 + 1;
+        if (!Res.charge(Nodes * (1 + Words),
+                        Nodes * (4 * sizeof(SymNode) + 8 * sizeof(SymRef) +
+                                 4 * sizeof(llvm::APInt) +
+                                 4 * Words * sizeof(uint64_t))))
+          return {};
+        Value = Ctx.mkZExtOrTrunc(Value, Width);
+      }
+      Atoms.push_back(Value);
+    }
+    return Key.empty() ? Ctx.mkConst(Width, 1) : Ctx.mkMul(Atoms);
+  };
+  llvm::SmallVector<SymRef, 16> FactoredTerms{
+      Ctx.mkMul(Ctx.mkConst(Scale), Lookup(Tables[N]))};
+  // Distribute the residue coefficient tables through each projected affine
+  // map. Identical opaque atoms receive one complete coefficient table, so
+  // shared affine coordinates are emitted once rather than once per factor.
+  std::map<Atom, std::vector<uint64_t>> Columns;
+  auto AddColumn = [&](const Atom &Key, const llvm::APInt &Coeff,
+                       const std::vector<uint64_t> &Table) {
+    if (!Res.charge(Count + Key.size() * (1 + std::bit_width(Columns.size()))))
+      return false;
+    auto It = Columns.find(Key);
+    if (It == Columns.end()) {
+      if (!Res.charge(Count, sizeof(decltype(Columns)::value_type) +
+                                 4 * sizeof(void *) +
+                                 Key.size() * sizeof(uint32_t) +
+                                 Count * sizeof(uint64_t)))
+        return false;
+      It = Columns.emplace(Key, std::vector<uint64_t>(Count)).first;
+    }
+    // Required may differ between factors. Either representative of a
+    // coefficient modulo 2^Required is valid only after multiplication by
+    // this factor's table, whose nonzero rows prove the missing low zeros.
+    const uint64_t C = Coeff.sextOrTrunc(Needed).getZExtValue();
+    for (size_t X = 0; X < Count; ++X)
+      It->second[X] = (It->second[X] + C * Table[X]) & ResultMask;
+    return true;
+  };
+  if (!AddColumn({}, llvm::APInt(Needed, 1), Tables[N]))
+    return Root;
+  PrefixConstants Prefixes{Ctx, Res, {}};
+  for (size_t I = 0; I < N; ++I) {
+    const auto &Table = Tables[I];
+    if (std::none_of(Table.begin(), Table.end(), [](uint64_t V) { return V; }))
+      continue;
+    Factor Projected{{}, llvm::APInt(Required[I], 0)};
+    size_t Edges = 0;
+    if (!readFactor(Ctx, Originals[I], llvm::APInt(Required[I], 1), Projected,
+                    Res, Edges, 0, &Prefixes))
+      return Root;
+    if (!Res.charge(1 + 4 * Projected.Terms.size(),
+                    (1 + 4 * Projected.Terms.size()) * NodeBytes))
+      return Root;
+    llvm::SmallVector<SymRef, 16> Addends{
+        Ctx.mkConst(Projected.Offset.sextOrTrunc(Width))};
+    for (const auto &[Key, C] : Projected.Terms) {
+      auto Value = EmitAtom(Key);
+      if (!Value)
+        return Root;
+      Addends.push_back(Ctx.mkMul(Ctx.mkConst(C.sextOrTrunc(Width)), Value));
+    }
+    auto Value = Ctx.mkAdd(Addends);
+    if (readingScore(Ctx, Originals[I]) < readingScore(Ctx, Value))
+      Value = Originals[I];
+    FactoredTerms.push_back(
+        Ctx.mkMul({Ctx.mkConst(Scale), Lookup(Table), Value}));
+    // Eliminate the pivot coordinate in favor of Word. Its low Bits bits
+    // equal X in this row, so higher coefficient bits can move exactly into
+    // the row's constant. Other coordinates retain their complete differences.
+    auto PivotTerm = Projected.Terms.find(*Pivot);
+    const auto A = PivotTerm == Projected.Terms.end()
+                       ? llvm::APInt(Required[I], 0)
+                       : PivotTerm->second;
+    if (PivotTerm != Projected.Terms.end())
+      Projected.Terms.erase(PivotTerm);
+    for (const auto &[Key, C] : Base) {
+      if (Key == *Pivot)
+        continue;
+      if (!Res.charge(Key.size() + 1, sizeof(Coefficients::value_type) +
+                                          4 * sizeof(void *) +
+                                          Key.size() * sizeof(uint32_t)))
+        return Root;
+      auto It = Projected.Terms.try_emplace(Key, Required[I], 0).first;
+      It->second -= A * llvm::APInt(Bits, C).sextOrTrunc(Required[I]);
+    }
+    const unsigned CoeffBits = Required[I] > Bits ? Required[I] - Bits : 0;
+    const uint64_t Reduced =
+        A.getZExtValue() & ((uint64_t(1) << CoeffBits) - 1);
+    const uint64_t Difference = A.getZExtValue() - Reduced;
+    if (!AddColumn(Atom{Word.index()}, llvm::APInt(Needed, Reduced), Table) ||
+        !AddColumn({}, Projected.Offset, Table) || !Res.charge(Count))
+      return Root;
+    auto &Constants = Columns.at(Atom{});
+    for (size_t X = 0; X < Count; ++X)
+      Constants[X] = (Constants[X] + Table[X] * Difference * X) & ResultMask;
+    for (const auto &[Key, C] : Projected.Terms)
+      if (!C.isZero() && !AddColumn(Key, C, Table))
+        return Root;
+  }
+  auto Factored = Ctx.mkAdd(FactoredTerms);
+  auto Best =
+      readingScore(Ctx, Factored) < readingScore(Ctx, Root) ? Factored : Root;
+  // An atom with K known low bits equals V + 2^K*Q. Reduce its
+  // coefficients modulo 2^(Needed-K), retaining the discarded part times V
+  // in the constant column. In particular, cofactor tables multiplying a
+  // high-bit disturbance need not preserve unobservable odd units.
+  auto &Constant = Columns.at(Atom{});
+  for (auto &[Key, Table] : Columns) {
+    if (Key.size() != 1 || Ctx.width(SymRef(Key.front())) < Needed)
+      continue;
+    const auto Known = Prefixes.infer(SymRef(Key.front()), Needed);
+    if (Res.Failed || !Res.charge(2 * Count))
+      return Best;
+    const unsigned Precision =
+        std::min(Needed, unsigned(std::countr_one(Known.Known)));
+    const uint64_t CoeffMask = (uint64_t(1) << (Needed - Precision)) - 1;
+    for (size_t X = 0; X < Count; ++X) {
+      const auto Reduced = Table[X] & CoeffMask;
+      Constant[X] =
+          (Constant[X] + (Table[X] - Reduced) * Known.Value) & ResultMask;
+      Table[X] = Reduced;
+    }
+  }
+  // Column combination may split factors into more table-bearing atoms.
+  // Account for both candidate forms and their score walks before emission.
+  if (!Res.charge(Columns.size() * Count * (2 * Needed + 32),
+                  Columns.size() * Count * (sizeof(uint64_t) + 32 * NodeBytes)))
+    return Best;
+  // Disjoint residue supports can select structurally shared expressions
+  // before applying their common coefficient. Align commutative operands by
+  // shape; the signature orders a search only and never proves equality.
+  // Only arithmetic and bitwise nodes transport the low-word congruence;
+  // shifts, division and other unsupported boundaries remain opaque.
+  std::map<uint32_t, uint64_t> Shapes;
+  auto Shape = [&](auto &&Self, SymRef R, unsigned Depth) -> uint64_t {
+    if (Res.Failed)
+      return 0;
+    if (auto It = Shapes.find(R.index()); It != Shapes.end())
+      return It->second;
+    if (!Res.charge(1,
+                    sizeof(decltype(Shapes)::value_type) + 4 * sizeof(void *)))
+      return 0;
+    if (Res.Failed)
+      return 0;
+    if (Depth >= limits::kMaxAffineResidueDepth ||
+        Ctx.numOperands(R) > limits::kMaxResidueBaseTerms) {
+      Shapes.emplace(R.index(), R.index());
+      return R.index();
+    }
+    uint64_t H =
+        (uint64_t(Ctx.op(R)) + 1) * 0x9e3779b97f4a7c15ULL + Ctx.width(R);
+    if (Ctx.isConst(R))
+      H = 0;
+    else if (!Ctx.numOperands(R))
+      H ^= R.index();
+    else {
+      std::vector<uint64_t> Children;
+      for (auto Child : Ctx.operands(R)) {
+        if (Ctx.op(R) == SymOp::Add && Ctx.isConst(Child))
+          continue;
+        Children.push_back(Self(Self, Child, Depth + 1));
+      }
+      if (!Res.charge(Children.size() * (1 + std::bit_width(Children.size())),
+                      Children.size() * sizeof(uint64_t)))
+        return 0;
+      std::sort(Children.begin(), Children.end());
+      if (Ctx.op(R) == SymOp::Add && Children.size() == 1)
+        H = Children.front();
+      else
+        for (auto C : Children)
+          H = (H ^ C) * 0x9e3779b97f4a7c15ULL;
+    }
+    Shapes.emplace(R.index(), H);
+    return H;
+  };
+  auto Select = [&](auto &&Self, llvm::ArrayRef<SymRef> Values,
+                    unsigned Depth) -> SymRef {
+    if (Depth >= limits::kMaxAffineResidueDepth ||
+        !Res.charge(Count * (2 * Needed + 32),
+                    Count * (sizeof(uint64_t) + 32 * NodeBytes)))
+      return {};
+    if (std::all_of(Values.begin(), Values.end(),
+                    [&](SymRef R) { return R == Values.front(); }))
+      return Values.front();
+    if (std::all_of(Values.begin(), Values.end(),
+                    [&](SymRef R) { return Ctx.isConst(R); })) {
+      std::vector<uint64_t> Table;
+      for (auto R : Values)
+        Table.push_back(Ctx.constValue(R).zextOrTrunc(Needed).getZExtValue());
+      return Lookup(Table);
+    }
+    // An absent literal in an addition is a zero literal. This permits
+    // selecting among U, U+2, U+4, ... without repeating U in each branch.
+    const bool Add = std::any_of(Values.begin(), Values.end(), [&](SymRef R) {
+      return Ctx.op(R) == SymOp::Add;
+    });
+    const auto Op = Add ? SymOp::Add : Ctx.op(Values.front());
+    if (Op != SymOp::Add && Op != SymOp::Mul && !isBitwise(Op))
+      return {};
+    std::vector<std::vector<SymRef>> Rows;
+    size_t Arity = 0;
+    for (auto R : Values) {
+      if (Ctx.width(R) != Width || (!Add && Ctx.op(R) != Op))
+        return {};
+      std::vector<SymRef> Row;
+      SymRef Literal = Ctx.mkZero(Width);
+      if (Add && Ctx.op(R) != SymOp::Add)
+        Row.push_back(R);
+      else {
+        llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(R));
+        if (Inputs.size() > limits::kMaxResidueBaseTerms)
+          return {};
+        for (auto Child : Inputs) {
+          if (Add && Ctx.isConst(Child))
+            Literal = Child;
+          else
+            Row.push_back(Child);
+        }
+      }
+      for (auto Child : Row)
+        Shape(Shape, Child, 0);
+      if (Res.Failed ||
+          !Res.charge(Row.size() * (1 + std::bit_width(Row.size())),
+                      (Row.size() + 1) * sizeof(SymRef)))
+        return {};
+      std::stable_sort(Row.begin(), Row.end(), [&](SymRef A, SymRef B) {
+        return Shapes.at(A.index()) < Shapes.at(B.index());
+      });
+      if (Add)
+        Row.insert(Row.begin(), Literal);
+      if (Rows.empty())
+        Arity = Row.size();
+      else if (Row.size() != Arity)
+        return {};
+      Rows.push_back(std::move(Row));
+    }
+    llvm::SmallVector<SymRef, 16> Children;
+    for (size_t I = 0; I < Arity; ++I) {
+      llvm::SmallVector<SymRef, 16> Column;
+      for (const auto &Row : Rows)
+        Column.push_back(Row[I]);
+      auto Value = Self(Self, Column, Depth + 1);
+      if (!Value)
+        return {};
+      Children.push_back(Value);
+    }
+    if (Op == SymOp::Add)
+      return Ctx.mkAdd(Children);
+    if (Op == SymOp::Mul)
+      return Ctx.mkMul(Children);
+    if (Op == SymOp::And)
+      return Ctx.mkAnd(Children);
+    if (Op == SymOp::Or)
+      return Ctx.mkOr(Children);
+    if (Op == SymOp::Xor)
+      return Ctx.mkXor(Children);
+    return Ctx.mkNot(Children.front());
+  };
+  std::vector<const Atom *> Combined;
+  llvm::SmallVector<SymRef, 16> Summands;
+  for (const auto &[Key, Table] : Columns) {
+    if (Key.size() != 1 ||
+        std::find(Combined.begin(), Combined.end(), &Key) != Combined.end())
+      continue;
+    const auto RootAtom = SymRef(Key.front());
+    const auto Signature = Shape(Shape, RootAtom, 0);
+    uint64_t Coeff = 0;
+    bool Uniform = true;
+    for (auto V : Table) {
+      if (!V)
+        continue;
+      if (Coeff && Coeff != V)
+        Uniform = false;
+      Coeff = V;
+    }
+    if (!Coeff || !Uniform || Res.Failed)
+      continue;
+    if (!Res.charge(Columns.size() * (1 + Combined.size()) + Count,
+                    Count * (sizeof(uint64_t) + sizeof(SymRef))))
+      return Best;
+    std::vector<uint64_t> Support = Table;
+    std::vector<SymRef> Values(Count, RootAtom);
+    std::vector<const Atom *> Members{&Key};
+    for (const auto &[Other, Weights] : Columns) {
+      if (Other.size() != 1 || &Other == &Key ||
+          std::find(Combined.begin(), Combined.end(), &Other) !=
+              Combined.end() ||
+          Shape(Shape, SymRef(Other.front()), 0) != Signature)
+        continue;
+      if (!Res.charge(Count, Count * (sizeof(uint64_t) + sizeof(SymRef))))
+        return Best;
+      bool Disjoint = true, Active = false;
+      for (size_t X = 0; X < Count; ++X) {
+        Active |= Weights[X] != 0;
+        Disjoint &= !Weights[X] || (Weights[X] == Coeff && !Support[X]);
+      }
+      if (!Active || !Disjoint)
+        continue;
+      Members.push_back(&Other);
+      for (size_t X = 0; X < Count; ++X)
+        if (Weights[X]) {
+          Values[X] = SymRef(Other.front());
+          Support[X] = Coeff;
+        }
+    }
+    if (Members.size() < 2)
+      continue;
+    auto Merged = Select(Select, Values, 0);
+    if (Res.Failed)
+      return Best;
+    if (!Merged)
+      continue;
+    auto Term = Ctx.mkMul({Ctx.mkConst(Scale), Lookup(Support), Merged});
+    Summands.push_back(Term);
+    Combined.insert(Combined.end(), Members.begin(), Members.end());
+  }
+  for (const auto &[Key, Table] : Columns) {
+    if (std::find(Combined.begin(), Combined.end(), &Key) != Combined.end())
+      continue;
+    if (std::none_of(Table.begin(), Table.end(), [](uint64_t V) { return V; }))
+      continue;
+    auto Coefficient = Lookup(Table);
+    auto Term = Ctx.mkMul(Ctx.mkConst(Scale), Coefficient);
+    if (!Key.empty()) {
+      auto Value = EmitAtom(Key);
+      if (!Value)
+        return Best;
+      Term = Ctx.mkMul(Term, Value);
+    }
+    Summands.push_back(Term);
+  }
+  auto Result = Ctx.mkAdd(Summands);
+  return readingScore(Ctx, Result) < readingScore(Ctx, Best) ? Result : Best;
+}
+
 // Nonzero neighbors can still be much simpler functions of one affine word.
 // Check every coefficient before using that word, then enumerate its complete
 // observed domain. Independent opaque atoms need not be independent inputs.
 SymRef synthesizeResidueTable(SymContext &Ctx, SymRef Root,
                               const std::vector<Factor> &Factors,
-                              unsigned Observed, Resources &Res) {
+                              unsigned Observed, Resources &Res,
+                              bool *CompleteBase) {
   if (Observed > limits::kMaxAffineResidueTableBits)
     return Root;
   const Factor *Basis = nullptr;
@@ -513,6 +1241,8 @@ SymRef synthesizeResidueTable(SymContext &Ctx, SymRef Root,
     Rows.emplace_back(A, Low(F.Offset, F.Zeros));
   }
 
+  if (CompleteBase)
+    *CompleteBase = true;
   const size_t Count = size_t(1) << Observed;
   // Reserve all table, decision, lookup, polynomial and factored candidates
   // before emission. Output constants retain the source word width even when
@@ -696,6 +1426,21 @@ bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root) {
   auto Offset = [&](SymRef R) {
     return Ctx.op(R) == SymOp::Add && Ctx.isConst(Ctx.operand(R, 0));
   };
+  auto BitwiseTerm = [&](SymRef R, unsigned &Remaining) {
+    if (isBitwise(Ctx.op(R)))
+      return true;
+    if (Ctx.op(R) != SymOp::Mul ||
+        Ctx.numOperands(R) > limits::kMaxResidueBaseTerms)
+      return false;
+    for (auto Factor : Ctx.operands(R)) {
+      if (!Remaining)
+        return false;
+      --Remaining;
+      if (isBitwise(Ctx.op(Factor)))
+        return true;
+    }
+    return false;
+  };
   auto Wrapped = [&](auto &&Self, SymRef R, unsigned Depth,
                      unsigned &Remaining) -> bool {
     if (!Remaining)
@@ -706,12 +1451,32 @@ bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root) {
       return false;
     if (Offset(R)) {
       for (auto Child : Ctx.operands(R))
-        if (isBitwise(Ctx.op(Child)))
+        if (BitwiseTerm(Child, Remaining) ||
+            (Ctx.op(Child) == SymOp::Mul &&
+             Ctx.isConst(Ctx.operand(Child, 0)) &&
+             (Ctx.numOperands(Child) > 2 || Ctx.width(Child) > 64)))
           return true;
+      // Native scalar affine coordinates already have a cheap complete-map
+      // reader. Do not run a second projection search on their nonzero
+      // residuals; nonlinear monomials and wide coefficients benefit from it.
       return false;
     }
+    // Reassociation may leave A*(B+c) under a bitwise wrapper. A literal
+    // scale/shift is transparent to this hint; the reader still proves every
+    // coefficient and accounts for any fixed zeros before using its prefix.
+    const bool Scaled = Ctx.numOperands(R) == 2 &&
+                        ((Op == SymOp::Mul && Ctx.isConst(Ctx.operand(R, 0))) ||
+                         (Op == SymOp::Shl && Ctx.isConst(Ctx.operand(R, 1))));
+    // A scalar may retain its offset internally: A*(B+c) + disturbance.
+    // Only bitwise-bearing sums need the projected path; ordinary native
+    // affine sums retain their complete-map fast path.
+    const bool BitwiseSum =
+        Op == SymOp::Add &&
+        std::any_of(
+            Ctx.operands(R).begin(), Ctx.operands(R).end(),
+            [&](SymRef Child) { return BitwiseTerm(Child, Remaining); });
     if (!isBitwise(Op) && Op != SymOp::ZExt && Op != SymOp::SExt &&
-        Op != SymOp::Extract)
+        Op != SymOp::Extract && !Scaled && !BitwiseSum)
       return false;
     for (auto Child : Ctx.operands(R))
       if (Offset(Child) || (Depth && Self(Self, Child, Depth - 1, Remaining)))
@@ -748,65 +1513,131 @@ SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
   }
   if (!Needed)
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
-  const unsigned Bits =
+  const unsigned MaxBits =
       std::min(Width, unsigned(std::bit_width(Operands.size() - 1)));
-  if (!Bits || !Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
-    return Root;
+  // A balanced set of offsets can already establish enough zeros at a much
+  // coarser precision. Start there so unrelated higher bits cannot obscure
+  // the useful congruence. This estimate only orders attempts: every rewrite
+  // still requires complete coefficient maps and an exact residue bound.
   PrefixConstants Prefixes{Ctx, Res, {}};
-  std::vector<Factor> Factors;
-  Factors.reserve(Operands.size());
-  unsigned Available = Bits;
-  for (auto R : Operands) {
-    if (!Res.scalar(1))
-      return Root;
-    Factor F{{}, llvm::APInt(Bits, 0)};
-    size_t Edges = 0;
-    if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0, &Prefixes))
-      return Root;
-    auto SetValuation = [&]() {
-      unsigned CoeffZeros = F.Offset.getBitWidth();
-      for (const auto &[Key, Coeff] : F.Terms) {
-        (void)Key;
-        if (!Res.charge(1))
+  auto Prove = [&](unsigned Bits, unsigned Needed) {
+    if (!Bits || !Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
+      return false;
+    std::vector<Factor> Factors;
+    Factors.reserve(Operands.size());
+    unsigned Available = Bits;
+    for (auto R : Operands) {
+      if (!Res.scalar(1))
+        return false;
+      Factor F{{}, llvm::APInt(Bits, 0)};
+      size_t Edges = 0;
+      if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0,
+                      &Prefixes))
+        return false;
+      auto SetValuation = [&]() {
+        unsigned CoeffZeros = F.Offset.getBitWidth();
+        for (const auto &[Key, Coeff] : F.Terms) {
+          (void)Key;
+          if (!Res.charge(1))
+            return false;
+          CoeffZeros = std::min(CoeffZeros, Coeff.countr_zero());
+        }
+        const unsigned OffsetZeros = F.Offset.countr_zero();
+        F.Zeros = std::min(CoeffZeros, OffsetZeros);
+        F.FixedValuation = F.Terms.empty() || OffsetZeros < CoeffZeros;
+        return true;
+      };
+      if (!SetValuation())
+        return false;
+      // Removing fixed zeros also removes observed bits. Widen just this
+      // factor, leaving odd factors at their original (provable) precision.
+      const unsigned ExtraBits =
+          std::min({Width, Bits + F.Zeros, limits::kMaxResiduePrefixBits});
+      if ((!F.FixedValuation || F.Offset.isZero()) && ExtraBits > Bits) {
+        F = Factor{{}, llvm::APInt(ExtraBits, 0)};
+        Edges = 0;
+        if (!Res.scalar(1) ||
+            !readFactor(Ctx, R, llvm::APInt(ExtraBits, 1), F, Res, Edges, 0,
+                        &Prefixes) ||
+            !SetValuation())
           return false;
-        CoeffZeros = std::min(CoeffZeros, Coeff.countr_zero());
       }
-      const unsigned OffsetZeros = F.Offset.countr_zero();
-      F.Zeros = std::min(CoeffZeros, OffsetZeros);
-      F.FixedValuation = F.Terms.empty() || OffsetZeros < CoeffZeros;
-      return true;
-    };
-    if (!SetValuation())
-      return Root;
-    // Removing fixed zeros also removes observed bits. Widen just this
-    // factor, leaving odd factors at their original (provable) precision.
-    const unsigned ExtraBits =
-        std::min({Width, Bits + F.Zeros, limits::kMaxResiduePrefixBits});
-    if (!F.FixedValuation && ExtraBits > Bits) {
-      F = Factor{{}, llvm::APInt(ExtraBits, 0)};
-      Edges = 0;
-      if (!Res.scalar(1) ||
-          !readFactor(Ctx, R, llvm::APInt(ExtraBits, 1), F, Res, Edges, 0,
-                      &Prefixes) ||
-          !SetValuation())
-        return Root;
+      if (F.Zeros >= Needed)
+        return true;
+      Needed -= F.Zeros;
+      // A zero prefix guarantees only Bits zeros, not a zero full-width factor.
+      if (!F.FixedValuation)
+        Available = std::min(Available, F.Offset.getBitWidth() - F.Zeros);
+      Factors.push_back(std::move(F));
     }
-    if (F.Zeros >= Needed)
-      return Res.charge(1) ? Ctx.mkZero(Width) : Root;
-    Needed -= F.Zeros;
-    // A zero prefix guarantees only Bits zeros, not a zero full-width factor.
-    if (!F.FixedValuation)
-      Available = std::min(Available, F.Offset.getBitWidth() - F.Zeros);
-    Factors.push_back(std::move(F));
-  }
-  if (proveAffineResidues(Factors, Available, Needed, Res))
+    return proveAffineResidues(Factors, Available, Needed, Res);
+  };
+  // Failed precision attempts share the same cumulative resource account;
+  // the cache only contains completed queries keyed by their exact width.
+  if (proveAtResiduePrecisions(
+          Operands.size(), MaxBits, Needed, Res,
+          [&](unsigned Bits) { return Prove(Bits, Needed); }))
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
   return Root;
 }
 
+SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
+                                   WorkBudget &Budget, size_t &Storage) {
+  if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
+      Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
+      Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
+    return Root;
+  const unsigned Width = Ctx.width(Root);
+  llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(Root));
+  auto Operands = llvm::ArrayRef<SymRef>(Inputs);
+  const size_t SourceWords = (size_t(Width) - 1) / 64 + 1;
+  Resources Res{Budget, Storage, 1, SourceWords};
+  unsigned Needed = Width;
+  if (Ctx.isConst(Operands.front())) {
+    if (!Res.scalar(SourceWords))
+      return Root;
+    Needed -= Ctx.constValue(Operands.front()).countr_zero();
+    Operands = Operands.drop_front();
+  }
+  PrefixConstants Prefixes{Ctx, Res, {}};
+  SymRef Best = Root;
+  if (Needed <= limits::kMaxAffineResidueTableBits) {
+    const auto Scale = Ctx.isConst(Inputs.front())
+                           ? Ctx.constValue(Inputs.front())
+                           : llvm::APInt(Width, 1);
+    for (unsigned Bits = 1; Bits <= Needed && !Res.Failed; ++Bits) {
+      if (!Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
+        break;
+      std::vector<Factor> Factors;
+      Factors.reserve(Operands.size());
+      bool Complete = true;
+      for (auto R : Operands) {
+        Factor F{{}, llvm::APInt(Bits, 0)};
+        size_t Edges = 0;
+        if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0,
+                        &Prefixes)) {
+          Complete = false;
+          break;
+        }
+        Factors.push_back(std::move(F));
+      }
+      if (!Complete)
+        break;
+      auto Result = synthesizeResidualResidueTable(Ctx, Root, Factors, Operands,
+                                                   Scale, Bits, Needed, Res);
+      if (Result != Root && readingScore(Ctx, Result) < readingScore(Ctx, Best))
+        Best = Result;
+    }
+  }
+  return Best;
+}
+
 std::optional<SymRef>
 foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
-                          size_t &Storage, std::optional<bool> ProjectedHint) {
+                          size_t &Storage, std::optional<bool> ProjectedHint,
+                          bool *CompleteBase) {
+  if (CompleteBase)
+    *CompleteBase = false;
   if (Ctx.op(Root) != SymOp::Mul ||
       Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
       Ctx.numOperands(Root) > limits::kMaxResidueProductFactors ||
@@ -870,7 +1701,9 @@ foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   // Examining only this prefix avoids full-width inversions. It can decline
   // a proof that needs deeper residues; it never overstates a valuation.
   const unsigned Bits = std::min(Needed, unsigned(std::bit_width(N)));
-  if (proveAffineResidues(Factors, Bits, Needed, Res))
+  if (proveAtResiduePrecisions(N, Bits, Needed, Res, [&](unsigned Precision) {
+        return proveAffineResidues(Factors, Precision, Needed, Res);
+      }))
     return Res.charge(1) ? Ctx.mkZero(Width) : Root;
   // Reassociation can absorb the enclosing scale into one additive factor.
   // Once all fixed zeros are known, normalize the exact coefficient maps at
@@ -912,7 +1745,7 @@ foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       F = std::move(Reduced);
     }
   }
-  return synthesizeResidueTable(Ctx, Root, Factors, Needed, Res);
+  return synthesizeResidueTable(Ctx, Root, Factors, Needed, Res, CompleteBase);
 }
 
 } // namespace neverd::symbolic::detail

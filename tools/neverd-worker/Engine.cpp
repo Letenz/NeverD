@@ -1079,8 +1079,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                          optionText;
   Json original;
   for (const auto &cached : namedViews_)
-    if (cached->sourceKey == sourceKey && !cached->original.is_null()) {
-      original = cached->original;
+    if (cached->sourceKey == sourceKey && !cached->original.empty()) {
+      original = Json::parse(cached->original);
       break;
     }
   // A hit answers from its finished document without pretending the mutable
@@ -1163,7 +1163,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
     if (sourceView)
-      document->original = full;
+      document->original = full.dump();
     for (const auto &reason : staleVariableTypes)
       full["stale_variable_types"].push_back(reason);
     if (sourceView)
@@ -1287,11 +1287,10 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     // document, it remains usable for this response but is not reusable yet.
     if (cacheKey() != key)
       return document;
-    const auto jsonBytes = namedViewJsonBytes(document->value) +
-                           namedViewJsonBytes(document->original);
-    auto overhead = sizeof(NamedView) + 8 * sizeof(void *) +
-                    document->key.capacity() + 1 +
-                    document->sourceKey.capacity() + 1;
+    const auto jsonBytes = namedViewJsonBytes(document->value);
+    auto overhead =
+        sizeof(NamedView) + 8 * sizeof(void *) + document->key.capacity() + 1 +
+        document->sourceKey.capacity() + 1 + document->original.capacity() + 1;
     for (const auto *bounds :
          {&document->rowBounds, &document->referenceBounds,
           &document->sourceNameBounds, &document->codeNameBounds}) {
@@ -2033,11 +2032,24 @@ Json Engine::updateAnalysisNames(const Json &snapshot) {
   if (fs::file_size(utf8Path(path)) != loadedSize_ ||
       fs::last_write_time(utf8Path(path)) != loadedTime_)
     throw Error("input_changed", "The analysis input changed; reopen it");
-  const auto rows = readCodeEdits(path);
-  if (rows != snapshot.at("state").value("code_edits", Json::array()))
+  if (ProjectHistory::recoveryPending(utf8Path(path)))
+    throw Error("stale_snapshot", "Project edits require transaction recovery");
+  auto committed = ProjectHistory::readState(utf8Path(path));
+  if (committed.at("code_edits").size() >
+      ::neverd::limits::worker::kEngineReadCodeEditsRowsSizeLimit)
+    throw Error("invalid_request", "Invalid code edit table");
+  auto expected = ProjectHistory::normalizedState(snapshot.at("state"));
+  // Local declarations are loaded from disk when a replica opens. They must
+  // still match that analysis even though the snapshot has no types table.
+  expected["types"] =
+      declaresLocalTypes() ? typeDeclarationRows() : committed.at("types");
+  for (auto *state : {&committed, &expected})
+    for (auto &rename : state->at("renames"))
+      rename.erase("original");
+  if (committed != expected || typeLibrariesChanged())
     throw Error("stale_snapshot",
                 "Project edits changed while updating analysis");
-  codeEdits_ = rows;
+  codeEdits_ = snapshot.at("state").value("code_edits", Json::array());
   restoredSnapshot_ = snapshot;
   localNamesChanged();
   return {{"updated", true}};

@@ -12,13 +12,14 @@
 
 #include "neverd/symbolic/SymExpr.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
-#include <unordered_map>
 #include <utility>
 
 namespace neverd::symbolic {
@@ -57,7 +58,7 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
     : Ctx(Ctx), Root(Root) {
   // Iterative post-order so a deeply nested expression cannot overflow the
   // stack; obfuscators emit exactly that shape on purpose.
-  std::unordered_map<uint32_t, uint32_t> Slot;
+  llvm::DenseMap<uint32_t, uint32_t> Slot;
   llvm::DenseSet<uint32_t> Visited;
   llvm::SmallVector<std::pair<SymRef, bool>, 64> Work{{Root, false}};
   llvm::SmallVector<SymRef, 64> PostOrder;
@@ -67,7 +68,7 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
     if (Expanded) {
       if (Slot.count(Cur.index()))
         continue;
-      Slot.emplace(Cur.index(), static_cast<uint32_t>(PostOrder.size()));
+      Slot.try_emplace(Cur.index(), static_cast<uint32_t>(PostOrder.size()));
       PostOrder.push_back(Cur);
       continue;
     }
@@ -85,6 +86,8 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
     const SymNode &N = Ctx.node(R);
     if (N.Width > 64)
       FitsU64 = false;
+    if (N.Op == SymOp::Var)
+      Vars.push_back(static_cast<uint32_t>(N.Aux));
 
     Step S;
     S.Op = N.Op;
@@ -94,15 +97,16 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
     S.FirstArg = static_cast<uint32_t>(ArgSlots.size());
     S.NumArgs = N.NumOperands;
     for (SymRef C : Ctx.operands(R))
-      ArgSlots.push_back(Slot.at(C.index()));
+      ArgSlots.push_back(Slot.find(C.index())->second);
     Steps.push_back(S);
   }
 
-  RootSlot = Slot.at(Root.index());
+  RootSlot = Slot.find(Root.index())->second;
 
-  llvm::SmallVector<uint32_t, 8> V;
-  Ctx.collectVars(Root, V);
-  Vars.assign(V.begin(), V.end());
+  // The lowering already visits every reachable variable. Retain the public
+  // sorted, unique order without a second DAG walk and its temporary set.
+  std::sort(Vars.begin(), Vars.end());
+  Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
 
   ScratchU64.resize(Steps.size());
   ScratchAP.resize(Steps.size());

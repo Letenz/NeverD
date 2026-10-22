@@ -5977,12 +5977,11 @@ TEST_F(SessionCAPITest, DriverProviderImportsUseTheirDeclaredSourceABI) {
       ASSERT_TRUE(Source.has_value()) << Text;
       EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
       EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
+      EXPECT_TRUE(Source->contains("extern void NdisCloseConfiguration(void*"))
+          << Source->str();
+      EXPECT_TRUE(Source->contains("extern int32_t NdisOpenConfigurationEx("))
+          << Source->str();
       if (std::string_view(View) == "c") {
-        EXPECT_TRUE(
-            Source->contains("extern void NdisCloseConfiguration(void*"))
-            << Source->str();
-        EXPECT_TRUE(Source->contains("extern int32_t NdisOpenConfigurationEx("))
-            << Source->str();
         EXPECT_TRUE(Source->contains("NdisParameterString")) << Source->str();
       }
     }
@@ -6044,9 +6043,11 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
       Session,
       neverd_func_entry(Session, neverd_func_find_by_name(Session, "Probe")),
       0));
-  EXPECT_NE(Lowered.find("extern uint64_t GetLastError();"), std::string::npos)
+  EXPECT_NE(Lowered.find("extern uint32_t GetLastError(void);"),
+            std::string::npos)
       << Lowered;
-  EXPECT_NE(Lowered.find("extern uint64_t ZwClose();"), std::string::npos)
+  EXPECT_NE(Lowered.find("extern int32_t ZwClose(void* Handle);"),
+            std::string::npos)
       << Lowered;
   EXPECT_NE(Lowered.find("(GetLastError())"), std::string::npos) << Lowered;
   // A definition named as a routine the headers declare that reads none of

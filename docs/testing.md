@@ -406,7 +406,17 @@ perturbations and nonzero neighbors through degree 256.
 Use `--family prefix-residue --count 128` for degree-4–256 products with
 independent high-bit XOR/OR/AND disturbances, masked and signed/unsigned narrow
 views, nested wrappers, even factors and nonlinear/correlated bases. Sixteen
-nearby controls retain a nonzero product. Run all seventeen families at
+nearby controls retain a nonzero product. Use
+`--family residue-frontier --count 128` for degree-4–256 products whose
+usable congruence stops at one to three bits, below the degree-based precision.
+These include even factors, arithmetic disturbances, correlated and nonlinear
+bases, narrow views and sixteen nonzero quartic controls. Use
+`--family distributed-prefix --count 128` for independent partial-bit factors,
+odd-product residues, carry propagation and nested bitwise/width projections.
+Its degree-4–256 products include a useful consecutive offset block and an odd
+residual tail, so the higher-degree cases still require more than parity.
+Sixteen nearby controls per width must retain their nonzero behavior.
+Run all nineteen families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -427,6 +437,31 @@ synthesis through narrowing and widening. Run it in both the focused MBA and
 full symbolic owners. Worker prefix-quartic/octic and nonzero-neighbor fixtures
 execute both C backends through CLI whole/function requests and GUI worker
 requests at O0/O2, including toggle/cache isolation.
+Coarse-prefix oracles additionally cover arithmetic high-bit products through
+257 bits, even zero-prefix rereading, nonzero offset/scale neighbors and exact
+versus one-short cumulative work/storage. Independent full-width Z3 checks
+include the one-bit frontier. The worker also executes coarse quartic/octic
+and nonzero-neighbor fixtures through all six source routes.
+Partial-bit proof tests cover 8–257-bit independent arithmetic oracles,
+nonzero offset/scale neighbors, exact and one-short work/storage allowances,
+and full-width Z3 checks. Nonzero cofactor-table tests exhaust small input
+domains, check independent 8–257-bit arithmetic, and verify that a short budget
+can return only a completed equivalent candidate. Distributed quartic/octic
+source fixtures and a
+nonzero neighbor execute through both C backends and all CLI/worker routes.
+`SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
+shared roots, complete subgraph overrides and simultaneous variable replacement
+against word arithmetic through 257 bits, including division by zero.
+Native nonzero affine controls retain their recovered polynomial within the
+original work allowance, guarding against duplicated projection searches.
+Complete opaque affine bases also retain polynomial recovery after an
+unprofitable full residue table, including scaled and unit-offset byte cases.
+`VariableMonomialsKeepTheirAffineFastPath` checks 256 scaled factors under an
+18,000-unit deep-simplification allowance and an independent modular oracle.
+`SymExpr.EvaluationPlanKeepsSharedInputsAfterContextGrowth` checks shared DAG
+operands, sorted sparse input IDs, callback reads and reusable plans through
+257 bits against separate word arithmetic. Existing evaluation and full
+symbolic tests remain required when optimizing plan construction.
 The mixed-degree C++ regression adds an independently generated three-block
 variant and a full-word arithmetic oracle through 257 bits. Cache regressions
 cover compatible and incompatible complement bases, storage refusal followed by
@@ -475,6 +510,10 @@ before consuming the budget needed to simplify their shared child.
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
 checks nested additions through 257 bits and rejects masked hidden poison.
+`MaskedMultiplyAdmissionMatchesExhaustiveByteDomains` exhausts signed and
+unsigned multiplication domains, including negative endpoint overflow.
+`MaskedMultiplyPreservesPoisonAndBoundedAdmission` checks masked sums through
+512 bits, hidden poison, annotations, and width/depth refusal.
 `MaskedDisjointOrMatchesExhaustiveByteDomains` and `NestedOrAdmission*` check
 OR-to-addition admission independently of compiler flags, including exhaustive
 byte domains, wrapping carries, nested ORs, hidden poison, and width/depth
@@ -699,6 +738,19 @@ for equality before attributing a speed difference to the allocator. Use
 Decode-only results do not measure the allocation-heavy IR stages; an allocator
 change does not guarantee an improvement for every workload.
 
+The mimalloc worker collects free pages after a request-free interval matching
+its configured purge delay. Check full source output after idle collection,
+plus allocator, transport and source-cache regressions. New requests must wake
+the delay immediately, including when `MIMALLOC_PURGE_DELAY` is very large.
+`NeverDWorkerIdleMemory` checks negative, zero, short and maximum C-long delays
+through real worker requests and complete cached source reads across idle waits.
+A negative delay disables this collection. A standalone worker built with
+`NEVERD_WORKER_MIMALLOC=OFF` must still build and serve the same protocol.
+Record current RSS/PSS at readiness and after idling separately from the process
+high-water RSS: returning idle pages can lower current use while preserving an
+earlier peak. Match worker executables, engine inputs, thread counts and paging
+options when isolating engine memory changes.
+
 
 ## Legacy GS recovery tests
 
@@ -757,6 +809,13 @@ answers the question behind a change, then run the broader aggregate before a
 high-risk pull request.
 
 `PipelineOutcome.ResolvedCalls*` checks register banks, call/invoke identity, packed and split stack bytes, narrow values in their own slots, and refusal of missing bytes. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` checks the recorded offsets. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` covers x64, ARM32 and AArch64 in ELF, PE and Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` checks all three formats and rejects clobbered lengths, writable or oversized spans, local names, wrong source registers, alternate entries and relocatable images. Host C differentials compile the source reference independently at O0 and emitted C at O2, preserving an independent oracle when a host optimizer miscompiles a recurrence. The AArch64 FMA check requests `-mfma` only on x86 hosts.
+
+`MedCallABI.BodyCopiesRetainEveryWideCallOperand` checks growing operand lists
+through 65 inputs and preservation of values, widths and occurrence-sensitive
+address provenance when function bodies are copied and moved.
+`CalleeSignatureMemo.WideOperandsCountAgainstTheBodyBudget` checks that expanded
+operand storage counts against the memo's byte budget, including retained
+allocations after the active operand list shrinks.
 
 ## Acceleration libraries
 
@@ -1121,6 +1180,14 @@ escaped and invalid UTF-8 payloads, and the exact encoded-frame byte limit.
 Timing-independent cache tests complement
 `source_revisit_bench.py`, which measures complete real source pages.
 
+The same cache test checks a 20,008-line document across later pages using SDK
+call counters. The undecorated copy is retained as serialized JSON, with its
+string capacity counted in the existing cache budget; local-name refresh
+reconstructs that exact source without rerunning the engine. The GUI's
+20,000-line responsiveness check retains its 15-second loading and 500-ms event
+gap limits. Rename isolation checks wait for initial navigation to settle before
+observing signals caused by the edit.
+
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and
 strict scalar-emulator refusal. `NeverDX86VirtualizationSourceTests` covers both
@@ -1168,6 +1235,12 @@ against a fixture and optional native input, including revisiting a function.
 `backgroundFunctionDiscoveryKeepsSelection` inserts a function before loaded rows
 and checks persistent selection, sorting, filtering and retiring an obsolete
 background refresh.
+`backgroundDiscoveryKeepsSelectionBeyondCachedPages` checks an insertion that
+moves a selected address into an unloaded page, both in address order and with
+sorting/filtering. It also verifies the selection model's other selected row.
+`NeverDWorkerLocalNameCache` rejects foreign function names, function edits and
+annotations committed after the owner's snapshot, retaining the prior replica
+document and all files on refusal.
 
 `listingRefreshKeepsItsContextAndArrows` observes every viewport paint through
 repeated refreshes, checks retained context, branch-gutter pixels and cursor
@@ -1183,6 +1256,24 @@ chunk boundary and optionally `NEVERD_LISTING_STABILITY_PDB`. It copies those
 inputs to a temporary directory, disables background analysis and alternates
 refresh/prefetch requests, requiring a stable inventory and listing generation
 after warmup. Missing external inputs are skips, not native qualification.
+
+The `findInView*` workbench cases exercise the production Ctrl+F action for
+pseudocode and LLVM C, multiple hits on one line, forward/backward wrap,
+case/word options, literal punctuation, Unicode comments and hidden block
+bodies. They check exact substring selection, address-prefix matching in the
+assembly, origin capture when focus moves into the modeless dialog, retargeting,
+complete multipage source, independent panes and retiring a source snapshot on
+function replacement or project close. Search must not issue a decompilation or
+move another pane merely to select a match. `viewSearchLiteralMatching*` checks
+the shared renderer/dialog matching rules without involving the worker.
+`viewSearchWholeWordsRecognizesSupplementaryCharacters` verifies that UTF-16
+surrogate pairs preserve letter and combining-mark word boundaries while emoji
+remain delimiters.
+The large-source case selects among 20,000 hits without replacing the document.
+The optional native-input case uses NEVERD_FIND_WORKER, NEVERD_FIND_INPUT,
+NEVERD_FIND_TARGET and optional NEVERD_FIND_PDB / NEVERD_FIND_TEXT. It copies
+external inputs into a temporary directory and checks unchanged document identity
+and no cross-pane navigation; missing inputs are an explicit skip.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
@@ -1512,7 +1603,11 @@ takes `EFI_IMAGE_ENTRY_POINT`;
 reads each pointer once;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
-out. The user mode libraries read a checkout of
+out. Optional [Microsoft ARM64 inputs](microsoft-windows-types.md) retain the
+official public layouts and supplement missing APIs. Their generator compares
+Clang's original and rendered record layouts; run the type tests in both source
+configurations. Named packing, nested anonymous definitions and fixed-width
+pointer round trips have synthetic parser regressions. The user mode libraries read a checkout of
 [phnt](https://github.com/winsiderss/phnt) besides mingw-w64's headers:
 `scripts/generate_windows_types.py --phnt <checkout> --reactos-ddk <headers>`
 (each generated header names the commits). Kernel generation requires
@@ -10322,3 +10417,10 @@ Absolute-memory regressions cover bounded contiguous and sparse batches, complet
 `NativeQueryTrace.*` covers independent query answers, all four zero extensions, selector/count/order mutations, undefined selectors, ordinary-read interleaving, every branch, unaffected state, strict byte/detail audits, malformed bundles, budgets, digest binding and static/inductive refusal. `NativeScalarQueryDescriptor.*` tests the generic descriptor limits and the actual receipt binding.
 
 `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+The entry-object regressions check symbolic copies, spills and copied slots, runtime loops, lost bindings and joins, object aliases, full wide/atomic/segmented writes, relative-range boundaries, malformed declarations, receipt mutations, exact/short preparation and operation budgets, and exhausted node limits. Independent byte/register oracles check retained effects. Run the owning suites and raw consumer refusals together; these checks establish no whole-function, compiled-C or ordinary-ABI certificate.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
