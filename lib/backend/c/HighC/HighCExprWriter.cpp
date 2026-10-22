@@ -4611,6 +4611,12 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
   }
   if (Printed.empty() || !CurrentFunc)
     return nullptr;
+  // Only the parameter declarations remain after the local and forwarded
+  // types above. Without a record among them, their names cannot name one.
+  // Avoid formatting every parameter name for every untyped memory base.
+  bindParams(*CurrentFunc);
+  if (!HasRecordParamTypes)
+    return nullptr;
   if (Dbg) {
     if (const auto &FS = resolvedFunction(CurrentFunc->Entry); FS) {
       for (const auto &Param : FS->Params) {

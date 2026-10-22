@@ -1249,6 +1249,9 @@ public:
   mutable std::vector<DebugParamBinding> ParamBindings;
   mutable std::vector<TypeRef> EmittedParamTypes;
   mutable std::vector<std::string> ParamDebugNames;
+  /// Whether an original or debug parameter can supply a record declaration.
+  /// Completion fills record fields, so unnamed/incomplete records count too.
+  mutable bool HasRecordParamTypes = false;
   /// The convention's rules placed the cached function's debug parameters
   /// by where they arrive, rather than by position.
   mutable bool ParamsPlaced = false;
