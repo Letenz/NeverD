@@ -2035,10 +2035,13 @@ struct Listing::Impl {
           if (reference.kind == RefKind::IndirectJump &&
               switchJumps.contains(reference.from))
             return false;
-          if (reference.kind == RefKind::Offset)
+          if (reference.kind == RefKind::Offset) {
+            if (switchTables.contains(reference.from))
+              return false;
             if (const auto slot = pointerAt(reference.from);
                 slot && slot->target == reference.to)
               return false;
+          }
           return true;
         });
         const auto previous = references.size();

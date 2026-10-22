@@ -68,6 +68,26 @@ def run(executable):
             assert any(row["address"] == hex(entry) and row["kind"] == "insn"
                        for row in listing(client, entry)), listing(client, entry)
 
+        # A jump table embedded before the default block remains data with
+        # references after the recovered body replaces the raw code index.
+        # The explicit 32-bit write bounds the complete RDI address index.
+        switch = Path(directory) / "switch.elf"
+        code = (bytes.fromhex("89ff83ff017729ff24fd98004000b80b000000c3b816000000c3")
+                + b"\x90" * 6 + struct.pack("<QQ", entry + 14, entry + 20)
+                + bytes.fromhex("b821000000c3"))
+        switch_segment = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base,
+                                     120 + len(code), 120 + len(code), 4096)
+        switch.write_bytes(header + switch_segment + code)
+        with Client(executable) as client:
+            ok(client, "open", {"path": str(switch)})
+            ok(client, "analyze")
+            expected = {(hex(entry + 7), "ijump"), (hex(entry + 32), "offset")}
+            for _ in range(2):
+                refs = ok(client, "xrefs", {"address": hex(entry + 14)})
+                assert expected <= {(row["from"], row["kind"])
+                                    for row in refs["items"]}, refs
+                listing(client, entry)
+
         # A rejected lift must leave the native bytes inspectable, with an
         # explicit linear-view warning rather than a fabricated recovered CFG.
         broken = Path(directory) / "incomplete.elf"
