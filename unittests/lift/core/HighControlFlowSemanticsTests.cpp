@@ -5313,6 +5313,60 @@ TEST(HighControlFlowSemantics, APadsFirstReadFoldsBehindAnAnchor) {
   EXPECT_FALSE(ReadsTheTemporary);
 }
 
+TEST(HighControlFlowSemantics,
+     IndependentEntriesSurviveRepeatedDeadCodeCleanup) {
+  // The dispatcher may enter any block after the ordinary entry returns.
+  // Folding away its first copy must leave each block's original entry
+  // usable, including during the later DCE rounds after goto reduction.
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto &Registers = getTargetRegInfo(Architecture);
+    MedFunc Med;
+    Med.Entry = 0x1000;
+    Med.Name = "independent_entries";
+    Med.ReturnType = NdType::makeInt(4);
+    for (unsigned I = 0; I != 33; ++I) {
+      MedBlock Block;
+      Block.Id = I;
+      Block.StartAddr = Med.Entry + I * 0x20;
+      Block.EndAddr = Block.StartAddr + 0x10;
+      MedOp Copy;
+      Copy.Opcode = NdOp::COPY;
+      Copy.Addr = Block.StartAddr;
+      Copy.Output.Kind = MedVar::Reg;
+      Copy.Output.RegOff = Registers.IntReturnReg;
+      Copy.Output.Id = I + 1;
+      Copy.Output.SSAVer = 1;
+      Copy.Output.Size = 4;
+      Copy.Output.TheArch = Architecture;
+      Copy.addInput(MedVar::makeConst(I + 7, 4));
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Block.StartAddr + 4;
+      MedVar Returned = Copy.Output;
+      if (!Registers.ReturnOperandIsValue) {
+        Returned.Id = 1000;
+        Returned.RegOff = Registers.LinkRegister;
+        Returned.SSAVer = 0;
+        Returned.Size = Registers.PointerSize;
+      }
+      Return.addInput(Returned);
+      Block.Ops = {Copy, Return};
+      Med.Blocks.push_back(std::move(Block));
+    }
+    MedToHighConverter Converter;
+    const HighFunc High = Converter.convert(Med, Architecture);
+    EXPECT_EQ(execute(High, 0), 7u);
+    for (unsigned I = 1; I != Med.Blocks.size(); ++I) {
+      SCOPED_TRACE(I);
+      HighFunc Entered = High;
+      Entered.Body.insert(Entered.Body.begin(),
+                          jump(0, Med.Blocks[I].StartAddr));
+      EXPECT_EQ(execute(Entered, 0, true), I + 7u);
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, AJumpTailKeepsTheLandingPadsAroundIt) {
   // 0x1764 is a landing pad whose code is `goto 0x1780`; 0x1768 jumps there
   // too.  0x1780 sets v1 and goes on to 0x17a0.

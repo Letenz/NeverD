@@ -13,9 +13,14 @@ from enum import Enum, IntEnum, IntFlag
 
 
 SessionHandle = ctypes.c_void_p
+ComparisonHandle = ctypes.c_void_p
 ModuleSetHandle = ctypes.c_uint64
 ExecutionHandle = ctypes.c_uint64
 VirtualAddress = ctypes.c_ulonglong
+CancelProbeCallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
+ComparisonProgressCallback = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_char_p, VirtualAddress, VirtualAddress,
+)
 LoadProgressCallback = ctypes.CFUNCTYPE(
     None, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_ulonglong,
     ctypes.c_ulonglong, ctypes.c_char_p,
@@ -868,6 +873,10 @@ _C_TYPES: dict[str, object] = {
     "long long": ctypes.c_longlong,
     "unsigned long long": ctypes.c_ulonglong,
     "neverd_session_t": SessionHandle,
+    "neverd_session_t *": ctypes.POINTER(SessionHandle),
+    "neverd_comparison_t": ComparisonHandle,
+    "neverd_cancel_probe_fn": CancelProbeCallback,
+    "neverd_comparison_progress_t": ComparisonProgressCallback,
     "neverd_module_set_t": ModuleSetHandle,
     "neverd_execution_t": ExecutionHandle,
     "const neverd_execution_options_v1 *": ctypes.POINTER(NeverDExecutionOptionsV1),
@@ -1042,6 +1051,8 @@ _declare("neverd_module_set_lookup_symbol_json", "const char *",
          ["neverd_module_set_t", "const char *", "const char *", "const char * *"],
          ownership=Ownership.OWNED_STRING)
 _declare("neverd_session_load", "int", ["neverd_session_t", "const char *"])
+_declare("neverd_session_load_cancellable", "int",
+         ["neverd_session_t", "const char *", "neverd_cancel_probe_fn", "void *"])
 _declare(
     "neverd_identify_json",
     "const char *",
@@ -1337,6 +1348,8 @@ _declare("neverd_func_count", "int", ["neverd_session_t"])
 _declare("neverd_func_entry", "neverd_va_t", ["neverd_session_t", "int"])
 _declare("neverd_func_size", "int", ["neverd_session_t", "int"])
 _declare("neverd_session_discover_functions", "int", ["neverd_session_t"])
+_declare("neverd_session_discover_functions_cancellable", "int",
+         ["neverd_session_t", "neverd_cancel_probe_fn", "void *"])
 _declare("neverd_session_discover_functions_step", "int", ["neverd_session_t"])
 _declare(
     "neverd_func_name",
@@ -2334,6 +2347,38 @@ _declare(
      "const neverd_devirtualize_options_v8 *", "const char * *"],
     ownership=Ownership.OWNED_STRING,
 )
+_declare("neverd_comparison_create", "neverd_comparison_t", [])
+_declare("neverd_comparison_destroy", "void", ["neverd_comparison_t"])
+_declare("neverd_comparison_cancel", "void", ["neverd_comparison_t"])
+_declare("neverd_comparison_run", "int",
+         ["neverd_comparison_t", "neverd_session_t", "neverd_session_t",
+          "const char *", "neverd_comparison_progress_t", "void *"])
+_declare("neverd_comparison_run_owned", "int",
+         ["neverd_comparison_t", "neverd_session_t *", "neverd_session_t *",
+          "const char *", "neverd_comparison_progress_t", "void *"])
+for _comparison_report in ("status_json", "last_error", "summary_json", "export_json"):
+    _declare(f"neverd_comparison_{_comparison_report}", "const char *",
+             ["neverd_comparison_t"], ownership=Ownership.OWNED_STRING)
+for _comparison_page in (
+    "functions", "function_page", "graph", "observations",
+    "owned_scalar_validation", "reviews", "regions", "region_page",
+    "flow_regions", "dataflow", "slice", "impact",
+):
+    _declare(f"neverd_comparison_{_comparison_page}_json", "const char *",
+             ["neverd_comparison_t", "const char *"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_comparison_function_json", "const char *",
+         ["neverd_comparison_t", "int", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_comparison_scalar_validation_json", "const char *",
+         ["neverd_comparison_t", "neverd_session_t", "neverd_session_t", "const char *"],
+         ownership=Ownership.OWNED_STRING)
+for _comparison_action in ("restore", "review_record", "override"):
+    _declare(f"neverd_comparison_{_comparison_action}_json", "int",
+             ["neverd_comparison_t", "const char *"])
+for _comparison_history in ("undo", "redo"):
+    _declare(f"neverd_comparison_{_comparison_history}", "int", ["neverd_comparison_t"])
+_declare("neverd_comparison_validate_inputs", "int",
+         ["neverd_comparison_t", "neverd_session_t", "neverd_session_t"])
+
 _declare("neverd_version", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_project_name", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_version_number", "const char *", [], ownership=Ownership.OWNED_STRING)
@@ -2342,6 +2387,9 @@ _declare("neverd_version_number", "const char *", [], ownership=Ownership.OWNED_
 __all__ = [
     "AddressChangedData",
     "BinaryLoadedData",
+    "CancelProbeCallback",
+    "ComparisonHandle",
+    "ComparisonProgressCallback",
     "EventData",
     "EventType",
     "FUNCTION_SPECS",

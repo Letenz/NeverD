@@ -6,11 +6,14 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
+#include <algorithm>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -455,6 +458,252 @@ TEST(MedStackAlignment, AJoinHoldsTheOffsetEveryWayInAgreesOn) {
     } else {
       ASSERT_TRUE(Offset.has_value());
       EXPECT_EQ(*Offset, -8);
+    }
+  }
+}
+
+TEST(MedStackAlignment, EntryLiveInQueriesKeepExactRegisterOccurrences) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      MedVar Entry = reg(0, Architecture);
+      Entry.RenameTag = 7;
+      Func.Blocks[0].Ops[0] = op(NdOp::COPY, Entry, Entry);
+      MedVar Narrow = Entry;
+      Narrow.Size /= 2;
+      MedVar OtherArch = Entry;
+      OtherArch.TheArch = Architecture == Arch::X64 ? Arch::AArch64 : Arch::X64;
+      MedVar OtherName = Entry;
+      OtherName.RenameTag = 8;
+      MedVar OtherRegister = Entry;
+      ++OtherRegister.RegOff;
+      MedVar OtherVersion = Entry;
+      ++OtherVersion.SSAVer;
+      MedVar OtherId = Entry;
+      ++OtherId.Id;
+      Func.Blocks[0].Ops.push_back(
+          op(NdOp::COPY, OtherId, temp(10, Architecture)));
+      std::vector<MedVar> Values = {Narrow,        OtherArch,    OtherName,
+                                    OtherRegister, OtherVersion, OtherId,
+                                    Entry,         Entry};
+      std::vector<std::optional<int64_t>> Expected = {std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      0,
+                                                      0};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                  Expected);
+        for (size_t I = 0; I < Values.size(); ++I) {
+          SCOPED_TRACE(I);
+          EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                    Expected[I]);
+        }
+      }
+    }
+  }
+}
+
+TEST(MedStackAlignment, EntryStackQueriesRejectUnauthenticatedMarkers) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+        SCOPED_TRACE(Mutation);
+        MedFunc Func = frameWithEntrySP(Architecture);
+        MedVar Entry = reg(0, Architecture);
+        MedBlock Other;
+        Other.Id = 1;
+        Other.StartAddr = 0x1010;
+        auto &Ops = Func.Blocks[0].Ops;
+        switch (Mutation) {
+        case 0:
+          Func.Entry = 0x2000;
+          break;
+        case 1:
+          Other.StartAddr = Func.Entry;
+          break;
+        case 2:
+          Other.StartAddr = Func.Entry;
+          Func.Blocks[0].StartAddr = 0x2000;
+          break;
+        case 3:
+          Ops.insert(Ops.begin(), op(NdOp::INT_ADD, temp(11, Architecture),
+                                     temp(12, Architecture),
+                                     MedVar::makeConst(1, Entry.Size)));
+          break;
+        case 4:
+          Ops[0].Inputs[0].RenameTag = 1;
+          break;
+        case 5:
+          Ops[0].addInput(MedVar::makeConst(0, Entry.Size));
+          break;
+        case 6:
+          Ops[0].NumInputs = 0;
+          break;
+        case 7:
+          Other.Ops.push_back(op(NdOp::COPY, Entry, Entry));
+          break;
+        case 8:
+          ++Entry.SSAVer;
+          Ops[0] = op(NdOp::COPY, Entry, Entry);
+          break;
+        }
+        Func.Blocks.push_back(std::move(Other));
+        EXPECT_FALSE(entryStackOffset(Func, Entry, Architecture, Format));
+        EXPECT_EQ(
+            entryStackOffsets(Func, {Entry, Entry}, Architecture, Format),
+            (std::vector<std::optional<int64_t>>{std::nullopt, std::nullopt}));
+      }
+    }
+  }
+}
+
+TEST(MedStackAlignment, EntryStackQueriesPreserveUndefinedIncomingSP) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      for (bool WithJoin : {false, true}) {
+        SCOPED_TRACE(WithJoin);
+        MedFunc Func = frameWithEntrySP(Architecture);
+        Func.Blocks[0].Ops.clear();
+        const MedVar Entry = reg(0, Architecture);
+        if (WithJoin) {
+          PhiNode Join;
+          Join.Output = Entry;
+          Join.Args = {{0, temp(20, Architecture)}};
+          Func.Blocks[0].Phis.push_back(std::move(Join));
+        }
+        EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format), 0);
+        EXPECT_EQ(entryStackOffsets(Func, {Entry, Entry}, Architecture, Format),
+                  (std::vector<std::optional<int64_t>>{0, 0}));
+      }
+    }
+  }
+}
+
+TEST(MedStackAlignment, EntryStackQueriesReauthenticateAfterMutation) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      const MedVar Entry = reg(0, Architecture);
+      EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format), 0);
+      Func.Blocks[0].Ops[0].Inputs[0].RenameTag = 1;
+      EXPECT_FALSE(entryStackOffset(Func, Entry, Architecture, Format));
+      Func.Blocks[0].Ops[0].Inputs[0] = Entry;
+      EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format), 0);
+      Func.Entry = 0x2000;
+      EXPECT_FALSE(entryStackOffset(Func, Entry, Architecture, Format));
+      Func.Entry = Func.Blocks[0].StartAddr;
+      EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format), 0);
+    }
+  }
+}
+
+TEST(MedStackAlignment, BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      const unsigned Width = getTargetRegInfo(Architecture).PointerSize;
+      MedFunc Func = frameWithEntrySP(Architecture);
+      Func.Blocks[0].Ops.push_back(op(NdOp::INT_SUB, temp(2, Architecture),
+                                      reg(0, Architecture),
+                                      MedVar::makeConst(8, Width)));
+      MedBlock Loop;
+      Loop.Id = 1;
+      Loop.StartAddr = 0x1010;
+      for (int Id : {5, 7}) {
+        PhiNode Join;
+        Join.Output = temp(Id, Architecture);
+        Join.Args = {{0, temp(2, Architecture)},
+                     {1, temp(Id + 1, Architecture)}};
+        Loop.Phis.push_back(std::move(Join));
+        Loop.Ops.push_back(
+            Id == 5 ? op(NdOp::COPY, temp(Id + 1, Architecture),
+                         temp(Id, Architecture))
+                    : op(NdOp::INT_ADD, temp(Id + 1, Architecture),
+                         temp(Id, Architecture), MedVar::makeConst(1, Width)));
+      }
+      PhiNode Mixed;
+      Mixed.Output = temp(9, Architecture);
+      Mixed.Args = {{0, temp(5, Architecture)}, {1, temp(7, Architecture)}};
+      Loop.Phis.push_back(std::move(Mixed));
+      // Multiple definitions stay ambiguous, independently of a previous
+      // query's accepted loop assumption or depth refusal.
+      Loop.Ops.push_back(
+          op(NdOp::COPY, temp(13, Architecture), reg(0, Architecture)));
+      Loop.Ops.push_back(
+          op(NdOp::COPY, temp(13, Architecture), temp(2, Architecture)));
+      MedVar Deep = reg(0, Architecture);
+      for (unsigned I = 0; I <= limits::ir::kMedStackAlignmentResolveDepthLimit;
+           ++I) {
+        const MedVar Next = temp(100 + I, Architecture);
+        Loop.Ops.push_back(op(NdOp::COPY, Next, Deep));
+        Deep = Next;
+      }
+      Func.Blocks.push_back(std::move(Loop));
+      MedVar Narrow = temp(2, Architecture);
+      Narrow.Size /= 2;
+      std::vector<MedVar> Values = {temp(5, Architecture),
+                                    temp(9, Architecture),
+                                    Narrow,
+                                    temp(12, Architecture),
+                                    temp(13, Architecture),
+                                    temp(7, Architecture),
+                                    temp(5, Architecture),
+                                    Deep,
+                                    temp(100, Architecture),
+                                    Deep,
+                                    reg(0, Architecture),
+                                    temp(2, Architecture)};
+      std::vector<std::optional<int64_t>> Expected = {-8,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      std::nullopt,
+                                                      -8,
+                                                      std::nullopt,
+                                                      0,
+                                                      std::nullopt,
+                                                      0,
+                                                      -8};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        const auto Offsets =
+            entryStackOffsets(Func, Values, Architecture, Format);
+        ASSERT_EQ(Offsets.size(), Expected.size());
+        for (size_t I = 0; I < Values.size(); ++I) {
+          SCOPED_TRACE(I);
+          EXPECT_EQ(Offsets[I], Expected[I]);
+          EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                    Expected[I]);
+        }
+      }
     }
   }
 }
