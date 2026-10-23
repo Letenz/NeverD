@@ -24,13 +24,15 @@ public:
   va_t Slot = 0;
   bool Nested = false;
   bool Record = false;
+  bool VoidResult = false;
   uint16_t PointerBytes = 8;
   DebugCallConv Convention = DebugCallConv::Cdecl;
   std::string element() const {
     return Record ? "struct fixture_record" : "uint16_t";
   }
   std::string declaration() const {
-    return "const " + element() + " *fixture_qualified(const " + element() +
+    return (VoidResult ? "void " : "const " + element() + " *") +
+           "fixture_qualified(const " + element() +
            (Nested ? " *const *input" : " *input") +
            ", volatile uint32_t *output)";
   }
@@ -52,7 +54,7 @@ public:
     auto Result = Pointer(Element);
     FunctionSym Function;
     Function.Name = Name.str();
-    Function.ReturnType = Result;
+    Function.ReturnType = VoidResult ? NdType::makeVoid() : Result;
     Function.Params = {{"input", Nested ? Pointer(Result) : Result},
                        {"output", Pointer(NdType::makeInt(4, false))}};
     Function.CallConv = Convention;
