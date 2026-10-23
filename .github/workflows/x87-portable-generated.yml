@@ -22,12 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-            prebuilt: 'ON'
-            original_target: NeverDX87OriginalReplay
-            original_argument: '--original-driver build-x87-portable/bin/NeverDX87OriginalReplay'
-            translation_argument: ''
+          # Temporary diagnostic dispatch uses only the affected native host.
           - arch: aarch64
             runner: ubuntu-24.04-arm
             # The pinned package set has no Linux AArch64 archive. Build the
@@ -114,14 +109,28 @@ jobs:
         timeout-minutes: 5
         run: |
           mkdir -p build-x87-portable/diagnostics
-          gdb --batch --return-child-result \
-            -ex 'set pagination off' -ex 'run' \
-            -ex 'thread apply all bt full' -ex 'info registers' \
-            -ex 'x/24i $pc-32' -ex 'x/24gx $sp' \
-            -ex 'info sharedlibrary' -ex 'info proc mappings' \
-            --args build-x87-portable/bin/NeverDX87TranslationTests \
-            --gtest_filter=X87TranslationNative.ExecutableStoreCommitsOnlyUnderInvalidatePolicy \
-            > build-x87-portable/diagnostics/executable-store-gdb.log 2>&1
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          output = Path('build-x87-portable/diagnostics')
+          command = ['gdb', '--batch', '--return-child-result']
+          for expression in ('set pagination off', 'run', 'thread apply all bt full',
+                             'info registers', 'x/24i $pc-32', 'x/24gx $sp',
+                             'info sharedlibrary', 'info proc mappings'):
+              command += ['-ex', expression]
+          command += ['--args', 'build-x87-portable/bin/NeverDX87TranslationTests']
+          results = []
+          for name, arguments in (
+              ('executable-store', ['--gtest_filter=X87TranslationNative.ExecutableStoreCommitsOnlyUnderInvalidatePolicy']),
+              ('complete-suite', [])):
+              with (output / (name + '-gdb.log')).open('wb') as log:
+                  process = subprocess.run(command + arguments, stdout=log,
+                      stderr=subprocess.STDOUT, timeout=120, check=False)
+              results.append({'name': name, 'command': command + arguments,
+                              'returncode': process.returncode})
+          (output / 'commands.json').write_text(json.dumps(results, indent=2) + '\n')
+          PY
       - name: Record seeded arithmetic for cross-host comparison
         run: >-
           python scripts/check_x87_cross_host.py record
@@ -155,6 +164,7 @@ jobs:
           retention-days: 30
 
   compare:
+    if: ${{ false }} # Temporary ARM64-only crash diagnosis is not qualification.
     name: Audit native cross-host state and arithmetic agreement
     needs: generated
     runs-on: ubuntu-24.04
