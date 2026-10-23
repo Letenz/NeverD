@@ -123,6 +123,24 @@ std::error_code TranslationJITLinkerError::convertToErrorCode() const {
   return std::make_error_code(std::errc::invalid_argument);
 }
 
+llvm::Error
+detail::markAuditedTranslationBlocksLiveV1(llvm::jitlink::LinkGraph &Graph) {
+  // LLVM's pruning roots are symbols, not blocks. Audited ELF metadata may
+  // have no symbols, so markAllSymbolsLive alone would remove it and invalidate
+  // the sealed graph. Give only those blocks a private, zero-width root before
+  // capture; this adds no content, callable entry, external, or relocation.
+  std::set<llvm::jitlink::Block *> SymbolBlocks;
+  for (llvm::jitlink::Symbol *Symbol : Graph.defined_symbols()) {
+    Symbol->setLive(true);
+    SymbolBlocks.insert(&Symbol->getBlock());
+  }
+  for (llvm::jitlink::Block *Block : Graph.blocks())
+    if (!SymbolBlocks.contains(Block))
+      Graph.addAnonymousSymbol(*Block, 0, 0, /*IsCallable=*/false,
+                               /*IsLive=*/true);
+  return llvm::Error::success();
+}
+
 bool detail::isSealedAArch64Branch26FixupV1(uint32_t OriginalInstruction,
                                             uint32_t FixedInstruction,
                                             uint64_t FixupAddress,
@@ -1015,12 +1033,13 @@ public:
       if (!Audit)
         return failure(TranslationJITLinkerErrorCode::PrePruneAuditFailed,
                        llvm::toString(Audit.takeError()));
+      if (llvm::Error Error = detail::markAuditedTranslationBlocksLiveV1(Graph))
+        return Error;
       if (llvm::Error Error = capturePrePruneGraph(Graph, *State))
         return Error;
       completeStage(State->Receipt, TranslationJITLinkAuditStageV1::PrePrune);
       return llvm::Error::success();
     });
-    Config.PrePrunePasses.push_back(llvm::jitlink::markAllSymbolsLive);
     Config.PostPrunePasses.push_back([State = State](LinkGraph &Graph) {
       return buildAArch64Tables(Graph, *State);
     });
