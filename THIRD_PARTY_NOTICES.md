@@ -517,23 +517,21 @@ executed by this implementation.
 
 ## zlib
 
-The shared NDDB reader also uses native zlib to stream compressed chunks written
-by Qt, with the same installed-library or pinned-static fallback policy.
+LLVM, the shared NDDB reader, mobile ZIP extraction and offline package gzip
+admission use the unchanged, hash-pinned zlib 1.3.2 source archive. The common
+CMake provider builds a static library with the selected target toolchain;
+system zlib discovery does not replace it. Standalone Qt desktop builds use
+that same provider for NeverD's reader. No zlib executable is invoked.
 
-Offline package gzip admission links the installed native zlib library when
-available, using only its in-process stream decoder and checksum validation.
-No zlib executable or upstream implementation source is copied into the web
-component. Gzip capability is unavailable when this dependency is omitted;
-plain tar and original SRI verification remain independent.
+The upstream copyright and license remain in the source distribution and are
+installed under `share/neverd/licenses/zlib`. See the
+[zlib license](https://zlib.net/zlib_license.html) and
+[source releases](https://zlib.net/fossils/). The Windows Web product also
+records the exact source archive and hash in its dependency manifest.
 
-Mobile ZIP extraction links zlib for DEFLATE and CRC-32. CMake uses an installed
-library when available, or builds the unchanged, hash-pinned zlib 1.3.2 source
-archive as a static dependency. Its copyright and license remain in the source
-distribution. See the [zlib license](https://zlib.net/zlib_license.html) and
-[source releases](https://zlib.net/fossils/).
-The Windows Web product includes the unchanged 1.3.2 notice under
-`share/neverd/licenses/zlib`; its exact source archive and hash are recorded
-in the product dependency manifest.
+A prebuilt Qt SDK may itself depend on a shared zlib. Desktop deployment keeps
+that dependency alongside Qt; statically linking NeverD's copy does not alter
+the independently built Qt libraries.
 
 The test fixture `unittests/lift/aarch64/test_jumptable_inflate_gcc_a64.s` is
 the AArch64 assembly GCC 15.2.0 produces for `inflate()` from the unchanged
