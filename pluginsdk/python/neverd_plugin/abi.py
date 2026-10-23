@@ -2210,6 +2210,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_x87_capabilities_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_cpu_capabilities_json",
     "const char *",
     ["neverd_session_t", "const char *", "int"],

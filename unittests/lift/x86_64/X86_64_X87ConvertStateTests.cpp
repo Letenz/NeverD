@@ -82,19 +82,19 @@ TEST(X87ContextContract, LowMedHighRefuseForgedHandlesAndTruncatedSelectors) {
     EXPECT_EQ(x87ContextLowShapeIsValid(Op, Arch::X64), Mutation == 0);
     MedOp Med;
     Med.Opcode = Op.Opcode;
-    Med.NumInputs = Op.NumInputs;
     Med.Output.Size = Op.Output.Size;
     Med.MemoryOrdering = Op.MemoryOrdering;
     Med.MemoryAddressSpace = Op.MemoryAddressSpace;
     for (unsigned I = 0; I < Op.NumInputs; ++I) {
+      MedVar Input;
       if (Op.Inputs[I].isConst())
-        Med.Inputs[I] =
-            MedVar::makeConst(Op.Inputs[I].Offset, Op.Inputs[I].Size);
+        Input = MedVar::makeConst(Op.Inputs[I].Offset, Op.Inputs[I].Size);
       else {
-        Med.Inputs[I].Kind = MedVar::Temp;
-        Med.Inputs[I].Id = I;
-        Med.Inputs[I].Size = Op.Inputs[I].Size;
+        Input.Kind = MedVar::Temp;
+        Input.Id = I;
+        Input.Size = Op.Inputs[I].Size;
       }
+      Med.addInput(Input);
     }
     EXPECT_EQ(x87ContextMedShapeIsValid(Med, Arch::X64), Mutation == 0);
     if (Mutation !=

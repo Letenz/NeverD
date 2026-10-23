@@ -105,9 +105,16 @@ Clang's explicit authentication-failure branch retains the setup of its sole
 continuing authenticated tail. Source C names an unassigned entry LR using
 `__builtin_return_address(0)`, as the LLVM projection already does.
 LDRAA/LDRAB authenticate the base before adding the offset, loading, and
-applying writeback. An unsupported exception return or FEAT_PAuth_LR form,
-including the PACM HINT that selects a second modifier, fails lifting instead
-of losing authentication.
+applying writeback. `AArch64PAuthLR.def` owns explicit FEAT_PAuth_LR encodings
+and their three-input operations. Fixed-register, original-PC, backward-PC-relative and
+register-modifier forms retain both diversifiers. Authentication of a return
+target remains observable without writing LR, including a poison check before
+an otherwise unused C return target is discarded. Fast and Capstone scanners
+both terminate at these returns. Frame proofs require a matching key and both
+modifiers before restoring a signed link. The machine operations use the
+implicit X17/X16/X15 forms so relocation cannot silently replace the original
+PC with the generated instruction's PC. Exception returns and the PACM HINT
+still fail until their architectural state is modelled.
 
 Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
 the architecture may poison a pointer without trapping immediately. The
@@ -167,8 +174,8 @@ pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
 Shared-cache-specific layouts require a cache address model. Exception-level
-authentication, FEAT_PAuth_LR and CPA2 remain unsupported; recognizing x1's
-header does not claim those instruction semantics.
+authentication, PACM state and CPA2 address arithmetic remain unsupported;
+recognizing x1's header does not claim those instruction semantics.
 
 ## GUI project and search ownership
 
@@ -5390,6 +5397,18 @@ KVO context tokens use a separate writable-identity proof. A uniquely named writ
 The loader validates bounded, acyclic graphs of Darwin constant strings, integer objects, arrays and sorted dictionaries. Every container field and edge requires immutable mapped storage and unambiguous import or relocation evidence; unsupported encodings, cycles and incomplete graphs fail explicitly. Source bindings revalidate the graph and any incoming pointer slot. Generated helpers preserve integer bits, child order and shared object addresses, reusing existing string identities. Container slots initialize once with acquire/release publication; initialization calls only validated child helpers. Each helper carries its own child declarations so independently recovered methods can share one definition. Portable graph tests cover malformed inputs and proof budgets; native compiler fixtures compare contents, aliases, copy identity and concurrent initialization against the original methods.
 
 ## Owned x64 x87 context
+
+The [x87 semantic contracts](x87-semantics.md) and [generated capability
+inventory](x87-capabilities.md) separate encoding/lifting, numerical results,
+complete state, native references, portable execution and formal qualification.
+`X87Instructions.def` owns coverage metadata and the strict evaluator’s
+processor-dependent classification; `X87StateBoundaries.def` owns external-state
+synchronization membership. C API, CLI and Python queries use the same report.
+`X87Binary80.h` owns raw classification. `X87Arithmetic` owns exact finite
+arithmetic and pure integer conversion; `X87PortableContext` applies the
+explicit masked-state slice to the existing context. It neither creates a
+parallel stack nor changes native/translation admission. Undefined CPU fields,
+unknown incoming state and unsupported effects stay explicit in that profile.
 
 For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 

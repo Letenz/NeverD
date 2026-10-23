@@ -46,13 +46,20 @@ inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
     if (!Op.Inputs[I].isReg() && !Op.Inputs[I].isTemp() &&
         !Op.Inputs[I].isConst())
       return false;
+  const bool TwoModifiers =
+      aarch64PAuthLROperation(static_cast<Intrinsic>(Op.Inputs[0].Offset))
+          .has_value();
   return aarch64PAuthShapeIsValid(
       static_cast<Intrinsic>(Op.Inputs[0].Offset),
       {.NumInputs = Op.NumInputs,
        .OutputBytes = Op.Output.Size,
        .PointerBytes = Op.Inputs[1].Size,
        .ModifierBytes =
-           Op.NumInputs > 2 ? Op.Inputs[Op.NumInputs - 1].Size : 0U,
+           Op.NumInputs > 2
+               ? Op.Inputs[TwoModifiers ? 2 : Op.NumInputs - 1].Size
+               : 0U,
+       .SecondModifierBytes =
+           TwoModifiers && Op.NumInputs == 4 ? Op.Inputs[3].Size : 0U,
        .KeyBytes = Op.NumInputs == 4 ? Op.Inputs[2].Size : 0U,
        .Key = Op.NumInputs == 4 && Op.Inputs[2].isConst()
                   ? std::optional<uint64_t>(Op.Inputs[2].Offset)

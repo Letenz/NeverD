@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`e6106ca17fc4`](https://github.com/NeverSight/llvm-project/commit/e6106ca17fc4)
+[`25b09571fe39`](https://github.com/NeverSight/llvm-project/commit/25b09571fe39)
 adds native instruction selection for the following APIs. NeverC's
-[`0c50426a8`](https://github.com/NeverSight/NeverC/commit/0c50426a8)
+[`5113c5f12`](https://github.com/NeverSight/NeverC/commit/5113c5f12)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -202,6 +202,9 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
 | `llvm.x86.readcr/readdr`, `llvm.x86.writecr/writedr` | x86-64 | Immediate register selector, full i64 values and ordered, potentially trapping accesses. CR0/2/3/4/8 and DR0..7 retain their native encodings and undefined arithmetic flags. |
 | `llvm.x86.readcr32/readdr32`, `llvm.x86.writecr32/writedr32` | i386 | Same contract with i32 values; CR8, invalid selectors and wrong-mode APIs fail explicitly. |
+| `llvm.x86.movsb/movsw/movsd.rep/movsq`, `llvm.x86.stosb/stosw/stosd/stosq` | x86-64 | One native REP operation with a full i64 element count, ambient DF, pointer/count clobbers and instruction-owned memory accesses. |
+| `llvm.x86.movsb32/movsw32/movsd.rep32`, `llvm.x86.stosb32/stosw32/stosd32` | i386 | Same contract with i32 element counts; wrong-mode APIs fail explicitly. |
+| `llvm.x86.inbytestring/inwordstring/indwordstring`, `llvm.x86.outbytestring/outwordstring/outdwordstring` | i386 and x86-64 | DX port, byte/word/dword elements and an i32 count zero-extended to RCX in 64-bit mode. Native REP retains I/O, memory and DF effects. |
 
 The fork generates the instruction effects from TableGen. NeverC's pruned table
 has a checked generator for the same VMX effects. The old NeverC VMREAD register
@@ -260,6 +263,21 @@ The new generic builtins are `__builtin_ia32_readcr`,
 `__builtin_ia32_writecr`, `__builtin_ia32_readdr` and
 `__builtin_ia32_writedr`. Five generator tests additionally protect the new
 write pseudo's stable opcode and synchronized metadata tables.
+
+REP qualification adds 1,000 LLVM cases across both code modes and 544 cases
+on each NeverC builtin spelling and the NeverC-to-fork route. MOVS/STOS execute
+in Unicorn against a sequential byte oracle covering all widths, both DF
+directions, zero/one/seven elements, unaligned overlap, zero-count unmapped
+pointers, input liveness and ordinary memory ordering. Controlled completions
+cover port I/O and full-width pointer/count transport. DF is changed only at
+the instruction boundary and restored before C resumes; the ABI requirements
+remain unchanged. This does not qualify hardware port I/O or fault restart.
+The new generic builtins use the `__builtin_ia32_` prefix, including
+`__builtin_ia32_movsd_rep` for the dword move. MOVS's Microsoft builtin source
+type is now correctly const-qualified. All 28 intrinsic tests and 81 binary
+checks pass, together with LLVM's native-string and ordinary memcpy/memset
+regressions. ELF/COFF/Mach-O generation and AT&T/Intel assembly round trips
+also cover a repaired `movsdi` typo in the existing REP MOVSD Intel printer.
 
 These tests qualify compiler transport, not successful privileged VM entry.
 The current pointer APIs cover the default address space. Register-result

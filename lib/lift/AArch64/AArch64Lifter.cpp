@@ -15,6 +15,7 @@
 
 #include "neverd/decode/AArch64FastClassify.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
@@ -410,6 +411,9 @@ void AArch64Lifter::fixupDecodedInsn(cs_insn * /*I*/) {
 }
 
 bool AArch64Lifter::isFunctionTerminator(const cs_insn *I) {
+  if (I->size == sizeof(uint32_t) &&
+      isAArch64PAuthLRReturnWord(llvm::support::endian::read32le(I->bytes)))
+    return true;
   switch (I->id) {
 #define NEVERD_A64_PAUTH_BRANCH(Insn, Mask, Word, Key, Zero, Kind)             \
   case AARCH64_INS_##Insn:                                                     \

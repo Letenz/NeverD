@@ -20,8 +20,14 @@ branches with live frames, local/stack targets, a signed link or a mismatched
 authentication key/modifier. `NEVERD_PARITY_BIN=/path/to/thin/arm64e` also
 checks the fast terminator classifier against Capstone on a real binary.
 Compiled C parameter-flow checks cover local-name collisions at O0/O2 through
-both renderers. Unsupported PAuth_LR encodings, including the PACM HINT, must
-fail explicitly through both decoder routes.
+both renderers. `AArch64PAuthLRSemantics` checks all explicit PAuth_LR forms
+with independent instruction words, both modifiers, original-PC offsets (including underflow),
+register overlap and return classification. It verifies LLVM O2, both C
+projections and generated objects; dead results retain authentication failure
+checks, and temporary names cannot capture any of the three inputs. Frame
+proofs cover matching and mismatching second modifiers, including an ADR of
+the signing PC. Unmodelled PACM state must still fail explicitly through both
+decoder routes.
 PACGA additionally checks independent inputs and rejects malformed widths.
 Its generated C is compiled back to LLVM to check operand and return flow.
 On a PAuth-capable Apple Silicon host,
@@ -34,8 +40,13 @@ feature discovery, so it cannot qualify pointer authentication.
 probe and explicitly skips if the host refuses it. On an eligible host it
 compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
 modifiers; each key must change at least one pointer, excluding a NOP profile.
-Other architectures skip both native checks. These tests do not certify
-arm64e ABI reconstruction or invalid-signature traps.
+Other architectures skip the native checks.
+`NativeTwoModifierKeysAgreeWithBothCProjections` independently probes
+PAuth_LR instruction execution and active IA/IB keys before comparing signing,
+authentication and authenticated-return targets across both C routes at O0/O2
+and optimized LLVM. It additionally requires the second modifier to change
+signatures. An ineligible host explicitly skips this oracle. These tests do
+not certify arm64e ABI reconstruction or invalid-signature traps.
 
 The same target checks scalar CPA instructions through both decoder routes,
 including shifts, SP, XZR and overlapping operands. Malformed widths and
@@ -3130,6 +3141,48 @@ ctest --test-dir build-release \
 ```
 
 ## Owned x64 x87 context
+
+`NeverDX87CapabilityTests` exhausts admitted/rejected encoding and prefix
+combinations, checks independent operand/flag/wait fixtures, and prevents
+native or typed support from promoting portable, state or proof capabilities.
+`NeverDX87CapabilitiesPublicTests` compares unloaded-session C and CLI reports;
+Python API tests cover the ownership-safe adapter. These inventory tests do
+not establish native instruction or ARM64 portable execution coverage.
+
+```sh
+cmake --build build-release --target NeverDX87CapabilityTests NeverDX87CapabilitiesPublicTests NeverDX87ArithmeticTests NeverDX87PortableContextTests NeverDX87PortableEmulatorTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX87(Capability|CapabilitiesPublic|Arithmetic|PortableContext|PortableEmulator)Tests$' --output-on-failure
+python3 scripts/generate_x87_capabilities.py --neverd build-release/bin/neverd --check
+```
+
+Use your configured Release build directory in place of `build-release`.
+`NeverDX87ArithmeticTests` checks direct PC/RC rounding, extended exponents,
+signed zero, masked overflow/underflow numerical results and invalid domains.
+LLVM and Unicorn are independent numerical references; the native x64 test
+compares original instruction bits and defined arithmetic status and skips on
+other hosts. `NeverDX87PortableContextTests` checks all TOP values, retained raw
+payloads and tags, control/exception boundaries and atomic refusal. It records
+the fields Unicorn cannot independently qualify. `NeverDX87PortableEmulatorTests`
+decodes original x64 bytes through the existing lifter and explicitly executes
+the portable slice, including a result distinguishable from binary64, provenance,
+memory rejection and external-state refusal. No test enables translation.
+See the [x87 contracts](x87-semantics.md) for the meaning of each capability.
+
+The numerical replay protocol retains raw requests, responses and all failures
+with source/driver hashes, declared build commands, CPU/backend metadata and
+seeds. Build `NeverDX87ArithmeticReplay` for the portable driver. On an x64
+GCC/Clang build, `NeverDX87OriginalReplay` executes original instructions. On
+Apple ARM64 with Rosetta already installed, the original driver can be compiled
+separately without LLVM; it reports Rosetta explicitly:
+
+```sh
+clang++ -arch x86_64 -std=c++20 -O2 -DNEVERD_X87_ORIGINAL_REFERENCE=1 unittests/lift/core/X87ArithmeticReplay.cpp -o build-release/X87OriginalReplay
+python3 scripts/check_x87_arithmetic_replay.py --portable-driver build-release/bin/NeverDX87ArithmeticReplay --original-driver build-release/X87OriginalReplay --output-dir build-release/x87-replay-run1 --portable-build 'configured Release build and pinned LLVM' --original-build 'clang++ -arch x86_64 -std=c++20 -O2 -DNEVERD_X87_ORIGINAL_REFERENCE=1'
+```
+
+Use a fresh output directory for every observation and record the actual build
+configuration. A Rosetta pass is not native x86 hardware evidence. Process
+timings include startup and I/O and do not establish application throughput.
 
 `NeverDX86X87ConvertStateTests` compares original bytes with native LLVM, HighC and LLVMC at default/NoOpt and C O0/O2. Its fixtures pin the owned context on every host through `BinaryImage::X87ContextOverride`; the integer-load, sign and x87 FPU suites also exercise the typed System V projection. It checks conversions, eight arithmetic forms, flags, MMX/EMMS, full/empty stacks, calls, wrappers, entry loops and independent roots. Four FLDENV/FRSTOR formats cover pending exceptions, tags and retained payloads. All four RC values, three defined PC values and 64 exception masks are exercised where applicable. Direct Low/Med/High contracts reject malformed shapes, forged handles and truncated selectors. Narrow returns retain call effects and reject demanded unknown bits. The host oracle requires x64 and Clang; tests do not establish every instruction, native platform, CPU model, fault priority or typed floating import ABI.
 
