@@ -158,6 +158,24 @@ def main():
         assert detail["primary"]["function"]["name"] == "checked"
         assert any(row["kind"] == "constant" for row in detail["rows"])
         checked = detail["primary"]["function"]["address"]
+        source_args = ["--source-function", checked, "--source-representation", "c"]
+        source_page = json.loads(run(base + source_args + ["--limit", "2"], {2, 3}).stdout)
+        assert source_page["schema"] == "neverd.bindiff.source.page", source_page
+        assert source_page["availability"] == "available", source_page
+        assert source_page["input_sha256"] == doc["primary"]["sha256"]
+        assert source_page["semantic_validation"] == "not_performed"
+        assert len(source_page["document"]["rows"]) == 2
+        source_next = json.loads(run(base + source_args + ["--limit", "2", "--offset", "2"], {2, 3}).stdout)
+        assert source_next["document"]["offset"] == 2
+        assert source_next["document"]["rows"][0]["line"] == 2
+        limited_source = json.loads(run(base + source_args + ["--source-max-instructions", "1"], {3}).stdout)
+        assert limited_source["state"] == "resource_limited" and not limited_source["document"]
+        reopened_source = json.loads(run(base + source_args + ["--reopen", str(saved), "--limit", "2"], {2, 3}).stdout)
+        assert reopened_source == source_page
+        run(base + ["--source-side", "secondary"], {1})
+        legacy = [item for item in base if item != "--structural"]
+        run(legacy + ["--source-function", checked], {1})
+        run(base + source_args + ["--source-representation", "bad"], {1})
         assert json.loads(run(base + ["--func", checked, "--json"], {2, 3}).stdout) == detail
         assert "primary function not found" in run(base + ["--func", "check", "--json"], {1}).stderr
         changes_args = ["--changes-function", checked]

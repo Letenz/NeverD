@@ -6158,10 +6158,6 @@ Coverage: %7</translation>
         <translation>Pseudocode</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>Raw x64</translation>
     </message>
@@ -7668,6 +7664,109 @@ Secondary SHA-256: %3
     <message>
         <source>yes</source>
         <translation>yes</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>View:</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>Input language</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>Reload source</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Options</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>Remove instruction allowance</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>Each pane shows its own source lines. Select a line to inspect its original instructions.</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>Secondary source</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>Primary source</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>Previous source page</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>Next source page</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>Go to source line</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>Original instruction anchors</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>Show instruction</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>Secondary: %1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>Primary: %1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>No function selected on this side.</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>Source is ready to load.</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>This worker does not support source inspection.</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>Preparing source… Cancellation waits for the current analysis step.</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>Source exceeds the instruction allowance. Adjust Options to inspect this function.</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>Source inspection stopped. Reload source to try again.</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>Source unavailable: %1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>Lines %1–%2 of %3</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · Native coverage is incomplete</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>Unmapped line</translation>
     </message>
 </context>
 </TS>

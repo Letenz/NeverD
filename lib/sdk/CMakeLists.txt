@@ -24,6 +24,7 @@ set(NEVERD_SDK_SOURCES
     capi/BinaryComparison.cpp
     capi/ComparisonDataFlow.cpp
     capi/ComparisonScalarValidation.cpp
+    capi/ComparisonSource.cpp
     capi/NeverDCAPIDiff.cpp
     capi/ProgramMain.cpp
     capi/ImageStrings.cpp

@@ -189,7 +189,11 @@ int runDiff() {
       DiffLimit.getNumOccurrences() || DiffListSide.getNumOccurrences() ||
       DiffListSearch.getNumOccurrences() || DiffListSort.getNumOccurrences() ||
       DiffListDescending.getNumOccurrences() ||
-      DiffAmbiguousWith.getNumOccurrences()) {
+      DiffAmbiguousWith.getNumOccurrences() ||
+      DiffSourceFunction.getNumOccurrences() ||
+      DiffSourceSide.getNumOccurrences() ||
+      DiffSourceRepresentation.getNumOccurrences() ||
+      DiffSourceInstructions.getNumOccurrences()) {
     WithColor::error()
         << "structural comparison options require --structural\n";
     return 1;

@@ -127,6 +127,22 @@ Comparison replies carry `comparison_revision`, and the payload's optional
 preserve the previous comparison. File stamp changes invalidate interactive reads;
 explicit validation/reopening also re-reads and checks content identity.
 
+`comparison_source_page` is advertised when the SDK exposes the optional source
+page API. It accepts `side`, `address`, `representation` (`c`, `llvmc`, `source`,
+`cpp`, `rust`, `go`), `offset`, `limit` (1–2048), `max_native_instructions`
+(default 4096; zero removes this extra allowance), `timeout_ms` and `refresh`.
+It returns `neverd.bindiff.source.page` version 1, with input revision/hash,
+availability, stop state and the ordinary source page in `document`. Rows add
+`comparison_anchors` bound to the captured native function. Existing completed
+native alignment supplies optional `listing_row` and `native_change` navigation;
+source-to-source alignment and semantic validation are not performed. Synthetic
+or unmapped lines stay unmapped. The page uses the comparison's owned sources,
+requires current input stamps and accepts `expected_comparison_revision`.
+Cancellation discards the page, but function analysis and rendering are
+indivisible steps; `hard_deadline` is false. Failed or unsupported source views
+leave the native comparison intact. Older SDKs retain ordinary comparison
+operations without advertising this capability.
+
 `comparison_dataflow` pages retained SSA collections (`side`, `kind` of
 `functions`, `nodes` or `blocks`, `address` for a graph, `offset`, `limit`).
 `comparison_slice` accepts `side`, `address`, `seeds` (node IDs), `direction`

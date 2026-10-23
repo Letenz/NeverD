@@ -6194,10 +6194,6 @@ Coverage: %7</source>
         <translation>Псевдокод</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>Псевдокод недоступен в этом декодированном профиле. Исходные инструкции, операнды и байты доступны в дизассемблировании.</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>Необработанный x64</translation>
     </message>
@@ -7704,6 +7700,109 @@ Secondary SHA-256: %3
     <message>
         <source>yes</source>
         <translation>да</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>Вид:</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>Язык входного файла</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>Перезагрузить код</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Параметры</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>Снять ограничение числа инструкций</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>Каждая панель показывает свои строки кода. Выберите строку, чтобы просмотреть исходные инструкции.</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>Код второго файла</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>Код первого файла</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>Предыдущая страница кода</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>Следующая страница кода</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>Перейти к строке кода</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>Привязки к исходным инструкциям</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>Показать инструкцию</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>Второй файл: %1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>Первый файл: %1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>На этой стороне функция не выбрана.</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>Код готов к загрузке.</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>Этот рабочий процесс не поддерживает просмотр кода.</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>Подготовка кода… Отмена ожидает завершения текущего этапа анализа.</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>Число инструкций превышает ограничение. Измените параметры, чтобы просмотреть эту функцию.</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>Просмотр кода остановлен. Перезагрузите код, чтобы повторить попытку.</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>Код недоступен: %1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>Строки %1–%2 из %3</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · Неполное покрытие машинных инструкций</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>Строка без привязки</translation>
     </message>
 </context>
 </TS>

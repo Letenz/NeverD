@@ -6158,10 +6158,6 @@ Copertura: %7</translation>
         <translation>Pseudocodice</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>Il pseudocodice non è disponibile in questo profilo decodificato. Istruzioni, operandi e byte originali restano disponibili nel disassemblato.</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>x64 grezzo</translation>
     </message>
@@ -7668,6 +7664,109 @@ SHA-256 secondario: %3
     <message>
         <source>yes</source>
         <translation>sì</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>Vista:</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>Linguaggio dell’input</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>Ricarica sorgente</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Opzioni</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>Rimuovi il limite di istruzioni</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>Ogni riquadro mostra le proprie righe di sorgente. Seleziona una riga per esaminarne le istruzioni originali.</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>Sorgente secondario</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>Sorgente principale</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>Pagina sorgente precedente</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>Pagina sorgente successiva</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>Vai alla riga sorgente</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>Ancoraggi delle istruzioni originali</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>Mostra istruzione</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>Secondario: %1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>Principale: %1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>Nessuna funzione selezionata su questo lato.</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>Il sorgente è pronto per essere caricato.</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>Questo processo di lavoro non supporta l’ispezione del sorgente.</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>Preparazione del sorgente… L’annullamento attende la fine della fase di analisi corrente.</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>Il sorgente supera il limite di istruzioni. Modifica le opzioni per esaminare questa funzione.</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>Ispezione del sorgente interrotta. Ricarica il sorgente per riprovare.</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>Sorgente non disponibile: %1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>Righe %1–%2 di %3</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · Copertura nativa incompleta</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>Riga senza corrispondenza</translation>
     </message>
 </context>
 </TS>

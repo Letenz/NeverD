@@ -25,6 +25,9 @@ public:
   using Reply = std::function<void(const QJsonObject &)>;
   ComparisonSession(const QString &Worker, QObject *Parent = nullptr);
   bool ready() const { return Ready; }
+  bool supports(const QString &Operation) const {
+    return Operations.contains(Operation);
+  }
   bool busy() const { return Busy; }
   bool cancellable() const { return !Cancellable.isEmpty(); }
   bool cancelRequested() const { return CancelRequested; }
@@ -54,7 +57,7 @@ private:
   QHash<QString, Pending> Requests;
   QJsonObject Summary;
   QString OperationMessage;
-  QStringList Cancellable, CancellableOperations;
+  QStringList Cancellable, CancellableOperations, Operations;
   bool Ready = false, Busy = false, CancelRequested = false;
   void receive(const QJsonObject &Message);
 };

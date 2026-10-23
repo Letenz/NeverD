@@ -534,6 +534,50 @@ trusted on reopen. Cancellation covers live rebinding and model/proof work;
 a native lift, LLVM copy/verification or serialization step can delay it, so
 `timeout_ms` is a cooperative deadline rather than a hard wall-clock bound.
 
+## Source inspection
+
+The **Pseudocode** tab loads the selected functions from the comparison's
+retained inputs. Each pane has independent pages, a source-line selector and
+original-instruction navigation. C and LLVM C use the same emitters as ordinary
+decompilation; Input language, C++, Rust and Go retain their existing dialect
+admission and unavailable reasons. Unmatched functions can be inspected too.
+Selecting a mapped line lists its original instruction anchors; **Show instruction**
+opens the native listing at that anchor. Unmapped and synthetic lines remain
+explicit. Source line numbers do not imply correspondence between the panes.
+
+```sh
+neverd diff --structural -a before.o -b after.o \
+  --source-function 0x1000 --source-representation c --limit 200
+neverd diff --structural -a before.o -b after.o \
+  --source-function 0x2000 --source-side secondary \
+  --source-representation llvmc --offset 200 --limit 200
+```
+
+`neverd_comparison_source_page_json` accepts `side`, `address`, `representation`,
+`offset`, `limit`, `max_native_instructions`, `timeout_ms` and `refresh`.
+It requires complete native captures from `run_owned`; it never reopens a path.
+The versioned `neverd.bindiff.source.page` response identifies the input revision,
+content hash, recipe, availability and actual stop state. Its `document` preserves
+the ordinary source page, including prelude metadata, dialect, text and line
+records. Each row adds `comparison_anchors` checked against the captured native
+function. A completed native detail query also supplies `listing_row` and
+`native_change`; the source query does not force alignment work.
+
+Pages contain up to 2048 lines. The additional admission allowance defaults to
+4096 native instructions; `--source-max-instructions 0`, or **Options → Remove
+instruction allowance**, removes that extra allowance while retaining the
+ordinary pipeline's limits. Cancellation and deadlines are checked around
+function analysis, rendering and anchor projection; an analysis step can delay
+cancellation. Stopped requests discard their source page. Reloading retries the
+view; mapping changes clear old navigation. The worker rejects stale source
+paths and obsolete comparison revisions, as for other interactive reads.
+
+Source inspection does not change saved native evidence and is not persisted as
+an equivalence result. `semantic_validation` and `source_alignment` remain
+`not_performed`, and `provenance_complete` remains false. This view provides
+anchored source inspection; source-to-source alignment and complete provenance
+remain separate work.
+
 ## Analyst cases and assessment history
 
 **Analyst review…** opens a paged case history for the selected function, or the
@@ -730,9 +774,9 @@ LTO/PGO/obfuscation coverage remain outstanding.
 
 The GUI uses bounded function/instruction page caches and worker-owned CFG
 viewport indexes. Its graph viewport reports when a display allowance is reached.
-The decoded profile explicitly reports pseudocode unavailable. Source/IR anchored
-comparison, full reference provenance and broader profile
-qualification remain work in progress.
+Comparison-owned inputs also provide paged source inspection with checked native
+anchors. Source-to-source alignment, full reference provenance and broader
+profile qualification remain work in progress.
 
 Native runs and verified finite SSA neighborhoods are parts of the required
 transformation work. Broader CFG/IR region matching, compiler/O-level/LTO/PGO/obfuscation

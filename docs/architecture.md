@@ -394,6 +394,14 @@ CFG views. Its stop state is separate from native body coverage; cancelled or
 timed-out deltas do not acquire unchanged rows or block annotations. The worker
 owns the advertised cooperative-operation list consumed by the GUI. Explicit
 refresh retries a stopped query; paging itself does not restart it.
+`ComparisonSource` adapts the ordinary selected-function source page API to the
+comparison's exclusively owned input sessions. It reuses their loader, analysis
+settings, dialect admission, emitter cache and canonical instruction provenance.
+The captured `lib/diff` programs remain immutable. Checked source anchors may
+reuse a completed native listing alignment, but never create source-line pairs
+or semantic claims. Source pages are transient and revision-bound; saved native
+evidence is independent of source inspection. Cancellation discards the page,
+with checkpoints around the existing indivisible analysis and rendering steps.
 See [binary comparison](binary-diff.md) for the current profile and limitations.
 
 ## Checked alignment recovery

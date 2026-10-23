@@ -152,6 +152,26 @@ def main():
             refreshed = ok(client, "comparison_function_page", {"address": address, "limit": 1, "refresh": True})
             assert refreshed == first
             assert first["total"] == len(detail["rows"]) and first["rows"] == detail["rows"][:1]
+            assert "comparison_source_page" in client.hello["capabilities"]
+            assert "comparison_source_page" in client.hello["comparison_cancellable_operations"]
+            source_query = {"address": address, "representation": "c", "limit": 200,
+                            "expected_comparison_revision": page["comparison_revision"]}
+            source = ok(client, "comparison_source_page", source_query)
+            assert source["availability"] == "available", source
+            assert source["comparison_revision"] == page["comparison_revision"]
+            assert source["input_source_binding"] == "owned_sessions"
+            assert source["semantic_validation"] == "not_performed"
+            assert not source["provenance_complete"] and not source["hard_deadline"]
+            mapped = [anchor for row in source["document"]["rows"] for anchor in row["comparison_anchors"]]
+            assert mapped and all(anchor["address"] == detail["rows"][anchor["listing_row"]]["primary"]["address"] for anchor in mapped)
+            source_cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(root / "17.o"),
+                "-b", str(root / "9.o"), "--source-function", address, "--source-representation", "c"],
+                text=True, capture_output=True, timeout=60)
+            assert source_cli.returncode in (2, 3), source_cli.stderr
+            cli_source = json.loads(source_cli.stdout)
+            assert cli_source["document"]["text"] == source["document"]["text"]
+            limited_source = ok(client, "comparison_source_page", {**source_query, "max_native_instructions": 1})
+            assert limited_source["state"] == "resource_limited" and not limited_source["document"]
             graph = ok(client, "comparison_cfg_summary", {"address": address})
             bounds = graph["bounds"]
             view = ok(client, "comparison_cfg_viewport", {"address": address,
@@ -164,6 +184,8 @@ def main():
             edited = ok(client, "comparison_override", {"kind": "confirm", "primary": address,
                         "secondary": other, "expected_comparison_revision": revision})
             assert edited["can_undo"] and not edited["can_redo"]
+            stale_source = client.call("comparison_source_page", source_query)
+            assert stale_source["error"]["code"] == "stale_comparison", stale_source
             refused = client.call("comparison_override", {"kind": "unmatch", "primary": address,
                         "secondary": other, "expected_comparison_revision": revision})
             assert refused["error"]["code"] == "stale_comparison", refused

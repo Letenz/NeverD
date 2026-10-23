@@ -6302,10 +6302,6 @@ Coverage: %7</source>
         <translation>الشيفرة الزائفة</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>الشيفرة الوهمية غير متاحة في ملف التعريف المفكوك هذا. تظل التعليمات والمعاملات والبايتات الأصلية متاحة في التفكيك.</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>x64 خام</translation>
     </message>
@@ -7812,6 +7808,109 @@ SHA-256 الثانوي: %3
     <message>
         <source>yes</source>
         <translation>نعم</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>العرض:</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>لغة الإدخال</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>إعادة تحميل الشفرة</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>الخيارات</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>إزالة حد التعليمات</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>يعرض كل جزء أسطر الشفرة الخاصة به. حدد سطرًا لفحص تعليماته الأصلية.</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>شفرة الإدخال الثانوي</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>شفرة الإدخال الأساسي</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>صفحة الشفرة السابقة</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>صفحة الشفرة التالية</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>الانتقال إلى سطر الشفرة</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>نقاط ربط التعليمات الأصلية</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>عرض التعليمة</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>الثانوي: %1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>الأساسي: %1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>لم تُحدد دالة في هذا الجانب.</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>الشفرة جاهزة للتحميل.</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>لا تدعم عملية العمل هذه فحص الشفرة.</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>جارٍ تحضير الشفرة… ينتظر الإلغاء انتهاء خطوة التحليل الحالية.</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>تتجاوز الشفرة حد التعليمات. اضبط الخيارات لفحص هذه الدالة.</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>توقف فحص الشفرة. أعد تحميل الشفرة للمحاولة مجددًا.</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>الشفرة غير متاحة: %1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>الأسطر %1–%2 من %3</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · تغطية التعليمات الأصلية غير مكتملة</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>سطر بلا ربط</translation>
     </message>
 </context>
 </TS>

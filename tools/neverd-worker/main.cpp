@@ -283,12 +283,16 @@ Json hello() {
           "comparison_observations",  "comparison_scalar_validation",
           "comparison_reviews",       "comparison_review_record"})
       result["capabilities"].push_back(operation);
+    if (ComparisonService::sourceSupported())
+      result["capabilities"].push_back("comparison_source_page");
     result["comparison_cancellation"] =
         "cooperative; partial snapshots retained";
     result["comparison_cancellable_operations"] = Json::array();
     for (const auto Operation : ComparisonService::CancellableOperations)
-      result["comparison_cancellable_operations"].push_back(
-          std::string(Operation));
+      if (Operation != "comparison_source_page" ||
+          ComparisonService::sourceSupported())
+        result["comparison_cancellable_operations"].push_back(
+            std::string(Operation));
   }
   // Function edits, data items and operand formats need an engine that keeps
   // them.

@@ -51,6 +51,7 @@ struct API {
   ENTRY(functions_json);
   ENTRY(function_json);
   ENTRY(function_page_json);
+  ENTRY(source_page_json);
   ENTRY(graph_json);
   ENTRY(regions_json);
   ENTRY(region_page_json);
@@ -324,6 +325,9 @@ struct ComparisonService::Impl {
 ComparisonService::ComparisonService(Writer Write)
     : State(std::make_unique<Impl>(std::move(Write))) {}
 ComparisonService::~ComparisonService() = default;
+bool ComparisonService::sourceSupported() {
+  return supported() && api().source_page_json;
+}
 bool ComparisonService::supported() { return bool(api()); }
 
 bool ComparisonService::cancellable(std::string_view Operation) {
@@ -444,6 +448,12 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
                               Cancelled);
   if (Operation == "comparison_functions")
     return S.result(api().functions_json(S.Handle, Payload.dump().c_str()));
+  if (Operation == "comparison_source_page") {
+    if (!api().source_page_json)
+      throw Error("unsupported_operation",
+                  "This engine has no comparison source view");
+    return S.result(api().source_page_json(S.Handle, Payload.dump().c_str()));
+  }
   if (Operation == "comparison_function_page")
     return S.result(api().function_page_json(S.Handle, Payload.dump().c_str()));
   if (Operation == "comparison_regions")
