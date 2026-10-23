@@ -21,6 +21,8 @@ namespace neverd::diff {
 namespace limits = neverd::limits::diff;
 
 std::optional<std::string> DataFlowSettings::validate() const {
+  if (Profile != DataFlowProfile && Profile != LLVMDataFlowProfile)
+    return "unsupported dataflow profile";
   if (!MaxFunctions || MaxFunctions > limits::kMaxFlowFunctions ||
       !MaxNativeInstructions ||
       MaxNativeInstructions > limits::kMaxFlowNativeInstructions ||
@@ -36,6 +38,8 @@ std::string DataFlowSettings::describe() const {
       << ",total_nodes=" << MaxTotalNodes << ",nodes=" << Graph.MaxNodes
       << ",blocks=" << Graph.MaxBlocks << ",work=" << Graph.MaxWork
       << ",rounds=" << Graph.Rounds;
+  if (Profile != DataFlowProfile)
+    Out << ",profile=" << Profile;
   return Text;
 }
 llvm::StringRef availabilityName(FlowAvailability State) {
@@ -112,8 +116,8 @@ std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
     const auto &G = *Row.Graph;
     if (auto Error = G.validate(S.Graph))
       return Error;
-    if (G.Function != Row.Function || G.Revision != P.Identity.Revision ||
-        G.ABI != P.Identity.ABI)
+    if (G.Profile != S.Profile || G.Function != Row.Function ||
+        G.Revision != P.Identity.Revision || G.ABI != P.Identity.ABI)
       return "dataflow graph belongs to a different native snapshot";
     const auto &F = P.Functions[*P.functionAt(Row.Function)];
     if (P.instructionCount(F) > S.MaxNativeInstructions)
@@ -122,13 +126,19 @@ std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
     for (const auto &B : P.blocks(F))
       for (const auto &Insn : P.instructions(B))
         Addresses.insert(Insn.Address);
-    for (const auto &N : G.Nodes)
-      if (N.OriginSequence >= 0 && !Addresses.contains(N.Address))
-        return "dataflow operation " + N.Opcode + " at 0x" +
-               llvm::utohexstr(N.Address) + " (sequence " +
-               std::to_string(N.OriginSequence) + ") in function 0x" +
-               llvm::utohexstr(Row.Function) +
-               " has no corresponding original instruction";
+    for (const auto &N : G.Nodes) {
+      std::optional<std::string> Error;
+      N.forEachOrigin([&](const FlowOrigin &Origin) {
+        if (!Addresses.contains(Origin.Address))
+          Error = "dataflow operation " + N.Opcode + " at 0x" +
+                  llvm::utohexstr(Origin.Address) + " (sequence " +
+                  std::to_string(Origin.Sequence) + ") in function 0x" +
+                  llvm::utohexstr(Row.Function) +
+                  " has no corresponding original instruction";
+      });
+      if (Error)
+        return Error;
+    }
   }
   return {};
 }

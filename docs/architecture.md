@@ -350,6 +350,21 @@ machine ABI preparation, including omitted-callee summaries, ends after final
 MedIR verification and before LLVM emission. `usesMachineMedIR()` keeps source
 presentation hints out of analysis as it does for lifting. Deferred source
 HighIR is a different stage and may not yet contain System V call arguments.
+The opt-in `llvm-ssa-v1` comparison adapter instead requests ordinary machine
+`LiftMode` and `RetainLLVMSourceObservations`. It retains the strict native audit
+and final LLVM verification gates. `LLVMDataFlow` observes that optimized body;
+it neither implements stack promotion nor enables source-only ABI hints. Typed
+integer contracts are exact; unsupported effects/types/metadata refuse the
+projection with a reason. The EH owner supplies `hasUnloweredContract` for both
+this admission and existing scalar validation, avoiding two numeric decoders.
+`LLVMSourceObservation::ExpressionDerived` distinguishes library expression
+ancestry from direct emission observations through RAUW, cloning and shard
+serialization. The comparison graph retains only direct observations of values
+still in the selected function; deleted, detached or foreign values never acquire
+invented origins. Schema 3 keeps sorted plural origins and typed signatures;
+original Med schema 2, recipes and fingerprints stay unchanged. Region profile
+identity follows the requested graph profile even before extraction completes.
+Med-only change/call associations abstain explicitly for optimized graphs.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
@@ -1816,6 +1831,11 @@ rewrite; the full-width verifier must accept it before the normal type,
 effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
+Expression interning beneath these passes uses a flat hash table, avoiding a
+separate allocation for each distinct node hash. A tagged key admits every
+64-bit hash, including values reserved by the table implementation. Colliding
+hashes still compare the complete operator, width, auxiliary value and operand
+sequence; context copies and moves own their complete tables and node arenas.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every
@@ -2025,6 +2045,23 @@ low prefix before the remaining interleaved bits. Dense decision and carry
 caches prepay their bucket growth. Immutable word views avoid repeated copies
 and are discarded when the assumption changes; polynomial views remain valid
 throughout reconstruction.
+Ordinary HighIR expression cleanup also uses an iterative operand walk, keeping
+its large local-rewrite frame off nested worker stacks. Operand order, shared
+node visitation and ordered-memory guards remain unchanged.
+Long odd-product blocks can recursively pair exact modular signatures. A
+signature preserves the complete word except for its highest observed bit;
+that bit's correction may itself depend on the inputs. Addition, XOR, constant
+masks and products propagate the correction with complete identities. Products
+remove only proved trailing zeros and retain every normalized parity term;
+one-bit products keep an opaque identity because cross terms can survive.
+An odd pair shares a square of its lower word and one exact highest-bit
+correction. Collecting the squares permits recursion at one fewer bit. Every
+unpaired factor and every correction remains in the result. Degree-block
+admission only orders this search; it never establishes a pair or oddness.
+Pairing indexes are constructed only for an admitted search and are confined
+to its active odd assumption, avoiding setup in ordinary low-word searches.
+All signature, pairing and reconstruction work uses the existing cumulative
+work/storage allowances and decision-node limit.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding

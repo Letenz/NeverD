@@ -61,6 +61,7 @@ struct SerializedSources {
     sigs::LibraryOccurrence Occurrence;
     std::string Function;
     size_t Instruction;
+    bool ExpressionDerived;
   };
   std::vector<Observation> Observations;
 };
@@ -86,7 +87,7 @@ SerializedSources serializeSources(const LLVMSourceMap &Sources,
       continue;
     Result.Observations.push_back({Source.Function, Source.Occurrence,
                                    Instruction->getFunction()->getName().str(),
-                                   Found->second});
+                                   Found->second, Source.ExpressionDerived});
   }
   return Result;
 }
@@ -108,7 +109,8 @@ void restoreSources(const SerializedSources &Sources, llvm::Module &Module,
     if (Function != Instructions.end() &&
         Source.Instruction < Function->second.size())
       Result.Observations.push_back({Source.Entry, Source.Occurrence,
-                                     Function->second[Source.Instruction]});
+                                     Function->second[Source.Instruction],
+                                     Source.ExpressionDerived});
   }
 }
 

@@ -583,6 +583,8 @@ static int runComparison(neverd_comparison_t Handle, neverd_session_t A,
     Side.clear();
     if (Primary->Stopped || Secondary->Stopped) {
       C.Result.Settings = Settings;
+      C.Result.FlowRegions.Profile =
+          flowRegionProfile(Settings.DataFlow.Profile).str();
       C.Result.PrimaryDataFlow = C.Primary.DataFlow;
       C.Result.SecondaryDataFlow = C.Secondary.DataFlow;
       C.Result.State =
@@ -1821,11 +1823,18 @@ const char *neverd_comparison_observations_json(neverd_comparison_t Handle,
             "observation page offset exceeds retained rows");
     const auto SSAStatus = [](const DataFlowEntry *Entry,
                               const DataFlowEvidence *Evidence, bool Indexed) {
+      const bool UnsupportedProfile =
+          Entry && Entry->Graph && Entry->Graph->Profile != DataFlowProfile;
       return llvm::json::Object{
-          {"availability", Entry      ? availabilityName(Entry->Availability)
+          {"availability", UnsupportedProfile ? "unsupported_profile"
+                           : Entry    ? availabilityName(Entry->Availability)
                            : Evidence ? "outside_collection"
                                       : "not_requested"},
-          {"reason", Entry ? Entry->Reason : ""},
+          {"reason",
+           UnsupportedProfile
+               ? "native change associations require the med-ssa-v2 profile"
+           : Entry ? Entry->Reason
+                   : ""},
           {"indexed", Indexed},
           {"recipe", Evidence ? Evidence->Recipe : ""}};
     };
@@ -1911,7 +1920,10 @@ const char *neverd_comparison_dataflow_json(neverd_comparison_t Handle,
       Out["function_info"] = function(P, *P.functionAt(Address));
     }
     Out["schema"] = "neverd.bindiff.dataflow.page";
-    Out["schema_version"] = DataFlowSchemaVersion;
+    Out["schema_version"] =
+        dataFlowSchemaVersion(C.Result.Settings.DataFlow.Profile);
+    if (C.Result.Settings.DataFlow.Profile == LLVMDataFlowProfile)
+      Out["profile"] = C.Result.Settings.DataFlow.Profile;
     Out["side"] = Side;
     Out["revision"] = P.Identity.Revision;
     Out["semantic_validation"] = "not_performed";
@@ -2418,6 +2430,20 @@ const char *neverd_comparison_flow_regions_json(neverd_comparison_t Handle,
             G.Nodes[N].OriginSequence >= 0 && It != Original.end()
                 ? llvm::json::Value(instruction(P, It->second))
                 : nullptr;
+        if (G.Profile == LLVMDataFlowProfile) {
+          llvm::json::Array Originals;
+          std::optional<uint64_t> Previous;
+          for (const auto &Origin : G.Nodes[N].Origins) {
+            if (Previous == Origin.Address)
+              continue;
+            Previous = Origin.Address;
+            const auto At = Original.find(Origin.Address);
+            require(At != Original.end(),
+                    "optimized SSA origin is outside the native function");
+            Originals.push_back(instruction(P, At->second));
+          }
+          Item["originals"] = std::move(Originals);
+        }
         return Item;
       };
       const auto &Pairs = Coordinates == "nodes" ? A->Nodes : A->PhiBlocks;

@@ -50,16 +50,18 @@ public:
 };
 
 uint64_t localKey(const FlowNode &N) {
-  return StableHash()
-      .add(N.Opcode)
+  StableHash H;
+  H.add(N.Opcode)
       .add(N.ResultBytes)
       .add(N.MemoryOrdering)
       .add(N.MemoryAddressSpace)
       .add(N.Phi)
       .add(N.Gaps)
       .add(N.CallArgumentBegin)
-      .add(N.CallArgumentCount)
-      .value();
+      .add(N.CallArgumentCount);
+  if (!N.Semantics.empty())
+    H.add(N.Semantics);
+  return H.value();
 }
 
 /// Controllers of each block. The synthetic exit has no source instruction.
@@ -161,6 +163,13 @@ controllers(const DataFlowGraph &G, WorkBudget &Work, uint32_t &Gaps) {
 }
 } // namespace
 
+uint64_t flowExtraWork(const FlowNode &N) {
+  uint64_t Work = N.Semantics.size() + N.Origins.size();
+  for (const auto &I : N.Inputs)
+    Work += I.Semantics.size();
+  return Work;
+}
+
 std::vector<llvm::StringRef> flowGapNames(uint32_t Mask) {
   std::vector<llvm::StringRef> Names;
   for (const auto &[Bit, Name] :
@@ -190,7 +199,8 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
     return Error;
   if (Nodes.size() > Options.MaxNodes || Blocks.size() > Options.MaxBlocks)
     return "dataflow snapshot exceeds its node/block allowance";
-  if (Profile != DataFlowProfile || Revision.empty() || ABI.empty() ||
+  if ((Profile != DataFlowProfile && Profile != LLVMDataFlowProfile) ||
+      Revision.empty() || ABI.empty() ||
       Revision.size() > limits::kMaxFlowIdentityBytes ||
       ABI.size() > limits::kMaxFlowIdentityBytes || (Gaps & ~AllFlowGaps))
     return "dataflow snapshot has an invalid profile, identity or gap mask";
@@ -213,6 +223,17 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
         return "dataflow CFG has an invalid successor";
   }
   for (const auto &N : Nodes) {
+    Inputs += N.Semantics.size() + N.Origins.size();
+    if (Inputs > Options.MaxWork ||
+        N.Semantics.size() > limits::kMaxFlowSemanticsBytes)
+      return "dataflow operation metadata exceeds its allowance";
+    if (Profile == DataFlowProfile
+            ? (!N.Semantics.empty() || !N.Origins.empty())
+            : (N.Semantics.empty() || N.OriginSequence != -1 || N.Address))
+      return "dataflow operation metadata disagrees with its profile";
+    for (size_t I = 0; I < N.Origins.size(); ++I)
+      if (N.Origins[I].Sequence < 0 || (I && N.Origins[I] <= N.Origins[I - 1]))
+        return "dataflow origins must be valid, sorted and unique";
     if (N.Block >= Blocks.size() || N.Opcode.empty() || N.OriginSequence < -1 ||
         N.Opcode.size() > limits::kMaxFlowOpcodeBytes ||
         (N.Gaps & ~AllFlowGaps))
@@ -228,6 +249,13 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
     if (Inputs > Options.MaxWork)
       return "dataflow operands exceed the work allowance";
     for (const auto &I : N.Inputs) {
+      Inputs += I.Semantics.size();
+      if (Inputs > Options.MaxWork ||
+          I.Semantics.size() > limits::kMaxFlowSemanticsBytes ||
+          (Profile == DataFlowProfile ? !I.Semantics.empty()
+                                      : I.Semantics.empty()))
+        return "dataflow operand metadata disagrees with its profile or "
+               "allowance";
       if (unsigned(I.Type) > unsigned(FlowOperand::Kind::Unknown) ||
           ((I.Type == FlowOperand::Kind::Node) != (I.Node != NoIndex)) ||
           (I.Type == FlowOperand::Kind::Node && I.Node >= Nodes.size()) ||
@@ -260,7 +288,7 @@ FlowFingerprints fingerprintDataFlow(const DataFlowGraph &G,
         Incoming[G.Blocks[B].Successors[I]].emplace_back(B, I);
       }
     for (const auto &N : G.Nodes) {
-      Work.charge();
+      Work.charge(1 + N.Semantics.size() + N.Origins.size());
       Local.push_back(localKey(N));
     }
     Keys = Local;
@@ -303,9 +331,11 @@ FlowFingerprints fingerprintDataFlow(const DataFlowGraph &G,
         bool Complete = !G.Gaps && !Node.Gaps;
         std::vector<uint64_t> Inputs;
         for (const auto &I : Node.Inputs) {
-          Work.charge();
+          Work.charge(1 + I.Semantics.size());
           StableHash H;
           H.add(uint8_t(I.Type)).add(I.Bytes).add(I.Provenance);
+          if (!I.Semantics.empty())
+            H.add(I.Semantics);
           if (I.Type == FlowOperand::Kind::Node)
             H.add(Keys[I.Node]);
           else if (I.Type != FlowOperand::Kind::Unknown)
@@ -372,7 +402,7 @@ FlowSlice sliceDataFlow(const DataFlowGraph &G, llvm::ArrayRef<uint32_t> Seeds,
         Edges[Definition].push_back(Use);
     };
     for (uint32_t N = 0; N < G.Nodes.size(); ++N) {
-      Work.charge();
+      Work.charge(1 + flowExtraWork(G.Nodes[N]));
       for (const auto &I : G.Nodes[N].Inputs)
         if (I.Type == FlowOperand::Kind::Node)
           Edge(I.Node, N);

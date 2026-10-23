@@ -992,6 +992,7 @@ ComparisonResult compare(const Program &Primary, const Program &Secondary,
     throw std::invalid_argument("unsupported comparison profile pair");
   ComparisonResult R;
   R.Settings = Settings;
+  R.FlowRegions.Profile = flowRegionProfile(Settings.DataFlow.Profile).str();
   R.PrimaryDataFlow = Primary.DataFlow;
   R.SecondaryDataFlow = Secondary.DataFlow;
   Matcher(Primary, Secondary, Settings, Control, R).run(Overrides);

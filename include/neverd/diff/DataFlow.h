@@ -17,6 +17,7 @@
 #include "neverd/diff/Limits.h"
 #include "neverd/diff/Program.h"
 
+#include <compare>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -34,7 +35,10 @@ enum FlowGap : uint32_t {
   FlowNoExit = 1u << 6,
 };
 inline constexpr uint32_t AllFlowGaps = (FlowNoExit << 1) - 1;
-inline constexpr llvm::StringLiteral DataFlowProfile = "med-ssa-v2";
+inline constexpr llvm::StringLiteral
+    DataFlowProfile(limits::diff::kMedSSAProfile);
+inline constexpr llvm::StringLiteral
+    LLVMDataFlowProfile(limits::diff::kLLVMSSAProfile);
 std::vector<llvm::StringRef> flowGapNames(uint32_t Mask);
 
 /// An interrupted projection publishes no graph with missing definitions.
@@ -68,7 +72,15 @@ struct FlowOperand {
   uint64_t AddressOwner = 0;
   /// Incoming predecessor for a PHI operand; otherwise NoIndex.
   uint32_t Predecessor = NoIndex;
+  /// Profile-specific exact type and argument attributes. Empty for MedIR.
+  std::string Semantics;
   bool operator==(const FlowOperand &) const = default;
+};
+
+struct FlowOrigin {
+  uint64_t Address = 0;
+  int32_t Sequence = -1;
+  auto operator<=>(const FlowOrigin &) const = default;
 };
 
 struct FlowNode {
@@ -91,8 +103,24 @@ struct FlowNode {
   uint32_t CallArgumentBegin = NoIndex;
   uint32_t CallArgumentCount = 0;
   std::vector<FlowOperand> Inputs;
+  /// Exact typed operation contract, distinct from its display opcode.
+  std::string Semantics;
+  /// Direct retained LLVM observations, sorted and unique. Optimized nodes
+  /// never invent one representative Address/OriginSequence from this list.
+  std::vector<FlowOrigin> Origins;
+  bool hasNativeOrigin() const {
+    return OriginSequence >= 0 || !Origins.empty();
+  }
+  template <class Callback> void forEachOrigin(Callback &&Visit) const {
+    if (OriginSequence >= 0)
+      Visit(FlowOrigin{Address, OriginSequence});
+    for (const auto &Origin : Origins)
+      Visit(Origin);
+  }
   bool operator==(const FlowNode &) const = default;
 };
+/// Extension processing charged in addition to the existing node/input work.
+uint64_t flowExtraWork(const FlowNode &Node);
 
 struct FlowBlock {
   uint64_t Begin = 0;

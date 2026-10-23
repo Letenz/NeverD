@@ -27,6 +27,15 @@ QString number(double Value) {
 QString code(const QJsonObject &I) {
   return I["mnemonic"].toString() + ' ' + I["operands"].toString();
 }
+QString originAddresses(const QJsonObject &Node) {
+  QStringList Addresses;
+  for (const auto &Origin : Node["origins"].toArray())
+    Addresses << Origin.toObject()["address"].toString();
+  if (Addresses.isEmpty() && Node["origin_sequence"].toInt(-1) >= 0)
+    Addresses << Node["address"].toString();
+  Addresses.removeDuplicates();
+  return Addresses.join(", ");
+}
 QString names(const QJsonArray &Functions) {
   QStringList Names;
   for (const auto &F : Functions)
@@ -185,6 +194,14 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
               QJsonDocument(R).toJson(QJsonDocument::Indented)));
     if (Type == Kind::FlowFunctions)
       return R["reason"].toString();
+    if ((Type == Kind::FlowNodes || Type == Kind::FlowSlice) &&
+        R.contains("origins"))
+      return tr("Block %1 · Original addresses: %2\n%3")
+          .arg(R["block"].toInt())
+          .arg(originAddresses(R).isEmpty() ? tr("Synthetic")
+                                            : originAddresses(R))
+          .arg(QString::fromUtf8(
+              QJsonDocument(R).toJson(QJsonDocument::Indented)));
     if (Type == Kind::FlowNodes || Type == Kind::FlowSlice)
       return tr("Block %1 · Original operation %2\n%3")
           .arg(R["block"].toInt())
@@ -356,8 +373,8 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     case 0:
       return R["id"].toInt();
     case 1:
-      return R["origin_sequence"].toInt(-1) < 0 ? tr("Synthetic")
-                                                : R["address"].toString();
+      return originAddresses(R).isEmpty() ? tr("Synthetic")
+                                          : originAddresses(R);
     case 2:
       return R["opcode"].toString();
     case 3:
@@ -369,7 +386,7 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
       const auto ArgumentCount = R["call_argument_count"].toInt();
       for (qsizetype N = 0; N < Values.size(); ++N) {
         const auto I = Values[N].toArray();
-        if (I.size() != 7)
+        if (I.size() != 7 && I.size() != 8)
           continue;
         const auto Kind = I[0].toInt();
         QString Text = Kind == 0   ? tr("n%1").arg(I[1].toInt())
@@ -416,10 +433,18 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     case 0:
       return N["id"].toInt();
     case 1:
-      return N["origin_sequence"].toInt(-1) < 0 ? tr("Synthetic")
-                                                : N["address"].toString();
+      return originAddresses(N).isEmpty() ? tr("Synthetic")
+                                          : originAddresses(N);
     case 2: {
       const auto Original = N["original"].toObject();
+      if (N.contains("originals")) {
+        QStringList Instructions;
+        for (const auto &O : N["originals"].toArray())
+          Instructions << code(O.toObject());
+        return N["opcode"].toString() + (Instructions.isEmpty()
+                                             ? QString()
+                                             : " · " + Instructions.join("; "));
+      }
       return N["opcode"].toString() +
              (Original.isEmpty() ? QString()
                                  : " · " + Original["mnemonic"].toString() +

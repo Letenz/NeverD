@@ -6309,6 +6309,22 @@ Couverture : %7</translation>
         <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
         <translation>Sélectionnez un binaire ou un projet NDDB enregistré. Les projets enregistrés utilisent leurs paramètres de chargement et une copie de travail indépendante.</translation>
     </message>
+    <message>
+        <source>SSA representation</source>
+        <translation>Représentation SSA</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>SSA d’origine</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>SSA optimisée</translation>
+    </message>
+    <message>
+        <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
+        <translation>La SSA optimisée réduit les structures auxiliaires du compilateur pour la comparaison. Les fonctions hors du périmètre pris en charge restent affichées avec une explication.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6395,6 +6411,18 @@ Sélectionnez une opération pour suivre ses dépendances. Les opérations synth
     <message>
         <source>none observed within this model</source>
         <translation>aucun observé dans ce modèle</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>SSA d’origine</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>SSA optimisée</translation>
+    </message>
+    <message>
+        <source>SSA representation: %1</source>
+        <translation>Représentation SSA : %1</translation>
     </message>
 </context>
 <context>
@@ -7166,6 +7194,12 @@ Explications heuristiques, comportement non validé.
     <message>
         <source>—</source>
         <translation>—</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original addresses: %2
+%3</source>
+        <translation>Bloc %1 · Adresses d’origine : %2
+%3</translation>
     </message>
 </context>
 <context>

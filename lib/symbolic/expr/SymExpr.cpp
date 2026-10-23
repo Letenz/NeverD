@@ -135,7 +135,7 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
   for (SymRef R : Ops)
     H = mixHash(H, R.index());
 
-  auto &Bucket = InternTable[H];
+  auto &Bucket = InternTable[{H, 0}];
   for (uint32_t Cand : Bucket) {
     const SymNode &N = Nodes[Cand];
     if (N.Op != Op || N.Width != Width || N.Aux != Aux ||

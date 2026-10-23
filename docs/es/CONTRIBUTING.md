@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
+<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
 
 # Contribuir a NeverD
 
@@ -157,8 +157,17 @@ entre lotes y comprueba sus pilas de 8 MiB; nunca compila/carga `tbbmalloc` ni s
 Los llamantes con pila grande reutilizan espacio disponible; los pequeños reciben un
 coordinador nativo. Anfitriones que hacen fork tras el primer uso o descargan el SDK
 dinámicamente deben usar hilos nativos (`NEVERD_ENABLE_TBB=OFF`): el planificador retenido
-no admite esos ciclos de vida. No finaliza el planificador TBB compartido del anfitrión.
-Distribuya su DLL/biblioteca compartida con las compilaciones habilitadas.
+no admite esos ciclos de vida. oneTBB se enlaza estáticamente con el núcleo compartido,
+y sus símbolos son privados de ese núcleo. Las llamadas a componentes desde la CLI y
+las solicitudes al worker de la GUI usan el mismo planificador; no se distribuye ninguna
+DLL ni biblioteca compartida de TBB. Los targets que enlazan `neverd_shared` seleccionan
+automáticamente el planificador compartido. Los clientes que acceden al SDK a través
+de otro target y también enlazan archivos de componentes deben usar
+`neverd_use_shared_task_scheduler` en su target final. Las herramientas de componentes
+independientes conservan su propio entorno de ejecución.
+Esta integración restringida evita varios planificadores NeverD en un mismo proceso;
+el proyecto original sigue considerando las [compilaciones estáticas de oneTBB](https://uxlfoundation.github.io/oneTBB/main/intro/static_linking.html)
+como no soportadas y desaconseja su uso general.
 
 Vea la [validación de aceleración](../testing.md#acceleration-libraries) para pruebas nativas, comparaciones y límites.
 

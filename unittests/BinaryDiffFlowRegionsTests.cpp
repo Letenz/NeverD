@@ -12,6 +12,7 @@
 #include "neverd/diff/FlowRegionsJSON.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <atomic>
 #include <gtest/gtest.h>
@@ -66,8 +67,8 @@ Program program(std::initializer_list<DataFlowGraph> Graphs) {
     B.addBlock(G.Function);
     std::set<uint64_t> Addresses;
     for (const auto &N : G.Nodes)
-      if (N.OriginSequence >= 0)
-        Addresses.insert(N.Address);
+      N.forEachOrigin(
+          [&](const FlowOrigin &O) { Addresses.insert(O.Address); });
     for (auto A : Addresses)
       B.addInstruction(A, {0x90}, "fixture", A, A, InstructionFlow::None);
     Evidence->Entries.push_back(
@@ -342,4 +343,77 @@ TEST(BinaryDiffFlowRegions, ManyRootsReuseGraphAdmissionWithinFiniteWork) {
   EXPECT_DOUBLE_EQ(R.Hypotheses[0].PrimaryCoverage, 1);
   EXPECT_DOUBLE_EQ(R.Hypotheses[0].SecondaryCoverage, 1);
   EXPECT_LE(R.Work, Settings.MaxWork);
+}
+
+TEST(BinaryDiffFlowRegions,
+     OptimizedOriginGateCountsInstructionsNotOperations) {
+  const auto Convert = [](DataFlowGraph G) {
+    G.Profile = LLVMDataFlowProfile.str();
+    for (auto &N : G.Nodes) {
+      N.Origins = {{G.Function, N.OriginSequence}};
+      N.Address = 0;
+      N.OriginSequence = -1;
+      N.Semantics = "owned-typed-fixture";
+      for (auto &I : N.Inputs)
+        I.Semantics = "i64";
+    }
+    return G;
+  };
+  auto A = Convert(chains(0x1000, {17}));
+  auto B = Convert(chains(0x8000, {17}));
+  auto Evidence = evidenceSettings();
+  Evidence.Profile = LLVMDataFlowProfile.str();
+  FlowRegionSettings Options;
+  Options.Enabled = true;
+  const auto Weak =
+      findFlowRegions(program({A}), program({B}), Evidence, Options);
+  EXPECT_TRUE(Weak.Anchors.empty());
+  EXPECT_GT(Weak.WeakCandidates, 0u);
+  EXPECT_EQ(Weak.Profile, LLVMFlowRegionProfile);
+  A.Nodes.back().Origins.push_back({0x1004, 0});
+  B.Nodes.back().Origins.push_back({0x8004, 0});
+  auto PA = program({A}), PB = program({B});
+  auto Qualified = findFlowRegions(PA, PB, Evidence, Options);
+  ASSERT_FALSE(Qualified.Anchors.empty());
+  EXPECT_EQ(Qualified.Anchors.back().PrimaryOrigins, 2u);
+  Qualified.Profile = FlowRegionProfile.str();
+  EXPECT_TRUE(validateFlowRegions(Qualified, PA, PB, Evidence, Options));
+  FlowRegionAnalysis Empty;
+  EXPECT_TRUE(validateFlowRegions(Empty, PA, PB, Evidence, Options));
+  Empty.Profile = LLVMFlowRegionProfile.str();
+  EXPECT_FALSE(validateFlowRegions(Empty, PA, PB, Evidence, Options));
+}
+
+TEST(BinaryDiffFlowRegions, OptimizedPluralAndUnstartedProfilesRoundTrip) {
+  auto A = chains(0x1000, {17}), B = chains(0x8000, {17});
+  for (auto *G : {&A, &B}) {
+    G->Profile = LLVMDataFlowProfile.str();
+    for (uint32_t I = 0; I < G->Nodes.size(); ++I) {
+      auto &N = G->Nodes[I];
+      N.Origins = {{G->Function + 2 * I, 0}, {G->Function + 2 * I + 1, 1}};
+      N.Address = 0;
+      N.OriginSequence = -1;
+      N.Semantics = "owned-typed-fixture";
+      for (auto &Input : N.Inputs)
+        Input.Semantics = "i64";
+    }
+  }
+  auto Evidence = evidenceSettings();
+  Evidence.Profile = LLVMDataFlowProfile.str();
+  FlowRegionSettings Options;
+  Options.Enabled = true;
+  const auto R = findFlowRegions(program({A}), program({B}), Evidence, Options);
+  ASSERT_FALSE(R.Anchors.empty());
+  EXPECT_GT(R.Anchors.front().PrimaryOrigins, R.Anchors.front().Nodes.size());
+  FlowRegionAnalysis Empty;
+  Empty.Profile = LLVMFlowRegionProfile.str();
+  for (const auto &Input : {R, Empty}) {
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    llvm::json::OStream JSON(OS);
+    JSON.object([&] { writeFlowRegionAnalysisFields(JSON, Input, false); });
+    auto Value = llvm::json::parse(Text);
+    ASSERT_TRUE(bool(Value));
+    EXPECT_EQ(readFlowRegionAnalysis(*Value, Options), Input);
+  }
 }

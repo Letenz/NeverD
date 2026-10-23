@@ -1,6 +1,6 @@
 **언어**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
+<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
 
 # NeverD 기여 가이드
 
@@ -137,7 +137,14 @@ simdjson 영역 밖 입력은 기존 허용 경로로 처리하며 잘못된 외
 보존하고 8 MiB 스택을 검사하며 `tbbmalloc`이나 프록시를 빌드/로드하지 않습니다. 큰 스택 호출자는
 여유를 재사용하고 작은 경우 네이티브 조정 스레드를 받습니다. 최초 사용 후 fork하거나 SDK를 동적 해제하는
 호스트는 네이티브 스레드 기준선 `NEVERD_ENABLE_TBB=OFF`를 사용해야 합니다. 보존 스케줄러는 이
-수명주기를 지원하지 않으며 호스트 공유 TBB 스케줄러를 종료하지 않습니다. 활성 빌드에 런타임 DLL/공유 라이브러리를 배포합니다.
+수명주기를 지원하지 않습니다. oneTBB는 공유 코어에 정적으로 링크되며 심볼은 해당 코어 내부로 제한됩니다.
+CLI의 컴포넌트 호출과 GUI worker 요청은 같은 스케줄러를 사용하며 TBB DLL/공유 라이브러리를 배포하지 않습니다.
+`neverd_shared`를 링크하는 타깃은 공유 스케줄러를 자동으로 선택합니다. 다른 타깃을 통해 SDK를 사용하면서
+컴포넌트 아카이브도 링크하는 클라이언트는 최종 타깃에 `neverd_use_shared_task_scheduler`를 적용해야 합니다.
+독립 실행형 컴포넌트 도구는 자체 런타임을 유지합니다.
+이 제한된 통합은 한 프로세스에 여러 NeverD 스케줄러가 생기는 것을 방지합니다. 업스트림은 여전히
+[oneTBB 정적 빌드](https://uxlfoundation.github.io/oneTBB/main/intro/static_linking.html)를 지원하지 않는 것으로
+명시하며 일반적인 용도로는 사용을 권장하지 않습니다.
 
 네이티브 테스트, 비활성 비교 및 호환 한계는 [가속 검증](../testing.md#acceleration-libraries)을 참고하세요.
 

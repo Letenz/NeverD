@@ -149,6 +149,10 @@ struct PipelineOptions {
   bool MedAnalysisOnly = false;
   bool PatchMode = false;
   bool LiftMode = false;
+  /// Retain native emission observations through LLVM replacement/deletion.
+  /// This sidecar does not enable source-only transformations or infer origins
+  /// for optimizer-created values.
+  bool RetainLLVMSourceObservations = false;
   /// LLVM-to-C uses the LLVM route without authorizing source-only rewrites
   /// for binary lifting or patching.
   bool SourceProjection = false;

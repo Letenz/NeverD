@@ -528,6 +528,8 @@ if __name__ == "__main__":
             ("carry-product-32", *carry_product_elf(32)),
             ("carry-product-64", *carry_product_elf(64, False)),
             ("carry-cofactor-8", *carry_product_elf(8, True, 5, 2)),
+            ("carry-product-paired-64", *carry_product_elf(64, True, 7, 2)),
+            ("carry-product-paired-128", *carry_product_elf(128, True, 8, 3)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

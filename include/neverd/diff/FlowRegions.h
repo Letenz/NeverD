@@ -19,6 +19,9 @@
 
 namespace neverd::diff {
 inline constexpr llvm::StringLiteral FlowRegionProfile = "med-neighborhoods-v1";
+inline constexpr llvm::StringLiteral LLVMFlowRegionProfile =
+    "llvm-neighborhoods-v1";
+llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile);
 struct FlowRegionSettings {
   bool Enabled = false;
   unsigned MinimumNodes = limits::diff::kDefaultFlowRegionMinNodes;
@@ -54,6 +57,7 @@ struct FlowRegionHypothesis {
   bool operator==(const FlowRegionHypothesis &) const = default;
 };
 struct FlowRegionAnalysis {
+  std::string Profile = FlowRegionProfile.str();
   std::optional<ComparisonState> State;
   std::string StoppedPhase;
   uint64_t Work = 0, PrimarySeeds = 0, SecondarySeeds = 0;

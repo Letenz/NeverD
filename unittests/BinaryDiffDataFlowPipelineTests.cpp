@@ -8,15 +8,19 @@
 /// These fixtures are analyzed without executing the target instructions.
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/diff/MedDataFlow.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <gtest/gtest.h>
+#include <set>
 
 using namespace neverd;
 using namespace neverd::diff;
@@ -190,5 +194,158 @@ TEST(BinaryDiffDataFlowPipeline, AnalysisRejectsVMsAndConflictingOutputModes) {
     const auto Result = Pipeline().run(Image, Context, Conflict);
     EXPECT_FALSE(Result.Success);
     EXPECT_FALSE(Result.Error.empty());
+  }
+}
+
+TEST(BinaryDiffDataFlowPipeline, LLVMRetentionPreservesSerialAndShardedOutput) {
+  for (unsigned Count : {1u, 8u}) {
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    Image.Base = Image.Entry = 0x1000;
+    Segment Segment;
+    Segment.VA = Image.Base;
+    Segment.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    PipelineOptions Options;
+    Options.LiftMode = true;
+    Options.EmitDumpOutput = false;
+    for (unsigned N = 0; N < Count; ++N) {
+      const auto Entry = Image.Base + Segment.Data.size();
+      auto Code = x64();
+      Image.Symbols.push_back(Symbol::makeFunc(Entry));
+      Options.OnlyFunctionEntries.insert(Entry);
+      Segment.Data.insert(Segment.Data.end(), Code.begin(), Code.end());
+      Segment.Data.resize(Segment.Data.size() + 17, 0xcc);
+    }
+    Segment.Size = Segment.Data.size();
+    Image.Segments.push_back(std::move(Segment));
+    llvm::LLVMContext Context;
+    const auto Plain = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Plain.Success) << Plain.Error;
+    ASSERT_TRUE(Plain.LlvmModule);
+    EXPECT_FALSE(Plain.LLVMSources);
+    Options.RetainLLVMSourceObservations = true;
+    const auto Observed = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Observed.Success) << Observed.Error;
+    ASSERT_TRUE(Observed.LlvmModule);
+    ASSERT_TRUE(Observed.LLVMSources);
+    std::string Before, After;
+    llvm::raw_string_ostream B(Before), A(After);
+    Plain.LlvmModule->print(B, nullptr);
+    Observed.LlvmModule->print(A, nullptr);
+    EXPECT_EQ(Before, After);
+    ASSERT_EQ(Observed.LLVMSources->Functions.size(), Count);
+    std::set<va_t> Retained;
+    for (const auto &O : Observed.LLVMSources->Observations) {
+      EXPECT_FALSE(O.ExpressionDerived);
+      const auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(O.Value);
+      if (!I)
+        continue;
+      const auto Owner = Observed.LLVMSources->Functions.find(O.Function);
+      ASSERT_NE(Owner, Observed.LLVMSources->Functions.end());
+      EXPECT_EQ(Owner->second, I->getFunction());
+      EXPECT_EQ(I->getModule(), Observed.LlvmModule.get());
+      EXPECT_GE(O.Occurrence.Address, O.Function);
+      EXPECT_LT(O.Occurrence.Address, O.Function + x64().size());
+      Retained.insert(O.Function);
+    }
+    EXPECT_EQ(Retained.size(), Count);
+  }
+}
+
+TEST(BinaryDiffDataFlowPipeline, LLVMAncestryKeepsItsDistinctOriginKind) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("source-observations", Context);
+  llvm::IRBuilder<> Builder(Context);
+  auto *Type = llvm::FunctionType::get(Builder.getInt32Ty(),
+                                       {Builder.getInt32Ty()}, false);
+  auto *Function = llvm::Function::Create(
+      Type, llvm::GlobalValue::ExternalLinkage, "fixture", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Add = Builder.CreateAdd(Function->getArg(0), Builder.getInt32(3));
+  auto *Mul = Builder.CreateMul(Add, Builder.getInt32(7));
+  auto *Xor = Builder.CreateXor(Mul, Builder.getInt32(23));
+  Builder.CreateRet(Xor);
+  LLVMSourceMap Sources;
+  Sources.Functions[0x1000] = Function;
+  Sources.Observations = {{0x1000, {0x1000, 0}, Add},
+                          {0x1000, {0x1004, 0}, Mul},
+                          {0x1000, {0x1008, 0}, Xor}};
+  sigs::LibraryRecognition Match;
+  Match.Function = 0x1000;
+  Match.Isolated = true;
+  Match.Occurrences = {{0x1000, 0}, {0x1004, 0}, {0x1008, 0}};
+  Sources.preserveExpressionOrigins({Match});
+  ASSERT_GT(Sources.Observations.size(), 3u);
+  for (size_t N = 0; N < Sources.Observations.size(); ++N)
+    EXPECT_EQ(Sources.Observations[N].ExpressionDerived, N >= 3);
+  // A real replacement keeps the original observation kind. Derived ancestry
+  // does not become direct evidence merely because a clone changes pointers.
+  Add->replaceAllUsesWith(Function->getArg(0));
+  EXPECT_EQ(Sources.Observations[0].Value, Function->getArg(0));
+  EXPECT_FALSE(Sources.Observations[0].ExpressionDerived);
+  Sources.remap([](llvm::Value *V) { return V; });
+  for (size_t N = 0; N < Sources.Observations.size(); ++N)
+    EXPECT_EQ(Sources.Observations[N].ExpressionDerived, N >= 3);
+}
+
+TEST(BinaryDiffDataFlowPipeline,
+     AArch64OptimizedLLVMRetainsDirectArithmeticOrigins) {
+  // compiler_regions_fixture.c, Clang 23 aarch64-unknown-linux-gnu O0/O2.
+  // These owned instructions are lifted, never executed.
+  const std::vector<std::vector<uint32_t>> Variants = {
+      {0xd10043ff, 0xb9000fe0, 0xb9000be1, 0xb9400fe8, 0xb9400be9, 0x0b090108,
+       0x528002e9, 0x4a090108, 0xb90007e8, 0xb94007e8, 0x528000e9, 0x1b097d08,
+       0x11002508, 0xb90007e8, 0xb94007e9, 0xb94007e8, 0x53051108, 0x2a491508,
+       0xb90007e8, 0xb94007e8, 0xb9400be9, 0x528001aa, 0x1b0a7d29, 0x11004529,
+       0x4a090108, 0x11000d00, 0x910043ff, 0xd65f03c0},
+      {0x528002e8, 0x0b000029, 0x528001aa, 0x4a080128, 0x5280022b, 0x1b0a2c2a,
+       0x531d7109, 0x4b080128, 0x11002508, 0x4ac81548, 0x11000d00, 0xd65f03c0}};
+  for (const auto &Words : Variants) {
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    Image.Base = Image.Entry = 0x1000;
+    Segment Segment;
+    Segment.VA = Image.Base;
+    Segment.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    for (auto Word : Words)
+      for (unsigned Byte = 0; Byte < 4; ++Byte)
+        Segment.Data.push_back(uint8_t(Word >> (Byte * 8)));
+    Segment.Size = Segment.Data.size();
+    Image.Segments.push_back(std::move(Segment));
+    Image.Symbols.push_back(Symbol::makeFunc(Image.Entry));
+    PipelineOptions Options;
+    Options.OnlyFunctionEntries.insert(Image.Entry);
+    Options.LiftMode = true;
+    Options.RetainLLVMSourceObservations = true;
+    Options.EmitDumpOutput = false;
+    llvm::LLVMContext Context;
+    const auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_TRUE(Result.LLVMSources);
+    ASSERT_TRUE(Result.LlvmModule);
+    std::set<uint64_t> Addresses;
+    std::set<const llvm::Instruction *> Values;
+    for (const auto &O : Result.LLVMSources->Observations) {
+      EXPECT_FALSE(O.ExpressionDerived);
+      const auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(O.Value);
+      if (!I || !llvm::isa<llvm::BinaryOperator>(I))
+        continue;
+      EXPECT_EQ(O.Function, Image.Entry);
+      EXPECT_EQ(I->getModule(), Result.LlvmModule.get());
+      EXPECT_GE(O.Occurrence.Address, Image.Entry);
+      EXPECT_LT(O.Occurrence.Address, Image.Entry + Words.size() * 4);
+      EXPECT_EQ((O.Occurrence.Address - Image.Entry) % 4, 0u);
+      Addresses.insert(O.Occurrence.Address);
+      Values.insert(I);
+    }
+    EXPECT_GE(Addresses.size(), 3u);
+    EXPECT_GE(Values.size(), 3u);
+    RecordProperty("native_words_" + std::to_string(Words.size()),
+                   std::to_string(Addresses.size()) + " direct origins / " +
+                       std::to_string(Values.size()) + " arithmetic values");
   }
 }

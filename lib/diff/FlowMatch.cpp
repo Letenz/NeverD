@@ -48,10 +48,13 @@ class Check {
     if (auto Stop = Control.stop())
       throw Stopped{*Stop};
   }
-  void charge() {
-    if (Out.Work == Options.MaxWork)
+  void charge(uint64_t Amount = 1) {
+    if (Amount > Options.MaxWork - Out.Work)
       throw Stopped{ComparisonState::ResourceLimited};
-    if (++Out.Work % limits::diff::kFlowPollWork == 0)
+    const auto Before = Out.Work;
+    Out.Work += Amount;
+    if (Before / limits::diff::kFlowPollWork !=
+        Out.Work / limits::diff::kFlowPollWork)
       poll();
   }
   void same(bool Condition, const char *Reason) {
@@ -144,9 +147,11 @@ class Check {
   }
   uint64_t operandKey(const DataFlowGraph &G, const FlowFingerprints &Keys,
                       const FlowOperand &I, uint32_t Block) {
-    charge();
+    charge(1 + I.Semantics.size());
     StableHash H;
     H.add(uint8_t(I.Type)).add(I.Bytes).add(I.Provenance);
+    if (!I.Semantics.empty())
+      H.add(I.Semantics);
     if (I.Type == FlowOperand::Kind::Node)
       H.add(Keys.Keys[I.Node]);
     else if (I.Type != FlowOperand::Kind::Unknown)
@@ -217,10 +222,11 @@ class Check {
       return;
     At->second = P.Depth;
     const auto &X = A.Nodes[P.A], &Y = B.Nodes[P.B];
-    same(std::tie(X.Opcode, X.ResultBytes, X.MemoryOrdering,
+    charge(X.Semantics.size() + Y.Semantics.size());
+    same(std::tie(X.Opcode, X.Semantics, X.ResultBytes, X.MemoryOrdering,
                   X.MemoryAddressSpace, X.Phi, X.Commutative, X.Gaps,
                   X.CallArgumentBegin, X.CallArgumentCount) ==
-             std::tie(Y.Opcode, Y.ResultBytes, Y.MemoryOrdering,
+             std::tie(Y.Opcode, Y.Semantics, Y.ResultBytes, Y.MemoryOrdering,
                       Y.MemoryAddressSpace, Y.Phi, Y.Commutative, Y.Gaps,
                       Y.CallArgumentBegin, Y.CallArgumentCount),
          "operation, width or effect metadata differ");
@@ -234,8 +240,9 @@ class Check {
     const auto XI = order(A, AK, X), YI = order(B, BK, Y);
     for (size_t N = 0; N < XI.size(); ++N) {
       const auto &U = X.Inputs[XI[N]], &V = Y.Inputs[YI[N]];
-      same(std::tie(U.Type, U.Bytes, U.Provenance) ==
-               std::tie(V.Type, V.Bytes, V.Provenance),
+      charge(U.Semantics.size() + V.Semantics.size());
+      same(std::tie(U.Type, U.Bytes, U.Provenance, U.Semantics) ==
+               std::tie(V.Type, V.Bytes, V.Provenance, V.Semantics),
            "operand kind, width or provenance differ");
       same((U.Predecessor == NoIndex) == (V.Predecessor == NoIndex),
            "PHI incoming-edge availability differs");

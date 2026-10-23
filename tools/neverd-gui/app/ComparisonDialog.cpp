@@ -284,6 +284,17 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
          "clone hypotheses. This does not validate behavior."));
   AnalyzeDataFlow = new QCheckBox(tr("Dependency evidence"), Settings);
   AnalyzeDataFlow->setObjectName("comparisonAnalyzeDataFlow");
+  FlowProfile = new QComboBox(Settings);
+  FlowProfile->setObjectName("comparisonFlowProfile");
+  FlowProfile->setAccessibleName(tr("SSA representation"));
+  FlowProfile->addItem(tr("Original SSA"),
+                       ::neverd::limits::diff::kMedSSAProfile);
+  FlowProfile->addItem(tr("Optimized SSA"),
+                       ::neverd::limits::diff::kLLVMSSAProfile);
+  FlowProfile->setEnabled(false);
+  FlowProfile->setToolTip(
+      tr("Optimized SSA reduces compiler scaffolding for comparison. Functions "
+         "outside its supported scope remain listed with a reason."));
   AnalyzeFlowRegions = new QCheckBox(tr("SSA region hypotheses"), Settings);
   AnalyzeFlowRegions->setObjectName("comparisonAnalyzeFlowRegions");
   AnalyzeFlowRegions->setToolTip(
@@ -294,6 +305,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
       AnalyzeDataFlow->setChecked(true);
   });
   connect(AnalyzeDataFlow, &QCheckBox::toggled, this, [this](bool On) {
+    FlowProfile->setEnabled(On);
     if (!On)
       AnalyzeFlowRegions->setChecked(false);
   });
@@ -329,6 +341,10 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
                             1);
   SettingsLayout->addWidget(FlowFunctions, 1, 2);
   SettingsLayout->addWidget(AnalyzeFlowRegions, 1, 3, 1, 3);
+  auto *ProfileLabel = new QLabel(tr("SSA representation"), Settings);
+  ProfileLabel->setBuddy(FlowProfile);
+  SettingsLayout->addWidget(ProfileLabel, 2, 0);
+  SettingsLayout->addWidget(FlowProfile, 2, 1, 1, 3);
   SettingsLayout->setColumnStretch(6, 1);
   Settings->setVisible(false);
   Root->addWidget(Settings);
@@ -683,8 +699,10 @@ void ComparisonDialog::run(const QString &Restore) {
       {{"use_names", Names->isChecked()},
        {"regions", AnalyzeRegions->isChecked()},
        {"flow_regions", AnalyzeFlowRegions->isChecked()},
-       {"dataflow", QJsonObject{{"enabled", AnalyzeDataFlow->isChecked()},
-                                {"max_functions", FlowFunctions->value()}}},
+       {"dataflow",
+        QJsonObject{{"enabled", AnalyzeDataFlow->isChecked()},
+                    {"profile", FlowProfile->currentData().toString()},
+                    {"max_functions", FlowFunctions->value()}}},
        {"min_similarity", Threshold->value()},
        {"timeout_ms", Timeout->value() * 1000}},
       Restore);
@@ -710,6 +728,8 @@ void ComparisonDialog::update() {
         Settings["regions"].toObject()["enabled"].toBool());
     const auto Flow = Settings["dataflow"].toObject();
     AnalyzeDataFlow->setChecked(Flow["enabled"].toBool());
+    FlowProfile->setCurrentIndex(FlowProfile->findData(
+        Flow["profile"].toString(::neverd::limits::diff::kMedSSAProfile)));
     AnalyzeFlowRegions->setChecked(
         Settings["flow_regions"].toObject()["enabled"].toBool());
     FlowFunctions->setValue(Flow["max_functions"].toInt(
