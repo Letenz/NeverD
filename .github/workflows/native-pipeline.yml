@@ -246,7 +246,7 @@ jobs:
                                   ('NeverDX86NativeStateAuditTests', 8),
                                   ('NeverDX86LegacyAlignedMoveTests', 7),
                                   ('NeverDX86UndefinedEffectsTests', 52),
-                                  ('NeverDSupportThreadTests', 12),
+                                  ('NeverDSupportThreadTests', 11),
                                   ('NeverDHighControlFlowTests', 420),
                                   ('NeverDAccelerationTests', 18),
                                   ('NeverDStringScanTests', 17),
@@ -275,6 +275,10 @@ jobs:
                   for name in ('FrameLocalLeafSummaryKeepsDefinitionIdentityAndDepth',
                                'FrameLocalLeafSummaryDoesNotReuseAnotherFunctionOrInvocation'):
                       assert 'MedABIPass.' + name in names
+              if owner == 'NeverDAccelerationTests':
+                  # The small-batch stack contract moved from support tests
+                  # to the scheduler owner; retain its explicit coverage.
+                  assert 'TaskScheduler.SmallAndSerialBatchesRetainTheWorkerStackContract' in names
               xml = output / (owner + '.xml')
               with (output / (owner + '.log')).open('w') as log:
                   result = subprocess.run([str(binary), '--gtest_output=xml:' + str(xml)],
