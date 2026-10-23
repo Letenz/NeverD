@@ -13,9 +13,12 @@
 #include "SessionImpl.h"
 
 #include "neverd/Common.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
+#include "neverd/diff/LLVMDataFlow.h"
 #include "neverd/diff/MedDataFlow.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Config/llvm-config.h"
 
 namespace neverd::sdk {
 using namespace diff;
@@ -30,7 +33,10 @@ readComparisonDataFlow(Session &S, const Program &P,
     return {};
   auto Evidence = std::make_shared<DataFlowEvidence>();
   Evidence->Recipe = std::string(VersionString) + ":native-" +
-                     DataFlowProfile.str() + ":" + Settings.describe();
+                     Settings.Profile + ":" + Settings.describe();
+  const bool Optimized = Settings.Profile == LLVMDataFlowProfile;
+  if (Optimized)
+    Evidence->Recipe += ":llvm=" LLVM_VERSION_STRING;
   Evidence->EligibleFunctions = llvm::count_if(
       P.Functions, [&](const auto &F) { return P.instructionCount(F) != 0; });
   uint64_t TotalNodes = 0;
@@ -69,7 +75,9 @@ readComparisonDataFlow(Session &S, const Program &P,
         PipelineOptions Options;
         S.applyAnalysisOptions(Options);
         Options.OnlyFunctionEntries = {F.Address};
-        Options.MedAnalysisOnly = true;
+        Options.MedAnalysisOnly = !Optimized;
+        Options.LiftMode = Optimized;
+        Options.RetainLLVMSourceObservations = Optimized;
         Options.EmitDumpOutput = false;
         Options.AnalysisCache = &Cache;
         auto Result =
@@ -100,9 +108,35 @@ readComparisonDataFlow(Session &S, const Program &P,
           auto GraphOptions = Settings.Graph;
           GraphOptions.MaxNodes = std::min<uint64_t>(
               GraphOptions.MaxNodes, Settings.MaxTotalNodes - TotalNodes);
-          Entry.Graph =
-              buildMedDataFlow(*Function, P.Identity.Revision, P.Identity.ABI,
-                               true, GraphOptions, Control);
+          if (Optimized) {
+            if (!Result.LlvmModule || !Result.LLVMSources ||
+                Result.LLVMVerifierFailed ||
+                Result.BackendUnhandledValueIntrinsics)
+              throw LLVMDataFlowUnsupported(
+                  "no complete verified LLVM emission");
+            if (Function->HasUnresolvedSEHFrame ||
+                llvm::any_of(Function->Blocks, [](const auto &B) {
+                  return !B.ExceptionalSuccs.empty() ||
+                         !B.ExceptionalPreds.empty();
+                }))
+              throw LLVMDataFlowUnsupported(
+                  "native exception edges are outside this profile");
+            const auto At = Result.LLVMSources->Functions.find(F.Address);
+            const auto *Lifted =
+                At == Result.LLVMSources->Functions.end()
+                    ? nullptr
+                    : llvm::dyn_cast_or_null<llvm::Function>(At->second);
+            if (!Lifted || Lifted->getParent() != Result.LlvmModule.get())
+              throw LLVMDataFlowUnsupported(
+                  "no retained native LLVM function binding");
+            Entry.Graph = buildLLVMDataFlow(
+                *Lifted, *Result.LLVMSources, F.Address, P.Identity.Revision,
+                P.Identity.ABI, true, GraphOptions, Control);
+          } else {
+            Entry.Graph =
+                buildMedDataFlow(*Function, P.Identity.Revision, P.Identity.ABI,
+                                 true, GraphOptions, Control);
+          }
           TotalNodes += Entry.Graph->Nodes.size();
           Entry.Availability = FlowAvailability::Available;
         }
@@ -113,6 +147,8 @@ readComparisonDataFlow(Session &S, const Program &P,
         }
         Entry.Availability = FlowAvailability::ResourceLimited;
         Entry.Reason = Stop.what();
+      } catch (const LLVMDataFlowUnsupported &Error) {
+        Entry.Reason = Error.what();
       } catch (const std::exception &Error) {
         Entry.Availability = FlowAvailability::Failed;
         Entry.Reason = Error.what();

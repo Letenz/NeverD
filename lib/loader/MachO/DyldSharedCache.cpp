@@ -23,6 +23,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <iterator>
 #include <set>
 #include <utility>
 
@@ -174,8 +175,22 @@ readFile(llvm::StringRef Path) {
   return std::move(*Buffer);
 }
 
+std::pair<uint32_t, uint32_t> slidePageRange(va_t Address, uint32_t PageSize,
+                                             uint32_t PageCount, va_t First,
+                                             va_t End) {
+  const uint64_t Bytes = uint64_t(PageCount) * PageSize;
+  const uint64_t Begin = std::min(std::max(First, Address) - Address, Bytes);
+  const uint64_t Limit = std::min(std::max(End, Address) - Address, Bytes);
+  return {uint32_t(Begin / PageSize),
+          uint32_t((Limit + PageSize - 1) / PageSize)};
+}
+
+bool overlapsFixup(va_t Slot, va_t First, va_t End) {
+  return Slot < End && (Slot >= First || First - Slot < arm64e::kPointerBytes);
+}
+
 llvm::Expected<std::vector<DyldCacheFixup>>
-readV2Slides(Bytes Data, Bytes Info, va_t Address,
+readV2Slides(Bytes Data, Bytes Info, va_t Address, va_t First, va_t End,
              const LoadProgress &Progress) {
   if (Info.size() < kV2HeaderBytes)
     return fail(kMalformedSlides);
@@ -206,7 +221,9 @@ readV2Slides(Bytes Data, Bytes Info, va_t Address,
   if (PageCount > kMaxSlidePages)
     return fail(kLimitExceeded);
   std::vector<DyldCacheFixup> Fixups;
-  for (uint32_t Page = 0; Page < PageCount; ++Page) {
+  const auto [FirstPage, EndPage] =
+      slidePageRange(Address, PageSize, PageCount, First, End);
+  for (uint32_t Page = FirstPage; Page < EndPage; ++Page) {
     Progress.check();
     const uint16_t Start = readLE<uint16_t>(Info.data() + StartsOffset +
                                             size_t(Page) * sizeof(uint16_t));
@@ -242,7 +259,8 @@ readV2Slides(Bytes Data, Bytes Info, va_t Address,
             return fail(kMalformedSlides);
           Fixup.Target += ValueAdd;
         }
-        Fixups.push_back(std::move(Fixup));
+        if (overlapsFixup(Fixup.Slot, First, End))
+          Fixups.push_back(std::move(Fixup));
         if (!Next)
           return llvm::Error::success();
         if (Next > PageSize - Offset)
@@ -582,9 +600,179 @@ DyldSharedCache::readImageFileBytes(size_t ImageIndex, uint64_t Offset,
   return *Result;
 }
 
+llvm::Expected<std::optional<DyldSharedCache::ObjCOptimization>>
+DyldSharedCache::readObjCOptimization() const {
+  if (Files.empty())
+    return fail(kMalformedHeader);
+  const Bytes Header = fileBytes(*Files.front());
+  const uint32_t HeaderSize = readLE<uint32_t>(Header.data() + kMappingOffset);
+  if (rangeInBounds(kObjCOptsSize, sizeof(uint64_t), HeaderSize)) {
+    const uint64_t Offset = readLE<uint64_t>(Header.data() + kObjCOptsOffset);
+    const uint64_t Size = readLE<uint64_t>(Header.data() + kObjCOptsSize);
+    if (bool(Offset) != bool(Size) || Offset > InvalidVA - Base)
+      return fail(kMalformedObjCOpts);
+    if (Size) {
+      const auto Data = readBytes(Base + Offset, Size);
+      if (!Data || Size < kObjCOptsV1Bytes)
+        return fail(kMalformedObjCOpts);
+      const uint32_t Version = readLE<uint32_t>(Data->data());
+      if (Version != kObjCOptsV1 && Version != kObjCOptsV2)
+        return fail(kUnsupportedObjCOpts);
+      if (Version == kObjCOptsV2 && Size < kObjCOptsV2Bytes)
+        return fail(kMalformedObjCOpts);
+      return ObjCOptimization{Base + Offset, Version, false, *Data};
+    }
+  }
+  for (size_t I = 0; I < Images.size(); ++I) {
+    if (Images[I].Path != kObjCLibraryPath)
+      continue;
+    auto Layout = readImageLayout(I);
+    if (!Layout)
+      return Layout.takeError();
+    for (const auto &Section : Layout->Sections) {
+      if (Section.Name != kObjCLegacyOptSection ||
+          Section.SegmentName != section_names::macho::TextSeg)
+        continue;
+      const auto Data = readBytes(Section.VA, Section.FileSz);
+      if (!Data || Data->size() < sizeof(uint32_t))
+        return fail(kMalformedObjCOpts);
+      const uint32_t Version = readLE<uint32_t>(Data->data());
+      if (Version != kObjCLegacyV15 && Version != kObjCLegacyV16)
+        return fail(kUnsupportedObjCOpts);
+      const size_t Minimum =
+          Version == kObjCLegacyV15 ? kObjCLegacyV15Bytes : kObjCLegacyV16Bytes;
+      if (Data->size() < Minimum)
+        return fail(kMalformedObjCOpts);
+      return ObjCOptimization{Section.VA, Version, true, *Data};
+    }
+  }
+  return std::optional<ObjCOptimization>();
+}
+
+llvm::Expected<std::optional<DyldCacheSelectorLayout>>
+DyldSharedCache::objcSelectorLayout() const {
+  auto Parsed = readObjCOptimization();
+  if (!Parsed)
+    return Parsed.takeError();
+  if (!*Parsed)
+    return std::optional<DyldCacheSelectorLayout>();
+  const auto &Info = **Parsed;
+  if (Info.Legacy && Info.Version == kObjCLegacyV15)
+    return DyldCacheSelectorLayout{DyldCacheSelectorEncoding::RecordRelative,
+                                   0};
+  va_t Address = 0;
+  if (Info.Legacy) {
+    const int64_t Relative =
+        readLE<int64_t>(Info.Data.data() + kObjCLegacySelectorBaseOffset);
+    if (!Relative)
+      return std::optional<DyldCacheSelectorLayout>();
+    const uint64_t Magnitude =
+        Relative < 0 ? 0 - uint64_t(Relative) : uint64_t(Relative);
+    if (Relative < 0 ? Magnitude > Info.Address
+                     : Magnitude > InvalidVA - Info.Address)
+      return fail(kMalformedObjCOpts);
+    Address =
+        Relative < 0 ? Info.Address - Magnitude : Info.Address + Magnitude;
+  } else {
+    const uint64_t Relative =
+        readLE<uint64_t>(Info.Data.data() + kObjCSelectorBaseOffset);
+    if (!Relative)
+      return std::optional<DyldCacheSelectorLayout>();
+    if (Relative > InvalidVA - Base)
+      return fail(kMalformedObjCOpts);
+    Address = Base + Relative;
+  }
+  if (!readBytes(Address, 1))
+    return fail(kMalformedObjCOpts);
+  return DyldCacheSelectorLayout{DyldCacheSelectorEncoding::BaseRelative,
+                                 Address};
+}
+
+llvm::Expected<va_t> DyldSharedCache::objcImageAddress(uint32_t Index) const {
+  auto Parsed = readObjCOptimization();
+  if (!Parsed)
+    return Parsed.takeError();
+  if (!*Parsed)
+    return fail(kMalformedObjCOpts);
+  const auto &Info = **Parsed;
+  va_t Address = 0;
+  if (Info.Legacy) {
+    const int64_t Relative =
+        readLE<int32_t>(Info.Data.data() + kObjCLegacyHeaderInfoOffset);
+    if (!Relative ||
+        (Relative < 0 ? uint64_t(-Relative) > Info.Address
+                      : uint64_t(Relative) > InvalidVA - Info.Address))
+      return fail(kMalformedObjCOpts);
+    Address = Relative < 0 ? Info.Address - uint64_t(-Relative)
+                           : Info.Address + uint64_t(Relative);
+  } else {
+    const uint64_t Offset =
+        readLE<uint64_t>(Info.Data.data() + kObjCHeaderInfoOffset);
+    if (!Offset || Offset > InvalidVA - Base)
+      return fail(kMalformedObjCOpts);
+    Address = Base + Offset;
+  }
+  const auto Header = readBytes(Address, kObjCHeaderInfoHeaderBytes);
+  if (!Header)
+    return fail(kMalformedObjCOpts);
+  const uint32_t Count = readLE<uint32_t>(Header->data());
+  const uint32_t Stride =
+      readLE<uint32_t>(Header->data() + kObjCHeaderInfoStrideOffset);
+  if (Count > kMaxImages || Index >= Count ||
+      (Stride != kObjCHeaderInfoRowBytes &&
+       Stride != kObjCHeaderInfoDyldRowBytes) ||
+      !readBytes(Address,
+                 kObjCHeaderInfoHeaderBytes + uint64_t(Count) * Stride))
+    return fail(kMalformedObjCOpts);
+  const va_t Row =
+      Address + kObjCHeaderInfoHeaderBytes + uint64_t(Index) * Stride;
+  const int64_t Relative = readLE<int64_t>(readBytes(Row, Stride)->data());
+  const uint64_t Magnitude =
+      Relative < 0 ? 0 - uint64_t(Relative) : uint64_t(Relative);
+  if (Relative < 0 ? Magnitude > Row : Magnitude > InvalidVA - Row)
+    return fail(kMalformedObjCOpts);
+  const va_t Target = Relative < 0 ? Row - Magnitude : Row + Magnitude;
+  if (std::none_of(Images.begin(), Images.end(),
+                   [&](const auto &Image) { return Image.Address == Target; }))
+    return fail(kMalformedObjCOpts);
+  return Target;
+}
+
 llvm::Expected<std::vector<DyldCacheFixup>>
 DyldSharedCache::readSlideFixups(size_t MappingIndex,
                                  const LoadProgress &Progress) const {
+  return readMappingSlides(MappingIndex, 0, InvalidVA, Progress);
+}
+
+llvm::Expected<std::vector<DyldCacheFixup>>
+DyldSharedCache::readSlideFixupsInRange(va_t Address, uint64_t Size,
+                                        const LoadProgress &Progress) const {
+  Progress.check();
+  if (Size > InvalidVA - Address)
+    return fail(kMalformedSlides);
+  std::vector<DyldCacheFixup> Fixups;
+  if (!Size)
+    return Fixups;
+  for (size_t Index = 0; Index < Mappings.size(); ++Index) {
+    const auto &M = Mappings[Index];
+    if (Address >= M.Address + M.Size || Address + Size <= M.Address)
+      continue;
+    auto Part = readMappingSlides(Index, Address, Address + Size, Progress);
+    if (!Part)
+      return Part.takeError();
+    if (Part->size() > kMaxFixups - Fixups.size())
+      return fail(kLimitExceeded);
+    Fixups.insert(Fixups.end(), std::make_move_iterator(Part->begin()),
+                  std::make_move_iterator(Part->end()));
+  }
+  std::sort(Fixups.begin(), Fixups.end(),
+            [](const auto &A, const auto &B) { return A.Slot < B.Slot; });
+  return Fixups;
+}
+
+llvm::Expected<std::vector<DyldCacheFixup>>
+DyldSharedCache::readMappingSlides(size_t MappingIndex, va_t First, va_t End,
+                                   const LoadProgress &Progress) const {
   Progress.check();
   if (MappingIndex >= Mappings.size())
     return fail(kMalformedMappings);
@@ -599,7 +787,7 @@ DyldSharedCache::readSlideFixups(size_t MappingIndex,
   const uint32_t Version = readLE<uint32_t>(Info.data() + kSlideVersion);
   if (Version == kSlideV2)
     return readV2Slides(File.slice(M.FileOffset, M.Size), Info, M.Address,
-                        Progress);
+                        First, End, Progress);
   if (Version != kSlideV3 && Version != kSlideV5)
     return fail(kUnsupportedSlides);
   const uint32_t PageSize = readLE<uint32_t>(Info.data() + kSlidePageSize);
@@ -613,7 +801,9 @@ DyldSharedCache::readSlideFixups(size_t MappingIndex,
     return fail(kMalformedSlides);
   if (PageCount > kMaxSlidePages)
     return fail(kLimitExceeded);
-  for (uint32_t Page = 0; Page < PageCount; ++Page) {
+  const auto [FirstPage, EndPage] =
+      slidePageRange(M.Address, PageSize, PageCount, First, End);
+  for (uint32_t Page = FirstPage; Page < EndPage; ++Page) {
     Progress.check();
     uint64_t Offset = readLE<uint16_t>(Info.data() + kSlideHeaderBytes +
                                        size_t(Page) * sizeof(uint16_t));
@@ -671,7 +861,8 @@ DyldSharedCache::readSlideFixups(size_t MappingIndex,
       } else if (Version == kSlideV5) {
         Fixup.Target |= kV5High8.extract(Word) << arm64e::kHigh8Shift;
       }
-      Fixups.push_back(std::move(Fixup));
+      if (overlapsFixup(Fixup.Slot, First, End))
+        Fixups.push_back(std::move(Fixup));
       if (!Next)
         break;
       Offset += Next * kChainStride;

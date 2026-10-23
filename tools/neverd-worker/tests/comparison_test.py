@@ -187,6 +187,60 @@ def aarch64_profiles(client, args, root, fixture):
     print("AArch64 ELF/COFF/Mach-O comparison, source, SSA/slices/regions and saved CLI parity passed")
 
 
+
+def optimized_ssa_profiles(client, args, root, fixture):
+    source = fixture.with_name("compiler_regions_fixture.c")
+    for fmt, target in (("elf", "aarch64-unknown-linux-gnu"),
+                         ("coff", "aarch64-pc-windows-msvc"),
+                         ("macho", "arm64-apple-macos11")):
+        paths = [root / f"optimized-{fmt}-O{level}.o" for level in (0, 2)]
+        for path, level in zip(paths, (0, 2)):
+            subprocess.run([args.cc, f"--target={target}", "-c", f"-O{level}",
+                            "-fno-asynchronous-unwind-tables", str(source), "-o", str(path)],
+                           check=True, capture_output=True)
+        start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paths[1])},
+                 "options": {"use_names": False, "dataflow": {"profile": "llvm-ssa-v1"},
+                             "flow_regions": True}}
+        summary = ok(client, "comparison_start", start)
+        assert summary["flow_regions"]["anchor_count"] > 0, summary
+        assert summary["flow_regions"]["profile"] == "llvm-neighborhoods-v1"
+        entries = ok(client, "comparison_dataflow", {"kind": "functions"})["rows"]
+        address = next(e["function"] for e in entries if e["availability"] == "available")
+        nodes = ok(client, "comparison_dataflow", {"kind": "nodes", "address": address, "limit": 200})
+        assert nodes["schema_version"] == 3 and nodes["profile"] == "llvm-ssa-v1", nodes
+        native = next(n for n in nodes["rows"] if n["origins"])
+        sliced = ok(client, "comparison_slice", {"address": address, "seeds": [native["id"]]})
+        assert sliced["state"] == "complete" and sliced["rows"], sliced
+        anchors = ok(client, "comparison_flow_regions", {"all_anchors": True, "limit": 1})
+        paired = ok(client, "comparison_flow_regions", {"anchor": anchors["items"][0]["anchor"], "limit": 200})
+        plural = False
+        for row in paired["rows"]:
+            for side in ("primary", "secondary"):
+                node = row[side]
+                assert node["original"] is None and node["origin_sequence"] == -1, node
+                origins = {o["address"].lower() for o in node["origins"]}
+                originals = {o["address"].lower() for o in node["originals"]}
+                assert origins == originals, node
+                assert all(o["bytes"] and o["mnemonic"] for o in node["originals"])
+                plural |= len(origins) > 1
+        assert plural, paired
+        document = ok(client, "comparison_export")
+        saved = root / f"optimized-{fmt}.nddiff"
+        saved.write_text(json.dumps(document))
+        cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(paths[0]),
+                              "-b", str(paths[1]), "--reopen", str(saved), "--json"],
+                             capture_output=True, text=True, timeout=60)
+        assert cli.returncode in (0, 2), cli.stderr
+        assert json.loads(cli.stdout) == document
+        ok(client, "comparison_start", {**start, "restore_path": str(saved)})
+        assert ok(client, "comparison_export") == document
+        refused = client.call("comparison_start", {
+            **start, "options": {"dataflow": {"profile": "unknown-ssa"}}})
+        assert refused["status"] == "error", refused
+        assert ok(client, "comparison_export") == document
+    print("Optimized AArch64 O0/O2 SSA, plural origins, slices and saved CLI/worker parity passed")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("worker")
@@ -210,6 +264,7 @@ def main():
             assert client.call("comparison_functions")["error"]["code"] == "comparison_not_loaded"
             ambiguity_pages(client, root)
             aarch64_profiles(client, args, root, fixture)
+            optimized_ssa_profiles(client, args, root, fixture)
             start = {"primary": {"path": str(a)}, "secondary": {"path": str(b)}, "options": {"regions": True, "dataflow": True, "flow_regions": {"min_nodes": 2}}}
             summary = ok(client, "comparison_start", start)
             assert summary["schema"] == "neverd.bindiff.summary"

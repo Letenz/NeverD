@@ -134,7 +134,7 @@ FlowRegionSettings readFlowRegionSettings(const Value &V) {
 }
 Object flowRegionSummaryJSON(const FlowRegionAnalysis &R) {
   return Object{
-      {"profile", FlowRegionProfile},
+      {"profile", R.Profile},
       {"state", R.State ? Value(stateName(*R.State)) : Value(nullptr)},
       {"stopped_phase", R.StoppedPhase},
       {"work", R.Work},
@@ -232,11 +232,13 @@ void writeFlowRegionAnalysisFields(llvm::json::OStream &Out,
 FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
                                           const FlowRegionSettings &Settings) {
   const auto &O = object(V);
-  require(text(field(O, "profile")) == FlowRegionProfile,
+  const auto Profile = text(field(O, "profile"));
+  require(Profile == FlowRegionProfile || Profile == LLVMFlowRegionProfile,
           "unsupported profile");
   require(text(field(O, "semantic_validation")) == "not_performed",
           "SSA correspondence does not establish semantic validation");
   FlowRegionAnalysis R;
+  R.Profile = Profile;
   if (!field(O, "state").getAsNull()) {
     R.State = stateNamed(text(field(O, "state")));
     require(R.State.has_value(), "unknown analysis state");
@@ -279,9 +281,12 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
     Row.PhiBlocks =
         pairs(field(A, "phi_blocks"), Settings.MaxNodePairs - StoredPairs);
     StoredPairs += Row.PhiBlocks.size();
-    Row.PrimaryOrigins = count(field(A, "primary_origins"), Row.Nodes.size());
+    const uint64_t OriginAllowance = R.Profile == LLVMFlowRegionProfile
+                                         ? limits::kMaxFlowNativeInstructions
+                                         : Row.Nodes.size();
+    Row.PrimaryOrigins = count(field(A, "primary_origins"), OriginAllowance);
     Row.SecondaryOrigins =
-        count(field(A, "secondary_origins"), Row.Nodes.size());
+        count(field(A, "secondary_origins"), OriginAllowance);
     Row.UniqueSeed = boolean(field(A, "unique_seed"));
     Row.Gaps = count(field(A, "gap_mask"), AllFlowGaps);
     Row.OpenDataFrontier = boolean(field(A, "open_data_frontier"));
@@ -338,8 +343,9 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
   require(R.Anchors.size() == count(field(O, "anchor_count")) &&
               R.Hypotheses.size() == count(field(O, "hypothesis_count")),
           "analysis counts disagree with inventories");
-  require(R.State || R == FlowRegionAnalysis{},
-          "unstarted analysis contains evidence");
+  FlowRegionAnalysis Empty;
+  Empty.Profile = R.Profile;
+  require(R.State || R == Empty, "unstarted analysis contains evidence");
   require(Settings.Enabled || !R.State, "unrequested SSA region evidence");
   return R;
 }

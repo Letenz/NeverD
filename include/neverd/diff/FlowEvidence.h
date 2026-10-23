@@ -21,6 +21,7 @@ struct DataFlowSettings {
   unsigned MaxNativeInstructions = limits::diff::kDefaultFlowNativeInstructions;
   uint64_t MaxTotalNodes = limits::diff::kDefaultFlowTotalNodes;
   DataFlowOptions Graph;
+  std::string Profile = DataFlowProfile.str();
   bool operator==(const DataFlowSettings &) const = default;
   std::optional<std::string> validate() const;
   std::string describe() const;

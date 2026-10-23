@@ -292,12 +292,14 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                    !requiresSerialLLVMEmission(Result.MedFuncs, Img);
 
   if (UseShards) {
-    LLVMEmissionResult Emission = emitLLVMSharded(
-        Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.abiFormat(),
-        Opts.NoOpt, Workers, !Result.LibraryRecognitions.empty(),
-        Result.LibraryRecognitions, Dbg,
-        SourceViewOptions{.Symbolic = Opts.SymbolicLLVMSource},
-        &Result.CallPrototypeArguments);
+    LLVMEmissionResult Emission =
+        emitLLVMSharded(Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img,
+                        Img.abiFormat(), Opts.NoOpt, Workers,
+                        Opts.RetainLLVMSourceObservations ||
+                            !Result.LibraryRecognitions.empty(),
+                        Result.LibraryRecognitions, Dbg,
+                        SourceViewOptions{.Symbolic = Opts.SymbolicLLVMSource},
+                        &Result.CallPrototypeArguments);
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;
     Result.LlvmModule = std::move(Emission.Module);
@@ -310,7 +312,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     MedLLVMEmitter MedEmitter;
     MedEmitter.setDebugContext(Dbg);
     MedEmitter.setPrototypeArgumentCallees(&Result.CallPrototypeArguments);
-    if (!Result.LibraryRecognitions.empty()) {
+    if (Opts.RetainLLVMSourceObservations ||
+        !Result.LibraryRecognitions.empty()) {
       Result.LLVMSources = std::make_shared<LLVMSourceMap>();
       MedEmitter.setSourceMap(Result.LLVMSources.get());
     }

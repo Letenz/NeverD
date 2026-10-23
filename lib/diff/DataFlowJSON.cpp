@@ -82,25 +82,38 @@ Array gaps(uint32_t Mask) {
     Out.push_back(Name);
   return Out;
 }
-Object node(const FlowNode &N) {
+Object node(const FlowNode &N, bool Extended) {
   Array Inputs;
-  for (const auto &I : N.Inputs)
-    Inputs.push_back(Array{uint8_t(I.Type), index(I.Node), I.Bytes,
-                           hex(I.Value), I.Provenance, hex(I.AddressOwner),
-                           index(I.Predecessor)});
-  return Object{{"opcode", N.Opcode},
-                {"result_bytes", N.ResultBytes},
-                {"memory_ordering", N.MemoryOrdering},
-                {"memory_address_space", N.MemoryAddressSpace},
-                {"block", N.Block},
-                {"address", hex(N.Address)},
-                {"origin_sequence", N.OriginSequence},
-                {"phi", N.Phi},
-                {"commutative", N.Commutative},
-                {"gap_mask", N.Gaps},
-                {"call_argument_begin", index(N.CallArgumentBegin)},
-                {"call_argument_count", N.CallArgumentCount},
-                {"inputs", std::move(Inputs)}};
+  for (const auto &I : N.Inputs) {
+    Array Input{uint8_t(I.Type),     index(I.Node), I.Bytes,
+                hex(I.Value),        I.Provenance,  hex(I.AddressOwner),
+                index(I.Predecessor)};
+    if (Extended)
+      Input.push_back(I.Semantics);
+    Inputs.push_back(std::move(Input));
+  }
+  Object Out{{"opcode", N.Opcode},
+             {"result_bytes", N.ResultBytes},
+             {"memory_ordering", N.MemoryOrdering},
+             {"memory_address_space", N.MemoryAddressSpace},
+             {"block", N.Block},
+             {"address", hex(N.Address)},
+             {"origin_sequence", N.OriginSequence},
+             {"phi", N.Phi},
+             {"commutative", N.Commutative},
+             {"gap_mask", N.Gaps},
+             {"call_argument_begin", index(N.CallArgumentBegin)},
+             {"call_argument_count", N.CallArgumentCount},
+             {"inputs", std::move(Inputs)}};
+  if (Extended) {
+    Out["semantics"] = N.Semantics;
+    Array Origins;
+    for (const auto &O : N.Origins)
+      Origins.push_back(
+          Object{{"address", hex(O.Address)}, {"sequence", O.Sequence}});
+    Out["origins"] = std::move(Origins);
+  }
+  return Out;
 }
 Object block(const FlowBlock &B) {
   return Object{{"begin", hex(B.Begin)},
@@ -111,7 +124,7 @@ Object block(const FlowBlock &B) {
 }
 Object metadata(const DataFlowGraph &G) {
   return Object{{"schema", "neverd.bindiff.dataflow"},
-                {"schema_version", DataFlowSchemaVersion},
+                {"schema_version", dataFlowSchemaVersion(G.Profile)},
                 {"profile", G.Profile},
                 {"revision", G.Revision},
                 {"abi", G.ABI},
@@ -151,11 +164,14 @@ DataFlowOptions readDataFlowOptions(const Value &V) {
   return Out;
 }
 Object dataFlowSettingsJSON(const DataFlowSettings &S) {
-  return Object{{"enabled", S.Enabled},
-                {"max_functions", S.MaxFunctions},
-                {"max_native_instructions", S.MaxNativeInstructions},
-                {"max_total_nodes", S.MaxTotalNodes},
-                {"graph", dataFlowOptionsJSON(S.Graph)}};
+  Object Out{{"enabled", S.Enabled},
+             {"max_functions", S.MaxFunctions},
+             {"max_native_instructions", S.MaxNativeInstructions},
+             {"max_total_nodes", S.MaxTotalNodes},
+             {"graph", dataFlowOptionsJSON(S.Graph)}};
+  if (S.Profile != DataFlowProfile)
+    Out["profile"] = S.Profile;
+  return Out;
 }
 DataFlowSettings readDataFlowSettings(const Value &V) {
   DataFlowSettings S;
@@ -168,10 +184,12 @@ DataFlowSettings readDataFlowSettings(const Value &V) {
     (void)Ignored;
     require(Key == "enabled" || Key == "max_functions" ||
                 Key == "max_native_instructions" || Key == "max_total_nodes" ||
-                Key == "graph",
+                Key == "graph" || Key == "profile",
             "unknown collection setting " + Key.str());
   }
   S.Enabled = O.get("enabled") ? boolean(*O.get("enabled")) : true;
+  if (const auto *P = O.get("profile"))
+    S.Profile = text(*P, limits::kMaxFlowIdentityBytes);
   S.MaxFunctions =
       count(O, "max_functions", S.MaxFunctions, limits::kMaxFlowFunctions);
   S.MaxNativeInstructions =
@@ -321,7 +339,7 @@ void writeDataFlowGraph(llvm::json::OStream &Out, const DataFlowGraph &G) {
     });
     Out.attributeArray("nodes", [&] {
       for (const auto &N : G.Nodes)
-        Out.value(node(N));
+        Out.value(node(N, G.Profile == LLVMDataFlowProfile));
     });
   });
 }
@@ -330,11 +348,13 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   if (auto Error = Options.validate())
     throw std::invalid_argument(*Error);
   const auto &O = object(V);
-  require(field(O, "schema").getAsString() == "neverd.bindiff.dataflow" &&
-              count(field(O, "schema_version")) == DataFlowSchemaVersion,
-          "unsupported saved graph schema");
   DataFlowGraph G;
   G.Profile = text(field(O, "profile"), limits::kMaxFlowIdentityBytes);
+  const bool Extended = G.Profile == LLVMDataFlowProfile;
+  require(field(O, "schema").getAsString() == "neverd.bindiff.dataflow" &&
+              count(field(O, "schema_version")) ==
+                  dataFlowSchemaVersion(G.Profile),
+          "unsupported saved graph schema");
   G.Revision = text(field(O, "revision"), limits::kMaxFlowIdentityBytes);
   G.ABI = text(field(O, "abi"), limits::kMaxFlowIdentityBytes);
   G.Function = address(field(O, "function"));
@@ -373,10 +393,26 @@ DataFlowGraph readDataFlowGraph(const Value &V,
     Node.Gaps = count(field(N, "gap_mask"), AllFlowGaps);
     Node.CallArgumentBegin = index(field(N, "call_argument_begin"));
     Node.CallArgumentCount = count(field(N, "call_argument_count"));
+    if (Extended) {
+      Node.Semantics =
+          text(field(N, "semantics"), limits::kMaxFlowSemanticsBytes);
+      Edges += Node.Semantics.size();
+      require(Edges <= Options.MaxWork, "metadata exceeds work allowance");
+      for (const auto &Origin : array(field(N, "origins"), Options.MaxWork)) {
+        require(++Edges <= Options.MaxWork, "origins exceed work allowance");
+        const auto &O = object(Origin);
+        Node.Origins.push_back(
+            {address(field(O, "address")),
+             int32_t(count(field(O, "sequence"), INT32_MAX))});
+      }
+    } else {
+      require(!N.get("semantics") && !N.get("origins"),
+              "MedIR graph contains optimized metadata");
+    }
     for (const auto &Input : array(field(N, "inputs"), Options.MaxWork)) {
       require(++Edges <= Options.MaxWork, "operands exceed work allowance");
-      const auto &A = array(Input, 7);
-      require(A.size() == 7, "an operand needs seven fields");
+      const auto &A = array(Input, Extended ? 8 : 7);
+      require(A.size() == (Extended ? 8u : 7u), "invalid operand field count");
       FlowOperand I;
       I.Type =
           FlowOperand::Kind(count(A[0], unsigned(FlowOperand::Kind::Unknown)));
@@ -386,6 +422,12 @@ DataFlowGraph readDataFlowGraph(const Value &V,
       I.Provenance = count(A[4], UINT8_MAX);
       I.AddressOwner = address(A[5]);
       I.Predecessor = index(A[6]);
+      if (Extended) {
+        I.Semantics = text(A[7], limits::kMaxFlowSemanticsBytes);
+        Edges += I.Semantics.size();
+        require(Edges <= Options.MaxWork,
+                "operand metadata exceeds work allowance");
+      }
       require((I.Type == FlowOperand::Kind::Node) == (I.Node != NoIndex),
               "operand kind disagrees with its definition");
       Node.Inputs.push_back(I);
@@ -401,7 +443,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
 }
 Object dataFlowNodeJSON(const DataFlowGraph &G, uint32_t N) {
   require(N < G.Nodes.size(), "missing graph node");
-  auto Row = node(G.Nodes[N]);
+  auto Row = node(G.Nodes[N], G.Profile == LLVMDataFlowProfile);
   Row["id"] = N;
   Row["gaps"] = gaps(G.Nodes[N].Gaps);
   return Row;

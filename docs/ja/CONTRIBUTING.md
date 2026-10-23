@@ -1,6 +1,6 @@
 **Languages**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
+<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
 
 # NeverD への貢献
 
@@ -147,8 +147,16 @@ NeverSight fork 由来で、互換修正は各既定ブランチに置きます�
 worker を保持し、8 MiB スタックを確認します。`tbbmalloc` やその proxy はビルド/ロードしません。
 大きなスタックの呼び出し元は余裕を再利用し、小さい場合はネイティブ調整スレッドを使います。
 初回使用後に fork するホスト、SDK を動的アンロードするホストはネイティブスレッド基準
-`NEVERD_ENABLE_TBB=OFF` が必須です。保持型 scheduler はこれらのライフサイクルをサポートせず、
-ホスト共有 TBB scheduler を終了しません。有効ビルドには runtime DLL/共有ライブラリを同梱します。
+`NEVERD_ENABLE_TBB=OFF` が必須です。保持型 scheduler はこれらのライフサイクルをサポートしません。
+oneTBB は共有コアに静的リンクされ、そのシンボルはコア内に限定されます。CLI からのコンポーネント呼び出しと
+GUI worker への要求は同じ scheduler を使用し、TBB DLL/共有ライブラリは配布しません。
+`neverd_shared` をリンクするターゲットは共有 scheduler を自動的に選択します。別のターゲットを経由して
+SDK を使用し、コンポーネントのアーカイブもリンクするクライアントは、最終ターゲットに
+`neverd_use_shared_task_scheduler` を適用する必要があります。独立したコンポーネントツールは
+独自のランタイムを維持します。
+この限定的な統合により、同一プロセス内で複数の NeverD scheduler が動作することを防ぎます。
+上流では引き続き [oneTBB の静的ビルド](https://uxlfoundation.github.io/oneTBB/main/intro/static_linking.html)
+を非サポートとし、一般的な用途での使用を推奨していません。
 
 ネイティブ検証、無効化比較、互換範囲は[高速化検証](../testing.md#acceleration-libraries)を参照してください。
 

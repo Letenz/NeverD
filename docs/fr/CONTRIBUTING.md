@@ -1,6 +1,6 @@
 **Langues**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
+<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
 
 # Contribuer à NeverD
 
@@ -159,8 +159,17 @@ oneTBB conserve ses workers entre lots, vérifie leurs piles de 8 MiB et ne comp
 `tbbmalloc` ou son proxy. Les appelants à grande pile réutilisent leur marge, les autres
 reçoivent un coordinateur natif. Les hôtes qui forkent après la première utilisation ou
 déchargent dynamiquement le SDK doivent utiliser les threads natifs (`NEVERD_ENABLE_TBB=OFF`) :
-ces cycles de vie ne sont pas pris en charge par l’ordonnanceur persistant. Celui-ci ne finalise
-pas l’ordonnanceur TBB partagé de l’hôte. Distribuez sa DLL/bibliothèque partagée avec le build activé.
+ces cycles de vie ne sont pas pris en charge par l’ordonnanceur persistant. oneTBB est lié
+statiquement au noyau partagé, et ses symboles restent privés à ce noyau. Les appels aux
+composants depuis la CLI et les requêtes au worker de la GUI utilisent le même ordonnanceur ;
+aucune DLL ni bibliothèque partagée TBB n’est distribuée. Les cibles liées à `neverd_shared`
+sélectionnent automatiquement l’ordonnanceur partagé. Les clients qui accèdent au SDK par
+une autre cible et lient également des archives de composants doivent appliquer
+`neverd_use_shared_task_scheduler` à leur cible finale. Les outils de composants autonomes
+conservent leur propre environnement d’exécution.
+Cette intégration restreinte évite plusieurs ordonnanceurs NeverD dans un même processus ;
+le projet amont considère toujours les [compilations statiques de oneTBB](https://uxlfoundation.github.io/oneTBB/main/intro/static_linking.html)
+comme non prises en charge et déconseille leur usage général.
 
 Voir la [validation des accélérations](../testing.md#acceleration-libraries) pour les tests natifs, comparaisons et limites de compatibilité.
 

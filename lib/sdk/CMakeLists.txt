@@ -215,7 +215,7 @@ if(APPLE AND TARGET LLVMSupport)
 endif()
 
 target_compile_definitions(neverd_shared PRIVATE NEVERD_EXPORTS)
-neverd_stage_task_runtime(neverd_shared)
+neverd_own_task_scheduler(neverd_shared)
 neverd_stage_performance_notices(neverd_shared)
 
 set_target_properties(neverd_shared PROPERTIES

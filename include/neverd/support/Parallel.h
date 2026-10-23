@@ -34,6 +34,11 @@ namespace neverd {
 
 /// Synchronous task scheduler. The callback owns/drains its work
 /// queue, just as in runWithLargeStackThreads.
+#if defined(_WIN32) && defined(NEVERD_TASK_SCHEDULER_EXPORTS)
+__declspec(dllexport)
+#elif defined(__GNUC__)
+__attribute__((visibility("default")))
+#endif
 void runTaskWorkers(unsigned Count, void (*Body)(void *), void *Context);
 
 template <typename Fn> void runPipelineWorkers(unsigned Count, Fn &Worker) {

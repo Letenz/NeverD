@@ -115,6 +115,38 @@ def main():
     assert reopened == changed
     run('incompatible-abi', [args.neverd, 'diff', '--structural', '-a', str(baseline),
                             '-b', str(variants['clang-coff-O2']), '--flow-regions', '--json'], (1,))
+    # The optimized profile uses the ordinary machine LLVM optimizer. Keep the
+    # original x64 Med corpus above intact; qualify AArch64 O0/O2 separately.
+    profile = ['--dataflow-profile=llvm-ssa-v1']
+    for fmt, triple in (('elf', 'aarch64-unknown-linux-gnu'),
+                        ('coff', 'aarch64-pc-windows-msvc'),
+                        ('macho', 'arm64-apple-macos11')):
+        compiled = {}
+        for level in ('0', '1', '2', '3', 's'):
+            name = f'aarch64-{fmt}-O{level}'
+            compiled[level] = build(name, args.clang,
+                [f'--target={triple}', '-O' + level, '-fno-asynchronous-unwind-tables'])
+        for level, target in compiled.items():
+            doc = compare(f'optimized-{fmt}-O2-O{level}', compiled['2'], target, profile)
+            assert doc['settings']['dataflow']['profile'] == 'llvm-ssa-v1'
+            assert doc['flow_regions']['profile'] == 'llvm-neighborhoods-v1'
+        patch = build(f'aarch64-{fmt}-patched', args.clang,
+            [f'--target={triple}', '-O2', '-fno-asynchronous-unwind-tables', '-DFINAL_ADD=5u'])
+        report = root / f'optimized-{fmt}.nddiff'
+        changed = compare(f'optimized-{fmt}-patch', compiled['2'], patch,
+                          [*profile, '--save', str(report)])
+        assert any('constants' in pair['changes'] for pair in changed['matches'])
+        reopened = compare(f'optimized-{fmt}-reopen', compiled['2'], patch,
+                           ['--reopen', str(report)])
+        assert reopened == changed
+        crossed = compare(f'optimized-{fmt}-cross-level-patch', compiled['0'], patch, profile)
+        # Native function pairing can abstain across O0/O2. Require the exact
+        # changed scalar in both retained SSA graphs instead of inventing a
+        # native alignment solely to label the patch.
+        for side, value in (('primary', '0x3'), ('secondary', '0x5')):
+            graph = crossed['dataflow'][side]['entries'][0]['graph']
+            assert any(n['opcode'] == 'add' and any(i[0] == 1 and i[3] == value
+                       for i in n['inputs']) for n in graph['nodes']), (fmt, side, graph)
     manifest['status'] = 'passed'
     save_manifest()
     print(f"{len(manifest['comparisons'])} compiler/patch fixture comparisons; artifacts: {root}")

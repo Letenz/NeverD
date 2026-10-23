@@ -294,11 +294,18 @@ int runStructuralDiff() {
       else
         (*Options)["flow_regions"] = true;
     }
-    if (DiffDataFlow || DataFlowView || DiffFlowRegions || FlowRegionsView) {
+    if (DiffDataFlow || DataFlowView || DiffFlowRegions || FlowRegionsView ||
+        DiffDataFlowProfile.getNumOccurrences()) {
       if (auto *Flow = Options->getObject("dataflow"))
         (*Flow)["enabled"] = true;
       else
         (*Options)["dataflow"] = true;
+    }
+    if (DiffDataFlowProfile.getNumOccurrences()) {
+      if (!Options->getObject("dataflow"))
+        (*Options)["dataflow"] = llvm::json::Object{{"enabled", true}};
+      (*Options->getObject("dataflow"))["profile"] =
+          DiffDataFlowProfile.getValue();
     }
     if (DiffSliceNode.getNumOccurrences() && DiffFlowFunction.empty())
       throw std::runtime_error("--slice-node requires --flow-function");

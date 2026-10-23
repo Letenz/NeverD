@@ -226,7 +226,7 @@ addresses come from that side's pages; an ID belongs to one saved graph. The
 collection visits decoded bodies in address order, subject to the input filters.
 The default allowance is 16 functions per input, 4096 native instructions per
 function, 65536 SSA nodes per graph, and 262144 retained nodes per input. The
-`dataflow` settings object accepts `enabled`, `max_functions`,
+`dataflow` settings object accepts `enabled`, `profile`, `max_functions`,
 `max_native_instructions`, `max_total_nodes`, and `graph`; `graph` accepts
 `max_nodes`, `max_blocks`, `max_work`, and `rounds`. Limits have one owner in
 `diff/Limits.h`. Collection summaries distinguish eligible, processed,
@@ -272,9 +272,50 @@ comparison settings; original input load/discovery/filter settings still need to
 match. These dependency pages alone do not qualify compiler transformations or
 cross-ISA profiles.
 
+Choose **Settings → SSA representation → Optimized SSA** or pass
+`--dataflow-profile=llvm-ssa-v1` to compare the ordinary machine pipeline's
+optimized LLVM integer SSA. This can expose shared computations hidden by O0
+stack spills and register moves. It uses the existing LLVM optimizer without
+source-only rewrites and keeps the native delta available. `med-ssa-v2` remains
+the default; existing reports retain their original profile and encoding.
+
+```sh
+neverd diff --structural -a unoptimized.o -b optimized.o --ignore-names \
+  --flow-regions --dataflow-profile=llvm-ssa-v1 --save optimized.nddiff
+```
+
+The optimized profile initially admits scalar integers up to 64 bits, integer
+operations, comparisons, casts, selects, PHIs, direct branches/switches/returns
+and selected integer intrinsics (including funnel shifts). Exact bit widths,
+flags, predicates, intrinsic immediates and argument/return/function attributes
+remain correspondence evidence. Memory, ordinary calls, other types, native EH
+contracts and unmodelled metadata produce a visible unavailable reason for that
+function. Use Original SSA to inspect its retained machine dependencies. These
+boundaries do not affect native comparison or source inspection.
+
+Dependency schema 3 adds an exact `semantics` string to each optimized node and
+an eighth type/attribute field to each operand. A sorted `origins` array retains
+all direct emission observations as `{address, sequence}`. Optimized nodes keep
+legacy `address:0x0` and `origin_sequence:-1`; no arbitrary representative is
+chosen. No origins means no retained direct instruction attribution. Library
+expression ancestry is excluded. Region node pages add `originals`, one decoded
+instruction per distinct origin address, while `original` remains null. Native
+origin thresholds count unique instruction addresses, not operation sequences.
+Slices and GUI dependency pages retain these plural origins. Optimized regions
+use `llvm-neighborhoods-v1`; saved profile/metadata/origin edits are checked
+against a fresh projection, including empty and stopped collections.
+
+Native-to-SSA change associations and call-effect contracts currently require
+the original MedIR profile. Change review explicitly reports an unsupported
+association profile for LLVM evidence while retaining native changes. Local
+LLVM correspondences remain finite structural observations with open control
+boundaries; they do not prove equivalence or patch presence. Extraction still
+checks cancellation between bounded function jobs, not inside LLVM optimization.
+
 ## SSA region hypotheses
 
-`--flow-regions` enables `med-neighborhoods-v1` and dependency extraction. In the
+`--flow-regions` enables dependency extraction and `med-neighborhoods-v1` by default.
+Selecting optimized SSA uses `llvm-neighborhoods-v1`. In the
 desktop, enable **Settings → SSA region hypotheses**, compare, then choose
 **Regions → SSA dependency regions**. The separate native instruction comparison
 continues to show residual changes and uncovered code.

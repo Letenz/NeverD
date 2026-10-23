@@ -181,7 +181,7 @@ CallEffectReview reviewCallEffects(const Program &P, const CallImpact &Impact,
     const auto &F = P.Functions[FI];
     const auto *Entry = P.DataFlow->find(F.Address);
     if (!Entry || Entry->Availability != FlowAvailability::Available ||
-        !Entry->Graph)
+        !Entry->Graph || Entry->Graph->Profile != DataFlowProfile)
       return At->second;
     const auto &G = *Entry->Graph;
     for (const auto &N : G.Nodes)

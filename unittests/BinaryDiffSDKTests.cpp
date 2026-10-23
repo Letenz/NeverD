@@ -2211,3 +2211,139 @@ TEST_F(BinaryDiffSDK,
 }
 
 } // namespace
+
+TEST_F(BinaryDiffSDK, OptimizedSSAOriginsSlicesAndTamperRefusal) {
+  std::vector<uint8_t> Code{0x89, 0xf8, 0x83, 0xc0, 3,    0x83, 0xf0, 23,
+                            0x6b, 0xc0, 7,    0x83, 0xc0, 9,    0xc3};
+  auto A = input(Code);
+  Code[4] = 5;
+  auto B = input(Code, 0x8000);
+  const char *Options =
+      R"({"discover":false,"dataflow":{"profile":"llvm-ssa-v1"},"flow_regions":true})";
+  auto C = compare(A, B, Options);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Page = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000","limit":200})"));
+  ASSERT_EQ(Page.getAsObject()->getString("availability"), "available")
+      << render(Page);
+  EXPECT_EQ(Page.getAsObject()->getString("profile"), "llvm-ssa-v1");
+  EXPECT_EQ(Page.getAsObject()->getInteger("schema_version"), 3);
+  const auto *Rows = Page.getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows && !Rows->empty());
+  int64_t NativeNode = -1;
+  for (const auto &Row : *Rows) {
+    const auto *N = Row.getAsObject();
+    EXPECT_EQ(N->getInteger("origin_sequence"), -1);
+    EXPECT_EQ(N->getString("address"), "0x0");
+    ASSERT_TRUE(N->getArray("origins"));
+    if (!N->getArray("origins")->empty())
+      NativeNode = *N->getInteger("id");
+  }
+  ASSERT_GE(NativeNode, 0);
+  auto Slice = parsed(neverd_comparison_slice_json(
+      C, render(llvm::json::Object{{"address", "0x1000"},
+                                   {"seeds", llvm::json::Array{NativeNode}}})
+             .c_str()));
+  EXPECT_EQ(Slice.getAsObject()->getString("state"), "complete");
+  EXPECT_FALSE(Slice.getAsObject()->getArray("rows")->empty());
+  const auto Observations =
+      parsed(neverd_comparison_observations_json(C, R"({"address":"0x1000"})"));
+  const auto *Status = Observations.getAsObject()->getObject("primary_ssa");
+  ASSERT_TRUE(Status);
+  EXPECT_EQ(Status->getString("availability"), "unsupported_profile");
+  EXPECT_FALSE(Status->getString("reason")->empty());
+  EXPECT_EQ(Status->getBoolean("indexed"), false);
+  auto Reopened = compare(A, B, Options);
+  ASSERT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+  EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
+  for (unsigned Kind = 0; Kind < 4; ++Kind) {
+    auto Forged = llvm::json::parse(Saved);
+    auto *Root = Forged->getAsObject();
+    auto *Graph = Root->getObject("dataflow")
+                      ->getObject("primary")
+                      ->getArray("entries")
+                      ->front()
+                      .getAsObject()
+                      ->getObject("graph");
+    auto *Node = (*Graph->getArray("nodes"))[NativeNode].getAsObject();
+    if (Kind == 0)
+      (*Node)["semantics"] = "forged-typed-operation";
+    else if (Kind == 1)
+      (*Node->getArray("origins"))[0].getAsObject()->operator[]("address") =
+          "0xdeadbeef";
+    else if (Kind == 2)
+      (*Graph)["profile"] = "med-ssa-v2";
+    else
+      (*Root->getObject("flow_regions"))["profile"] = "med-neighborhoods-v1";
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
+}
+
+TEST_F(BinaryDiffSDK, OptimizedSSAUnsupportedMemoryAndBudgetsRemainVisible) {
+  const auto Memory = input({0x8b, 0x07, 0xc3});
+  const auto C = compare(
+      Memory, Memory,
+      R"({"discover":false,"dataflow":{"profile":"llvm-ssa-v1"},"flow_regions":true})");
+  const auto Page = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000"})"));
+  EXPECT_EQ(Page.getAsObject()->getString("availability"), "unsupported");
+  EXPECT_FALSE(Page.getAsObject()->getString("reason")->empty());
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(Summary.getAsObject()->getString("state"), "complete");
+  EXPECT_EQ(
+      Summary.getAsObject()->getObject("flow_regions")->getString("profile"),
+      "llvm-neighborhoods-v1");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Forged = llvm::json::parse(Saved);
+  (*Forged->getAsObject()->getObject("flow_regions"))["profile"] =
+      "med-neighborhoods-v1";
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  const auto Pure = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});
+  const auto Limited = compare(
+      Pure, Pure,
+      R"({"discover":false,"dataflow":{"profile":"llvm-ssa-v1","graph":{"max_nodes":1}}})");
+  const auto LimitedPage = parsed(neverd_comparison_dataflow_json(
+      Limited, R"({"kind":"nodes","address":"0x1000"})"));
+  EXPECT_EQ(LimitedPage.getAsObject()->getString("availability"),
+            "resource_limited");
+  EXPECT_FALSE(LimitedPage.getAsObject()->getString("reason")->empty());
+}
+
+TEST_F(BinaryDiffSDK, OptimizedSSAEarlyCancellationRetainsReopenableProfile) {
+  for (const auto *Phase : {"primary:discovery", "primary:decode"}) {
+    auto A = input(body()), B = input(body());
+    auto C = neverd_comparison_create();
+    Comparisons.push_back(C);
+    struct State {
+      neverd_comparison_t Comparison;
+      std::string Phase;
+    } Context{C, Phase};
+    const auto Cancel = [](void *Opaque, const char *Phase, neverd_va_t,
+                           neverd_va_t) {
+      auto &S = *static_cast<State *>(Opaque);
+      if (S.Phase == Phase)
+        neverd_comparison_cancel(S.Comparison);
+    };
+    ASSERT_EQ(
+        neverd_comparison_run(
+            C, A, B,
+            R"({"dataflow":{"profile":"llvm-ssa-v1"},"flow_regions":true})",
+            Cancel, &Context),
+        1)
+        << take(neverd_comparison_last_error(C));
+    const auto Saved = take(neverd_comparison_export_json(C));
+    auto Document = llvm::json::parse(Saved);
+    ASSERT_TRUE(bool(Document));
+    EXPECT_EQ(Document->getAsObject()->getString("state"), "cancelled");
+    EXPECT_EQ(Document->getAsObject()
+                  ->getObject("flow_regions")
+                  ->getString("profile"),
+              "llvm-neighborhoods-v1");
+    EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1)
+        << take(neverd_comparison_last_error(C));
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
+}

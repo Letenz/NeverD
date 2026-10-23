@@ -1505,6 +1505,11 @@ cl::opt<bool>
     DiffDataFlow("dataflow",
                  cl::desc("Capture bounded native SSA dependency evidence"),
                  cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffDataFlowProfile("dataflow-profile",
+                        cl::desc("SSA evidence profile: med-ssa-v2 (default) "
+                                 "or llvm-ssa-v1 (optimized)"),
+                        cl::sub(DiffCmd));
 cl::opt<bool>
     DiffFlowRegions("flow-regions",
                     cl::desc("Analyze verified finite SSA region hypotheses"),

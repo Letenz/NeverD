@@ -1687,6 +1687,38 @@ TEST(HighSymSimplify, DoesNotMergeUnrelatedOrMalformedParameterViews) {
   }
 }
 
+TEST(HighExprSimplify, WalksDeepExpressionGraphsOnAWorkerStack) {
+  const auto Input = HighExpr::makeVar(tempOfSize(1, kWordBytes));
+  for (bool Ordered : {false, true}) {
+    SCOPED_TRACE(Ordered);
+    auto Value = Input;
+    if (Ordered) {
+      Value = HighExpr::makeUnary(NdOp::INT_NOT, Input);
+      Value->MemoryOrdering = NdMemoryOrdering::Acquire;
+    }
+    auto Deep = Value;
+    for (unsigned I = 0; I < 8192; ++I)
+      Deep = HighExpr::makeBinop(NdOp::INT_SUB, std::move(Deep),
+                                 HighExpr::makeConst(0, kWordBytes));
+    std::vector<HighStmt> Body{returnValue(Deep)};
+    bool Changed = false;
+    std::thread Worker([&] { Changed = simplifyAllExprs(Body); });
+    Worker.join();
+    EXPECT_EQ(Changed, !Ordered);
+    EXPECT_EQ(Body.front().RetVal, Ordered ? Deep : Input);
+
+    // Keep shared-pointer teardown outside the worker-stack assertion. The
+    // ordered graph deliberately remains deep because its accesses survive.
+    Body.clear();
+    auto Current = std::move(Deep);
+    while (Current && Current != Value && !Current->Operands.empty()) {
+      auto Next = std::move(Current->Operands[0]);
+      Current->Operands.clear();
+      Current = std::move(Next);
+    }
+  }
+}
+
 TEST(HighCDeadStoreAnalysis, WalksDeepExpressionGraphsOnAWorkerStack) {
   MedVar Input;
   Input.Kind = MedVar::Param;

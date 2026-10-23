@@ -37,6 +37,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -48,6 +49,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace neverd::symbolic {
@@ -507,8 +509,10 @@ private:
   uint32_t LowWordProjectionInsertions = 0;
 
   /// Hash of a node's identity to the nodes carrying that hash.  Collisions
-  /// are resolved by comparing the candidate against each bucket entry.
-  std::unordered_map<uint64_t, llvm::SmallVector<uint32_t, 2>> InternTable;
+  /// are resolved by comparing the candidate against each bucket entry. The
+  /// zero tag keeps every 64-bit hash outside DenseMap's reserved key pairs.
+  llvm::DenseMap<std::pair<uint64_t, uint32_t>, llvm::SmallVector<uint32_t, 2>>
+      InternTable;
   /// Plain variables keep their legacy name-and-width declaration identity.
   std::map<std::pair<std::string, uint32_t>, uint32_t> VarByNameAndWidth;
 

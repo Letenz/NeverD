@@ -52,6 +52,8 @@ public:
   }
 
   const uint8_t *bytes(va_t VA, uint64_t Size) const {
+    if (View == PointerView::MetadataTarget && Image.MachOSharedCache)
+      return macho_loader::readMetadataBytes(Image, VA, Size);
     const auto *Section = Image.getSectionFor(VA);
     const auto *Segment = Image.getSegmentFor(VA);
     if (!Section || !Segment || !Section->isReadable() ||

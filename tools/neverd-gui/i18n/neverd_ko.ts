@@ -6273,6 +6273,22 @@ Coverage: %7</source>
         <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
         <translation>바이너리 또는 저장된 NDDB 프로젝트를 선택하세요. 저장된 프로젝트는 기존 불러오기 설정과 별도의 작업 복사본을 사용합니다.</translation>
     </message>
+    <message>
+        <source>SSA representation</source>
+        <translation>SSA 표현</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>원본 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>최적화된 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
+        <translation>최적화된 SSA는 비교를 위해 컴파일러가 추가한 보조 구조를 줄입니다. 지원 범위를 벗어난 함수도 이유와 함께 목록에 표시됩니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6359,6 +6375,18 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>none observed within this model</source>
         <translation>이 모델 내에서 관찰된 항목 없음</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>원본 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>최적화된 SSA</translation>
+    </message>
+    <message>
+        <source>SSA representation: %1</source>
+        <translation>SSA 표현: %1</translation>
     </message>
 </context>
 <context>
@@ -7130,6 +7158,12 @@ Heuristic explanations, not validated behavior.
     <message>
         <source>—</source>
         <translation>—</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original addresses: %2
+%3</source>
+        <translation>블록 %1 · 원본 주소: %2
+%3</translation>
     </message>
 </context>
 <context>

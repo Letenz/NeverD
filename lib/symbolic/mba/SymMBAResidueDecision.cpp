@@ -757,6 +757,335 @@ class LowWordDecisions {
     return Term;
   }
 
+  Bits product(llvm::ArrayRef<SymRef> Factors, unsigned Observed) {
+    if (Factors.empty()) {
+      Bits One(Observed, 0);
+      One.front() = 1;
+      return One;
+    }
+    if (Factors.size() == 1)
+      return word(Factors.front(), Observed);
+    // Write every group as (L + 2^Split H_i). Since 3*Split >= Observed,
+    // only the constant, linear and quadratic elementary sums survive.
+    // Group equality comes from complete decision words, never from samples.
+    const unsigned Split = (Observed + 2) / 3;
+    std::map<Bits, std::vector<Bits>> Groups;
+    for (auto Factor : Factors) {
+      if (Ctx.isConst(Factor))
+        continue;
+      const auto &Value = word(Factor, Observed);
+      if (Failed ||
+          !charge(Observed * (1 + std::bit_width(Groups.size())),
+                  sizeof(decltype(Groups)::value_type) + 4 * sizeof(void *) +
+                      (2 * Observed * sizeof(uint32_t) + 2 * sizeof(Bits))))
+        return Bits{};
+      Bits Low(Value.begin(), Value.begin() + Split);
+      Groups[Low].emplace_back(Value.begin() + Split, Value.end());
+    }
+    std::vector<Bits> Products;
+    if (!charge(Groups.size(), Groups.size() * sizeof(Bits)))
+      return Bits{};
+    for (const auto &[Low, Group] : Groups) {
+      const auto Count = Group.size();
+      const auto High = sumWords(Group, Observed - Split);
+      if (Failed)
+        return Bits{};
+      auto Wide = Low;
+      Wide.resize(Observed, 0);
+      auto Term = power(Wide, Count);
+      if (Observed != Split) {
+        Bits Narrow(Wide.begin(), Wide.begin() + Observed - Split);
+        auto Correction = calculate(SymOp::Mul, power(Narrow, Count - 1), High);
+        Bits Upper(Observed, 0);
+        std::copy(Correction.begin(), Correction.end(), Upper.begin() + Split);
+        Term = calculate(SymOp::Add, Term, Upper);
+      }
+      if (2 * Split < Observed && Count > 1) {
+        // 2*e2(H) = (sum H)^2 - sum(H^2). Compute one additional bit
+        // before exact division by two; two is not invertible in this ring.
+        const unsigned N = Observed - 2 * Split + 1;
+        if (!charge(Group.size(), Group.size() * sizeof(Bits)))
+          return Bits{};
+        std::vector<Bits> Squares;
+        Squares.reserve(Group.size());
+        for (const auto &H : Group) {
+          Bits V(H.begin(), H.begin() + N);
+          Squares.push_back(calculate(SymOp::Mul, V, V));
+        }
+        auto SumSquares = sumWords(Squares, N);
+        auto Sum = Bits(High.begin(), High.begin() + N);
+        auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
+        for (auto &Bit : SumSquares)
+          Bit = apply(Xor, Bit, 1);
+        Bits One(N, 0);
+        One[0] = 1;
+        auto Difference = calculate(SymOp::Add, SumSquare,
+                                    calculate(SymOp::Add, SumSquares, One));
+        if (Failed || Difference.front() != 0)
+          return Bits{};
+        Bits Elementary(Difference.begin() + 1, Difference.end());
+        Bits Narrow(Low.begin(), Low.begin() + N - 1);
+        auto Correction =
+            calculate(SymOp::Mul, power(Narrow, Count - 2), Elementary);
+        Bits Upper(Observed, 0);
+        std::copy(Correction.begin(), Correction.end(),
+                  Upper.begin() + 2 * Split);
+        Term = calculate(SymOp::Add, Term, Upper);
+      }
+      Products.push_back(std::move(Term));
+    }
+    // Pair equal low prefixes first. Balanced products avoid constructing
+    // transient decisions for high carries that a nearby factor cancels.
+    while (Products.size() > 1 && !Failed) {
+      if (!charge(Products.size() * Observed *
+                  (1 + std::bit_width(Products.size()))))
+        return Bits{};
+      std::sort(Products.begin(), Products.end());
+      size_t Out = 0;
+      for (size_t I = 0; I < Products.size(); I += 2)
+        Products[Out++] =
+            I + 1 == Products.size()
+                ? Products[I]
+                : calculate(SymOp::Mul, Products[I], Products[I + 1]);
+      Products.resize(Out);
+    }
+    if (Failed || Products.empty()) {
+      return Bits{};
+    }
+    return std::move(Products.front());
+  }
+
+  // Equal identities denote the same word except for the highest observed
+  // bit. Flip is an exact Boolean decision for that bit's difference from
+  // the shared representative; it need not be a constant.
+  struct ResidueSignature {
+    uint32_t Identity = 0;
+    uint32_t Flip = 0;
+  };
+  using SignatureKey = llvm::SmallVector<uint64_t, 8>;
+  struct SignatureHash {
+    size_t operator()(const SignatureKey &Key) const {
+      return size_t(llvm::hash_combine_range(Key.begin(), Key.end()));
+    }
+  };
+  // Ordinary low-word searches do not need this state. Construct it only
+  // after pairing admission, and keep it within the active odd assumption.
+  struct PairingState {
+    std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
+    std::unordered_map<uint64_t, ResidueSignature> Words;
+  };
+
+  uint32_t internSignature(PairingState &State, SignatureKey Key) {
+    if (!charge(1 + Key.size()))
+      return 0;
+    if (auto It = State.Ids.find(Key); It != State.Ids.end())
+      return It->second;
+    if (!charge(1, sizeof(SignatureKey) + sizeof(uint32_t) +
+                       Key.size() * sizeof(uint64_t) + 6 * sizeof(void *)))
+      return 0;
+    const auto Identity = uint32_t(State.Ids.size() + 1);
+    State.Ids.emplace(std::move(Key), Identity);
+    return Identity;
+  }
+
+  ResidueSignature residueSignature(PairingState &State, SymRef R,
+                                    unsigned Count, unsigned Depth = 0) {
+    if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return {};
+    }
+    const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
+    if (auto It = State.Words.find(Key); It != State.Words.end())
+      return It->second;
+    const auto Op = Ctx.op(R);
+    const uint64_t Top = uint64_t(1) << (Count - 1);
+    ResidueSignature Result;
+    if (Ctx.isConst(R)) {
+      auto Value = literal(R);
+      if (!Value)
+        return {};
+      const auto Low = Value->getLoBits(Count).getZExtValue();
+      Result = {internSignature(State, {0, Count, Low & (Top - 1)}),
+                uint32_t(bool(Low & Top))};
+    } else if (Op == SymOp::Add || Op == SymOp::Xor) {
+      const auto Operands = Ctx.operands(R);
+      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
+                  2 * (Operands.size() + 3) * sizeof(uint64_t)))
+        return {};
+      uint64_t Literal = 0;
+      uint32_t Flip = 0;
+      SignatureKey Children;
+      Children.reserve(Operands.size() + 3);
+      for (auto Child : Operands) {
+        if (Ctx.isConst(Child)) {
+          auto Value = literal(Child);
+          if (!Value)
+            return {};
+          const auto Low = Value->getLoBits(Count).getZExtValue();
+          if (Op == SymOp::Add)
+            Literal += Low;
+          else
+            Literal ^= Low;
+        } else {
+          const auto Value = residueSignature(State, Child, Count, Depth + 1);
+          Flip = apply(Xor, Flip, Value.Flip);
+          Children.push_back(Value.Identity);
+        }
+      }
+      Flip = apply(Xor, Flip, bool(Literal & Top));
+      Literal &= Top - 1;
+      std::sort(Children.begin(), Children.end());
+      if (Op == SymOp::Xor) {
+        size_t Out = 0;
+        for (size_t I = 0; I < Children.size();) {
+          size_t End = I + 1;
+          while (End < Children.size() && Children[End] == Children[I])
+            ++End;
+          if ((End - I) & 1)
+            Children[Out++] = Children[I];
+          I = End;
+        }
+        Children.resize(Out);
+      }
+      if (Children.empty())
+        Result = {internSignature(State, {0, Count, Literal}), Flip};
+      else if (Children.size() == 1 && !Literal)
+        Result = {uint32_t(Children.front()), Flip};
+      else {
+        Children.insert(Children.begin(), {uint64_t(Op) + 1, Count, Literal});
+        Result = {internSignature(State, std::move(Children)), Flip};
+      }
+    } else if (Op == SymOp::And && Ctx.numOperands(R) == 2 &&
+               Ctx.isConst(Ctx.operand(R, 0))) {
+      auto Value = literal(Ctx.operand(R, 0));
+      if (!Value)
+        return {};
+      const auto Mask = Value->getLoBits(Count).getZExtValue();
+      if (!Mask)
+        Result = {internSignature(State, {0, Count, 0}), 0};
+      else {
+        const auto Child =
+            residueSignature(State, Ctx.operand(R, 1), Count, Depth + 1);
+        Result = Mask == 2 * Top - 1
+                     ? Child
+                     : ResidueSignature{
+                           internSignature(State, {uint64_t(Op) + 1, Count,
+                                                   Mask, Child.Identity}),
+                           Mask & Top ? Child.Flip : 0};
+      }
+    } else if (Op == SymOp::Mul) {
+      const auto Operands = Ctx.operands(R);
+      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
+                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
+                      2 * (4 * Operands.size() + 1) * sizeof(uint32_t)))
+        return {};
+      unsigned TotalZeros = 0;
+      llvm::SmallVector<unsigned, 16> Zeros;
+      for (auto Child : Operands) {
+        const auto Zero = std::min(Count, knownZeros(Child));
+        Zeros.push_back(Zero);
+        TotalZeros = std::min(Count, TotalZeros + Zero);
+      }
+      if (TotalZeros == Count)
+        Result = {internSignature(State, {0, Count, 0}), 0};
+      else if (Count - TotalZeros >= 2) {
+        SignatureKey Children;
+        Children.reserve(Operands.size() + 2);
+        Bits Flips;
+        for (size_t I = 0; I < Operands.size(); ++I) {
+          const auto Value = residueSignature(
+              State, Operands[I], Count - TotalZeros + Zeros[I], Depth + 1);
+          Children.push_back(Value.Identity);
+          Flips.push_back(Value.Flip);
+        }
+        uint32_t Flip = 0;
+        if (std::any_of(Flips.begin(), Flips.end(),
+                        [](uint32_t V) { return V != 0; })) {
+          // Remove only proven zeros. The remaining precision is at least
+          // two bits, so products of two highest-bit disturbances vanish.
+          // Prefix and suffix parities retain every linear contribution,
+          // including even normalized operands, without division.
+          Bits Parities, Prefix(Operands.size() + 1, 1);
+          for (size_t I = 0; I < Operands.size(); ++I) {
+            Parities.push_back(word(Operands[I], Zeros[I] + 1)[Zeros[I]]);
+            Prefix[I + 1] = apply(And, Prefix[I], Parities.back());
+          }
+          uint32_t Suffix = 1;
+          for (size_t I = Operands.size(); I-- != 0;) {
+            if (Flips[I])
+              Flip = apply(Xor, Flip,
+                           apply(And, Flips[I], apply(And, Prefix[I], Suffix)));
+            Suffix = apply(And, Suffix, Parities[I]);
+          }
+        }
+        std::sort(Children.begin(), Children.end());
+        Children.insert(Children.begin(), {uint64_t(Op) + 1, Count});
+        Result = {internSignature(State, std::move(Children)), Flip};
+      } else {
+        // A one-bit normalized product can retain cross terms. Keep its
+        // exact original identity instead of using the linear formula.
+        Result = {internSignature(State, {UINT64_MAX, Count, R.index()}), 0};
+      }
+    } else {
+      // Equality of opaque representatives is structural, never sampled.
+      Result = {internSignature(State, {UINT64_MAX, Count, R.index()}), 0};
+    }
+    if (!charge(1, sizeof(uint64_t) + sizeof(ResidueSignature) +
+                       4 * sizeof(void *)))
+      return {};
+    State.Words.emplace(Key, Result);
+    return Result;
+  }
+
+  // The caller has proved every factor odd in the active assumption. For
+  // A = L + 2^(N-1)*a and B = L + 2^(N-1)*b, AB is L^2 plus
+  // 2^(N-1)*(a XOR b). The other odd factors preserve that correction.
+  // Pull all squares into one product and recurse at N-1 bits. No original
+  // highest bit is needed for its square, and recursion strictly decreases N.
+  Bits pairedProduct(PairingState &State, llvm::ArrayRef<SymRef> Factors,
+                     unsigned Count) {
+    if (Count <= 2 || Factors.size() < 2)
+      return product(Factors, Count);
+    if (!charge(Factors.size(), 2 * Factors.size() * sizeof(SymRef)))
+      return {};
+    std::map<uint32_t, std::pair<SymRef, uint32_t>> Unpaired;
+    llvm::SmallVector<SymRef, 16> Pairs, Rest;
+    uint32_t Correction = 0;
+    for (auto Factor : Factors) {
+      const auto Signature = residueSignature(State, Factor, Count);
+      if (Failed || !charge(1 + std::bit_width(Unpaired.size())))
+        return {};
+      auto It = Unpaired.find(Signature.Identity);
+      if (It == Unpaired.end()) {
+        if (!charge(1, sizeof(decltype(Unpaired)::value_type) +
+                           4 * sizeof(void *)))
+          return {};
+        Unpaired.emplace(Signature.Identity,
+                         std::make_pair(Factor, Signature.Flip));
+        continue;
+      }
+      Pairs.push_back(Factor);
+      Correction =
+          apply(Xor, Correction, apply(Xor, It->second.second, Signature.Flip));
+      Unpaired.erase(It);
+    }
+    if (Pairs.empty())
+      return product(Factors, Count);
+    auto Inner = pairedProduct(State, Pairs, Count - 1);
+    if (Failed || Inner.empty())
+      return {};
+    Inner.push_back(0);
+    auto Result = calculate(SymOp::Mul, Inner, Inner);
+    for (const auto &[Identity, Value] : Unpaired)
+      Rest.push_back(Value.first);
+    auto Other = product(Rest, Count);
+    if (Failed || Other.empty())
+      return {};
+    Result = calculate(SymOp::Mul, Result, Other);
+    Result.back() = apply(Xor, Result.back(), Correction);
+    return Result;
+  }
+
 public:
   LowWordDecisions(SymContext &Ctx, WorkBudget &Budget, size_t &Storage,
                    size_t MaxWork, bool *StorageLimited)
@@ -840,94 +1169,36 @@ public:
     if (OddProductOnly && !Assumption)
       return Root;
 
-    // Write every group as (L + 2^Split H_i). Since 3*Split >= Observed,
-    // only the constant, linear and quadratic elementary sums survive.
-    // Group equality comes from complete decision words, never from samples.
-    const unsigned Split = (Observed + 2) / 3;
-    std::map<Bits, std::vector<Bits>> Groups;
-    for (auto Factor : Factors) {
-      if (Ctx.isConst(Factor))
-        continue;
-      const auto &Value = word(Factor, Observed);
-      if (Failed ||
-          !charge(Observed * (1 + std::bit_width(Groups.size())),
-                  sizeof(decltype(Groups)::value_type) + 4 * sizeof(void *) +
-                      (2 * Observed * sizeof(uint32_t) + 2 * sizeof(Bits))))
+    // Favor full power-of-two degree blocks: partial blocks can spend their
+    // allowance building a pairing index and still need the full carry graph.
+    // This only selects a search. Every pair requires an exact signature and
+    // every factor must independently be odd under the current assumption.
+    const size_t PairingBlock = size_t(1) << (Observed - 1);
+    bool AllOdd = Assumption &&
+                  Observed >= limits::kMinResidueDecisionPairingBits &&
+                  Nonconstant >= PairingBlock && !(Nonconstant % PairingBlock);
+    llvm::SmallVector<SymRef, 16> Nonconstants;
+    if (AllOdd) {
+      if (!charge(Factors.size(), Factors.size() * sizeof(SymRef)))
         return Root;
-      Bits Low(Value.begin(), Value.begin() + Split);
-      Groups[Low].emplace_back(Value.begin() + Split, Value.end());
-    }
-    std::vector<Bits> Products;
-    if (!charge(Groups.size(), Groups.size() * sizeof(Bits)))
-      return Root;
-    for (const auto &[Low, Group] : Groups) {
-      const auto Count = Group.size();
-      const auto High = sumWords(Group, Observed - Split);
-      if (Failed)
-        return Root;
-      auto Wide = Low;
-      Wide.resize(Observed, 0);
-      auto Term = power(Wide, Count);
-      if (Observed != Split) {
-        Bits Narrow(Wide.begin(), Wide.begin() + Observed - Split);
-        auto Correction = calculate(SymOp::Mul, power(Narrow, Count - 1), High);
-        Bits Upper(Observed, 0);
-        std::copy(Correction.begin(), Correction.end(), Upper.begin() + Split);
-        Term = calculate(SymOp::Add, Term, Upper);
-      }
-      if (2 * Split < Observed && Count > 1) {
-        // 2*e2(H) = (sum H)^2 - sum(H^2). Compute one additional bit
-        // before exact division by two; two is not invertible in this ring.
-        const unsigned N = Observed - 2 * Split + 1;
-        if (!charge(Group.size(), Group.size() * sizeof(Bits)))
-          return Root;
-        std::vector<Bits> Squares;
-        Squares.reserve(Group.size());
-        for (const auto &H : Group) {
-          Bits V(H.begin(), H.begin() + N);
-          Squares.push_back(calculate(SymOp::Mul, V, V));
+      for (auto Factor : Factors) {
+        if (Ctx.isConst(Factor))
+          continue;
+        Nonconstants.push_back(Factor);
+        if (word(Factor, 1).front() != 1) {
+          AllOdd = false;
+          break;
         }
-        auto SumSquares = sumWords(Squares, N);
-        auto Sum = Bits(High.begin(), High.begin() + N);
-        auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
-        for (auto &Bit : SumSquares)
-          Bit = apply(Xor, Bit, 1);
-        Bits One(N, 0);
-        One[0] = 1;
-        auto Difference = calculate(SymOp::Add, SumSquare,
-                                    calculate(SymOp::Add, SumSquares, One));
-        if (Failed || Difference.front() != 0)
-          return Root;
-        Bits Elementary(Difference.begin() + 1, Difference.end());
-        Bits Narrow(Low.begin(), Low.begin() + N - 1);
-        auto Correction =
-            calculate(SymOp::Mul, power(Narrow, Count - 2), Elementary);
-        Bits Upper(Observed, 0);
-        std::copy(Correction.begin(), Correction.end(),
-                  Upper.begin() + 2 * Split);
-        Term = calculate(SymOp::Add, Term, Upper);
       }
-      Products.push_back(std::move(Term));
     }
-    // Pair equal low prefixes first. Balanced products avoid constructing
-    // transient decisions for high carries that a nearby factor cancels.
-    while (Products.size() > 1 && !Failed) {
-      if (!charge(Products.size() * Observed *
-                  (1 + std::bit_width(Products.size()))))
-        return Root;
-      std::sort(Products.begin(), Products.end());
-      size_t Out = 0;
-      for (size_t I = 0; I < Products.size(); I += 2)
-        Products[Out++] =
-            I + 1 == Products.size()
-                ? Products[I]
-                : calculate(SymOp::Mul, Products[I], Products[I + 1]);
-      Products.resize(Out);
+    if (AllOdd) {
+      PairingState State;
+      Product = pairedProduct(State, Nonconstants, Observed);
+    } else {
+      Product = product(Factors, Observed);
     }
-    if (Failed || Products.empty()) {
+    if (Failed || Product.empty())
       return Root;
-    }
-    Product = std::move(Products.front());
     Assumption.reset();
     if (Parity != 1)
       for (auto &Bit : Product)

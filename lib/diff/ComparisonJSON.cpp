@@ -517,6 +517,9 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
         In.fail(E.what());
       }
     }
+    if (C.FlowRegions.Profile != flowRegionProfile(C.Settings.DataFlow.Profile))
+      In.fail(
+          "SSA region profile disagrees with requested dependency evidence");
     if (C.Settings.FlowRegions.Enabled &&
         C.State == ComparisonState::Complete &&
         C.FlowRegions.State != ComparisonState::Complete)

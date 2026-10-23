@@ -99,7 +99,15 @@ tests include the original-offset layout retained by signed cached images.
 Cancellation is checked before and during chain traversal. Set
 `NEVERD_DYLD_CACHE` to a local main arm64e cache with its matching subcaches to
 validate every image layout and every slide record without altering bytes;
-without it the real-cache check explicitly skips. This tests the cache reader,
+without it the real-cache checks explicitly skip. Range queries also exercise
+partial slot overlap and corruption elsewhere on the selected page. Metadata
+fixtures cover cross-image authenticated and ordinary targets, local edits,
+conflicting provenance, modern and legacy selector bases, signed offsets,
+conditional relative lists, empty list headers, extended header-info rows,
+resource exhaustion and retained JSON origins. The real Foundation check
+requires all recovered methods to have names, no metadata diagnostics, retained
+image conditions and no local source-body proof for external IMPs.
+This tests the cache reader and metadata view,
 not yet CLI cached-image selection or native execution/reconstruction.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
@@ -712,6 +720,17 @@ work counts to the CLI report before computing per-case medians and percentiles.
 The independent evaluator handles explicit word widths, extracts, extensions
 and modular shifts. Check it with
 `python3 tools/neverd-bench/tests/test_symbolic_masks.py`.
+Expression interning regressions retain deliberately colliding variable and
+literal identities, all-bit hash values, and references across table growth,
+context copies, assignment and moves. Full symbolic and source-route coverage
+checks the shared table underneath both CLI and GUI simplification.
+Paired-product regressions cover degree-64–128 mixed carry frontiers with
+independent 8–257-bit arithmetic oracles. A separate 32-factor fixture retains
+an input-dependent highest-bit correction, exhausts its three relevant low
+input words and has independent full-width Z3 proofs at 8/16/32/64 bits. Nearby
+parity changes and exact/one-short work plus short storage check refusal and
+cumulative accounting. Real worker and CLI source tests also execute degree-64
+and degree-128 mixed pairs through all six source routes at O0/O2.
 `SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
 exhaustive small-word perturbations, nonzero coefficient/offset controls,
 zero-prefix versus zero-word refusal, exact/short resource budgets and Z3
@@ -1173,6 +1192,16 @@ independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
 AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
 pass. The acceleration CI also runs installed binaries on each native host.
 
+`NeverDSharedSchedulerTests` reproduces the core, component-archive, CLI and
+plugin link boundaries. Its callbacks and exceptions must cross those
+boundaries synchronously, and `TBB_VERSION=1` must report exactly one initialized
+runtime (zero with TBB disabled). `verify.py --minimum 2 --tbb-runtimes 1` checks
+this inventory in both build and install trees. Installation must contain no
+TBB shared runtime. The Linux core hides static TBB symbols from its dynamic
+symbol table; macOS hides the archive and Windows exports only the callback
+boundary. These checks are necessary because upstream static TBB builds have
+limited coverage.
+
 `NeverDAccelerationTests` checks supported host SIMD targets, every byte value,
 alignments and inaccessible tails; UTF-8 validity; JSON decoded duplicates,
 number boundaries, BOMs, depth and error precedence; nested/concurrent queues,
@@ -1196,6 +1225,10 @@ worker stack. It never links `tbbmalloc` or `tbbmalloc_proxy`.
 Performance measurements belong in ignored build directories. Measure Release
 with matching inputs, process allocator and thread count; separate primitive
 throughput from whole-request latency and compare all non-timing output.
+Compare the actual CLI, GUI worker and GUI startup at the normal thread count,
+as well as a constrained thread count; short single-function requests need not
+benefit from a scheduler that improves parallel batches. Alternate backend
+order and retain paired measurements and CPU time alongside output hashes.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
 
@@ -1419,6 +1452,20 @@ hashes, tool versions, flags, output and a status manifest under
 `unittests/bindiff-compiler-regions` in the build tree. Missing GCC is reported as
 a skipped optional profile; this small family is not held-out accuracy,
 optimization-family, LTO/PGO or competitive qualification.
+The same compiler regression also exercises the opt-in `llvm-ssa-v1` profile
+for AArch64 ELF, COFF and Mach-O at Clang O0/O1/O2/O3/Os. It requires finite
+O0/O2 anchors, preserves an exact changed final scalar across optimization
+levels, keeps same-level native constant deltas, and reopens saved reports.
+Cross-level native function pairing may abstain; SSA evidence does not invent
+an accepted native pair. `BinaryDiffLLVMDataFlow` checks exact widths/flags,
+attributes, intrinsic immediates, PHI/switch edges, plural versus derived origins,
+unsupported effects/metadata and bounded stops. SDK tests cover typed/origin/
+profile tampering, explicit Med-association abstention, unsupported memory and
+early native-capture cancellation. Worker tests check all three formats' plural
+original instructions, slices and saved CLI parity. The real Qt test selects the
+optimized profile and displays plural origins with optional light/dark captures.
+These remain owned functional fixtures, not held-out accuracy or general
+optimization/obfuscation qualification.
 `NeverDBinaryDiffFlowPipelineTests` projects owned x64/AArch64 bytes through the
 actual strict lifter and SSA pipeline, checking native origins and that a changed
 scalar survives beyond a short fingerprint's reported open frontier. It neither
@@ -1436,6 +1483,19 @@ close an active job. SDK and real-worker comparison checks retain the discovery
 stop phase and incomplete coverage; stopped snapshots never authorize scalar
 validation. Run the image-boundary, session-discovery and comparison suites when
 changing these shared cancellation boundaries. No input instructions execute.
+`FunctionDiscoveryAlignment.LongCalleesNeedReachableCallableExits` checks the
+64/65-instruction linear-prefix and 256/257-instruction reachable-probe boundaries
+on x86/x64/ARM/Thumb/AArch64 in ELF and Mach-O. A long unlabelled callee can gain
+candidate identity from an observed callable exit; a trap, closed cycle,
+indirect-only transfer, truncated input or exhausted probe cannot supply it.
+An exit on one branch does not hide a truncated, escaping, unlifted PACM or
+over-budget arm. `LongCalleesVerifyUnprovenTailTargets` distinguishes a scanned
+tail's observed return from trap/cycle bodies and authenticated function metadata.
+An indirect frontier alongside a known exit keeps the existing candidate policy;
+this is not complete control-flow or semantic validation. The real musl fixture
+also requires all five whole-function and mapped direct-callee identities through
+HighC and optimized/unoptimized LLVMC. Run the image-boundary, relocated-entry,
+x86-discovery, library-recognition and session suites for this shared decision.
 `NativeLoadCancellation.*` and controlled `InputDigest.*` cases in
 `NeverDNativeBufferTests` check ELF/x64, ELF/AArch64, PE and Mach-O cancellation,
 retry byte/digest parity with LLVM, chunk/padding edges, and loader callback
@@ -1613,7 +1673,9 @@ tests cover menu/keyboard activation, cancellation with retained source,
 concurrent listing/function reads and reset on navigation. Worker source-cache
 tests count engine calls separately for each option set. `HighExprSimplify.*`
 checks exact masked status bits, signed extensions, shared expressions and
-effect preservation without the symbolic bridge. The x87 classification test
+effect preservation without the symbolic bridge. An 8,192-level worker-thread
+regression checks iterative operand traversal for both pure rewrites and
+ordered-memory ancestors that must remain intact. The x87 classification test
 executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
 

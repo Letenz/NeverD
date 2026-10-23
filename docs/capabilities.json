@@ -1603,6 +1603,7 @@
           "neverd diff --changes-max-work",
           "neverd diff --changes-side",
           "neverd diff --dataflow",
+          "neverd diff --dataflow-profile",
           "neverd diff --effect-max-records",
           "neverd diff --effect-max-work",
           "neverd diff --flow-function",

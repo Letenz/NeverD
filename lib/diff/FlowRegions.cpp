@@ -20,6 +20,13 @@
 #include <tuple>
 
 namespace neverd::diff {
+llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile) {
+  if (GraphProfile == LLVMDataFlowProfile)
+    return LLVMFlowRegionProfile;
+  if (GraphProfile == DataFlowProfile)
+    return FlowRegionProfile;
+  throw std::invalid_argument("unsupported SSA region graph profile");
+}
 namespace {
 namespace limits = neverd::limits::diff;
 struct Interrupted {};
@@ -84,9 +91,10 @@ struct Index {
   std::vector<Seed> Seeds;
 };
 bool eligible(const FlowNode &N) {
-  return N.OriginSequence >= 0 && N.ResultBytes && N.Opcode != "COPY" &&
+  return N.hasNativeOrigin() && N.ResultBytes && N.Opcode != "COPY" &&
          N.Opcode != "INT_ZEXT" && N.Opcode != "INT_SEXT" &&
-         N.Opcode != "SUBBYTES" && N.Opcode != "CONCAT";
+         N.Opcode != "SUBBYTES" && N.Opcode != "CONCAT" && N.Opcode != "zext" &&
+         N.Opcode != "sext" && N.Opcode != "trunc";
 }
 Index index(FlowRegionInput Input, const DataFlowSettings &EvidenceSettings,
             const FlowRegionSettings &Settings, FlowRegionAnalysis &R,
@@ -110,8 +118,9 @@ Index index(FlowRegionInput Input, const DataFlowSettings &EvidenceSettings,
       ValidationWork += B.Successors.size();
     }
     for (const auto &N : G.Nodes) {
-      Work.charge();
-      ValidationWork += N.Inputs.size();
+      const auto Extra = flowExtraWork(N);
+      Work.charge(1 + Extra);
+      ValidationWork += N.Inputs.size() + Extra;
       for (const auto &I : N.Inputs)
         if (I.Predecessor != NoIndex)
           ValidationWork += G.Blocks[I.Predecessor].Successors.size();
@@ -209,10 +218,12 @@ void anchors(const Index &A, const Index &B, const DataFlowSettings &Evidence,
         std::set<uint64_t> OriginsA, OriginsB;
         for (const auto &[NA, NB] : Match.Nodes) {
           Work.charge();
-          if (AG.Graph->Nodes[NA].OriginSequence >= 0)
-            OriginsA.insert(AG.Graph->Nodes[NA].Address);
-          if (BG.Graph->Nodes[NB].OriginSequence >= 0)
-            OriginsB.insert(BG.Graph->Nodes[NB].Address);
+          const auto &AN = AG.Graph->Nodes[NA], &BN = BG.Graph->Nodes[NB];
+          Work.charge(AN.Origins.size() + BN.Origins.size());
+          AN.forEachOrigin(
+              [&](const FlowOrigin &O) { OriginsA.insert(O.Address); });
+          BN.forEachOrigin(
+              [&](const FlowOrigin &O) { OriginsB.insert(O.Address); });
         }
         if (Match.Nodes.size() < Settings.MinimumNodes ||
             OriginsA.size() < Settings.MinimumOrigins ||
@@ -401,6 +412,7 @@ FlowRegionAnalysis findFlowRegions(FlowRegionInput P, FlowRegionInput S,
   if (auto Error = Settings.validate())
     throw std::invalid_argument(*Error);
   FlowRegionAnalysis R;
+  R.Profile = flowRegionProfile(Evidence.Profile).str();
   if (!Settings.Enabled)
     return R;
   if (!Evidence.Enabled)
@@ -444,8 +456,12 @@ std::optional<std::string>
 validateFlowRegions(const FlowRegionAnalysis &Saved, FlowRegionInput P,
                     FlowRegionInput S, const DataFlowSettings &Evidence,
                     const FlowRegionSettings &Settings) {
+  FlowRegionAnalysis Empty;
+  Empty.Profile = flowRegionProfile(Evidence.Profile).str();
+  if (Saved.Profile != Empty.Profile)
+    return "saved SSA region profile disagrees with requested evidence";
   if (!Saved.State) {
-    if (Saved != FlowRegionAnalysis{})
+    if (Saved != Empty)
       return "unstarted SSA region analysis contains evidence";
     return {};
   }
