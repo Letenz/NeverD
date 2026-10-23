@@ -106,6 +106,41 @@ metadata. Category fixtures exercise authenticated class, metaclass and method r
 reconstruction restriction. Metadata names replace synthesized function-start
 names while preserving stated, analysis and user names.
 
+`NeverDLanguageEHTests` also covers compact PAuth_LR frame recipes with zero,
+middle and final signing-instruction offsets, register pairs, reserved bits,
+range truncation, alignment and arithmetic overflow. Shared raw/semantic page
+tests reject overflowing compressed deltas, incorrect first rows, duplicates
+and out-of-page records for signed ARM64, ordinary ARM64 and x86-64; a discarded
+middle page cannot widen a valid neighbor. `AArch64DwarfReturnAddress` uses
+independent CFI bytes to check absolute states, both keys, HINT/non-HINT
+recipes, legacy toggles, CIE/FDE remember/restore, unknown runtime rules,
+signed displacement overflow, strict set_loc (including base zero), reserved
+states, malformed LEBs, architecture admission and bounded queries. Reserved
+CIE/FDE states must remain partial through Darwin normalization and fail the
+plain-source unwind predicate.
+
+`NeverDNativeExceptionRewriteContractTests` checks compact PAuth_LR linker
+records, exact range preservation, adjacent distinct signing PCs and
+transactional installation/refusal. Its DWARF cases preserve the `N`
+augmentation in metadata rewriting. Metadata-only layout growth preserves
+absolute states, legacy PC toggles, both keys, HINT/non-HINT recipes and shared
+CIE/FDE remembered states while code bytes and signing PCs stay fixed. Unknown
+state, unsupported recipes and exhausted comparison budgets leave the entire
+image unchanged. Exact/short budget cases include final advances and cumulative
+work across multiple FDEs. Callback code relocation still rejects these new
+recipes. `AppleSignedCallbacks/SourcePatchPAuthLRCallbackMatrix`
+in `NeverDSourcePatchMatrixTests` rejects exact and interior original callbacks
+whose compact recipe requires PAuth_LR, leaving image and output unchanged.
+These tests do not execute native signed exception unwinding.
+
+`AArch64LinkedUnwind` assembles and links real arm64e dylibs with the host
+Apple toolchain, then loads them through the public Mach-O loader. Its explicit
+mode-5 compact row checks linker transport and the PACIBSPPC offset; it does
+not claim automatic compiler selection of that mode. PACM/HINT fixtures check
+legacy PC signing and absolute state CFI, including DWARF fallback binding.
+The tests execute no fixture code. Missing Apple arm64e tools are explicit
+skips; after the baseline toolchain probe passes, fixture failures fail the test.
+
 `NeverDDyldSharedCacheTests` checks immutable arm64e cache mappings, old/new
 subcache tables, suffix/UUID/placement validation, embedded image layouts and
 cross-file reads. Independently serialized v2/v3/v5 fixtures cover extra

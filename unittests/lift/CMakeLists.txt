@@ -2041,6 +2041,7 @@ endif()
 # are the public fail-closed boundary under test.
 add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/DwarfEHFrameTests.cpp
+  eh/AArch64DwarfRewriteTests.cpp
   eh/ELFExceptionTests.cpp
   eh/ELFSectionPatchTests.cpp
   eh/ELFSourceRelocationsTests.cpp
@@ -2366,6 +2367,8 @@ add_custom_target(NeverDWindowsEHSyntheticCorpus
 
 add_neverd_unittest(NeverDLanguageEHTests
   language/LanguageEHTests.cpp
+  language/AArch64DwarfReturnAddressTests.cpp
+  language/AArch64LinkedUnwindTests.cpp
   language/LanguageEHDirectBranchTests.cpp
   language/DirectBranchDecodeTests.cpp
   language/LanguageEHItaniumSJLJTests.cpp
