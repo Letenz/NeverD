@@ -1089,6 +1089,8 @@ class X87CallEffectIndex {
     // a double in an XMM register and returns it on the x87 stack.
     if (isX86FPStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
       return true;
+    if (static_cast<Intrinsic>(Op.Inputs[0].Offset) == Intrinsic::X86AMXState)
+      return x86AmxShapeIsValid(x86AmxLowShape(Op, Architecture));
     if (isX86SgxIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
       return x86SgxShapeIsValid(static_cast<Intrinsic>(Op.Inputs[0].Offset),
                                 x86SgxLowShape(Op, Architecture));

@@ -14,6 +14,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86AmxState.h"
 #include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
@@ -1964,6 +1965,15 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (E.IntrinsicId == Intrinsic::X86AMXState) {
+    std::vector<std::string> Arguments;
+    for (const auto &V : E.Operands) {
+      if (!V)
+        llvm::report_fatal_error("missing AMX operand");
+      Arguments.push_back(intrinsicOperandStr(*V));
+    }
+    return renderX86AmxExpression(Opts.TheArch, E, Arguments, typeToC(E.Type));
+  }
   if (isX86SgxIntrinsic(E.IntrinsicId))
     return renderX86SgxExpression(
         Opts.TheArch, E,

@@ -82,6 +82,8 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
                      "operand/output contract");
     return llvm::Error::success();
   }
+  if (Id == Intrinsic::X86AMXState && !x86AmxShapeIsValid(x86AmxLowShape(Op)))
+    return invalid("AMX architectural bank operation has an invalid shape");
   if (isX86SgxIntrinsic(Id)) {
     if (!x86SgxShapeIsValid(Id, x86SgxLowShape(Op)))
       return invalid("x86 SGX intrinsic has an invalid completion contract");

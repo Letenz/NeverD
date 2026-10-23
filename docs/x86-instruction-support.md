@@ -33,6 +33,7 @@ complete instruction support or semantic test coverage.
 
 | Instructions | Implementation and verification |
 | --- | --- |
+| AMX tile/configuration, compute and row operations | Versioned architectural bank ownership across strict LowIR, concrete execution, LLVM, HighC and LLVM-to-C; native restart and encoding distinctions are retained. See the AMX qualification below. |
 | ENCLS, ENCLV | Native supervisor/VMM completion on x86/x64, preserving rAX/rBX results, rCX/rDX inputs and leaf-dependent arithmetic flags. Enclave memory and fault ordering remain instruction-owned. |
 | RDPID | Explicit natural-width query result; ordered hardware effect. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
@@ -109,7 +110,6 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC | Leaf-specific register/state results and control transfer, including measured-environment entry/exit. |
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
-| AMX native LLVM output | Versioned TILECFG/tile-state ownership, restartable strided memory, partial progress and fault continuation. Existing strict LowIR support is not native code-generation support. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 
@@ -118,12 +118,15 @@ retain WC protocol, concurrent write completion and device transactions, but
 these tests do not independently measure those properties. The concrete
 emulator models only the single-threaded ordinary-memory projection.
 
-VMRUN, SKINIT, GETSEC and ENCLU still fail strict lifting explicitly. The
-existing AMX LLVM guard remains explicit. Adding an opaque helper declaration,
-bare assembly without outputs or a NOP would not close these gaps.
+VMRUN, SKINIT, GETSEC and ENCLU still fail strict lifting explicitly. Legacy
+AMX value-form intrinsics retain their LLVM guard: an arbitrary 64-byte config
+and 1024-byte tile SSA value cannot be treated as the ambient CPU bank. Decoded
+AMX instructions now use the separate architectural-bank contract below. An
+opaque helper declaration, assembly that loses state, or a NOP does not close
+a missing semantic contract.
 
 Completion therefore still requires extending the shared machine-state/runtime
-contract for transitions and AMX, completing the ENCLU leaf/state contracts, and
+contract for transitions, completing the ENCLU leaf/state contracts, and
 testing the remaining instruction forms. The bounded system contract added
 here is deliberately not a replacement for a complete machine-state boundary.
 This audit does **not** certify every encoding of the other decoder IDs.
@@ -136,6 +139,19 @@ described below. Extending this census still does not establish complete
 architectural coverage.
 
 ## Work needed for complete coverage
+
+The requested completion also includes native LLVM intrinsic support and
+NeverC's builtin frontend. Architectural native assembly is a validated
+intermediate implementation, not completion of that requirement. Audit
+`NeverSight/llvm-project` and NeverC's embedded LLVM separately: reusable
+intrinsics must preserve every result, memory effect, encoding requirement and
+control continuation. Add missing IR definitions and instruction selection to
+the LLVM fork, synchronize NeverC's definitions/generated tables and builtins,
+and replace NeverD's assembly paths where the equivalent intrinsic is ready.
+After the complete instruction work is validated, publish a new immutable LLVM
+release, pin the exact commit plus every platform artifact digest, and update
+NeverD's LLVM submodule and consumers together. Do not publish a release for an
+incomplete intermediate batch.
 
 1. Extend the shared instruction encoding audit beyond the current MC corpus,
    with separate expectations for decoding, strict lifting and each emitter.
@@ -150,10 +166,11 @@ architectural coverage.
    state, distinguish native return, VM exit and nonlocal transfer, and reject
    states the selected runtime cannot transport. A compiler calling convention
    alone does not preserve the unsaved guest registers exposed by VMRUN.
-4. Give AMX explicit state and access ownership, including partial progress
-   and fault order. Native and concrete executors must consume the same
-   contract. A concrete i386 segmented executor still requires a supplied
-   descriptor environment; native block transactions now retain that state.
+4. Qualify native AMX successful execution and fault restart on suitable
+   hardware using the checked-in signal-context oracle. The shared bank
+   contract and concrete partial-progress tests are implemented. A concrete
+   i386 segmented executor still requires a supplied descriptor environment;
+   native block transactions now retain that state.
 5. Validate transition and privilege behavior in an authenticated execution
    environment. Compile-only checks establish operand transport and generated
    code validity; they do not establish VM-exit, enclave or fault semantics.
@@ -589,3 +606,70 @@ flag oracle. Enqueue checks cover native faults, not successful CPL0 execution
 or device acceptance. Windows C compilation uses Clang GNU inline assembly.
 The references are Intel's [SDM Volume 2A](https://cdrdv2.intel.com/v1/dl/getContent/671199)
 and [SDM Volume 2B](https://cdrdv2.intel.com/v1/dl/getContent/671241).
+
+## Architectural AMX bank and native output
+
+`X86AmxState.h` owns the version-1 descriptor for 28 operation kinds. The new
+append-only `X86AMXState` intrinsic carries a base address, a constant descriptor,
+and a stride or row selector where required. The descriptor distinguishes tile
+register indices, four load hints, address-size wrapping, APX-promoted memory,
+register/immediate row selection, extended row GPRs and the default SS segment.
+FS/GS use the existing address-space authority. All validation layers consume
+this shape; malformed versions, modes, widths and effects fail explicitly.
+
+The operation owns the complete architectural TILECFG/TILEDATA bank. Native
+LLVM and both C routes emit the real instruction with volatile ordering,
+compiler memory effects and all eight TMM clobbers. Hardware retains the bank,
+including partial completion and `start_row` when a tile transfer faults. There
+is no tile-valued function ABI, synthetic configuration load, speculative row
+preload, or implicit software runtime helper. Only the 64-byte result of a row
+instruction enters ordinary SSA; an explicit ZMM result and private row storage
+transport those bytes. LLVM allocates this storage once in the entry block.
+
+`TILERELEASE` is now a native side effect instead of a series of zero copies.
+`TILELOADD`, `TILELOADDT1`, `TILELOADDRS` and `TILELOADDRST1` retain their separate
+instructions. APX memory uses EVEX even for low GPRs; extended row selectors
+retain an extended GPR. Native memory retains the source segment, address width,
+byte stride and instruction-owned feature, permission and fault checks.
+Successful execution still requires the relevant CPU features and OS state
+permission. Generated source uses GNU-compatible assembly, including Clang for
+Windows; this does not add an MSVC C spelling for AMX.
+
+The concrete evaluator owns the same physical bank in its register state and
+reuses the existing tile/configuration arithmetic and memory evaluators. It
+preserves partial tile data and `start_row` on failed memory accesses, clears
+progress only on completion, and refuses missing configuration/tile state.
+This is the ordinary-memory projection, not emulation of CPU enablement, XFD,
+TSX or hardware cache protocols. Legacy value-form AMX intrinsics remain valid
+for their existing concrete use but cannot bypass their LLVM transport guard.
+
+The historical `TMMULTF32PS` opcode remains supported for decoded older input.
+Intel withdrew AMX-TF32 in ISE revision 062, and
+[LLVM removed its mnemonic in July 2026](https://lists.llvm.org/pipermail/llvm-commits/Week-of-Mon-20260706/1969009.html).
+Native output therefore preserves the exact five opcode bytes and tile indices,
+including the processor's actual unsupported-feature fault, rather than using
+another matrix instruction. Its concrete arithmetic follows the historical
+[ISE revision 059](https://cdrdv2-public.intel.com/865891/319433-059-architecture-instruction-set-extensions-programming-reference_2025-0930.pdf).
+It is not counted as a currently advertised CPU extension.
+
+The six row operations follow
+[ISE revision 062](https://cdrdv2.intel.com/v1/dl/getContent/671368): both immediate
+and register selectors use only bits 3:0. A row beyond the configured extent
+produces 64 zero bytes and clears `start_row`; ignored selector high bits do not
+raise a synthetic fault. The earlier row-chunk interpretation is removed from
+the shared concrete evaluator. Out-of-range rows do not require known tile
+contents, while rows that are actually read still do. Invalid configuration
+and column shapes continue to fail before output publication.
+
+Qualification uses 63 independently assembled/reference encodings, all three
+native object formats and both pipeline optimization settings. HighC,
+LLVM-to-C and LLVM IR compile at O0/O2, and the repository backend emits native
+objects. Fixed-bank operations are checked against exact object bytes. Isolated
+Linux subprocesses compare native completion or signal/code with original bytes
+for every fixture. The complete configuration/load/store/release sequence and
+its signal-context restart oracle compile and link on the baseline host.
+The AMX hardware test checks normal row data, saved first-row bytes and
+`start_row=1` at a second-row protection fault, then resumes the same instruction.
+It is explicitly skipped when AMX-TILE is unavailable; this host cannot qualify
+native successful tile computation or fault restart. Concrete tests cover
+integer/floating arithmetic, row conversion, shape checks and partial progress.

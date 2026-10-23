@@ -199,3 +199,5 @@ A(Intrinsic::X86Encls, "encls");
 A(Intrinsic::X86Enclv, "enclv");
 
 A(Intrinsic::X86SegmentedBlockMemory, "x86_segmented_block_memory");
+
+A(Intrinsic::X86AMXState, "x86_amx_state");

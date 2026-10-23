@@ -32,6 +32,29 @@ also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
 
+AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
+and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
+encoding fixtures cover every bank operation, register/immediate and extended
+row selectors, APX memory, FS/GS/SS and address-size overrides. The source
+matrix compiles LLVM and both C routes at O0/O2 for ELF/COFF/Mach-O, checks
+exact fixed-bank object bytes, and compares native faults or completion with
+original machine bytes. Malformed LowIR, MedIR, HighIR and native assembly
+cannot drop bank, memory or feature effects. Concrete tests retain arithmetic,
+row conversion and partial-progress oracles.
+`RowSelectorsIgnoreHighBitsAndZeroOutOfRangeRows` covers all six operations,
+both selector forms, ignored high bits and an independent exact-value oracle.
+It follows ISE 062 rather than the superseded row-chunk exception rules.
+
+`CompleteTransferSequenceAndRestartDriverCompile` always compiles and links
+the native AMX restart oracle on Linux x64, without executing AMX on unsupported
+hosts. `NativeTileRowsAndFaultContinuationMatchOriginalBytes` requires AMX-TILE
+and Linux tiled-data permission. It checks complete row bytes and the signal
+frame's TILECFG/TMM partial progress at a second-row page fault before resuming
+and finishing the transfer. Missing AMX is an explicit skip; compile/fault-only
+coverage does not establish successful execution of AMX arithmetic or restart.
+Do not relink the shared library while these tests run: pipeline tests also
+launch the CLI from the same build tree.
+
 `X86SystemMemory.*` and `X86SystemMemorySource.*` cover WRSSD/Q, WRUSSD/Q and
 long-mode ENQCMD/ENQCMDS through the shared system contract. Run
 `NeverDX86SystemStateTests`, `NeverDX86SystemSideeffectTests` and

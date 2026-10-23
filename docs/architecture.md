@@ -4,6 +4,20 @@
 
 # NeverD Architecture
 
+
+`X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
+instructions name physical tile registers and retain their memory/encoding
+semantics; they do not expose TILECFG or TMM values through an ordinary function
+ABI. Native LLVM, HighC and LLVM-to-C consume `X86AmxAsm.h`, keeping the bank in
+the CPU with complete TMM and memory effects. Native faults retain hardware
+partial progress and restart state. Row instructions explicitly publish their
+64-byte ZMM result to ordinary SSA through private storage. The concrete
+executor owns the same physical bank and reuses the existing tile evaluators;
+unknown required bank contents fail. Legacy value-form AMX operations remain
+separate and guarded at native emission. See
+[x86 instruction support](x86-instruction-support.md#architectural-amx-bank-and-native-output)
+for feature distinctions, historical TF32 encoding and qualification limits.
+
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.

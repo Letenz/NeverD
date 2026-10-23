@@ -14,6 +14,7 @@
 #include "../CRecordCall.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
+#include "../render/X86AmxState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
@@ -4855,6 +4856,11 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Amx = renderX86AmxCall(Opts.TheArch, Call, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *Amx;
+    return true;
+  }
   if (auto Sgx =
           renderX86SgxCall(Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);

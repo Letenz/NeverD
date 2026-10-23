@@ -248,3 +248,5 @@ SIDEEFFECT(Intrinsic::X86Encls);
 SIDEEFFECT(Intrinsic::X86Enclv);
 
 SIDEEFFECT(Intrinsic::X86SegmentedBlockMemory);
+
+SIDEEFFECT(Intrinsic::X86AMXState);
