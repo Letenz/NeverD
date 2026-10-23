@@ -19,6 +19,9 @@ recognize leaf/non-leaf authenticated tails. Negative frame tests retain
 branches with live frames, local/stack targets, a signed link or a mismatched
 authentication key/modifier. `NEVERD_PARITY_BIN=/path/to/thin/arm64e` also
 checks the fast terminator classifier against Capstone on a real binary.
+Compiled C parameter-flow checks cover local-name collisions at O0/O2 through
+both renderers. Unsupported PAuth_LR encodings, including the PACM HINT, must
+fail explicitly through both decoder routes.
 
 The same target checks public Mach-O loading, CPU subtype capability bits,
 arm64e chained formats 1/7/9/10/12, signing metadata, signed import addends,

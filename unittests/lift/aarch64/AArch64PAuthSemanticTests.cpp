@@ -31,11 +31,13 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IRReader/IRReader.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 #include <array>
@@ -91,7 +93,8 @@ void expectIntrinsic(const LowOp &Op, Intrinsic Id, unsigned Inputs) {
 }
 
 void compileArm64eC(const std::string &Source,
-                    const std::function<void(llvm::StringRef)> &Inspect = {}) {
+                    const std::function<void(llvm::StringRef)> &Inspect = {},
+                    bool EmitLLVM = false) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -121,19 +124,21 @@ void compileArm64eC(const std::string &Source,
   // Exclude host libc headers explicitly. Only Clang's resource headers and
   // the fixture's C declarations are needed, including on Linux and Windows.
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
-    const llvm::StringRef Args[] = {Compiler,
-                                    "-target",
-                                    "arm64e-apple-macos",
-                                    "-ffreestanding",
-                                    "-nostdlibinc",
-                                    "-I",
-                                    NEVERD_ARM64E_TEST_HEADERS,
-                                    "-std=gnu11",
-                                    Optimization,
-                                    "-c",
-                                    SourcePath,
-                                    "-o",
-                                    ObjectPath};
+    llvm::SmallVector<llvm::StringRef> Args = {Compiler,
+                                               "-target",
+                                               "arm64e-apple-macos",
+                                               "-ffreestanding",
+                                               "-nostdlibinc",
+                                               "-I",
+                                               NEVERD_ARM64E_TEST_HEADERS,
+                                               "-std=gnu11",
+                                               Optimization,
+                                               EmitLLVM ? "-S" : "-c",
+                                               SourcePath,
+                                               "-o",
+                                               ObjectPath};
+    if (EmitLLVM)
+      Args.push_back("-emit-llvm");
     std::string Error;
     const int Status = llvm::sys::ExecuteAndWait(Compiler, Args, std::nullopt,
                                                  Redirects, 30, 0, &Error);
@@ -298,7 +303,97 @@ TEST(AArch64PAuthSemantics, CRenderersPreserveTiedPointerOperands) {
                                             (Auth.Strip ? " $0" : " $0, $2"),
                                         Auth.Mnemonic, "result", true, Args);
     EXPECT_NE(Low.Code.find("\"+r\"(__pointer)"), std::string::npos);
-    EXPECT_NE(Low.Code.find("result = __pointer"), std::string::npos);
+    EXPECT_NE(Low.Code.find("result = "), std::string::npos);
+  }
+}
+
+TEST(AArch64PAuthSemantics, CTemporariesNeverCaptureOperandsOrResults) {
+  for (Intrinsic Id : {Intrinsic::Pacia, Intrinsic::Autdb, Intrinsic::Xpaci,
+                       Intrinsic::A64_AuthBranch}) {
+    const bool Branch = Id == Intrinsic::A64_AuthBranch;
+    const bool Strip = Id == Intrinsic::Xpaci;
+    const std::string Pointer = Branch ? "__target" : "__pointer";
+    const std::string Modifier = Pointer + "_";
+    std::vector<std::string> Args{Pointer};
+    if (Branch)
+      Args.push_back("1");
+    if (!Strip)
+      Args.push_back(Modifier);
+    for (bool LLVMRoute : {false, true}) {
+      if (Branch && LLVMRoute)
+        continue; // LLVMC's auth builtin introduces no local C scope.
+      SCOPED_TRACE(testing::Message() << intrinsicName(Id) << " " << LLVMRoute);
+      std::string Body;
+      if (LLVMRoute) {
+        const auto Auth = *aarch64PAuthOperation(Id);
+        // The output deliberately has the same name as the original input.
+        Body = renderARMInlineAsm(Arch::AArch64, Auth.llvmAsm(), Auth.Mnemonic,
+                                  Pointer, true, Args)
+                   .Code +
+               "return " + Pointer + ";";
+      } else {
+        bool HasIntrinsics = false;
+        Body = "return " + renderARMIntrinsicCall(Id, Args, 8, HasIntrinsics) +
+               ";";
+      }
+      const std::string Source =
+          "#include <stdint.h>\nuint64_t capture(uint64_t " + Pointer +
+          ", uint64_t " + Modifier + ") { " + Body + " }\n";
+      compileArm64eC(
+          Source,
+          [&](llvm::StringRef Path) {
+            llvm::LLVMContext Context;
+            llvm::SMDiagnostic Diagnostic;
+            auto Module = llvm::parseIRFile(Path, Diagnostic, Context);
+            ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+            auto *Function = Module->getFunction("capture");
+            ASSERT_TRUE(Function);
+            Function->removeFnAttr(llvm::Attribute::OptimizeNone);
+            optimize(*Module);
+            ASSERT_FALSE(llvm::verifyModule(*Module));
+            Function = Module->getFunction("capture");
+            ASSERT_TRUE(Function);
+            unsigned AuthenticationCount = 0;
+            for (auto &Block : *Function)
+              for (auto &Insn : Block) {
+                const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+                if (!Call)
+                  continue;
+                const auto *Asm =
+                    llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+                const auto *Callee = Call->getCalledFunction();
+                const bool Machine =
+                    Asm && !Branch &&
+                    llvm::StringRef(Asm->getAsmString())
+                        .starts_with(
+                            std::string(aarch64PAuthOperation(Id)->Mnemonic) +
+                            " ");
+                const bool Control =
+                    Branch && Callee &&
+                    Callee->getIntrinsicID() == llvm::Intrinsic::ptrauth_auth;
+                if (!Machine && !Control)
+                  continue;
+                ++AuthenticationCount;
+                // Clang places the explicit modifier before the implicit tied
+                // input of a +r output. NeverD's direct LLVM emitter uses its
+                // own valid ordering; this oracle checks the C compiler's IR.
+                if (Machine)
+                  EXPECT_EQ(Asm->getConstraintString(),
+                            Strip ? "=r,0" : "=r,r,0");
+                EXPECT_EQ(Call->getArgOperand(Branch || Strip ? 0 : 1),
+                          Function->getArg(0));
+                if (!Strip)
+                  EXPECT_EQ(Call->getArgOperand(Branch ? 2 : 0),
+                            Function->getArg(1));
+                const auto *Return =
+                    llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator());
+                ASSERT_TRUE(Return);
+                EXPECT_EQ(Return->getReturnValue(), Call);
+              }
+            EXPECT_EQ(AuthenticationCount, 1u) << Source;
+          },
+          /*EmitLLVM=*/true);
+    }
   }
 }
 
@@ -463,6 +558,19 @@ TEST(AArch64PAuthSemantics, ExceptionReturnsNeverLoseAuthentication) {
   for (bool Fast : {false, true})
     for (uint32_t Word : {0xd69f0bffu, 0xd69f0fffu})
       EXPECT_THROW(lift(Word, Fast), UnliftedInstruction);
+}
+
+TEST(AArch64PAuthSemantics, UnsupportedPAuthLRNeverFallsBackToHints) {
+  // Independently assembled with LLVM MC's +pauth-lr feature. PACM is the
+  // compatible HINT that changes how later baseline PAC/AUT use modifiers.
+  for (bool Fast : {false, true})
+    for (uint32_t Word :
+         {0xd50324ffu, 0xdac18bfeu, 0xdac18ffeu, 0xdac1bbfeu, 0xdac1bffeu,
+          0xdac1a3feu, 0xdac1a7feu, 0xdac183feu, 0xdac187feu, 0xf380001fu,
+          0xf3a0001fu, 0x5500001fu, 0x5520001fu}) {
+      SCOPED_TRACE(testing::Message() << Word << " " << Fast);
+      EXPECT_THROW(lift(Word, Fast), UnliftedInstruction);
+    }
 }
 
 TEST(AArch64PAuthSemantics, AuthenticatedTailCallsRequireARestoredFrame) {

@@ -57,13 +57,11 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
     for (const auto &Auth : kAArch64PAuthOperations) {
       if (AsmStr != Auth.llvmAsm() || Args.size() != (Auth.Strip ? 1 : 2))
         continue;
-      const std::string Body =
+      const std::string Value =
           aarch64PAuthMachineC(Auth, Args[0], Auth.Strip ? "" : Args[1]);
-      const std::string Result =
-          ResultLive && !ResultName.empty()
-              ? llvm::formatv(kAArch64PAuthCCopyResult, ResultName).str()
-              : std::string();
-      return {"{ " + Body + Result + "}\n", false};
+      const std::string Prefix =
+          ResultLive && !ResultName.empty() ? ResultName + " = " : "(void)";
+      return {Prefix + Value + ";\n", false};
     }
   }
   if (Mnemonic == "sel" && Args.size() >= 2) {
