@@ -143,3 +143,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(X87PortableRuntimeCHeader.c PROPERTIES
     COMPILE_OPTIONS "-fshort-enums")
 endif()
+
+add_neverd_unittest(NeverDX87PortablePreparationTests
+  X87PortablePreparationTests.cpp
+
+  LINK_COMPONENTS
+  Pipeline
+  BackendLLVM
+  BackendC
+  IRMed
+)

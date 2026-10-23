@@ -6966,6 +6966,17 @@ consumption is a stateful, single-use operation; failure and nonproducing steps
 invalidate it. The internal C++ embedding layout must match the runtime build.
 The bridge itself establishes no generated-code or translation qualification.
 
+`preparePortableX87Function` owns the alternate generated-function interface.
+It admits an ABI-recovered x64 integer leaf only after checking its direct CFG,
+SSA dominance, owned context and portable forms. Source arguments remain numeric
+guest values. An explicit runtime pointer and source-result pointer follow them;
+the function returns a status. Each step has an immediate failure return, and
+only its exclusive success edge may consume a scalar result. A complete known
+64-bit source return is required; unknown upper RAX bits are never zero-filled.
+The immutable prepared body uses private control labels, carries no original
+code-range proof and exposes no mutable IR or public qualification switch.
+Ordinary LLVM and HighC entry points reject its dedicated helper intrinsics.
+
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
 composes proof-gated semantic simplification with LLVM optimization at `O0`

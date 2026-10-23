@@ -3577,6 +3577,15 @@ native or typed support from promoting portable, state or proof capabilities.
 Python API tests cover the ownership-safe adapter. These inventory tests do
 not establish native instruction or ARM64 portable execution coverage.
 
+`NeverDX87PortablePreparationTests` lifts authored x64 leaf, branch and loop
+bytes through the normal pipeline in default and NoOpt modes, then checks the
+private portable interface. It refuses malformed scalars/edges, counterfeit
+incoming-register copies, unsupported forms, external context handoffs and
+partial or unknown-upper-bit returns. It also verifies that ordinary emitters
+cannot publish the dedicated helpers. Run `NeverDMedMutableSourceTests` with it
+when changing the shared scalar-shape rules. These preparation checks do not
+establish generated execution or ARM64 translation coverage.
+
 `NeverDWorkerX87Capabilities` compares the real worker with the C/Python report
 and, when the CLI target is present, the CLI. It checks unloaded and loaded
 sessions, unchanged bytes/project revisions, malformed requests, and refusal

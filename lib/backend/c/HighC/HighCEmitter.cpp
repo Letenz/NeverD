@@ -4500,6 +4500,9 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       [&](const ExprPtr &Expr) {
         if (!Expr || !Seen.insert(Expr.get()).second)
           return;
+        if (isPortableX87Intrinsic(Expr->IntrinsicId))
+          throw std::invalid_argument(
+              "portable x87 helpers require a prepared emission entry");
         if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
           throw std::invalid_argument(
               "raw environment requirement has no C runtime contract");

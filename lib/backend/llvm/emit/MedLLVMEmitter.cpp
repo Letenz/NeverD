@@ -781,6 +781,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
               "intrinsic has an invalid intrinsic ID shape");
         if (Op.Opcode == NdOp::INTRINSIC) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isPortableX87Intrinsic(Id))
+            throw std::invalid_argument(
+                "portable x87 helpers require a prepared emission entry");
           if (Id == Intrinsic::A64_PACMPending)
             throw std::runtime_error(kAArch64PAuthMalformedOperation);
           if (Id == Intrinsic::A64_SvePtrue &&
