@@ -70,9 +70,9 @@ does not introduce a virtual CPU or synthesize successful hardware responses.
 The system-memory follow-up also brings the existing CET writes and enqueue
 intrinsics under this contract without changing their serialized IDs.
 WRSSD/WRUSSD retain their 32-bit-target forms; the qword forms require x64.
-ENQCMD/ENQCMDS remain long-mode-only in the lifter: their second address is an
-implicit ES destination, independent of a source FS/GS override. Their native
-implementations own all permission checks and memory accesses; no compiler
+ENQCMD/ENQCMDS retain an implicit ES destination, independent of the source
+segment. The i386 forms use the segmented block contract described below.
+Their native implementations own all permission checks and memory accesses; no compiler
 preload or ordinary store is substituted. The existing scalar enqueue executor
 continues to require explicit CPL/PASID state and returns retry for ordinary
 memory. It does not acquire a real device portal from this change.
@@ -110,7 +110,6 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | GETSEC | Leaf-specific register/state results and control transfer, including measured-environment entry/exit. |
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
 | AMX native LLVM output | Versioned TILECFG/tile-state ownership, restartable strided memory, partial progress and fault continuation. Existing strict LowIR support is not native code-generation support. |
-| ENQCMD, ENQCMDS, MOVDIR64B in 32-bit mode | Implicit ES destination base/limit ownership. Existing 64-bit support does not prove these forms. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 
@@ -151,9 +150,10 @@ architectural coverage.
    state, distinguish native return, VM exit and nonlocal transfer, and reject
    states the selected runtime cannot transport. A compiler calling convention
    alone does not preserve the unsaved guest registers exposed by VMRUN.
-4. Give AMX and 32-bit implicit ES destinations explicit state and access
-   ownership, including partial progress, segment checks and fault order.
-   Native and concrete executors must consume the same contract.
+4. Give AMX explicit state and access ownership, including partial progress
+   and fault order. Native and concrete executors must consume the same
+   contract. A concrete i386 segmented executor still requires a supplied
+   descriptor environment; native block transactions now retain that state.
 5. Validate transition and privilege behavior in an authenticated execution
    environment. Compile-only checks establish operand transport and generated
    code validity; they do not establish VM-exit, enclave or fault semantics.
@@ -182,9 +182,10 @@ the fixture corpus, not all 1,652 IDs or all x86 forms.
 The original diagnostic scan of the decoder's C unit-test byte arrays found 298
 fully consumed x86/x64 candidates. Five VEX/EVEX form failures were fixed in the
 first batch; ten candidates then failed in the REX2 and 32-bit ES families.
-The follow-up FP regressions address REX2 forms while the implicit ES contract
-remains open. These arrays also contain negative decoder fixtures: this diagnostic
-count is not an architectural validity or instruction-coverage denominator.
+The FP regressions address the REX2 forms; the segmented block contract below
+now covers the i386 ES forms. These arrays also contain negative decoder
+fixtures: this diagnostic count is not an architectural validity or
+instruction-coverage denominator.
 
 Source tests exercise the system instructions on ELF, COFF and Mach-O with and
 without pipeline optimization. LLVM IR and both generated C routes compile
@@ -554,3 +555,37 @@ The pinned decoder corpus remains 2,770 lifted encodings across 478 IDs plus
 two refused far returns; it has no ENCLS/ENCLV cases, so the dedicated SGX
 fixtures provide that coverage without inflating the corpus count. No decoder
 submodule revision changes in this batch.
+
+
+## i386 segmented block transactions
+
+`ENQCMD`, `ENQCMDS` and `MOVDIR64B` now retain protected/compatibility-mode
+segment semantics through `X86SegmentedBlockMemory`. Its constant selector
+identifies the instruction, source segment and 16/32-bit address size; the two
+32-bit values are segment offsets, never linear image pointers. Source
+DS/ES/SS/CS/FS/GS selection is explicit, including default SS for BP/EBP/ESP
+addressing. Destination ES cannot be overridden. The native instruction owns
+segment descriptors, limits, access rights, source reads, alignment, feature
+and privilege checks and the ordered transaction. No compiler preload or
+ordinary store substitutes for it. Enqueue returns native ZF and clears the
+other arithmetic flags; MOVDIR64B preserves flags.
+
+The shared system shape and assembly plan drive LowIR validation, MedIR,
+LLVM, HighC and LLVMC. Native assembly uses the original address width and
+fixed SI/DI operands; source segment prefixes are independent of register
+allocation. Both native arguments remain integers, so an offset matching an
+image VA cannot acquire an unrelated symbol identity. The scalar emulator
+refuses these operations before effects because it has no descriptor context.
+This is native CPU execution support, not a new software segmentation model.
+
+`X86SegmentedBlock.*` tests decode/detail agreement, segment selection, address
+wrapping, output shapes and missing-environment refusal.
+`X86SegmentedBlockSource.*` compiles all six source segments and both address
+sizes for i386 ELF, COFF and Mach-O through both C routes and LLVM at O0/O2.
+Linux i386 executables compare the original bytes and generated objects with
+nonflat ES/FS descriptors, ES source/destination overlap, read-only ES, segment
+limits and unaligned destinations. MOVDIR64B success has a separate byte and
+flag oracle. Enqueue checks cover native faults, not successful CPL0 execution
+or device acceptance. Windows C compilation uses Clang GNU inline assembly.
+The references are Intel's [SDM Volume 2A](https://cdrdv2.intel.com/v1/dl/getContent/671199)
+and [SDM Volume 2B](https://cdrdv2.intel.com/v1/dl/getContent/671241).

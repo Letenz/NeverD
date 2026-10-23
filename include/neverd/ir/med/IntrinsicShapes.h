@@ -449,6 +449,12 @@ x86SystemStateMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
     else if (Input.Kind == MedVar::Reg && Input.TheArch != Shape.TargetArch)
       Shape.ValidId = false;
   }
+  if (Shape.ValidId &&
+      Op.Inputs[0].ConstVal ==
+          static_cast<uint16_t>(Intrinsic::X86SegmentedBlockMemory) &&
+      Op.NumInputs > 1 && Op.Inputs[1].isConst() && Op.Inputs[1].Size == 2 &&
+      Op.Inputs[1].ConstVal <= UINT16_MAX)
+    Shape.SegmentedBlockSelector = static_cast<uint16_t>(Op.Inputs[1].ConstVal);
   return Shape;
 }
 

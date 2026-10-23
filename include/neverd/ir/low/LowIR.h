@@ -425,6 +425,12 @@ inline X86SystemStateShape x86SystemStateLowShape(const LowOp &Op,
     Shape.InputSizes[I] = Input.Size;
     Shape.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
   }
+  if (Shape.ValidId &&
+      Op.Inputs[0].Offset ==
+          static_cast<uint16_t>(Intrinsic::X86SegmentedBlockMemory) &&
+      Op.NumInputs > 1 && Op.Inputs[1].isConst() && Op.Inputs[1].Size == 2 &&
+      Op.Inputs[1].Offset <= UINT16_MAX)
+    Shape.SegmentedBlockSelector = static_cast<uint16_t>(Op.Inputs[1].Offset);
   return Shape;
 }
 

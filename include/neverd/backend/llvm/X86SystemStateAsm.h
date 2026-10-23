@@ -32,9 +32,10 @@ struct X86SystemStateAsm {
 
 inline std::optional<X86SystemStateAsm>
 x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
-                  NdMemoryAddressSpace Space) {
+                  NdMemoryAddressSpace Space,
+                  std::optional<uint16_t> Selector = std::nullopt) {
   const auto C = x86SystemStateContract(Id);
-  const auto L = x86SystemStateLayout(Id, TargetArch, Width);
+  const auto L = x86SystemStateLayout(Id, TargetArch, Width, Selector);
   if (!L || (TargetArch != Arch::X86 && TargetArch != Arch::X64) ||
       !isKnownMemoryAddressSpace(Space) ||
       ((C.MemoryArgument < 0 || C.Kind == X86SystemStateKind::MsrList) &&
@@ -67,6 +68,24 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   auto Memory = [&](unsigned I) { return Segment + "(" + Input(I) + ")"; };
   using K = X86SystemStateKind;
   switch (C.Kind) {
+  case K::SegmentedBlock: {
+    const char *Mnemonics[] = {"movdir64b", "enqcmd", "enqcmds"};
+    const char *Segments[] = {"%es:", "%cs:", "%ss:", "%ds:", "%fs:", "%gs:"};
+    const auto Value = *Selector;
+    const auto Modifier = Value & X86SegmentedBlockAddress16 ? ":w}" : ":k}";
+    auto Offset = [&](unsigned I) {
+      return "${" + std::to_string(P.OutputBytes.size() + I) + Modifier;
+    };
+    P.Text += "\n\t" + std::string(Mnemonics[Value & 3]) + " " +
+              Segments[(Value >> 2) & 7] + "(" + Offset(0) + "), " + Offset(1);
+    if (L->HasFlag)
+      P.Text += "\n\tsetz $0";
+    P.InputBytes = {4, 4};
+    // SI is a legal base for both addr16 and addr32. Explicitly name the
+    // source segment, including default SS, independently of allocation.
+    P.InputConstraints = {"{si}", "{di}"};
+    break;
+  }
   case K::ReadPid:
   case K::ReadBase:
     P.Text += " $0";

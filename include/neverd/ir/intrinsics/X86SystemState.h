@@ -13,6 +13,7 @@
 #define NEVERD_IR_INTRINSICS_X86SYSTEMSTATE_H
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86SegmentedBlock.h"
 
 #include <array>
 #include <cstdint>
@@ -24,6 +25,7 @@ struct X86SystemStateShape {
   Arch TargetArch = Arch::Unknown;
   NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
   NdMemoryAddressSpace MemoryAddressSpace = NdMemoryAddressSpace::Default;
+  std::optional<uint16_t> SegmentedBlockSelector;
   bool ValidId = false;
   bool WritableOutput = false;
   uint16_t OutputSize = 0;
@@ -43,7 +45,8 @@ struct X86SystemStateLayout {
 };
 
 inline std::optional<X86SystemStateLayout>
-x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width) {
+x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width,
+                     std::optional<uint16_t> Selector = std::nullopt) {
   if (TargetArch != Arch::Unknown && TargetArch != Arch::X86 &&
       TargetArch != Arch::X64)
     return std::nullopt;
@@ -52,6 +55,14 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width) {
     return std::nullopt;
   using K = X86SystemStateKind;
   switch (C.Kind) {
+  case K::SegmentedBlock: {
+    if (TargetArch == Arch::X64 || !Selector ||
+        !x86SegmentedBlockSelectorIsValid(*Selector))
+      return std::nullopt;
+    const bool Flag = x86SegmentedBlockHasFlag(*Selector);
+    return X86SystemStateLayout{
+        static_cast<uint16_t>(Flag), 3, {2, 4, 4}, 0, Flag};
+  }
   case K::ReadPid:
     if ((Width != 4 && Width != 8) || (TargetArch == Arch::X86 && Width != 4) ||
         (TargetArch == Arch::X64 && Width != 8))
@@ -174,8 +185,9 @@ inline uint16_t x86SystemStateMemoryBytes(Intrinsic Id, uint16_t Width) {
 inline bool x86SystemStateShapeIsValid(Intrinsic Id,
                                        const X86SystemStateShape &Shape) {
   const auto C = x86SystemStateContract(Id);
-  const auto L = x86SystemStateLayout(Id, Shape.TargetArch,
-                                      x86SystemStateWidth(Id, Shape));
+  const auto L =
+      x86SystemStateLayout(Id, Shape.TargetArch, x86SystemStateWidth(Id, Shape),
+                           Shape.SegmentedBlockSelector);
   if (!L || !Shape.ValidId || Shape.MemoryOrdering != NdMemoryOrdering::None ||
       !isKnownMemoryAddressSpace(Shape.MemoryAddressSpace) ||
       ((C.MemoryArgument < 0 || C.Kind == X86SystemStateKind::MsrList) &&

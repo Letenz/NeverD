@@ -787,3 +787,104 @@ TEST(X86Sgx, RefiningPrefixesNeverBecomeUnprefixedInstructions) {
         EXPECT_TRUE(Ops.empty());
       }
 }
+
+TEST(X86SegmentedBlock, OffsetsSegmentsAddressWidthsAndCompletionStayExplicit) {
+  for (unsigned Kind = 0; Kind != 3; ++Kind)
+    for (unsigned Segment = 0; Segment != 7; ++Segment)
+      for (bool Address16 : {false, true}) {
+        SCOPED_TRACE(Kind);
+        SCOPED_TRACE(Segment);
+        SCOPED_TRACE(Address16);
+        const uint8_t Prefixes[] = {0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0};
+        std::vector<uint8_t> Bytes;
+        if (Prefixes[Segment])
+          Bytes.push_back(Prefixes[Segment]);
+        if (Address16)
+          Bytes.push_back(0x67);
+        Bytes.insert(Bytes.end(),
+                     {uint8_t(Kind == 0   ? 0x66
+                              : Kind == 1 ? 0xf2
+                                          : 0xf3),
+                      0x0f, 0x38, 0xf8, uint8_t(Address16 ? 0x3c : 0x3e)});
+        const auto Ops = lift(Arch::X86, Bytes);
+        auto I = std::find_if(Ops.begin(), Ops.end(), [](const auto &Op) {
+          return Op.Opcode == NdOp::INTRINSIC;
+        });
+        ASSERT_NE(I, Ops.end());
+        EXPECT_EQ(I->Inputs[0].Offset,
+                  uint16_t(Intrinsic::X86SegmentedBlockMemory));
+        const auto Shape = x86SystemStateLowShape(*I, Arch::X86);
+        ASSERT_TRUE(x86SystemStateShapeIsValid(
+            Intrinsic::X86SegmentedBlockMemory, Shape));
+        EXPECT_EQ(Shape.SegmentedBlockSelector,
+                  x86SegmentedBlockSelector(
+                      static_cast<X86SegmentedBlockKind>(Kind),
+                      static_cast<X86BlockSegment>(Segment == 6 ? 3 : Segment),
+                      Address16));
+        EXPECT_EQ(I->Output.Size, Kind == 0 ? 0 : 1);
+        BinaryImage Image;
+        Image.Arch = Arch::X86;
+        NdOpEmulator Emu(Image);
+        Emu.setRegister(x86reg::RSI, 0xa5a51234);
+        Emu.setRegister(x86reg::RDI, 0x5a5a5678);
+        Emu.setRegister(x86reg::CF, 1);
+        for (auto P = Ops.begin(); P != I; ++P)
+          ASSERT_TRUE(Emu.step(*P));
+        EXPECT_EQ(Emu.getRegister(I->Inputs[2].Offset),
+                  Address16 ? 0x1234u : 0xa5a51234u);
+        EXPECT_FALSE(Emu.step(*I)); // No implicit flat segment environment.
+        EXPECT_EQ(Emu.getRegister(x86reg::CF), 1u);
+        for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+          auto Bad = Shape;
+          switch (Mutation) {
+          case 0:
+            Bad.TargetArch = Arch::X64;
+            break;
+          case 1:
+            Bad.SegmentedBlockSelector.reset();
+            break;
+          case 2:
+            Bad.SegmentedBlockSelector = 3;
+            break;
+          case 3:
+            Bad.SegmentedBlockSelector = 64;
+            break;
+          case 4:
+            Bad.InputSizes[1] = 8;
+            break;
+          case 5:
+            Bad.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+            break;
+          }
+          EXPECT_FALSE(x86SystemStateShapeIsValid(
+              Intrinsic::X86SegmentedBlockMemory, Bad));
+        }
+      }
+}
+
+TEST(X86SegmentedBlock, StackAddressDefaultsToSSAndMalformedDetailIsRefused) {
+  for (const auto &Bytes :
+       {std::vector<uint8_t>{0x66, 0x0f, 0x38, 0xf8, 0x7d, 0},
+        std::vector<uint8_t>{0x67, 0x66, 0x0f, 0x38, 0xf8, 0x7e, 0}}) {
+    auto Ops = lift(Arch::X86, Bytes);
+    auto I = std::find_if(Ops.begin(), Ops.end(), [](const auto &Op) {
+      return Op.Opcode == NdOp::INTRINSIC;
+    });
+    ASSERT_NE(I, Ops.end());
+    EXPECT_EQ((I->Inputs[1].Offset >> 2) & 7, unsigned(X86BlockSegment::SS));
+    Decoder D;
+    ASSERT_TRUE(D.init(Arch::X86));
+    DecodedInsn DI{};
+    ASSERT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, DI),
+              Bytes.size());
+    // The public lifter requires trusted bytes/detail; changing the register
+    // operand width must never produce a different segmented transaction.
+    auto *CI = DI.Raw;
+    CI->detail->x86.operands[0].size = 8;
+    X86Lifter L(Arch::X86);
+    L.setStrict(true);
+    std::vector<LowOp> Bad;
+    EXPECT_THROW(L.lift(CI, Bad), std::exception);
+    EXPECT_TRUE(Bad.empty());
+  }
+}

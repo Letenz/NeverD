@@ -5225,6 +5225,15 @@ enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
 retry behavior; CET writes still require an execution environment it lacks.
 Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
 CET writes, after validating the same operand contract.
+The i386 forms of ENQCMD/ENQCMDS/MOVDIR64B instead use
+`X86SegmentedBlockMemory`. `X86SegmentedBlock.h` owns the serialized instruction,
+source-segment and address-size selector. The system shape requires a constant
+selector and two 32-bit offsets. Native lowering never resolves those offsets
+as process pointers: the hardware instruction owns source DS/ES/SS/CS/FS/GS and
+implicit destination ES, including descriptor rights and limits. Default SS
+selection happens in the lifter before changing the address register. The
+shared assembly plan uses SI/DI at the encoded address width. Static emulation
+refuses without descriptor state; it cannot inherit the flat x64 projection.
 MOVDIRI and long-mode MOVDIR64B also use the shared native memory contract.
 MOVDIRI retains its scalar width; MOVDIR64B carries both addresses, with FS/GS
 applying only to the source. No ordinary load, masked store or eager alignment

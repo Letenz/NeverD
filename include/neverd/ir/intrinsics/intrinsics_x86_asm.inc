@@ -197,3 +197,5 @@ A(Intrinsic::DebugService, "int 2Dh");
 
 A(Intrinsic::X86Encls, "encls");
 A(Intrinsic::X86Enclv, "enclv");
+
+A(Intrinsic::X86SegmentedBlockMemory, "x86_segmented_block_memory");

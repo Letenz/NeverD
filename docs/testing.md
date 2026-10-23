@@ -24,6 +24,16 @@ unavailable, retaining the compiler's actual intrinsic headers and emitted bodie
 The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
 
+`X86SegmentedBlock.*` and `X86SegmentedBlockSource.*` additionally cover i386
+MOVDIR64B/ENQCMD/ENQCMDS with explicit source segments and implicit ES. The
+matrix compiles every source segment and both address widths for ELF/COFF/Mach-O.
+Freestanding Linux i386 execution needs compatibility mode and `modify_ldt`;
+MOVDIR64B success also needs the host feature. The driver compares raw bytes
+with both C routes, LLVM and native objects, checks independent copied bytes
+and flags, and exercises nonflat ES/FS, read-only/limited ES, source limits and
+alignment faults in isolated children. Enqueue success on a real device is not
+qualified. The scalar emulator must refuse without descriptor state.
+
 The system-memory matrix also covers 24 MOVDIRI/MOVDIR64B encodings, including
 16-bit addressing within the i386 target, long-mode address-size overrides,
 both scalar widths and FS/GS. `X86DirectStore.*` checks scalar memory projection

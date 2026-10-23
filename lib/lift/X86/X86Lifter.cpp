@@ -49,13 +49,14 @@ X86Lifter::X86Lifter(Arch A) : TargetArch(A) {}
 // ===----------------------------------------------------------------------===//
 
 NdVar X86Lifter::LiftState::computeEA(const cs_x86_op &MemOp,
-                                      bool ForMemoryAccess) {
+                                      bool ForMemoryAccess,
+                                      bool SegmentOffset) {
   const uint16_t ArithmeticSize =
       AddressSize == 2 || AddressSize == 4 || AddressSize == 8 ? AddressSize
                                                                : uint16_t{8};
   const bool SegmentRelative =
-      ForMemoryAccess &&
-      memoryAddressSpace(MemOp) != NdMemoryAddressSpace::Default;
+      SegmentOffset || (ForMemoryAccess && memoryAddressSpace(MemOp) !=
+                                               NdMemoryAddressSpace::Default);
   const bool HasIndex = !isNoSibIndex(MemOp.mem.index, AddressSize);
   NdVar EA = makeTemp(ArithmeticSize);
   bool First = true;

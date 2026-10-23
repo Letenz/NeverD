@@ -391,6 +391,8 @@ enum class Intrinsic : uint16_t {
   // Append-only: bounded SGX supervisor/VMM completion.
   X86Encls,
   X86Enclv,
+  // Append-only: i386 source-segment/implicit-ES block transaction.
+  X86SegmentedBlockMemory,
 
   _Count = 16000
 };
@@ -415,7 +417,8 @@ enum class X86SystemStateKind : uint8_t {
   SendUserInterrupt,
   LoadKernelGs,
   HistoryReset,
-  InvalidateBroadcast
+  InvalidateBroadcast,
+  SegmentedBlock
 };
 
 struct X86SystemStateContract {

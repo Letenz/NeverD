@@ -238,7 +238,9 @@ public:
       return true;
     }
 
-    NdVar computeEA(const cs_x86_op &MemOp, bool ForMemoryAccess = true);
+    /// SegmentOffset keeps every displacement scalar, even for DS/ES/SS/CS.
+    NdVar computeEA(const cs_x86_op &MemOp, bool ForMemoryAccess = true,
+                    bool SegmentOffset = false);
     static NdMemoryAddressSpace memoryAddressSpace(const cs_x86_op &MemOp);
     void storeToMem(const cs_x86_op &MemOp, NdVar Val);
     NdVar emitByteSwap(NdVar Src);

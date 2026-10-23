@@ -2388,3 +2388,263 @@ TEST(X86SgxSource, UnusedLeafRegistersDoNotBecomeParametersOrTraps) {
                     A == Arch::X64);
     }
 }
+
+namespace {
+std::vector<uint8_t> segmentedBlockFunction(unsigned Kind, unsigned Segment,
+                                            bool Address16, size_t &Offset) {
+  // Two cdecl scalar offsets. Preserve callee-saved ESI/EDI and keep the flag
+  // result observable without a synthetic pointer dereference in the fixture.
+  std::vector<uint8_t> Bytes = {0x56, 0x57, 0x8b, 0x74, 0x24, 0x0c, 0x8b,
+                                0x7c, 0x24, 0x10, 0xb8, 0,    0,    0,
+                                0,    0x83, 0xc0, 0,    0xf9};
+  Offset = Bytes.size();
+  const uint8_t Segments[] = {0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65};
+  Bytes.push_back(Segments[Segment]);
+  if (Address16)
+    Bytes.push_back(0x67);
+  Bytes.insert(Bytes.end(), {uint8_t(Kind == 0   ? 0x66
+                                     : Kind == 1 ? 0xf2
+                                                 : 0xf3),
+                             0x0f, 0x38, 0xf8, uint8_t(Address16 ? 0x3c : 0x3e),
+                             0x9f, 0x0f, 0xb6, 0xc4, 0x5f, 0x5e, 0xc3});
+  return Bytes;
+}
+
+std::string segmentedBlockDriver(const BinaryImage &Image, unsigned Kind,
+                                 unsigned Segment, bool Address16) {
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  OS << "#define KIND " << Kind << "\n#define SEGMENT " << Segment
+     << "\n#define ADDRESS16 " << unsigned(Address16) << "\n";
+  OS << R"C(
+extern unsigned virtualization_test(unsigned, unsigned);
+extern unsigned neverd_original(unsigned, unsigned);
+static unsigned char source[256] __attribute__((aligned(64)));
+static unsigned char destination[256] __attribute__((aligned(64)));
+static unsigned char expected[256];
+static int sys(int n, unsigned a, unsigned b, unsigned c) {
+  int r;
+  __asm__ volatile("int $0x80" : "=a"(r) : "0"(n), "b"(a), "c"(b), "d"(c) : "memory", "cc");
+  return r;
+}
+static void done(int code) {
+  sys(1, code, 0, 0);
+  __builtin_unreachable();
+}
+struct descriptor { unsigned entry, base, limit, flags; };
+static unsigned invoke(unsigned (*fn)(unsigned, unsigned), int mode) {
+  struct descriptor es = {0, (unsigned)destination, mode == 1 ? 63u : 255u,
+                           mode == 2 ? 0x49u : 0x41u};
+  struct descriptor fs = {1, (unsigned)source, mode == 4 ? 127u : 255u, 0x41};
+  if (sys(123, 1, (unsigned)&es, sizeof(es)) ||
+      sys(123, 1, (unsigned)&fs, sizeof(fs))) done(90);
+  unsigned short oldes, oldfs;
+  __asm__ volatile("movw %%es,%0; movw %%fs,%1" : "=r"(oldes), "=r"(oldfs));
+  __asm__ volatile("movw %0,%%es; movw %1,%%fs" : : "r"((unsigned short)7), "r"((unsigned short)15) : "memory");
+  unsigned src = SEGMENT == 3 ? (unsigned)(source + 128) : 128;
+  unsigned dst = mode == 3 ? 65 : 64;
+  if (ADDRESS16) { src |= 0xa5a50000u; dst |= 0x5a5a0000u; }
+  unsigned result = fn(src, dst);
+  __asm__ volatile("sfence; movw %0,%%es; movw %1,%%fs" : : "r"(oldes), "r"(oldfs) : "memory");
+  return result;
+}
+static void init(void) {
+  for (unsigned i = 0; i != 256; ++i) {
+    source[i] = (unsigned char)(i * 13 + 7);
+    destination[i] = (unsigned char)(i * 17 + 5);
+  }
+}
+static int status(unsigned (*fn)(unsigned, unsigned), int mode) {
+  int pid = sys(2, 0, 0, 0);
+  if (pid < 0) done(91);
+  if (!pid) {
+    sys(172, 4, 0, 0); // PR_SET_DUMPABLE=0: no host core collector.
+    invoke(fn, mode);
+    done(0);
+  }
+  int result = -1;
+  if (sys(7, pid, (unsigned)&result, 0) != pid) done(92);
+  return result;
+}
+void _start(void) {
+  init();
+  if (KIND == 0) {
+    unsigned a = invoke(neverd_original, 0);
+    for (unsigned i = 0; i != 256; ++i) expected[i] = destination[i];
+    // Independent successful transaction check, beyond agreement of routes.
+    for (unsigned i = 0; i != 64; ++i) {
+      unsigned char value = SEGMENT == 0 ? (unsigned char)((128+i)*17+5) : source[128+i];
+      if (destination[64+i] != value) done(11);
+    }
+    init();
+    unsigned b = invoke(virtualization_test, 0);
+    if (a != 0x47 || b != a) done(12);
+    for (unsigned i = 0; i != 256; ++i)
+      if (destination[i] != expected[i]) done(13);
+  }
+  for (int mode = KIND ? 0 : 1; mode != 5; ++mode) {
+    if (mode == 4 && SEGMENT != 4) continue;
+    int a = status(neverd_original, mode);
+    int b = status(virtualization_test, mode);
+    if ((a & 127) == 0 || a != b) done(20 + mode);
+  }
+  done(0);
+}
+__asm__(".text\n.globl neverd_original\nneverd_original:\n"
+)C";
+  for (uint8_t Byte : Image.Segments.front().Data)
+    OS << "\".byte " << unsigned(Byte) << "\\n\"\n";
+  OS << ");\n";
+  return Text;
+}
+} // namespace
+
+TEST(X86SegmentedBlockSource, AllSegmentsAndWidthsCompileAcrossNativeFormats) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (unsigned Kind = 0; Kind != 3; ++Kind)
+      for (unsigned Segment = 0; Segment != 6; ++Segment)
+        for (bool Address16 : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Kind);
+          SCOPED_TRACE(Segment);
+          SCOPED_TRACE(Address16);
+          size_t Offset;
+          auto Image =
+              image(Arch::X86, Format,
+                    segmentedBlockFunction(Kind, Segment, Address16, Offset));
+          compileRoutes(Image, false, Entry + Offset,
+                        Kind == 0   ? "movdir64b"
+                        : Kind == 1 ? "enqcmd"
+                                    : "enqcmds",
+                        {}, false, false, {}, {}, 4, true);
+          if (::testing::Test::HasFailure())
+            return;
+        }
+}
+
+TEST(X86SegmentedBlockSource,
+     NonflatSegmentsAndNativeFaultsMatchOriginalBytes) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "Requires Linux i386 compatibility execution";
+#else
+  const auto Features = llvm::sys::getHostCPUFeatures();
+  if (!Features.lookup("movdir64b"))
+    GTEST_SKIP() << "MOVDIR64B is unavailable";
+  for (unsigned Kind = 0; Kind != 3; ++Kind)
+    for (unsigned Segment : {0, 3, 4})
+      for (bool Address16 : {false, true})
+        for (bool NoOpt : {false, true}) {
+          if (Segment == 3 && Address16)
+            continue; // DS is the process flat segment.
+          SCOPED_TRACE(Kind);
+          SCOPED_TRACE(Segment);
+          SCOPED_TRACE(Address16);
+          SCOPED_TRACE(NoOpt);
+          size_t Offset;
+          auto Image =
+              image(Arch::X86, BinaryFormat::ELF,
+                    segmentedBlockFunction(Kind, Segment, Address16, Offset));
+          const auto Driver =
+              segmentedBlockDriver(Image, Kind, Segment, Address16);
+          compileRoutes(Image, NoOpt, Entry + Offset,
+                        Kind == 0   ? "movdir64b"
+                        : Kind == 1 ? "enqcmd"
+                                    : "enqcmds",
+                        {}, false, false, Driver, {}, 4);
+          if (::testing::Test::HasFailure())
+            return;
+        }
+#endif
+}
+
+TEST(X86SegmentedBlockSource, MalformedAssemblyCannotEraseSegmentOrEffects) {
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    const auto Selector = x86SegmentedBlockSelector(
+        static_cast<X86SegmentedBlockKind>(Kind), X86BlockSegment::FS, true);
+    const auto P =
+        x86SystemStateAsm(Intrinsic::X86SegmentedBlockMemory, Arch::X86, 0,
+                          NdMemoryAddressSpace::Default, Selector);
+    ASSERT_TRUE(P);
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      SCOPED_TRACE(Kind);
+      SCOPED_TRACE(Mutation);
+      llvm::LLVMContext Context;
+      llvm::Module Module("segmented", Context);
+      llvm::IRBuilder<> B(Context);
+      auto *Result = Kind ? B.getInt8Ty() : B.getVoidTy();
+      auto *Type = llvm::FunctionType::get(
+          Result, {B.getInt32Ty(), B.getInt32Ty()}, false);
+      auto *Function = llvm::Function::Create(
+          Type, llvm::GlobalValue::ExternalLinkage, "test", Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+      auto Text = P->Text;
+      auto Constraints = P->Constraints;
+      if (Mutation == 1)
+        Constraints.erase(Constraints.find(",~{memory}"));
+      if (Mutation == 2)
+        Text.replace(Text.find("%fs:"), 4, "%ds:");
+      // DS is also a valid segment. Breaking the declared width/constraints
+      // instead of merely choosing another valid transaction must fail.
+      if (Mutation == 2)
+        Constraints.replace(Constraints.find("{si}"), 4, "r");
+      if (Mutation == 3)
+        Text.erase(Text.find("%fs:"), 4);
+      auto *Asm = llvm::InlineAsm::get(
+          Type, Text, Constraints, Mutation != 4, Mutation == 5,
+          Mutation == 6 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
+      auto *Call =
+          B.CreateCall(Asm, {Function->getArg(0), Function->getArg(1)});
+      if (Mutation == 7)
+        Call->setOnlyReadsMemory();
+      if (Mutation == 8)
+        Call->setDoesNotReturn();
+      if (Kind)
+        B.CreateRet(Call);
+      else
+        B.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X86;
+      Options.EmitIncludes = false;
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      if (!Mutation)
+        EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options)) << Source;
+      else
+        EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                     std::invalid_argument);
+    }
+  }
+}
+
+TEST(X86SegmentedBlockSource, ImageShapedOffsetsRemainNumeric) {
+  for (bool NoOpt : {false, true}) {
+    // The offset equals this image's named entry. It belongs to DS/ES, so
+    // neither operand may become the address of the replacement C function.
+    std::vector<uint8_t> Bytes = {
+        0x57, 0xbf, 0x00, 0x10, 0,    0,    0xb8, 0,    0,    0,    0,
+        0x83, 0xc0, 0,    0xf9, 0x3e, 0x66, 0x0f, 0x38, 0xf8, 0x3d, 0,
+        0x10, 0,    0,    0x9f, 0x0f, 0xb6, 0xc4, 0x5f, 0xc3};
+    auto Image = image(Arch::X86, BinaryFormat::ELF, Bytes);
+    std::string High, LLVM, Native;
+    sourceRoutes(Image, NoOpt, Entry + 15, "movdir64b", &High, &LLVM, {}, {},
+                 &Native);
+    if (::testing::Test::HasFailure())
+      return;
+    for (const auto *S : {&High, &LLVM}) {
+      const auto Start = S->find("__asm__ volatile");
+      ASSERT_NE(Start, std::string::npos);
+      const auto End = S->find(';', Start);
+      EXPECT_EQ(S->substr(Start, End - Start).find("virtualization_test"),
+                std::string::npos)
+          << *S;
+    }
+    EXPECT_EQ(Native.find("ptrtoint (ptr @virtualization_test"),
+              std::string::npos)
+        << Native;
+    compileRoutes(Image, NoOpt, Entry + 15, "movdir64b");
+    if (::testing::Test::HasFailure())
+      return;
+  }
+}

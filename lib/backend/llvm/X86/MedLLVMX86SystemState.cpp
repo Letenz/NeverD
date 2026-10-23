@@ -50,12 +50,15 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
   if (!x86SystemStateShapeIsValid(Id, Shape))
     llvm::report_fatal_error("invalid x86 system instruction operand contract");
   const auto C = x86SystemStateContract(Id);
-  const auto P = x86SystemStateAsm(
-      Id, TargetArch, x86SystemStateWidth(Id, Shape), Op.MemoryAddressSpace);
+  const auto P =
+      x86SystemStateAsm(Id, TargetArch, x86SystemStateWidth(Id, Shape),
+                        Op.MemoryAddressSpace, Shape.SegmentedBlockSelector);
   if (!P)
     llvm::report_fatal_error("unsupported x86 system assembly contract");
   std::vector<llvm::Value *> Arguments;
   std::vector<llvm::Type *> Types;
+  const unsigned FirstInput =
+      C.Kind == X86SystemStateKind::SegmentedBlock ? 2 : 1;
   for (size_t I = 0; I < P->InputBytes.size(); ++I) {
     auto *T = sizeToType(P->InputBytes[I]);
     llvm::Value *V;
@@ -68,8 +71,12 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
                                  sizeToType(AccessBytes), Builder, Space);
       if (Space == NdMemoryAddressSpace::Default)
         T = V->getType();
-    } else
-      V = getVar(Op.Inputs[I + 1], Builder);
+    } else if (C.Kind == X86SystemStateKind::SegmentedBlock)
+      // A segment offset may equal an image VA without naming its replacement.
+      // Reuse the FS/GS offset materializer, including non-constant SSA copies.
+      V = getRawSegmentOffset(Op.Inputs[I + FirstInput], Builder);
+    else
+      V = getVar(Op.Inputs[I + FirstInput], Builder);
     if (V->getType() != T)
       V = V->getType()->isPointerTy() ? Builder.CreatePtrToInt(V, T)
                                       : Builder.CreateZExtOrTrunc(V, T);

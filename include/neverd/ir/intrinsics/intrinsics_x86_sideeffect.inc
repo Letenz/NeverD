@@ -246,3 +246,5 @@ SIDEEFFECT(Intrinsic::X86FPMaskCompareMemoryState);
 
 SIDEEFFECT(Intrinsic::X86Encls);
 SIDEEFFECT(Intrinsic::X86Enclv);
+
+SIDEEFFECT(Intrinsic::X86SegmentedBlockMemory);

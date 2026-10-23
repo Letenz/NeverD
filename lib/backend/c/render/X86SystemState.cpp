@@ -59,6 +59,15 @@ std::string gnuText(const std::string &Text) {
       I += 5;
       continue;
     }
+    if (Text.compare(I, 2, "${") == 0 && I + 5 < Text.size() &&
+        Text[I + 3] == ':' && (Text[I + 4] == 'w' || Text[I + 4] == 'k') &&
+        Text[I + 5] == '}') {
+      Result += '%';
+      Result += Text[I + 4];
+      Result += Text[I + 2];
+      I += 5;
+      continue;
+    }
     const char C = Text[I];
     if (C == '$')
       Result += '%';
@@ -246,6 +255,14 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
         E->Type->Kind == NdTypeKind::Ptr)
       Shape.InputSizes[I] = 8;
   }
+  if (Id == Intrinsic::X86SegmentedBlockMemory &&
+      !Expression.Operands.empty()) {
+    const auto *Selector = Expression.Operands[0].get();
+    if (Selector && Selector->Kind == ExprKind::Const && Selector->Type &&
+        Selector->Type->Kind == NdTypeKind::Int && Selector->Type->Size == 2 &&
+        Selector->ConstVal <= UINT16_MAX)
+      Shape.SegmentedBlockSelector = static_cast<uint16_t>(Selector->ConstVal);
+  }
   if (!x86SystemStateShapeIsValid(Id, Shape))
     throw std::invalid_argument("invalid x86 system expression contract");
   // Preserve the established MSVC spelling after the shared admission check.
@@ -259,13 +276,18 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
            unsignedType(Width) + ")(" + Arguments[1] +
            "), (void *)(uintptr_t)(" + Arguments[0] + "))";
   }
-  const auto P = x86SystemStateAsm(
-      Id, TargetArch, x86SystemStateWidth(Id, Shape), Shape.MemoryAddressSpace);
+  const auto P =
+      x86SystemStateAsm(Id, TargetArch, x86SystemStateWidth(Id, Shape),
+                        Shape.MemoryAddressSpace, Shape.SegmentedBlockSelector);
   if (!P)
     throw std::invalid_argument("unsupported x86 system assembly contract");
   std::vector<std::string> Outputs;
   std::string Text = "({ " + locals(*P, Outputs);
-  Text += renderAsm(*P, Outputs, Arguments);
+  const std::vector<std::string> NativeArguments =
+      C.Kind == X86SystemStateKind::SegmentedBlock
+          ? std::vector<std::string>(Arguments.begin() + 1, Arguments.end())
+          : Arguments;
+  Text += renderAsm(*P, Outputs, NativeArguments);
   if (Outputs.size() == 1)
     Text += " " + Outputs[0] + ";";
   else if (Outputs.size() == 2) {
@@ -304,17 +326,29 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
   Mnemonic = Mnemonic.split(' ').first;
   for (const auto Id : Inventory) {
     const auto C = x86SystemStateContract(Id);
-    if (Mnemonic != C.Mnemonic &&
+    const bool Segmented = C.Kind == X86SystemStateKind::SegmentedBlock;
+    if (!(Segmented &&
+          llvm::StringRef(Asm->getAsmString()).starts_with(C.Mnemonic)) &&
+        Mnemonic != C.Mnemonic &&
         !(C.Kind == X86SystemStateKind::ShadowWrite &&
           (Mnemonic == std::string(C.Mnemonic) + "d" ||
            Mnemonic == std::string(C.Mnemonic) + "q")))
       continue;
     Known = true;
-    for (uint16_t Width : {0, 2, 4, 8})
+    std::vector<uint16_t> Widths = {0, 2, 4, 8};
+    if (Segmented) {
+      Widths.clear();
+      for (uint16_t S = 0; S < X86SegmentedBlockSelectorLimit; ++S)
+        if (x86SegmentedBlockSelectorIsValid(S))
+          Widths.push_back(S);
+    }
+    for (uint16_t Width : Widths)
       for (const auto Space :
            {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
             NdMemoryAddressSpace::X86GS}) {
-        const auto P = x86SystemStateAsm(Id, TargetArch, Width, Space);
+        const auto P = x86SystemStateAsm(
+            Id, TargetArch, Segmented ? 0 : Width, Space,
+            Segmented ? std::optional<uint16_t>(Width) : std::nullopt);
         if (!P || P->Text != Asm->getAsmString() ||
             P->Constraints != Asm->getConstraintString() ||
             !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
