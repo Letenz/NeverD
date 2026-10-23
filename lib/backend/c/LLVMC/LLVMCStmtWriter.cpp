@@ -28,6 +28,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/MachineInstructionText.h"
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
@@ -3912,14 +3913,14 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   }
   if (IID == llvm::Intrinsic::ptrauth_auth) {
     if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 3)
-      throw std::runtime_error("pointer authentication requires AArch64");
+      throw std::runtime_error(kAArch64PAuthRequiresAArch64);
     emitIndent(Indent);
     if (!Call.use_empty())
       OS << getName(&Call) << " = ";
-    OS << "(uint64_t)__builtin_ptrauth_auth((void *)(uintptr_t)("
-       << valueStr(Call.getArgOperand(0)) << "), "
-       << valueStr(Call.getArgOperand(1)) << ", (uintptr_t)("
-       << valueStr(Call.getArgOperand(2)) << "));\n";
+    OS << aarch64PAuthAuthenticateC(valueStr(Call.getArgOperand(0)),
+                                    valueStr(Call.getArgOperand(1)),
+                                    valueStr(Call.getArgOperand(2)))
+       << ";\n";
     return true;
   }
   if (IID == llvm::Intrinsic::aarch64_neon_bfmmla) {

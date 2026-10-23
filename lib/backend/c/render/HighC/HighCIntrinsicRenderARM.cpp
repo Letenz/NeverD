@@ -10,10 +10,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/support/IntegerLiterals.h"
 
@@ -770,24 +770,24 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
                                    uint16_t ResultBytes, bool &HasCIntrinsics) {
   using I = Intrinsic;
   if (const auto Auth = aarch64PAuthOperation(Id)) {
-    if (ResultBytes != 8 || Ops.size() != (Auth->Strip ? 1 : 2))
-      throw std::invalid_argument("malformed AArch64 pointer authentication");
-    return "({ uint64_t __pointer = (uint64_t)(" + Ops[0] +
-           "); __asm__ volatile(\"" + Auth->Mnemonic +
-           (Auth->Strip ? " %0" : " %0, %1") + "\" : \"+r\"(__pointer)" +
-           (Auth->Strip ? std::string()
-                        : " : \"r\"((uint64_t)(" + Ops[1] + "))") +
-           "); __pointer; })";
+    if (ResultBytes != kAArch64PAuthPointerBytes ||
+        Ops.size() != (Auth->Strip ? 1 : 2))
+      throw std::invalid_argument(kAArch64PAuthMalformedOperation);
+    return "({ " +
+           aarch64PAuthMachineC(*Auth, Ops[0], Auth->Strip ? "" : Ops[1]) +
+           kAArch64PAuthCPointerResult + "})";
   }
   if (Id == I::A64_AuthBranch) {
-    if (ResultBytes != 8 || Ops.size() != 3 || !constantOperand(Ops[1]) ||
-        *constantOperand(Ops[1]) > 1)
-      throw std::invalid_argument("malformed AArch64 authenticated branch");
-    return "({ uint64_t __target = (uint64_t)__builtin_ptrauth_auth((void "
-           "*)(uintptr_t)(" +
-           Ops[0] + "), " + Ops[1] + ", (uintptr_t)(" + Ops[2] +
-           ")); __asm__ volatile(\"" + kAArch64AuthenticatedTargetUseAsm +
-           "\" : : \"r\"(__target)); __target; })";
+    if (ResultBytes != kAArch64PAuthPointerBytes || Ops.size() != 3 ||
+        !constantOperand(Ops[1]) ||
+        !aarch64PAuthCodeKeyIsValid(*constantOperand(Ops[1])))
+      throw std::invalid_argument(kAArch64PAuthMalformedBranch);
+    return "({ " +
+           llvm::formatv(kAArch64PAuthCTargetDeclaration,
+                         aarch64PAuthAuthenticateC(Ops[0], Ops[1], Ops[2]))
+               .str() +
+           aarch64PAuthTargetUseC(kAArch64PAuthCTarget) + kAArch64PAuthCTarget +
+           "; })";
   }
   switch (Id) {
   case I::A64_Rbit: {

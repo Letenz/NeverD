@@ -24,6 +24,7 @@
 
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/FloatingPointContract.h"
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
@@ -3849,8 +3850,8 @@ void HighCWriter::writeImageObjects() {
         Obj.IndexedBytes,
         Obj.Type ? Obj.Type->Size : pointerBytes(Opts.TheArch));
     if (Opts.Image->hasMachOAuthenticatedPointerIn(Addr, ObjectBytes)) {
-      OS << "extern " << declarationToC(Obj.Type, Obj.Name)
-         << "; /* arm64e: dyld-authenticated storage */\n";
+      OS << "extern " << declarationToC(Obj.Type, Obj.Name) << ";"
+         << kArm64eAuthenticatedStorageComment << "\n";
       continue;
     }
     if (!Obj.String && !Obj.PointsTo && relocatedSlotInitializer(Addr, Obj)) {

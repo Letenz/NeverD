@@ -305,8 +305,7 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
   CodegenResult Result;
   ensureTargets();
   if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
-    llvm::WithColor::error() << "codegen: arm64e image rebuilding requires "
-                                "ABI-aware signing and fixups\n";
+    llvm::WithColor::error() << kArm64eRebuildUnsupported;
     return Result;
   }
 
@@ -524,8 +523,7 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
   llvm::mc_rewrite::RewriteResult Result;
   ensureTargets();
   if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
-    llvm::WithColor::error() << "codegen: arm64e image rebuilding requires "
-                                "ABI-aware signing and fixups\n";
+    llvm::WithColor::error() << kArm64eRebuildUnsupported;
     Result.ImageValid = false;
     return Result;
   }

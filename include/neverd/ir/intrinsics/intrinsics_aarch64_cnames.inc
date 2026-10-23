@@ -168,18 +168,10 @@ C(Intrinsic::Udf_A64, "__builtin_trap");
 C(Intrinsic::A64_Clrex, "__clrex");
 
 // PAC (ARMv8.3 Pointer Authentication)
-C(Intrinsic::Pacia, "__pacia");
-C(Intrinsic::Pacib, "__pacib");
-C(Intrinsic::Pacda, "__pacda");
-C(Intrinsic::Pacdb, "__pacdb");
-C(Intrinsic::Autia, "__autia");
-C(Intrinsic::Autib, "__autib");
-C(Intrinsic::Autda, "__autda");
-C(Intrinsic::Autdb, "__autdb");
-C(Intrinsic::Xpaci, "__xpaci");
-C(Intrinsic::Xpacd, "__xpacd");
-C(Intrinsic::A64_Pacga, "__builtin_arm_pacga");
-C(Intrinsic::A64_AuthBranch, "__builtin_ptrauth_auth");
+#define NEVERD_A64_PAUTH_OPERATION(Id, Insn, Mnemonic, Key, Strip, Auth)       \
+  C(Intrinsic::Id, "__" Mnemonic);
+#define NEVERD_A64_PAUTH_BUILTIN(Id, Name) C(Intrinsic::Id, Name);
+#include "neverd/ir/intrinsics/AArch64PAuth.def"
 C(Intrinsic::A64_SveCntb, "svcntb");
 C(Intrinsic::A64_SveCnth, "svcnth");
 C(Intrinsic::A64_SveCntw, "svcntw");

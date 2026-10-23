@@ -7,6 +7,7 @@
 #include "MachODyldFixups.h"
 
 #include "neverd/loader/Limits.h"
+#include "neverd/loader/MachO/MachOArm64e.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -198,19 +199,12 @@ void joinImportSlot(BinaryImage &Img, llvm::StringRef Name,
     }
 }
 
-bool isArm64eChainFormat(uint16_t Format) {
-  return Format == DYLD_CHAINED_PTR_ARM64E ||
-         Format == DYLD_CHAINED_PTR_ARM64E_KERNEL ||
-         Format == DYLD_CHAINED_PTR_ARM64E_USERLAND ||
-         Format == DYLD_CHAINED_PTR_ARM64E_FIRMWARE ||
-         Format == DYLD_CHAINED_PTR_ARM64E_USERLAND24;
-}
-
 /// Decode a whole segment before publishing any of its fixups. Authenticated
 /// slots keep a signing recipe and their original bytes; only unauthenticated
 /// slots are materialized as preferred-base runtime pointer values.
 bool parseArm64eSegment(
-    const dyld_chained_starts_in_segment &Seg, const uint8_t *Bytes, va_t Base,
+    const dyld_chained_starts_in_segment &Seg,
+    const arm64e::ChainFormat &Format, const uint8_t *Bytes, va_t Base,
     const std::optional<std::vector<ChainedImportRecord>> &Imports,
     BinaryImage &Img) {
   struct Fixup {
@@ -221,23 +215,16 @@ bool parseArm64eSegment(
     std::optional<MachOAuthenticatedPointer> Authentication;
   };
   const auto fail = [&]() {
-    Img.MachOChainedFixupsError = "macho: malformed arm64e chained fixups";
+    Img.MachOChainedFixupsError = arm64e::kMalformedChainedFixups;
     return false;
   };
-  const unsigned Stride =
-      Seg.pointer_format == DYLD_CHAINED_PTR_ARM64E_KERNEL ||
-              Seg.pointer_format == DYLD_CHAINED_PTR_ARM64E_FIRMWARE
-          ? 4
-          : 8;
-  const bool Offset = Seg.pointer_format != DYLD_CHAINED_PTR_ARM64E &&
-                      Seg.pointer_format != DYLD_CHAINED_PTR_ARM64E_FIRMWARE;
-  const unsigned OrdinalBits =
-      Seg.pointer_format == DYLD_CHAINED_PTR_ARM64E_USERLAND24 ? 24 : 16;
   const size_t StartOffset =
       offsetof(dyld_chained_starts_in_segment, page_start);
-  if (!Imports || (Seg.page_size != 0x1000 && Seg.page_size != 0x4000) ||
+  if (!Imports ||
+      (Seg.page_size != arm64e::kSmallPageBytes &&
+       Seg.page_size != arm64e::kLargePageBytes) ||
       Seg.size < StartOffset ||
-      uint64_t(Seg.page_count) * 2 > Seg.size - StartOffset ||
+      uint64_t(Seg.page_count) * sizeof(uint16_t) > Seg.size - StartOffset ||
       Seg.segment_offset > InvalidVA - Base)
     return fail();
   const va_t SegmentVA = Base + Seg.segment_offset;
@@ -246,9 +233,9 @@ bool parseArm64eSegment(
       (Seg.page_count &&
        uint64_t(Seg.page_count - 1) * Seg.page_size >= Owner->Size))
     return fail();
-  const size_t StartCount = (Seg.size - StartOffset) / 2;
+  const size_t StartCount = (Seg.size - StartOffset) / sizeof(uint16_t);
   const auto startAt = [&](size_t Index) {
-    return readLE<uint16_t>(Bytes + StartOffset + Index * 2);
+    return readLE<uint16_t>(Bytes + StartOffset + Index * sizeof(uint16_t));
   };
   std::vector<Fixup> Pending;
   std::set<va_t> Slots;
@@ -278,7 +265,7 @@ bool parseArm64eSegment(
     }
     for (uint32_t At : Starts) {
       for (;;) {
-        if (At % Stride || At > Seg.page_size - sizeof(uint64_t) ||
+        if (At % Format.Stride || At > Seg.page_size - sizeof(uint64_t) ||
             At > InvalidVA - PageVA ||
             Pending.size() >=
                 limits::loader::
@@ -298,26 +285,30 @@ bool parseArm64eSegment(
             Img.MachOResolvedChainedPointerSlots.count(Slot))
           return fail();
         const uint64_t Raw = readLE<uint64_t>(Storage);
-        const bool Auth = Raw >> 63;
-        const bool Bind = (Raw >> 62) & 1;
-        const uint32_t Next = (Raw >> 51) & 0x7ff;
+        const bool Auth = arm64e::kAuthentication.extract(Raw);
+        const bool Bind = arm64e::kBind.extract(Raw);
+        const uint32_t Next = arm64e::kNext.extract(Raw);
         Fixup F{Slot};
         if (Auth) {
           F.Authentication.emplace();
-          F.Authentication->Diversity = (Raw >> 32) & 0xffff;
-          F.Authentication->AddressDiversity = (Raw >> 48) & 1;
-          F.Authentication->Key = (Raw >> 49) & 3;
+          F.Authentication->Diversity = arm64e::kDiversity.extract(Raw);
+          F.Authentication->AddressDiversity =
+              arm64e::kAddressDiversity.extract(Raw);
+          F.Authentication->Key = arm64e::kKey.extract(Raw);
         }
         if (Bind) {
-          const uint32_t Ordinal = Raw & ((uint32_t(1) << OrdinalBits) - 1);
-          if (((Raw & UINT32_MAX) >> OrdinalBits) != 0 || !Imports ||
-              Ordinal >= Imports->size() || !(*Imports)[Ordinal].Valid)
+          const uint32_t Ordinal =
+              Raw & llvm::maskTrailingOnes<uint32_t>(Format.OrdinalBits);
+          if ((arm64e::kOrdinalStorage.extract(Raw) >> Format.OrdinalBits) !=
+                  0 ||
+              !Imports || Ordinal >= Imports->size() ||
+              !(*Imports)[Ordinal].Valid)
             return fail();
           F.Import = &(*Imports)[Ordinal];
           if (!Auth && !Img.isValidImportStorageSlot(Slot, F.Import->Name))
             return fail();
           const int64_t InlineAddend =
-              Auth ? 0 : (int64_t((Raw >> 32) & 0x7ffff) ^ 0x40000) - 0x40000;
+              Auth ? 0 : arm64e::kInlineAddend.signExtend(Raw);
           if (llvm::AddOverflow(F.Import->Addend, InlineAddend, F.Addend))
             return fail();
           if (Auth) {
@@ -327,10 +318,11 @@ bool parseArm64eSegment(
             F.Authentication->WeakImport = F.Import->WeakImport;
           }
         } else {
-          F.Target = Auth ? Raw & UINT32_MAX
-                          : (Raw & ((uint64_t(1) << 43) - 1)) |
-                                (((Raw >> 43) & 0xff) << 56);
-          if (Auth || Offset) {
+          F.Target =
+              Auth ? arm64e::kAuthenticatedTarget.extract(Raw)
+                   : arm64e::kTarget.extract(Raw) |
+                         (arm64e::kHigh8.extract(Raw) << arm64e::kHigh8Shift);
+          if (Auth || Format.Offset) {
             if (F.Target > InvalidVA - Base)
               return fail();
             F.Target += Base;
@@ -341,7 +333,7 @@ bool parseArm64eSegment(
         Pending.push_back(std::move(F));
         if (!Next)
           break;
-        const unsigned Delta = Next * Stride;
+        const unsigned Delta = Next * Format.Stride;
         if (Delta > Seg.page_size - At)
           return fail();
         At += Delta;
@@ -412,7 +404,7 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
                                BinaryImage &Img) {
   const auto malformedArm64e = [&]() {
     if (Img.isArm64e())
-      Img.MachOChainedFixupsError = "macho: malformed arm64e chained fixups";
+      Img.MachOChainedFixupsError = arm64e::kMalformedChainedFixups;
   };
   uint32_t DataOff = Info.DataOff;
   uint32_t DataSize = Info.DataSize;
@@ -474,9 +466,9 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
     }
     uint64_t SegEnd = SegAbs + Seg->size;
     uint16_t PtrFormat = Seg->pointer_format;
-    if (isArm64eChainFormat(PtrFormat)) {
-      if (!parseArm64eSegment(*Seg, BasePtr + SegAbs, TextVMAddr, ImportRecords,
-                              Img))
+    if (const auto Format = arm64e::chainFormat(PtrFormat)) {
+      if (!parseArm64eSegment(*Seg, *Format, BasePtr + SegAbs, TextVMAddr,
+                              ImportRecords, Img))
         return;
       continue;
     }
@@ -485,7 +477,7 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
         PtrFormat != DYLD_CHAINED_PTR_64_OFFSET) {
       if (Img.isArm64e()) {
         Img.MachOChainedFixupsError =
-            "macho: unsupported arm64e chained pointer format " +
+            std::string(arm64e::kUnsupportedChainFormatPrefix) +
             std::to_string(PtrFormat);
         return;
       }

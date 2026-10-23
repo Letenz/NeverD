@@ -70,6 +70,12 @@ and identifies `CPU_SUBTYPE_ARM64E` separately from ordinary arm64. Both use
 the AArch64 decoder. `AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
 implicit LR/SP and X17/X16 HINT aliases, and authenticated branch/call/return
 semantics. Authenticated calls read the old operands before overwriting LR.
+`AArch64PAuth.def` owns the instruction inventory, implicit HINT operands,
+authenticated transfer encodings, keys and emission contracts. The fast and
+Capstone classifiers, lifter, intrinsic metadata and emitters consume those
+rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
+`AArch64PAuthC.def` owns the C syntax shared by both projections;
+`MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
 Validated pointer-authentication operations preserve argument setup across
 both ABI recovery and C lowering. Tail-transfer proofs retain target taint
 separately from the signing modifier and restore a saved signed link only

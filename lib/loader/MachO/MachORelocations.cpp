@@ -8,6 +8,7 @@
 #include "MachORelocationsDetail.h"
 
 #include "neverd/loader/DirectBranch.h"
+#include "neverd/loader/MachO/MachOArm64e.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -744,27 +745,29 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
           if (SymOwnerVA != InvalidVA)
             recordAbsolutePointerRelocation(Img, P, Val, SymOwnerVA);
         } else if (RType == ARM64_RELOC_AUTHENTICATED_POINTER) {
-          if (Info.IsScattered || Info.IsPCRel || Info.Length != 3 ||
-              !Info.IsExternal || !Resolved ||
-              !rangeInBounds(SegOff, 8, ApplySeg->Data.size()))
-            return relocationError("invalid ARM64 authenticated pointer",
-                                   SecAddr, RAddr);
+          if (Info.IsScattered || Info.IsPCRel ||
+              Info.Length != arm64e::kObjectPointerLength || !Info.IsExternal ||
+              !Resolved ||
+              !rangeInBounds(SegOff, arm64e::kPointerBytes,
+                             ApplySeg->Data.size()))
+            return relocationError(arm64e::kInvalidObjectPointer, SecAddr,
+                                   RAddr);
           const uint64_t Raw = readLE<uint64_t>(ApplySeg->Data.data() + SegOff);
-          if ((Raw >> 51) != 0x1000)
-            return relocationError("invalid ARM64 authenticated pointer bits",
-                                   SecAddr, RAddr);
-          const int64_t Addend = static_cast<int32_t>(Raw & UINT32_MAX);
+          if (!arm64e::kAuthentication.extract(Raw) ||
+              arm64e::kObjectReserved.extract(Raw))
+            return relocationError(arm64e::kInvalidObjectPointerBits, SecAddr,
+                                   RAddr);
+          const int64_t Addend = arm64e::kObjectAddend.signExtend(Raw);
           const auto Target = addSigned(S, Addend);
           if (!Target || Img.MachOAuthenticatedPointers.count(P))
-            return relocationError(
-                "ARM64 authenticated pointer overflows or conflicts", SecAddr,
-                RAddr);
+            return relocationError(arm64e::kConflictingObjectPointer, SecAddr,
+                                   RAddr);
           MachOAuthenticatedPointer Auth;
           Auth.Target = *Target;
           Auth.Addend = Addend;
-          Auth.Diversity = (Raw >> 32) & 0xffff;
-          Auth.AddressDiversity = (Raw >> 48) & 1;
-          Auth.Key = (Raw >> 49) & 3;
+          Auth.Diversity = arm64e::kDiversity.extract(Raw);
+          Auth.AddressDiversity = arm64e::kAddressDiversity.extract(Raw);
+          Auth.Key = arm64e::kKey.extract(Raw);
           if (const auto Symbol = Reloc.getSymbol();
               Symbol != Obj.symbol_end()) {
             auto Name = Symbol->getName();

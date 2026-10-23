@@ -1828,6 +1828,8 @@ add_neverd_unittest(NeverDArm64eAnalysisTests
   format/MachOArm64eTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode Lift Loader
 )
+target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE
+  NEVERD_ARM64E_TEST_HEADERS="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/arm64e")
 if(NEVERD_TEST_CLANG_EXECUTABLE)
   target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")

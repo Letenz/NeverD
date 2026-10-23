@@ -405,15 +405,14 @@ void AArch64Lifter::fixupDecodedInsn(cs_insn * /*I*/) {
 
 bool AArch64Lifter::isFunctionTerminator(const cs_insn *I) {
   switch (I->id) {
+#define NEVERD_A64_PAUTH_BRANCH(Insn, Mask, Word, Key, Zero, Kind)             \
+  case AARCH64_INS_##Insn:                                                     \
+    return NdOp::Kind != NdOp::INDIR_CALL;
+#include "neverd/ir/intrinsics/AArch64PAuth.def"
+
   case AARCH64_INS_RET:
   case AARCH64_INS_B:
   case AARCH64_INS_BR:
-  case AARCH64_INS_BRAA:
-  case AARCH64_INS_BRAB:
-  case AARCH64_INS_BRAAZ:
-  case AARCH64_INS_BRABZ:
-  case AARCH64_INS_RETAA:
-  case AARCH64_INS_RETAB:
   case AARCH64_INS_ERET:
   case AARCH64_INS_BRK:
   case AARCH64_INS_HLT:

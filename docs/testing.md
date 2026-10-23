@@ -10,7 +10,9 @@ decoder routes for PAC/AUT/XPAC, implicit HINT operands, authenticated
 branches/calls/returns and LDRAA writeback; verifies emitted LLVM; compiles
 both C projections for arm64e at `-O0` and `-O2`; and verifies a compiler-style
 signed return preserves X0. Clang source checks require the arm64e target;
-they do not require a signing identity or an arm64e execution host.
+they use Clang's resource headers and compile-only C library declarations
+with host libc includes disabled. They require neither an Apple SDK nor a
+signing identity or an arm64e execution host.
 Compiler-generated arm64e objects at both optimization levels must preserve
 the explicit argument of an authenticated indirect call through LLVM O2 and
 recognize leaf/non-leaf authenticated tails. Negative frame tests retain

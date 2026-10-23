@@ -93,8 +93,11 @@ SIDEEFFECT(Intrinsic::A64_AtomicUmax);
 SIDEEFFECT(Intrinsic::A64_AtomicUmin);
 SIDEEFFECT(Intrinsic::A64LinuxSyscall);
 // Authentication may fault even when no data-flow consumer uses its result.
-SIDEEFFECT(Intrinsic::Autia);
-SIDEEFFECT(Intrinsic::Autib);
-SIDEEFFECT(Intrinsic::Autda);
-SIDEEFFECT(Intrinsic::Autdb);
+#define NEVERD_A64_PAUTH_EFFECT_true(Id) SIDEEFFECT(Intrinsic::Id);
+#define NEVERD_A64_PAUTH_EFFECT_false(Id)
+#define NEVERD_A64_PAUTH_OPERATION(Id, Insn, Mnemonic, Key, Strip, Auth)       \
+  NEVERD_A64_PAUTH_EFFECT_##Auth(Id)
+#include "neverd/ir/intrinsics/AArch64PAuth.def"
+#undef NEVERD_A64_PAUTH_EFFECT_true
+#undef NEVERD_A64_PAUTH_EFFECT_false
 SIDEEFFECT(Intrinsic::A64_AuthBranch);

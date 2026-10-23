@@ -10,9 +10,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -50,33 +50,20 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
   const bool AArch64 = TheArch == Arch::AArch64;
   if (AArch64 && AsmStr == kAArch64AuthenticatedTargetUseAsm &&
       Args.size() == 1 && !ResultLive)
-    return {"__asm__ volatile(\"" +
-                std::string(kAArch64AuthenticatedTargetUseAsm) +
-                "\" : : \"r\"(" + Args[0] + "));\n",
-            false};
+    return {aarch64PAuthTargetUseC(Args[0]) + "\n", false};
   // Preserve the tied input/output of machine PAC/AUT/XPAC; the generic asm
   // renderer cannot infer that constraint from operand numbers alone.
   if (AArch64) {
-    for (Intrinsic Id : {Intrinsic::Pacia, Intrinsic::Pacib, Intrinsic::Pacda,
-                         Intrinsic::Pacdb, Intrinsic::Autia, Intrinsic::Autib,
-                         Intrinsic::Autda, Intrinsic::Autdb, Intrinsic::Xpaci,
-                         Intrinsic::Xpacd}) {
-      const auto Auth = *aarch64PAuthOperation(Id);
-      if (AsmStr !=
-              std::string(Auth.Mnemonic) + (Auth.Strip ? " $0" : " $0, $2") ||
-          Args.size() != (Auth.Strip ? 1 : 2))
+    for (const auto &Auth : kAArch64PAuthOperations) {
+      if (AsmStr != Auth.llvmAsm() || Args.size() != (Auth.Strip ? 1 : 2))
         continue;
-      return {"{ uint64_t __pointer = (uint64_t)(" + Args[0] +
-                  "); __asm__ volatile(\"" + Auth.Mnemonic +
-                  (Auth.Strip ? " %0" : " %0, %1") + "\" : \"+r\"(__pointer)" +
-                  (Auth.Strip ? std::string()
-                              : " : \"r\"((uint64_t)(" + Args[1] + "))") +
-                  "); " +
-                  (ResultLive && !ResultName.empty()
-                       ? ResultName + " = __pointer; "
-                       : std::string()) +
-                  "}\n",
-              false};
+      const std::string Body =
+          aarch64PAuthMachineC(Auth, Args[0], Auth.Strip ? "" : Args[1]);
+      const std::string Result =
+          ResultLive && !ResultName.empty()
+              ? llvm::formatv(kAArch64PAuthCCopyResult, ResultName).str()
+              : std::string();
+      return {"{ " + Body + Result + "}\n", false};
     }
   }
   if (Mnemonic == "sel" && Args.size() >= 2) {

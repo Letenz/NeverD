@@ -118,12 +118,16 @@ void compileArm64eC(const std::string &Source,
   }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
-  // Freestanding compilation requires neither an Apple SDK nor an arm64e host.
+  // Exclude host libc headers explicitly. Only Clang's resource headers and
+  // the fixture's C declarations are needed, including on Linux and Windows.
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
     const llvm::StringRef Args[] = {Compiler,
                                     "-target",
                                     "arm64e-apple-macos",
                                     "-ffreestanding",
+                                    "-nostdlibinc",
+                                    "-I",
+                                    NEVERD_ARM64E_TEST_HEADERS,
                                     "-std=gnu11",
                                     Optimization,
                                     "-c",

@@ -69,9 +69,10 @@ Arch cpuTypeToArch(uint32_t CpuType, bool Is64) {
 
 /// How the load dialog names a cputype value.
 std::string cpuName(uint32_t CpuType, uint32_t CpuSubtype = 0) {
-  if (CpuType == CPU_TYPE_ARM64 &&
-      (CpuSubtype & ~uint32_t(CPU_SUBTYPE_MASK)) == CPU_SUBTYPE_ARM64E)
-    return "ARM64E";
+#define NEVERD_MACHO_CPU_SUBTYPE(CPU, Subtype, Name)                           \
+  if (CpuType == CPU && (CpuSubtype & ~uint32_t(CPU_SUBTYPE_MASK)) == Subtype) \
+    return Name;
+#include "neverd/loader/MachO/MachONames.def"
   switch (CpuType) {
 #define NEVERD_MACHO_CPU(Value, Name)                                          \
   case Value:                                                                  \

@@ -28,6 +28,7 @@
 #define NEVERD_DECODE_AARCH64FASTCLASSIFY_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/NdOps.h"
 
 #include <cstdint>
 
@@ -75,11 +76,10 @@ inline bool isTerminatorWord(uint32_t Word) {
     return true;
   if ((Word & 0xFFFFFC1Fu) == 0xD61F0000u) // BR Xn
     return true;
-  if (Word == 0xD65F0BFFu || Word == 0xD65F0FFFu) // RETAA / RETAB
+#define NEVERD_A64_PAUTH_BRANCH(Insn, Mask, Match, Key, Zero, Kind)            \
+  if (NdOp::Kind != NdOp::INDIR_CALL && (Word & Mask) == Match)                \
     return true;
-  if ((Word & 0xFFFFF800u) == 0xD71F0800u || // BRAA / BRAB Xn, Xm|SP
-      (Word & 0xFFFFF81Fu) == 0xD61F081Fu)   // BRAAZ / BRABZ Xn
-    return true;
+#include "neverd/ir/intrinsics/AArch64PAuth.def"
   if (Word == 0xD69F03E0u) // ERET
     return true;
   if ((Word >> 26) == 0x05u) // B (unconditional, id 51)
