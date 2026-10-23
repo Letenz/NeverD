@@ -1790,6 +1790,22 @@ TEST(AArch64PACMSemantics, ExecutedEdgesOwnPrefixState) {
           }
         EXPECT_TRUE(SawMode);
       }
+      if (Attempt != 0)
+        continue;
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      Options.Format = BinaryFormat::MachO;
+      for (bool LLVMRoute : {false, true}) {
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVMRoute)
+          ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+        else
+          ASSERT_TRUE(HighCEmitter().emit(
+              {MedToHighConverter().convert(Med, Arch::AArch64)}, Out,
+              Options));
+        compileArm64eC(Source);
+      }
     }
   }
 }
