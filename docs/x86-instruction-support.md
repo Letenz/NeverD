@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`a3f1a1e579c2`](https://github.com/NeverSight/llvm-project/commit/a3f1a1e579c2)
+[`e6106ca17fc4`](https://github.com/NeverSight/llvm-project/commit/e6106ca17fc4)
 adds native instruction selection for the following APIs. NeverC's
-[`6e08b592b`](https://github.com/NeverSight/NeverC/commit/6e08b592b)
+[`0c50426a8`](https://github.com/NeverSight/NeverC/commit/0c50426a8)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -200,6 +200,8 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.cli`, `llvm.x86.sti`, `llvm.x86.invlpg` | i386 and x86-64 | Ordered state effects; CLI/STI preserve arithmetic flags, and INVLPG does not preload its address. |
 | `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
+| `llvm.x86.readcr/readdr`, `llvm.x86.writecr/writedr` | x86-64 | Immediate register selector, full i64 values and ordered, potentially trapping accesses. CR0/2/3/4/8 and DR0..7 retain their native encodings and undefined arithmetic flags. |
+| `llvm.x86.readcr32/readdr32`, `llvm.x86.writecr32/writedr32` | i386 | Same contract with i32 values; CR8, invalid selectors and wrong-mode APIs fail explicitly. |
 
 The fork generates the instruction effects from TableGen. NeverC's pruned table
 has a checked generator for the same VMX effects. The old NeverC VMREAD register
@@ -243,6 +245,21 @@ the NeverC route too. This exposed an incorrect CLI/STI dependency on arithmetic
 EFLAGS; both backends now retain the processor-state effect without inventing
 an arithmetic-flags input or clobber. NeverC's descriptor load/store effects
 are also generated from a checked schema.
+
+CR/DR qualification adds 1,650 LLVM cases across both word sizes, 858 NeverC
+cases for each of the generic and Microsoft builtin spellings, and 858
+NeverC-to-fork cases. The old NeverC lowering deleted unused register reads
+and merged repeated ones at O2. The fixed lowering emits chained native reads
+and expands writes to real MOVs before machine optimization; both describe
+the undefined arithmetic flags. Tests cover every valid register index,
+full values, dead/repeated reads, repeated writes, write/read sequences,
+ordinary memory ordering, flag clobbers and nonvolatile registers. Machine
+verification, O0/O2 and optimized IR, ELF/COFF/Mach-O generation, invalid mode
+and selector diagnostics, 27 intrinsic tests and the 81 binary checks pass.
+The new generic builtins are `__builtin_ia32_readcr`,
+`__builtin_ia32_writecr`, `__builtin_ia32_readdr` and
+`__builtin_ia32_writedr`. Five generator tests additionally protect the new
+write pseudo's stable opcode and synchronized metadata tables.
 
 These tests qualify compiler transport, not successful privileged VM entry.
 The current pointer APIs cover the default address space. Register-result
