@@ -18,6 +18,7 @@
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -246,6 +247,51 @@ TEST(X86SystemRegisterSource, NativeMovesClobberUndefinedArithmeticFlags) {
           ASSERT_FALSE(Object.empty());
           EXPECT_NE(Native.find("~{flags}"), std::string::npos) << Native;
         }
+}
+
+TEST(X86UnsupportedSource, LegacyPlaceholdersCannotBecomeNoOps) {
+  for (auto A : {Arch::X86, Arch::X64})
+    for (auto Id : {Intrinsic::BndMk, Intrinsic::BndMov, Intrinsic::BndCl,
+                    Intrinsic::BndCu, Intrinsic::BndCn, Intrinsic::BndLdx,
+                    Intrinsic::BndStx, Intrinsic::Xacquire, Intrinsic::Xrelease,
+                    Intrinsic::ShaGeneric}) {
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      SCOPED_TRACE(static_cast<unsigned>(Id));
+      MedFunc Function;
+      Function.Entry = Entry;
+      Function.Name = "unsupported_instruction";
+      Function.CC =
+          A == Arch::X64 ? CallingConv::SysV_AMD64 : CallingConv::CDECL;
+      Function.ReturnType = NdType::makeVoid();
+      Function.ReturnsNoValue = true;
+      Function.Blocks.resize(1);
+      auto &Block = Function.Blocks.front();
+      Block.Id = 0;
+      Block.StartAddr = Entry;
+      Block.EndAddr = Entry + 2;
+      MedOp Op;
+      Op.Opcode = NdOp::INTRINSIC;
+      Op.Addr = Entry;
+      Op.addInput(MedVar::makeConst(static_cast<unsigned>(Id), 2));
+      Block.Ops.push_back(Op);
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Entry + 1;
+      Block.Ops.push_back(Return);
+      EXPECT_DEATH(
+          {
+            llvm::LLVMContext Context;
+            (void)MedLLVMEmitter().emit({Function}, Context, Function.Name, A);
+          },
+          "unimplemented x86 intrinsic requires an owned semantic contract");
+      for (bool Gnu : {false, true})
+        EXPECT_DEATH(
+            {
+              bool HasIntrinsics = false;
+              (void)renderX86IntrinsicCall(Id, {}, HasIntrinsics, Gnu);
+            },
+            "unimplemented x86 intrinsic requires an owned semantic contract");
+    }
 }
 
 TEST(X86SystemRegisterSource, MalformedCallsCannotBecomeIntrinsicWritesOfZero) {

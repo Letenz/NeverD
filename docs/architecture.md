@@ -4774,8 +4774,10 @@ cold-fragment ends also bound calls and traps when no separate unwind record
 describes the fragment. An adjacent owned fragment still continues.
 Owned NOP suffixes also need observable code before the owner ends; a sized
 range containing alignment does not make the next function a continuation.
-Decoded NOP identity handles x86 prefixes and MPX-disabled compatibility forms,
-with mode-aware legacy alignment patterns shared by the decoder. Both peeking
+Decoded NOP identity handles x86 prefixes and the architectural register NOP
+forms of `0F 1A/1B`, with mode-aware legacy alignment patterns shared by the
+decoder. Their memory forms retain BNDLDX/BNDSTX identity: neither decoding nor
+lifting assumes that MPX is disabled. Both peeking
 and ordinary exploration reject an instruction that starts in sized ownership
 but borrows bytes outside the primary and its explicitly owned fragments.
 Contiguous fragments may supply those bytes; an ownership gap may not.

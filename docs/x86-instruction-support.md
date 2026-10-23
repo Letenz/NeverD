@@ -112,6 +112,8 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
+| BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
+| XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation; legacy standalone placeholder intrinsics cannot become NOPs. |
 
 The direct-store execution checks cover ordinary memory. Native instructions
 retain WC protocol, concurrent write completion and device transactions, but
@@ -124,6 +126,18 @@ and 1024-byte tile SSA value cannot be treated as the ambient CPU bank. Decoded
 AMX instructions now use the separate architectural-bank contract below. An
 opaque helper declaration, assembly that loses state, or a NOP does not close
 a missing semantic contract.
+
+MPX memory forms retain their decoded identity in both full and lightweight
+decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.
+Only the unprefixed register forms of `0F 1A/1B` remain architectural NOPs, as
+specified by the SDM's BNDLDX/BNDSTX descriptions. Strict lifting rejects the
+seven unmodeled MPX operations without appending partial effects. Existing
+serialized MPX, standalone HLE and generic SHA placeholder IDs remain readable,
+but both LLVM and HighC output fail explicitly instead of silently dropping
+them. Specific SHA and RTM instruction contracts are separate.
+Qualification covers 192 strict MPX form/register/mode/decode-route cases,
+60 legacy emitter refusals, the pinned decoder corpus, and all 86 instruction
+boundary tests. The related source and system-sideeffect suites pass too.
 
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and

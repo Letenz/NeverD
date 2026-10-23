@@ -3392,7 +3392,10 @@ straddling metadata ends, and cold-fragment ends without separate unwind
 records. Calls and traps share the fragment-end controls; adjacent fragments
 still continue. Owned NOP suffixes include runs beyond the heuristic lookahead
 limit, sized symbols/ranges and fragment-only ownership, with and without a
-neighbor entry. Prefix and MPX-disabled x86 NOPs share decoder classification;
+neighbor entry. Prefixed x86 NOPs and the architectural register NOP forms of
+`0F 1A/1B` share decoder classification. MPX memory forms retain instruction
+length, identity and explicit unsupported coverage until bounds state and
+fault behavior are modeled;
 REX.B register exchanges, upper-half-clearing copies, PAUSE and 32-bit INC remain
 observable controls. Interior NOP runs still reach real code, and an independent
 branch into a suffix retains its own ordinary fallthrough. Every partial
