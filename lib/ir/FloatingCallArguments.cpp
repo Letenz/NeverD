@@ -15,6 +15,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace neverd {
 

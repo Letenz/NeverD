@@ -15,6 +15,9 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 
+#include <utility>
+#include <vector>
+
 namespace neverd {
 namespace {
 
