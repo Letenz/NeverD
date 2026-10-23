@@ -58,6 +58,22 @@ class CrossHostEvidenceTests(unittest.TestCase):
             self.assertEqual(controls, {0x7f | (pc << 8) | (rc << 10)
                                        for pc in (0, 2, 3) for rc in range(4)})
 
+    def test_same_commit_cannot_hide_modified_or_missing_source_bindings(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            patch = directory / "source.patch"
+            patch.write_bytes(b"")
+            record = {"git_head": "1" * 40, "untracked_source_sha256": {}}
+            recorder.require_clean_source_record(directory, record)
+            patch.write_bytes(b"different implementation at the same HEAD")
+            with self.assertRaisesRegex(ValueError, "clean committed"):
+                recorder.require_clean_source_record(directory, record)
+            patch.write_bytes(b"")
+            for untracked in ({"lib/injected.cpp": "digest"}, None):
+                record["untracked_source_sha256"] = untracked
+                with self.assertRaisesRegex(ValueError, "clean committed"):
+                    recorder.require_clean_source_record(directory, record)
+
 
 if __name__ == "__main__":
     unittest.main()

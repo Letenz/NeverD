@@ -3642,9 +3642,53 @@ comparison. Generated guest IP/DP are checked independently.
 cross-route/optimization agreement, no skips, stable source/build/compiler and
 runtime hashes, and retained raw state. On x64 it requires 5,760 original
 comparisons. The manual `x87-portable-generated.yml` workflow runs those hosts
-separately; this is generated-leaf evidence, not translation or a performance
-measurement. A pinned Linux AArch64 LLVM package is unavailable, so that lane
+separately. This recorder supplies generated-program evidence; the workflow's
+separate translation, cross-host arithmetic and measurement steps have their
+own records. A pinned Linux AArch64 LLVM package is unavailable, so that lane
 builds the repository's exact LLVM revision from source.
+
+`NeverDX87TranslationRuntimeTests` checks transactional named-extension import
+and export, full payload/provenance preservation, completion and scalar latches,
+terminal helper validation, exact ten-byte faults, invalidation with cancellation,
+forged registries, stale credentials and the unchanged legacy factory.
+`NeverDX87TranslationTests` includes five AOT boundary/profile/cache checks and
+eight native Linux AArch64 invocation/session checks. Native cases compile on
+other hosts and explicitly skip execution there. They cover all 96 TOP/PC/RC
+combinations, refusals and prefix retention, the last byte of an 80-bit memory
+fault, both executable-write policies, mixed unsupported forms, branches,
+backedges at O0/O2, and budget checkpoint/restore.
+
+`scripts/check_x87_translation.py` requires all thirteen translation tests to
+execute without skips on native Linux AArch64. Its frozen fixture retains
+192 observations and the 1,152 actual ELF objects passed into JITLink, with
+serialized logical state after each block, O0/O2 agreement and production
+session agreement. `scripts/check_x87_cross_host.py` separately records three
+fixed arithmetic seeds on x64 and AArch64 (57,888 observations per host). Its
+comparison phase validates complete artifact manifests, matching source commits,
+6,096 generated state observations and arithmetic raw bits/defined status against
+the native x64 originals. Recording alone is not a passing cross-host comparison.
+
+`NeverDX87PortableBenchmark` loads only the authored libraries selected by
+`scripts/benchmark_x87_portable.py` from a passing frozen record. Its twenty
+x64 configurations cover the three routes and three body shapes, exact and
+controlled-refusal execution, raw transport and logical snapshots. Native ARM
+adds complete session cost, checked against frozen translation. Five trials
+retain all child results, failure attempts, counts, timings and process VmHWM.
+A single allowed CPU is selected; no frequency policy is changed. The record
+requires unchanged source/runtime/build inputs and does not claim a speedup.
+
+```sh
+python3 -m unittest scripts.tests.test_check_x87_portable_generated scripts.tests.test_check_x87_translation scripts.tests.test_check_x87_cross_host scripts.tests.test_benchmark_x87_portable -v
+python3 scripts/build.py build-release --target NeverDX87PortableGeneratedTests NeverDX87PortableBenchmark NeverDX87TranslationRuntimeTests NeverDX87TranslationTests --parallel 4
+python3 scripts/check_x87_portable_generated.py --driver build-release/bin/NeverDX87PortableGeneratedTests --runtime build-release/bin/libneverd_x87_runtime_v1.so --compiler /usr/lib/llvm-23/bin/clang --build-dir build-release --output-dir build-release/x87-generated-run1
+python3 scripts/benchmark_x87_portable.py --generated-record build-release/x87-generated-run1/record.json --driver build-release/bin/NeverDX87PortableBenchmark --output-dir build-release/x87-portable-timing1
+```
+
+On native AArch64, run `check_x87_translation.py` first and provide its record
+using `--translation-record` to the benchmark. Freeze and measurement must use
+the same clean committed source and build; rebuilding changes evidence inputs.
+The workflow retains failures as well as successful artifacts for thirty days.
+See [recorded qualification](x87-qualification.md) for actual runs and exclusions.
 
 `NeverDWorkerX87Capabilities` compares the real worker with the C/Python report
 and, when the CLI target is present, the CLI. It checks unloaded and loaded

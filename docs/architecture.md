@@ -6960,7 +6960,7 @@ Protocol identity must be bound by a trusted profile/invocation and included in
 artifact/cache identity before activation. It cannot be inferred from a control
 record, including a successful or eight-byte record, or selected by retrying a
 failed scalar validation. This foundational validator enables no new profile;
-existing integer dispatch, artifact admission and helpers remain scalar-v1.
+default integer dispatch, artifact admission and helpers remain scalar-v1.
 
 `X87PortableRuntime` adapts the existing portable semantic owner to this checked
 memory boundary. Its separate versioned state includes explicit environment
@@ -7001,6 +7001,29 @@ DP and source arguments remain integers. LLVM-C consumes this module with
 positions and omits source-architecture intrinsic headers and original-address
 annotations. Output targets require 64-bit little-endian x64/AArch64 C layouts;
 runtime linking and profile qualification remain explicit requirements.
+
+`isPortableX87RuntimeInstruction` in the shared instruction inventory owns
+Step V1 instruction admission for generated preparation, translation and public
+queries. This boundary excludes the concrete interpreter's integer-flag x87
+forms. `RuntimeX87GuestState` composes the legacy integer state with the versioned
+portable image and separate last-step diagnostics; logical snapshots serialize
+only the named extension in explicit little-endian order.
+`RuntimeX87Helpers` owns terminal step execution and post-invocation validation.
+It reuses the existing transactional semantic/memory owner and never accesses
+host x87 state. Successful FNSTSW updates AX without changing upper RAX.
+
+The explicit C++ `TranslationRuntimeProfileV1::PortableX87` targets native Linux
+AArch64 ELF. Its block builder stops at the first x87 instruction, its lowerer
+flushes the integer prefix before the terminal helper, and its dispatcher resumes
+only after validating completion and the selected PC. Partial completion,
+cancellation, executable-store invalidation and budget resumption retain their
+separate outcomes. The profile owns exact-span validation and refuses
+`ValidateBeforeDispatch`; legacy integer invocation cannot enter its larger
+state ABI. Runtime profile, memory policy, state/helper layout, descriptor and
+actual native symbol bindings participate in object/registry/linker/cache checks.
+Object pipeline schema 17 and lowering schema 10 separate these artifacts from
+the old contracts. Credentials and dynamic state are invocation inputs, never
+host pointers embedded in reusable cache identities.
 
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
@@ -7048,7 +7071,8 @@ forms compute their architecturally defined flags while preserving `AF` in the
 NeverD state model. Canonical `C3` `RET`
 and `C2 iw` `RET imm16` terminate return blocks; canonical `EB cb` and `E9 cd`
 direct-relative `JMP` encodings terminate direct-branch blocks. The published
-lowering schema is 9. Canonical, legacy-prefix-free traditional Jcc branches
+lowering schema is 10; the default scalar instruction subset is unchanged.
+Canonical, legacy-prefix-free traditional Jcc branches
 terminate blocks only in these forms: `JO`/`JNO` short `70/71 cb` or near
 `0F 80/81 cd`; `JB`/`JAE` short `72/73 cb` or near `0F 82/83 cd`; `JE`/`JNE`
 short `74/75 cb` or near `0F 84/85 cd`; `JBE`/`JA` short `76/77 cb` or near
@@ -7114,15 +7138,21 @@ remains exact across blocks, and successful guest stops commit executed state
 and authoritative memory together. Cancellation is linearized against that
 final commit.
 
-This is an executable vertical slice, not a complete translator. It does not
-yet cover ordinary guest-memory instructions, partial registers, conditional
-control flow outside the exact schema-9 traditional-Jcc slice above—including
+The default scalar profile is an executable vertical slice, not a complete
+translator. It does not cover ordinary guest-memory instructions, partial
+registers, conditional control flow outside the exact schema-9 traditional-Jcc slice above—including
 `JRCXZ`/`JECXZ`/`JCXZ` and `LOOP`/`LOOPE`/`LOOPNE`—indirect control flow, calls,
 floating-point, SIMD, x87, atomics, system instructions, general exception
 propagation, block caching, other guest/host pairs, or the reverse
 AArch64-to-x86-64 direction. The execution session has no C, Python, CLI, or
 JSON surface yet, and debugging remains separate and unsupported. The object
 APIs above remain useful without opting into native execution.
+The separately selected portable x87 profile adds only its admitted x64 owned
+instructions and authenticated extension on Linux AArch64. It does not widen
+these scalar object APIs, add a floating calling convention, or admit MMX,
+general environment operations, arbitrary memory instructions or other hosts.
+The [x87 contracts](x87-semantics.md) and [qualification record](x87-qualification.md)
+define that scope independently of complete state or formal proof.
 
 The generated-IR contract requires every translated block governed by it to be
 hidden and non-preemptible with the C ABI `i32 (ptr state, ptr runtime)`.

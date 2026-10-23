@@ -15,7 +15,7 @@ import statistics
 import subprocess
 
 from benchmark_x87_workload import cpu_identity
-from check_x87_cross_host import read_verified
+from check_x87_cross_host import read_verified, require_clean_source_record
 from check_x87_native_regression import git, linked_libraries, sha256, source_snapshot
 from check_x87_portable_generated import audit_observations
 from check_x87_translation import audit_observations as audit_translation_observations
@@ -101,6 +101,7 @@ def main():
     try:
         generated_root = args.generated_record.resolve(strict=True).parent
         generated = read_verified(generated_root)
+        require_clean_source_record(generated_root, generated)
         if (generated["protocol"] != "neverd-x87-portable-generated-leaf-v1" or
                 not generated["passed"] or not generated["stable_inputs"]):
             raise ValueError("passing stable generated evidence is required")
@@ -136,6 +137,7 @@ def main():
                 raise ValueError("native ARM timing requires its passing translation evidence")
             translation_root = args.translation_record.resolve(strict=True).parent
             translation = read_verified(translation_root)
+            require_clean_source_record(translation_root, translation)
             if not translation["passed"] or not translation["stable_inputs"] or translation["git_head"] != head:
                 raise ValueError("translation evidence does not match the benchmark")
             rows = [json.loads(line) for line in (translation_root / "artifacts/observations.jsonl").read_text().splitlines()]

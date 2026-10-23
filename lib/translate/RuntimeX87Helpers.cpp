@@ -93,10 +93,7 @@ uint32_t execute(RuntimeCallFrameV1 *Frame, RuntimeGuestStateX86_64X87V1 *State,
 } // namespace
 
 bool isRuntimeX87InstructionV1(uint32_t Selector) {
-  const auto *Form = x87InstructionForm(Selector);
-  const auto Spec = x87ContextInstruction(Selector);
-  return Form && Form->PortableOperation != X87PortableOperation::None &&
-         Spec && !Spec->ReadsFlags;
+  return isPortableX87RuntimeInstruction(Selector);
 }
 
 llvm::Error validateRuntimeX87AfterInvocationV1(

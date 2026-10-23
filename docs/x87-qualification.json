@@ -1,0 +1,352 @@
+{
+  "schema": "neverd-x87-qualification-ledger-v1",
+  "issue": "https://github.com/NeverSight/NeverD/issues/1677",
+  "status": "candidate; native translation and combined cross-host qualification pending",
+  "scope": "Explicit named profiles in x87-semantics.md; independent numerical, observed-state, execution and formal properties",
+  "records": [
+    {
+      "id": "x87-closure-native-call1",
+      "record": "build-release/x87-closure-native-call1/record.json",
+      "record_sha256": "0ff4a1781b02ac74d6e836a60945a2fea9f13ca55164eed878ad557446b5124e",
+      "protocol": "neverd-x87-native-generated-regression-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 841,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n",
+        "sha256": "ffd0d7a36200bc5620008e8665410e1a74c4d64896b4f857f3b7a7d395d45884"
+      },
+      "tests": 3,
+      "retained_executables": 210
+    },
+    {
+      "id": "x87-closure-native-state1",
+      "record": "build-release/x87-closure-native-state1/record.json",
+      "record_sha256": "7370339bec1c17cd12a469dc05cabdb4f43ff1bd7d4c019323f12a2d40564abf",
+      "protocol": "neverd-x87-native-generated-regression-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 4714,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n",
+        "sha256": "ffd0d7a36200bc5620008e8665410e1a74c4d64896b4f857f3b7a7d395d45884"
+      },
+      "tests": 85,
+      "retained_executables": 710
+    },
+    {
+      "id": "x87-closure-native-bcd1",
+      "record": "build-release/x87-closure-native-bcd1/record.json",
+      "record_sha256": "e21e2d28267c7ba47621bf608c3a7c6b40818ebb1eed219d8f823bc1c0b16f88",
+      "protocol": "neverd-x87-native-generated-regression-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 1605,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n",
+        "sha256": "ffd0d7a36200bc5620008e8665410e1a74c4d64896b4f857f3b7a7d395d45884"
+      },
+      "tests": 5,
+      "retained_executables": 48
+    },
+    {
+      "id": "x87-closure-native-stack1",
+      "record": "build-release/x87-closure-native-stack1/record.json",
+      "record_sha256": "0d4053b86211dc4f44b8e5b9b9dc3953b192f054017ad9f42acd3c56e1a30d34",
+      "protocol": "neverd-x87-native-generated-regression-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 465,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n",
+        "sha256": "ffd0d7a36200bc5620008e8665410e1a74c4d64896b4f857f3b7a7d395d45884"
+      },
+      "tests": 4,
+      "retained_executables": 120
+    },
+    {
+      "id": "x87-closure-native-trig1",
+      "record": "build-release/x87-closure-native-trig1/record.json",
+      "record_sha256": "0a703e756119c6b3fbe077a6610e99ba04439d28dbc3ae529bbfbd1427e56eae",
+      "protocol": "neverd-x87-native-generated-regression-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 1391,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n",
+        "sha256": "ffd0d7a36200bc5620008e8665410e1a74c4d64896b4f857f3b7a7d395d45884"
+      },
+      "tests": 10,
+      "retained_executables": 360
+    },
+    {
+      "id": "x87-closure-native-workload1",
+      "record": "build-release/x87-closure-native-workload1/record.json",
+      "record_sha256": "0afb66faff0a2d97748453eeed5382e4d2190f5af86920bf573b8b02acc55a7e",
+      "protocol": "neverd-x87-native-generated-regression-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 833,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n",
+        "sha256": "ffd0d7a36200bc5620008e8665410e1a74c4d64896b4f857f3b7a7d395d45884"
+      },
+      "tests": 5,
+      "retained_executables": 120
+    },
+    {
+      "id": "x87-closure-native-timing1",
+      "record": "build-release/x87-closure-native-timing1/record.json",
+      "record_sha256": "3c425ceb92428db6eefb8523fe2372567823c0c9937d63d0e1cf72b26e81797f",
+      "protocol": "neverd-x87-batch-measurement-v2",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 300,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "measurement_configuration": {
+        "cpu": 2,
+        "repetitions": 128,
+        "trials": 5,
+        "timeout": 60
+      },
+      "bound_workload_record_sha256": "0afb66faff0a2d97748453eeed5382e4d2190f5af86920bf573b8b02acc55a7e",
+      "measurement_configurations": 30
+    },
+    {
+      "id": "x87-portable-benchmark-measured1",
+      "record": "build-release/x87-portable-benchmark-measured1/record.json",
+      "record_sha256": "441b947b740a12c2590e82ddbe045ded3f22950b21f23e1a7f4f8464f2e42ef0",
+      "protocol": "neverd-x87-portable-measurement-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 200,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "measurement_configuration": {
+        "cpu": 2,
+        "iterations": 16384,
+        "session_iterations": 4,
+        "trials": 5
+      }
+    },
+    {
+      "id": "x87-portable-benchmark-generated2",
+      "record": "build-release/x87-portable-benchmark-generated2/record.json",
+      "record_sha256": "56b08c91b8a3dd8b69987dc04a50dfaeb01412eed0c52b270bf8c471f3980404",
+      "protocol": "neverd-x87-portable-generated-leaf-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 116,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n"
+      },
+      "coverage": {
+        "artifacts": 36,
+        "observations": 6096,
+        "distinct_cases": 508,
+        "statuses": {
+          "0": 5772,
+          "2": 36,
+          "6": 36,
+          "5": 36,
+          "9": 36,
+          "10": 36,
+          "12": 36,
+          "13": 36,
+          "1": 72
+        },
+        "native_x64_original_comparisons": 5760,
+        "cross_route_and_optimization_agreement": true
+      }
+    },
+    {
+      "id": "x87-closure-arithmetic1",
+      "record": "build-release/x87-closure-arithmetic1/record.json",
+      "record_sha256": "6c11ee05c82f14b8419ee642a59734bea55960147fde936cb0bc6fc5ba387aa1",
+      "protocol": "neverd-x87-cross-host-arithmetic-v1",
+      "tested_commit": "62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "local verification workspace",
+      "files_verified": 14,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "13th Gen Intel(R) Core(TM) i9-13900H",
+        "CPU family": "6",
+        "Model": "186",
+        "Stepping": "2"
+      },
+      "observations": 57888
+    },
+    {
+      "id": "x87-ci-40016086999-x64",
+      "record": "build-release/x87-ci-40016086999-x64/evidence/record.json",
+      "record_sha256": "1ad03043e103a8a1a71a8cb28092471c8208b813a2275c597ca6c4d246e0d46e",
+      "protocol": "neverd-x87-portable-generated-leaf-v1",
+      "tested_commit": "d3d429208c8c5f3ff6e616c15a3dfade4868b468",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "GitHub Actions artifact, 30 days; downloaded local copy retained",
+      "files_verified": 116,
+      "cpu": {
+        "Architecture": "x86_64",
+        "Model name": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "CPU family": "6",
+        "Model": "207",
+        "Stepping": "2"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.5 (++20261023090852+395ba2c4d274-1~exp1~20261023090919.90)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n"
+      },
+      "coverage": {
+        "artifacts": 36,
+        "observations": 6096,
+        "distinct_cases": 508,
+        "statuses": {
+          "0": 5772,
+          "2": 36,
+          "6": 36,
+          "5": 36,
+          "9": 36,
+          "10": 36,
+          "12": 36,
+          "13": 36,
+          "1": 72
+        },
+        "native_x64_original_comparisons": 5760,
+        "cross_route_and_optimization_agreement": true
+      },
+      "run": "https://github.com/NeverSight/NeverD/actions/runs/40016086999"
+    },
+    {
+      "id": "x87-ci-40016086999-arm64",
+      "record": "build-release/x87-ci-40016086999-arm64/evidence/record.json",
+      "record_sha256": "691a220155498e2429026ffa530ebfb90d63d45d652d7d04ea1ee41c7f226e41",
+      "protocol": "neverd-x87-portable-generated-leaf-v1",
+      "tested_commit": "d3d429208c8c5f3ff6e616c15a3dfade4868b468",
+      "passed": true,
+      "stable_inputs": true,
+      "retention": "GitHub Actions artifact, 30 days; downloaded local copy retained",
+      "files_verified": 116,
+      "cpu": {
+        "Architecture": "aarch64",
+        "Model name": "Neoverse-N2",
+        "Model": "0",
+        "Stepping": "r0p0"
+      },
+      "compiler": {
+        "version": "Ubuntu clang version 23.1.5 (++20261023090852+395ba2c4d274-1~exp1~20261023090919.90)\nTarget: aarch64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-23/bin\n"
+      },
+      "coverage": {
+        "artifacts": 36,
+        "observations": 6096,
+        "distinct_cases": 508,
+        "statuses": {
+          "0": 5772,
+          "2": 36,
+          "6": 36,
+          "5": 36,
+          "9": 36,
+          "10": 36,
+          "12": 36,
+          "13": 36,
+          "1": 72
+        },
+        "native_x64_original_comparisons": 0,
+        "cross_route_and_optimization_agreement": true
+      },
+      "run": "https://github.com/NeverSight/NeverD/actions/runs/40016086999"
+    }
+  ],
+  "pending": [
+    "native Linux AArch64 translation after sealed metadata liveness fix",
+    "combined native x64/AArch64 generated and seeded arithmetic comparison",
+    "native ARM64 execution and full-session performance recording",
+    "final public capability, GUI and scoped integration verification"
+  ],
+  "limitations": [
+    "No all-instruction, all-CPU, arbitrary-application or OS-exception qualification",
+    "No complete architectural-state or formal-equivalence proof",
+    "No approximate mode or native fallback in the portable runtime",
+    "No speed improvement claim; raw timing and memory reports stay in retained artifacts",
+    "Historical evidence applies to its tested source and configuration; changed applicable inputs require fresh validation"
+  ]
+}

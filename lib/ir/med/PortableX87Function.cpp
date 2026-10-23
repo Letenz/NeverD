@@ -66,12 +66,6 @@ Intrinsic intrinsic(const MedOp &Op) {
              ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
              : Intrinsic::None;
 }
-bool portableForm(uint32_t Selector) {
-  const auto *Form = x87InstructionForm(Selector);
-  const auto Spec = x87ContextInstruction(Selector);
-  return Form && Form->PortableOperation != X87PortableOperation::None &&
-         Spec && !Spec->ReadsFlags;
-}
 
 /// Remove physical-register and source-address projections from the private
 /// alternate ABI. Incoming self-copies are admitted only for actual parameters.
@@ -285,8 +279,9 @@ preparePortableX87Function(const MedFunc &Source, Arch SourceArch,
           Context = Op.Output;
         } else if (Id == Intrinsic::X87ContextStep) {
           if (!Context || Exported || Op.Inputs[1] != *Context ||
-              !portableForm(Op.Inputs[2].ConstVal) || !Op.Inputs[4].isConst() ||
-              Op.Inputs[4].ConstVal != 0 || !Op.Inputs[5].isConst())
+              !isPortableX87RuntimeInstruction(Op.Inputs[2].ConstVal) ||
+              !Op.Inputs[4].isConst() || Op.Inputs[4].ConstVal != 0 ||
+              !Op.Inputs[5].isConst())
             return invalid(
                 "portable x87 source step is outside the explicit profile");
           ++Steps;
@@ -568,8 +563,8 @@ llvm::Error PreparedPortableX87Function::validate() const {
       if (intrinsic(Op) != Intrinsic::PortableX87Step)
         continue;
       if (!portableX87MedShapeIsValid(Op) || !Same(Op.Inputs[1], Execution) ||
-          !portableForm(Op.Inputs[2].ConstVal) || I + 2 != Block.Ops.size() ||
-          Block.Succs.size() != 2)
+          !isPortableX87RuntimeInstruction(Op.Inputs[2].ConstVal) ||
+          I + 2 != Block.Ops.size() || Block.Succs.size() != 2)
         return invalid(
             "portable x87 step has no exact helper or exit boundary");
       const auto &Branch = Block.Ops.back();

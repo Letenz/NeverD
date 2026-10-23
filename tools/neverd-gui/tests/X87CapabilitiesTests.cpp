@@ -252,6 +252,53 @@ private slots:
     QCOMPARE(Sent.first().first().toJsonObject().value("operation").toString(),
              "x87_capabilities");
     QCOMPARE(Queries.revision(), "0");
+    const auto RawReport = Model->report();
+    X87CapabilitiesModel Projection;
+    QString Error;
+    QVERIFY2(Projection.setReport(RawReport, Error), qPrintable(Error));
+    const auto RawCoverage = RawReport.value("coverage").toArray();
+    for (const auto *Consumer : {"llvm", "high-c", "llvm-c", "translation"}) {
+      const auto Selected = dimensions(Consumer);
+      Projection.setDimensions(Selected);
+      bool SawAdmitted = false, SawRefused = false;
+      for (int Row = 0; Row != Projection.rowCount(); ++Row) {
+        const auto Form = Projection.form(Row);
+        QJsonObject Expected;
+        for (const auto &Value : RawCoverage) {
+          const auto Cell = Value.toObject();
+          bool Matches =
+              Cell.value("coverage_class") == Form.value("coverage_class");
+          for (auto It = Selected.begin(); It != Selected.end(); ++It)
+            if (It.key() != "abi")
+              Matches &= Cell.value(It.key()) == It.value();
+          if (Matches) {
+            QVERIFY(Expected.isEmpty());
+            Expected = Cell;
+          }
+        }
+        QVERIFY(!Expected.isEmpty());
+        QCOMPARE(Projection.capability(Row), Expected);
+        SawAdmitted |= Expected.value("implemented").toBool();
+        SawRefused |= !Expected.value("implemented").toBool();
+      }
+      QVERIFY(SawAdmitted);
+      QVERIFY(SawRefused);
+    }
+    const auto Selected = dimensions("translation");
+    for (auto It = Selected.begin(); It != Selected.end(); ++It) {
+      auto *Selector = Dialog.findChild<QComboBox *>(It.key());
+      QVERIFY(Selector);
+      QVERIFY(Selector->findText(It.value().toString()) >= 0);
+      Selector->setCurrentText(It.value().toString());
+    }
+    Dialog.findChild<QLineEdit *>("x87Filter")->setText("m80");
+    auto *Details = Dialog.findChild<QPlainTextEdit *>("x87Details");
+    QTRY_VERIFY(Details->toPlainText().contains(
+        "explicit-portable-x87-translation-v1"));
+    auto *Table = Dialog.findChild<QTableView *>("x87Forms");
+    QVERIFY(Table->model()->rowCount() > 0);
+    QCOMPARE(Table->model()->index(0, 4).data().toString(),
+             "conservative-unknown");
     const auto Capture = qEnvironmentVariable("NEVERD_X87_GUI_CAPTURES");
     if (!Capture.isEmpty()) {
       QVERIFY(QDir().mkpath(Capture));

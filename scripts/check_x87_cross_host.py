@@ -118,9 +118,18 @@ def arithmetic_mismatches(requests, actual, expected):
     return failures
 
 
+def require_clean_source_record(directory, record):
+    # Matching HEADs alone do not bind recordings made with different patches.
+    # Debug recorders may retain dirty sources; reusable cross-host and timing
+    # evidence must instead identify the exact committed source.
+    if record.get("untracked_source_sha256") != {} or (directory / "source.patch").read_bytes():
+        raise ValueError("frozen execution requires clean committed sources")
+
+
 def generated_observations(directory, native):
     root = directory / "evidence"
     record = read_verified(root)
+    require_clean_source_record(root, record)
     if (not record["passed"] or not record["stable_inputs"] or
             record["environment"]["machine"] != ("x86_64" if native else "aarch64")):
         raise ValueError("generated execution lacks passing native-host evidence")

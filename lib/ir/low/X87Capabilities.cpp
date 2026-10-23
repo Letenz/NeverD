@@ -51,8 +51,18 @@ const char *supportName(X87Support Support) {
   return "unsupported";
 }
 
+uint32_t representativeSelector(const X87InstructionForm &Form) {
+  uint32_t Selector = Form.Escape | (unsigned(Form.FirstModRM) << 8);
+  if (Form.Memory)
+    Selector |= X87ContextMemory |
+                (unsigned(Form.FirstModRM) << X87ContextOriginalModRMShift);
+  return Selector;
+}
+
 const char *coverageClass(const X87InstructionForm &Form) {
   if (Form.PortableOperation != X87PortableOperation::None) {
+    if (!isPortableX87RuntimeInstruction(representativeSelector(Form)))
+      return "portable-flags-value-projection";
     if (Form.ValueClass == X87ValueClass::StateOnly)
       return "portable-state-only";
     return Form.ValueClass == X87ValueClass::ExactValue
@@ -163,6 +173,13 @@ bool x87InstructionIsProcessorDependent(uint32_t Selector) {
   return Form && Form->ValueClass == X87ValueClass::ProcessorDependent;
 }
 
+bool isPortableX87RuntimeInstruction(uint32_t Selector) {
+  const auto *Form = x87InstructionForm(Selector);
+  const auto Spec = x87ContextInstruction(Selector);
+  return Form && Form->PortableOperation != X87PortableOperation::None &&
+         Spec && !Spec->ReadsFlags;
+}
+
 X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
   if (!validQuery(Q))
     return unavailable("invalid-query-dimension");
@@ -174,8 +191,6 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
     return unavailable("owned-context-requires-x86-64-source");
   if (!Owned && !Form->TypedLift)
     return unavailable("instruction-refused-by-typed-stack");
-  if (Q.Consumer == X87Consumer::Translation)
-    return unavailable("x87-cross-architecture-translation-unqualified");
 
   X87Capability Result;
   Result.Numerical = X87Support::Unknown;
@@ -190,6 +205,41 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
               "unittests/lift/x86_32/X87StackManagementTests.cpp; "
               "unittests/lift/x86_32/X87PackedBCDTests.cpp; "
               "unittests/lift/x86_32/X87TranscendentalTests.cpp";
+  if (Q.Consumer == X87Consumer::Translation) {
+    if (!Owned)
+      return unavailable("portable-translation-requires-owned-x64-state");
+    if (Q.Backend != X87Backend::Portable)
+      return unavailable("translation-requires-explicit-portable-runtime");
+    if (Q.Destination != X87Destination::ARM64)
+      return unavailable("portable-translation-requires-linux-aarch64");
+    if (!isPortableX87RuntimeInstruction(Q.Selector))
+      return unavailable("instruction-outside-portable-runtime-profile");
+    Result.Implemented = true;
+    Result.Numerical = Form->ValueClass == X87ValueClass::StateOnly
+                           ? X87Support::Unknown
+                           : X87Support::Exact;
+    Result.Profile = kX87PortableProfile;
+    Result.Reason =
+        "explicit-portable-x87-translation-v1; excluded-effects-refuse";
+    Result.Requirements =
+        "explicit C++ TranslationRuntimeProfileV1::PortableX87; native Linux "
+        "AArch64 ELF; x64 owned state with authenticated "
+        "neverd.x87.portable-v1 "
+        "extension; version-matched runtime; checked "
+        "object/registry/credential "
+        "binding; exact-span memory; raw transport preserves encodings; "
+        "RejectExecutableWrites or "
+        "InvalidateOnWrite; masked finite instruction domain; no integer-flag "
+        "x87 forms, floating call ABI, MMX or general environment operations; "
+        "legacy C/Python/CLI translation object interfaces remain scalar-only";
+    Result.Evidence =
+        "unittests/translate/RuntimeX87HelpersTests.cpp; "
+        "unittests/translate/RuntimeX87GuestStateTests.cpp; "
+        "unittests/translate/X87TranslationTests.cpp; "
+        "unittests/translate/X87TranslationFrozenTests.cpp; "
+        "scripts/check_x87_translation.py; scripts/check_x87_cross_host.py";
+    return Result;
+  }
   if (Q.Consumer == X87Consumer::Symbolic ||
       Q.Consumer == X87Consumer::CheckedRefinement) {
     if (Q.Backend != X87Backend::None)
@@ -224,7 +274,7 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
                              : X87Support::Exact;
       Result.Profile = kX87PortableProfile;
       Result.Reason =
-          "portable-masked-slice; complete-state-qualification-pending";
+          "admitted-portable-instruction-slice; excluded-effects-refuse";
       Result.Requirements =
           "explicit setX87PortableMode(true); x64 owned state; known CW/SW "
           "and read payloads; authenticated ordinary memory; no pending "
@@ -265,8 +315,39 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
         "operations require explicit non-strict native-reference mode";
     return Result;
   }
+  if (Q.Backend == X87Backend::Portable) {
+    if (!Owned)
+      return unavailable("portable-generated-requires-owned-x64-state");
+    if (Q.Destination == X87Destination::I386)
+      return unavailable("portable-32-bit-host-unqualified");
+    if (!isPortableX87RuntimeInstruction(Q.Selector))
+      return unavailable("instruction-outside-portable-runtime-profile");
+    Result.Implemented = true;
+    Result.Numerical = Form->ValueClass == X87ValueClass::StateOnly
+                           ? X87Support::Unknown
+                           : X87Support::Exact;
+    Result.Profile = kX87PortableProfile;
+    Result.Reason =
+        "explicit-portable-generated-interface; ordinary-emission-unchanged";
+    Result.Requirements =
+        "explicit C++ preparePortableX87Function/emitPortableX87; Linux "
+        "little-endian x64/AArch64, LLVM/Clang 23; recovered x64 owned integer "
+        "ABI with numeric guest arguments, explicit context and source-result "
+        "pointer, uint32 status return; version-matched neverd_x87_runtime; "
+        "authenticated state and exact-span memory; masked finite instruction "
+        "domain; raw transport preserves encodings; no integer-flag x87 forms, "
+        "floating/call ABI, ordinary guest "
+        "memory operations, MMX or general environment handoffs; failure "
+        "preserves completed prefix and leaves source result unpublished";
+    Result.Evidence = "unittests/translate/X87PortablePreparationTests.cpp; "
+                      "unittests/translate/X87PortableEmissionTests.cpp; "
+                      "unittests/translate/X87PortableGeneratedTests.cpp; "
+                      "scripts/check_x87_portable_generated.py; "
+                      "scripts/check_x87_cross_host.py";
+    return Result;
+  }
   // These are generated-code capabilities, not the architecture of the host
-  // doing analysis. All current full-context routes use x86-64 inline asm.
+  // doing analysis. The native full-context routes use x86-64 inline asm.
   if (Q.Backend != X87Backend::NativeX86)
     return unavailable("generated-x87-runtime-unqualified");
   if (Q.Destination == X87Destination::ARM64 ||
@@ -363,10 +444,7 @@ std::string x87CapabilitiesJSON() {
   for (const auto &Form : Forms) {
     if (!EmittedClasses.insert(coverageClass(Form)).second)
       continue;
-    uint32_t Selector = Form.Escape | (unsigned(Form.FirstModRM) << 8);
-    if (Form.Memory)
-      Selector |= X87ContextMemory |
-                  (unsigned(Form.FirstModRM) << X87ContextOriginalModRMShift);
+    const uint32_t Selector = representativeSelector(Form);
     for (auto Mode : Modes)
       for (auto Path : Paths)
         for (auto Consumer : Consumers)

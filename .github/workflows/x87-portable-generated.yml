@@ -77,6 +77,7 @@ jobs:
           NeverDX87PortablePreparationTests NeverDX87PortableExecutionTests
           NeverDX87TranslationRuntimeTests NeverDX87TranslationTests
           NeverDTranslationContractTests
+          NeverDX87CapabilityTests NeverDX87CapabilitiesPublicTests
           NeverDX87ArithmeticTests NeverDX87PortableContextTests
           NeverDX87PortableEmulatorTests NeverDX87ArithmeticReplay
           NeverDX87PortableBenchmark
@@ -84,7 +85,7 @@ jobs:
       - name: Check preparation, runtimes and legacy translation regressions
         run: >-
           ctest --test-dir build-x87-portable --output-on-failure -j 4
-          -L '^(NeverDX87PortableEmissionTests|NeverDX87PortablePreparationTests|NeverDX87PortableExecutionTests|NeverDX87TranslationRuntimeTests|NeverDTranslationContractTests|NeverDX87ArithmeticTests|NeverDX87PortableContextTests|NeverDX87PortableEmulatorTests)$'
+          -L '^(NeverDX87PortableEmissionTests|NeverDX87PortablePreparationTests|NeverDX87PortableExecutionTests|NeverDX87TranslationRuntimeTests|NeverDTranslationContractTests|NeverDX87ArithmeticTests|NeverDX87PortableContextTests|NeverDX87PortableEmulatorTests|NeverDX87CapabilityTests|NeverDX87CapabilitiesPublicTests)$'
       - name: Check portable object control-flow boundaries
         run: >-
           ctest --test-dir build-x87-portable --output-on-failure -j 4

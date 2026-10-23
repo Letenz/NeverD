@@ -177,22 +177,26 @@ addresses, signal resumption and other OS/CPU contracts; they do not promote
 the inventory's architectural-state or formal qualification.
 
 The portable concrete slice below is explicitly selected and instruction scoped.
-There is still no qualified x87 cross-architecture translation profile; mixed
-supported/unsupported programs retain their refusal gates. LLVM and both C
-output paths must acquire an explicit portable runtime contract before
-publication on other hosts. No approximate reduced-precision mode is introduced.
+Generated LLVM, HighC and LLVM-C use separate C++ entry points with an explicit
+portable runtime contract. The C++ translation profile targets native Linux
+AArch64; it does not widen the existing scalar C/Python/CLI translation ABI.
+Mixed supported/unsupported programs retain their refusal gates. Recorded
+execution scope appears in [x87 qualification](x87-qualification.md); a static
+inventory is not a passing execution record. No reduced-precision mode is offered.
 
-## Failure and future portable admission
+## Failure and portable admission
 
 Unknown incoming architectural state remains unknown. Waiting boundaries refuse
 pending unmasked exceptions before address evaluation. Memory operands require
 authenticated full ranges and permissions, including stores suppressed by an
 x87 fault. Invalid control fields, missing payload provenance and unimplemented
-effects cannot produce a plausible numerical value. Refusal must leave state,
-output and memory unchanged.
+effects cannot produce a plausible numerical value. An uncompleted instruction
+leaves its state, output and memory unchanged. Earlier completed instructions
+remain committed. A completed self-modifying store retains its store and pop
+while reporting invalidation; that status does not mean the store was rolled back.
 
-The first portable slice must name its exact encodings, finite/nonfinite input
-domain, rounding points, exception masks and environment policy. Raw m80
+The portable slice names its exact encodings, finite/nonfinite input domain,
+rounding points, exception masks and environment policy. Raw m80
 transport, NaN payloads, signaling/quiet behavior, signed zero, subnormals,
 unsupported encodings and integer/BCD conversion have instruction-specific
 rules; host math-library behavior is insufficient. Applicable PC/RC rounding
@@ -287,7 +291,8 @@ publication. Native and portable paths share the pending-exception predicate.
 Preflight success authenticates neither payloads nor guest memory and is not a
 reusable execution receipt. Exact binary80 adapters can use the translation
 memory owner's transactional byte-span operations rather than split stores;
-those operations alone do not enable generated-code or translation support.
+those operations alone do not select the separate generated or translation
+interfaces.
 The checked `X87PortableRuntime` C++ adapter uses a separate versioned state
 with explicit environment-known and physical-payload-known fields. It requires
 an authenticated incoming environment even for FNINIT; it does not synthesize
@@ -357,3 +362,69 @@ remain in the output directory. Rosetta identifies itself separately from a
 native x86-64 process. The protocol compares result bits plus IE/DE/ZE/OE/UE/PE
 and C1; it is not whole-state, generated-code, termination or formal evidence.
 Recorded process time includes startup and file I/O, not application throughput.
+
+
+## Portable translation and resumption
+
+`TranslationRuntimeProfileV1::PortableX87` is an explicit C++ x64-to-native-Linux-
+AArch64 ELF profile. It requires the existing scalar capability plus X87 and
+an authenticated `neverd.x87.portable-v1` extension in the logical `GuestState`.
+The extension serializes the versioned 528-byte portable image and provenance
+in explicit little-endian order. It does not infer state from an ABI, FNINIT,
+tags or arbitrary bytes. Import/export is transactional and preserves unrelated
+extensions; trusted embedding code owns authentication.
+
+The composed runtime state retains the original 160-byte integer layout and
+adds portable x87 state plus the last-step diagnostic. The legacy integer ABI,
+scalar memory protocol and default runtime factories remain unchanged. Old
+integer invocation cannot enter the larger profile, even when an individual
+block contains only integer instructions. The C/Python/CLI translation APIs
+continue to publish scalar-only objects and expose no execution session. Their capability
+queries, worker and GUI nevertheless report this C++ interface and its limits.
+
+An x87 block ends at its first admitted x87 instruction. Integer effects before
+that instruction are flushed, the terminal helper commits at most that one
+instruction, and the runtime validates its selector, PCs, completion, state,
+memory extent and scalar result before another block can execute. FNSTSW AX
+preserves the upper RAX bits. A refused instruction does not advance RIP; a
+completed instruction does, including stores that trigger code invalidation.
+Budget checkpoints preserve explicit state across resumption. This is a bounded
+execution/resumption contract, not a proof that an arbitrary loop terminates.
+
+`isPortableX87RuntimeInstruction` owns the shared selector gate used by capability
+queries, generated preparation and translation. Step V1 has no integer-flag
+operands: the concrete interpreter's FCOMI/FUCOMI support does not admit those
+forms at this boundary. Unsupported x87 instructions, floating source/call ABIs,
+MMX and general save/restore operations remain explicit failures. Rejecting an
+unsupported later block preserves the last completed prefix.
+
+The object, runtime registry, cache identity and checked invocation bind the
+runtime profile, state layout, helper protocol and exact-span memory policy.
+Registry shape identity cannot authenticate a forged helper address. Object
+publication alone is not permission to invoke: the actual linked object needs
+matching code-generation credentials and memory policy. Only
+`RejectExecutableWrites` and `InvalidateOnWrite` are admitted;
+`ValidateBeforeDispatch` is refused for this profile. A completed executable
+store invalidates its credential even when cancellation takes exit priority.
+
+## Measured workloads
+
+`scripts/benchmark_x87_portable.py` requires passing frozen generated evidence
+from the same clean source, host and runtime before loading its authored shared
+libraries. It measures the LLVM, HighC and LLVM-C leaf, branch and two-iteration
+backedge bodies at source-default/host-O2, both exact-only and with every 32nd
+call deliberately refused on a separate qNaN context. Every call checks its
+status and source result; final raw state and memory must match frozen execution.
+There is no fallback dispatch, and refusals are retained in the measurements.
+
+Raw 80-bit C-bridge load/store pairs and logical state import/export are separate
+transport measurements. Native AArch64 additionally measures complete session
+creation, compilation, linking, execution, snapshot and unload against the frozen
+session result. Defaults are five alternating-order trials, 16,384 calls for
+bounded workloads and four requests for complete sessions, pinned to one allowed
+logical CPU without changing the governor. CW is 0x037f and TOP is 5. Timing
+includes status checks; Linux VmHWM measures the whole process including loaded
+libraries and fixtures. These are scoped throughput and memory observations,
+not isolated allocator costs, a speedup claim, all-control performance coverage,
+or third-party application compatibility. No approximate mode contributes to
+exact qualification.

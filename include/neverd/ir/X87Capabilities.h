@@ -116,6 +116,11 @@ struct X87Capability {
 llvm::ArrayRef<X87InstructionForm> x87InstructionForms();
 const X87InstructionForm *x87InstructionForm(uint32_t Selector);
 bool x87InstructionIsProcessorDependent(uint32_t Selector);
+
+/// Shared instruction gate for explicit generated/translation Step V1. Its
+/// boundary has no integer-flag operands; the concrete interpreter's flag
+/// comparisons remain a separate, wider portable contract.
+bool isPortableX87RuntimeInstruction(uint32_t Selector);
 X87Capability queryX87Capability(const X87CapabilityQuery &Query);
 
 /// Factorized matrix: explicit source/ABI/state paths, forms, and evaluated
