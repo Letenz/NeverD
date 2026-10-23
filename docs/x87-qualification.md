@@ -7,10 +7,11 @@ translation and formal equivalence remain separate claims. The shared
 [capability inventory](x87-capabilities.md) describes routes and prerequisites;
 it does not execute a host probe or turn regression sources into proof.
 
-**Candidate status:** native ARM64 generated execution has passed, but native
-translation, combined cross-host arithmetic and ARM64 measurements remain pending.
-Issue #1677 remains open. The current candidate must pass those gates before this
-record can claim closure.
+**Qualification status:** the scoped X0–X4 acceptance gates have passed. Native
+x64 and ARM64 execution, ARM64 translation, cross-host numerical/state comparison,
+measurements and public capability surfaces have recorded evidence. Qualification
+is limited to the named profiles below; complete architectural and formal
+equivalence remain unknown.
 
 ## Profiles and limits
 
@@ -33,20 +34,35 @@ backend, runtime or assumption requires new applicable evidence. Historical
 records are labelled by their actual tested commit; they are not automatically
 proof for a later checkout.
 
-The completed generated-only run is
-[40016086999](https://github.com/NeverSight/NeverD/actions/runs/40016086999), at
-`d3d429208c8c5f3ff6e616c15a3dfade4868b468`: both native hosts passed and their
-6,096 observations agree. Local native replay at
-`62158ce9e40f30b9ba21f6aabfa122aeeb3fb14a` passed 112 tests with 1,568 retained
-executables. These historical records identify their actual source versions.
-They do not establish the pending native translation result for this candidate.
+Native execution is recorded at
+`d8da52b927fd6d902800809db089762f0b0a8fbc` in
+[run 40036032606](https://github.com/NeverSight/NeverD/actions/runs/40036032606).
+Both native host jobs passed. The strict comparison of their downloaded artifacts
+passed independently; the ledger distinguishes this local audit from the CI
+comparison job. Local native replay at the same commit passed 112 tests with
+1,568 retained executables. Every retained file manifest was rehashed after
+recording.
 
-Native translation qualification initially exposed an ELF metadata liveness bug:
-LLVM removed four audited symbol-free metadata blocks before the sealed audit.
-The correction retains those blocks with private zero-width live symbols and
-keeps the original content, cardinality and relocation audits. A real LLVM
-pruning regression reproduces the old failure at O0/O2 on any host. Native
-execution after that correction is still required.
+Qualification found and fixed two blockers. JITLink pruned four audited,
+symbol-free ELF metadata blocks; private zero-width live symbols now retain
+those blocks without relaxing content, cardinality or relocation audits. A real
+LLVM pruning regression covers O0/O2. The executable-store fixture also assumed
+that `RejectExecutableWrites` admitted writable executable mappings, contrary to
+the existing session contract. It now checks rejection during session admission
+and successful invalidation under `InvalidateOnExecutableWrite`; the runtime
+test separately checks rejected-store atomicity. All thirteen native translation
+tests passed after these corrections.
+
+Commit `83f6a3438ebfe7d88ed2ac213a5d00b0abcaddcb` subsequently corrected only
+public prerequisite wording; a structural report comparison found three changed
+string fields and no capability or runtime change. Merge
+`51747fe8c1398b9a7b14c320a58c536c6ef81522` preserves the later `dev` descriptor-address
+work. That change is confined to system-state intrinsics and their segmented
+address rendering; it does not change the x87 semantic owners, runtime,
+translation gate or LLVM revision. Subsequent local integration checks passed:
+373 regressions, 49 explicitly skipped ARM-only tests, and all 36 generated
+artifacts with 6,096 observations. These checks are recorded separately from
+the frozen native ARM64 evidence.
 
 The native differential layer retains original/generated C, LLVM/object files,
 executables, commands, output, raw binary80 values and defined state. It covers
@@ -66,21 +82,21 @@ file manifests and matches portable observations separately from native-only
 reference fields.
 
 The translation gate requires all thirteen tests on native Linux AArch64 without
-skips. Its exhaustive fixture is designed to retain 192 TOP/PC/RC/O0/O2
-observations and the
-1,152 actual objects given to JITLink, full logical state after each block and
-agreement with production sessions. The candidate result is pending. Separate
-tests cover ten-byte memory faults,
+skips. Its exhaustive fixture retained 192 TOP/PC/RC/O0/O2 observations and
+1,152 actual AArch64 ELF objects given to JITLink, full logical state after each
+block and agreement with production sessions. All thirteen tests executed
+successfully without skips. Separate tests cover ten-byte memory faults,
 self-modification, forged/stale invocation bindings, prefix retention, mixed
 unsupported programs, branches/backedges and checkpoint/resume. Passing these
 checks qualifies
 this bounded profile; object compilation on x64 alone does not supply this result.
 
 Three fixed arithmetic seeds (`0x871677`, `0x871678`, `0x871679`) produce 57,888
-observations per host. The local x64 recording passed; the combined native
-ARM64 comparison is pending. Raw result bits and defined IE/DE/ZE/OE/UE/PE/C1 bits
+observations per host. Native x64 and ARM64 results match the native x64 original
+instructions with zero differences. Raw result bits and defined IE/DE/ZE/OE/UE/PE/C1 bits
 are compared with original x64 instructions. Additional local replay covers native
-i386/x64 GCC/Clang at O0/O2. Fixed boundary fixtures, LLVM APFloat and the pinned
+i386/x64 GCC/Clang at O0/O2: eight configurations and 154,368 observations, with
+zero differences. Fixed boundary fixtures, LLVM APFloat and the pinned
 Unicorn/Haswell reference remain distinct references with the limitations listed
 in the semantic contract; missing Unicorn status fields are not counted as
 exception evidence.
@@ -88,8 +104,9 @@ exception evidence.
 ## Measurements and authorized replay
 
 The completed local protocols retain thirty paired native workload configurations
-and one hundred portable execution/transport trials at `62158ce9e`. ARM64 session
-measurements remain pending. Record hashes and configurations are in the ledger;
+and one hundred portable execution/transport trials at `d8da52b92`. CI retains
+one hundred x64 and 105 ARM64 trials, including five full-session trials.
+Record hashes and configurations are in the ledger;
 machine-local timings and memory measurements remain in ignored artifacts, as
 required by the repository contribution policy.
 
@@ -111,8 +128,9 @@ execution mode is offered or used to satisfy an exact-mode criterion.
 
 ## Acceptance mapping
 
-This table maps implementation and required evidence; the pending gates above
-prevent treating it as a completed acceptance checklist.
+All 24 issue acceptance items map to passing evidence within the declared scope.
+The machine-readable ledger records each item and its evidence identifiers; this
+table groups those records by phase.
 
 | Phase | Evidence and boundary |
 | --- | --- |
