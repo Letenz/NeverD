@@ -426,10 +426,11 @@ tests, 340 earlier bounded-system checks and 12 plugin tests pass; the
 intrinsic overload audit has zero mismatches. No opcode, register, feature or
 plugin-schema identity changes in this batch.
 
-The CPL0 fixture passes descriptor addresses through a non-inlined runtime
-boundary: NeverC can still emit legacy pointer/shift constant expressions
-that newer LLVM text IR rejects. General IR-format compatibility remains a
-separate migration concern; these results qualify the native APIs themselves.
+The CPL0 bridge consumes NeverC's native bitcode output, allowing the full
+LLVM reader to upgrade legacy pointer/shift constant expressions that its text
+parser no longer accepts. The optimized descriptor construction remains
+unchanged; no fixture-specific runtime boundary is needed. This qualifies the
+tested bitcode migration and native APIs, not every cross-version IR feature.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
