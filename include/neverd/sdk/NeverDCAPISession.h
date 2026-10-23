@@ -78,6 +78,12 @@ NEVERD_API int neverd_session_load_cancellable(neverd_session_t Sess,
 /// {"rows":[],"error"} when \p Path names no regular file.  Path is UTF-8.
 /// Free with neverd_free_string.
 NEVERD_API const char *neverd_identify_json(const char *Path);
+/// List an arm64e shared cache's validated image catalogue, including its
+/// subcache files: {"images":[{"path","address"}]}, or {"images":[],"error"}.
+/// Paths are exact install names for load-options JSON's cache_image key.
+/// The UTF-8 main-cache path and its subcaches must be readable. This does not
+/// load or execute an image. Free with neverd_free_string.
+NEVERD_API const char *neverd_dyld_cache_images_json(const char *Path);
 /// The PDB the PE at \p Path names, and where it is, without loading the PE:
 /// {"pdb":null} for an input that names no PDB a symbol store can key -- not
 /// a PE, or one without a unique valid CodeView record -- and otherwise
@@ -157,10 +163,16 @@ NEVERD_API const char *neverd_symbol_table_reference_json(const char *Path);
 /// reads it from the code -- where calls put their first argument, what
 /// prologues preserve, the thread block and system calls the code reaches --
 /// and assumes System V when the code shows too little.  {"loader":"evm"}
-/// reads a file as EVM bytecode, and {"loader":"auto"} as its header or
-/// contents say, even when `<input>.neverd/load.json` says otherwise;
-/// NULL drops the request, so a load reads that file when there is one.
-/// Returns 0, or -1 with neverd_last_error.
+/// reads a file as EVM bytecode.
+/// {"loader":"dyld-cache","cache_image":"/usr/lib/X.dylib"} selects an exact
+/// install name from neverd_dyld_cache_images_json; auto with cache_image makes
+/// the same selection. Cache inputs retain main/subcache hashes and isolate
+/// address-bearing project files by image. A cache path without a selected
+/// image fails. {"loader":"auto"} reads as its header or contents say, even
+/// when `<input>.neverd/load.json` says otherwise; NULL drops the request, so a
+/// new load reads that file when there is one. Reloading an already selected
+/// cache image retains the session's selection. Returns 0, or -1 with
+/// neverd_last_error.
 NEVERD_API int neverd_session_set_load_options(neverd_session_t Sess,
                                                const char *OptionsJson);
 /// How the loaded image was read, in neverd_session_set_load_options JSON;

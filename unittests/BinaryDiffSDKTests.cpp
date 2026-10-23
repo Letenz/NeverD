@@ -493,6 +493,33 @@ TEST_F(BinaryDiffSDK, SourceCancellationDiscardsTextAndKeepsNativeComparison) {
   EXPECT_EQ(take(neverd_comparison_export_json(C)), Before);
 }
 
+TEST_F(BinaryDiffSDK, DeepSourceAnalysisCompletesOnAnAsyncCallerStack) {
+  std::vector<uint8_t> Code{0x89, 0xf8};
+  for (unsigned I = 0; I < 1500; ++I)
+    Code.insert(Code.end(), {0x83, 0xc0, 1});
+  Code.push_back(0xc3);
+  input(Code);
+  input(Code, 0x8000);
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[1],
+                                        R"({"discover":false})", nullptr,
+                                        nullptr),
+            1);
+  // Unlike cancellation coverage, this completes every analysis phase even
+  // when the caller wins the scheduling race. macOS worker stacks are smaller
+  // than the main thread's stack.
+  auto Work = std::async(std::launch::async, [&] {
+    return take(neverd_comparison_source_page_json(
+        C, R"({"address":"0x1000","limit":2})"));
+  });
+  auto Page = llvm::json::parse(Work.get());
+  ASSERT_TRUE(bool(Page));
+  ASSERT_TRUE(Page->getAsObject());
+  EXPECT_EQ(Page->getAsObject()->getString("availability"), "available")
+      << render(*Page);
+}
+
 TEST_F(BinaryDiffSDK, SourceDifferencePagesReassembleExactOwnedRenderings) {
   auto A = input(body(7)), B = input(body(9), 0x8000);
   const auto OrdinaryA = parsed(neverd_ir_view_json(A, 0x1000, "c", 0, 200));

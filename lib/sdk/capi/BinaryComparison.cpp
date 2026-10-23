@@ -579,6 +579,8 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     Identity.Analysis += ":" + std::string(LoadOptions);
     neverd_free_string(LoadOptions);
   }
+  if (S.Img.MachOSharedCache)
+    Identity.Analysis += ":" + jsonToString(sharedCacheIdentity(S.Img));
   Identity.ImageBase = S.Img.Base;
   Identity.EntryPoint = S.Img.Entry;
   Identity.DiscoveryComplete = S.DiscoveredFunctions.has_value() &&

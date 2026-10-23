@@ -530,7 +530,9 @@ loadDebugInfoImpl(const std::filesystem::path &BinaryPath,
   DebugInfoResult Result;
   if (!Req.Enabled)
     return Result;
-  const bool Searches = searchesDebugInfo(Img.Arch);
+  // The cache container and its companions describe many images. Only an
+  // explicitly selected companion can belong to this projected Mach-O image.
+  const bool Searches = searchesDebugInfo(Img.Arch) && !Img.MachOSharedCache;
 
   // The PDB or DWARF: the file the caller named, else the one discovery
   // finds.

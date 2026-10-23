@@ -226,11 +226,15 @@ def audit_bundle(bundle: Path) -> dict:
 
 
 def copy_notices(bundle: Path, source: Path, origins: set[Path], qt_version: str,
-                 qt_licenses: Path, kddw_source: Path, json_license: Path) -> None:
+                 qt_licenses: Path, kddw_source: Path, json_license: Path,
+                 engine_notices: Path) -> None:
     licenses = bundle / "Contents/Resources/Licenses"
     licenses.mkdir()
-    for name in ("LICENSE", "NOTICE", "ATTRIBUTION.md"):
+    for name in ("LICENSE", "NOTICE", "ATTRIBUTION.md", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(source.parents[1] / name, licenses / ("NeverD-" + name))
+    shutil.copytree(source.parents[1] / "LICENSES/zlib", licenses / "zlib")
+    if engine_notices.is_dir():
+        shutil.copytree(engine_notices, licenses / "Engine")
     if not qt_licenses.is_dir():
         raise RuntimeError(f"Qt {qt_version} license directory required: {qt_licenses}")
     shutil.copytree(qt_licenses, licenses / ("Qt-" + qt_version))
@@ -350,7 +354,7 @@ def main() -> None:
     kddw_source = args.kddw_source or args.build_dir / "_deps/kddockwidgets-src"
     json_license = args.json_license or args.build_dir / "_deps/neverd_worker_json-src/LICENSE.MIT"
     copy_notices(bundle, source, origins, version, args.qt_licenses or source / "licenses" / ("Qt-" + version),
-                 kddw_source, json_license)
+                 kddw_source, json_license, args.engine.parent / "licenses")
     (resources / "dependency-audit.json").write_text(json.dumps(report, indent=2) + "\n")
     # Dependency repair invalidates Mach-O signatures. Preserve entitlements
     # when the final recursive bundle signing revisits the engine hosts.

@@ -13,10 +13,14 @@
 
 #include "neverd/loader/MachO/MachOLoader.h"
 
+#include "DyldCacheLoading.h"
+
 #include "neverd/Limits.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/loader/Go/GoRuntimeEH.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
+#include "neverd/loader/MachO/DyldSharedCache.h"
 #include "neverd/loader/MachO/MachOARM32Mode.h"
 #include "neverd/loader/MachO/MachOExceptions.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
@@ -111,14 +115,53 @@ void judge(const llvm::object::MachOObjectFile &Obj, LoadCandidate &Row) {
 
 llvm::Expected<BinaryImage>
 MachOLoader::load(const std::filesystem::path &Path) {
+  if (!CacheImage.empty()) {
+    auto Opened = macho_loader::DyldSharedCache::open(Path, Progress);
+    if (!Opened)
+      return Opened.takeError();
+    auto Cache =
+        std::make_shared<macho_loader::DyldSharedCache>(std::move(*Opened));
+    const auto Images = Cache->images();
+    auto Selected = llvm::find_if(
+        Images, [&](const auto &Image) { return Image.Path == CacheImage; });
+    if (Selected == Images.end() ||
+        llvm::count_if(Images, [&](const auto &Image) {
+          return Image.Path == CacheImage;
+        }) != 1)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     macho_loader::cache_load::kImageMissing);
+    const size_t Index = Selected - Images.begin();
+    auto Prepared = Cache->prepareImage(Index, Progress);
+    if (!Prepared)
+      return Prepared.takeError();
+    const llvm::StringRef Bytes(
+        reinterpret_cast<const char *>(Prepared->data()), Prepared->size());
+    return loadBufferImpl(llvm::MemoryBufferRef(Bytes, Selected->Path),
+                          std::move(Cache), Index);
+  }
   auto Buffer = readFileBuffer(Path, BinaryFormat::MachO, Progress);
   if (!Buffer)
     return Buffer.takeError();
+  if (macho_loader::DyldSharedCache::hasMagic((*Buffer)->getBuffer()))
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        macho_loader::cache_load::kSelectionRequired);
   return loadBuffer((*Buffer)->getMemBufferRef());
 }
 
 llvm::Expected<BinaryImage>
 MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
+  if (!CacheImage.empty())
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        macho_loader::cache_load::kBufferUnavailable);
+  return loadBufferImpl(Buffer, nullptr);
+}
+
+llvm::Expected<BinaryImage> MachOLoader::loadBufferImpl(
+    llvm::MemoryBufferRef Buffer,
+    std::shared_ptr<const macho_loader::DyldSharedCache> Cache,
+    size_t ImageIndex) {
   Progress.report("parse", 0, 1, "Mach-O tables");
   auto OpenOr = macho_loader::openMachOBuffer(Buffer);
   if (!OpenOr)
@@ -127,6 +170,12 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   auto MachOObj = std::move(*OpenOr);
   const auto &Obj = *MachOObj;
 
+  if (Cache && Obj.getHeader().filetype != MH_DYLIB &&
+      Obj.getHeader().filetype != MH_DYLINKER)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        macho_loader::cache_load::kImageTypeUnsupported);
+
   bool Is64 = Obj.is64Bit();
   bool IsLE = Obj.isLittleEndian();
   if (!IsLE)
@@ -134,13 +183,24 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
         "macho: big-endian not supported", llvm::inconvertibleErrorCode());
 
   BinaryImage Img;
-  initializeImage(Buffer, Img, BinaryFormat::MachO, /*CopyRaw=*/false,
-                  Progress);
+  if (Cache) {
+    Img.Format = BinaryFormat::MachO;
+    Img.MachOSharedCache = std::move(Cache);
+    Img.MachOSharedCacheImagePath =
+        Img.MachOSharedCache->images()[ImageIndex].Path;
+    Img.MachOSharedCacheFileSHA256 =
+        Img.MachOSharedCache->fileDigests(Progress);
+    Img.InputFileSHA256 = Img.MachOSharedCacheFileSHA256.front();
+  } else {
+    initializeImage(Buffer, Img, BinaryFormat::MachO, /*CopyRaw=*/false,
+                    Progress);
+  }
   Img.IsRelocatable = Obj.getHeader().filetype == MH_OBJECT;
   Img.ReadsStaticSymbols = ReadsStaticSymbols;
   Img.MachOIsDylib = Obj.getHeader().filetype == MH_DYLIB;
   // An executable linked without MH_PIE runs at its link address.
-  Img.LoadsAtLinkAddress = Obj.getHeader().filetype == MH_EXECUTE &&
+  Img.LoadsAtLinkAddress = !Img.MachOSharedCache &&
+                           Obj.getHeader().filetype == MH_EXECUTE &&
                            !(Obj.getHeader().flags & MH_PIE);
   llvm::StringRef ObjBytes = Obj.getData();
   copyImageBytes(llvm::arrayRefFromStringRef(ObjBytes), Img.Raw, Progress);
@@ -277,6 +337,11 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
       return;
     }
     if (Img.IsRelocatable)
+      return;
+    // Packed linkedit bytes have file identity only. Their original VM range
+    // remains readable through the owning cache, never through this projection.
+    if (Img.MachOSharedCache &&
+        readMachOName(Name) == section_names::macho::LinkeditSeg)
       return;
     // A segment may carry more file bytes than it maps.  Go's internal Mach-O
     // linker emits `__DWARF` with a zero vmsize and the entire debug payload in
@@ -542,12 +607,17 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   macho_loader::parseFunctionStarts(BasePtr, FileSize, FuncStarts, TextVMAddr,
                                     Img);
   macho_loader::parseNeededLibraries(Obj, Img);
-  macho_loader::parseBindStreams(BasePtr, FileSize, DyldInfo, Img);
-  macho_loader::parseRebaseStream(BasePtr, FileSize, DyldInfo, Img);
-  macho_loader::parseChainedFixupsImports(BasePtr, FileSize, ChainedFixups,
-                                          Img);
-  macho_loader::parseChainedFixupsRebases(BasePtr, FileSize, ChainedFixups,
-                                          TextVMAddr, Img);
+  if (Img.MachOSharedCache) {
+    if (auto Error = macho_loader::applyCacheSlideFixups(Img, Progress))
+      return std::move(Error);
+  } else {
+    macho_loader::parseBindStreams(BasePtr, FileSize, DyldInfo, Img);
+    macho_loader::parseRebaseStream(BasePtr, FileSize, DyldInfo, Img);
+    macho_loader::parseChainedFixupsImports(BasePtr, FileSize, ChainedFixups,
+                                            Img);
+    macho_loader::parseChainedFixupsRebases(BasePtr, FileSize, ChainedFixups,
+                                            TextVMAddr, Img);
+  }
   if (!Img.MachOChainedFixupsError.empty())
     return llvm::make_error<llvm::StringError>(Img.MachOChainedFixupsError,
                                                llvm::inconvertibleErrorCode());

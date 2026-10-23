@@ -107,8 +107,24 @@ conditional relative lists, empty list headers, extended header-info rows,
 resource exhaustion and retained JSON origins. The real Foundation check
 requires all recovered methods to have names, no metadata diagnostics, retained
 image conditions and no local source-body proof for external IMPs.
-This tests the cache reader and metadata view,
-not yet CLI cached-image selection or native execution/reconstruction.
+Projection fixtures also cover compact symbol strings, N_INDR aliases,
+dylib module names, indirect symbol indices, section relocations, reordered
+commands, data-in-code offsets, malformed ranges and cancellation. Selected
+loading verifies exact source hashes, unchanged authenticated words, unsigned
+slide targets and separate symbolic references. With `NEVERD_DYLD_CACHE`, every
+catalogued image must produce an LLVM-readable projection and Foundation must
+load through `loadBinary` without Objective-C metadata diagnostics.
+`NeverDDyldCacheCAPITests` exercises catalogue selection, input identity,
+invalid options, isolated annotations and reopening a remembered selection
+through the public SDK, including simultaneous sessions and symlink-equivalent
+writer locks. Optimized GOT regressions retain surviving indirect-table names
+without import-storage proof and reject invalid indices. `ObjCStorage` tests
+separate arm64e bitfield and Swift declarations from native object ownership;
+the full Foundation load also requires recovered ivars and offline references
+without any `ObjCSourceReferences`. These checks qualify static cached-image analysis;
+they do not qualify native execution or standalone cache reconstruction.
+`NeverDDebugInfoTests` rejects automatic container companion discovery while
+retaining explicit per-image debug-file diagnostics.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -243,6 +259,28 @@ qualifiers, convention ownership and `_Noreturn`. The original SDK check's
 `UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
 Windows architectures, independently of the synthetic import names.
 The qualifier execution cases also cover void results.
+They supply complete local struct/union layouts as well: pointer-only imports
+must keep forward declarations and compile alongside independent definitions.
+`LocalTypesDebugContext.PointerDeclarationsDoNotRequireRecordLayouts` checks
+tag kinds, type-dependency tracking and that a complete-layout request still
+wins in either order. The original SDK cases `UseCRTExceptionCopy`,
+`UseCRTTypeName` and `UseCRTTypeCleanup` cover both routes on x86/x64/ARM64.
+`RecordCallContract.WindowsRecordResultsPreserveEveryByte` executes HighC and
+LLVMC from O0/O2 PE fixtures against an independent host provider, at O0/O2
+with address/undefined-behavior sanitizers. x64 hidden buffers and ARM64
+register HFAs preserve both returned fields through single and chained calls,
+including NaN payloads and signed zero; output sentinels bound every write.
+ARM64 explicitly stores both fields, so the test does not infer a wrapper's
+source return type from unused scratch registers. The shared placement suite
+covers one through four float/double HFA members on COFF/ELF/Mach-O and rejects
+incomplete, padded and spilled records. Native Windows/ARM64 execution and
+unobserved wrapper return-type recovery are separate coverage.
+`ReturnContract.ExplicitX87PrecisionRequiresAnExactIEEEValue` keeps arithmetic,
+raw byte changes and unknown loads at eighty bits while exact IEEE extensions
+and identity copies retain their declared precision. SDK checks use the
+original integer keyword identity and compare generated anonymous-enum
+members, signedness and size before using the SDK typedef; unmodified output
+must also compile independently.
 `Win64CallContract.AVoidSourceReturnDoesNotEraseAnObservedCallResult` checks
 that a volatile store of the machine result keeps it live despite a proposed
 void import prototype and a wrapper with a void source return.
@@ -1195,6 +1233,9 @@ must run and pass; the jobs retain the source commit and JUnit records.
 
 The default scheduler retains oneTBB workers between synchronous calls. Large
 callers reuse spare stack headroom; small callers use a native coordinator.
+Scheduler tests exercise ordinary, weighted and explicitly serial small batches
+from a small caller stack. `NeverDBinaryDiffSDKTests` completes a deep source
+page on an asynchronous caller without relying on cancellation to avoid analysis.
 It does not support fork after first use or dynamic SDK unloading; those hosts
 must select `NEVERD_ENABLE_TBB=OFF`.
 Its task arena limits each batch, while nested batches drain on a fresh native
@@ -1287,6 +1328,30 @@ provenance, reopen, project-state changes and WAL-only edits. The Qt comparison
 test saves real projects, removes the originals, compares through the worker,
 and checks a normal recovery-workspace sentinel. GUI units retain roundtrip and
 recovery-journal coverage.
+
+The focused compression fixture also exercises an independently authored zlib
+frame, a roundtrip across a shared-library boundary and checksum rejection:
+
+```sh
+cmake -S unittests/compression -B build-compression -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-compression --parallel 4
+ctest --test-dir build-compression --output-on-failure --no-tests=error
+```
+
+Supply `-DLLVM_DIR=/path/to/lib/cmake/llvm` to include the real prebuilt LLVM
+consumer and `ProjectDatabaseTest.*`. Stale `ZLIB_LIBRARY_RELEASE` and
+`ZLIB_INCLUDE_DIR` cache entries must not replace the bundled provider. Also
+configure with `Ninja Multi-Config` and build/test both `--config Debug` and
+`--config Release` (`ctest -C` selects the test configuration). For integrated
+LLVM, verify that source configuration retains zlib and resolves its archive
+location before building; the archive is intentionally not present at configure
+time. Inspect final core/CLI imports and exports: no dynamic zlib import or
+public zlib symbols. Qt can retain its own dynamic zlib dependency.
+
+Desktop relocation and dependency-audit checks are described in
+[`tools/neverd-gui/PACKAGING.md`](../tools/neverd-gui/PACKAGING.md).
+
 The core tests check matching, ambiguity, deltas, deterministic correspondence,
 manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker

@@ -41,6 +41,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <stdexcept>
 
 namespace {
 
@@ -468,6 +469,35 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       return true;
     return ParameterRegister(Arg);
   };
+
+  if (CallIdx < Ops.size() && Ops[CallIdx].ScalarCallSignature) {
+    const auto &Call = Ops[CallIdx];
+    const auto &Signature = *Call.ScalarCallSignature;
+    if (!boundFloatingCallArguments(Call, TargetArch,
+                                    Image ? Image->abiFormat()
+                                          : BinaryFormat::Unknown))
+      throw std::runtime_error(
+          "A mixed header call lost its complete operands");
+    std::vector<ExprPtr> Arguments;
+    for (unsigned I = 1; I < Call.NumInputs; ++I) {
+      const auto &Parameter = Signature.Scalars[I - 1];
+      ExprPtr Value = medvarToExpr(Call.Inputs[I]);
+      if (!Value || !Value->Type || Value->Type->Size < Parameter.Bytes)
+        throw std::runtime_error("A mixed header argument is incomplete");
+      if (Value->Type->Size > Parameter.Bytes) {
+        Value = HighExpr::makeBinop(NdOp::SUBBYTES, Value,
+                                    HighExpr::makeConst(0, 4));
+        Value->Type = NdType::makeInt(Parameter.Bytes, false);
+      }
+      if (Parameter.Floating != (Value->Type->Kind == NdTypeKind::Float))
+        Value = HighExpr::makeBitCast(
+            Value, Parameter.Floating
+                       ? NdType::makeFloat(Parameter.Bytes)
+                       : NdType::makeInt(Parameter.Bytes, false));
+      Arguments.push_back(std::move(Value));
+    }
+    return Arguments;
+  }
 
   // A call whose inputs are every argument it passes (a formatted call)
   // passes exactly those: a floating one as its bits' value, an integer one

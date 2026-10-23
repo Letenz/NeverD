@@ -41,10 +41,23 @@ inline llvm::StringRef portableScalarDeclaration(const FunctionSym &Function,
   if (!Function.ReturnType || (Function.ReturnType->Kind != NdTypeKind::Void &&
                                !Scalar(Function.ReturnType)))
     return {};
-  for (const auto &[Parameter, Type] : Function.Params)
+  std::set<std::string, std::less<>> Enumerations;
+  const auto EnumName = [&](const TypeRef &Type) {
+    if (Type && Type->Kind == NdTypeKind::Struct && Type->IsEnum) {
+      if (!Type->SourceName.empty())
+        Enumerations.insert(Type->SourceName);
+      if (!Type->TypedefName.empty())
+        Enumerations.insert(Type->TypedefName);
+    }
+  };
+  EnumName(Function.ReturnType);
+  for (const auto &[Parameter, Type] : Function.Params) {
     if (!Scalar(Type))
       return {};
-  return selfContainedDeclaration(Function.PortablePrototypeDeclaration, Name)
+    EnumName(Type);
+  }
+  return selfContainedDeclaration(Function.PortablePrototypeDeclaration, Name,
+                                  Enumerations)
              ? llvm::StringRef(Function.PortablePrototypeDeclaration)
              : llvm::StringRef();
 }

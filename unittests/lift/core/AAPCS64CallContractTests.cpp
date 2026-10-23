@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SourceCallExecution.h"
+#include "WindowsMixedScalarFixture.h"
 #include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
@@ -591,6 +592,55 @@ TEST(AAPCS64CallContract, WindowsVariadicPrefixSurvivesOmittedCalleeCache) {
         else
           source_call_execution_test::checkSyntax(Source);
       }
+  }
+}
+
+TEST(AAPCS64CallContract, MixedHeaderScalarsKeepIndependentRegisterBanks) {
+  windows_mixed_scalar_test::Header Debug(Got);
+  // Only the integer setup changes: d0 and d1 are untouched incoming values.
+  // x0/x1/x2/x3 are four source arguments, with the two FP arguments between.
+  auto Image =
+      makeImage({{Text,
+                  {0x528000E0u, 0x52800121u, 0x52800162u, 0xD2824683u,
+                   adrp(16, Text + 16, Got), ldrX(17, 16, Got), br(17)}}},
+                {{Text, "mixed_wrapper"}}, {"fixture_mixed"});
+  Image.Format = BinaryFormat::COFF;
+  Image.Imports.front().Module = "fixture.dll";
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Text};
+    Options.LiftMode = LLVM;
+    Options.SourceProjection = LLVM;
+    auto Result = Pipeline().run(Image, Context, Options, &Debug);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    CEmitterOptions COptions;
+    COptions.TheArch = Image.Arch;
+    COptions.Format = Image.Format;
+    COptions.Image = &Image;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(
+        LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions, &Debug,
+                                   &Image)
+             : HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+    const std::string Arguments = LLVM ? "x, y" : "2.5, -6.5";
+    source_call_execution_test::compileAndRun(
+        Source + windows_mixed_scalar_test::Provider + R"(
+int main(void) {
+  typedef uint64_t carrier __attribute__((vector_size(16)));
+  carrier x = {0, 0}, y = {0, 0};
+  double left = 2.5, right = -6.5, result;
+  __builtin_memcpy(&x, &left, sizeof(left));
+  __builtin_memcpy(&y, &right, sizeof(right));
+  __auto_type output = mixed_wrapper()" +
+        Arguments + R"();
+  __builtin_memcpy(&result, &output, sizeof(result));
+  return result != 42.25;
+}
+)");
   }
 }
 

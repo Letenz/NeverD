@@ -19,6 +19,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -304,6 +305,10 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
                                llvm::StringRef TargetTriple) {
   CodegenResult Result;
   ensureTargets();
+  if (Mod.getModuleFlag(macho_loader::cache_load::kAnalysisFlag)) {
+    llvm::WithColor::error() << macho_loader::cache_load::kRebuildUnsupported;
+    return Result;
+  }
   if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
     llvm::WithColor::error() << kArm64eRebuildUnsupported;
     return Result;
@@ -522,6 +527,11 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
     llvm::StringRef TargetTriple, RewriteInputKind InputKind) {
   llvm::mc_rewrite::RewriteResult Result;
   ensureTargets();
+  if (Mod.getModuleFlag(macho_loader::cache_load::kAnalysisFlag)) {
+    llvm::WithColor::error() << macho_loader::cache_load::kRebuildUnsupported;
+    Result.ImageValid = false;
+    return Result;
+  }
   if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
     llvm::WithColor::error() << kArm64eRebuildUnsupported;
     Result.ImageValid = false;

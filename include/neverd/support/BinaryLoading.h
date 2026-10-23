@@ -32,6 +32,9 @@ struct LoaderChoice {
   /// as a binary file of a processor at an address, as Raw places it.
   BinaryFormat Format = BinaryFormat::Unknown;
   RawLoadOptions Raw;
+  /// Exact install name from an arm64e dyld shared cache's image catalogue.
+  /// Empty selects an ordinary file. Requires a path with its subcache files.
+  std::string MachOSharedCacheImage;
 };
 
 /// Load-time work-set for a single-function CLI/C-API request.  Empty keeps

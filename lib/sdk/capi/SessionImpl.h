@@ -599,6 +599,10 @@ struct Session {
 
   void setError(const std::string &Msg) { LastError = Msg; }
   void clearError() { LastError.clear(); }
+  /// Selection-specific sidecar namespace, without changing the source locator.
+  std::filesystem::path projectInputPath() const;
+  std::string projectNamespaceSuffix() const;
+
   uint64_t inputFileSize() const {
     if (!Loaded)
       return 0;
@@ -1366,6 +1370,9 @@ std::string inputSha256(Session &S);
 
 /// The loaded input as a project's project.json names it.
 llvm::json::Object projectInput(Session &S);
+llvm::json::Object sharedCacheIdentity(const BinaryImage &Image);
+bool matchesProjectInput(const llvm::json::Object &Left,
+                         const llvm::json::Object &Right);
 
 /// The input the project's project.json names, if it names one.
 std::optional<llvm::json::Object> recordedInput(const Session &S);

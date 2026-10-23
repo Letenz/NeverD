@@ -3770,7 +3770,8 @@ ImportPrototypeArguments importPrototypeArguments(
                                                           Img.abiFormat())) {
             Result.FloatingArguments.emplace(Addr, std::move(*Floating));
             Result.PrototypeDeclared.insert(Addr);
-            if (Convention->ArgumentsFromCallSetup)
+            if (Convention->ArgumentsFromCallSetup &&
+                !Convention->RegparmOnlyForInternalCalls)
               return;
           }
       // Header arity is a count of source parameters. A record's pieces take
@@ -4025,6 +4026,9 @@ void computeCallRegisterEffects(
       Result.CallEntryStackArgs = std::move(Prototyped.StackArgs);
       Result.CallEntryStackSlots = std::move(Prototyped.StackSlots);
       Result.CallEntryStackPops = std::move(Prototyped.StackPops);
+      Result.CallEntryFloatingArguments =
+          std::move(Prototyped.FloatingArguments);
+      Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
       Result.CallEntryVariadicArguments =
@@ -4355,6 +4359,20 @@ void computeCallRegisterEffects(
 } // namespace
 
 struct PipelineAnalysisCache::Impl {
+  static std::map<std::string, uint16_t>
+  declaredX87Imports(const BinaryImage &Image, const DebugContext *Debug) {
+    std::map<std::string, uint16_t> Returns;
+    if (Image.Arch != Arch::X86 || !Debug)
+      return Returns;
+    for (const auto &Import : Image.Imports)
+      if (const auto Function = Debug->resolvePrototype(
+              cNameOfStatedName(Import.Name, Image.Format, Image.Arch)))
+        if (const auto Signature = libc::floatingCallArguments(
+                *Function, Image.Arch, Image.abiFormat()))
+          Returns.emplace(Import.Name, Signature->ReturnBytes);
+    return Returns;
+  }
+
   /// These indexes read the image, not a selection's extra entry boundaries.
   /// Keep them while replacing SelectionFacts for another unnamed function.
   struct ImageInputs {
@@ -4365,6 +4383,7 @@ struct PipelineAnalysisCache::Impl {
     libc::NoReturnTargetIndex Targets;
     libc::StackProbeIndex StackProbes;
     const std::map<va_t, PointerVariableCallee> PointerCallees;
+    const std::map<std::string, uint16_t> X87FloatingImports;
     detail::AbsoluteRelocationRootIndex Roots;
     ExecutableCodeOwnerIndex Owners;
 
@@ -4386,7 +4405,8 @@ struct PipelineAnalysisCache::Impl {
                         })
                   : libc::NoReturnTargetIndex::DeclaredNoReturn()),
           StackProbes(Img), PointerCallees(collectPointerVariableCallees(Img)),
-          Roots(Img), Owners(Img) {}
+          X87FloatingImports(declaredX87Imports(Img, Dbg)), Roots(Img),
+          Owners(Img) {}
 
     /// Import-address names (getImportAddressNames). HighIR lays a run's own
     /// function, debug and thunk names over this map and takes them off
@@ -4451,12 +4471,12 @@ struct PipelineAnalysisCache::Impl {
         Entries(std::move(Entries)),
         Callees(*this->Inputs->Image, &this->Entries, &this->Inputs->Targets,
                 &this->Inputs->Roots, &this->Inputs->Owners),
-        Graphs(createX87CallGraphCache(&Callees, &this->Inputs->Targets,
-                                       RetainBodies,
-                                       {limits::kMaxPipelineCallGraphEntries,
-                                        limits::kMaxPipelineCallGraphBytes,
-                                        limits::kMaxPipelineCallBodyBytes},
-                                       &this->Entries)) {}
+        Graphs(createX87CallGraphCache(
+            &Callees, &this->Inputs->Targets, RetainBodies,
+            {limits::kMaxPipelineCallGraphEntries,
+             limits::kMaxPipelineCallGraphBytes,
+             limits::kMaxPipelineCallBodyBytes},
+            &this->Entries, this->Inputs->X87FloatingImports)) {}
 
   /// \p CandidateEntries is sorted and holds each entry once. BuiltFrom
   /// permits the identity shortcut only when these are the inventory's starts.

@@ -129,6 +129,8 @@ public:
   /// A pointer to \p Record, by its tag, which the unit then declares; empty
   /// when the record has no C name.
   std::string recordPointerSpelling(const NdType &Record);
+  /// Records whose size is required by an emitted object, including arrays.
+  void noteRecordValue(TypeRef Type) const;
   void writeStructDefs(llvm::Module &Mod);
   std::string aggregateMemberPath(llvm::Type *Ty,
                                   llvm::ArrayRef<unsigned> Indices);

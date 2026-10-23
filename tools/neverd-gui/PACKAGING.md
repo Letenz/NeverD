@@ -1,4 +1,79 @@
-# macOS development bundle
+# Desktop distribution
+
+NeverD embeds zlib and its core acceleration libraries. The CLI, worker and MCP
+server share `libneverd`; Qt libraries and required plugins ship dynamically
+beside the desktop application. A prebuilt Qt library can depend on its own
+dynamic zlib even though NeverD uses static zlib. Keep that private Qt dependency
+in the package.
+
+## Linux and Windows
+
+The GUI's CMake install runs Qt deployment and then completes and audits the
+runtime dependency closure. `NEVERD_BUNDLE_DESKTOP_RUNTIME` defaults to `ON`.
+Standalone builds import the matching engine through `NEVERD_ENGINE_LIBRARY`
+(and `NEVERD_ENGINE_IMPLIB` on Windows); set `NEVERD_DESKTOP_CLI` to include its
+matching CLI executable. An integrated build includes the `neverd` target.
+`NEVERD_DESKTOP_QT_LICENSES` supplies the matching Qt license/attribution catalog;
+the checked-in catalog is selected automatically only for Qt 6.11.1.
+`NEVERD_DESKTOP_EXTRA_LICENSES` supplies notices for additional bundled runtime
+libraries. Core, zlib and KDDockWidgets notices are installed automatically.
+`NEVERD_DESKTOP_RUNTIME_LIBRARIES` lists additional libraries opened by name
+instead of linked directly. On Linux it defaults to available HarfBuzz and
+OpenSSL libraries, used by FreeType auto-hinting and Qt's TLS backend. Extend
+this list for additional runtime-loaded features in a custom Qt kit.
+
+```sh
+cmake -S tools/neverd-gui -B build-gui -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt/kit \
+  -DNEVERD_ENGINE_LIBRARY=/path/to/core/bin/libneverd.so \
+  -DNEVERD_DESKTOP_CLI=/path/to/core/bin/neverd
+python3 scripts/build.py build-gui --target neverd-gui neverd-worker neverd-mcp
+cmake --install build-gui --prefix "$PWD/build-gui/dist/NeverD"
+```
+
+Use the platform's engine/CLI filenames on Windows. Multi-config generators
+also require `--config Release` for both build and installation. Build the
+engine with `NEVERD_ENABLE_PYTHON_PLUGINS=OFF` for a package without Python.
+
+Linux deployment requires `patchelf`. Libraries and plugins receive paths
+relative to the installed package. glibc, the ELF loader and graphics dispatch
+libraries remain operating-system dependencies; other required libraries are
+copied privately. Build on the oldest supported Linux baseline: bundling Qt
+does not lower the glibc requirement of the compiled binaries. Windows keeps
+system DLLs external and bundles non-system dependencies with the executables.
+Build natively for the selected architecture and keep Qt, engine and CRT
+configurations consistent.
+
+Only Qt's local SQLite driver is retained. Missing required files, unknown SQL
+drivers, unresolved dependencies, conflicting library names and dependencies
+that still resolve outside the completed package stop installation.
+`share/neverd/dependency-audit.txt` records hashes of the deployed runtime.
+
+The Linux collector regressions use small real ELF files to check transitive
+dependency relocation, missing libraries and SQL drivers, and preservation of
+files outside the installation:
+
+```sh
+python3 tools/neverd-gui/tests/test_desktop_runtime.py -v
+```
+
+Move the completed install directory away from the build tree and test it with
+developer environment variables cleared. For Linux, launch a native X11 or
+Wayland session (or `xvfb-run` for a headless local check):
+
+```sh
+env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM \
+  -u QML2_IMPORT_PATH -u QML_IMPORT_PATH \
+  PATH=/usr/bin:/bin /path/to/moved/NeverD/bin/neverd-gui --smoke-test
+```
+
+Also open a binary through the bundled worker and run the bundled CLI. Verify
+that loaded Qt and non-system dependency paths stay inside the package. Linux
+checks do not qualify Windows or macOS runtime behavior. Before public release,
+retain the matching Qt/dependency notices and corresponding sources, and apply
+the platform's signing and release qualification process.
+
+## macOS development bundle
 
 Build the GUI and worker in the same configuration as the selected engine, then
 run the packaging helper on macOS. The output path must not already exist.
@@ -17,6 +92,8 @@ KDDockWidgets and JSON license inputs must match the sources used by the build.
 The checked-in Qt license catalog matches Qt 6.11.1; a different Qt build requires
 its matching `--qt-licenses` directory. Homebrew component notices and available
 SPDX catalogs are collected from the libraries actually copied into the bundle.
+The pinned static zlib notice and any notices staged beside the engine in its
+`licenses` directory are retained too; build and package matching engine inputs.
 
 The helper copies the GUI, worker, engine, Qt plugins and recursive non-system
 dependencies. It rewrites library IDs and dependencies, supplies

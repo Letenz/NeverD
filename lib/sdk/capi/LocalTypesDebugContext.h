@@ -205,6 +205,7 @@ public:
   /// the library's, or an enumerator of one the decompiler displays, which
   /// stands for that enumeration.  What the debug information gave types of
   /// the name, members or enumerators, must agree with the library too.
+  /// A pointer request obtains only a record's tag, without completing it.
   CRecordDefinitions definitions(const std::vector<TypeRef> &Records) const;
   /// The copy of the library this context reads, which its definitions
   /// render.
@@ -264,6 +265,7 @@ private:
   /// of the libraries joined again.
   mutable std::map<types::BuiltinSpelling, std::unique_ptr<types::TypeSpeller>>
       Spellers;
+  mutable std::unique_ptr<types::TypeSpeller> PortablePrototypeSpeller;
   /// What renders the records a unit embeds: spelling the library's names
   /// for each unit would name every type again.
   mutable std::unique_ptr<types::EmbeddedCRenderer> CRenderer;

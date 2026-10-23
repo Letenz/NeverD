@@ -384,7 +384,12 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
   Call->SourceCallHint = CurOp.SourceCallHint;
-  if (CurOp.CalleeFloatReturnBytes && CurMed)
+  if (auto Signature = boundFloatingCallArguments(
+          CurOp, TargetArch,
+          Image ? Image->abiFormat() : BinaryFormat::Unknown))
+    Call->FloatingCallSignature =
+        std::make_shared<FloatingCallArguments>(std::move(*Signature));
+  else if (CurOp.CalleeFloatReturnBytes && CurMed)
     if (const auto *Info = CurMed->findCall(CurBlock.Id, CI))
       if (auto Signature = recoveredFloatingCallArguments(
               CurOp, *Info, TargetArch,
@@ -416,11 +421,23 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
   if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
     Call->Type = sourceCallResultType(CurOp);
     S.Kind = StmtKind::Assign;
-    S.Dst = HighExpr::makeVar(CurOp.Output, Call->Type && Call->Type->Kind ==
-                                                              NdTypeKind::Struct
-                                                ? Call->Type
-                                                : nullptr);
+    const bool SourceFloat = SourceFloatCallValues.count(varKey(CurOp.Output));
+    S.Dst = HighExpr::makeVar(
+        CurOp.Output,
+        SourceFloat || (Call->Type && Call->Type->Kind == NdTypeKind::Struct)
+            ? Call->Type
+            : nullptr);
     S.Val = Call;
+    if (!SourceFloat && CurOp.Output.Kind == MedVar::Reg &&
+        CurOp.Output.Size == 10 &&
+        getTargetRegInfo(TargetArch).isX87StackReg(CurOp.Output.RegOff)) {
+      if (Call->Type && Call->Type->Size != CurOp.Output.Size) {
+        S.Val = HighExpr::makeUnary(NdOp::FLOAT_FLOAT2FLOAT, S.Val);
+        S.Val->Type = NdType::makeFloat(CurOp.Output.Size);
+      }
+      S.Val = HighExpr::makeBitCast(S.Val,
+                                    NdType::makeInt(CurOp.Output.Size, false));
+    }
   }
   CallOutputs.insert({CurOp.Output.Id, CurOp.Output.SSAVer});
   if (S.Kind == StmtKind::Call)

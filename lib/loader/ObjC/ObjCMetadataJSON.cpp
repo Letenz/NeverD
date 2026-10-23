@@ -1,8 +1,17 @@
+//===- ObjCMetadataJSON.cpp - Objective-C declaration serialization -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file Expose declarations and their analysis-only provenance explicitly.
+//===----------------------------------------------------------------------===//
+
 #include "neverd/loader/ObjC/ObjCMetadataJSON.h"
 
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <map>
 
@@ -11,6 +20,9 @@ namespace {
 #define NEVERD_OBJC_RELATIVE_LIST_TEXT(Name, Text)                             \
   inline constexpr char Name[] = Text;
 #include "ObjCRelativeLists.def"
+#define NEVERD_OBJC_STORAGE_TEXT(Name, Text)                                   \
+  inline constexpr char Name[] = Text;
+#include "ObjCStorage.def"
 
 std::string addressText(va_t Address) {
   return "0x" + llvm::utohexstr(Address, /*LowerCase=*/true);
@@ -27,9 +39,28 @@ cacheOriginJSON(const std::optional<ObjCCacheListOrigin> &Origin) {
       {kImageAddressJSON, addressText(Origin->ImageAddress)},
       {kConditionJSON, kImageLoadedJSON}};
 }
+
+llvm::StringRef referenceKind(ObjCSourceReference::Kind Kind) {
+  switch (Kind) {
+#define NEVERD_OBJC_STORAGE_REFERENCE(Enumerator, Text)                        \
+  case ObjCSourceReference::Kind::Enumerator:                                  \
+    return Text;
+#include "ObjCStorage.def"
+  }
+  llvm_unreachable(kUnresolvedReference);
+}
 } // namespace
 
 llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
+  llvm::json::Array References;
+  for (const auto &[Address, Reference] : Image.ObjCMetadataReferences)
+    References.push_back(
+        llvm::json::Object{{kAddressJSON, addressText(Address)},
+                           {kKindJSON, referenceKind(Reference.TheKind)},
+                           {kSizeJSON, Reference.Size},
+                           {kNameJSON, jsonSafeText(Reference.Name)},
+                           {kClassNameJSON, jsonSafeText(Reference.ClassName)},
+                           {kViewJSON, kMetadataOnly}});
   llvm::json::Array Classes;
   for (const ObjCClass &Class : Image.ObjCClasses) {
     llvm::json::Array Methods;
@@ -152,6 +183,7 @@ llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
                             {"categories", std::move(Categories)},
                             {"protocols", std::move(Protocols)},
                             {"properties", std::move(Properties)},
+                            {kReferencesJSON, std::move(References)},
                             {"limitations", std::move(Limitations)}};
 }
 

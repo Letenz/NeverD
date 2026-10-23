@@ -4,6 +4,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
   include(CTest)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDZlib.cmake")
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../neverd-worker" "${CMAKE_BINARY_DIR}/worker")
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp" "${CMAKE_BINARY_DIR}/mcp")
 endif()
@@ -36,6 +37,9 @@ FetchContent_Declare(neverd_docking
   URL_HASH SHA256=5cd9495d9316cf6cc937bb328a7fd491c3248ef2469cfa42511f1039f6148aca
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(neverd_docking)
+# The application embeds KDDockWidgets; its development SDK is not part of
+# the desktop runtime install. Referenced targets still build normally.
+set_property(DIRECTORY "${neverd_docking_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 
 # Worker transport, request dispatch and MCP bridges: no widgets.
 add_library(neverd_gui_core STATIC EngineClient.cpp QueryService.cpp
@@ -116,6 +120,7 @@ install(TARGETS neverd-gui RUNTIME DESTINATION bin BUNDLE DESTINATION .)
 qt_generate_deploy_app_script(TARGET neverd-gui OUTPUT_SCRIPT deploy_script
   NO_UNSUPPORTED_PLATFORM_ERROR)
 install(SCRIPT ${deploy_script})
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDDesktopPackaging.cmake")
 
 if(BUILD_TESTING)
   option(NEVERD_GUI_CI_DIAGNOSTICS

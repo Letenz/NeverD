@@ -24,6 +24,9 @@ struct IntegerCallArgumentPiece {
   unsigned Argument = 0;
   uint16_t Offset = 0;
   uint16_t Bytes = 0;
+  /// A record adapter may supply a typed FP operand; copy its bits, never
+  /// convert its numeric value to the integer storage used for assembly.
+  bool Floating = false;
 };
 
 struct IntegerCallParameter {
