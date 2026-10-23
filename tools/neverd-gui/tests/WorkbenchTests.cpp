@@ -1,5 +1,12 @@
-// Workbench controller tests against the fixture worker: the session, the
-// production main window and its views, edits and session transitions.
+//===- WorkbenchTests.cpp - Workbench controller regressions --------------===//
+//
+//                         NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Exercise the production session, window and views with a fixture worker.
+//===----------------------------------------------------------------------===//
+
 #include "AddressSpace.h"
 #include "ChooserView.h"
 #include "CodeView.h"
@@ -60,6 +67,7 @@
 #include <QFontMetricsF>
 #include <QHeaderView>
 #include <QHelpEvent>
+#include <QImage>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
@@ -7775,6 +7783,55 @@ private slots:
     QCOMPARE(results, (QStringList{QString(), QString()}));
     QVERIFY(!assembly->graphMode());
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x44));
+  }
+
+  void listingFirstContentPaintWaitsForCurrentRows_data() {
+    QTest::addColumn<bool>("jump");
+    QTest::newRow("refresh") << false;
+    QTest::newRow("pending-jump") << true;
+  }
+
+  void listingFirstContentPaintWaitsForCurrentRows() {
+    QFETCH(bool, jump);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    AddressSpace space;
+    ListingView listing(bench.session, space);
+    listing.resize(640, 480);
+    listing.jumpTo(Base + 0x40);
+    QTRY_VERIFY_WITH_TIMEOUT(listing.searchReady(), OpenTimeoutMs);
+    QSignalSpy painted(&listing, &ListingView::contentPainted);
+    // Render the real viewport synchronously while a replacement is pending.
+    // Its retained rows are visible, but cannot qualify a useful first frame.
+    if (jump)
+      listing.jumpTo(Base + 0x50);
+    else
+      listing.refresh();
+    QVERIFY(!listing.searchReady());
+    QVERIFY(!listing.searchText().isEmpty());
+    const auto paint = [&] {
+      QImage image(listing.viewport()->size(), QImage::Format_ARGB32);
+      listing.viewport()->render(&image);
+    };
+    paint();
+    QCOMPARE(painted.size(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(listing.searchReady(), OpenTimeoutMs);
+    paint();
+    QCOMPARE(painted.size(), 1);
+    paint();
+    QCOMPARE(painted.size(), 1);
+    listing.clear();
+    paint();
+    QCOMPARE(painted.size(), 1);
+    listing.jumpTo(Base + 0x40);
+    QTRY_VERIFY_WITH_TIMEOUT(listing.searchReady(), OpenTimeoutMs);
+    paint();
+    QCOMPARE(painted.size(), 2);
   }
 
   void listingRefreshKeepsItsContextAndArrows() {
