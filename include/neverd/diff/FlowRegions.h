@@ -21,7 +21,11 @@ namespace neverd::diff {
 inline constexpr llvm::StringLiteral FlowRegionProfile = "med-neighborhoods-v1";
 inline constexpr llvm::StringLiteral LLVMFlowRegionProfile =
     "llvm-neighborhoods-v1";
-llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile);
+inline constexpr llvm::StringLiteral FlowFragmentProfile = "med-fragments-v1";
+inline constexpr llvm::StringLiteral LLVMFlowFragmentProfile =
+    "llvm-fragments-v1";
+llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
+                                  bool Fragments = false);
 struct FlowRegionSettings {
   bool Enabled = false;
   unsigned MinimumNodes = limits::diff::kDefaultFlowRegionMinNodes;
@@ -31,6 +35,7 @@ struct FlowRegionSettings {
   uint64_t MaxWork = limits::diff::kDefaultFlowRegionWork;
   unsigned MaxAnchors = limits::diff::kDefaultFlowRegionAnchors;
   uint64_t MaxNodePairs = limits::diff::kDefaultFlowRegionPairs;
+  bool Fragments = false;
   bool operator==(const FlowRegionSettings &) const = default;
   std::optional<std::string> validate() const;
   std::string describe() const;
@@ -43,6 +48,10 @@ struct FlowRegionAnchor {
   uint32_t Gaps = 0;
   bool OpenDataFrontier = false, OpenControlFrontier = true, UniqueSeed = false;
   uint32_t PrimaryOrigins = 0, SecondaryOrigins = 0;
+  /// Zero is the original fixed-neighborhood recipe. Fragment depth counts
+  /// included operation levels; its external bindings are not matched nodes.
+  unsigned Depth = 0;
+  std::vector<std::pair<uint32_t, uint32_t>> Frontier;
   bool operator==(const FlowRegionAnchor &) const = default;
 };
 struct FlowRegionHypothesis {

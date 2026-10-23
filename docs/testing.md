@@ -1429,6 +1429,19 @@ coverage, cooperative stops and rederived saved facts. SDK/CLI/worker/Qt region
 checks inspect bounded paired nodes and original bytes and retain unclassified
 anchors after a grouping stop. These are owned local fixtures, not compiler
 family or competitive-baseline qualification.
+`BinaryDiffFlowFragments` checks finite depth, leaf scalar/type/flag contracts,
+external/internal definition sharing, commutative ties, reconvergent graphs,
+cycles, excluded control/effect/unknown nodes, hash collisions and atomic stops.
+Region checks keep frontier conflicts separate from clone facts and coverage,
+bind saved depths/frontiers to recomputation and retain legacy encoding.
+The owned `control_regions_fixture.c` adds AArch64 branch O0/O2 cells for ELF,
+COFF and Mach-O, changed final constants, original bytes and fresh report reopen.
+CLI and worker inspect the external PHI/select boundary. x64 parameter projection
+and loop attribute differences remain measured unresolved cells, with no positive
+correspondence requirement. The real Qt test separates changed external producers
+from matched operations, navigates to originals and restores the recipe through
+the reopen dialog. These controls do not establish semantic equivalence or
+general compiler-transformation coverage.
 `BinaryDiffImpact` checks native caller/callee witnesses, tails, resolved imports,
 recursion, duplicate sites, multiple seeds, missing indirect callers, entry traits,
 depth/storage/work frontiers and cancellation. SDK integration checks original

@@ -6325,6 +6325,14 @@ Cobertura: %7</translation>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>La SSA optimizada reduce las estructuras auxiliares del compilador para la comparación. Las funciones fuera del alcance admitido siguen apareciendo con una explicación.</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>Fragmentos SSA comunes</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>Buscar cálculos comunes aunque cambien las dependencias. Los productores de las entradas externas quedan sin verificar. Incluye hipótesis de regiones SSA.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7201,6 +7209,12 @@ Explicaciones heurísticas; comportamiento no validado.
         <translation>Bloque %1 · Direcciones originales: %2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>Correspondencia de entradas externas; sus productores no se han comparado.
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7333,6 +7347,30 @@ Cobertura: %4% / %5% de los nodos SSA observados en estas funciones. El control 
     <message>
         <source>partial</source>
         <translation>parcial</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>Evidencia del fragmento</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>Operaciones coincidentes</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>Entradas externas</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>Profundidad %1 · Operaciones coincidentes: %2 · Entradas externas: %3
+Los productores de las entradas externas no se comparan ni se cuentan como código común.</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+Método SSA: %1</translation>
     </message>
 </context>
 <context>

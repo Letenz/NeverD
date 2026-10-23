@@ -28,10 +28,12 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollBar>
@@ -245,6 +247,145 @@ private slots:
     }
     QCOMPARE(Failures.size(), 0);
   }
+  void sharedFragmentsKeepExternalInputsSeparateAndRestoreSettings() {
+    const auto A = Directory.filePath("fragments-before.bin");
+    const auto B = Directory.filePath("fragments-after.bin");
+    QVERIFY(write(A, QByteArray::fromHex("89f883c00383f0176bc00783c009c3")));
+    QVERIFY(write(B, QByteArray::fromHex("89f883c00583f0176bc00783c009c3")));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    View.findChild<QLineEdit *>("comparisonPrimary")->setText(A);
+    View.findChild<QLineEdit *>("comparisonSecondary")->setText(B);
+    for (const auto *Name : {"primaryLoader", "secondaryLoader"})
+      View.findChild<QComboBox *>(Name)->setCurrentIndex(1);
+    View.findChild<QLineEdit *>("primaryBase")->setText("0x1000");
+    View.findChild<QLineEdit *>("secondaryBase")->setText("0x8000");
+    auto *Fragments = View.findChild<QCheckBox *>("comparisonFlowFragments");
+    auto *Regions = View.findChild<QCheckBox *>("comparisonAnalyzeFlowRegions");
+    auto *Flow = View.findChild<QCheckBox *>("comparisonAnalyzeDataFlow");
+    auto *Profile = View.findChild<QComboBox *>("comparisonFlowProfile");
+    QVERIFY(Fragments && Regions && Flow && Profile);
+    Fragments->setChecked(true);
+    QVERIFY(Regions->isChecked() && Flow->isChecked() && Profile->isEnabled());
+    Profile->setCurrentIndex(Profile->findData("llvm-ssa-v1"));
+    QTest::mouseClick(View.findChild<QToolButton *>("comparisonSettings"),
+                      Qt::LeftButton);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonStart"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Failures.size(), 0);
+    QCOMPARE(Session.summary()["flow_regions"].toObject()["profile"].toString(),
+             QString("llvm-fragments-v1"));
+    auto *Menu =
+        View.findChild<QPushButton *>("comparisonRegionReview")->menu();
+    QVERIFY(Menu && Menu->actions().size() == 2);
+    Menu->actions()[1]->trigger();
+    auto *Dialog =
+        View.findChild<ComparisonRegionsDialog *>("comparisonFlowRegions");
+    QVERIFY(Dialog);
+    auto *Anchors = Dialog->findChild<QTableView *>("regionAnchors");
+    auto *Nodes = Dialog->findChild<QTableView *>("regionInstructions");
+    auto *Rows = qobject_cast<ComparisonModel *>(Nodes->model());
+    auto *Coordinates = Dialog->findChild<QComboBox *>("flowRegionCoordinates");
+    auto *Scope = Dialog->findChild<QLabel *>("flowFragmentScope");
+    QTRY_VERIFY_WITH_TIMEOUT(Anchors->model()->rowCount() > 0, Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(Rows->rowCount() >= 4 && !Rows->row(0).isEmpty(),
+                             Timeout);
+    QVERIFY(Coordinates->isVisible() && Scope->isVisible());
+    QVERIFY(Dialog->findChild<QLabel *>("regionSummary")
+                ->text()
+                .contains("llvm-fragments-v1"));
+    const int Matched = Rows->rowCount();
+    QVERIFY(
+        Scope->text().contains(QString("Matched operations: %1").arg(Matched)));
+    QVERIFY(Scope->text().contains("not compared or counted"));
+    Coordinates->setCurrentIndex(Coordinates->findData("frontier"));
+    QTRY_VERIFY_WITH_TIMEOUT(Rows->rowCount() == 1 && !Rows->row(0).isEmpty(),
+                             Timeout);
+    const auto Boundary = Rows->row(0);
+    for (const auto &[Side, Value] :
+         {std::pair{"primary", "0x3"}, {"secondary", "0x5"}}) {
+      const auto Node = Boundary[Side].toObject();
+      QCOMPARE(Node["opcode"].toString(), QString("add"));
+      const auto Originals = Node["originals"].toArray();
+      QVERIFY(!Originals.empty());
+      QVERIFY(!Originals[0].toObject()["bytes"].toString().isEmpty());
+      bool Found = false;
+      for (const auto &Input : Node["inputs"].toArray()) {
+        const auto I = Input.toArray();
+        Found |= I[0].toInt() == 1 && I[3].toString() == Value;
+      }
+      QVERIFY(Found);
+    }
+    QVERIFY(Rows->data(Rows->index(0, 0), Qt::ToolTipRole)
+                .toString()
+                .contains("have not been compared"));
+    QSignalSpy Navigation(Dialog, &ComparisonRegionsDialog::inspectFunction);
+    for (auto *Button : Dialog->findChildren<QPushButton *>())
+      if (Button->text() == "Inspect secondary function")
+        QTest::mouseClick(Button, Qt::LeftButton);
+    QCOMPARE(Navigation.size(), 1);
+    QCOMPARE(Navigation[0][0].toString(), QString("secondary"));
+    QCOMPARE(Navigation[0][1].toString(), QString("0x8000"));
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        View.resize(1280, 800);
+        Dialog->resize(1280, 800);
+        QTest::qWait(40);
+        const auto Suffix = Mode == Theme::Mode::Dark ? "dark" : "light";
+        QVERIFY(View.grab().save(Captures + "/fragments-settings-" + Suffix +
+                                 ".png"));
+        QVERIFY(Dialog->grab().save(Captures + "/fragments-frontier-" + Suffix +
+                                    ".png"));
+      }
+    }
+    Coordinates->setCurrentIndex(Coordinates->findData("nodes"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        Rows->rowCount() == Matched && !Rows->row(0).isEmpty(), Timeout);
+    for (int I = 0; I < Matched; ++I)
+      for (const auto *Side : {"primary", "secondary"})
+        QVERIFY(Rows->row(I)[Side].toObject()["id"] !=
+                Boundary[Side].toObject()["id"]);
+    const auto Saved = Directory.filePath("fragments.nddiff");
+    Session.command("comparison_save", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && QFile::exists(Saved), Timeout);
+    Dialog->hide();
+    Flow->setChecked(false);
+    QVERIFY(!Fragments->isChecked() && !Regions->isChecked());
+    Profile->setCurrentIndex(Profile->findData("med-ssa-v2"));
+    // Exercise the ordinary reopen button so the restored recipe repopulates
+    // the settings widgets, not just the underlying worker session.
+    bool Selected = false;
+    QTimer Select;
+    connect(&Select, &QTimer::timeout, this, [&] {
+      if (auto *File =
+              qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+        File->selectFile(Saved);
+        if (auto *Name = File->findChild<QLineEdit *>("fileNameEdit"))
+          Name->setText(Saved);
+        Selected = true;
+        static_cast<QDialog *>(File)->accept();
+      }
+    });
+    Select.start(10);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonReopen"),
+                      Qt::LeftButton);
+    Select.stop();
+    QVERIFY(Selected);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Fragments->isChecked(),
+                             Timeout);
+    QVERIFY(Regions->isChecked() && Flow->isChecked());
+    QCOMPARE(Profile->currentData().toString(), QString("llvm-ssa-v1"));
+    QCOMPARE(Failures.size(), 0);
+  }
+
   void savedProjectsCompareThroughTheSharedReader() {
     const auto A = Directory.filePath("saved-before.bin");
     const auto B = Directory.filePath("saved-after.bin");

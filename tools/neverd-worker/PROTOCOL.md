@@ -192,6 +192,14 @@ instruction records; `coordinates:"phi_blocks"` pages verified PHI context pairs
 An optional `region_id` checks anchor membership. Conflicting selectors fail.
 Replies expose scope, abstention/limit counters and open dependency boundaries.
 These finite correspondences neither certify behavior nor hide native deltas.
+The optional start setting `flow_regions:{"fragments":true}` selects
+`med-fragments-v1` or `llvm-fragments-v1`. Anchors expose `depth` and
+`frontier_count`; `coordinates:"frontier"` pages their external definition
+bindings with `view:"frontier"` and `boundary_only:true`. Producers in those
+rows have not been compared. They share a consistent mapping with internal
+nodes but are excluded from matched-node counts, origin admission and coverage.
+Original bytes remain inspectable. Legacy anchors reject frontier coordinates.
+The mode defaults off; saved settings retain it even on early cancellation.
 
 `comparison_impact` accepts `side`, nonempty address-string `seeds`, `direction`
 (`callers`/`callees`), `kind` (`functions`/`entrypoints`/`sites`/`boundaries`/

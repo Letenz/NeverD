@@ -33,10 +33,13 @@ private:
   ComparisonModel *Hypotheses, *Anchors, *Instructions;
   QTableView *HypothesisTable, *AnchorTable, *InstructionTable;
   QComboBox *Kind;
+  QComboBox *Coordinates = nullptr;
+  QLabel *FragmentScope = nullptr;
   QLabel *Summary, *Evidence;
   QString Revision, RegionId;
   void refresh();
   void filter();
+  void selectAnchor();
 };
 } // namespace neverd::gui
 

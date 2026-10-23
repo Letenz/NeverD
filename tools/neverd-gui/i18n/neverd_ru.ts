@@ -6361,6 +6361,14 @@ Coverage: %7</source>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>Оптимизированная SSA сокращает вспомогательные конструкции компилятора для сравнения. Неподдерживаемые функции остаются в списке с указанием причины.</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>Общие фрагменты SSA</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>Поиск общих вычислений при изменённых зависимостях. Узлы, создающие внешние входные значения, остаются непроверенными. Включает гипотезы об областях SSA.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7237,6 +7245,12 @@ Heuristic explanations, not validated behavior.
         <translation>Блок %1 · Исходные адреса: %2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>Сопоставление внешних входных значений; создающие их узлы не сравнивались.
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7369,6 +7383,30 @@ Coverage: %4% / %5% of observed SSA nodes in these functions. Control and extern
     <message>
         <source>partial</source>
         <translation>частично</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>Свидетельства фрагмента</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>Совпавшие операции</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>Внешние входные значения</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>Глубина %1 · Совпавших операций: %2 · Внешних входных значений: %3
+Узлы, создающие внешние входные значения, не сравниваются и не учитываются как общий код.</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+Метод SSA: %1</translation>
     </message>
 </context>
 <context>

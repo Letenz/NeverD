@@ -288,14 +288,19 @@ int runStructuralDiff() {
       else
         (*Options)["regions"] = true;
     }
-    if (DiffFlowRegions || FlowRegionsView) {
+    if (DiffFlowRegions || DiffFlowFragments || FlowRegionsView) {
       if (auto *Regions = Options->getObject("flow_regions"))
         (*Regions)["enabled"] = true;
       else
         (*Options)["flow_regions"] = true;
     }
-    if (DiffDataFlow || DataFlowView || DiffFlowRegions || FlowRegionsView ||
-        DiffDataFlowProfile.getNumOccurrences()) {
+    if (DiffFlowFragments) {
+      if (!Options->getObject("flow_regions"))
+        (*Options)["flow_regions"] = llvm::json::Object{{"enabled", true}};
+      (*Options->getObject("flow_regions"))["fragments"] = true;
+    }
+    if (DiffDataFlow || DataFlowView || DiffFlowRegions || DiffFlowFragments ||
+        FlowRegionsView || DiffDataFlowProfile.getNumOccurrences()) {
       if (auto *Flow = Options->getObject("dataflow"))
         (*Flow)["enabled"] = true;
       else

@@ -21,6 +21,7 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QTableView>
 #include <QVBoxLayout>
@@ -167,7 +168,26 @@ ComparisonRegionsDialog::ComparisonRegionsDialog(ComparisonSession &S,
                           Flow ? ComparisonModel::Kind::FlowRegionNodes
                                : ComparisonModel::Kind::Instructions,
                           this);
-  InstructionTable = table(Right, Instructions, "regionInstructions");
+  auto *NodePane = new QWidget(Right);
+  auto *NodeLayout = new QVBoxLayout(NodePane);
+  NodeLayout->setContentsMargins(0, 0, 0, 0);
+  if (Flow) {
+    Coordinates = new QComboBox(NodePane);
+    Coordinates->setObjectName("flowRegionCoordinates");
+    Coordinates->setAccessibleName(tr("Fragment evidence"));
+    Coordinates->addItem(tr("Matched operations"), "nodes");
+    Coordinates->addItem(tr("External inputs"), "frontier");
+    Coordinates->setVisible(false);
+    NodeLayout->addWidget(Coordinates);
+    FragmentScope = label(NodePane);
+    FragmentScope->setObjectName("flowFragmentScope");
+    FragmentScope->setVisible(false);
+    NodeLayout->addWidget(FragmentScope);
+    connect(Coordinates, &QComboBox::currentIndexChanged, this,
+            &ComparisonRegionsDialog::selectAnchor);
+  }
+  InstructionTable = table(NodePane, Instructions, "regionInstructions");
+  NodeLayout->addWidget(InstructionTable, 1);
   if (Flow) {
     InstructionTable->setColumnWidth(2, 230);
     InstructionTable->setColumnWidth(5, 230);
@@ -193,13 +213,7 @@ ComparisonRegionsDialog::ComparisonRegionsDialog(ComparisonSession &S,
             Instructions->setQuery({});
           });
   connect(AnchorTable->selectionModel(), &QItemSelectionModel::currentChanged,
-          this, [this](const QModelIndex &Index) {
-            const auto A = Anchors->row(Index.row());
-            Instructions->setQuery(A.isEmpty()
-                                       ? QJsonObject{}
-                                       : QJsonObject{{"region_id", RegionId},
-                                                     {"anchor", A["anchor"]}});
-          });
+          this, &ComparisonRegionsDialog::selectAnchor);
   connect(Anchors, &ComparisonModel::pageReady, this, [this](const auto &Page) {
     const auto H = Page["hypothesis"].toObject();
     if (H.isEmpty()) {
@@ -238,6 +252,32 @@ ComparisonRegionsDialog::ComparisonRegionsDialog(ComparisonSession &S,
           &ComparisonRegionsDialog::refresh);
   refresh();
 }
+void ComparisonRegionsDialog::selectAnchor() {
+  const auto A = Anchors->row(AnchorTable->currentIndex().row());
+  QJsonObject Query;
+  if (!A.isEmpty())
+    Query = {{"region_id", RegionId}, {"anchor", A["anchor"]}};
+  if (Coordinates) {
+    const bool Fragment = A["depth"].toInt() > 0;
+    Coordinates->setVisible(Fragment);
+    FragmentScope->setVisible(Fragment);
+    if (!Fragment) {
+      const QSignalBlocker Block(Coordinates);
+      Coordinates->setCurrentIndex(0);
+      FragmentScope->clear();
+    } else {
+      Query["coordinates"] = Coordinates->currentData().toString();
+      FragmentScope->setText(
+          tr("Depth %1 · Matched operations: %2 · External inputs: %3\n"
+             "External input producers are not compared or counted as shared "
+             "code.")
+              .arg(A["depth"].toInt())
+              .arg(A["node_count"].toInt())
+              .arg(A["frontier_count"].toInt()));
+    }
+  }
+  Instructions->setQuery(Query);
+}
 void ComparisonRegionsDialog::refresh() {
   const auto &S = Session.summary();
   const bool Usable = !Session.busy() && !S["stale"].toBool();
@@ -246,6 +286,8 @@ void ComparisonRegionsDialog::refresh() {
   HypothesisTable->setEnabled(Usable &&
                               Kind->currentData().toString() != "raw_anchors");
   Kind->setEnabled(Usable);
+  if (Coordinates)
+    Coordinates->setEnabled(Usable);
   if (!Usable) {
     Summary->setText(Session.busy()
                          ? tr("Waiting for comparison to finish…")
@@ -262,6 +304,7 @@ void ComparisonRegionsDialog::refresh() {
     for (auto *View : {HypothesisTable, AnchorTable, InstructionTable})
       View->setEnabled(false);
     Evidence->clear();
+    selectAnchor();
     Summary->setText(Flow ? tr("Enable SSA region hypotheses in comparison "
                                "Settings, then compare again.")
                           : tr("Enable region analysis in comparison Settings, "
@@ -291,7 +334,8 @@ void ComparisonRegionsDialog::refresh() {
                  R["secondary_scope_complete"].toBool() ? tr("complete")
                                                         : tr("partial"))
             .arg(R["ambiguous_candidates"].toInt())
-            .arg(R["limited_graphs"].toInt()));
+            .arg(R["limited_graphs"].toInt()) +
+        tr("\nSSA recipe: %1").arg(R["profile"].toString()));
   if (Revision != Session.revision()) {
     Revision = Session.revision();
     if (!R["hypothesis_count"].toInt() && R["anchor_count"].toInt())
@@ -311,5 +355,6 @@ void ComparisonRegionsDialog::filter() {
   }
   Instructions->clear();
   RegionId.clear();
+  selectAnchor();
 }
 } // namespace neverd::gui

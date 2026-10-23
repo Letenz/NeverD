@@ -1527,6 +1527,11 @@ cl::opt<std::string>
                                  "or llvm-ssa-v1 (optimized)"),
                         cl::sub(DiffCmd));
 cl::opt<bool>
+    DiffFlowFragments("flow-fragments",
+                      cl::desc("Match finite SSA fragments with explicit "
+                               "external inputs (enables flow regions)"),
+                      cl::sub(DiffCmd));
+cl::opt<bool>
     DiffFlowRegions("flow-regions",
                     cl::desc("Analyze verified finite SSA region hypotheses"),
                     cl::sub(DiffCmd));
@@ -1538,10 +1543,10 @@ cl::opt<unsigned> DiffFlowRegionAnchor(
     "flow-region-anchor",
     cl::desc("Page paired SSA nodes of a global anchor index"),
     cl::sub(DiffCmd));
-cl::opt<std::string>
-    DiffFlowRegionCoordinates("flow-region-coordinates",
-                              cl::desc("SSA anchor page: nodes or phi_blocks"),
-                              cl::init("nodes"), cl::sub(DiffCmd));
+cl::opt<std::string> DiffFlowRegionCoordinates(
+    "flow-region-coordinates",
+    cl::desc("SSA anchor page: nodes, phi_blocks or frontier"),
+    cl::init("nodes"), cl::sub(DiffCmd));
 cl::opt<std::string>
     DiffFlowFunction("flow-function",
                      cl::desc("Page SSA evidence at a function entry address"),

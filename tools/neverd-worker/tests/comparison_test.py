@@ -241,6 +241,62 @@ def optimized_ssa_profiles(client, args, root, fixture):
     print("Optimized AArch64 O0/O2 SSA, plural origins, slices and saved CLI/worker parity passed")
 
 
+def shared_fragments(client, args, root, fixture):
+    source = fixture.with_name("control_regions_fixture.c")
+    for fmt, target in (("elf", "aarch64-unknown-linux-gnu"),
+                         ("coff", "aarch64-pc-windows-msvc"),
+                         ("macho", "arm64-apple-macos11")):
+        paths = [root / f"fragments-{fmt}-O{level}.o" for level in (0, 2)]
+        for path, level in zip(paths, (0, 2)):
+            subprocess.run([args.cc, f"--target={target}", "-c", f"-O{level}",
+                            "-fno-asynchronous-unwind-tables", str(source), "-o", str(path)],
+                           check=True, capture_output=True)
+        start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paths[1])},
+                 "options": {"use_names": False, "dataflow": {"profile": "llvm-ssa-v1"},
+                             "flow_regions": {"fragments": True}}}
+        summary = ok(client, "comparison_start", start)
+        assert summary["flow_regions"]["profile"] == "llvm-fragments-v1", summary
+        anchors = ok(client, "comparison_flow_regions", {"all_anchors": True})
+        anchor = next(a for a in anchors["items"] if a["frontier_count"] and a["node_count"] >= 4)
+        query = {"anchor": anchor["anchor"], "coordinates": "frontier", "limit": 1}
+        page = ok(client, "comparison_flow_regions", query)
+        assert page["boundary_only"] and page["view"] == "frontier", page
+        assert page["total"] == anchor["frontier_count"]
+        boundary = []
+        while True:
+            boundary += page["rows"]
+            if page["next_offset"] is None:
+                break
+            page = ok(client, "comparison_flow_regions", {**query, "offset": page["next_offset"]})
+        matched = ok(client, "comparison_flow_regions", {"anchor": anchor["anchor"], "limit": 200})
+        assert matched["total"] == anchor["node_count"]
+        for side in ("primary", "secondary"):
+            assert not ({row[side]["id"] for row in boundary} &
+                        {row[side]["id"] for row in matched["rows"]})
+            assert all(row[side]["opcode"] not in ("phi", "select") for row in matched["rows"])
+            for row in boundary + matched["rows"]:
+                node = row[side]
+                assert {int(o["address"], 16) for o in node["origins"]} == {
+                    int(o["address"], 16) for o in node["originals"]}, node
+                assert all(o["bytes"] and o["mnemonic"] for o in node["originals"])
+        assert any(row["primary"]["opcode"] == "phi" and row["secondary"]["opcode"] == "select"
+                   for row in boundary), boundary
+        document = ok(client, "comparison_export")
+        saved = root / f"fragments-{fmt}.nddiff"
+        saved.write_text(json.dumps(document))
+        cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(paths[0]),
+                              "-b", str(paths[1]), "--reopen", str(saved), "--json"],
+                             capture_output=True, text=True, timeout=60)
+        assert cli.returncode in (0, 2), cli.stderr
+        assert json.loads(cli.stdout) == document
+        ok(client, "comparison_start", {**start, "restore_path": str(saved)})
+        assert ok(client, "comparison_export") == document
+        assert ok(client, "comparison_flow_regions", {"anchor": anchor["anchor"], "limit": 200})["rows"] == matched["rows"]
+        reopened = ok(client, "comparison_flow_regions", query)
+        assert reopened["rows"] == boundary[:1]
+    print("Shared AArch64 branch fragments: finite matched nodes, external PHI/select, CLI/worker reopen passed")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("worker")
@@ -265,6 +321,7 @@ def main():
             ambiguity_pages(client, root)
             aarch64_profiles(client, args, root, fixture)
             optimized_ssa_profiles(client, args, root, fixture)
+            shared_fragments(client, args, root, fixture)
             start = {"primary": {"path": str(a)}, "secondary": {"path": str(b)}, "options": {"regions": True, "dataflow": True, "flow_regions": {"min_nodes": 2}}}
             summary = ok(client, "comparison_start", start)
             assert summary["schema"] == "neverd.bindiff.summary"

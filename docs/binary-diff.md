@@ -341,7 +341,7 @@ redistribution, inline, outline or module movement. These explanations are not
 accepted function mappings, calibrated probabilities, semantic validation or
 patch-presence findings. Control beyond PHI context remains open in every anchor.
 
-`flow_regions` accepts `enabled`, `min_nodes`, `min_origins`, `max_occurrences`,
+`flow_regions` accepts `enabled`, `fragments`, `min_nodes`, `min_origins`, `max_occurrences`,
 `max_seeds`, `max_work`, `max_anchors` and `max_node_pairs`. Defaults admit eight
 occurrences of a seed per side, 262144 indexed roots per side, 67108864 work
 units, 20000 anchors and 1048576 retained node/PHI-block pairs. Dependency
@@ -352,6 +352,32 @@ function inventory; they do not assert complete semantic coverage. A work stop
 keeps completed anchors even when no group was published. The raw-anchor view
 can inspect them. Save before revisiting a partial result, since anchor indices
 belong to that result.
+
+**Shared SSA fragments** is an explicit optional mode (`--flow-fragments`, or
+`flow_regions:{"fragments":true}`). It enables dependency/region extraction and
+uses `med-fragments-v1` or `llvm-fragments-v1`. The desktop setting has the same
+name; the region view shows the recipe, depth, matched operations and external
+inputs. A depth of one verifies one operation and its immediate constants,
+parameter identities and types. Larger depths include more producer operations,
+up to the graph's configured rounds. PHIs, control transfers, memory/call effects
+and unknown operands are excluded inside the fragment. Their producers can
+remain outside it: this can retain an identical return computation after an O0
+PHI becomes an O2 select. Exact function attributes and instruction semantics
+are still required; the mode does not remove inconvenient contracts.
+
+Each fragment records separate `nodes` and `frontier` pairs, `depth` and
+`frontier_count`. Both sets share one consistent definition mapping. Frontier
+producers have **not** been compared and contribute neither matched-node counts,
+native-origin admission nor coverage. Inspect them with **External inputs** or
+`--flow-region-anchor 0 --flow-region-coordinates frontier`; pages report
+`boundary_only:true` and retain original instructions. Combined conflicting
+bindings mark a hypothesis ambiguous without inventing extra clone evidence.
+All depth nominations consume the seed allowance; all retained node and frontier
+pairs consume the pair allowance. Deeper candidates are preferred. The existing
+four-node/two-origin defaults apply. Loops remain open even when every represented
+node has a binding. This local correspondence does not establish equal return
+values, branch behavior or patch presence. Legacy recipes and report fields are
+unchanged when the mode is off.
 
 Reopen recomputes the regions from freshly bound dependency observations.
 Completed/resource-limited records must reproduce their mappings and coverage;
@@ -781,7 +807,9 @@ or every retained anchor (`all_anchors:true`). `region_page_json` pages one
 global anchor index's original instructions; optional `region_id` checks its
 membership. `flow_regions_json` shares hypothesis/anchor selectors and, with
 `anchor`, pages paired SSA nodes plus original bytes; `coordinates:"phi_blocks"`
-selects the verified PHI context pairs. `graph_json` accepts
+selects the verified PHI context pairs. Fragment anchors additionally accept
+`coordinates:"frontier"` for uncompared input producers; legacy anchors reject
+that selector. `graph_json` accepts
 explicit node/edge allowances. Full export and legacy full
 function detail are intended for batch use; interactive consumers should page.
 

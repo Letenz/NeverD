@@ -6289,6 +6289,14 @@ Coverage: %7</source>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>最佳化後 SSA 會精簡編譯器引入的輔助結構，以便比較。尚未支援的函式仍會列出，並說明原因。</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>共用 SSA 片段</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>在相依性變更時尋找共用計算。外部輸入的產生節點仍未驗證。包含 SSA 區域假設。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7165,6 +7173,12 @@ Heuristic explanations, not validated behavior.
         <translation>基本區塊 %1 · 原始位址：%2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>外部輸入對應；產生這些輸入的節點尚未比較。
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7297,6 +7311,30 @@ Coverage: %4% / %5% of observed SSA nodes in these functions. Control and extern
     <message>
         <source>partial</source>
         <translation>部分</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>片段證據</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>相符的運算</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>外部輸入</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>深度 %1 · 相符運算：%2 · 外部輸入：%3
+外部輸入的產生節點未作比較，也不計入共用程式碼。</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+SSA 分析方案：%1</translation>
     </message>
 </context>
 <context>

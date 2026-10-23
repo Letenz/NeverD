@@ -6469,6 +6469,14 @@ Coverage: %7</source>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>تقلّل SSA المحسّنة البنى المساعدة التي يضيفها المترجم لتسهيل المقارنة. تبقى الدوال غير المدعومة مدرجة مع توضيح السبب.</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>مقاطع SSA المشتركة</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>البحث عن حسابات مشتركة رغم تغيّر الاعتماديات. تبقى العُقد التي تنتج المدخلات الخارجية دون تحقق. يتضمن فرضيات مناطق SSA.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7345,6 +7353,12 @@ Heuristic explanations, not validated behavior.
         <translation>الكتلة %1 · العناوين الأصلية: %2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>ربط المدخلات الخارجية؛ لم تُقارَن العُقد التي تنتجها.
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7477,6 +7491,30 @@ Coverage: %4% / %5% of observed SSA nodes in these functions. Control and extern
     <message>
         <source>partial</source>
         <translation>جزئي</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>أدلة المقطع</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>العمليات المتطابقة</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>المدخلات الخارجية</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>العمق %1 · العمليات المتطابقة: %2 · المدخلات الخارجية: %3
+لا تُقارَن العُقد التي تنتج المدخلات الخارجية ولا تُحتسب ضمن الشيفرة المشتركة.</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+طريقة SSA: %1</translation>
     </message>
 </context>
 <context>

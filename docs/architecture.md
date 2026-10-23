@@ -388,6 +388,16 @@ and SSA region paths share `regionExplanations` for topology/call/module facts.
 `FlowRegionsJSON` owns strict streaming persistence and bounded previews; restore
 recomputes mappings before publication. Neither frontend may infer equivalence
 from these hypotheses or replace the native function delta with them.
+The optional `FlowFragments` verifier owns finite-depth matching with explicit
+external definition pairs. It shares exact operation/operand contracts with
+`DataFlow` and `FlowMatch`; it does not rewrite the observations or relax their
+types, flags or function signatures. One bijection covers included and external
+nodes, while only included nodes contribute to origin admission and coverage.
+Depth-local fingerprints nominate candidates; exact verification decides them.
+`FlowRegions` prefers deeper candidates, counts each depth nomination, and owns
+cross-anchor binding ambiguity. New `med-fragments-v1` / `llvm-fragments-v1`
+recipes keep these boundaries separate from the unchanged legacy neighborhood
+contract. The C API, CLI, worker and Qt inspect the same retained frontier pairs.
 Saved work counters are bounded historical diagnostics; cache and host sort
 changes must not make identical observed mappings fail evidence binding.
 `CallImpact` indexes admitted native `Instruction::Callee` relations, including

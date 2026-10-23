@@ -92,14 +92,17 @@ std::vector<std::pair<uint32_t, uint32_t>> pairs(const Value &V, uint64_t Max) {
 } // namespace
 
 Object flowRegionSettingsJSON(const FlowRegionSettings &S) {
-  return Object{{"enabled", S.Enabled},
-                {"min_nodes", S.MinimumNodes},
-                {"min_origins", S.MinimumOrigins},
-                {"max_occurrences", S.MaxOccurrences},
-                {"max_seeds", S.MaxSeeds},
-                {"max_work", S.MaxWork},
-                {"max_anchors", S.MaxAnchors},
-                {"max_node_pairs", S.MaxNodePairs}};
+  Object Out{{"enabled", S.Enabled},
+             {"min_nodes", S.MinimumNodes},
+             {"min_origins", S.MinimumOrigins},
+             {"max_occurrences", S.MaxOccurrences},
+             {"max_seeds", S.MaxSeeds},
+             {"max_work", S.MaxWork},
+             {"max_anchors", S.MaxAnchors},
+             {"max_node_pairs", S.MaxNodePairs}};
+  if (S.Fragments)
+    Out["fragments"] = true;
+  return Out;
 }
 FlowRegionSettings readFlowRegionSettings(const Value &V) {
   FlowRegionSettings S;
@@ -113,10 +116,12 @@ FlowRegionSettings readFlowRegionSettings(const Value &V) {
     require(Key == "enabled" || Key == "min_nodes" || Key == "min_origins" ||
                 Key == "max_occurrences" || Key == "max_seeds" ||
                 Key == "max_work" || Key == "max_anchors" ||
-                Key == "max_node_pairs",
+                Key == "max_node_pairs" || Key == "fragments",
             "unknown setting " + Key.str());
   }
   S.Enabled = O.get("enabled") ? boolean(*O.get("enabled")) : true;
+  if (const auto *Fragments = O.get("fragments"))
+    S.Fragments = boolean(*Fragments);
   const auto Set = [&](llvm::StringRef Key, auto &To, uint64_t Max) {
     if (const auto *V = O.get(Key))
       To = count(*V, Max);
@@ -167,6 +172,12 @@ Object flowRegionAnchorJSON(const FlowRegionAnchor &A, bool Coordinates) {
              {"gaps", gaps(A.Gaps)},
              {"open_data_frontier", A.OpenDataFrontier},
              {"open_control_frontier", A.OpenControlFrontier}};
+  if (A.Depth) {
+    Out["depth"] = A.Depth;
+    Out["frontier_count"] = A.Frontier.size();
+    if (Coordinates)
+      Out["frontier"] = pairs(A.Frontier);
+  }
   if (Coordinates) {
     Out["nodes"] = pairs(A.Nodes);
     Out["phi_blocks"] = pairs(A.PhiBlocks);
@@ -233,8 +244,13 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
                                           const FlowRegionSettings &Settings) {
   const auto &O = object(V);
   const auto Profile = text(field(O, "profile"));
-  require(Profile == FlowRegionProfile || Profile == LLVMFlowRegionProfile,
+  const bool Fragments =
+      Profile == FlowFragmentProfile || Profile == LLVMFlowFragmentProfile;
+  require(Profile == FlowRegionProfile || Profile == LLVMFlowRegionProfile ||
+              Fragments,
           "unsupported profile");
+  require(Fragments == Settings.Fragments,
+          "fragment profile disagrees with settings");
   require(text(field(O, "semantic_validation")) == "not_performed",
           "SSA correspondence does not establish semantic validation");
   FlowRegionAnalysis R;
@@ -281,7 +297,21 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
     Row.PhiBlocks =
         pairs(field(A, "phi_blocks"), Settings.MaxNodePairs - StoredPairs);
     StoredPairs += Row.PhiBlocks.size();
-    const uint64_t OriginAllowance = R.Profile == LLVMFlowRegionProfile
+    if (Fragments) {
+      Row.Depth = count(field(A, "depth"), limits::kMaxFlowRounds);
+      require(Row.Depth && Row.PhiBlocks.empty(),
+              "fragment depth or PHI inventory is invalid");
+      Row.Frontier =
+          pairs(field(A, "frontier"), Settings.MaxNodePairs - StoredPairs);
+      StoredPairs += Row.Frontier.size();
+      require(Row.Frontier.size() == count(field(A, "frontier_count")),
+              "fragment frontier count disagrees with coordinates");
+    } else {
+      require(!A.get("depth") && !A.get("frontier") && !A.get("frontier_count"),
+              "legacy neighborhood contains fragment fields");
+    }
+    const uint64_t OriginAllowance = (R.Profile == LLVMFlowRegionProfile ||
+                                      R.Profile == LLVMFlowFragmentProfile)
                                          ? limits::kMaxFlowNativeInstructions
                                          : Row.Nodes.size();
     Row.PrimaryOrigins = count(field(A, "primary_origins"), OriginAllowance);

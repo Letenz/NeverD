@@ -1612,6 +1612,7 @@
           "neverd diff --flow-region-anchor",
           "neverd diff --flow-region-coordinates",
           "neverd diff --flow-regions",
+          "neverd diff --flow-fragments",
           "neverd diff --flow-side",
           "neverd diff --ignore-names",
           "neverd diff --impact-depth",

@@ -495,8 +495,8 @@ extern llvm::cl::opt<std::string> DiffProfile, DiffOptions, DiffSave,
     DiffAmbiguousWith, DiffSourceFunction, DiffSourceSide,
     DiffSourceRepresentation, DiffDataFlowProfile;
 extern llvm::cl::opt<bool> DiffIgnoreNames, DiffRegions, DiffDataFlow,
-    DiffSliceDataOnly, DiffFlowRegions, DiffReviewLatest, DiffListDescending,
-    DiffSourceDifference, DiffSourcePrelude;
+    DiffSliceDataOnly, DiffFlowRegions, DiffFlowFragments, DiffReviewLatest,
+    DiffListDescending, DiffSourceDifference, DiffSourcePrelude;
 extern llvm::cl::opt<double> DiffMinSimilarity;
 extern llvm::cl::opt<unsigned long long> DiffTimeout;
 extern llvm::cl::opt<unsigned long long> DiffImpactWork, DiffChangesWork,

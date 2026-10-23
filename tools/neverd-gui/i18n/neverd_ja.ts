@@ -6289,6 +6289,14 @@ Coverage: %7</source>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>最適化後の SSA は、比較のためにコンパイラーが追加した補助構造を簡略化します。対応範囲外の関数も理由とともに一覧に表示されます。</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>共通 SSA フラグメント</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>依存関係が変化しても共通する計算を検索します。外部入力の生成ノードは未検証のままです。SSA 領域の仮説を含みます。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7165,6 +7173,12 @@ Heuristic explanations, not validated behavior.
         <translation>ブロック %1 · 元のアドレス：%2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>外部入力の対応付けです。生成ノードは比較されていません。
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7297,6 +7311,30 @@ Coverage: %4% / %5% of observed SSA nodes in these functions. Control and extern
     <message>
         <source>partial</source>
         <translation>部分的</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>フラグメントの根拠</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>一致した演算</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>外部入力</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>深さ %1 · 一致した演算: %2 · 外部入力: %3
+外部入力の生成ノードは比較されず、共通コードにも数えられません。</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+SSA 分析方式: %1</translation>
     </message>
 </context>
 <context>

@@ -10,6 +10,8 @@
 
 #include "neverd/diff/FlowMatch.h"
 
+#include "FlowContract.h"
+
 #include "neverd/diff/StableHash.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -223,12 +225,7 @@ class Check {
     At->second = P.Depth;
     const auto &X = A.Nodes[P.A], &Y = B.Nodes[P.B];
     charge(X.Semantics.size() + Y.Semantics.size());
-    same(std::tie(X.Opcode, X.Semantics, X.ResultBytes, X.MemoryOrdering,
-                  X.MemoryAddressSpace, X.Phi, X.Commutative, X.Gaps,
-                  X.CallArgumentBegin, X.CallArgumentCount) ==
-             std::tie(Y.Opcode, Y.Semantics, Y.ResultBytes, Y.MemoryOrdering,
-                      Y.MemoryAddressSpace, Y.Phi, Y.Commutative, Y.Gaps,
-                      Y.CallArgumentBegin, Y.CallArgumentCount),
+    same(detail::sameFlowOperation(X, Y),
          "operation, width or effect metadata differ");
     Out.Gaps |=
         X.Gaps | Y.Gaps | A.Blocks[X.Block].Gaps | B.Blocks[Y.Block].Gaps;
@@ -241,8 +238,7 @@ class Check {
     for (size_t N = 0; N < XI.size(); ++N) {
       const auto &U = X.Inputs[XI[N]], &V = Y.Inputs[YI[N]];
       charge(U.Semantics.size() + V.Semantics.size());
-      same(std::tie(U.Type, U.Bytes, U.Provenance, U.Semantics) ==
-               std::tie(V.Type, V.Bytes, V.Provenance, V.Semantics),
+      same(detail::sameFlowOperandShape(U, V),
            "operand kind, width or provenance differ");
       same((U.Predecessor == NoIndex) == (V.Predecessor == NoIndex),
            "PHI incoming-edge availability differs");

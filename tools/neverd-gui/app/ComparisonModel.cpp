@@ -178,6 +178,11 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
   const auto E = R["evidence"].toObject();
   const auto K = R["kind"].toString();
   if (Role == Qt::ToolTipRole) {
+    if (Type == Kind::FlowRegionNodes && Query["coordinates"] == "frontier")
+      return tr("External input binding; the producers have not been "
+                "compared.\n%1")
+          .arg(QString::fromUtf8(
+              QJsonDocument(R).toJson(QJsonDocument::Indented)));
     if (Type == Kind::Changes || Type == Kind::Reviews)
       return QString::fromUtf8(
           QJsonDocument(R).toJson(QJsonDocument::Indented));

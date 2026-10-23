@@ -6289,6 +6289,14 @@ Coverage: %7</source>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>최적화된 SSA는 비교를 위해 컴파일러가 추가한 보조 구조를 줄입니다. 지원 범위를 벗어난 함수도 이유와 함께 목록에 표시됩니다.</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>공통 SSA 조각</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>종속성이 변경되어도 공통 계산을 찾습니다. 외부 입력을 생성하는 노드는 검증되지 않은 상태로 남습니다. SSA 영역 가설을 포함합니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7165,6 +7173,12 @@ Heuristic explanations, not validated behavior.
         <translation>블록 %1 · 원본 주소: %2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>외부 입력 대응 관계입니다. 입력을 생성하는 노드는 비교하지 않았습니다.
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7297,6 +7311,30 @@ Coverage: %4% / %5% of observed SSA nodes in these functions. Control and extern
     <message>
         <source>partial</source>
         <translation>부분</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>조각 근거</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>일치하는 연산</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>외부 입력</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>깊이 %1 · 일치하는 연산: %2 · 외부 입력: %3
+외부 입력을 생성하는 노드는 비교하지 않으며 공통 코드에도 포함하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+SSA 분석 방식: %1</translation>
     </message>
 </context>
 <context>
