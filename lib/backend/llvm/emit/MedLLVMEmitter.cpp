@@ -779,6 +779,18 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         if (Op.Opcode == NdOp::INTRINSIC && !hasValidMedIntrinsicId(Op))
           llvm::report_fatal_error(
               "intrinsic has an invalid intrinsic ID shape");
+        if (Op.Opcode == NdOp::INTRINSIC) {
+          const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (x87ValueInfo(Id) &&
+              !x87ValueShapeIsValid(x87ValueMedShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "invalid x87 scalar value/status contract");
+          if (isX87GuardedValueIntrinsic(Id) &&
+              !x87GuardedValueShapeIsValid(
+                  x87GuardedValueMedShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "invalid guarded x87 value/control contract");
+        }
         if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
             Op.Inputs[0].isConst() &&
             Op.Inputs[0].ConstVal == static_cast<uint64_t>(Intrinsic::X87Fxam))

@@ -94,9 +94,9 @@ continues to reject reserved bits, invalid addressing forms and prefixes.
 | FISTTP | m16int | DF | 08 | 2 | true | value-projection |
 | FIST | m16int | DF | 10 | 2 | true | portable-value-projection |
 | FISTP | m16int | DF | 18 | 2 | true | portable-value-projection |
-| FBLD | m80bcd | DF | 20 | 10 | false | owned-only |
+| FBLD | m80bcd | DF | 20 | 10 | true | value-projection |
 | FILD | m64int | DF | 28 | 8 | true | portable-exact-value-projection |
-| FBSTP | m80bcd | DF | 30 | 10 | false | owned-only |
+| FBSTP | m80bcd | DF | 30 | 10 | true | value-projection |
 | FISTP | m64int | DF | 38 | 8 | true | portable-value-projection |
 | FADD | ST(0),ST(i) | D8 | C0–C7 | 0 | true | portable-value-projection |
 | FMUL | ST(0),ST(i) | D8 | C8–CF | 0 | true | portable-value-projection |
@@ -138,7 +138,7 @@ continues to reject reserved bits, invalid addressing forms and prefixes.
 | FPATAN | implicit | D9 | F3 | 0 | true | processor-dependent |
 | FXTRACT | implicit | D9 | F4 | 0 | true | value-projection |
 | FPREM1 | implicit | D9 | F5 | 0 | true | processor-dependent |
-| FDECSTP | implicit | D9 | F6 | 0 | false | owned-only-state |
+| FDECSTP | implicit | D9 | F6 | 0 | true | state-only |
 | FINCSTP | implicit | D9 | F7 | 0 | true | state-only |
 | FPREM | implicit | D9 | F8 | 0 | true | processor-dependent |
 | FYL2XP1 | implicit | D9 | F9 | 0 | true | processor-dependent |
@@ -170,7 +170,7 @@ continues to reject reserved bits, invalid addressing forms and prefixes.
 | FSTP | ST(i) | DD | D8–DF | 0 | true | portable-value-projection |
 | FUCOM | ST(i) | DD | E0–E7 | 0 | true | portable-value-projection |
 | FUCOMP | ST(i) | DD | E8–EF | 0 | true | portable-value-projection |
-| FFREEP | ST(i) | DF | C0–C7 | 0 | false | owned-only-state |
+| FFREEP | ST(i) | DF | C0–C7 | 0 | true | state-only |
 | WAIT | implicit | 9B | 00 | 0 | true | portable-state-only |
 | EMMS | MMX aliases | 0F | 77 | 0 | true | state-only |
 
@@ -300,28 +300,6 @@ unknown or unsupported until separately qualified.
 | portable-value-projection | owned-context | symbolic | none | false | ? | ? |
 | portable-value-projection | owned-context | checked-refinement | none | false | ? | ? |
 | portable-value-projection | owned-context | translation | native-x86 | false | U | U |
-| owned-only | typed-stack | lift | none | false | U | U |
-| owned-only | typed-stack | ir-analysis | none | false | U | U |
-| owned-only | typed-stack | llvm | native-x86 | false | U | U |
-| owned-only | typed-stack | high-c | native-x86 | false | U | U |
-| owned-only | typed-stack | llvm-c | native-x86 | false | U | U |
-| owned-only | typed-stack | concrete | native-x86 | false | U | U |
-| owned-only | typed-stack | concrete | portable | false | U | U |
-| owned-only | typed-stack | concrete | native-reference | false | U | U |
-| owned-only | typed-stack | symbolic | none | false | U | U |
-| owned-only | typed-stack | checked-refinement | none | false | U | U |
-| owned-only | typed-stack | translation | native-x86 | false | U | U |
-| owned-only | owned-context | lift | none | true | ? | ? |
-| owned-only | owned-context | ir-analysis | none | true | ? | ? |
-| owned-only | owned-context | llvm | native-x86 | true | E | ? |
-| owned-only | owned-context | high-c | native-x86 | true | E | ? |
-| owned-only | owned-context | llvm-c | native-x86 | true | E | ? |
-| owned-only | owned-context | concrete | native-x86 | true | E | ? |
-| owned-only | owned-context | concrete | portable | false | U | U |
-| owned-only | owned-context | concrete | native-reference | true | E | ? |
-| owned-only | owned-context | symbolic | none | false | ? | ? |
-| owned-only | owned-context | checked-refinement | none | false | ? | ? |
-| owned-only | owned-context | translation | native-x86 | false | U | U |
 | exact-value-projection | typed-stack | lift | none | true | ? | ? |
 | exact-value-projection | typed-stack | ir-analysis | none | true | ? | ? |
 | exact-value-projection | typed-stack | llvm | native-x86 | true | E | ? |
@@ -366,28 +344,6 @@ unknown or unsupported until separately qualified.
 | processor-dependent | owned-context | symbolic | none | false | ? | ? |
 | processor-dependent | owned-context | checked-refinement | none | false | ? | ? |
 | processor-dependent | owned-context | translation | native-x86 | false | U | U |
-| owned-only-state | typed-stack | lift | none | false | U | U |
-| owned-only-state | typed-stack | ir-analysis | none | false | U | U |
-| owned-only-state | typed-stack | llvm | native-x86 | false | U | U |
-| owned-only-state | typed-stack | high-c | native-x86 | false | U | U |
-| owned-only-state | typed-stack | llvm-c | native-x86 | false | U | U |
-| owned-only-state | typed-stack | concrete | native-x86 | false | U | U |
-| owned-only-state | typed-stack | concrete | portable | false | U | U |
-| owned-only-state | typed-stack | concrete | native-reference | false | U | U |
-| owned-only-state | typed-stack | symbolic | none | false | U | U |
-| owned-only-state | typed-stack | checked-refinement | none | false | U | U |
-| owned-only-state | typed-stack | translation | native-x86 | false | U | U |
-| owned-only-state | owned-context | lift | none | true | ? | ? |
-| owned-only-state | owned-context | ir-analysis | none | true | ? | ? |
-| owned-only-state | owned-context | llvm | native-x86 | true | ? | ? |
-| owned-only-state | owned-context | high-c | native-x86 | true | ? | ? |
-| owned-only-state | owned-context | llvm-c | native-x86 | true | ? | ? |
-| owned-only-state | owned-context | concrete | native-x86 | true | ? | ? |
-| owned-only-state | owned-context | concrete | portable | false | U | U |
-| owned-only-state | owned-context | concrete | native-reference | true | ? | ? |
-| owned-only-state | owned-context | symbolic | none | false | ? | ? |
-| owned-only-state | owned-context | checked-refinement | none | false | ? | ? |
-| owned-only-state | owned-context | translation | native-x86 | false | U | U |
 
 ## External state boundaries
 
@@ -426,8 +382,8 @@ These records identify required synchronization, not instruction admission.
 test_sources are regression source references, not passing results, CPU qualifications or reusable proof receipts.
 
 - explicit incoming state; validated encoding, memory and CFG/call contract.
-- x86 GCC/Clang GNU assembly and target x87; actual source/target ABI and long-double layout; typed C value operations require 64-bit significand long double; admitted CFG/tag/control and call preconditions.
-- x86-64 GCC/Clang; FXSAVE/FXRSTOR; SSE3 for FISTTP; known CW/SW, tags and demanded payloads; valid PC/RC; no pending unmasked exception at waiting boundaries; authenticated ordinary memory; processor-dependent operations require explicit non-strict native-reference mode.
+- x86 GCC/Clang GNU assembly and target x87; actual source/target ABI and long-double layout; FBLD numerical scope requires decimal digits 0-9; typed BCD guards require valid CW and all exception masks; out-of-scope typed BCD inputs trap before conversion; typed FPTAN/FSINCOS/FXTRACT pairs require proved source/destination tags, canonical finite input and valid all-masked CW; FPTAN/FSINCOS require abs(input) < 2^63; other pair inputs trap before execution; HighC sampled-status helpers require initialized TLS; typed C value operations require 64-bit significand long double; admitted CFG/tag/control and call preconditions.
+- x86-64 GCC/Clang; FXSAVE/FXRSTOR; SSE3 for FISTTP; known CW/SW, tags and demanded payloads; valid PC/RC; no pending unmasked exception at waiting boundaries; authenticated ordinary memory; FBLD requires decimal digits 0-9 (undefined digits are not native-reference inputs); processor-dependent operations require explicit non-strict native-reference mode.
 - explicit setX87PortableMode(true); x64 owned state; known CW/SW and read payloads; authenticated ordinary memory; no pending waiting exception or stack fault; data instructions require all exception masks; FLDCW admits only all-masked input; arithmetic/comparisons/integer stores require canonical finite operands; raw m80/register moves retain encodings; undefined C0/C2/C3/FOP/register FDP are not CPU identity.
 
 Test sources referenced by this inventory:
@@ -436,5 +392,9 @@ Test sources referenced by this inventory:
 - [X87PortableContextTests.cpp](../unittests/lift/core/X87PortableContextTests.cpp)
 - [X87PortableEmulatorTests.cpp](../unittests/lift/core/X87PortableEmulatorTests.cpp)
 - [X86_32_X87FPUTests.cpp](../unittests/lift/x86_32/X86_32_X87FPUTests.cpp)
+- [X87PackedBCDTests.cpp](../unittests/lift/x86_32/X87PackedBCDTests.cpp)
+- [X87StackManagementTests.cpp](../unittests/lift/x86_32/X87StackManagementTests.cpp)
+- [X87TranscendentalTests.cpp](../unittests/lift/x86_32/X87TranscendentalTests.cpp)
 - [X86_64_X87ConvertStateTests.cpp](../unittests/lift/x86_64/X86_64_X87ConvertStateTests.cpp)
+- [X86_64_X87FaultTests.cpp](../unittests/lift/x86_64/X86_64_X87FaultTests.cpp)
 - [SymX87Tests.cpp](../unittests/symbolic/SymX87Tests.cpp)

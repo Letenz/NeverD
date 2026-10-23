@@ -151,8 +151,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     MutablePlan = &It->second;
     MutableReturnValue = MutablePlan->ReturnValue;
   }
-  PendingX87FpremStatus = nullptr;
-  PendingX87FpremBlock = nullptr;
+  PendingX87Status = nullptr;
+  PendingX87StatusBlock = nullptr;
 
   // A page fragment or truncated exact address is an incomplete relocation
   // relation, not a runtime value.

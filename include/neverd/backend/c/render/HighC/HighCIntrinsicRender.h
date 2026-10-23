@@ -73,8 +73,10 @@ enum class X87CHelper : uint8_t {
   Frndint,     ///< frndint, rounding to an integer by the x87 control word
   Fsqrt,       ///< fsqrt, the correctly rounded square root
   ControlWord, ///< fnstcw, the unit's control word
-  Fprem,       ///< fprem, fprem1 and the status word they leave
-#define NEVERD_X87_VALUE_HELPER(Intrinsic, Name, Asm, Operands, PopsST1)       \
+  Fprem,       ///< fprem and fprem1
+  Status,      ///< status sampled by the preceding x87 value instruction
+#define NEVERD_X87_VALUE_HELPER(Intrinsic, Name, Asm, Operands, PopsST1,       \
+                                SamplesStatus)                                 \
   Intrinsic,
 #include "neverd/ir/intrinsics/X87ValueInstructions.def"
 };
