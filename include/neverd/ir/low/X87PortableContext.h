@@ -42,8 +42,8 @@ const char *x87PortableOutcomeName(X87PortableOutcome Outcome);
 /// the caller owns address/permission checks and publication of memory writes.
 /// IP and DP are guest addresses, never addresses of host scratch buffers.
 /// On refusal all arguments remain unchanged. FNINIT does not authenticate
-/// retained payloads. Only defined architectural fields are qualified: FOP is
-/// retained for masked instructions, FDP is retained on register operations,
+/// retained payloads. The profile specifies defined architectural fields: FOP
+/// is retained for masked instructions, FDP is retained on register operations,
 /// and undefined C0/C2/C3 bits are retained. No native fallback is performed.
 X87PortableOutcome
 executePortableX87Context(uint32_t Selector, std::array<uint8_t, 512> &State,
