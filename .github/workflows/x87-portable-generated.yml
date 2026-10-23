@@ -56,7 +56,7 @@ jobs:
           sudo install -m 0644 /tmp/llvm-signing-key.asc /usr/share/keyrings/neverd-llvm.asc
           echo 'deb [signed-by=/usr/share/keyrings/neverd-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main' | sudo tee /etc/apt/sources.list.d/neverd-llvm.list
           sudo apt-get update
-          sudo apt-get install --yes clang-23 lld-23 ninja-build
+          sudo apt-get install --yes clang-23 lld-23 ninja-build gdb
           echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
       - name: Verify strict observation and result auditing
         run: python -m unittest scripts.tests.test_check_x87_portable_generated scripts.tests.test_check_x87_translation scripts.tests.test_check_x87_cross_host scripts.tests.test_benchmark_x87_portable -v
@@ -99,12 +99,29 @@ jobs:
           --build-dir build-x87-portable
           --output-dir build-x87-portable/evidence
       - name: Freeze native AArch64 translation objects and sessions
+        id: translation
         if: ${{ matrix.arch == 'aarch64' }}
         run: >-
           python scripts/check_x87_translation.py
           --driver build-x87-portable/bin/NeverDX87TranslationTests
           --build-dir build-x87-portable
           --output-dir build-x87-portable/translation-evidence
+      # Temporary issue-1677 diagnostic: preserve the original failure and
+      # inspect its smallest native reproducer without changing qualification.
+      - name: Diagnose executable-store native failure
+        if: ${{ failure() && matrix.arch == 'aarch64' && steps.translation.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          mkdir -p build-x87-portable/diagnostics
+          gdb --batch --return-child-result \
+            -ex 'set pagination off' -ex 'run' \
+            -ex 'thread apply all bt full' -ex 'info registers' \
+            -ex 'x/24i $pc-32' -ex 'x/24gx $sp' \
+            -ex 'info sharedlibrary' -ex 'info proc mappings' \
+            --args build-x87-portable/bin/NeverDX87TranslationTests \
+            --gtest_filter=X87TranslationNative.ExecutableStoreCommitsOnlyUnderInvalidatePolicy \
+            > build-x87-portable/diagnostics/executable-store-gdb.log 2>&1
       - name: Record seeded arithmetic for cross-host comparison
         run: >-
           python scripts/check_x87_cross_host.py record
@@ -129,6 +146,7 @@ jobs:
             build-x87-portable/translation-evidence/
             build-x87-portable/arithmetic-evidence/
             build-x87-portable/performance-evidence/
+            build-x87-portable/diagnostics/
             build-x87-portable/Testing/Temporary/
             build-x87-portable/neverd-build-receipt.json
             build-x87-portable/neverd-dependency-inputs.json
