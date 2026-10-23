@@ -244,6 +244,36 @@ x87ReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   return Elem ? Elem : scalarFPLoadElemSize(Defs, V, 0);
 }
 
+// Unlike the legacy register-shape heuristic above, narrowing an explicitly
+// normalized x87 return requires exact IEEE provenance. Raw byte slices,
+// arithmetic and unresolved joins must keep all eighty architectural bits.
+static uint16_t
+exactX87SourceWidth(const std::map<std::pair<int, int>, const MedOp *> &Defs,
+                    const MedVar &V, int Depth) {
+  if (Depth > limits::ir::kMedTypePassX87ReturnElemSizeDepthLimit ||
+      V.isConst() || V.Size != 10)
+    return 0;
+  const auto It = Defs.find({V.Id, V.SSAVer});
+  if (It == Defs.end())
+    return 0;
+  const MedOp &Def = *It->second;
+  if (Def.Output.Size != V.Size)
+    return 0;
+  if ((Def.Opcode == NdOp::CALL || Def.Opcode == NdOp::INDIR_CALL) &&
+      Def.ScalarCallSignature && !Def.ScalarCallSignature->ReturnElements &&
+      Def.CalleeFloatReturnBytes == Def.ScalarCallSignature->ReturnBytes &&
+      (Def.CalleeFloatReturnBytes == 4 || Def.CalleeFloatReturnBytes == 8))
+    return Def.CalleeFloatReturnBytes;
+  if (Def.Opcode == NdOp::FLOAT_FLOAT2FLOAT && Def.NumInputs == 1 &&
+      (Def.Inputs[0].Size == 4 || Def.Inputs[0].Size == 8))
+    return Def.Inputs[0].Size;
+  if ((Def.Opcode == NdOp::COPY && Def.NumInputs == 1) ||
+      (Def.Opcode == NdOp::SUBBYTES && Def.NumInputs == 2 &&
+       Def.Inputs[1].isConst() && Def.Inputs[1].ConstVal == 0))
+    return exactX87SourceWidth(Defs, Def.Inputs[0], Depth + 1);
+  return 0;
+}
+
 // LowIR represents `fstp st(0)` as a COPY between two SSA versions of the
 // same physical x87 slot followed by a TOP rotation.  The COPY is a data
 // identity used for stack bookkeeping, not a fresh floating-point return.
@@ -652,7 +682,8 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       for (const auto &Op : Block.Ops)
         if (Op.Opcode == NdOp::RETURN) {
           const uint16_t Width =
-              Op.NumInputs == 1 ? x87ReturnElemSize(Defs, Op.Inputs[0], 0) : 0;
+              Op.NumInputs == 1 ? exactX87SourceWidth(Defs, Op.Inputs[0], 0)
+                                : 0;
           if (Width != 4 && Width != 8)
             return NdType::makeFloat(10);
           Bytes = std::max(Bytes, Width);

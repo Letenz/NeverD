@@ -468,7 +468,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
          (LOp.Output.isReg() && TRI.isX87StackReg(LOp.Output.Offset) &&
           LOp.Output.Size == x86reg::FPURegSize))) {
       const auto &Signature = F->second;
-      if (TargetArch == Arch::X86 || !Signature.Scalars.empty()) {
+      if (TargetArch == Arch::X86 || !Signature.Scalars.empty() ||
+          Signature.ReturnElements) {
         // TOP normalization owns the physical x87 result slot. A declaration
         // cannot overwrite an unproved or context-based call with guessed ST0.
         MOp.ScalarCallSignature =
@@ -519,9 +520,11 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
           Block.Ops.push_back(std::move(Address));
           Block.Ops.push_back(std::move(Load));
         }
-        MOp.CalleeFloatReturnBytes = Signature.ReturnBytes;
+        MOp.CalleeFloatReturnBytes =
+            Signature.ReturnElements ? 0 : Signature.ReturnBytes;
         MOp.Output =
-            TargetArch == Arch::X86
+            Signature.ReturnElements ? Temporary(Signature.ReturnBytes)
+            : TargetArch == Arch::X86
                 ? ndVarToMedVar(LOp.Output)
                 : ndVarToMedVar(NdVar::reg(TRI.FPReturnReg, TRI.FPABIRegWidth));
       } else if (Signature.ParameterBytes.size() <= FPParamRegs.size() &&
@@ -1266,6 +1269,30 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                        Proof.TargetOwnerVA));
       }
       MB.Ops.push_back(MOp);
+      if (MOp.ScalarCallSignature && MOp.ScalarCallSignature->ReturnElements) {
+        // The selected header owns every HFA result register before SSA.
+        // A following call may consume those fields without a single move.
+        const auto &Signature = *MOp.ScalarCallSignature;
+        const uint16_t Bytes = Signature.ReturnBytes / Signature.ReturnElements;
+        for (uint16_t I = 0; I < Signature.ReturnElements; ++I) {
+          MedOp Field;
+          Field.Opcode = NdOp::SUBBYTES;
+          Field.Addr = LOp.Addr;
+          Field.Output =
+              ndVarToMedVar(NdVar::reg(ConventionRegs.FPReturnRegs[I], Bytes));
+          Field.addInput(MOp.Output);
+          Field.addInput(MedVar::makeConst(I * Bytes, 4,
+                                           ConstantAddressProvenance::Scalar));
+          MedOp Register;
+          Register.Opcode = NdOp::INT_ZEXT;
+          Register.Addr = LOp.Addr;
+          Register.Output = ndVarToMedVar(NdVar::reg(
+              ConventionRegs.FPReturnRegs[I], ConventionRegs.FPABIRegWidth));
+          Register.addInput(Field.Output);
+          MB.Ops.push_back(std::move(Field));
+          MB.Ops.push_back(std::move(Register));
+        }
+      }
 
       // i386 callee-cleanup: a checked runtime import or direct callee pops on
       // return (x86 `ret imm`, the SysV hidden struct-return (sret) pointer

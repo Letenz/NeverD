@@ -31,9 +31,12 @@ constexpr size_t kMaxAggregateMembers = 4;
 /// No homogeneous aggregate is larger: four 16-byte members.
 constexpr uint16_t kMaxAggregateBytes = 64;
 
-/// The members of a homogeneous floating-point aggregate, or none.
+} // namespace
+
 std::optional<std::vector<NdScalarLeaf>>
-floatingAggregate(const TypeRef &Record) {
+neverd::aapcs64FloatingAggregate(const TypeRef &Record) {
+  if (!isRecord(Record))
+    return std::nullopt;
   const auto Leaves = scalarLeaves(Record);
   if (!Leaves || Leaves->empty() || Leaves->size() > kMaxAggregateMembers)
     return std::nullopt;
@@ -42,7 +45,6 @@ floatingAggregate(const TypeRef &Record) {
       return std::nullopt;
   return Leaves;
 }
-} // namespace
 
 std::optional<SourceParameterPlacement>
 source_placement::placeAAPCS64(const TargetRegInfo &TRI, BinaryFormat F,
@@ -117,7 +119,7 @@ source_placement::placeAAPCS64(const TargetRegInfo &TRI, BinaryFormat F,
     } else if (isRecord(Type) && Type->Size &&
                (Type->Passing == NdRecordPassing::ByValue ||
                 Type->Passing == NdRecordPassing::Complex)) {
-      if (const auto Members = floatingAggregate(Type)) {
+      if (const auto Members = aapcs64FloatingAggregate(Type)) {
         if (NextVector + Members->size() > Vector.size()) {
           NextVector = Vector.size();
           Pieces = OnStack(Type->Size, Type->Alignment);

@@ -27,6 +27,7 @@
 #include "llvm/Support/Program.h"
 
 #include <fstream>
+#include <utility>
 
 using namespace neverd;
 
@@ -329,63 +330,83 @@ public:
   }
 };
 
-TEST(RecordCallContract, WindowsHiddenRecordResultPreservesEveryByte) {
+TEST(RecordCallContract, WindowsRecordResultsPreserveEveryByte) {
 #if !defined(__linux__) || !defined(__x86_64__)
   GTEST_SKIP() << "Host execution of the generated C requires Linux x86-64";
 #else
-  const std::string Compiler = NEVERD_TEST_CLANG;
-  const auto Linker = llvm::sys::findProgramByName("lld-link");
-  if (!Linker)
-    GTEST_SKIP() << "lld-link is required to build the Windows import fixture";
-  llvm::SmallString<128> Directory;
-  ASSERT_FALSE(
-      llvm::sys::fs::createUniqueDirectory("neverd-win-record", Directory));
-  const auto Cleanup = llvm::make_scope_exit(
-      [&] { llvm::sys::fs::remove_directories(Directory); });
-  const std::string Root = Directory.str().str();
-  const std::string Header = Root + "/complex.h", Input = Root + "/input.c",
-                    ProviderPath = Root + "/provider.c",
-                    Object = Root + "/input.obj",
-                    ProviderObject = Root + "/provider.obj",
-                    ImportLibrary = Root + "/provider.lib",
-                    ProviderDLL = "/out:" + Root + "/provider.dll",
-                    ImportOption = "/implib:" + ImportLibrary,
-                    DLL = Root + "/input.dll", DLLOption = "/out:" + DLL,
-                    Generated = Root + "/generated.c", Product = Root + "/run",
-                    Include = "-I" + Root, Errors = Root + "/errors.txt";
-  write(Header, WindowsComplexHeader);
-  write(ProviderPath, R"(
+  for (const auto &[ARM64, Chain] :
+       {std::pair{false, false}, {true, false}, {false, true}, {true, true}}) {
+    SCOPED_TRACE(ARM64 ? "ARM64 HFA" : "x64 hidden result");
+    SCOPED_TRACE(Chain ? "chained result" : "single call");
+    const std::string Target = ARM64 ? "--target=aarch64-pc-windows-msvc"
+                                     : "--target=x86_64-pc-windows-msvc";
+    const std::string Compiler = NEVERD_TEST_CLANG;
+    const auto Linker = llvm::sys::findProgramByName("lld-link");
+    if (!Linker)
+      GTEST_SKIP()
+          << "lld-link is required to build the Windows import fixture";
+    llvm::SmallString<128> Directory;
+    ASSERT_FALSE(
+        llvm::sys::fs::createUniqueDirectory("neverd-win-record", Directory));
+    const auto Cleanup = llvm::make_scope_exit(
+        [&] { llvm::sys::fs::remove_directories(Directory); });
+    const std::string Root = Directory.str().str();
+    const std::string Header = Root + "/complex.h", Input = Root + "/input.c",
+                      ProviderPath = Root + "/provider.c",
+                      Object = Root + "/input.obj",
+                      ProviderObject = Root + "/provider.obj",
+                      ImportLibrary = Root + "/provider.lib",
+                      ProviderDLL = "/out:" + Root + "/provider.dll",
+                      ImportOption = "/implib:" + ImportLibrary,
+                      DLL = Root + "/input.dll", DLLOption = "/out:" + DLL,
+                      Generated = Root + "/generated.c",
+                      Product = Root + "/run", Include = "-I" + Root,
+                      Errors = Root + "/errors.txt";
+    write(Header, WindowsComplexHeader);
+    write(ProviderPath, R"(
 #include "complex.h"
 int _fltused;
 __declspec(dllexport) _Dcomplex cpow(_Dcomplex x, _Dcomplex y) { return x; }
 )");
-  write(Input, R"(
+    std::string Fixture = ARM64 ? R"(
+#include "complex.h"
+int _fltused;
+__declspec(dllexport) void record_probe(_Dcomplex *out, _Dcomplex x, _Dcomplex y) {
+  *out = cpow(x, y);
+}
+)"
+                                : R"(
 #include "complex.h"
 int _fltused;
 __declspec(dllexport) _Dcomplex record_probe(_Dcomplex x, _Dcomplex y) {
   return cpow(x, y);
 }
-)");
-  ASSERT_TRUE(
-      execute(Compiler,
-              {Compiler, "--target=x86_64-pc-windows-msvc", "-O1",
-               "-ffreestanding", "-c", ProviderPath, "-o", ProviderObject},
-              Errors));
-  ASSERT_TRUE(execute(*Linker,
-                      {*Linker, "/dll", "/noentry", "/nodefaultlib",
-                       ProviderDLL, ImportOption, ProviderObject},
-                      Errors));
-  auto Types = std::make_shared<types::TypeLibrary>(types::DataModel::LLP64);
-  Types->setRecordABI(types::RecordABI::Microsoft);
-  ASSERT_TRUE(types::parseCTypes(WindowsComplexHeader, *Types).ok());
-  // The host provider observes the original bits, including signed zero and
-  // NaN payloads. Sentinels prove the hidden buffer write is exactly 16 bytes.
-  constexpr const char *Oracle = R"(
+)";
+    if (Chain)
+      Fixture.replace(Fixture.find("cpow(x, y)"),
+                      std::string("cpow(x, y)").size(), "cpow(cpow(x, y), y)");
+    write(Input, Fixture);
+    ASSERT_TRUE(execute(Compiler,
+                        {Compiler, Target, "-O1", "-ffreestanding", "-c",
+                         ProviderPath, "-o", ProviderObject},
+                        Errors));
+    ASSERT_TRUE(execute(*Linker,
+                        {*Linker, "/dll", "/noentry", "/nodefaultlib",
+                         ProviderDLL, ImportOption, ProviderObject},
+                        Errors));
+    auto Types = std::make_shared<types::TypeLibrary>(types::DataModel::LLP64);
+    Types->setRecordABI(types::RecordABI::Microsoft);
+    ASSERT_TRUE(types::parseCTypes(WindowsComplexHeader, *Types).ok());
+    // The host provider observes the original bits, including signed zero and
+    // NaN payloads. Sentinels prove the hidden buffer write is exactly 16
+    // bytes.
+    constexpr const char *Oracle = R"(
 static unsigned calls;
 _Dcomplex cpow(_Dcomplex x, _Dcomplex y) {
   uint64_t xb[2], yb[2], rb[2] = {0xFEDCBA9876543210ULL, 0x0123456789ABCDEFULL};
   __builtin_memcpy(xb, &x, 16); __builtin_memcpy(yb, &y, 16);
-  if (xb[0] != 0x7FF8123456789ABCULL || xb[1] != 0x8000000000000000ULL ||
+  if (xb[0] != (calls ? rb[0] : 0x7FF8123456789ABCULL) ||
+      xb[1] != (calls ? rb[1] : 0x8000000000000000ULL) ||
       yb[0] != 0x3FF0000000000000ULL || yb[1] != 0xFFF8DEADBEEF0123ULL)
     __builtin_trap();
   ++calls;
@@ -396,70 +417,100 @@ int main(void) {
   uint64_t y[2] = {0x3FF0000000000000ULL, 0xFFF8DEADBEEF0123ULL};
   uint64_t out[4] = {0x1122334455667788ULL, 0, 0, 0x8877665544332211ULL};
   uintptr_t result = record_probe((uintptr_t)&out[1], x, y);
-  return result != (uintptr_t)&out[1] || calls != 1 ||
+  return result != (uintptr_t)&out[1] || calls != EXPECTED_CALLS ||
       out[0] != 0x1122334455667788ULL || out[3] != 0x8877665544332211ULL ||
       out[1] != 0xFEDCBA9876543210ULL || out[2] != 0x0123456789ABCDEFULL;
 }
 )";
-  for (const char *Optimization : {"-O0", "-O2"}) {
-    SCOPED_TRACE(Optimization);
-    ASSERT_TRUE(execute(Compiler,
-                        {Compiler, "--target=x86_64-pc-windows-msvc",
-                         Optimization, "-ffreestanding", "-fno-stack-protector",
-                         "-c", Input, "-o", Object},
-                        Errors));
-    ASSERT_TRUE(execute(*Linker,
-                        {*Linker, "/dll", "/noentry", "/nodefaultlib",
-                         DLLOption, Object, ImportLibrary},
-                        Errors));
-    auto Reader = Loader::create(DLL);
-    ASSERT_TRUE(bool(Reader));
-    auto Loaded = Reader->load(DLL);
-    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
-    BinaryImage Image = std::move(*Loaded);
-    EmptyDebug Empty;
-    sdk::LocalTypesDebugContext Context(Empty, Types, {}, &Image);
-    DeclaredHeaderDebug Debug(Context);
-    for (bool LLVM : {false, true}) {
-      SCOPED_TRACE(LLVM ? "LLVM-C" : "HighC");
-      llvm::LLVMContext LLVMContext;
-      PipelineOptions Options;
-      Options.EmitDumpOutput = false;
-      Options.LiftMode = LLVM;
-      Options.SourceProjection = LLVM;
-      for (const auto &Export : Image.Exports)
-        if (Export.Name == "record_probe")
-          Options.OnlyFunctionEntries.insert(Export.Addr);
-      ASSERT_EQ(Options.OnlyFunctionEntries.size(), 1u);
-      auto Result = Pipeline().run(Image, LLVMContext, Options, &Debug);
-      ASSERT_TRUE(Result.Success) << Result.Error;
-      CEmitterOptions COptions;
-      COptions.TheArch = Image.Arch;
-      COptions.Format = Image.Format;
-      COptions.Image = &Image;
-      COptions.RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
-        return Context.definitions(Records);
-      };
-      std::string Source;
-      llvm::raw_string_ostream Out(Source);
-      if (LLVM) {
-        ASSERT_TRUE(Result.LlvmModule);
-        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
-                                        &Debug, &Image));
-      } else {
-        ASSERT_TRUE(
-            HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
-      }
-      write(Generated, Source + Oracle);
-      for (const char *COptimization : {"-O0", "-O2"}) {
-        SCOPED_TRACE(COptimization);
-        ASSERT_TRUE(execute(Compiler,
-                            {Compiler, "-std=gnu11", COptimization,
-                             "-fno-builtin", "-fsanitize=address,undefined",
-                             Include, Generated, "-o", Product},
-                            Errors))
-            << Source;
-        ASSERT_TRUE(execute(Product, {Product}, Errors)) << Source;
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      ASSERT_TRUE(execute(Compiler,
+                          {Compiler, Target, Optimization, "-ffreestanding",
+                           "-fno-stack-protector", "-c", Input, "-o", Object},
+                          Errors));
+      ASSERT_TRUE(execute(*Linker,
+                          {*Linker, "/dll", "/noentry", "/nodefaultlib",
+                           DLLOption, Object, ImportLibrary},
+                          Errors));
+      auto Reader = Loader::create(DLL);
+      ASSERT_TRUE(bool(Reader));
+      auto Loaded = Reader->load(DLL);
+      ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+      BinaryImage Image = std::move(*Loaded);
+      EmptyDebug Empty;
+      sdk::LocalTypesDebugContext Context(Empty, Types, {}, &Image);
+      DeclaredHeaderDebug Debug(Context);
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(LLVM ? "LLVM-C" : "HighC");
+        llvm::LLVMContext LLVMContext;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = LLVM;
+        for (const auto &Export : Image.Exports)
+          if (Export.Name == "record_probe")
+            Options.OnlyFunctionEntries.insert(Export.Addr);
+        ASSERT_EQ(Options.OnlyFunctionEntries.size(), 1u);
+        auto Result = Pipeline().run(Image, LLVMContext, Options, &Debug);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        COptions.RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
+          return Context.definitions(Records);
+        };
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                          &Debug, &Image));
+        } else {
+          ASSERT_TRUE(
+              HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+        }
+        std::string NativeOracle = Oracle;
+        if (ARM64) {
+          NativeOracle.resize(NativeOracle.find("int main(void)"));
+          NativeOracle += R"(
+int main(void) {
+  uint64_t input[4] = {0x7FF8123456789ABCULL, 0x8000000000000000ULL,
+                       0x3FF0000000000000ULL, 0xFFF8DEADBEEF0123ULL};
+  typedef uint64_t carrier __attribute__((vector_size(16)));
+  carrier vectors[4] = {{0,0},{0,0},{0,0},{0,0}};
+  double scalars[4];
+  for (unsigned i = 0; i < 4; ++i) {
+    __builtin_memcpy(&vectors[i], &input[i], 8);
+    __builtin_memcpy(&scalars[i], &input[i], 8);
+  }
+  uint64_t output[4] = {0x1122334455667788ULL, 0, 0, 0x8877665544332211ULL};
+  record_probe()";
+          NativeOracle += Source.find("record_probe(void*") == std::string::npos
+                              ? "(uintptr_t)&output[1], "
+                              : "(void*)&output[1], ";
+          NativeOracle +=
+              LLVM ? "vectors[0], vectors[1], vectors[2], vectors[3]"
+                   : "scalars[0], scalars[1], scalars[2], scalars[3]";
+          NativeOracle += R"();
+  return calls != EXPECTED_CALLS || output[1] != 0xFEDCBA9876543210ULL ||
+         output[2] != 0x0123456789ABCDEFULL ||
+         output[0] != 0x1122334455667788ULL || output[3] != 0x8877665544332211ULL;
+}
+)";
+        }
+        write(Generated, Source + "\n#define EXPECTED_CALLS " +
+                             (Chain ? "2" : "1") + "\n" + NativeOracle);
+        for (const char *COptimization : {"-O0", "-O2"}) {
+          SCOPED_TRACE(COptimization);
+          ASSERT_TRUE(execute(Compiler,
+                              {Compiler, "-std=gnu11", COptimization,
+                               "-fno-builtin", "-fsanitize=address,undefined",
+                               Include, Generated, "-o", Product},
+                              Errors))
+              << Source;
+          ASSERT_TRUE(execute(Product, {Product}, Errors)) << Source;
+        }
       }
     }
   }

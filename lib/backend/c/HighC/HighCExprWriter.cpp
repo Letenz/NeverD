@@ -2704,6 +2704,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   }
   S += Note;
   S += ")";
+  if (RecordCall && RecordCall->FloatingResult) {
+    if (!E.Type || E.Type->Kind != NdTypeKind::Int ||
+        E.Type->Size != Callee->ReturnType->Size)
+      throw std::runtime_error(
+          "A record call has an incompatible result carrier");
+    S = "__builtin_bit_cast(" + typeToC(E.Type) + ", " + S + ")";
+  }
   if (RecordCall && RecordCall->ResultPointer) {
     const unsigned Index = *RecordCall->ResultPointer;
     if (Index >= E.Operands.size() || !E.Operands[Index])

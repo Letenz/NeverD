@@ -4810,7 +4810,8 @@ bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
     return false;
   if (const auto Signature =
           libc::floatingCallArguments(FS, Opts.TheArch, Opts.Format);
-      Signature && (Opts.TheArch == Arch::X86 || !Signature->Scalars.empty()))
+      Signature && (Opts.TheArch == Arch::X86 || !Signature->Scalars.empty() ||
+                    Signature->ReturnElements))
     return true;
   if (isMsvcIndirectReturn(FS.ReturnType, Opts.TheArch, Opts.Format))
     return true;

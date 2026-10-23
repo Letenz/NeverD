@@ -398,17 +398,26 @@ std::optional<FloatingCallArguments>
 boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
   const auto &Registers = getTargetRegInfo(A);
   if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
-      !Op.ScalarCallSignature ||
-      (A != Arch::X86 && Op.ScalarCallSignature->Scalars.empty()) ||
-      Op.SourceCallHint || Op.CalleeVariadicFrom >= 0 ||
-      Op.NumInputs != Op.ScalarCallSignature->Scalars.size() + 1 ||
-      Op.CalleeFloatReturnBytes != Op.ScalarCallSignature->ReturnBytes ||
-      Op.Output.Kind != MedVar::Reg ||
-      (A == Arch::X86 ? (!Registers.isX87StackReg(Op.Output.RegOff) ||
-                         Op.Output.Size != 10)
-                      : Op.Output.RegOff != Registers.FPReturnReg) ||
-      Op.Output.Size < Op.CalleeFloatReturnBytes)
+      !Op.ScalarCallSignature || Op.SourceCallHint ||
+      Op.CalleeVariadicFrom >= 0 ||
+      Op.NumInputs != Op.ScalarCallSignature->Scalars.size() + 1)
     return std::nullopt;
+  const auto &Signature = *Op.ScalarCallSignature;
+  if (Signature.ReturnElements) {
+    if (A != Arch::AArch64 || Op.CalleeFloatReturnBytes ||
+        Op.Output.Kind != MedVar::Temp ||
+        Op.Output.Size != Signature.ReturnBytes ||
+        Signature.ReturnElements > Registers.FPReturnRegs.size())
+      return std::nullopt;
+  } else if ((A != Arch::X86 && Signature.Scalars.empty()) ||
+             Op.CalleeFloatReturnBytes != Signature.ReturnBytes ||
+             Op.Output.Kind != MedVar::Reg ||
+             (A == Arch::X86 ? (!Registers.isX87StackReg(Op.Output.RegOff) ||
+                                Op.Output.Size != 10)
+                             : Op.Output.RegOff != Registers.FPReturnReg) ||
+             Op.Output.Size < Op.CalleeFloatReturnBytes) {
+    return std::nullopt;
+  }
   std::vector<TypeRef> Parameters;
   for (size_t I = 0; I < Op.ScalarCallSignature->Scalars.size(); ++I) {
     const auto &Parameter = Op.ScalarCallSignature->Scalars[I];
@@ -422,8 +431,48 @@ boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
                              : NdType::makeInt(Parameter.Bytes));
     Parameters.back()->Size = Parameter.Bytes;
   }
-  const auto Expected = floatingCallArguments(
-      A, F, NdType::makeFloat(Op.CalleeFloatReturnBytes), Parameters);
+  const auto Record = [](llvm::ArrayRef<TypeRef> Members) -> TypeRef {
+    if (Members.empty())
+      return nullptr;
+    for (const auto &Member : Members)
+      if (Member->Kind != NdTypeKind::Float ||
+          Member->Size != Members.front()->Size)
+        return nullptr;
+    auto Type = NdType::makeStruct(
+        std::vector<TypeRef>(Members.begin(), Members.end()));
+    if (Type)
+      Type->Passing = NdRecordPassing::ByValue;
+    return Type;
+  };
+  if (!Signature.ParameterElements.empty()) {
+    std::vector<TypeRef> Source;
+    size_t At = 0;
+    for (uint16_t Count : Signature.ParameterElements) {
+      const size_t Pieces = std::max<uint16_t>(Count, 1);
+      if (Pieces > Parameters.size() - At)
+        return std::nullopt;
+      TypeRef Type = Count
+                         ? Record(llvm::ArrayRef(Parameters).slice(At, Pieces))
+                         : Parameters[At];
+      if (!Type)
+        return std::nullopt;
+      Source.push_back(std::move(Type));
+      At += Pieces;
+    }
+    if (At != Parameters.size())
+      return std::nullopt;
+    Parameters = std::move(Source);
+  }
+  TypeRef Result = NdType::makeFloat(Signature.ReturnBytes);
+  if (Signature.ReturnElements) {
+    if (Signature.ReturnBytes % Signature.ReturnElements)
+      return std::nullopt;
+    std::vector<TypeRef> Members(
+        Signature.ReturnElements,
+        NdType::makeFloat(Signature.ReturnBytes / Signature.ReturnElements));
+    Result = Record(Members);
+  }
+  const auto Expected = floatingCallArguments(A, F, Result, Parameters);
   return Expected && *Expected == *Op.ScalarCallSignature ? Expected
                                                           : std::nullopt;
 }
