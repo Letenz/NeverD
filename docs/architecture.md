@@ -1898,6 +1898,18 @@ low prefix before the remaining interleaved bits. Dense decision and carry
 caches prepay their bucket growth. Immutable word views avoid repeated copies
 and are discarded when the assumption changes; polynomial views remain valid
 throughout reconstruction.
+Long odd-product blocks can recursively pair exact modular signatures. A
+signature preserves the complete word except for its highest observed bit;
+that bit's correction may itself depend on the inputs. Addition, XOR, constant
+masks and products propagate the correction with complete identities. Products
+remove only proved trailing zeros and retain every normalized parity term;
+one-bit products keep an opaque identity because cross terms can survive.
+An odd pair shares a square of its lower word and one exact highest-bit
+correction. Collecting the squares permits recursion at one fewer bit. Every
+unpaired factor and every correction remains in the result. Degree-block
+admission only orders this search; it never establishes a pair or oddness.
+All signature, pairing and reconstruction work uses the existing cumulative
+work/storage allowances and decision-node limit.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding
