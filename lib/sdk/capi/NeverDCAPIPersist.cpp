@@ -174,19 +174,18 @@ int neverd_annotations_load(neverd_session_t Sess) {
   auto *Arr = Parsed->getAsArray();
   if (!Arr)
     return 1;
-  S->Annotations.clear();
+  std::map<va_t, std::string> Annotations;
   for (const auto &Item : *Arr) {
     auto *Obj = Item.getAsObject();
-    if (!Obj)
-      continue;
-    const llvm::json::Value *AddrVal = Obj->get("addr");
-    auto Text = Obj->getString("text");
-    if (!AddrVal || !Text)
-      continue;
-    std::optional<va_t> Addr = parsePersistedAddress(*AddrVal);
-    if (Addr)
-      S->Annotations[*Addr] = Text->str();
+    const auto *AddrVal = Obj ? Obj->get("addr") : nullptr;
+    const auto Text = Obj ? Obj->getString("text") : std::nullopt;
+    const auto Addr = AddrVal ? parsePersistedAddress(*AddrVal) : std::nullopt;
+    if (!Addr || !Text || !Annotations.emplace(*Addr, Text->str()).second) {
+      S->setError("annotations sidecar has an invalid or duplicate row");
+      return 1;
+    }
   }
+  S->Annotations = std::move(Annotations);
   return 0;
 }
 
@@ -435,22 +434,23 @@ int neverd_renames_load(neverd_session_t Sess) {
   auto *Arr = Parsed->getAsArray();
   if (!Arr)
     return -1;
-  Reset();
+  std::map<va_t, std::string> Renames;
   for (const auto &V : *Arr) {
     auto *Obj = V.getAsObject();
-    if (!Obj)
-      continue;
-    const llvm::json::Value *AddrVal = Obj->get("addr");
-    auto Renamed = Obj->getString("renamed");
-    if (!AddrVal || !Renamed)
-      continue;
-    std::optional<va_t> Addr = parsePersistedAddress(*AddrVal);
-    if (!Addr)
-      continue;
-    S->Renames[*Addr] = Renamed->str();
+    const auto *AddrVal = Obj ? Obj->get("addr") : nullptr;
+    const auto Renamed = Obj ? Obj->getString("renamed") : std::nullopt;
+    const auto Addr = AddrVal ? parsePersistedAddress(*AddrVal) : std::nullopt;
+    if (!Addr || !Renamed || !Renames.emplace(*Addr, Renamed->str()).second) {
+      S->setError("renames sidecar has an invalid or duplicate row");
+      return -1;
+    }
+  }
+  Reset();
+  S->Renames = std::move(Renames);
+  for (const auto &[Addr, Renamed] : S->Renames) {
     for (auto &F : S->Functions) {
-      if (F.Entry == *Addr) {
-        F.Name = Renamed->str();
+      if (F.Entry == Addr) {
+        F.Name = Renamed;
         F.Origin = NameOrigin::User;
         break;
       }

@@ -1026,6 +1026,15 @@ fixtures do not qualify arbitrary compiler transformations or cross-ISA matching
 Build `NeverDBinaryDiffTests`, `NeverDBinaryDiffFlowPipelineTests`,
 `NeverDBinaryDiffSDKTests`, `neverd`,
 `neverd-worker` and, with Qt enabled, `neverd-gui-comparison-tests`.
+For saved projects also build `NeverDProjectDatabaseTests` and
+`neverd-gui-unit-tests`. `ProjectDatabaseTest.*` checks streaming, integrity,
+concurrent WAL saves, budgets, path admission and cancellation with independent
+SQLite/zlib fixtures. `NeverDBinaryDiffProjectInputs` covers SDK/CLI/worker
+workspace lifetime, failed/cancelled replacement, saved names/types/settings,
+provenance, reopen, project-state changes and WAL-only edits. The Qt comparison
+test saves real projects, removes the originals, compares through the worker,
+and checks a normal recovery-workspace sentinel. GUI units retain roundtrip and
+recovery-journal coverage.
 The core tests check matching, ambiguity, deltas, deterministic correspondence,
 manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker

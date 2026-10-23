@@ -58,6 +58,15 @@ QString progressLabel(const QString &Phase) {
   const auto Step = Phase.section(':', -1);
   const std::pair<const char *, const char *> Labels[] = {
       {"load", QT_TRANSLATE_NOOP("ComparisonDialog", "Loading input")},
+      {"project-open",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Opening saved project")},
+      {"project-files",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Reading saved project settings")},
+      {"project-unpack",
+       QT_TRANSLATE_NOOP("ComparisonDialog",
+                         "Unpacking and checking saved input")},
+      {"project-apply",
+       QT_TRANSLATE_NOOP("ComparisonDialog", "Applying saved analysis")},
       {"image", QT_TRANSLATE_NOOP("ComparisonDialog", "Loading input")},
       {"identify",
        QT_TRANSLATE_NOOP("ComparisonDialog", "Identifying file format")},
@@ -163,8 +172,11 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
     auto *Label = new QLabel(Name, this);
     Paths[I] = new QLineEdit(this);
     Paths[I]->setObjectName(I ? "comparisonSecondary" : "comparisonPrimary");
-    Paths[I]->setPlaceholderText(I ? tr("New binary or patch")
-                                   : tr("Original binary"));
+    Paths[I]->setPlaceholderText(I ? tr("New binary or saved project")
+                                   : tr("Original binary or saved project"));
+    Paths[I]->setToolTip(
+        tr("Select a binary or an NDDB saved project. Saved projects use their "
+           "stored load settings and a private working copy."));
     Label->setBuddy(Paths[I]);
     auto *Browse = new QPushButton(icon("open"), tr("Browse…"), this);
     Loaders[I] = new QComboBox(this);

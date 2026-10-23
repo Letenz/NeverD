@@ -50,6 +50,7 @@
 #include "neverd/sdk/NeverDPlugin.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectDatabase.h"
 #include "neverd/support/ProjectFiles.h"
 #include "neverd/support/StackSizeMain.h"
 
@@ -65,7 +66,10 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <iterator>
+#include <memory>
 #include <stdexcept>
+#include <utility>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -272,8 +276,11 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   if (Policy) {
     LoadOpts.OnlyFunctionEntries = Policy->OnlyFunctionEntries;
     LoadOpts.ARMFunctionModes = Policy->ARMFunctionModes;
-    LoadOpts.ReadStaticSymbols = Policy->ReadsStaticSymbols;
-    DbgRequest = Policy->DbgRequest;
+    LoadOpts.ReadStaticSymbols = Policy->PackedProject
+                                     ? Policy->LoadedStaticSymbols
+                                     : Policy->ReadsStaticSymbols;
+    DbgRequest =
+        Policy->PackedProject ? Policy->LoadedDbgRequest : Policy->DbgRequest;
   }
   // The file reads with the loader its project keeps, as a session load
   // reads it; the pipeline refuses a binary file.
@@ -345,7 +352,9 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
                       std::filesystem::path SanitizeSourcePath,
                       std::optional<uint64_t> MemoryBytes = std::nullopt,
                       std::string NativeProvenance = {},
-                      const LoadProgress *ProgressOverride = nullptr) {
+                      const LoadProgress *ProgressOverride = nullptr,
+                      std::shared_ptr<ProjectInput> PackedProject = {},
+                      const ProjectLoadSettings *ProjectSettings = nullptr) {
   const auto &Progress =
       ProgressOverride ? *ProgressOverride : S.LoadProgressCb;
   // Prepare the complete replacement before changing the current image, its
@@ -354,7 +363,11 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   Progress.report("image", 1, 1, "binary parsed");
   DebugInfoResult Found;
   if (!MemoryBytes)
-    Found = loadDebugInfo(Path, Image, S.DbgRequest, Progress);
+    Found = loadDebugInfo(
+        Path, Image, ProjectSettings ? ProjectSettings->Debug : S.DbgRequest,
+        Progress);
+  if (ProjectSettings)
+    checkProjectDebugFiles(*ProjectSettings, Progress);
   Progress.check();
   if (!Found.Error.empty()) {
     S.setError(Found.Error);
@@ -363,6 +376,45 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   Progress.report("debug-apply", 0, 1);
   applyDebugInfo(Image, Found);
   Progress.report("debug-apply", 1, 1);
+  // Reuse the sidecar APIs' semantic readers on an unpublished state. Moving
+  // the image avoids a second binary allocation; malformed packed edits leave
+  // the caller's existing image and annotations untouched.
+  std::unique_ptr<Session> ProjectState;
+  if (PackedProject) {
+    ProjectState = std::make_unique<Session>();
+    auto &Next = *ProjectState;
+    Next.Img = std::move(Image);
+    Next.Dbg = std::move(Found.Context);
+    Next.FilePath = Path;
+    Next.Loaded = true;
+    Next.resetFunctionsFromImage();
+    if (Next.Img.Arch != Arch::EVM && Next.Img.Arch != Arch::SBF &&
+        !Next.Dec.init(Next.Img)) {
+      S.setError("failed to init decoder for project input");
+      return 0;
+    }
+    const std::pair<const char *, int (*)(neverd_session_t)> Readers[] = {
+        {"annotations", neverd_annotations_load},
+        {"renames", neverd_renames_load},
+        {"functions", neverd_functions_load},
+        {"items", neverd_items_load},
+        {"operands", neverd_operand_formats_load},
+        {"types", neverd_type_declarations_load},
+        {"type libraries", neverd_type_libraries_load}};
+    size_t Done = 0;
+    for (const auto &[Name, Read] : Readers) {
+      Progress.report("project-apply", Done, std::size(Readers), Name);
+      if (Read(&Next) != 0) {
+        S.setError(std::string("NDDB: cannot load saved ") + Name +
+                   (Next.LastError.empty() ? "" : ": " + Next.LastError));
+        return 0;
+      }
+      ++Done;
+    }
+    Progress.report("project-apply", Done, Done);
+    Image = std::move(Next.Img);
+    Found.Context = std::move(Next.Dbg);
+  }
   Progress.report("ready", 1, 1, "");
 
   // Decoder::init retains its existing state on failure, so it is the final
@@ -376,6 +428,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   // Dispose analysis while the image/debug objects it was built from still
   // exist. clearPipeline also releases LLVM modules before their context.
   S.clearPipeline();
+  auto PreviousProject = std::move(S.PackedProject);
   S.Img = std::move(Image);
   S.ExceptionHandlersSettled = false;
   S.FilePath = std::move(Path);
@@ -386,6 +439,10 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.DbgKind = Found.Kind;
   S.DbgPath = std::move(Found.Path);
   S.DbgFiles = std::move(Found.Files);
+  S.LoadedDbgRequest = ProjectSettings ? ProjectSettings->Debug : S.DbgRequest;
+  S.PackedProject = std::move(PackedProject);
+  S.LoadedStaticSymbols = ProjectSettings ? ProjectSettings->ReadStaticSymbols
+                                          : S.ReadsStaticSymbols;
   // neverd_session_load() says so once the load is its own.
   S.ReadFromFile = false;
   S.dropLocalTypes();
@@ -405,11 +462,21 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.DiscoveredFunctions.reset();
   S.ProgramMainFound.reset();
   S.ImageStrings.reset();
+  if (ProjectState) {
+    S.Annotations = std::move(ProjectState->Annotations);
+    S.Renames = std::move(ProjectState->Renames);
+    S.FunctionEdits = std::move(ProjectState->FunctionEdits);
+    S.FunctionAttributeEdits = std::move(ProjectState->FunctionAttributeEdits);
+    S.DataItems = std::move(ProjectState->DataItems);
+    S.OperandFormats = std::move(ProjectState->OperandFormats);
+    S.TypeDeclarations = std::move(ProjectState->TypeDeclarations);
+    S.TypeLibraryChoice = std::move(ProjectState->TypeLibraryChoice);
+  }
   S.resetFunctionsFromImage();
   // The previous image's discovery, if it has finished, is not this one's.
   S.retireStaleDiscovery();
 
-  if (!MemoryBytes) {
+  if (!MemoryBytes && !ProjectState) {
     neverd_annotations_load(Sess);
     neverd_renames_load(Sess);
     neverd_functions_load(Sess);
@@ -673,6 +740,19 @@ int neverd_session_load_cancellable(neverd_session_t Sess, const char *Path,
       return 0;
     }
 
+    auto PackedProject = prepareProjectInput(P, Progress);
+    // A caller may reload session_file_path(). Keep the extracted files alive
+    // when that path belongs to the current project, including symlink aliases.
+    if (!PackedProject && S->PackedProject &&
+        std::filesystem::equivalent(P, S->PackedProject->Input))
+      PackedProject = S->PackedProject;
+    if (PackedProject)
+      P = PackedProject->Input;
+    std::optional<ProjectLoadSettings> ProjectSettings;
+    if (PackedProject)
+      ProjectSettings = projectLoadSettings(*PackedProject, S->DbgRequest,
+                                            S->ReadsStaticSymbols, Progress);
+
     // Capture a separate absolute, symlink-free source locator at the trusted
     // load boundary.  Keep P unchanged: FilePath is an older public contract
     // used by sidecar discovery and must preserve the caller's spelling.
@@ -691,7 +771,9 @@ int neverd_session_load_cancellable(neverd_session_t Sess, const char *Path,
     LoadOpts.Progress = Progress;
     LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
     LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
-    LoadOpts.ReadStaticSymbols = S->ReadsStaticSymbols;
+    LoadOpts.ReadStaticSymbols = ProjectSettings
+                                     ? ProjectSettings->ReadStaticSymbols
+                                     : S->ReadsStaticSymbols;
     // A project an older NeverD kept as files beside the input moves into its
     // folder, where the rest of the C API and the workbench read it.
     project_files::migrate(P);
@@ -724,9 +806,11 @@ int neverd_session_load_cancellable(neverd_session_t Sess, const char *Path,
     Progress.report("platform", 0, 1);
     settleBinaryFilePlatform(*ImgOrErr, LoadOpts.Choice);
     Progress.report("platform", 1, 1);
-    const int Result = finishSessionLoad(
-        Sess, *S, std::move(*ImgOrErr), std::move(P),
-        std::move(SanitizeSourcePath), std::nullopt, {}, &Progress);
+    const int Result =
+        finishSessionLoad(Sess, *S, std::move(*ImgOrErr), std::move(P),
+                          std::move(SanitizeSourcePath), std::nullopt, {},
+                          &Progress, std::move(PackedProject),
+                          ProjectSettings ? &*ProjectSettings : nullptr);
     if (Result) {
       S->LoadedChoice = LoadOpts.Choice;
       S->ReadFromFile = true;
@@ -737,6 +821,14 @@ int neverd_session_load_cancellable(neverd_session_t Sess, const char *Path,
     S->setError(LoadCancelled::Message);
     Trace.finish(false);
     return -2;
+  } catch (const project_database::Error &Error) {
+    S->setError(Error.what());
+    Trace.finish(false);
+    return 0;
+  } catch (const std::filesystem::filesystem_error &Error) {
+    S->setError(Error.what());
+    Trace.finish(false);
+    return 0;
   }
 }
 

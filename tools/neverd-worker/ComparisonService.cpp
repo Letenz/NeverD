@@ -24,6 +24,7 @@
 #include <exception>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace neverd::worker {
@@ -217,18 +218,48 @@ Session load(const Json &Input, const char *Side,
   return S;
 }
 struct Stamp {
-  std::string Path;
-  fs::file_time_type Time;
-  std::uintmax_t Size = 0;
-  explicit Stamp(const Json &Input) : Path(pathField(Input)) {
-    Time = fs::last_write_time(path(Path));
-    Size = fs::file_size(path(Path));
+  struct File {
+    fs::path Path;
+    fs::file_time_type Time;
+    std::uintmax_t Size = 0;
+    explicit File(fs::path P) : Path(std::move(P)) {
+      Time = fs::last_write_time(Path);
+      Size = fs::file_size(Path);
+    }
+    bool changed() const {
+      std::error_code E;
+      return fs::file_size(Path, E) != Size || E ||
+             fs::last_write_time(Path, E) != Time || E;
+    }
+  } Input;
+  fs::path Locator;
+  fs::path WalPath, JournalPath;
+  std::optional<File> Wal, Journal;
+  explicit Stamp(const Json &Value)
+      : Input(fs::canonical(path(pathField(Value)))),
+        Locator(path(pathField(Value))) {
+    // SQLite may commit solely to the WAL while the main NDDB inode is
+    // unchanged. Include creation/removal of transaction companions as well.
+    WalPath = Input.Path;
+    WalPath += "-wal";
+    JournalPath = Input.Path;
+    JournalPath += "-journal";
+    if (fs::exists(WalPath))
+      Wal.emplace(WalPath);
+    if (fs::exists(JournalPath))
+      Journal.emplace(JournalPath);
   }
   bool changed() const {
-    std::error_code E;
-    if (fs::file_size(path(Path), E) != Size || E)
+    std::error_code LocatorError;
+    if (fs::canonical(Locator, LocatorError) != Input.Path || LocatorError)
       return true;
-    return fs::last_write_time(path(Path), E) != Time || E;
+    const auto Changed = [](const fs::path &P, const std::optional<File> &F) {
+      std::error_code E;
+      const bool Exists = fs::exists(P, E);
+      return E || Exists != F.has_value() || (F && F->changed());
+    };
+    return Input.changed() || Changed(WalPath, Wal) ||
+           Changed(JournalPath, Journal);
   }
 };
 std::string readSaved(const Json &Payload) {

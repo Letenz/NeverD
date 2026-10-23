@@ -119,9 +119,16 @@ The worker adapts those pages to the transport. The GUI owns wraparound and
 retires results and callbacks on a new search or session change.
 
 Deep-link syntax and checked address arithmetic belong to `DeepLink`; instance
-matching and recent-input lookup belong to `LinkDispatch`. `ProjectDatabase`
-owns metadata-only identity reads as well as unpacking and authenticating the
-stored input. A metadata match is only a lookup hint. CLI clients and native
+matching and recent-input lookup belong to `LinkDispatch`. The Qt-independent
+`project_database::Reader` owns NDDB metadata admission, snapshot-consistent
+reads and streaming input authentication. Qt `ProjectDatabase` adapts that
+reader and owns transaction writes and normal recovery behavior. SHA-256 sinks
+adapt LLVM/Qt hashing; the shared reader owns digest comparison, chunk/framing
+validation, schema constants, the file allowlist and compression policy. SDK
+`ProjectInput` owns isolated extraction through the session/comparison lifetime;
+CLI and worker use the SDK load boundary. `FileStamp.h` owns external file/tree
+selection stamps shared by worker and saved debug choices. A metadata match is
+only a lookup hint. CLI clients and native
 URL events share the dispatcher. Native events dispatch off the GUI thread so
 the receiving window can answer its own local socket. Instance probes have
 bounded concurrency and one deadline; socket framing tracks incomplete JSON

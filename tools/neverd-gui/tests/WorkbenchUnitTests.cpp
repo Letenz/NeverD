@@ -1164,8 +1164,7 @@ private slots:
                                          "'1')")}));
     const auto foreignBytes = contents(foreign);
     QVERIFY(!ProjectDatabase::read(foreign, &error));
-    QCOMPARE(error,
-             QStringLiteral("%1 is not a NeverD database.").arg(foreign));
+    QCOMPARE(error, QStringLiteral("NDDB: not a NeverD database"));
     QVERIFY(!ProjectDatabase::saveState(foreign, {}).isEmpty());
     QVERIFY(!ProjectDatabase::save(foreign, binary, {}).isEmpty());
     QCOMPARE(contents(foreign), foreignBytes);

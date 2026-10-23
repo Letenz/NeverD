@@ -59,6 +59,13 @@ add_neverd_unittest(NeverDTestProcessTests
   TestProcessTests.cpp
 )
 
+if(TARGET NeverDProjectDatabase)
+  add_neverd_unittest(NeverDProjectDatabaseTests
+    ProjectDatabaseTests.cpp
+    LINK_LIBS NeverDProjectDatabase neverd_project_sqlite ZLIB::ZLIB LLVMSupport)
+  target_include_directories(NeverDProjectDatabaseTests PRIVATE ${LLVM_INCLUDE_DIRS})
+endif()
+
 add_neverd_unittest(NeverDSupportThreadTests
   SupportThreadTests.cpp
   LINK_LIBS neverd_task_scheduler
@@ -211,6 +218,18 @@ target_include_directories(NeverDLocalTypesDebugContextTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
 
 if(TARGET neverd_shared)
+  if(Python3_EXECUTABLE)
+    set(_neverd_project_input_worker_args)
+    if(TARGET neverd-worker)
+      list(APPEND _neverd_project_input_worker_args --worker $<TARGET_FILE:neverd-worker>)
+    endif()
+    add_test(NAME NeverDBinaryDiffProjectInputs
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/diff/project_inputs_test.py"
+        --neverd $<TARGET_FILE:neverd> --library $<TARGET_FILE:neverd_shared>
+        ${_neverd_project_input_worker_args})
+    set_tests_properties(NeverDBinaryDiffProjectInputs PROPERTIES
+      TIMEOUT 120 LABELS "NeverDBinaryDiff")
+  endif()
   add_neverd_unittest(NeverDSourcePatchDynCodeTests
     SourcePatchDynCodeTests.cpp
     LINK_COMPONENTS CodeGen
