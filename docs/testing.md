@@ -1260,7 +1260,11 @@ exercise TBZ bit-index/target collisions and partial-page ADRP movement. Profile
 selection preserves x86 identities; unsupported ISA/ABI/bitness and illegal
 instructions cannot acquire complete evidence. Worker/CLI cases compile the
 same change to ELF relocatable, COFF object and Mach-O object inputs, inspect
-owned source alignment and reopen the same saved report. The Qt case selects
+owned source alignment, SSA origins, slices and region correspondences, and
+reopen the same saved report. A raw unsized conditional-branch case retains
+both successors, a changed fallthrough constant and its ordinary call reference;
+the COFF cell exercises the same walk without a recorded function size.
+The Qt case selects
 raw AArch64, views aligned source and navigates to original instructions. These
 object cells do not qualify every linked image or transformation family.
 `NeverDAArch64DecodeValidityTests` verifies decoded illegal operands and the

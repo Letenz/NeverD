@@ -417,6 +417,11 @@ refusal to emit semantics for a decoded illegal instruction, including permissiv
 calls; ordinary flow queries and DIFF therefore retain bytes without inventing
 transfers or references. This is distinct from a decode failure: the original
 spelling remains inspectable.
+The shared unsized function traversal follows both successors of ordinary
+lifted conditional flow. A straight-line decoder terminator can end only a
+basic block (as with AArch64 B.cond); it does not discard the fallthrough path.
+The existing function-entry, instruction-mode and coverage boundaries still
+govern the walk, so reference queries and DIFF capture the same body.
 `ComparisonDataFlow` runs bounded selected-function native pipeline jobs, then
 projects their verified SSA into immutable `FlowEvidence` collections. It owns
 the session/loader boundary; graph validation, persistence and binding remain in

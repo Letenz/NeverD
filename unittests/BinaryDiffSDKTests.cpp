@@ -229,6 +229,44 @@ TEST_F(BinaryDiffSDK, AArch64BranchBitIndexIsNotASecondTargetOperand) {
 }
 
 TEST_F(BinaryDiffSDK,
+       AArch64UnsizedConditionalFallthroughKeepsChangesAndCalls) {
+  // cmp w0, #17; b.eq taken; mov w0, #7/#9; bl callee; ret;
+  // taken: ret; callee: ret. Both exits belong to the unsized caller.
+  auto A = input(words({0x7100441f, 0x54000080, 0x528000e0, 0x94000003,
+                        0xd65f03c0, 0xd65f03c0, 0xd65f03c0}),
+                 0x1000, "aarch64");
+  auto B = input(words({0x7100441f, 0x54000080, 0x52800120, 0x94000003,
+                        0xd65f03c0, 0xd65f03c0, 0xd65f03c0}),
+                 0x8000, "aarch64");
+  ASSERT_EQ(neverd_func_create(A, 0x1018), 0);
+  ASSERT_EQ(neverd_func_create(B, 0x8018), 0);
+  auto C = compare(A, B);
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(Evidence) << render(Detail);
+  EXPECT_EQ(Evidence->getBoolean("analysis_complete"), true);
+  EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"), false);
+  const auto *Rows = Detail.getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows);
+  EXPECT_EQ(Rows->size(), 6u);
+  EXPECT_TRUE(std::any_of(Rows->begin(), Rows->end(), [](const auto &Row) {
+    const auto *O = Row.getAsObject();
+    const auto *Primary = O->getObject("primary");
+    return O->getString("kind") == "constant" && Primary &&
+           Primary->getString("address") == "0x1008";
+  }));
+  auto References = parsed(neverd_code_refs_json(A, 0x1000, 1));
+  const auto *Refs = References.getAsObject()->getArray("refs");
+  ASSERT_TRUE(Refs);
+  EXPECT_TRUE(std::any_of(Refs->begin(), Refs->end(), [](const auto &Ref) {
+    const auto &Fields = *Ref.getAsArray();
+    return Fields[0].getAsString() == "0x100C" &&
+           Fields[1].getAsString() == "0x1018" &&
+           Fields[2].getAsString() == "call";
+  })) << render(References);
+}
+
+TEST_F(BinaryDiffSDK,
        AArch64IllegalInstructionsRetainBytesWithoutCompleteFacts) {
   auto A =
       input(words({0xf8408c00, 0x91000c00, 0xd65f03c0}), 0x1000, "aarch64");

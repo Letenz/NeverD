@@ -79,7 +79,8 @@ def aarch64_profiles(client, args, root, fixture):
                             "-fno-asynchronous-unwind-tables", f"-DPATCH_LIMIT={limit}",
                             str(fixture), "-o", str(path)], check=True, capture_output=True)
         start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paths[1])},
-                 "options": {"use_names": False}}
+                 "options": {"use_names": False, "dataflow": True,
+                             "flow_regions": {"min_nodes": 2}}}
         summary = ok(client, "comparison_start", start)
         for side in ("primary", "secondary"):
             assert summary[side]["architecture"] == "aarch64", summary
@@ -92,6 +93,27 @@ def aarch64_profiles(client, args, root, fixture):
         assert detail["computation_complete"], detail
         assert not detail["evidence"]["normalized_unchanged"], detail
         assert any(row["kind"] == "constant" for row in detail["rows"]), detail
+        nodes = ok(client, "comparison_dataflow", {
+            "address": address, "kind": "nodes", "limit": 200})
+        assert nodes["availability"] == "available", nodes
+        assert nodes["abi"] == summary["primary"]["abi"], nodes
+        native_nodes = [row for row in nodes["rows"] if row["origin_sequence"] >= 0]
+        original_addresses = {row["primary"]["address"].lower() for row in detail["rows"]
+                              if row["primary"] is not None}
+        assert native_nodes and all(row["address"].lower() in original_addresses
+                                    for row in native_nodes), nodes
+        sliced = ok(client, "comparison_slice", {
+            "address": address, "seeds": [native_nodes[0]["id"]], "limit": 200})
+        assert sliced["state"] == "complete" and sliced["rows"], sliced
+        assert sliced["semantic_validation"] == "not_performed", sliced
+        regions = ok(client, "comparison_flow_regions", {"limit": 1})
+        assert regions["total"] > 0, regions
+        anchors = ok(client, "comparison_flow_regions", {
+            "region_id": regions["items"][0]["id"], "limit": 1})
+        aligned = ok(client, "comparison_flow_regions", {
+            "anchor": anchors["items"][0]["anchor"], "limit": 1})
+        assert aligned["rows"] and aligned["view"] == "nodes", aligned
+        assert aligned["analysis"]["semantic_validation"] == "not_performed", aligned
         source = ok(client, "comparison_source_difference", {"address": address})
         assert source["computation_complete"] and source["availability"] == "available", source
         assert any(row["kind"] == "changed" for row in source["rows"]), source
@@ -104,7 +126,7 @@ def aarch64_profiles(client, args, root, fixture):
         assert cli.returncode in (2, 3), cli.stderr
         assert json.loads(cli.stdout) == document
         explicit = ok(client, "comparison_start", {
-            **start, "options": {"use_names": False, "profile": "native-aarch64-v1"},
+            **start, "options": {**start["options"], "profile": "native-aarch64-v1"},
             "restore_path": str(saved)})
         assert explicit["primary"] == summary["primary"]
         assert ok(client, "comparison_export") == document
@@ -162,7 +184,7 @@ def aarch64_profiles(client, args, root, fixture):
                                                "options": {"discover": False}})
     assert partial["coverage"]["primary"]["incomplete"] > 0, partial
     assert partial["counts"]["normalized_unchanged"] == 0, partial
-    print("AArch64 ELF/COFF/Mach-O object comparison, source and saved CLI parity passed")
+    print("AArch64 ELF/COFF/Mach-O comparison, source, SSA/slices/regions and saved CLI parity passed")
 
 
 def main():

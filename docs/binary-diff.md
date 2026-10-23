@@ -40,7 +40,8 @@ The desktop adds **Raw AArch64** alongside automatic format detection.
 
 AArch64 qualification covers authored raw instructions and compiled ELF
 relocatable, COFF object and Mach-O object fixtures through the real loaders,
-CLI, worker, source views and saved comparison binding. It does not establish
+CLI, worker, source views, SSA/slice/region inspection and saved comparison
+binding. It does not establish
 qualification for linked applications, every relocation/transformation family
 or large production corpora. Mach-O AArch64 identity preserves the complete CPU
 subtype, including ARM64e ABI bits; differing subtypes and raw Darwin inputs
