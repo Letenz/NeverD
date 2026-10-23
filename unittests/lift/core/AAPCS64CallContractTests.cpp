@@ -526,14 +526,23 @@ TEST(AAPCS64CallContract, ACallToThePLTEntryOfItsOwnRoutinePassesItsArgs) {
 TEST(AAPCS64CallContract, WindowsVariadicPrefixSurvivesOmittedCalleeCache) {
   windows_variadic_test::Header Debug;
   Debug.Slot = Got;
-  constexpr va_t Caller = Text + 0x40;
-  for (unsigned Tail : {0u, 1u}) {
+  constexpr va_t Caller = Text + 0x80;
+  for (unsigned Tail : {0u, 1u, 7u, 8u}) {
+    std::vector<uint32_t> Code = {PushFrame, SetFrame,
+                                  0xD10043FFu,                // sub sp, sp, #16
+                                  0x52800001u | (Tail << 5)}; // mov w1, #Tail
+    for (unsigned I = 0; I < Tail; ++I) {
+      const unsigned Register = I < 6 ? I + 2 : 8;
+      Code.push_back(0x52800000u | (11 * (I + 1) << 5) | Register);
+      if (I >= 6)
+        Code.push_back(0xF90003E8u | ((I - 6) << 10)); // str x8, [sp, #slot]
+    }
+    Code.push_back(adrp(16, Text + Code.size() * 4, Got));
+    Code.insert(Code.end(), {ldrX(17, 16, Got), blr(17),
+                             0x910043FFu, // add sp, sp, #16
+                             PopFrame, Ret});
     BinaryImage Image = makeImage(
-        {{Text,
-          {PushFrame, SetFrame, 0x52800001u | (Tail << 5), // mov w1, #Tail
-           0x52800162u, // mov w2, #11 (scratch when Tail is zero below)
-           adrp(16, Text + 16, Got), ldrX(17, 16, Got), blr(17), PopFrame,
-           Ret}},
+        {{Text, Code},
          {Caller,
           {PushFrame, SetFrame,
            0x94000000u |
@@ -541,9 +550,6 @@ TEST(AAPCS64CallContract, WindowsVariadicPrefixSurvivesOmittedCalleeCache) {
            PopFrame, Ret}}},
         {{Text, "forward_variadic"}, {Caller, "middle_variadic"}},
         {"fixture_variadic"});
-    // No variadic setup at all in the zero-tail case.
-    if (!Tail)
-      place(Image.Segments.front(), Text + 12, {0xD503201Fu});
     Image.Format = BinaryFormat::COFF;
     Image.Imports.front().Module = "fixture.dll";
     PipelineAnalysisCache Cache;

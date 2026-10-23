@@ -165,7 +165,7 @@ Windows header variadic prefixes are covered by `NeverDWin64CallContractTests`,
 The synthetic import is absent from the curated runtime tables. Both C routes
 are compiled and executed with an independent `va_arg` provider checking the
 forwarded fixed argument, each integer tail value and the returned low bits.
-The matrix includes zero and multiple tail arguments, x64 stack overflow,
+The matrix includes zero and multiple tail arguments, x64/ARM64 stack overflow,
 register-loaded import slots, and ARM64 selection/omitted-callee cache reuse.
 These host C tests do not qualify native Windows execution or arbitrary FP,
 record or split-width variadic tails. `check_windows_ucrt_calls.py --function
