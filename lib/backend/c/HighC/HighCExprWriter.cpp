@@ -2223,7 +2223,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (Callee && !Defined)
     if (const auto Signature =
             libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
-        Signature && !Signature->Scalars.empty() &&
+        Signature &&
+        (Opts.TheArch == Arch::X86 || !Signature->Scalars.empty()) &&
         (!E.FloatingCallSignature || *E.FloatingCallSignature != *Signature))
       throw std::runtime_error("A mixed header call lost its checked ABI");
   const libc::LibCPrototype *Prototype = calleePrototype(E);

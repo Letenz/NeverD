@@ -19,7 +19,7 @@ namespace neverd {
 std::optional<FloatingCallArguments>
 floatingCallArguments(Arch A, BinaryFormat F, const TypeRef &ReturnType,
                       llvm::ArrayRef<TypeRef> Parameters) {
-  if (A != Arch::X64 && A != Arch::AArch64)
+  if (A != Arch::X86 && A != Arch::X64 && A != Arch::AArch64)
     return std::nullopt;
   const auto Scalar = [](const TypeRef &Type) {
     return Type && Type->Kind == NdTypeKind::Float &&
@@ -34,13 +34,16 @@ floatingCallArguments(Arch A, BinaryFormat F, const TypeRef &ReturnType,
   for (const auto &Type : Parameters)
     if (!Scalar(Type)) {
       AllFloating = false;
-      if (!Type || !Type->Size ||
-          Type->Size > getTargetRegInfo(A).PointerSize ||
+      if (!Type ||
+          (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
+           Type->Size != 8) ||
+          (Type->Kind == NdTypeKind::Ptr &&
+           Type->Size != getTargetRegInfo(A).PointerSize) ||
           (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Ptr &&
            !(Type->Kind == NdTypeKind::Struct && Type->IsEnum)))
         return std::nullopt;
     }
-  if (AllFloating && Parameters.size() > Registers.size())
+  if (A != Arch::X86 && AllFloating && Parameters.size() > Registers.size())
     return std::nullopt;
   const auto Placement = placeSourceParameters(A, F, ReturnType, Parameters);
   if (!Placement || Placement->ResultPointer ||
@@ -48,7 +51,7 @@ floatingCallArguments(Arch A, BinaryFormat F, const TypeRef &ReturnType,
     return std::nullopt;
   FloatingCallArguments Result;
   Result.ReturnBytes = ReturnType->Size;
-  if (!AllFloating) {
+  if (A == Arch::X86 || !AllFloating) {
     for (size_t I = 0; I < Parameters.size(); ++I) {
       const auto &Pieces = Placement->Parameters[I];
       if (Pieces.size() != 1 || Pieces[0].Indirect || Pieces[0].Offset != 0 ||

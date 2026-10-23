@@ -129,8 +129,17 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
       if (Op.NumInputs != 1 || !CFloatBytes(Op.Inputs[0].Size) ||
           (!IntegerResult && !CFloatBytes(Op.Output.Size)))
         return HighExpr::makeUndef(Op.Output.Size);
-      auto Value = HighExpr::makeUnary(
-          Op.Opcode, sourceFloatValue(Op.Inputs[0], Op.Inputs[0].Size));
+      auto Input = sourceFloatValue(Op.Inputs[0], Op.Inputs[0].Size);
+      if (Op.Opcode == NdOp::FLOAT_FLOAT2FLOAT &&
+          Op.Inputs[0].Size > Op.Output.Size &&
+          Input->Kind == ExprKind::UnaryOp &&
+          Input->Op == NdOp::FLOAT_FLOAT2FLOAT && Input->Operands.size() == 1 &&
+          Input->Operands[0]->Type &&
+          Input->Operands[0]->Type->Kind == NdTypeKind::Float &&
+          Input->Operands[0]->Type->Size == Op.Output.Size)
+        return HighExpr::makeBitCast(Input->Operands[0],
+                                     NdType::makeInt(Op.Output.Size, false));
+      auto Value = HighExpr::makeUnary(Op.Opcode, Input);
       if (IntegerResult) {
         Value->Type = NdType::makeInt(Op.Output.Size,
                                       Op.Opcode != NdOp::FLOAT_FLOAT2UINT &&

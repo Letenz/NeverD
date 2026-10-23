@@ -398,12 +398,15 @@ std::optional<FloatingCallArguments>
 boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
   const auto &Registers = getTargetRegInfo(A);
   if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
-      !Op.ScalarCallSignature || Op.ScalarCallSignature->Scalars.empty() ||
+      !Op.ScalarCallSignature ||
+      (A != Arch::X86 && Op.ScalarCallSignature->Scalars.empty()) ||
       Op.SourceCallHint || Op.CalleeVariadicFrom >= 0 ||
       Op.NumInputs != Op.ScalarCallSignature->Scalars.size() + 1 ||
       Op.CalleeFloatReturnBytes != Op.ScalarCallSignature->ReturnBytes ||
       Op.Output.Kind != MedVar::Reg ||
-      Op.Output.RegOff != Registers.FPReturnReg ||
+      (A == Arch::X86 ? (!Registers.isX87StackReg(Op.Output.RegOff) ||
+                         Op.Output.Size != 10)
+                      : Op.Output.RegOff != Registers.FPReturnReg) ||
       Op.Output.Size < Op.CalleeFloatReturnBytes)
     return std::nullopt;
   std::vector<TypeRef> Parameters;

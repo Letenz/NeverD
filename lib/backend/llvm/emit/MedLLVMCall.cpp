@@ -67,13 +67,10 @@ bool floatingHeaderCall(const FunctionSym &Function, Arch Architecture,
   const auto Signature =
       libc::floatingCallArguments(Function, Architecture, Format);
   const auto &Registers = getTargetRegInfo(Architecture);
-  if (Signature && !Signature->Scalars.empty()) {
+  if (Signature && (Architecture == Arch::X86 || !Signature->Scalars.empty())) {
     const auto Recovered =
         recoveredFloatingCallArguments(Op, Call, Architecture, Format);
-    return Recovered && *Recovered == *Signature &&
-           Op.Output.Kind == MedVar::Reg &&
-           Op.Output.RegOff == Registers.FPReturnReg &&
-           Op.Output.Size >= Signature->ReturnBytes;
+    return Recovered && *Recovered == *Signature;
   }
   if (!Signature || Signature->ParameterBytes.size() != Call.Args.size() ||
       Op.NumInputs != Call.Args.size() + 1 || Op.Output.Kind != MedVar::Reg ||

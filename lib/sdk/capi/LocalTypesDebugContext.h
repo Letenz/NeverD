@@ -265,6 +265,7 @@ private:
   /// of the libraries joined again.
   mutable std::map<types::BuiltinSpelling, std::unique_ptr<types::TypeSpeller>>
       Spellers;
+  mutable std::unique_ptr<types::TypeSpeller> PortablePrototypeSpeller;
   /// What renders the records a unit embeds: spelling the library's names
   /// for each unit would name every type again.
   mutable std::unique_ptr<types::EmbeddedCRenderer> CRenderer;

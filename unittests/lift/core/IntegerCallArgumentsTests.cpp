@@ -52,7 +52,18 @@ TEST(FloatingCallArguments, CompleteScalarRegistersAndConservativeBoundaries) {
     }
   }
   const auto T = NdType::makeFloat(8);
-  EXPECT_FALSE(floatingCallArguments(Arch::X86, BinaryFormat::COFF, T, {T}));
+  for (BinaryFormat F :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    const auto Stack = floatingCallArguments(Arch::X86, F, T, {T, T});
+    ASSERT_TRUE(Stack);
+    ASSERT_EQ(Stack->Scalars.size(), 2u);
+    EXPECT_EQ(Stack->Scalars[0].StackOffset, 4);
+    EXPECT_EQ(Stack->Scalars[1].StackOffset, 12);
+    EXPECT_EQ(Stack->Scalars[0].Kind, SourceABICarrierKind::Stack);
+    EXPECT_TRUE(Stack->Scalars[0].Floating);
+    EXPECT_TRUE(floatingCallArguments(Arch::X86, F, T, {}));
+    EXPECT_FALSE(floatingCallArguments(Arch::X86, F, T, {NdType::makePtr()}));
+  }
   FunctionSym Function;
   Function.ReturnType = T;
   Function.Params = {{"x", T}};

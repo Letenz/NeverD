@@ -203,17 +203,24 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Addr = CurOp.Addr;
-    S.Dst = HighExpr::makeVar(CurOp.Output,
-                              CallExpr->Type &&
-                                      CallExpr->Type->Kind == NdTypeKind::Struct
-                                  ? CallExpr->Type
-                                  : nullptr);
+    const bool SourceFloat = SourceFloatCallValues.count(varKey(CurOp.Output));
+    S.Dst = HighExpr::makeVar(
+        CurOp.Output, SourceFloat || (CallExpr->Type && CallExpr->Type->Kind ==
+                                                            NdTypeKind::Struct)
+                          ? CallExpr->Type
+                          : nullptr);
     // All machine consumers read the x87 carrier as eighty raw bits. Keep
     // that representation at the assignment boundary, including when a
     // later pass inlines the call into an arithmetic operand or return.
-    S.Val = X87Result ? HighExpr::makeBitCast(
-                            CallExpr, NdType::makeInt(CurOp.Output.Size, false))
-                      : CallExpr;
+    S.Val = CallExpr;
+    if (X87Result && !SourceFloat) {
+      if (CallExpr->Type && CallExpr->Type->Size != CurOp.Output.Size) {
+        S.Val = HighExpr::makeUnary(NdOp::FLOAT_FLOAT2FLOAT, S.Val);
+        S.Val->Type = NdType::makeFloat(CurOp.Output.Size);
+      }
+      S.Val = HighExpr::makeBitCast(S.Val,
+                                    NdType::makeInt(CurOp.Output.Size, false));
+    }
     Func.Body.push_back(std::move(S));
   } else {
     HighStmt S;

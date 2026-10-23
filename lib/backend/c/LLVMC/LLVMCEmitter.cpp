@@ -55,6 +55,7 @@
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCVariadicArguments.h"
 #include "neverd/libc/MinGWHeaderFunctions.h"
@@ -1693,9 +1694,13 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
   std::set<std::string> Rejected;
   const unsigned PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;
   const auto Scalar = [&](const TypeRef &Type) {
-    return Type && Type->Size && Type->Size <= PointerBytes &&
+    const bool Floating =
+        Type && Type->Kind == NdTypeKind::Float &&
+        (Type->Size == sizeof(float) || Type->Size == sizeof(double));
+    return Type && Type->Size && (Floating || Type->Size <= PointerBytes) &&
            (Type->Kind != NdTypeKind::Ptr || Type->Size == PointerBytes) &&
-           (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr ||
+           (Floating || Type->Kind == NdTypeKind::Int ||
+            Type->Kind == NdTypeKind::Ptr ||
             (Type->Kind == NdTypeKind::Struct && Type->IsEnum)) &&
            hasCSpelling(cDisplayType(Type));
   };
@@ -1732,26 +1737,42 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           Fits &= Scalar(Param.second);
           Parameters.push_back(Param.second);
         }
+        const auto Floating = Fits ? libc::floatingCallArguments(
+                                         *Source, Opts.TheArch, Opts.Format)
+                                   : std::nullopt;
         const auto Layout =
-            Fits ? integerCallArguments(Opts.TheArch, Opts.Format,
-                                        Source->ReturnType, Parameters)
-                 : std::nullopt;
-        Fits &= Layout && Layout->Positions == Parameters.size() &&
-                (Source->IsVariadic ? Parameters.size() <= Call->arg_size()
-                                    : Parameters.size() == Call->arg_size());
+            Fits && !Floating
+                ? integerCallArguments(Opts.TheArch, Opts.Format,
+                                       Source->ReturnType, Parameters)
+                : std::nullopt;
+        Fits &=
+            (Floating || (Layout && Layout->Positions == Parameters.size())) &&
+            (Source->IsVariadic ? Parameters.size() <= Call->arg_size()
+                                : Parameters.size() == Call->arg_size());
         for (unsigned I = 0; Fits && I < Parameters.size(); ++I) {
-          const auto &Param = Layout->Parameters[I];
           auto *Carrier = Call->getArgOperand(I)->getType();
-          Fits &= !Param.Indirect && Param.Pieces.size() == 1 &&
-                  Param.Pieces[0].Argument == I &&
-                  (Carrier->isIntegerTy() || Carrier->isPointerTy()) &&
-                  (!Carrier->isPointerTy() ||
-                   Carrier->getPointerAddressSpace() == 0) &&
-                  Mod.getDataLayout().getTypeStoreSize(Carrier) >=
-                      Parameters[I]->Size;
+          if (Parameters[I]->Kind == NdTypeKind::Float) {
+            Fits &= Floating && Carrier->isFloatingPointTy() &&
+                    Mod.getDataLayout().getTypeStoreSize(Carrier) ==
+                        Parameters[I]->Size;
+            continue;
+          }
+          Fits &=
+              (Floating || (!Layout->Parameters[I].Indirect &&
+                            Layout->Parameters[I].Pieces.size() == 1 &&
+                            Layout->Parameters[I].Pieces[0].Argument == I)) &&
+              (Carrier->isIntegerTy() || Carrier->isPointerTy()) &&
+              (!Carrier->isPointerTy() ||
+               Carrier->getPointerAddressSpace() == 0) &&
+              Mod.getDataLayout().getTypeStoreSize(Carrier) >=
+                  Parameters[I]->Size;
         }
         if (Fits && Source->ReturnType->Kind == NdTypeKind::Void)
           Fits = Call->getType()->isVoidTy() || !valueFeedsPrintedUse(Call);
+        else if (Fits && Source->ReturnType->Kind == NdTypeKind::Float)
+          Fits = Floating && Call->getType()->isFloatingPointTy() &&
+                 Mod.getDataLayout().getTypeStoreSize(Call->getType()) ==
+                     Source->ReturnType->Size;
         else if (Fits)
           Fits =
               Scalar(Source->ReturnType) && (Call->getType()->isIntegerTy() ||
@@ -1873,6 +1894,13 @@ std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
   if (const auto *Source = sourceImportCallee(Call)) {
     if (Source->ReturnType->Kind == NdTypeKind::Void)
       throw std::runtime_error("A void import has a live machine result");
+    if (Source->ReturnType->Kind == NdTypeKind::Float) {
+      if (!Type->isFloatingPointTy() ||
+          Type->getPrimitiveSizeInBits() != Source->ReturnType->Size * 8)
+        throw std::runtime_error(
+            "A floating import has an incompatible machine result");
+      return Expr;
+    }
     // Source signedness must not sign-extend the low return-register bits
     // into the machine carrier. Pointers similarly convert through uintptr_t.
     const std::string Bits =

@@ -167,6 +167,10 @@ public:
   /// In a decompiled unit, the type a typedef of a name the implementation
   /// reserves stands for (reservedTypedef); none elsewhere.
   const TypeExpr *spelledThrough(llvm::StringRef Name) const {
+    if (Embedded && Options.PrototypeIntegerIdentity)
+      if (const LocalType *Local = Library.find(Name);
+          Local && Local->Kind == TypeKind::Typedef)
+        return Local->Target.get();
     return Embedded ? reservedTypedef(Library, Name) : nullptr;
   }
   /// Take the record \p Name from the system's headers, which name it by a
@@ -266,6 +270,17 @@ std::string CWriter::builtin(Builtin Type) const {
   case BuiltinSpelling::Keywords:
     return Info.Keywords;
   case BuiltinSpelling::Portable:
+    if (Options.PrototypeIntegerIdentity &&
+        (Type == Builtin::Long || Type == Builtin::ULong ||
+         Type == Builtin::LongLong || Type == Builtin::ULongLong)) {
+      // A Windows unsigned long and uint32_t have the same ABI width but
+      // distinct C types. Keep the header's identity on its own target while
+      // preserving the machine width when compiling the source on another.
+      const std::string Keywords = Info.Keywords;
+      return "__typeof__(__builtin_choose_expr(sizeof(" + Keywords +
+             ") == " + std::to_string(Library.builtinBytes(Type)) + ", (" +
+             Keywords + ")0, (" + portableBuiltin(Type, Library) + ")0))";
+    }
     return portableBuiltin(Type, Library);
   }
   return Info.Keywords;

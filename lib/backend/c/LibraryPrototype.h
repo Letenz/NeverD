@@ -22,18 +22,24 @@ namespace neverd::c_library {
 /// types, <stdint.h>'s, and record and enumeration tags.  Such a unit then
 /// declares the routine as its header does, `const` and all, and agrees with
 /// the header wherever it includes it too.
-inline bool selfContainedDeclaration(llvm::StringRef Declaration,
-                                     llvm::StringRef Name) {
+inline bool selfContainedDeclaration(
+    llvm::StringRef Declaration, llvm::StringRef Name,
+    const std::set<std::string, std::less<>> &DeclaredTypes = {}) {
   if (Declaration.empty())
     return false;
   static const std::set<std::string, std::less<>> Known = {
-      "void",      "char",     "short",    "int",        "long",
-      "signed",    "unsigned", "float",    "double",     "_Bool",
-      "const",     "volatile", "restrict", "__restrict", "__restrict__",
-      "_Noreturn", "struct",   "union",    "enum",       "int8_t",
-      "int16_t",   "int32_t",  "int64_t",  "uint8_t",    "uint16_t",
-      "uint32_t",  "uint64_t", "intptr_t", "uintptr_t",  "intmax_t",
-      "uintmax_t"};
+      "void",      "char",       "short",
+      "int",       "long",       "signed",
+      "unsigned",  "float",      "double",
+      "_Bool",     "const",      "volatile",
+      "restrict",  "__restrict", "__restrict__",
+      "_Noreturn", "struct",     "union",
+      "enum",      "int8_t",     "int16_t",
+      "int32_t",   "int64_t",    "uint8_t",
+      "uint16_t",  "uint32_t",   "uint64_t",
+      "intptr_t",  "uintptr_t",  "intmax_t",
+      "uintmax_t", "__typeof__", "__builtin_choose_expr",
+      "sizeof"};
   llvm::StringRef Previous;
   for (size_t I = 0; I < Declaration.size();) {
     if (!llvm::isAlpha(Declaration[I]) && Declaration[I] != '_') {
@@ -53,7 +59,8 @@ inline bool selfContainedDeclaration(llvm::StringRef Declaration,
     const bool Parameter = Next < Declaration.size() &&
                            llvm::StringRef(",)[").contains(Declaration[Next]);
     if (Word != Name && !Parameter && !Known.count(Word) &&
-        Previous != "struct" && Previous != "union" && Previous != "enum")
+        !DeclaredTypes.count(Word) && Previous != "struct" &&
+        Previous != "union" && Previous != "enum")
       return false;
     Previous = Word;
     I = End;

@@ -101,6 +101,38 @@ TEST(LocalTypesDebugContext,
   EXPECT_EQ(Stop->PortablePrototypeDeclaration, "_Noreturn void Stop(void)");
 }
 
+TEST(LocalTypesDebugContext, PortablePrototypesRetainIntegerKeywordIdentity) {
+  using namespace neverd;
+  for (auto Model : {types::DataModel::ILP32, types::DataModel::LLP64,
+                     types::DataModel::LP64}) {
+    auto Library = std::make_shared<types::TypeLibrary>(Model);
+    ASSERT_TRUE(types::parseCTypes(R"(
+      typedef unsigned long DWORD;
+      typedef enum { OpFirst = 1, OpSecond = 2 } Operation;
+      double Scalar(DWORD Flags, Operation Op, double Value, long *Output);
+    )",
+                                   *Library)
+                    .ok());
+    NamesOnlyDebugContext Names;
+    sdk::LocalTypesDebugContext Context(Names, Library);
+    const auto Signature = Context.resolvePrototype("Scalar");
+    ASSERT_TRUE(Signature);
+    const std::string Bytes = Model == types::DataModel::LP64 ? "8" : "4";
+    const std::string Bits = Model == types::DataModel::LP64 ? "64" : "32";
+    EXPECT_NE(Signature->PortablePrototypeDeclaration.find(
+                  "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == " +
+                  Bytes + ", (unsigned long)0, (uint" + Bits + "_t)0)) Flags"),
+              std::string::npos)
+        << Signature->PortablePrototypeDeclaration;
+    EXPECT_NE(Signature->PortablePrototypeDeclaration.find("Operation Op"),
+              std::string::npos);
+    EXPECT_EQ(Signature->Params[0].second->Size,
+              Model == types::DataModel::LP64 ? 8u : 4u);
+    EXPECT_EQ(Context.resolvePrototype("Scalar")->PortablePrototypeDeclaration,
+              Signature->PortablePrototypeDeclaration);
+  }
+}
+
 TEST(LocalTypesDebugContext, PointerDeclarationsDoNotRequireRecordLayouts) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>(types::DataModel::LLP64);

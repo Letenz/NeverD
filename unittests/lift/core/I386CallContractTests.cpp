@@ -96,6 +96,110 @@ BinaryImage makeImage(std::vector<uint8_t> Code,
   return Img;
 }
 
+TEST(I386CallContract, HeaderFloatingImportsDefineTheNormalizedX87Result) {
+  class Header : public NullDebugContext {
+  public:
+    uint16_t Bytes = 8;
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "fixture_scalar_fp")
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Name = Name.str();
+      Function.PrototypeFromHeader = true;
+      Function.PrototypeLibrary = "test-header";
+      Function.CallConv = DebugCallConv::Cdecl;
+      Function.ReturnType = NdType::makeFloat(Bytes);
+      Function.Params = {{"left", NdType::makeFloat(Bytes)},
+                         {"right", NdType::makeFloat(Bytes)}};
+      const std::string Type = Bytes == 4 ? "float" : "double";
+      Function.PortablePrototypeDeclaration =
+          Type + " fixture_scalar_fp(" + Type + " left, " + Type + " right)";
+      return Function;
+    }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      auto Function =
+          Address == Iat ? resolvePrototype("fixture_scalar_fp") : std::nullopt;
+      if (Function)
+        Function->Addr = Address;
+      return Function;
+    }
+  } Debug;
+  for (uint16_t Bytes : {4u, 8u}) {
+    Debug.Bytes = Bytes;
+    for (bool StoreResult : {false, true}) {
+      std::vector<uint8_t> Code;
+      auto Push = [&](uint32_t Value) {
+        Code.push_back(0x68);
+        for (unsigned Byte = 0; Byte < 4; ++Byte)
+          Code.push_back(static_cast<uint8_t>(Value >> (8 * Byte)));
+      };
+      if (Bytes == 8) {
+        Push(0xC01A0000);
+        Push(0);
+        Push(0x40040000);
+        Push(0);
+      } else {
+        Push(0xC0D00000);
+        Push(0x40200000);
+      }
+      const auto Call = callThroughSlot(Iat);
+      Code.insert(Code.end(), Call.begin(), Call.end());
+      Code.insert(Code.end(), {0x83, 0xC4, uint8_t(2 * Bytes)});
+      if (StoreResult) {
+        // fstp/fld must see the actual post-call TOP, not a stale entry slot.
+        Code.insert(Code.end(), {0x83, 0xEC, uint8_t(Bytes),
+                                 uint8_t(Bytes == 8 ? 0xDD : 0xD9), 0x1C, 0x24,
+                                 uint8_t(Bytes == 8 ? 0xDD : 0xD9), 0x04, 0x24,
+                                 0x83, 0xC4, uint8_t(Bytes)});
+      }
+      Code.push_back(0xC3);
+      auto Image = makeImage(Code, {"fixture_scalar_fp"});
+      ASSERT_TRUE(Image.recordImportStorageSlot(
+          Iat, "fixture_scalar_fp", 0, ImportStorageEvidence::LoaderBind));
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(Bytes);
+        SCOPED_TRACE(StoreResult);
+        SCOPED_TRACE(LLVM);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = LLVM;
+        auto Result = Pipeline().run(Image, Context, Options, &Debug);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        ASSERT_EQ(Result.MedFuncs.size(), 1u);
+        EXPECT_TRUE(Result.MedFuncs.front().FPReturnViaX87);
+        ASSERT_TRUE(Result.MedFuncs.front().ReturnType);
+        EXPECT_EQ(Result.MedFuncs.front().ReturnType->Size, Bytes);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        ASSERT_TRUE(LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Out,
+                                               COptions, &Debug, &Image)
+                         : HighCEmitter().emit(Result.HighFuncs, Out, COptions,
+                                               &Debug));
+        if (!StoreResult) {
+          EXPECT_EQ(Source.find("_BitInt(80)"), std::string::npos) << Source;
+          EXPECT_EQ(Source.find("long double"), std::string::npos) << Source;
+        }
+        const std::string Type = Bytes == 4 ? "float" : "double";
+        source_call_execution_test::compileAndRun(
+            Source + "\n" + Type + " fixture_scalar_fp(" + Type + " left, " +
+            Type +
+            " right) {\n"
+            "  if (left != 2.5 || right != -6.5) __builtin_trap();\n"
+            "  return 42.25;\n}\n"
+            "int main(void) { return wrap() != 42.25; }\n");
+      }
+    }
+  }
+}
+
 TEST(I386CallContract, HeaderQualifiersKeepTheOuterCallingConvention) {
   auto Code = callThroughSlot(Iat);
   Code[1] = 0x25; // jmp [IAT], forwarding the two incoming stack arguments.

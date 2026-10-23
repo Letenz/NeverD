@@ -463,9 +463,14 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
   if (Convention && Convention->ImportArgumentsFromPrototype &&
       CallEntryFloatingArguments && MOp.NumInputs == 1)
     if (const auto F = CallEntryFloatingArguments->find(ArgumentsKey);
-        F != CallEntryFloatingArguments->end()) {
+        F != CallEntryFloatingArguments->end() &&
+        (TargetArch != Arch::X86 ||
+         (LOp.Output.isReg() && TRI.isX87StackReg(LOp.Output.Offset) &&
+          LOp.Output.Size == x86reg::FPURegSize))) {
       const auto &Signature = F->second;
-      if (!Signature.Scalars.empty()) {
+      if (TargetArch == Arch::X86 || !Signature.Scalars.empty()) {
+        // TOP normalization owns the physical x87 result slot. A declaration
+        // cannot overwrite an unproved or context-based call with guessed ST0.
         MOp.ScalarCallSignature =
             std::make_shared<FloatingCallArguments>(Signature);
         MOp.CalleeRegisterArgs = -1;
@@ -493,7 +498,9 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
           // Ordinary x64 CALL pushes a return PC; the lift is SP-neutral.
           // A tail jump already sees the callee's entry stack position.
           const int64_t Bias =
-              TargetArch == Arch::X64 && !TailCall ? TRI.PointerSize : 0;
+              (TargetArch == Arch::X64 || TargetArch == Arch::X86) && !TailCall
+                  ? TRI.PointerSize
+                  : 0;
           MedOp Address;
           Address.Opcode = NdOp::INT_ADD;
           Address.Addr = LOp.Addr;
@@ -514,7 +521,9 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
         }
         MOp.CalleeFloatReturnBytes = Signature.ReturnBytes;
         MOp.Output =
-            ndVarToMedVar(NdVar::reg(TRI.FPReturnReg, TRI.FPABIRegWidth));
+            TargetArch == Arch::X86
+                ? ndVarToMedVar(LOp.Output)
+                : ndVarToMedVar(NdVar::reg(TRI.FPReturnReg, TRI.FPABIRegWidth));
       } else if (Signature.ParameterBytes.size() <= FPParamRegs.size() &&
                  Signature.ParameterBytes.size() <=
                      sizeof(MOp.CalleeVectorArgWidths) * 2 &&

@@ -13,6 +13,7 @@
 
 #include "neverd/ir/med/MedTypePass.h"
 
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -226,6 +227,11 @@ x87ReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   if (It == Defs.end())
     return 0;
   const MedOp *Def = It->second;
+  if ((Def->Opcode == NdOp::CALL || Def->Opcode == NdOp::INDIR_CALL) &&
+      Def->Output.Size == 10 && Def->ScalarCallSignature &&
+      Def->CalleeFloatReturnBytes == Def->ScalarCallSignature->ReturnBytes &&
+      (Def->CalleeFloatReturnBytes == 4 || Def->CalleeFloatReturnBytes == 8))
+    return Def->CalleeFloatReturnBytes;
   if (Def->Opcode == NdOp::FLOAT_FLOAT2FLOAT && Def->NumInputs >= 1 &&
       Def->Output.Size > 8 &&
       (Def->Inputs[0].Size == 4 || Def->Inputs[0].Size == 8))
@@ -608,15 +614,6 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   DefinedReturnBytes = 0;
   uint16_t DefaultSize = TRI.PointerSize > 0 ? TRI.PointerSize : 4;
 
-  // CFG construction can prove the exact logical x87 top at every return.
-  // Its explicit operand is the returned value, including across calls and
-  // joins; do not rediscover a different physical slot by backward scanning.
-  if (Func.ExplicitX87ReturnValue) {
-    ReturnViaX87 = true;
-    DefinedReturnBytes = 10;
-    return NdType::makeFloat(10);
-  }
-
   // The epilogue register-restore filter below applies to x86/x86-64: a `pop`
   // into the integer return register right before `ret` is a stack-cleanup /
   // PIC-base restore (i386 `pop eax` for the GOT base, x86-64 `pop rax` undoing
@@ -642,6 +639,26 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
     for (const auto &Phi : Blk.Phis)
       if (Phi.Output.Size > 0)
         PhiDefs[{Phi.Output.Id, Phi.Output.SSAVer}] = &Phi;
+
+  // CFG construction owns the logical x87 top at every return. Its carrier
+  // remains eighty bits, but a declared float/double call result or an IEEE
+  // value extended into it needs only that source precision. Every return
+  // must agree; arithmetic, unknown values and unresolved PHIs retain fp80.
+  if (Func.ExplicitX87ReturnValue) {
+    ReturnViaX87 = true;
+    DefinedReturnBytes = 10;
+    uint16_t Bytes = 0;
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::RETURN) {
+          const uint16_t Width =
+              Op.NumInputs == 1 ? x87ReturnElemSize(Defs, Op.Inputs[0], 0) : 0;
+          if (Width != 4 && Width != 8)
+            return NdType::makeFloat(10);
+          Bytes = std::max(Bytes, Width);
+        }
+    return NdType::makeFloat(Bytes ? Bytes : 10);
+  }
 
   // Aggregate across *every* RETURN, not just the first: a function with an
   // early `return arg` (no return-register write — the FP argument is passed

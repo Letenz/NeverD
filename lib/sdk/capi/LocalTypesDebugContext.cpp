@@ -765,7 +765,8 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
       (Function->second->NoReturn ? "_Noreturn " : "") +
       Speller->spell(*types::makeFunction(Function->second), Name.str());
   Options.Spelling = types::BuiltinSpelling::Portable;
-  auto &Portable = Spellers[types::spellingOf(Options)];
+  Options.PrototypeIntegerIdentity = true;
+  auto &Portable = PortablePrototypeSpeller;
   if (!Portable)
     Portable = std::make_unique<types::TypeSpeller>(*Types, Options);
   auto PortableFunction = Function->second;
