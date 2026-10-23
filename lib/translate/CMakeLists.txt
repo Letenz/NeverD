@@ -21,6 +21,7 @@ add_neverd_component_library(NeverDTranslate
   TranslationTargetMachine.cpp
   X86TranslationBlockBuilder.cpp
   X86TranslationBlockLowerer.cpp
+  X87PortableRuntime.cpp
 
   LINK_COMPONENTS
   Decode

@@ -6883,6 +6883,18 @@ record, including a successful or eight-byte record, or selected by retrying a
 failed scalar validation. This foundational validator enables no new profile;
 existing integer dispatch, artifact admission and helpers remain scalar-v1.
 
+`X87PortableRuntime` adapts the existing portable semantic owner to this checked
+memory boundary. Its separate versioned state includes explicit environment
+and physical-payload provenance; the original integer state/frame is unchanged.
+Waiting-exception preflight precedes memory checks, and store preflight precedes
+operand evaluation without publishing bytes or generations. Final stores repeat
+those checks. A store fault keeps the current x87 state; a completed executable
+store commits the matching stack/pop state before returning self-modification.
+The result carries a stable refusal code, completion flag and success-only
+scalar validity, plus only this operation's memory result. Callers still own
+PC/accounting and profile admission. This C++ adapter alone does not enable a
+generated-code, JIT, public API or cross-architecture capability cell.
+
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
 composes proof-gated semantic simplification with LLVM optimization at `O0`

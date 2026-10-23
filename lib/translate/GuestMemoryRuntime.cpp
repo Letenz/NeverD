@@ -298,7 +298,20 @@ GuestMemoryRuntime::loadBytes(uint64_t Address,
 GuestMemoryAccessResult
 GuestMemoryRuntime::storeBytes(uint64_t Address, llvm::ArrayRef<uint8_t> Input,
                                uint32_t RequiredAlignment) {
-  const uint64_t Size = Input.size();
+  return accessStoreBytes(Address, Input.size(), Input.data(),
+                          RequiredAlignment, StorePhase::Commit);
+}
+
+GuestMemoryAccessResult
+GuestMemoryRuntime::validateStoreBytes(uint64_t Address, uint64_t Size,
+                                       uint32_t RequiredAlignment) {
+  return accessStoreBytes(Address, Size, nullptr, RequiredAlignment,
+                          StorePhase::Validate);
+}
+
+GuestMemoryAccessResult GuestMemoryRuntime::accessStoreBytes(
+    uint64_t Address, uint64_t Size, const uint8_t *Input,
+    uint32_t RequiredAlignment, StorePhase Phase) {
   if (Size == 0 || Size > kMemoryFaultMaxAccessBytes)
     return fault(RuntimeMemoryFaultKindV1::InvalidAccessWidth, Address, 0,
                  MemoryAccessKind::Write, RequiredAlignment);
@@ -349,6 +362,12 @@ GuestMemoryRuntime::storeBytes(uint64_t Address, llvm::ArrayRef<uint8_t> Input,
                    Address, Size, MemoryAccessKind::Write, RequiredAlignment, 0,
                    OldGeneration);
     NewGeneration = OldGeneration + 1;
+  }
+
+  if (Phase == StorePhase::Validate) {
+    GuestMemoryAccessResult Result;
+    recordResult(Result);
+    return Result;
   }
 
   uint64_t ByteIndex = 0;

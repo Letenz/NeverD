@@ -288,6 +288,14 @@ Preflight success authenticates neither payloads nor guest memory and is not a
 reusable execution receipt. Exact binary80 adapters can use the translation
 memory owner's transactional byte-span operations rather than split stores;
 those operations alone do not enable generated-code or translation support.
+The checked `X87PortableRuntime` C++ adapter uses a separate versioned state
+with explicit environment-known and physical-payload-known fields. It requires
+an authenticated incoming environment even for FNINIT; it does not synthesize
+one from an ABI or initialize unknown retained registers. It validates the full
+store operand before evaluation, and publishes memory and x87 state only on a
+completed instruction. Self-modifying stores commit their corresponding pop
+before reporting invalidation. The caller must bind a generated/translation
+profile separately; the adapter does not qualify such a profile by itself.
 Invalid controls, unsupported forms/values, unmasked data-instruction controls, stack
 faults and unauthenticated memory refuse without committing state or a store.
 Unqualified MMX and external save/restore boundaries also refuse in lenient

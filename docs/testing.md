@@ -3505,6 +3505,15 @@ faults and executable stores to check old-protocol rejection, lossless details,
 generation overflow and retained reserved-field, scalar, generation, size and
 fault/access invariants. Existing scalar and runtime ABI tests remain required
 because both access shapes share the same memory owner.
+`X87PortableRuntime.*` in the translation contract target exercises the checked
+adapter with every TOP and all twelve valid PC/RC combinations using a sum
+distinguishable from binary64. It checks exact ten-byte results, sticky status,
+physical provenance, FIP/FDP, write-only output and canaries. Additional cases
+check a faulting final byte after a completed load, completed executable-store
+pop, pending/unknown/invalid input state, stale memory faults, unsupported
+operations, memory-before-stack-fault precedence and success-only scalar output.
+Store-preflight regression checks that a successful check neither writes nor
+increments generations and cannot authorize a later overflowing generation.
 LLVM and Unicorn are independent numerical references; the native x64 test
 compares original instruction bits and defined arithmetic status and skips on
 other hosts. `NeverDX87PortableContextTests` checks all TOP values, retained raw

@@ -1228,6 +1228,33 @@ TEST(GuestMemoryRuntime, ExactSpanProtocolRetainsAllOtherControlInvariants) {
   Reject(Invalid);
 }
 
+TEST(GuestMemoryRuntime, StorePreflightCannotPublishOrAuthorizeAStaleWrite) {
+  auto Runtime = createRuntime(stateWithMemory({
+      {0xa000, MemoryPermission::Write | MemoryPermission::Execute,
+       UINT64_MAX - 1, std::vector<uint8_t>(10, 0x5a)},
+  }));
+  EXPECT_EQ(Runtime->validateStoreBytes(0xa000, 10).Status,
+            GuestMemoryAccessStatus::Completed);
+  auto Snapshot = Runtime->snapshotMemoryRegions();
+  EXPECT_EQ(Snapshot[0].Bytes, std::vector<uint8_t>(10, 0x5a));
+  EXPECT_EQ(Snapshot[0].Generation, UINT64_MAX - 1);
+  const std::array<uint8_t, 10> Value{};
+  EXPECT_EQ(Runtime->storeBytes(0xa000, Value).Status,
+            GuestMemoryAccessStatus::SelfModification);
+  expectFault(Runtime->storeBytes(0xa000, Value),
+              RuntimeMemoryFaultKindV1::ExecutableGenerationOverflow);
+  expectWideControl(Runtime->snapshotControlBlock());
+  Snapshot = Runtime->snapshotMemoryRegions();
+  EXPECT_EQ(Snapshot[0].Bytes, std::vector<uint8_t>(10, 0));
+  EXPECT_EQ(Snapshot[0].Generation, UINT64_MAX);
+  expectFault(
+      Runtime->validateStoreBytes(0xa000, kMemoryFaultMaxAccessBytes + 1),
+      RuntimeMemoryFaultKindV1::InvalidAccessWidth);
+  EXPECT_EQ(Runtime->snapshotControlBlock().Exit.Size, 0u);
+  expectValidControl(Runtime->snapshotControlBlock());
+  expectValidExactSpanControl(Runtime->snapshotControlBlock());
+}
+
 TEST(GuestMemoryRuntime,
      StoresAcrossMultipleExecutableOwnersFailClosedForEveryPolicy) {
   const GuestState State = stateWithMemory({

@@ -17,6 +17,7 @@ add_neverd_unittest(NeverDTranslationContractTests
   TranslationObjectRequestTests.cpp
   X86TranslationBlockBuilderTests.cpp
   X86TranslationBlockLowererTests.cpp
+  X87PortableRuntimeTests.cpp
 
   LINK_COMPONENTS
   Support
