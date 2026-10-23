@@ -1489,9 +1489,12 @@ TEST(AArch64PAuthSemantics, AuthenticatedTailCallsRequireARestoredFrame) {
       {false, {0xdac1a3fe, 0xf3a0003f, 0xd61f081f}}, // wrong key
       {false, {0xdac1a3fe, 0xd50323bf, 0xd61f081f}}, // missing second modifier
       {false, {0xd503233f, 0xf380003f, 0xd61f081f}}, // extra second modifier
+#define NEVERD_A64_PAUTH_FRAME_CASE(TailCall, ...) {TailCall, {__VA_ARGS__}},
+#include "AArch64PAuthFrameFixtures.def"
   };
+  unsigned CaseIndex = 0;
   for (const auto &Case : Cases) {
-    SCOPED_TRACE(testing::Message() << Case.Words.front());
+    SCOPED_TRACE(CaseIndex++);
     BinaryImage Image;
     Image.Arch = Arch::AArch64;
     Image.Format = BinaryFormat::MachO;
