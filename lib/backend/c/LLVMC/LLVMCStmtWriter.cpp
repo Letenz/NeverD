@@ -15,6 +15,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
+#include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
 #include "LLVMCIntegerMinMax.h"
@@ -4841,6 +4842,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Sgx =
+          renderX86SgxCall(Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *Sgx;
+    return true;
+  }
   if (auto SystemState = renderX86SystemStateCall(Opts.TheArch, Call, Name,
                                                   ResultLive, ArgStrs)) {
     emitIndent(Indent);

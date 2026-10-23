@@ -1466,6 +1466,17 @@ reconstructs that exact source without rerunning the engine. The GUI's
 gap limits. Rename isolation checks wait for initial navigation to settle before
 observing signals caused by the edit.
 
+`X86Sgx.*` in `NeverDX86SystemStateTests` checks ENCLS/ENCLV input/output
+widths, ignored and forbidden prefixes, strict emulator refusal, leaf-dependent
+CF/ZF/PF/AF/SF/OF projection and preserved DF. `X86SgxSource.*` in
+`NeverDX86VirtualizationSourceTests` checks dynamic leaf selection, all GPR
+transports, retained dead effects and malformed owned assembly. Both word sizes
+compile through LLVM, HighC and LLVMC for ELF, COFF and Mach-O with default/NoOpt
+and Clang O0/O2; the checks also build the actual native objects. Linux x64
+compares fault signal/code with original bytes, then injects controlled
+completions through sigreturn to check all result transports. This is not a
+successful privileged SGX or enclave-memory concurrency qualification.
+
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and
 strict scalar-emulator refusal. `NeverDX86VirtualizationSourceTests` covers both

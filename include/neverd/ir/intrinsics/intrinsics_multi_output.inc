@@ -40,3 +40,7 @@ MULTI_OUT(Intrinsic::A64_MopsSetPTN, 3);
 
 // AArch64 FEAT_MOPS copy prologue: destination, source, count, NZCV.
 MULTI_OUT(Intrinsic::A64_MopsCpyFP, 4);
+
+// SGX: rBX and the two-byte CF/ZF completion; rAX is the primary result.
+MULTI_OUT(Intrinsic::X86Encls, 2);
+MULTI_OUT(Intrinsic::X86Enclv, 2);

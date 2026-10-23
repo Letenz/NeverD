@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Constant.h"
+#include "neverd/ir/intrinsics/X86Sgx.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-intrinsic"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
@@ -106,6 +107,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   using I = Intrinsic;
   auto IC = static_cast<I>(IntrCode);
 
+  if (isX86SgxIntrinsic(IC))
+    return emitX86Sgx(Op, IC, Builder);
   if (isX86SystemStateIntrinsic(IC) || IC == I::X86MsrAccess)
     return emitX86SystemState(Op, IC, Builder);
 

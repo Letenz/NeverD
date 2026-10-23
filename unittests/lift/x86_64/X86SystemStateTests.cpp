@@ -651,3 +651,139 @@ TEST(X86MaskedStore, SelectedLanesWriteWithoutTouchingMaskedUnmappedMemory) {
 }
 
 } // namespace
+
+TEST(X86Sgx, ImplicitOperandsAndIgnoredPrefixesKeepNativeWidths) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Opcode : {0xcf, 0xc0})
+      for (const uint8_t Prefix : {0, 0x67, 0x64, 0x65, 0x4f}) {
+        if (Prefix == 0x4f && A == Arch::X86)
+          continue;
+        std::vector<uint8_t> Bytes;
+        if (Prefix)
+          Bytes.push_back(Prefix);
+        Bytes.insert(Bytes.end(), {0x0f, 0x01, static_cast<uint8_t>(Opcode)});
+        const auto Ops = lift(A, Bytes);
+        const auto It =
+            std::find_if(Ops.begin(), Ops.end(), [](const auto &Op) {
+              return Op.Opcode == NdOp::INTRINSIC;
+            });
+        ASSERT_NE(It, Ops.end());
+        const auto Id =
+            Opcode == 0xcf ? Intrinsic::X86Encls : Intrinsic::X86Enclv;
+        const uint16_t Word = A == Arch::X64 ? 8 : 4;
+        ASSERT_EQ(It->NumInputs, 5);
+        EXPECT_EQ(It->Output, NdVar::reg(x86reg::RAX, Word));
+        EXPECT_EQ(It->Inputs[1], NdVar::reg(x86reg::RAX, Word));
+        for (unsigned I = 2; I <= 4; ++I) {
+          EXPECT_TRUE(It->Inputs[I].isTemp());
+          EXPECT_EQ(It->Inputs[I].Size, Word);
+        }
+        EXPECT_TRUE(x86SgxShapeIsValid(Id, x86SgxLowShape(*It, A)));
+        EXPECT_EQ(intrinsicOutputCount(Id), 2u);
+        EXPECT_TRUE(isSideeffectIntrinsic(Id));
+        BinaryImage Image;
+        Image.Arch = A;
+        NdOpEmulator Emulator(Image);
+        EXPECT_FALSE(Emulator.step(*It));
+        for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+          auto S = x86SgxLowShape(*It, A);
+          switch (Mutation) {
+          case 0:
+            S.InputSizes[3] = 2;
+            break;
+          case 1:
+            S.OutputSize = 0;
+            break;
+          case 2:
+            S.Arguments = 3;
+            break;
+          case 3:
+            S.ValidId = false;
+            break;
+          case 4:
+            S.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+            break;
+          case 5:
+            S.TargetArch = Arch::AArch64;
+            break;
+          }
+          EXPECT_FALSE(x86SgxShapeIsValid(Id, S));
+        }
+      }
+}
+
+TEST(X86Sgx, FlagProjectionUsesIncomingLeafAndPreservesDirection) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (bool Supervisor : {false, true})
+      for (unsigned Leaf = 0; Leaf <= 24; ++Leaf)
+        for (unsigned Old : {0, 1})
+          for (unsigned Completion = 0; Completion < 4; ++Completion) {
+            if (!Supervisor && Leaf > 2)
+              continue;
+            const auto Ops =
+                lift(A, {0x0f, 0x01,
+                         static_cast<uint8_t>(Supervisor ? 0xcf : 0xc0)});
+            BinaryImage Image;
+            Image.Arch = A;
+            NdOpEmulator E(Image);
+            E.setRegister(x86reg::RAX,
+                          (A == Arch::X64 ? UINT64_C(0x1234567800000000) : 0) |
+                              Leaf);
+            E.setRegister(x86reg::RBX, 0x12345678);
+            E.setRegister(x86reg::RCX, 0x23456789);
+            E.setRegister(x86reg::RDX, 0x3456789a);
+            for (auto F : {x86reg::CF, x86reg::ZF, x86reg::AF, x86reg::PF,
+                           x86reg::SF, x86reg::OF, x86reg::DF})
+              E.setRegister(F, Old);
+            auto Supply = [&](NdVar Dst, uint64_t Value) {
+              LowOp O;
+              O.Opcode = NdOp::COPY;
+              O.Output = Dst;
+              O.addInput(NdVar::scalar(Value, Dst.Size));
+              EXPECT_TRUE(E.step(O));
+            };
+            for (unsigned I = 0; I < Ops.size(); ++I) {
+              if (Ops[I].Opcode == NdOp::INTRINSIC) {
+                // Substitute only the unavailable CPU completion. The actual
+                // lifted flag projection and auxiliary transport run unchanged.
+                ASSERT_LT(I + 2, Ops.size());
+                Supply(Ops[I].Output, 0xdeadbeef);
+                Supply(Ops[I + 1].Inputs[0], 0xabcde123);
+                Supply(Ops[I + 2].Inputs[0],
+                       (Completion & 1) | ((Completion >> 1) << 8));
+              } else
+                ASSERT_TRUE(E.step(Ops[I]));
+            }
+            const bool Preserve =
+                Supervisor && (Leaf == 0 || Leaf == 1 || Leaf == 6 ||
+                               Leaf == 10 || Leaf == 13);
+            EXPECT_EQ(E.getRegister(x86reg::CF),
+                      Preserve ? Old : Completion & 1);
+            EXPECT_EQ(E.getRegister(x86reg::ZF),
+                      Preserve ? Old : Completion >> 1);
+            for (auto F : {x86reg::AF, x86reg::PF, x86reg::SF, x86reg::OF})
+              EXPECT_EQ(E.getRegister(F), Preserve ? Old : 0);
+            EXPECT_EQ(E.getRegister(x86reg::DF), Old);
+            EXPECT_EQ(E.getRegister(x86reg::RBX),
+                      Supervisor && Leaf == 4 ? 0xabcde123u : 0x12345678u);
+            EXPECT_EQ(E.getRegister(x86reg::RAX), 0xdeadbeefu);
+          }
+}
+
+TEST(X86Sgx, RefiningPrefixesNeverBecomeUnprefixedInstructions) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const uint8_t Opcode : {0xcf, 0xc0})
+      for (const uint8_t Prefix : {0xf0, 0x66, 0xf2, 0xf3}) {
+        Decoder D;
+        ASSERT_TRUE(D.init(A));
+        const std::vector<uint8_t> Bytes = {Prefix, 0x0f, 0x01, Opcode};
+        DecodedInsn I{};
+        const auto Size =
+            D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I);
+        if (!Size)
+          continue;
+        std::vector<LowOp> Ops;
+        EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+      }
+}

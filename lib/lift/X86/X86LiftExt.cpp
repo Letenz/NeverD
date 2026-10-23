@@ -807,15 +807,15 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_UMWAIT:
     return liftSystemState(*this, S, Insn, X86);
 
-  // Machine transitions need a complete-state continuation contract. SGX
-  // supervisor/VMM leaves also still need explicit register/flag completion
-  // and enclave-memory contracts; a bare mnemonic would lose those effects.
+  case X86_INS_ENCLS:
+  case X86_INS_ENCLV:
+    return liftSgx(*this, S, Insn, X86);
+
+  // Machine transitions need a complete-state continuation contract.
   case X86_INS_VMRUN:
   case X86_INS_SKINIT:
   case X86_INS_GETSEC:
-  case X86_INS_ENCLS:
   case X86_INS_ENCLU:
-  case X86_INS_ENCLV:
     return false;
 
   // These change processor state only; none of them produces a value, so

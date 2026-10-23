@@ -33,6 +33,7 @@ complete instruction support or semantic test coverage.
 
 | Instructions | Implementation and verification |
 | --- | --- |
+| ENCLS, ENCLV | Native supervisor/VMM completion on x86/x64, preserving rAX/rBX results, rCX/rDX inputs and leaf-dependent arithmetic flags. Enclave memory and fault ordering remain instruction-owned. |
 | RDPID | Explicit natural-width query result; ordered hardware effect. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
 | CLTS | Ordered processor-state effect with no fabricated register output. |
@@ -108,7 +109,6 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC | Leaf-specific register/state results and control transfer, including measured-environment entry/exit. |
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
-| ENCLS, ENCLV | Leaf-specific implicit register/flag completion, enclave memory and exception contracts. These supervisor/VMM operations should not be conflated with ENCLU's context transitions. |
 | AMX native LLVM output | Versioned TILECFG/tile-state ownership, restartable strided memory, partial progress and fault continuation. Existing strict LowIR support is not native code-generation support. |
 | ENQCMD, ENQCMDS, MOVDIR64B in 32-bit mode | Implicit ES destination base/limit ownership. Existing 64-bit support does not prove these forms. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
@@ -119,12 +119,12 @@ retain WC protocol, concurrent write completion and device transactions, but
 these tests do not independently measure those properties. The concrete
 emulator models only the single-threaded ordinary-memory projection.
 
-The original six transition/SGX mnemonics still fail strict lifting explicitly. The
+VMRUN, SKINIT, GETSEC and ENCLU still fail strict lifting explicitly. The
 existing AMX LLVM guard remains explicit. Adding an opaque helper declaration,
 bare assembly without outputs or a NOP would not close these gaps.
 
 Completion therefore still requires extending the shared machine-state/runtime
-contract for transitions and AMX, implementing the bounded SGX leaves, and
+contract for transitions and AMX, completing the ENCLU leaf/state contracts, and
 testing the remaining instruction forms. The bounded system contract added
 here is deliberately not a replacement for a complete machine-state boundary.
 This audit does **not** certify every encoding of the other decoder IDs.
@@ -142,10 +142,9 @@ architectural coverage.
    with separate expectations for decoding, strict lifting and each emitter.
    Include positive and negative forms for widths, register banks, masks,
    address sizes, segments and privilege-sensitive operations.
-2. Define supervisor/VMM SGX completion from the documented leaf tables:
-   consumed and modified GPRs, defined/preserved/undefined flags, and owned
-   memory accesses. ENCLS/ENCLV can then use a bounded native contract without
-   pretending that ENCLU entry/exit is an ordinary returning call.
+2. Extend the bounded SGX contract to ENCLU query/memory leaves, with explicit
+   enclave execution requirements. Its entry/exit/resume leaves remain part of
+   the complete-state continuation work below.
 3. Introduce a versioned complete-machine-state boundary and explicit
    continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
@@ -503,3 +502,55 @@ and 16 new MC text cases pass against the local updated library. The initial
 new decoder regression failed before implementation. The MC corpus now records
 2,770 lifted encodings across 478 instruction IDs and two explicitly rejected
 far-return encodings; it remains a subset of the 1,662-ID decoder inventory.
+
+
+## SGX supervisor and VMM completion
+
+`X86Sgx.h` owns ENCLS/ENCLV's four natural-width GPR inputs, primary rAX
+result and two auxiliary outputs (rBX and a two-byte CF/ZF snapshot).
+`X86SgxLeaves.h` defines which implicit registers each leaf consumes. Unused
+inputs are conditionally zeroed before the native boundary, and only EDBGRD
+publishes rBX completion. EUPDATESVN therefore remains a zero-argument
+operation without invented register reads or traps. Call-graph summaries and
+MedIR both prune constant selections, retaining the selected value's address
+provenance. All
+three emitters share `X86SgxAsm.h`. The instruction keeps implicit DS accesses,
+privilege checks, enclave state and memory fault ordering; no compiler preload
+or ordinary memory store substitutes for an SGX access. Segment, address-size
+and long-mode REX overrides are ignored. LOCK, 66H and REP forms fail strict
+lifting. Runtime rAX retains its full input, while leaf selection uses EAX.
+
+ENCLS leaves ECREATE, EADD, EEXTEND, EPA and EAUG preserve the incoming
+arithmetic flags. Other documented supervisor/VMM leaves return native CF/ZF
+and clear PF/AF/SF/OF; DF remains unchanged. This includes current EUPDATESVN
+and the historical conflict/virtualization leaves. Native rBX completion
+retains EDBGRD's data, without fabricating outputs for rCX or rDX. The assembly
+saves rAX before SETC/SETZ write AL/AH, using neither stack scratch nor LAHF.
+The primary result participates in the shared return contract, and unused
+results cannot remove the ordered instruction. The scalar emulator refuses
+SGX without an architectural environment.
+
+The references are Intel's [SDM 093 Volume 3D](https://cdrdv2.intel.com/v1/dl/getContent/671269)
+and the [earlier Volume 3D containing ENCLV](https://cdrdv2-public.intel.com/774498/332831-sdm-vol-3d.pdf).
+These normal-completion contracts do not implement ENCLU transitions or an
+AEX/VM-exit handler. Native execution still needs the CPU and OS SGX state.
+
+C output uses GNU inline assembly; Windows compilation is qualified with
+Clang. The focused tests cover ignored/invalid prefixes and both word sizes, all
+six arithmetic flags plus DF, dynamic leaf selection, full-width GPR inputs,
+rBX output and dead-result effects. The source tests compile HighC, LLVMC and
+LLVM at O0/O2 and generate native objects for x86/x64 ELF, COFF and Mach-O.
+Linux x64 tests compare the real fault signal/code with original bytes, then
+use controlled sigreturn to validate register/flag transport across the three
+routes and native objects. That second oracle does not certify successful
+CPL0 SGX execution, EPC updates, concurrency or exception priority.
+
+
+SGX batch qualification on 2026-10-22: 264 focused tests (263 passed, one
+existing platform skip) and 3,633 broader x86, call/ABI, constant propagation
+and relocation tests (3,590 passed, 43 skips), with no failures. The focused
+set includes 39 source-route tests and three registration-SEH control tests.
+The pinned decoder corpus remains 2,770 lifted encodings across 478 IDs plus
+two refused far returns; it has no ENCLS/ENCLV cases, so the dedicated SGX
+fixtures provide that coverage without inflating the corpus count. No decoder
+submodule revision changes in this batch.

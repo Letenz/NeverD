@@ -194,3 +194,6 @@ A(Intrinsic::DebugService, "int 2Dh");
 #define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, ...) A(Intrinsic::Id, Mnemonic);
 #include "neverd/ir/intrinsics/X86SystemState.def"
 #undef NEVERD_X86_SYSTEM_STATE
+
+A(Intrinsic::X86Encls, "encls");
+A(Intrinsic::X86Enclv, "enclv");

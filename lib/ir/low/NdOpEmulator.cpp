@@ -507,8 +507,8 @@ bool NdOpEmulator::step(const LowOp &Op) {
     // A scalar tracer has neither CPL/CR4/CPUID state nor a guest TLB.  Even a
     // structurally valid invalidation or MSR access must therefore stop here
     // rather than pretending the architectural state transition succeeded.
-    if (Id == Intrinsic::X86Invalidate || Id == Intrinsic::X86MsrAccess ||
-        isX86VirtualizationIntrinsic(Id))
+    if (isX86SgxIntrinsic(Id) || Id == Intrinsic::X86Invalidate ||
+        Id == Intrinsic::X86MsrAccess || isX86VirtualizationIntrinsic(Id))
       return false;
   }
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {

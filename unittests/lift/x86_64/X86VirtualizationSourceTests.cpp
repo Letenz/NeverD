@@ -20,6 +20,7 @@
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86SgxAsm.h"
 #include "neverd/backend/llvm/X86SystemStateAsm.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -496,7 +497,8 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                    bool OriginalBytes = false, bool CompareFaults = false,
                    llvm::StringRef CustomDriver = {},
                    llvm::ArrayRef<uint8_t> ExpectedInstruction = {},
-                   uint16_t RequiredReturnBytes = 0) {
+                   uint16_t RequiredReturnBytes = 0,
+                   bool CompileForImageFormat = false) {
   const bool Execute = Expected || CompareFaults || !CustomDriver.empty();
 #if !defined(__linux__) || !defined(__x86_64__)
   if (Execute)
@@ -584,15 +586,19 @@ void _start(void) {
     }
     for (const char *Optimization : {"-O0", "-O2"}) {
       SCOPED_TRACE(Optimization);
+      const char *Target = Image.Arch == Arch::X86
+                               ? "--target=i386-unknown-linux-gnu"
+                               : "--target=x86_64-unknown-linux-gnu";
+      if (CompileForImageFormat && !Execute) {
+        if (Image.Format == BinaryFormat::COFF)
+          Target = Image.Arch == Arch::X86 ? "--target=i686-pc-windows-msvc"
+                                           : "--target=x86_64-pc-windows-msvc";
+        else if (Image.Format == BinaryFormat::MachO)
+          Target = Image.Arch == Arch::X86 ? "--target=i386-apple-darwin"
+                                           : "--target=x86_64-apple-darwin";
+      }
       std::vector<llvm::StringRef> Arguments = {
-          Compiler,
-          Image.Arch == Arch::X86 ? "--target=i386-unknown-linux-gnu"
-                                  : "--target=x86_64-unknown-linux-gnu",
-          Optimization,
-          "-c",
-          Input,
-          "-o",
-          Output};
+          Compiler, Target, Optimization, "-c", Input, "-o", Output};
       // Match Codegen's x86 SSE2 baseline. Clang's plain i386 target has no
       // XMM register class for the emitted floating-point assembly operands.
       if (Image.Arch == Arch::X86)
@@ -2152,5 +2158,233 @@ TEST(X86SystemExtensionsSource, MalformedOwnedAssemblyCannotLoseItsEffects) {
       else
         EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
                      std::invalid_argument);
+    }
+}
+
+namespace {
+std::vector<uint8_t> sgxFunction(Arch A, bool Supervisor, bool Dead,
+                                 size_t &Offset) {
+  const bool Wide = A == Arch::X64;
+  std::vector<uint8_t> B = {0x53}; // preserve the ABI's rBX
+  auto Move = [&](uint8_t Opcode, uint64_t Value) {
+    if (Wide)
+      B.push_back(0x48);
+    B.push_back(Opcode);
+    for (unsigned I = 0; I < (Wide ? 8u : 4u); ++I)
+      B.push_back(Value >> (8 * I));
+  };
+  if (Wide)
+    B.insert(B.end(), {0x48, 0x89, 0xf8}); // dynamic leaf from rDI
+  else
+    B.insert(B.end(), {0x8b, 0x44, 0x24, 0x08}); // cdecl leaf
+  Move(0xbb, UINT64_C(0x1122334455667788));
+  Move(0xb9, UINT64_C(0x2233445566778899));
+  Move(0xba, UINT64_C(0x33445566778899aa));
+  // The original flags are OF/SF/AF/PF/CF, with ZF clear.
+  B.insert(B.end(),
+           {0x50, 0xb8, 0xff, 0xff, 0xff, 0x7f, 0x83, 0xc0, 0x01, 0xf9, 0x58});
+  Offset = B.size();
+  B.insert(B.end(),
+           {0x0f, 0x01, static_cast<uint8_t>(Supervisor ? 0xcf : 0xc0)});
+  if (Dead) {
+    if (Wide)
+      B.push_back(0x48);
+    B.insert(B.end(), {0x31, 0xc0});
+  } else {
+    // Capture before arithmetic consumes the instruction's flags. rSI is
+    // saved below in the i386 fixture, where it is callee-saved.
+    if (Wide)
+      B.insert(B.end(), {0x9c, 0x41, 0x58, 0x49, 0x81, 0xe0, 0xd5, 0x08,
+                         0,    0,    0x48, 0x31, 0xd8, 0x48, 0x31, 0xc8,
+                         0x48, 0x31, 0xd0, 0x4c, 0x31, 0xc0});
+    else
+      B.insert(B.end(), {0x56, 0x9c, 0x5e, 0x81, 0xe6, 0xd5, 0x08, 0, 0, 0x31,
+                         0xd8, 0x31, 0xc8, 0x31, 0xd0, 0x31, 0xf0, 0x5e});
+  }
+  B.insert(B.end(), {0x5b, 0xc3});
+  return B;
+}
+
+std::string sgxDriver(const BinaryImage &Image, bool Supervisor, bool Dead) {
+  std::string D = faultDriver(Image);
+  for (const char *Name : {"virtualization_test", "neverd_original"}) {
+    const std::string Old = std::string("extern void ") + Name + "(void);";
+    D.replace(D.find(Old), Old.size(),
+              std::string("extern unsigned long long ") + Name +
+                  "(unsigned long long);");
+  }
+  D.replace(D.find("int main(void)"), 14, "int compare_faults(void)");
+  for (const char *Name : {"virtualization_test", "neverd_original"}) {
+    const std::string Old = std::string("observe(") + Name;
+    D.replace(D.find(Old), Old.size(),
+              std::string("observe((void (*)(void))") + Name);
+  }
+  D = "#define _GNU_SOURCE\n#include <stdint.h>\n#include <ucontext.h>\n" + D;
+  llvm::raw_string_ostream OS(D);
+  OS << "\nstatic const int supervisor = " << Supervisor << ", dead = " << Dead
+     << ";\n";
+  OS << R"C(
+static volatile sig_atomic_t events, completion;
+static uint64_t leaf_input;
+static int preserves(unsigned leaf) {
+  return supervisor && (leaf == 0 || leaf == 1 || leaf == 6 || leaf == 10 || leaf == 13);
+}
+static void complete_sgx(int signal, siginfo_t *info, void *context) {
+  (void)signal; (void)info;
+  greg_t *g = ((ucontext_t *)context)->uc_mcontext.gregs;
+  const unsigned char *ip = (const unsigned char *)(uintptr_t)g[REG_RIP];
+  if (ip[0] != 0x0f || ip[1] != 1 || ip[2] != (supervisor ? 0xcf : 0xc0)) _exit(21);
+  unsigned leaf = (uint32_t)leaf_input;
+  int b_used = supervisor ? (leaf <= 19 && leaf != 3 && leaf != 9 &&
+                              leaf != 12 && leaf != 17) : leaf < 2;
+  int c_used = !supervisor || leaf <= 19;
+  int d_used = supervisor ? (leaf == 2 || leaf == 7 || leaf == 8 ||
+                              leaf == 11 || leaf == 18 || leaf == 19) : leaf == 2;
+  if ((uint64_t)g[REG_RAX] != leaf_input ||
+      (b_used && (uint64_t)g[REG_RBX] != UINT64_C(0x1122334455667788)) ||
+      (c_used && (uint64_t)g[REG_RCX] != UINT64_C(0x2233445566778899)) ||
+      (d_used && (uint64_t)g[REG_RDX] != UINT64_C(0x33445566778899aa))) _exit(22);
+  g[REG_RAX] = UINT64_C(0xfedcba9876543210);
+  if (supervisor && (uint32_t)leaf_input == 4 && !(completion & 2))
+    g[REG_RBX] = UINT64_C(0xabcddcba11223344);
+  if (!preserves((uint32_t)leaf_input))
+    g[REG_EFL] = (g[REG_EFL] & ~(greg_t)0x8d5) |
+                (completion & 1) | ((completion >> 1) << 6);
+  g[REG_RIP] += 3;
+  ++events;
+}
+int main(void) {
+  if (compare_faults()) return 10;
+  struct sigaction action = {0};
+  action.sa_sigaction = complete_sgx;
+  action.sa_flags = SA_SIGINFO;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGILL, &action, 0) || sigaction(SIGSEGV, &action, 0)) return 11;
+  for (unsigned leaf = 0; leaf <= (supervisor ? 24u : 2u); ++leaf) {
+    if (supervisor && leaf > 19 && leaf != 24) continue;
+    leaf_input = UINT64_C(0x9876543200000000) | leaf;
+    for (completion = 0; completion < 4; ++completion) {
+      uint64_t flags = preserves(leaf) ? 0x895 :
+          (unsigned)(completion & 1) | ((unsigned)(completion >> 1) << 6);
+      uint64_t bx = supervisor && leaf == 4 && !(completion & 2) ? UINT64_C(0xabcddcba11223344) :
+                                               UINT64_C(0x1122334455667788);
+      uint64_t expected = dead ? 0 : UINT64_C(0xfedcba9876543210) ^ bx ^
+          UINT64_C(0x2233445566778899) ^ UINT64_C(0x33445566778899aa) ^ flags;
+      events = 0;
+      if (neverd_original(leaf_input) != expected || events != 1) return 12;
+      events = 0;
+      if (virtualization_test(leaf_input) != expected || events != 1) return 13;
+    }
+  }
+  return 0;
+}
+)C";
+  return D;
+}
+} // namespace
+
+TEST(X86SgxSource, DynamicLeavesRetainRegistersFlagsFaultsAndDeadEffects) {
+  for (bool Supervisor : {false, true})
+    for (bool NoOpt : {false, true})
+      for (bool Dead : {false, true}) {
+        SCOPED_TRACE(Supervisor);
+        SCOPED_TRACE(NoOpt);
+        SCOPED_TRACE(Dead);
+        size_t Offset;
+        auto I = image(Arch::X64, BinaryFormat::ELF,
+                       sgxFunction(Arch::X64, Supervisor, Dead, Offset));
+        const std::vector<uint8_t> Encoding = {
+            0x0f, 0x01, static_cast<uint8_t>(Supervisor ? 0xcf : 0xc0)};
+        compileRoutes(I, NoOpt, Entry + Offset, Supervisor ? "encls" : "enclv",
+                      std::nullopt, false, false,
+                      sgxDriver(I, Supervisor, Dead), Encoding, 8);
+      }
+}
+
+TEST(X86SgxSource, BothWordSizesRetainCompletionAcrossNativeObjectFormats) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Supervisor : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Supervisor);
+          SCOPED_TRACE(NoOpt);
+          size_t Offset;
+          auto I = image(A, Format, sgxFunction(A, Supervisor, false, Offset));
+          // The x64 COFF ABI's first parameter is RCX rather than RDI.
+          if (A == Arch::X64 && Format == BinaryFormat::COFF)
+            I.Segments.front().Data[3] = 0xc8;
+          compileRoutes(I, NoOpt, Entry + Offset,
+                        Supervisor ? "encls" : "enclv", std::nullopt, false,
+                        false, {}, {}, A == Arch::X64 ? 8 : 4, true);
+        }
+}
+
+TEST(X86SgxSource, MalformedAssemblyCannotDropRegistersOrEffects) {
+  for (auto A : {Arch::X86, Arch::X64})
+    for (auto Id : {Intrinsic::X86Encls, Intrinsic::X86Enclv})
+      for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Id));
+        SCOPED_TRACE(Mutation);
+        const auto P = x86SgxAsm(Id, A);
+        ASSERT_TRUE(P);
+        llvm::LLVMContext Context;
+        llvm::Module M("sgx-contract", Context);
+        M.setDataLayout(A == Arch::X64 ? "e-p:64:64" : "e-p:32:32");
+        llvm::IRBuilder<> B(Context);
+        auto *Word = B.getIntNTy(P->WordBytes * 8);
+        auto *Return = llvm::StructType::get(
+            Context, {Word, Word, B.getIntNTy(Mutation == 4 ? 32 : 16)});
+        std::vector<llvm::Type *> Types(4, Word);
+        if (Mutation == 7)
+          Types[3] = B.getInt16Ty();
+        auto *Signature = llvm::FunctionType::get(Return, Types, false);
+        auto *F = llvm::Function::Create(
+            Signature, llvm::GlobalValue::ExternalLinkage, "effect", M);
+        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+        std::vector<llvm::Value *> Values;
+        for (auto &V : F->args())
+          Values.push_back(&V);
+        auto Constraints = P->Constraints;
+        if (Mutation == 1)
+          Constraints.erase(Constraints.find(",~{memory}"));
+        auto *Asm = llvm::InlineAsm::get(
+            Signature, P->Text + (Mutation == 6 ? "\n\tnop" : ""), Constraints,
+            Mutation != 2);
+        auto *Call = B.CreateCall(Asm, Values);
+        if (Mutation == 3)
+          Call->setDoesNotReturn();
+        if (Mutation == 5)
+          Call->setOnlyReadsMemory();
+        B.CreateRet(Call);
+        CEmitterOptions O;
+        O.TheArch = A;
+        O.EmitIncludes = false;
+        std::string Text;
+        llvm::raw_string_ostream OS(Text);
+        if (!Mutation)
+          EXPECT_TRUE(LLVMCEmitter().emit(M, OS, O)) << Text;
+        else
+          EXPECT_THROW(LLVMCEmitter().emit(M, OS, O), std::invalid_argument);
+      }
+}
+
+TEST(X86SgxSource, UnusedLeafRegistersDoNotBecomeParametersOrTraps) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      SCOPED_TRACE(NoOpt);
+      auto I = image(A, BinaryFormat::ELF,
+                     {0xb8, 0x18, 0, 0, 0, 0x0f, 0x01, 0xcf, 0xc3});
+      std::string High, LLVM;
+      sourceRoutes(I, NoOpt, Entry + 5, "encls", &High, &LLVM);
+      EXPECT_EQ(High.find("unknown register"), std::string::npos) << High;
+      EXPECT_EQ(High.find("arg0"), std::string::npos) << High;
+      EXPECT_EQ(LLVM.find("__builtin_trap"), std::string::npos) << LLVM;
+      compileRoutes(I, NoOpt, Entry + 5, "encls", std::nullopt, false,
+                    A == Arch::X64);
     }
 }

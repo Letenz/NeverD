@@ -58,6 +58,7 @@ add_neverd_component_library(NeverDBackendC
   render/SyscallHelpers.cpp
   render/X86Virtualization.cpp
   render/X86SystemState.cpp
+  render/X86Sgx.cpp
 
   LINK_COMPONENTS
   IR

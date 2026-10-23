@@ -19,6 +19,7 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86Virtualization.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -385,6 +386,26 @@ inline X86VirtualizationShape x86VirtualizationLowShape(const LowOp &Op,
     Shape.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
   }
   return Shape;
+}
+
+inline X86SgxShape x86SgxLowShape(const LowOp &Op,
+                                  Arch TargetArch = Arch::Unknown) {
+  X86SgxShape S;
+  S.TargetArch = TargetArch;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+              Op.Inputs[0].Offset <= UINT16_MAX;
+  S.WritableOutput = Op.Output.isReg() || Op.Output.isTemp();
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    S.InputSizes[I] = Input.Size;
+    S.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
+  }
+  return S;
 }
 
 inline X86SystemStateShape x86SystemStateLowShape(const LowOp &Op,

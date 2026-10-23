@@ -388,6 +388,10 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/X86SystemState.def"
 #undef NEVERD_X86_SYSTEM_STATE
 
+  // Append-only: bounded SGX supervisor/VMM completion.
+  X86Encls,
+  X86Enclv,
+
   _Count = 16000
 };
 

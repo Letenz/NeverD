@@ -5197,6 +5197,21 @@ descriptor reads remain inside the native instruction; active GS base is not
 changed. SENDUIPI's full-width index is scalar, as is INVLPGB's address/control
 descriptor. INVLPGB's input width selects native address size. HRESET's ignored
 imm8 is canonicalized to zero, while EAX remains an explicit input.
+`X86Sgx.h` separately owns bounded ENCLS/ENCLV completion: four natural-width
+GPR inputs, primary rAX and auxiliary rBX/CF-ZF outputs.
+`X86SgxLeaves.h` defines conditional register reads so unused leaf operands do
+not create source arguments or unknown-register traps; only EDBGRD publishes
+a changed rBX value. Call-graph register summaries evaluate
+constant selections with the shared LowIR scalar evaluator; MedIR folds the
+same chosen value before inferring SGX parameters, preserving its provenance. `X86SgxAsm.h` keeps
+LLVM and both C routes on the same volatile assembly and early-clobber
+constraints. The lifter projects native CF/ZF for flag-writing leaves, preserves
+all arithmetic flags for ECREATE/EADD/EEXTEND/EPA/EAUG, and never changes DF.
+Implicit DS accesses and all enclave checks remain inside the instruction;
+address/segment/REX overrides do not change the operands. Native outputs use
+no stack scratch. Return inference accepts the validated primary completion,
+while strict scalar emulation refuses the environment-dependent operation.
+ENCLU's entry, exit, resume and asynchronous continuation remain unsupported.
 Far/interrupt returns do not use the bounded system contract or ordinary ABI
 RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
 and its nonlocal continuation are represented.

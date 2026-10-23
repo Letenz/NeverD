@@ -82,6 +82,11 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
                      "operand/output contract");
     return llvm::Error::success();
   }
+  if (isX86SgxIntrinsic(Id)) {
+    if (!x86SgxShapeIsValid(Id, x86SgxLowShape(Op)))
+      return invalid("x86 SGX intrinsic has an invalid completion contract");
+    return llvm::Error::success();
+  }
   if (isX86SystemStateIntrinsic(Id)) {
     if (!x86SystemStateShapeIsValid(Id,
                                     x86SystemStateLowShape(Op, Arch::Unknown)))
