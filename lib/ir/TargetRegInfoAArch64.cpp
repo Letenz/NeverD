@@ -147,6 +147,7 @@ void initAArch64RegInfoTables() {
 
   A64RegInfo.IntReturnRegs = A64IntReturnRegs;
   A64RegInfo.FPReturnRegs = A64FPReturnRegs;
+  A64RegInfo.FPABIRegWidth = 16;
   A64RegInfo.ZeroRegister = a64reg::XZR;
   A64RegInfo.ReturnAggregatesSingleClass = true;
 }

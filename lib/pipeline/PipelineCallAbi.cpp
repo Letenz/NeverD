@@ -69,6 +69,13 @@ omittedCalleeArgumentCounts(const PipelineResult &Result) {
              : Result.CallEntryArgumentCounts;
 }
 
+const std::map<va_t, FloatingCallArguments> &
+omittedCalleeFloatingArguments(const PipelineResult &Result) {
+  return Result.OmittedCalleeFloatingArguments
+             ? *Result.OmittedCalleeFloatingArguments
+             : Result.CallEntryFloatingArguments;
+}
+
 const std::map<va_t, int> &
 omittedCalleeStackArgs(const PipelineResult &Result) {
   return Result.OmittedCalleeStackArgs ? *Result.OmittedCalleeStackArgs
@@ -98,6 +105,9 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   const std::map<va_t, int> &Counts = omittedCalleeArgumentCounts(Result);
   if (const auto It = Counts.find(Key); It != Counts.end())
     Read.ArgumentCount = It->second;
+  const auto &Floating = omittedCalleeFloatingArguments(Result);
+  if (const auto It = Floating.find(Key); It != Floating.end())
+    Read.FloatingArguments = It->second;
   return Read;
 }
 
@@ -184,7 +194,9 @@ size_t readBytes(llvm::ArrayRef<OmittedCalleeMemo::ProbeRead> Reads) {
     Bytes += (Read.Name ? Read.Name->size() : 0) +
              ((Read.FPRegs ? Read.FPRegs->size() : 0) +
               (Read.IntRegs ? Read.IntRegs->size() : 0)) *
-                 sizeof(uint64_t);
+                 sizeof(uint64_t) +
+             (Read.FPScalarBytes ? Read.FPScalarBytes->size() : 0) *
+                 sizeof(std::pair<uint64_t, uint16_t>);
   return Bytes;
 }
 } // namespace
@@ -193,7 +205,8 @@ void OmittedCalleeMemo::keepProbe(Conversion &Holder, Probe Kept) {
   Kept.Bytes =
       sizeof(Probe) + readBytes(Kept.Reads) +
       (Kept.Gives.FPRegs.size() + Kept.Gives.IntegerArgumentRegisters.size()) *
-          sizeof(uint64_t);
+          sizeof(uint64_t) +
+      Kept.Gives.FPScalarBytes.size() * sizeof(std::pair<uint64_t, uint16_t>);
   if (Holder.Probes.size() == MaxProbes) {
     Holder.Bytes -= Holder.Probes.back().Bytes;
     Bytes -= Holder.Probes.back().Bytes;
@@ -256,7 +269,8 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
       Converted.Bytes +=
           sizeof(CalleeSummary) +
           (Summary->IntegerArgumentRegisters.size() + Summary->FPRegs.size()) *
-              sizeof(uint64_t);
+              sizeof(uint64_t) +
+          Summary->FPScalarBytes.size() * sizeof(std::pair<uint64_t, uint16_t>);
     Converted.Bytes +=
         (Converted.CalleesRead.size() + Converted.DirectCallTargets.size()) *
         sizeof(va_t);
@@ -440,6 +454,8 @@ public:
       Converter.setCallEntryStackSlots(&omittedCalleeStackSlots(Result));
       Converter.setCallEntryArgumentCounts(
           &omittedCalleeArgumentCounts(Result));
+      Converter.setCallEntryFloatingArguments(
+          &omittedCalleeFloatingArguments(Result));
       Converter.setCallSummaryKeysRead(&Keys);
       Converter.setRuntimeRoutineCalls(&runtimeRoutineCalls());
       Converter.setCodePointerTargets(&codePointerTargets());
@@ -754,6 +770,7 @@ OmittedCalleeMemo::CalleeSummary summarizeCallee(const MedFunc &MF,
     FpArity = std::max(FpArity, static_cast<int>(FPRegs.size()));
   }
   Summary.FPArity = FpArity;
+  Summary.FPScalarBytes = MF.FPParamScalarBytes;
   const uint16_t ReturnSize =
       MF.ReturnType && MF.ReturnType->Size ? MF.ReturnType->Size : 8;
   const bool ReturnsScalarFP = MF.ReturnType &&
@@ -782,6 +799,7 @@ struct SummaryView {
   const std::map<va_t, int> &FPArity;
   const std::map<va_t, uint16_t> &FPReturnSize;
   const std::map<va_t, std::vector<uint64_t>> &FPRegs;
+  const std::map<va_t, std::map<uint64_t, uint16_t>> &FPScalarBytes;
   const std::map<va_t, bool> &HasSret;
   const std::map<va_t, bool> &IsVariadic;
   const std::map<va_t, bool> &ConsumesVaList;
@@ -799,6 +817,7 @@ struct SummaryView {
     Read.FPArity = valueAt(FPArity, Key);
     Read.FPReturnSize = valueAt(FPReturnSize, Key);
     Read.FPRegs = valueAt(FPRegs, Key);
+    Read.FPScalarBytes = valueAt(FPScalarBytes, Key);
     Read.HasSret = valueAt(HasSret, Key);
     Read.IsVariadic = valueAt(IsVariadic, Key);
     Read.ConsumesVaList = valueAt(ConsumesVaList, Key);
@@ -820,7 +839,9 @@ struct SummaryView {
            same(FPReturnSize, Read.FPReturnSize) &&
            same(HasSret, Read.HasSret) &&
            same(ConsumesVaList, Read.ConsumesVaList) &&
-           same(FPRegs, Read.FPRegs) && same(IntRegs, Read.IntRegs) &&
+           same(FPRegs, Read.FPRegs) &&
+           same(FPScalarBytes, Read.FPScalarBytes) &&
+           same(IntRegs, Read.IntRegs) &&
            (VectorArguments.count(Key) != 0) == Read.VectorArguments &&
            (PrototypeArguments.count(Key) != 0) == Read.PrototypeArguments &&
            same(Names, Read.Name);
@@ -852,6 +873,7 @@ struct ReadSummaries {
   std::map<va_t, int> RegArity, TotalArity, FPArity;
   std::map<va_t, uint16_t> FPReturnSize;
   std::map<va_t, std::vector<uint64_t>> FPRegs, IntRegs;
+  std::map<va_t, std::map<uint64_t, uint16_t>> FPScalarBytes;
   std::map<va_t, bool> HasSret, IsVariadic, ConsumesVaList;
   std::set<va_t> VectorArguments, PrototypeArguments;
 
@@ -868,6 +890,7 @@ struct ReadSummaries {
       put(FPArity, Read.FPArity);
       put(FPReturnSize, Read.FPReturnSize);
       put(FPRegs, Read.FPRegs);
+      put(FPScalarBytes, Read.FPScalarBytes);
       put(IntRegs, Read.IntRegs);
       put(HasSret, Read.HasSret);
       put(IsVariadic, Read.IsVariadic);
@@ -900,8 +923,9 @@ void propagateForwardedCallArities(
     const std::map<va_t, std::string> &FuncNames, const BinaryImage &Img,
     std::map<va_t, int> &CalleeRegArity, std::map<va_t, int> &CalleeTotalArity,
     std::map<va_t, int> &CalleeFPArity,
-    const std::map<va_t, uint16_t> &CalleeFPReturnSize,
+    std::map<va_t, uint16_t> &CalleeFPReturnSize,
     std::map<va_t, std::vector<uint64_t>> &CalleeFPRegs,
+    std::map<va_t, std::map<uint64_t, uint16_t>> &CalleeFPScalarBytes,
     const std::map<va_t, bool> &CalleeHasSret,
     std::map<va_t, bool> &CalleeIsVariadic,
     const std::map<va_t, bool> &CalleeConsumesVaList,
@@ -936,11 +960,19 @@ void propagateForwardedCallArities(
 
   const auto &TRI = getTargetRegInfo(TheArch);
   // Every summary, user prototype and name the run holds.
-  const SummaryView View{
-      FuncNames,     CalleeRegArity,        CalleeTotalArity,
-      CalleeFPArity, CalleeFPReturnSize,    CalleeFPRegs,
-      CalleeHasSret, CalleeIsVariadic,      CalleeConsumesVaList,
-      CalleeIntRegs, VectorArgumentCallees, PrototypeArgumentCallees};
+  const SummaryView View{FuncNames,
+                         CalleeRegArity,
+                         CalleeTotalArity,
+                         CalleeFPArity,
+                         CalleeFPReturnSize,
+                         CalleeFPRegs,
+                         CalleeFPScalarBytes,
+                         CalleeHasSret,
+                         CalleeIsVariadic,
+                         CalleeConsumesVaList,
+                         CalleeIntRegs,
+                         VectorArgumentCallees,
+                         PrototypeArgumentCallees};
   // What recovering a copy of Funcs[I] under the summaries gives, and the
   // summaries the recovery leaves at its entry, or a kept probe's where
   // they read the same.
@@ -972,7 +1004,7 @@ void propagateForwardedCallArities(
                    &CalleeConsumesVaList, /*FrameLocalLeafCallees=*/nullptr,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
                    &PrototypeArgumentCallees, &RelocationSymbols,
-                   Holder ? &Keys : nullptr);
+                   Holder ? &Keys : nullptr, &CalleeFPScalarBytes);
     int MaxRegIdx = -1;
     int MaxIdx = -1;
     OmittedCalleeMemo::ProbeSignature Gives;
@@ -997,6 +1029,8 @@ void propagateForwardedCallArities(
     Gives.MaxArgumentIndex = MaxIdx;
     Gives.RecoveryTotalArity = callRecoveryTotalArity(Probe, MaxIdx);
     Gives.IsVariadic = Probe.IsVariadic;
+    Gives.FPScalarBytes = Probe.FPParamScalarBytes;
+    Gives.FPReturnSize = summarizeCallee(Probe, Img).FPReturnSize;
     Gives.IntegerArgumentRegisters = Probe.IntegerArgumentRegisters;
     Gives.EntryRegArity = valueAt(CalleeRegArity, Body.Entry);
     Gives.EntryTotalArity = valueAt(CalleeTotalArity, Body.Entry);
@@ -1054,6 +1088,19 @@ void propagateForwardedCallArities(
       if (FPArity > CalleeFPArity[Entry]) {
         CalleeFPArity[Entry] = FPArity;
         CalleeFPRegs[Entry] = Probe.FPRegs;
+        Grew = true;
+      }
+    }
+    if (!IsVariadicPublic) {
+      for (const auto &[Register, Bytes] : Probe.FPScalarBytes) {
+        auto &Width = CalleeFPScalarBytes[Entry][Register];
+        if (Bytes > Width) {
+          Width = Bytes;
+          Grew = true;
+        }
+      }
+      if (Probe.FPReturnSize && !CalleeFPReturnSize[Entry]) {
+        CalleeFPReturnSize[Entry] = Probe.FPReturnSize;
         Grew = true;
       }
     }
@@ -1121,6 +1168,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   std::map<va_t, int> CalleeTotalArity;
   std::map<va_t, int> CalleeFPArity;
   std::map<va_t, std::vector<uint64_t>> CalleeFPRegs;
+  std::map<va_t, std::map<uint64_t, uint16_t>> CalleeFPScalarBytes;
   std::map<va_t, uint16_t> CalleeFPReturnSize;
   std::map<va_t, bool> CalleeHasSret;
   std::map<va_t, bool> CalleeIsVariadic;
@@ -1181,6 +1229,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       VectorArgumentCallees.insert(MF.Entry);
     CalleeFPArity[MF.Entry] = Summary.FPArity;
     CalleeFPRegs[MF.Entry] = Summary.FPRegs;
+    CalleeFPScalarBytes[MF.Entry] = Summary.FPScalarBytes;
     CalleeFPReturnSize[MF.Entry] = Summary.FPReturnSize;
   }
 
@@ -1325,9 +1374,9 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   propagateForwardedCallArities(
       SignatureBodies, KeptBodies, Memo, Img.Arch, AllFuncNames, Img,
       CalleeRegArity, CalleeTotalArity, CalleeFPArity, CalleeFPReturnSize,
-      CalleeFPRegs, CalleeHasSret, CalleeIsVariadic, CalleeConsumesVaList,
-      CalleeIntRegs, VectorArgumentCallees, PointerCallees,
-      Result.CallPrototypeArguments, RelocationSymbols);
+      CalleeFPRegs, CalleeFPScalarBytes, CalleeHasSret, CalleeIsVariadic,
+      CalleeConsumesVaList, CalleeIntRegs, VectorArgumentCallees,
+      PointerCallees, Result.CallPrototypeArguments, RelocationSymbols);
 
   const auto FrameLocalLeafCallees =
       Convention && Convention->TargetSpillsSurviveLeafCalls
@@ -1339,7 +1388,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &Result.CallPrototypeArguments, &RelocationSymbols, Keys);
+                   &Result.CallPrototypeArguments, &RelocationSymbols, Keys,
+                   &CalleeFPScalarBytes);
   };
   for (MedFunc &F : Result.MedFuncs)
     recover(F);
@@ -1381,11 +1431,19 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   // that reads the same takes instead; a run's leaf callees, which only
   // Darwin's recovery reads, are not among what it keeps.
   const bool Remembers = Memo && FrameLocalLeafCallees.empty();
-  const SummaryView FirstSummaries{
-      AllFuncNames,  CalleeRegArity,        CalleeTotalArity,
-      CalleeFPArity, CalleeFPReturnSize,    CalleeFPRegs,
-      CalleeHasSret, CalleeIsVariadic,      CalleeConsumesVaList,
-      CalleeIntRegs, VectorArgumentCallees, Result.CallPrototypeArguments};
+  const SummaryView FirstSummaries{AllFuncNames,
+                                   CalleeRegArity,
+                                   CalleeTotalArity,
+                                   CalleeFPArity,
+                                   CalleeFPReturnSize,
+                                   CalleeFPRegs,
+                                   CalleeFPScalarBytes,
+                                   CalleeHasSret,
+                                   CalleeIsVariadic,
+                                   CalleeConsumesVaList,
+                                   CalleeIntRegs,
+                                   VectorArgumentCallees,
+                                   Result.CallPrototypeArguments};
   struct OmittedRecovery {
     /// The memo's conversion of the body and its record of the recovery,
     /// where the memo keeps them.
@@ -1483,7 +1541,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
                      /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2,
                      &VectorArgumentCallees, &PointerCallees,
-                     &Result.CallPrototypeArguments, &RelocationSymbols, Keys);
+                     &Result.CallPrototypeArguments, &RelocationSymbols, Keys,
+                     &CalleeFPScalarBytes);
     };
     for (MedFunc &F : Result.MedFuncs)
       recoverAgain(F, nullptr);
@@ -1493,6 +1552,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                                       CalleeFPArity,
                                       CalleeFPReturnSize,
                                       CalleeFPRegs,
+                                      CalleeFPScalarBytes,
                                       CalleeHasSret,
                                       CalleeIsVariadic,
                                       CalleeConsumesVaList,
@@ -1533,7 +1593,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
             &Read.RegArity, &Read.TotalArity, &Read.FPArity, &Read.FPReturnSize,
             &Read.FPRegs, &Read.HasSret, &Read.IsVariadic, &Read.ConsumesVaList,
             &FrameLocalLeafCallees, &Read.IntRegs, &Read.VectorArguments,
-            &PointerCallees, &Read.PrototypeArguments, &RelocationSymbols);
+            &PointerCallees, &Read.PrototypeArguments, &RelocationSymbols,
+            nullptr, &Read.FPScalarBytes);
       }
       MedFunc &Body = *Callee.Body;
       OmittedCalleeMemo::ProbeRead EntryRead;
@@ -1627,10 +1688,11 @@ void matchCallsToCalleeSignatures(const BinaryImage &Img,
       // were, pass nothing.
       CI.ArgReadBytes.assign(CI.Args.size(), 0);
       for (size_t K = 0; K < CI.Args.size(); ++K)
-        if (const MedVar &Arg = CI.Args[K]; Arg.Kind == MedVar::Reg)
+        if (const MedVar &Arg = CI.Args[K];
+            Arg.Kind == MedVar::Reg || Arg.Kind == MedVar::Param)
           if (const auto Scalar = Callee.FPParamScalarBytes.find(Arg.RegOff);
               Scalar != Callee.FPParamScalarBytes.end() &&
-              Scalar->second < Arg.Size)
+              Scalar->second <= Arg.Size)
             CI.ArgReadBytes[K] = Scalar->second;
     }
 }

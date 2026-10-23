@@ -830,6 +830,10 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                                      : fpReturnElemSize(Defs, Rit2->Output, 0);
             if (!E && IsFPRegReturn)
               E = scalarFPLoadElemSize(Defs, Rit2->Output, 0);
+            if (!E && IsFPRegReturn &&
+                (Rit2->Opcode == NdOp::CALL ||
+                 Rit2->Opcode == NdOp::INDIR_CALL))
+              E = Rit2->CalleeFloatReturnBytes;
             // A call whose callee returns its float in this register.
             if (!E && IsFPRegReturn && CalleeFloatReturns &&
                 (Rit2->Opcode == NdOp::CALL ||

@@ -568,6 +568,8 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
         Reconv.setCallEntryStackArgs(&Result.CallEntryStackArgs);
         Reconv.setCallEntryStackSlots(&Result.CallEntryStackSlots);
         Reconv.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
+        Reconv.setCallEntryFloatingArguments(
+            &Result.CallEntryFloatingArguments);
         Reconv.setCallDispatchThunks(&Result.CallDispatchThunks);
         Reconv.setCallVariadicFrom(&Result.CallVariadicFrom);
         Reconv.setFormattedCalls(&Result.FormattedCalls);
