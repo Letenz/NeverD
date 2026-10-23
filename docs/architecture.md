@@ -1548,6 +1548,14 @@ The default task helper uses oneTBB with checked 8 MiB worker stacks. A caller
 with enough unused stack can coordinate directly; small callers get a native
 coordinator. Nested work receives a fresh stack. It preserves per-batch
 thread limits and synchronous exception delivery, and supplies no allocator.
+`neverd_task_scheduler` is a component-facing facade. The shared core owns
+`neverd_task_scheduler_runtime` and a private static oneTBB archive. Targets
+linking `neverd_shared` select the shared callback boundary automatically;
+indirect SDK clients use `neverd_use_shared_task_scheduler` to select it
+explicitly. Component archives therefore do not embed another scheduler in
+SDK clients. Standalone tools own their runtime. The GUI
+uses the core through `neverd-worker`, so its engine uses the same scheduling
+policy as the CLI without adding TBB to the Qt process.
 Fork after initialization and dynamic SDK unloading are not supported by the
 retained backend; those embedding hosts must select the explicit native-thread
 baseline. Normal builds enable all four performance providers.

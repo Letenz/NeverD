@@ -1159,6 +1159,16 @@ independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
 AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
 pass. The acceleration CI also runs installed binaries on each native host.
 
+`NeverDSharedSchedulerTests` reproduces the core, component-archive, CLI and
+plugin link boundaries. Its callbacks and exceptions must cross those
+boundaries synchronously, and `TBB_VERSION=1` must report exactly one initialized
+runtime (zero with TBB disabled). `verify.py --minimum 2 --tbb-runtimes 1` checks
+this inventory in both build and install trees. Installation must contain no
+TBB shared runtime. The Linux core hides static TBB symbols from its dynamic
+symbol table; macOS hides the archive and Windows exports only the callback
+boundary. These checks are necessary because upstream static TBB builds have
+limited coverage.
+
 `NeverDAccelerationTests` checks supported host SIMD targets, every byte value,
 alignments and inaccessible tails; UTF-8 validity; JSON decoded duplicates,
 number boundaries, BOMs, depth and error precedence; nested/concurrent queues,
@@ -1182,6 +1192,10 @@ worker stack. It never links `tbbmalloc` or `tbbmalloc_proxy`.
 Performance measurements belong in ignored build directories. Measure Release
 with matching inputs, process allocator and thread count; separate primitive
 throughput from whole-request latency and compare all non-timing output.
+Compare the actual CLI, GUI worker and GUI startup at the normal thread count,
+as well as a constrained thread count; short single-function requests need not
+benefit from a scheduler that improves parallel batches. Alternate backend
+order and retain paired measurements and CPU time alongside output hashes.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
 
