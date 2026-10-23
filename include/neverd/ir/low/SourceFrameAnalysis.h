@@ -135,10 +135,14 @@ struct SourceFrameLoadDefinition {
 /// Calls unable to reach the query need no contract; this grants no source
 /// gate. Calls must be freshly authenticated against the current image and
 /// LowIR.
-std::optional<SourceFrameLoadDefinition>
-sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
-                            const NativeSourceCalls &Calls, int BlockId,
-                            size_t OperationIndex);
+/// This query additionally accepts complete scalar/HFA stack members, using
+/// their actual widths and invalidating the entire outgoing argument area.
+/// Format selects preserved bytes; WorkRemaining optionally shares a budget
+/// across queries in one analysis rather than resetting it for every load.
+std::optional<SourceFrameLoadDefinition> sourceFrameLoadedDefinition(
+    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
+    int BlockId, size_t OperationIndex,
+    BinaryFormat Format = BinaryFormat::MachO, size_t *WorkRemaining = nullptr);
 
 struct SourceFrameStoredByte {
   bool Initialized = false;

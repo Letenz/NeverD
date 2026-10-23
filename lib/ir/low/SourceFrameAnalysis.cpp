@@ -230,7 +230,8 @@ public:
                     std::set<int64_t> IncomingStackSlots = {},
                     bool RequirePrivateFrame = false,
                     bool ExternalMemoryDisjoint = false,
-                    const SourceFunctionTypeHint *EntrySignature = nullptr)
+                    const SourceFunctionTypeHint *EntrySignature = nullptr,
+                    BinaryFormat Format = BinaryFormat::MachO)
       : Architecture(Architecture), Calls(Calls),
         TRI(getTargetRegInfo(Architecture)), TerminalOnly(TerminalOnly),
         TrackStackArguments(TerminalOnly),
@@ -248,10 +249,10 @@ public:
     if (Architecture == Arch::AArch64)
       for (const auto &[Site, Contract] : Calls)
         if (Contract.Signature)
-          for (const auto &Parameter : Contract.Signature->Parameters)
+          for (const auto &Parameter : sourceABIParameters(*Contract.Signature))
             TrackStackArguments |=
                 Parameter.Location.Kind == SourceABICarrierKind::Stack;
-    for (const auto &Range : TRI.callPreservedRanges(BinaryFormat::MachO))
+    for (const auto &Range : TRI.callPreservedRanges(Format))
       for (unsigned I = 0; I < Range.Bytes; ++I)
         Preserved.insert(Range.Offset + I);
     for (uint64_t Offset : Preserved)
@@ -668,12 +669,16 @@ public:
                 TerminalOnly && Found->second.terminates();
             const bool ReturningArgument =
                 !TerminalOnly && Architecture == Arch::AArch64 && !Tail &&
-                Parameter.Components.empty() && Parameter.Type &&
-                (Parameter.Type->Kind == NdTypeKind::Int ||
-                 Parameter.Type->Kind == NdTypeKind::Ptr ||
-                 Parameter.Type->Kind == NdTypeKind::Float) &&
-                Parameter.Type->Size == 8 && Location.ValueBytes == 8 &&
-                Location.EntryStackOffset % 8 == 0;
+                Physical.Type &&
+                (Physical.Type->Kind == NdTypeKind::Int ||
+                 Physical.Type->Kind == NdTypeKind::Ptr ||
+                 Physical.Type->Kind == NdTypeKind::Float) &&
+                Physical.Type->Size == Location.ValueBytes &&
+                ((Parameter.Components.empty() && Location.ValueBytes == 8) ||
+                 (TrackDefinitions &&
+                  (Location.ValueBytes == 1 || Location.ValueBytes == 2 ||
+                   Location.ValueBytes == 4 || Location.ValueBytes == 8))) &&
+                Location.EntryStackOffset % Location.ValueBytes == 0;
             if ((!TerminalArgument && !ReturningArgument) ||
                 !Location.ValueBytes || Location.ValueBytes > 64 ||
                 Location.EntryStackOffset < 0 ||
@@ -708,7 +713,8 @@ public:
             // cannot restore a spill after this call. These prefix ranges
             // together cover call SP through the final stacked argument.
             if (ReturningArgument)
-              WritableFrameRanges.emplace_back(*SP, Start - *SP + 8);
+              WritableFrameRanges.emplace_back(
+                  *SP, (Start - *SP + Location.ValueBytes + 7) & ~int64_t(7));
             continue;
           }
           if ((Location.Kind != SourceABICarrierKind::IntegerRegister &&
@@ -1951,13 +1957,35 @@ static bool sourceFrameQuery(PreservationProof &Proof, const LowFunc &Function,
 std::optional<SourceFrameLoadDefinition>
 sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
                             const NativeSourceCalls &Calls, int BlockId,
-                            size_t OperationIndex) {
-  if (Architecture != Arch::AArch64)
+                            size_t OperationIndex, BinaryFormat Format,
+                            size_t *WorkRemaining) {
+  if (Architecture != Arch::AArch64 ||
+      (Format != BinaryFormat::MachO && Format != BinaryFormat::COFF &&
+       Format != BinaryFormat::ELF))
     return std::nullopt;
+  if (WorkRemaining) {
+    if (*WorkRemaining <= Calls.size()) {
+      *WorkRemaining = 0;
+      return std::nullopt;
+    }
+    *WorkRemaining -= Calls.size();
+  }
   bool HasStackStore = false;
   if (!validateFrameCalls(Function, Architecture, Calls, HasStackStore))
     return std::nullopt;
-  PreservationProof Proof(Architecture, Calls);
+  PreservationProof Proof(Architecture, Calls, false, {}, false, false, nullptr,
+                          Format);
+  if (WorkRemaining)
+    Proof.Remaining = std::min(Proof.Remaining, *WorkRemaining);
+  struct Budget {
+    size_t *Shared;
+    size_t &Remaining;
+    size_t Initial;
+    ~Budget() {
+      if (Shared)
+        *Shared -= Remaining <= Initial ? Initial - Remaining : Initial;
+    }
+  } Debit{WorkRemaining, Proof.Remaining, Proof.Remaining};
   Proof.TrackDefinitions = true;
   const auto Graph = frameGraph(Function, Architecture, Calls, Proof.Remaining);
   if (!Graph || !Graph->Blocks.count(BlockId))

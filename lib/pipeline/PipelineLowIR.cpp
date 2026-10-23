@@ -3770,6 +3770,8 @@ ImportPrototypeArguments importPrototypeArguments(
                                                           Img.abiFormat())) {
             Result.FloatingArguments.emplace(Addr, std::move(*Floating));
             Result.PrototypeDeclared.insert(Addr);
+            if (Function->PrototypeLibrary == UserPrototypeLibrary)
+              Result.UserDeclared.insert(Addr);
             if (Convention->ArgumentsFromCallSetup &&
                 !Convention->RegparmOnlyForInternalCalls)
               return;

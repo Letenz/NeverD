@@ -418,63 +418,11 @@ boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
              Op.Output.Size < Op.CalleeFloatReturnBytes) {
     return std::nullopt;
   }
-  std::vector<TypeRef> Parameters;
-  for (size_t I = 0; I < Op.ScalarCallSignature->Scalars.size(); ++I) {
-    const auto &Parameter = Op.ScalarCallSignature->Scalars[I];
-    if (Op.Inputs[I + 1].Size < Parameter.Bytes ||
-        (Parameter.Pointer &&
-         (Parameter.Floating || Parameter.Bytes != Registers.PointerSize)))
+  for (size_t I = 0; I < Signature.Scalars.size(); ++I)
+    if (Op.Inputs[I + 1].Size < Signature.Scalars[I].Bytes)
       return std::nullopt;
-    Parameters.push_back(Parameter.Floating ? NdType::makeFloat(Parameter.Bytes)
-                         : Parameter.Pointer
-                             ? NdType::makePtr()
-                             : NdType::makeInt(Parameter.Bytes));
-    Parameters.back()->Size = Parameter.Bytes;
-  }
-  const auto Record = [](llvm::ArrayRef<TypeRef> Members) -> TypeRef {
-    if (Members.empty())
-      return nullptr;
-    for (const auto &Member : Members)
-      if (Member->Kind != NdTypeKind::Float ||
-          Member->Size != Members.front()->Size)
-        return nullptr;
-    auto Type = NdType::makeStruct(
-        std::vector<TypeRef>(Members.begin(), Members.end()));
-    if (Type)
-      Type->Passing = NdRecordPassing::ByValue;
-    return Type;
-  };
-  if (!Signature.ParameterElements.empty()) {
-    std::vector<TypeRef> Source;
-    size_t At = 0;
-    for (uint16_t Count : Signature.ParameterElements) {
-      const size_t Pieces = std::max<uint16_t>(Count, 1);
-      if (Pieces > Parameters.size() - At)
-        return std::nullopt;
-      TypeRef Type = Count
-                         ? Record(llvm::ArrayRef(Parameters).slice(At, Pieces))
-                         : Parameters[At];
-      if (!Type)
-        return std::nullopt;
-      Source.push_back(std::move(Type));
-      At += Pieces;
-    }
-    if (At != Parameters.size())
-      return std::nullopt;
-    Parameters = std::move(Source);
-  }
-  TypeRef Result = NdType::makeFloat(Signature.ReturnBytes);
-  if (Signature.ReturnElements) {
-    if (Signature.ReturnBytes % Signature.ReturnElements)
-      return std::nullopt;
-    std::vector<TypeRef> Members(
-        Signature.ReturnElements,
-        NdType::makeFloat(Signature.ReturnBytes / Signature.ReturnElements));
-    Result = Record(Members);
-  }
-  const auto Expected = floatingCallArguments(A, F, Result, Parameters);
-  return Expected && *Expected == *Op.ScalarCallSignature ? Expected
-                                                          : std::nullopt;
+  return floatingCallTypes(A, F, Signature) ? std::optional(Signature)
+                                            : std::nullopt;
 }
 
 std::optional<FloatingCallArguments>

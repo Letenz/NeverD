@@ -363,10 +363,13 @@ covers one through four float/double HFA members on COFF/ELF/Mach-O, including
 whole-record COFF/ELF stack placement, and rejects incomplete, padded,
 over-aligned and unsupported Mach-O stack layouts.
 `RecordCallContract.WindowsStackedHFAsPreserveGroupsAndFollowingArguments`
-uses an independent header/provider and linked ARM64 PE fixtures for one through
+and `RecordCallContract.WindowsStackedHFAImportSlotsPreserveCompleteCalls`
+use an independent header/provider and linked ARM64 PE fixtures for one through
 four float/double members, seven preceding floats, a following float, an integer
-and another HFA. Single/chained calls and O0/O2 inputs produce both C routes,
-executed at O0/O2 with address/undefined-behavior sanitizers. Every parameter,
+and another HFA. Single/chained calls through import thunks or import slots,
+and O0/O2 inputs, produce both C routes. The unchanged output compiles for
+Windows ARM64 and executes on the host at O0/O2 with address/undefined-behavior
+sanitizers. Every parameter,
 result member and output sentinel is observed, including signed zero and NaN
 payloads; malformed stack offsets and source groups fail the bound validator.
 LLVM parameters must retain HFA arrays instead of flattened or struct operands.
@@ -376,11 +379,25 @@ returns, variadic calls and special ABI attributes. The scalar/aggregate
 nonfinite constant test also checks exact quiet/signaling NaN, infinity and
 signed-zero bits. Native Windows/ARM64 execution and unobserved wrapper
 return-type recovery are separate coverage.
-The generated C matrix executes on the host. It does not establish native
-AArch64 C compilation of wide aggregate-result bridges: the paired Clang
-currently rejects `_BitInt` wider than 128 bits on AArch64. Three/four-double
-HighC result carriers still have that native-C limitation; native LLVM HFA
-carriers and ordinary SVE ACLE projections do not use that C scalar type.
+HighIR retains checked HFA results as records of their returned registers;
+field reads do not require unsupported 192/256-bit C integers on AArch64.
+`RecordCallContract.HFAResultRecordsRequireTheExactDeclaredLayout` rejects
+changed member classes, offsets, alignment, size and an unproved carrier.
+`RecordCallContract.WindowsHFAProjectionsExecuteOnAArch64` and
+`RecordCallContract.WindowsHFAImportSlotProjectionsExecuteOnAArch64` execute
+those C matrices as freestanding Linux AArch64 programs, directly on that
+architecture or with `qemu-aarch64` from `PATH`. Missing tools are explicit
+skips. Each test covers 128 programs across both C routes and O0/O2; the thunk
+and import-slot variants together cover 256 host and 256 AArch64 executions.
+The oracle observes every argument/result bit and the number of calls. This
+checks the C projection's AArch64 transport, not native Windows execution.
+`RecordCallContract.CachedImportsRequireUnchangedPrivateBytes` covers private
+spills and preserved registers on COFF/ELF/Mach-O, rejecting partial writes,
+escapes, unknown calls, expired storage and malformed declarations.
+`CachedImportsInvalidateDenseStackArgumentsAndPadding` checks that outgoing
+COFF/ELF HFA members and padding lose old spill identities; uninitialized
+members and unsupported Apple stack packing refuse. `CachedImportFrameQueriesShareTheirWorkBudget`
+checks that repeated pointer queries cannot reset the function's proof budget.
 `ReturnContract.ExplicitX87PrecisionRequiresAnExactIEEEValue` keeps arithmetic,
 raw byte changes and unknown loads at eighty bits while exact IEEE extensions
 and identity copies retain their declared precision. SDK checks use the

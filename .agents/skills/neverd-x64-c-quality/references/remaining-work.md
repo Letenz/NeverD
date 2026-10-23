@@ -9,14 +9,23 @@ Windows provider declarations now include NDIS, filter manager, NETIO,
 storage, USB and HID APIs, with explicit x86/x64 layout and SDK HighC/LLVMC
 coverage. User libraries include more networking, security and device APIs.
 An export inventory is only a coverage audit; undocumented and ordinal-only
-exports still require authenticated declarations. ARM64 kernel headers remain
-unavailable in the MinGW DDK input.
+exports still require authenticated declarations. The retained Microsoft
+SDK/WDK input supplies x86/x64/ARM64 declarations; the older MinGW DDK input
+alone has no ARM64 kernel headers. Input availability is not full ABI coverage.
 
 The shared call-read summary excludes register copies proved overwritten before
 observation, including CPUID scratch exchanges. Calls, exits, partial writes
 and exceptional edges keep their incoming evidence. A VM entry that stores
 registers into an escaping machine-state frame can still have genuine inputs
 unknown after earlier calls; never erase those inputs or replace them with zero.
+Complete header and explicit local FP/HFA declarations share the same checked
+carrier adapter. ARM64 cached imports retain the original loaded callable
+through bounded private-frame proofs. Selected LLVMC output includes the
+checked import declaration and its by-value record definitions even when the
+callee is reached only through an image pointer mirror. The public record
+matrix checks both declaration origins, both C routes, selected-source target
+compilation, and independent host/AArch64 execution; it does not establish
+integer/void HFA result contracts or native Windows execution.
 Readonly scalar loads among instruction bytes reuse the immutable code reader's
 mapping and relocation checks. Default source cleanup also folds exact integer
 idempotence and absorption without symbolic search. Runtime-indexed memory and
@@ -44,7 +53,7 @@ The public constant-branch and worker chunk regressions cover these boundaries.
 | LLVMC output may retain avoidable frame references or control flow | Reproduce each issue with a public synthetic LLVM fixture. Keep a negative test for any value or edge that must remain printed. |
 | Source types and member calls remain partially recovered | Use authenticated PDB/TPI type and method metadata; do not infer a virtual method name from a vtable offset alone. |
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
-| UCRT declarations do not yet imply complete source-call coverage | Use `scripts/check_windows_ucrt_calls.py` with retained official inputs. Pointer qualifiers, variadic prefixes, pointer-only record/union tags, mixed scalar banks and x86 float/double stack arguments now have public contracts. Declared x87 scalar results retain TOP and exact source precision; real extended arithmetic still requires an 80-bit C type. Dense ARM64 HFAs retain their complete source groups in registers and ordinary COFF/ELF stack slots, and all one-to-four float/double result fields. The HFA adapter still requires an FP/HFA result; integer/void-result variants, padded or over-aligned records, Apple stack packing and nonordinary conventions remain outside it. Host C execution does not close native AArch64 C compilation of three/four-double result carriers: the paired Clang rejects scalar `_BitInt` widths above 128 there. A wrapper without a source return type or observing caller still cannot infer a source aggregate result merely from residual FP registers. The strict SDK check independently compares anonymous enum values/layout and compiles the unmodified standalone output too; compiler success alone does not certify execution. |
+| UCRT declarations do not yet imply complete source-call coverage | Use `scripts/check_windows_ucrt_calls.py` with retained official inputs. Pointer qualifiers, variadic prefixes, pointer-only record/union tags, mixed scalar banks and x86 float/double stack arguments now have public contracts. Declared x87 scalar results retain TOP and exact source precision; real extended arithmetic still requires an 80-bit C type. Dense ARM64 HFAs retain their complete source groups in registers and ordinary COFF/ELF stack slots, and all one-to-four float/double result fields. The HFA adapter still requires an FP/HFA result; integer/void-result variants, padded or over-aligned records, Apple stack packing and nonordinary conventions remain outside it. Checked HFA results now retain their register-record shape in HighIR, avoiding artificial 192/256-bit C integers. Both C routes have Windows ARM64 target compilation, host sanitizer execution and freestanding Linux AArch64 execution matrices for import thunks/slots and single/chained calls; native Windows runtime execution remains separate. A wrapper without a source return type or observing caller still cannot infer a source aggregate result merely from residual FP registers. The strict SDK check independently compares anonymous enum values/layout and compiles the unmodified standalone output too; compiler success alone does not certify execution. |
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
 | Interior code-address bits have no portable C or general LLVM blockaddress contract | Preserve precise CLI refusal and existing-file protection at full/selected optimized/unoptimized emission. Other atomic functions must still emit. LLVM verification does not prove bit observation; close opaque transport versus inspected bits at the shared LLVM owner. |
 | Explicitly lifting an interior fragment still lacks its caller's machine state | Navigate through authenticated recovered ownership when available. A forced standalone fragment must not invent missing register or stack inputs; executable-section data addresses alone do not establish a relocatable function identity. |

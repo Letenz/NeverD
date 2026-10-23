@@ -5418,10 +5418,16 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   std::string Expr = CalleeName + "(";
   const unsigned Limit = printedCallArgLimit(Call, CalleeName);
   const LibraryCallee Library = libraryCallee(Call);
-  const auto Function = debugCallee(Call);
+  // Import-slot calls already have a checked source declaration even when
+  // debug lookup cannot name their loaded LLVM operand. Use that same
+  // declaration for record arguments and results, as for scalar conversions.
+  const auto *SourceImport = sourceImportCallee(Call);
+  const auto DebugFunction = SourceImport ? std::nullopt : debugCallee(Call);
+  const auto *Function = SourceImport    ? SourceImport
+                         : DebugFunction ? &*DebugFunction
+                                         : nullptr;
   const bool SourceRecord =
-      Function &&
-      ((Library && Function->Name == Library.Name) || sourceImportCallee(Call));
+      Function && ((Library && Function->Name == Library.Name) || SourceImport);
   const bool Grouped = Function && groupedFloatingCall(Call, *Function);
   const auto RecordCall =
       SourceRecord ? libc::recordCallArguments(*Function, Opts.TheArch,
@@ -5496,9 +5502,8 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
     const bool Integer = Operand->getType()->isIntegerTy();
-    if (const auto *Source = sourceImportCallee(Call);
-        Source && ArgIdx < Source->Params.size()) {
-      const auto &Type = Source->Params[ArgIdx].second;
+    if (SourceImport && ArgIdx < SourceImport->Params.size()) {
+      const auto &Type = SourceImport->Params[ArgIdx].second;
       const std::string Bridge =
           Integer || PointerSpelling || Operand->getType()->isPointerTy()
               ? "(uintptr_t)"

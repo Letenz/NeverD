@@ -15,6 +15,7 @@
 #define NEVERD_LIBC_LIBCRECORDARGUMENTS_H
 
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/libc/LibCFloatingArguments.h"
@@ -30,8 +31,9 @@ inline bool isRecordCallParameter(const FunctionSym &Function, size_t Index,
     return false;
   const auto &Type = Function.Params[Index].second;
   return Type && Type->Kind == NdTypeKind::Struct && !Type->IsEnum &&
-         !isObjectPointerParameter(Function.Name, static_cast<unsigned>(Index),
-                                   Variant);
+         (Function.PrototypeLibrary == UserPrototypeLibrary ||
+          !isObjectPointerParameter(Function.Name, static_cast<unsigned>(Index),
+                                    Variant));
 }
 
 inline bool hasRecordCallParameters(const FunctionSym &Function,
@@ -63,13 +65,15 @@ struct RecordCallArguments : IntegerCallArguments {
   bool FloatingResult = false;
 };
 
-/// A user's declaration keeps its own call model. Header declarations retain
-/// their original name and header while their record pieces take the places
-/// SourceParameterPlacement assigns. Transparent pointer unions stay pointers.
+/// Header declarations and checked local FP/HFA declarations retain their
+/// original source types while their pieces take the places assigned by
+/// SourceParameterPlacement. Other user declarations keep their own call model.
 inline std::optional<RecordCallArguments>
 recordCallArguments(const FunctionSym &Function, Arch Architecture,
                     BinaryFormat Format, LibCVariant Variant) {
-  if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary) ||
+  const auto Floating = floatingCallArguments(Function, Architecture, Format);
+  if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary &&
+       !Floating) ||
       !Function.PlatformConvention || Function.IsVariadic ||
       Function.CallConv == DebugCallConv::Fastcall ||
       Function.CallConv == DebugCallConv::Thiscall)
@@ -92,7 +96,6 @@ recordCallArguments(const FunctionSym &Function, Arch Architecture,
     if (auto Integer = integerCallArguments(Architecture, Format,
                                             Function.ReturnType, Types))
       return RecordCallArguments{std::move(*Integer), false};
-  const auto Floating = floatingCallArguments(Function, Architecture, Format);
   if (!Floating ||
       (Floating->ParameterElements.empty() && !Floating->ReturnElements))
     return std::nullopt;

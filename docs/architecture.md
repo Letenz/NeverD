@@ -1456,6 +1456,15 @@ the typed callee, including immutable import identities absent from libc tables.
 Windows x64 and ARM64 publish these operands before SSA and record the scalar
 return width; later call setup recovery preserves them. Writable import slots
 retain their runtime target even when the declaration establishes its ABI.
+`floatingCallTypes` reconstructs and reclassifies complete scalar/HFA groups;
+bound call validation and cached-pointer analysis share it. `importedCallSlotFacts`
+uses exact import declarations to cross ABI-preserved registers, and delegates
+private spill identity to `SourceFrameAnalysis`. Queries share a work budget,
+require every reaching byte and reject frame escapes, partial writes and
+unproved intervening calls. The argument area, including slot padding, loses
+its old byte identities at each call. Low-to-Med snapshots the original loaded
+pointer and forwards only proven reloads before binding operands and building
+SSA; it does not replace a cached pointer with another read of the import slot.
 Omitted-callee conversion and its cache include the same signatures,
 independently of the selected functions. Forwarding recovery keeps each scalar
 argument width separate from the result width and admits incoming FP parameters
@@ -1470,9 +1479,15 @@ four bytes apart and exhausting the FP bank does not exhaust the integer bank.
 The native LLVM adapter uses an array for each HFA parameter: flattening it,
 or using an LLVM literal struct, can split a record between registers and the
 stack. Both C routes rebuild the original source record and retain complete
-return fields, including a single float and a three-float result whose C
-integer carrier has padding. Locally supplied header records get complete
-value definitions; records supplied by an included header are not redefined.
+return fields, including a single float and a three-float result. MedIR keeps
+the packed result's machine identity; `MedToHighConverter` maps its checked HFA
+signature to a record of returned registers, and consumers read typed fields.
+HighC verifies that carrier's complete layout against the header before copying
+the result bytes. A three/four-double result therefore needs no 192/256-bit C
+integer on AArch64. Locally supplied header records get complete value
+definitions; records supplied by an included header are not redefined.
+LLVM C uses its validated import prototype for the record conversions even
+when a call through an import slot has no separate debug-function identity.
 Padded or over-aligned HFAs, special conventions and Apple stack packing remain
 outside this adapter. A source aggregate return for an untyped wrapper still
 needs independent source or caller evidence.
