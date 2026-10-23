@@ -1,4 +1,5 @@
-//===- AArch64_NativeDecodeParityTestsDetail.h - native decode parity harness -===//
+//===- AArch64_NativeDecodeParityTestsDetail.h - Decode parity harness
+//-------===//
 //
 // NeverD Decompiler
 //
@@ -13,13 +14,13 @@
 #ifndef NEVERD_UNITTESTS_LIFT_AARCH64_NATIVEDECODEPARITYTESTSDETAIL_H
 #define NEVERD_UNITTESTS_LIFT_AARCH64_NATIVEDECODEPARITYTESTSDETAIL_H
 
+#include "gtest/gtest.h"
+
 #include "neverd/decode/AArch64NativeDecode.h"
 #include "neverd/lift/AArch64Lifter.h"
 
+#include <algorithm>
 #include <capstone/capstone.h>
-
-#include "gtest/gtest.h"
-
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -27,8 +28,6 @@
 #include <random>
 #include <string>
 #include <vector>
-
-#include <algorithm>
 
 namespace neverd::a64_parity_test {
 
@@ -93,13 +92,13 @@ public:
 
   // Decode+lift with capstone; returns false if capstone rejects the word.
   bool lift(uint32_t Word, va_t Addr, std::vector<LowOp> &Ops) const {
-    uint8_t Code[4] = {static_cast<uint8_t>(Word),
-                       static_cast<uint8_t>(Word >> 8),
-                       static_cast<uint8_t>(Word >> 16),
-                       static_cast<uint8_t>(Word >> 24)};
+    uint8_t Code[4] = {
+        static_cast<uint8_t>(Word), static_cast<uint8_t>(Word >> 8),
+        static_cast<uint8_t>(Word >> 16), static_cast<uint8_t>(Word >> 24)};
     const uint8_t *P = Code;
     size_t Sz = 4;
     uint64_t A = Addr;
+    Insn->illegal = false;
     if (!cs_disasm_iter(H, &P, &Sz, &A, Insn))
       return false;
     AArch64Lifter::fixupDecodedInsn(Insn);
@@ -118,7 +117,7 @@ private:
 // Lift a native-decoded word; caller has already confirmed tryDecode accepted.
 
 inline void nativeLift(uint32_t Word, va_t Addr, const cs_insn &NI,
-                std::vector<LowOp> &Ops) {
+                       std::vector<LowOp> &Ops) {
   AArch64Lifter L(Arch::AArch64);
   L.setStrict(false);
   Ops.clear();
@@ -170,6 +169,7 @@ inline std::string checkOne(const Oracle &O, uint32_t Word, va_t Addr) {
 
 inline void poison(cs_insn &NI, cs_detail &ND) {
   NI.detail = &ND;
+  NI.illegal = true;
   ND.writeback = true;
   cs_aarch64 &A = ND.aarch64;
   A.cc = AArch64CC_LT;
@@ -197,7 +197,7 @@ inline void poison(cs_insn &NI, cs_detail &ND) {
 // surfaces here as a lift mismatch even though checkOne (fresh buffer) passes.
 
 inline std::string checkOneReuse(const Oracle &O, cs_insn &NI, cs_detail &ND,
-                          uint32_t Word, va_t Addr) {
+                                 uint32_t Word, va_t Addr) {
   poison(NI, ND);
   if (!a64native::tryDecode(Word, Addr, NI, ND))
     return "";

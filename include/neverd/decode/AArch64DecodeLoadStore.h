@@ -266,6 +266,10 @@ inline bool decodeLdStImm9OrReg(uint32_t Word, va_t Addr, cs_insn &Insn,
   bool IsStore = false, RtIs64 = false;
   if (!ldstIntId(Size, Opc, Id, IsStore, RtIs64))
     return false;
+  // Let the full decoder retain soft-failure evidence for an overlapping
+  // load destination and writeback base (XZR and SP are distinct registers).
+  if (!IsStore && Rn != 31 && (Word & 0x1Fu) == Rn)
+    return false;
   cs_aarch64 &A = begin(Insn, Detail, Word, Addr, Id);
   A.op_count = 2;
   setReg(A.operands[0], gpr(Word & 0x1Fu, RtIs64));
@@ -400,6 +404,10 @@ inline bool decodeLdStPair(uint32_t Word, va_t Addr, cs_insn &Insn,
   const unsigned Rt2 = (Word >> 10) & 0x1Fu;
   const unsigned Rn = (Word >> 5) & 0x1Fu;
 
+  if ((IsLoad && Rt == Rt2) ||
+      (Mode != 2 && Rn != 31 && (Rt == Rn || Rt2 == Rn)))
+    return false;
+
   cs_aarch64 &A = begin(Insn, Detail, Word, Addr,
                         IsLoad ? AARCH64_INS_LDP : AARCH64_INS_STP);
   // Capstone aliases only the zero-displacement offset form.
@@ -438,6 +446,8 @@ inline bool decodeLdStPairFP(uint32_t Word, va_t Addr, cs_insn &Insn,
   const unsigned Rt = Word & 0x1Fu;
   const unsigned Rt2 = (Word >> 10) & 0x1Fu;
   const unsigned Rn = (Word >> 5) & 0x1Fu;
+  if (IsLoad && Rt == Rt2)
+    return false;
 
   cs_aarch64 &A = begin(Insn, Detail, Word, Addr,
                         IsLoad ? AARCH64_INS_LDP : AARCH64_INS_STP);

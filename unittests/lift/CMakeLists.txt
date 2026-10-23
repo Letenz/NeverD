@@ -1850,6 +1850,16 @@ target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDAArch64DecodeValidityTests
+  aarch64/AArch64DecodeValidityTests.cpp
+  aarch64/AArch64_NativeDecodeParityTests.cpp
+  aarch64/AArch64_NativeDecodeParityControlTests.cpp
+  aarch64/AArch64_NativeDecodeParityFPTests.cpp
+  aarch64/AArch64_NativeDecodeParityLoadStoreTests.cpp
+  aarch64/AArch64_NativeDecodeParitySweepTests.cpp
+  LINK_COMPONENTS Decode IRLow Support
+)
+
 add_neverd_unittest(NeverDCMemoryCopyTests
   core/CMemoryCopyTests.cpp
   LINK_COMPONENTS BackendC
