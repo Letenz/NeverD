@@ -37,6 +37,21 @@ modifiers; each key must change at least one pointer, excluding a NOP profile.
 Other architectures skip both native checks. These tests do not certify
 arm64e ABI reconstruction or invalid-signature traps.
 
+The same target checks scalar CPA instructions through both decoder routes,
+including shifts, SP, XZR and overlapping operands. Malformed widths and
+arities cannot grant call-argument proofs. LLVM O2 and both C projections
+retain the actual instruction even with a dead result; generated C compiles
+at O0/O2, with parameter-flow checks for temporary-name collisions. Vector
+CPA forms must reject instead of becoming unchecked arithmetic. These are
+instruction-preservation checks, not native CPA/CPA2 execution qualification.
+`ReturnContracts.CheckedAArch64PointersRemainReturnValues` covers all baseline
+PAC/AUT/XPAC/PACGA, authenticated target and scalar CPA results. An effectful
+instruction must not turn a returned pointer into a void function; malformed
+operand widths cannot acquire that return-value contract. C compilation rejects
+unused-value warnings, including intentionally discarded pointer results.
+LowIR instruction-boundary and MedIR verification reject malformed PAC/AUT,
+strip, generic-signature and checked-arithmetic operations before emission.
+
 The same target checks public Mach-O loading, CPU subtype capability bits,
 arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
 multi-start pages, tagged pointers, malformed chains and unsupported layouts.
@@ -50,6 +65,19 @@ and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
 also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
+Analysis-only metadata tests follow local authentication recipes for every
+supported chained format and for authenticated object relocations. Stale
+bytes, signing-field mismatches, conflicting provenance, overlapping storage
+and imported or unmapped targets reject. Initializer/finalizer discovery must
+leave recipe bytes unchanged. A real Clang arm64e Objective-C object at O0/O2
+must retain local class/metaclass record and signed IMP targets; it does not
+bypass the linked-image requirement for source types. On Apple Silicon the
+test also links a bundle with local symbols stripped and requires class,
+selector, signature, IMP and function-name recovery from its authenticated
+metadata. Category fixtures exercise authenticated class, metaclass and method records in
+`NeverDObjCSourceCallTests`; its source-binding tests retain the plain-object
+reconstruction restriction. Metadata names replace synthesized function-start
+names while preserving stated, analysis and user names.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -5177,6 +5205,10 @@ return-address read. Run it with `NeverDMedStackAlignmentTests`,
 checks four architectures and three formats in both query orders. Accepted and
 moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and
 depth refusal must leave later queries correct in both batched and single use.
+`SharedJoinsKeepThePerQueryWorkLimit` checks shared-input joins on both sides
+of the work limit and recovery after refusal.
+`StackQueriesKeepDistinctValueKindsAndVersions` keeps register and temporary
+occurrences separate across many SSA versions.
 
 `MedStackAlignment.EntryLiveInQueriesKeepExactRegisterOccurrences` and the
 `EntryStackQueries*` cases check exact width, architecture, rename tag, physical

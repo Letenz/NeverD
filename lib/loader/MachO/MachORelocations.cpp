@@ -764,6 +764,7 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
                                    RAddr);
           MachOAuthenticatedPointer Auth;
           Auth.Target = *Target;
+          Auth.EncodedValue = Raw;
           Auth.Addend = Addend;
           Auth.Diversity = arm64e::kDiversity.extract(Raw);
           Auth.AddressDiversity = arm64e::kAddressDiversity.extract(Raw);

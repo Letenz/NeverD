@@ -81,6 +81,9 @@ NEVERD_MACHO_ARM64E_TEXT(kInvalidObjectPointerBits,
                          "invalid ARM64 authenticated pointer bits")
 NEVERD_MACHO_ARM64E_TEXT(kConflictingObjectPointer,
                          "ARM64 authenticated pointer overflows or conflicts")
+NEVERD_MACHO_ARM64E_TEXT(kObjCMetadataPointerUnavailable,
+                         "Objective-C metadata pointer is unavailable or has "
+                         "an unresolved chained fixup")
 
 #undef NEVERD_MACHO_ARM64E_FORMAT
 #undef NEVERD_MACHO_ARM64E_FIELD

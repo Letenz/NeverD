@@ -6,6 +6,7 @@
 
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 
+#include "neverd/loader/MachO/MachOMetadataPointer.h"
 #include "neverd/loader/MachO/MachOPlatform.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -411,9 +412,11 @@ void parseRuntimeFunctionSections(const std::vector<SectionInfo> &Sections,
           continue;
         Addr = TextVMAddr + Offset;
       } else {
-        Addr = static_cast<va_t>(readPtr(P, Img.is64Bit()));
-        if (Addr == 0)
+        const auto Target =
+            readMetadataPointerTarget(Img, Sec.Addr + I * EntrySize);
+        if (!Target || !*Target)
           continue;
+        Addr = *Target;
       }
       appendRuntimeFunction(Addr, Out, Img);
     }

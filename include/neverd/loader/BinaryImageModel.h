@@ -71,6 +71,8 @@ struct ImportBindSlot {
 /// remain encoded: offline loading cannot manufacture the process's PAC.
 struct MachOAuthenticatedPointer {
   va_t Target = InvalidVA;
+  /// Exact on-disk recipe, retained to invalidate analysis after byte edits.
+  std::optional<uint64_t> EncodedValue;
   std::string Symbol;
   std::string Module;
   int64_t Addend = 0;
