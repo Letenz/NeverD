@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
+#include "neverd/loader/MachO/MachOMetadataPointer.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/BinaryFormat/MachO.h"
@@ -543,6 +544,9 @@ TEST(MachOARM64Relocation, AuthenticatedPointerKeepsSigningRecipe) {
       ASSERT_EQ(Image.MachOAuthenticatedPointers.size(), 1);
       const auto &Auth = Image.MachOAuthenticatedPointers.at(SectionVA);
       EXPECT_EQ(Auth.Target, SectionVA + 4);
+      EXPECT_EQ(Auth.EncodedValue, Raw);
+      EXPECT_EQ(macho_loader::readMetadataPointerTarget(Image, SectionVA),
+                SectionVA + 4);
       EXPECT_EQ(Auth.Addend, -4);
       EXPECT_EQ(Auth.Symbol, "_target0");
       EXPECT_EQ(Auth.Key, Key);

@@ -15,6 +15,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/c/render/AArch64PointerC.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/MsvcTypeName.h"
@@ -1599,6 +1600,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           namedFrameSlot(*Stmt.Val->Operands[0]))
         break;
       emitIndent(Indent);
+      if (Stmt.Val->Kind == ExprKind::Call &&
+          aarch64PointerCRequiresDiscard(Stmt.Val->IntrinsicId)) {
+        OS << callStatementText(*Stmt.Val) << "\n";
+        break;
+      }
       OS << (Stmt.Val->Kind == ExprKind::Store
                  ? statementText(exprStr(*Stmt.Val))
                  : exprStr(*Stmt.Val))

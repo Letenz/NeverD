@@ -205,7 +205,8 @@ class ProtocolReader {
 
 public:
   explicit ProtocolReader(BinaryImage &Image)
-      : Image(Image), Data(Image), Imports(Image.collectImportStorageSlots()) {}
+      : Image(Image), Data(Image, PointerView::MetadataTarget),
+        Imports(Image.collectImportStorageSlots()) {}
 
   void run() {
     size_t RootsRemaining = ::neverd::limits::loader::kObjCProtocolsMaxRecords;

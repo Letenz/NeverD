@@ -644,10 +644,13 @@ SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
                                    WorkBudget &Budget, size_t &Storage);
 
 /// Complete bounded bit decisions over a product's observed low word.
+/// Complete, when supplied, records a finished search over free variables;
+/// it does not certify global minimality or an equivalence on its own.
 SymRef foldResidueDecisions(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                             size_t &Storage, bool OddProductOnly = false,
                             size_t MaxWork = std::numeric_limits<size_t>::max(),
-                            bool *StorageLimited = nullptr);
+                            bool *StorageLimited = nullptr,
+                            bool *Complete = nullptr);
 
 /// Avoid rediscovering an emitted exact low-word reading. Original opaque
 /// inputs still participate in the deep walk. The canonical builder propagates
