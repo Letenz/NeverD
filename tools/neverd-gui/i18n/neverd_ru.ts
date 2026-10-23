@@ -1103,6 +1103,14 @@
         <source>Static register value...</source>
         <translation>Статическое значение регистра...</translation>
     </message>
+    <message>
+        <source>Compare &amp;binaries…</source>
+        <translation>Сравнить б&amp;инарные файлы…</translation>
+    </message>
+    <message>
+        <source>Compare two binaries, inspect changes and review function correspondence</source>
+        <translation>Сравнить два бинарных файла, изучить изменения и соответствие функций</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -5466,6 +5474,2228 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
         <translation>Ни в одном запущенном NeverD не открыта программа ссылки, и среди недавно открытых файлов её нет; укажите и файл: neverd-gui FILE LINK</translation>
+    </message>
+</context>
+<context>
+    <name>ComparisonDialog</name>
+    <message>
+        <source>Applying debug symbols</source>
+        <translation>Применение отладочных символов</translation>
+    </message>
+    <message>
+        <source>Checking ambiguous matches</source>
+        <translation>Проверка неоднозначных соответствий</translation>
+    </message>
+    <message>
+        <source>Checking file identity</source>
+        <translation>Проверка идентичности файла</translation>
+    </message>
+    <message>
+        <source>Comparing binaries</source>
+        <translation>Сравнение бинарных файлов</translation>
+    </message>
+    <message>
+        <source>Comparing function context</source>
+        <translation>Сравнение контекста функций</translation>
+    </message>
+    <message>
+        <source>Comparing function features</source>
+        <translation>Сравнение признаков функций</translation>
+    </message>
+    <message>
+        <source>Discovering functions</source>
+        <translation>Обнаружение функций</translation>
+    </message>
+    <message>
+        <source>Finding function entries</source>
+        <translation>Поиск точек входа в функции</translation>
+    </message>
+    <message>
+        <source>Finding similar functions</source>
+        <translation>Поиск похожих функций</translation>
+    </message>
+    <message>
+        <source>Identifying file format</source>
+        <translation>Определение формата файла</translation>
+    </message>
+    <message>
+        <source>Input ready</source>
+        <translation>Входные данные готовы</translation>
+    </message>
+    <message>
+        <source>Loading input</source>
+        <translation>Загрузка входных данных</translation>
+    </message>
+    <message>
+        <source>Matching exact features</source>
+        <translation>Сопоставление точных признаков</translation>
+    </message>
+    <message>
+        <source>Measuring function changes</source>
+        <translation>Измерение изменений функций</translation>
+    </message>
+    <message>
+        <source>Preparing image metadata</source>
+        <translation>Подготовка метаданных образа</translation>
+    </message>
+    <message>
+        <source>Preparing input bytes</source>
+        <translation>Подготовка входных байтов</translation>
+    </message>
+    <message>
+        <source>Primary: %1</source>
+        <translation>Основной: %1</translation>
+    </message>
+    <message>
+        <source>Reading debug symbols</source>
+        <translation>Чтение отладочных символов</translation>
+    </message>
+    <message>
+        <source>Reading file</source>
+        <translation>Чтение файла</translation>
+    </message>
+    <message>
+        <source>Reading format metadata</source>
+        <translation>Чтение метаданных формата</translation>
+    </message>
+    <message>
+        <source>Reading instructions</source>
+        <translation>Чтение инструкций</translation>
+    </message>
+    <message>
+        <source>Resolving calling convention</source>
+        <translation>Определение соглашения о вызовах</translation>
+    </message>
+    <message>
+        <source>Secondary: %1</source>
+        <translation>Дополнительный: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonChangesDialog</name>
+    <message>
+        <source>  %1 bytes · %2</source>
+        <translation>  %1 байт · %2</translation>
+    </message>
+    <message>
+        <source>%1 slice · %2 operations · %3 · gaps: %4</source>
+        <translation>Срез %1 · операций: %2 · %3 · пробелы: %4</translation>
+    </message>
+    <message>
+        <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
+Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
+Boundaries: primary %12; secondary %13.</source>
+        <translation>%1 ↔ %2 · %3 · совпадений: %4 / сохранённых наблюдений: %5
+Строки машинного кода: %6 / %7; покрытие: %8; неоднозначные связи: %9. SSA: основной %10; дополнительный %11.
+Границы: основной %12; дополнительный %13.</translation>
+    </message>
+    <message>
+        <source>; indexing incomplete</source>
+        <translation>; индексирование неполное</translation>
+    </message>
+    <message>
+        <source>All local changes</source>
+        <translation>Все локальные изменения</translation>
+    </message>
+    <message>
+        <source>Association: %1; native row: %2 (%3)</source>
+        <translation>Связь: %1; строка машинного кода: %2 (%3)</translation>
+    </message>
+    <message>
+        <source>Call argument dependencies</source>
+        <translation>Зависимости аргументов вызова</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>Пути вызовов…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Change context filter</source>
+        <translation>Фильтр контекста изменения</translation>
+    </message>
+    <message>
+        <source>Change review — NeverD</source>
+        <translation>Обзор изменений — NeverD</translation>
+    </message>
+    <message>
+        <source>Changes: %1</source>
+        <translation>Изменения: %1</translation>
+    </message>
+    <message>
+        <source>Choose an accepted function pair to review its changes.</source>
+        <translation>Выберите принятую пару функций для обзора изменений.</translation>
+    </message>
+    <message>
+        <source>Comparison changed. Choose a function pair for a fresh review.</source>
+        <translation>Сравнение изменилось. Выберите пару функций для нового обзора.</translation>
+    </message>
+    <message>
+        <source>Context: %1</source>
+        <translation>Контекст: %1</translation>
+    </message>
+    <message>
+        <source>Dependency slice</source>
+        <translation>Срез зависимостей</translation>
+    </message>
+    <message>
+        <source>Evidence input</source>
+        <translation>Входные данные свидетельств</translation>
+    </message>
+    <message>
+        <source>Inspect function</source>
+        <translation>Изучить функцию</translation>
+    </message>
+    <message>
+        <source>Memory write dependencies</source>
+        <translation>Зависимости записи в память</translation>
+    </message>
+    <message>
+        <source>Native evidence only; no unique SSA association.</source>
+        <translation>Только машинные свидетельства; однозначной связи с SSA нет.</translation>
+    </message>
+    <message>
+        <source>No original instruction on this side</source>
+        <translation>На этой стороне нет исходной инструкции</translation>
+    </message>
+    <message>
+        <source>Operation gaps: %1</source>
+        <translation>Пробелы операций: %1</translation>
+    </message>
+    <message>
+        <source>Original evidence</source>
+        <translation>Исходные свидетельства</translation>
+    </message>
+    <message>
+        <source>Predicate dependencies</source>
+        <translation>Зависимости предиката</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>Основной входной файл</translation>
+    </message>
+    <message>
+        <source>Priority orders review leads; it is not severity or confidence. Context is an observed dependency. Local operands and unique direct synthetic operands are compared; deeper expressions, security effects and fix presence remain unassessed.</source>
+        <translation>Приоритет упорядочивает направления обзора; это не серьёзность и не уверенность. Контекст — наблюдаемая зависимость. Сравниваются локальные операнды и однозначные прямые синтетические операнды; более глубокие выражения, влияние на безопасность и наличие исправления не оценены.</translation>
+    </message>
+    <message>
+        <source>Refresh review</source>
+        <translation>Обновить обзор</translation>
+    </message>
+    <message>
+        <source>Return dependencies</source>
+        <translation>Зависимости возврата</translation>
+    </message>
+    <message>
+        <source>Reviewing local changes…</source>
+        <translation>Обзор локальных изменений…</translation>
+    </message>
+    <message>
+        <source>SSA node %1: %2, result %3 bytes; native anchor node %4</source>
+        <translation>Узел SSA %1: %2, результат %3 байт; якорный узел машинного кода %4</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>Дополнительный входной файл</translation>
+    </message>
+    <message>
+        <source>Select a change, then trace its inputs or uses.</source>
+        <translation>Выберите изменение и проследите его входы или использования.</translation>
+    </message>
+    <message>
+        <source>Synthetic operation: linked by a direct operand; its address is not an original instruction.</source>
+        <translation>Синтетическая операция: связана прямым операндом; её адрес не является исходной инструкцией.</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>Проследить входы</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>Проследить использования</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>Отслеживание зависимостей %1…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>завершено</translation>
+    </message>
+    <message>
+        <source>constant %1</source>
+        <translation>константа %1</translation>
+    </message>
+    <message>
+        <source>node %1</source>
+        <translation>узел %1</translation>
+    </message>
+    <message>
+        <source>none recorded</source>
+        <translation>не записано</translation>
+    </message>
+    <message>
+        <source>parameter</source>
+        <translation>параметр</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>частично</translation>
+    </message>
+    <message>
+        <source>unknown input</source>
+        <translation>неизвестный вход</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonCounterpartDialog</name>
+    <message>
+        <source>
+Removes the candidate&apos;s existing pair %1 ↔ %2 · %3.</source>
+        <translation>
+Удаляет существующую пару кандидата %1 ↔ %2 · %3.</translation>
+    </message>
+    <message>
+        <source>
+Removes the existing pair %1 ↔ %2.</source>
+        <translation>
+Удаляет существующую пару %1 ↔ %2.</translation>
+    </message>
+    <message>
+        <source>
+This function has incomplete analysis.</source>
+        <translation>
+Анализ этой функции неполон.</translation>
+    </message>
+    <message>
+        <source>
+This records your chosen correspondence. Undo restores previous pairs.</source>
+        <translation>
+Записывает выбранное соответствие. Отмена восстанавливает предыдущие пары.</translation>
+    </message>
+    <message>
+        <source>%1 functions · Select a row to review its current pairing.</source>
+        <translation>Функций: %1 · Выберите строку, чтобы проверить текущую пару.</translation>
+    </message>
+    <message>
+        <source>%1 is already paired with this function.</source>
+        <translation>%1 уже образует пару с этой функцией.</translation>
+    </message>
+    <message>
+        <source>%1 of %2 candidates · These are hypotheses; choose using your analysis.
+%3</source>
+        <translation>Кандидатов: %1 из %2 · Это гипотезы; выбирайте на основе своего анализа.
+%3</translation>
+    </message>
+    <message>
+        <source>Address: high to low</source>
+        <translation>Адрес: по убыванию</translation>
+    </message>
+    <message>
+        <source>Address: low to high</source>
+        <translation>Адрес: по возрастанию</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>Все функции</translation>
+    </message>
+    <message>
+        <source>Ambiguity candidates</source>
+        <translation>Неоднозначные кандидаты</translation>
+    </message>
+    <message>
+        <source>Candidate scope</source>
+        <translation>Область кандидатов</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2 · %3.</source>
+        <translation>Выберите соответствие со стороны «%1» для %2 · %3.</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2.</source>
+        <translation>Выберите соответствие со стороны «%1» для %2.</translation>
+    </message>
+    <message>
+        <source>Choose counterpart — NeverD</source>
+        <translation>Выбор соответствия — NeverD</translation>
+    </message>
+    <message>
+        <source>Could not load candidates. %1</source>
+        <translation>Не удалось загрузить кандидатов. %1</translation>
+    </message>
+    <message>
+        <source>Counterpart functions</source>
+        <translation>Соответствующие функции</translation>
+    </message>
+    <message>
+        <source>Current counterpart: %1. Select a replacement; Undo restores previous pairs.</source>
+        <translation>Текущее соответствие: %1. Выберите замену; отмена восстанавливает предыдущие пары.</translation>
+    </message>
+    <message>
+        <source>Loading functions…</source>
+        <translation>Загрузка функций…</translation>
+    </message>
+    <message>
+        <source>Name: A to Z</source>
+        <translation>Имя: по возрастанию</translation>
+    </message>
+    <message>
+        <source>Name: Z to A</source>
+        <translation>Имя: по убыванию</translation>
+    </message>
+    <message>
+        <source>No ambiguity candidates match. Clear the search or choose All functions.</source>
+        <translation>Подходящих неоднозначных кандидатов нет. Очистите поиск или выберите «Все функции».</translation>
+    </message>
+    <message>
+        <source>No functions match. Try another name or address.</source>
+        <translation>Подходящих функций нет. Попробуйте другое имя или адрес.</translation>
+    </message>
+    <message>
+        <source>Pair %1 with %2 · %3.</source>
+        <translation>Образовать пару %1 с %2 · %3.</translation>
+    </message>
+    <message>
+        <source>Pair functions</source>
+        <translation>Объединить функции в пары</translation>
+    </message>
+    <message>
+        <source>Search by function name or hexadecimal address</source>
+        <translation>Поиск по имени функции или шестнадцатеричному адресу</translation>
+    </message>
+    <message>
+        <source>Search counterpart functions</source>
+        <translation>Поиск соответствующих функций</translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation>Поиск…</translation>
+    </message>
+    <message>
+        <source>Select a function to pair. Browsing leaves your comparison unchanged.</source>
+        <translation>Выберите функцию для пары. Просмотр не меняет сравнение.</translation>
+    </message>
+    <message>
+        <source>Size: large to small</source>
+        <translation>Размер: по убыванию</translation>
+    </message>
+    <message>
+        <source>Size: small to large</source>
+        <translation>Размер: по возрастанию</translation>
+    </message>
+    <message>
+        <source>Sort functions</source>
+        <translation>Сортировка функций</translation>
+    </message>
+    <message>
+        <source>The comparison changed. Close this window and choose the function again.</source>
+        <translation>Сравнение изменилось. Закройте это окно и выберите функцию снова.</translation>
+    </message>
+    <message>
+        <source>The comparison worker is unavailable. Close this window and retry the comparison.</source>
+        <translation>Рабочий процесс сравнения недоступен. Закройте это окно и повторите сравнение.</translation>
+    </message>
+    <message>
+        <source>This function has no retained ambiguity group. Choose All functions to select a counterpart.</source>
+        <translation>У этой функции нет сохранённой группы неоднозначности. Выберите «Все функции» для выбора соответствия.</translation>
+    </message>
+    <message>
+        <source>primary</source>
+        <translation>основной</translation>
+    </message>
+    <message>
+        <source>secondary</source>
+        <translation>дополнительный</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonDialog</name>
+    <message>
+        <source>
+
+Primary identity: %1
+Secondary identity: %2
+
+Structural correspondence does not establish semantic equivalence or patch presence.</source>
+        <translation>
+
+Идентификатор основного файла: %1
+Идентификатор дополнительного файла: %2
+
+Структурное соответствие не доказывает семантическую эквивалентность или наличие исправления.</translation>
+    </message>
+    <message>
+        <source> (difference %1)</source>
+        <translation> (различие %1)</translation>
+    </message>
+    <message>
+        <source> Function discovery is partial.</source>
+        <translation> Обнаружение функций выполнено частично.</translation>
+    </message>
+    <message>
+        <source> image base</source>
+        <translation> база образа</translation>
+    </message>
+    <message>
+        <source> input format</source>
+        <translation> формат входных данных</translation>
+    </message>
+    <message>
+        <source> s</source>
+        <translation> с</translation>
+    </message>
+    <message>
+        <source>%1  %2 / %3</source>
+        <translation>%1  %2 / %3</translation>
+    </message>
+    <message>
+        <source>%1 %2  ↔  %3 %4</source>
+        <translation>%1 %2  ↔  %3 %4</translation>
+    </message>
+    <message>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
+        <translation>Совпадений: %1  ·  изменённых: %2  ·  неоднозначных: %3  ·  без соответствия: %4 / %5  ·  неполных: %6 / %7</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>Все функции</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>Неоднозначно</translation>
+    </message>
+    <message>
+        <source>Analyst review…</source>
+        <translation>Обзор аналитика…</translation>
+    </message>
+    <message>
+        <source>Auto format</source>
+        <translation>Автоматический формат</translation>
+    </message>
+    <message>
+        <source>Binary comparison</source>
+        <translation>Сравнение бинарных файлов</translation>
+    </message>
+    <message>
+        <source>Bounded native instruction-run analysis for split, merge, inline and clone hypotheses. This does not validate behavior.</source>
+        <translation>Ограниченный анализ последовательностей машинных инструкций для гипотез разделения, слияния, встраивания и клонирования. Не подтверждает поведение.</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Обзор…</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>Пути вызовов…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Cancellation requested — waiting for computation to stop…</source>
+        <translation>Запрошена отмена — ожидание остановки вычислений…</translation>
+    </message>
+    <message>
+        <source>Capture bounded SSA observations in address order. Pipeline cancellation is checked between functions. See Dependencies for omitted and unsupported functions.</source>
+        <translation>Сбор ограниченных наблюдений SSA в порядке адресов. Отмена конвейера проверяется между функциями. Пропущенные и неподдерживаемые функции указаны в зависимостях.</translation>
+    </message>
+    <message>
+        <source>Change review…</source>
+        <translation>Обзор изменений…</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>Изменено</translation>
+    </message>
+    <message>
+        <source>Compare</source>
+        <translation>Сравнить</translation>
+    </message>
+    <message>
+        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
+        <translation>Сравнение двух машинных входных файлов x86/x64. Оценки соответствия эвристические.</translation>
+    </message>
+    <message>
+        <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
+        <translation>Сравнение завершено. Оценки эвристические; изучите покрытие и свидетельства.</translation>
+    </message>
+    <message>
+        <source>Comparison deadline</source>
+        <translation>Срок сравнения</translation>
+    </message>
+    <message>
+        <source>Computation stopped: %1. Partial results retained.</source>
+        <translation>Вычисление остановлено: %1. Частичные результаты сохранены.</translation>
+    </message>
+    <message>
+        <source>Confirm pair</source>
+        <translation>Подтвердить пару</translation>
+    </message>
+    <message>
+        <source>Control flow</source>
+        <translation>Поток управления</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>Соответствующая функция</translation>
+    </message>
+    <message>
+        <source>Deadline</source>
+        <translation>Срок</translation>
+    </message>
+    <message>
+        <source>Dependencies…</source>
+        <translation>Зависимости…</translation>
+    </message>
+    <message>
+        <source>Dependency evidence</source>
+        <translation>Свидетельства зависимостей</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>Дизассемблированный код</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>Свидетельства</translation>
+    </message>
+    <message>
+        <source>Filter by name or address</source>
+        <translation>Фильтр по имени или адресу</translation>
+    </message>
+    <message>
+        <source>Filter functions</source>
+        <translation>Фильтр функций</translation>
+    </message>
+    <message>
+        <source>Fit graphs</source>
+        <translation>Вписать графы</translation>
+    </message>
+    <message>
+        <source>Function difference %1. No completed instruction comparison is available. Use Retry difference to recompute.
+
+</source>
+        <translation>Различие функций %1. Завершённое сравнение инструкций недоступно. Используйте «Повторить сравнение различий» для пересчёта.
+
+</translation>
+    </message>
+    <message>
+        <source>Function difference stopped. Use Retry difference to recompute; no completed instruction comparison is shown.</source>
+        <translation>Сравнение различий функций остановлено. Используйте «Повторить сравнение различий» для пересчёта; завершённое сравнение инструкций не показано.</translation>
+    </message>
+    <message>
+        <source>Function state</source>
+        <translation>Состояние функции</translation>
+    </message>
+    <message>
+        <source>Functions per input</source>
+        <translation>Функций на входной файл</translation>
+    </message>
+    <message>
+        <source>Image base</source>
+        <translation>База образа</translation>
+    </message>
+    <message>
+        <source>Index and verify finite dependency neighborhoods across functions. Includes dependency evidence.</source>
+        <translation>Индексирование и проверка конечных окрестностей зависимостей между функциями. Включает свидетельства зависимостей.</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload before continuing review.</source>
+        <translation>Входные данные изменились. Перезагрузите перед продолжением обзора.</translation>
+    </message>
+    <message>
+        <source>Inspect overlapping region and transformation hypotheses. Enable analysis in Settings before comparing.</source>
+        <translation>Изучите перекрывающиеся области и гипотезы преобразований. Перед сравнением включите анализ в настройках.</translation>
+    </message>
+    <message>
+        <source>Inventory side</source>
+        <translation>Сторона списка</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>Загрузка %1…</translation>
+    </message>
+    <message>
+        <source>Loading comparison inputs…</source>
+        <translation>Загрузка входных данных сравнения…</translation>
+    </message>
+    <message>
+        <source>Match: %1
+%2
+
+Similarity: %3
+Heuristic confidence: %4%
+Changes: %5
+Analyst confirmed: %6
+Coverage: %7</source>
+        <translation>Соответствие: %1
+%2
+
+Сходство: %3
+Эвристическая уверенность: %4%
+Изменения: %5
+Подтверждено аналитиком: %6
+Покрытие: %7</translation>
+    </message>
+    <message>
+        <source>Matched</source>
+        <translation>Соответствует</translation>
+    </message>
+    <message>
+        <source>Matching evidence appears here.</source>
+        <translation>Здесь появятся свидетельства соответствия.</translation>
+    </message>
+    <message>
+        <source>Maximum dependency functions per input</source>
+        <translation>Максимум функций зависимостей на входной файл</translation>
+    </message>
+    <message>
+        <source>Minimum similarity</source>
+        <translation>Минимальное сходство</translation>
+    </message>
+    <message>
+        <source>Native instruction regions…</source>
+        <translation>Области машинных инструкций…</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>Сравнение NeverD (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff);;JSON (*.json)</source>
+        <translation>Сравнение NeverD (*.nddiff);;JSON (*.json)</translation>
+    </message>
+    <message>
+        <source>New binary or patch</source>
+        <translation>Новый бинарный файл или исправление</translation>
+    </message>
+    <message>
+        <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
+        <translation>Принятого соответствия нет. Изучите неоднозначных кандидатов или выберите пару вручную.</translation>
+    </message>
+    <message>
+        <source>No deadline</source>
+        <translation>Без срока</translation>
+    </message>
+    <message>
+        <source>Original binary</source>
+        <translation>Исходный бинарный файл</translation>
+    </message>
+    <message>
+        <source>Pair with…</source>
+        <translation>Образовать пару с…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Основной</translation>
+    </message>
+    <message>
+        <source>Pseudocode</source>
+        <translation>Псевдокод</translation>
+    </message>
+    <message>
+        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
+        <translation>Псевдокод недоступен в этом декодированном профиле. Исходные инструкции, операнды и байты доступны в дизассемблировании.</translation>
+    </message>
+    <message>
+        <source>Raw x64</source>
+        <translation>Необработанный x64</translation>
+    </message>
+    <message>
+        <source>Raw x86</source>
+        <translation>Необработанный x86</translation>
+    </message>
+    <message>
+        <source>Ready to compare two native binaries.</source>
+        <translation>Готово к сравнению двух машинных бинарных файлов.</translation>
+    </message>
+    <message>
+        <source>Recompute a cancelled or timed-out function difference.</source>
+        <translation>Пересчитать различия функций после отмены или истечения времени.</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>Повторить</translation>
+    </message>
+    <message>
+        <source>Region hypotheses</source>
+        <translation>Гипотезы областей</translation>
+    </message>
+    <message>
+        <source>Regions…</source>
+        <translation>Области…</translation>
+    </message>
+    <message>
+        <source>Reopen comparison</source>
+        <translation>Открыть сравнение заново</translation>
+    </message>
+    <message>
+        <source>Reopen…</source>
+        <translation>Открыть заново…</translation>
+    </message>
+    <message>
+        <source>Retry difference</source>
+        <translation>Повторить сравнение различий</translation>
+    </message>
+    <message>
+        <source>SSA dependency regions…</source>
+        <translation>Области зависимостей SSA…</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses</source>
+        <translation>Гипотезы областей SSA</translation>
+    </message>
+    <message>
+        <source>Save / export…</source>
+        <translation>Сохранить / экспортировать…</translation>
+    </message>
+    <message>
+        <source>Save comparison</source>
+        <translation>Сохранить сравнение</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>Сохранено: %1</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Дополнительный</translation>
+    </message>
+    <message>
+        <source>Select %1 input</source>
+        <translation>Выберите входной файл со стороны «%1»</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its counterpart.</source>
+        <translation>Выберите функцию для изучения её соответствия.</translation>
+    </message>
+    <message>
+        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
+        <translation>Выбирайте блоки, чтобы следить за соответствиями. Ctrl+колесо меняет масштаб.</translation>
+    </message>
+    <message>
+        <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
+        <translation>Выберите оба входных файла и исходные настройки, затем откройте сохранённое сравнение. Проверяются хеши входных файлов и ревизии анализа.</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Настройки</translation>
+    </message>
+    <message>
+        <source>Starting comparison worker…</source>
+        <translation>Запуск рабочего процесса сравнения…</translation>
+    </message>
+    <message>
+        <source>Trace observed callers, callees and entry points of this function.</source>
+        <translation>Проследить наблюдаемые вызывающие и вызываемые функции, а также точки входа этой функции.</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>Отменить</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>Убрать соответствие</translation>
+    </message>
+    <message>
+        <source>Unmatched</source>
+        <translation>Без соответствия</translation>
+    </message>
+    <message>
+        <source>Use symbol names</source>
+        <translation>Использовать имена символов</translation>
+    </message>
+    <message>
+        <source>Validate returns…</source>
+        <translation>Проверить возвращаемые значения…</translation>
+    </message>
+    <message>
+        <source>decoded bodies complete</source>
+        <translation>декодированные тела полны</translation>
+    </message>
+    <message>
+        <source>identity only; no bodies available</source>
+        <translation>только идентичность; тела недоступны</translation>
+    </message>
+    <message>
+        <source>incomplete</source>
+        <translation>неполно</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>нет</translation>
+    </message>
+    <message>
+        <source>not applicable</source>
+        <translation>неприменимо</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>да</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonFlowDialog</name>
+    <message>
+        <source>%1 slice · %2 nodes · %3
+Gaps: %4</source>
+        <translation>Срез %1 · узлов: %2 · %3
+Пробелы: %4</translation>
+    </message>
+    <message>
+        <source>%1 · %2
+%3</source>
+        <translation>%1 · %2
+%3</translation>
+    </message>
+    <message>
+        <source>%1 · %2 available / %3 processed / %4 eligible functions · %5 unprocessed
+%6 unsupported, %7 resource limited, %8 failed. Collection state: %9.</source>
+        <translation>%1 · доступно: %2 / обработано: %3 / подходящих функций: %4 · не обработано: %5
+Не поддерживается: %6, ограничено ресурсами: %7, ошибок: %8. Состояние сбора: %9.</translation>
+    </message>
+    <message>
+        <source>%1 · %2 · %3 SSA operations
+Select an operation to follow dependencies. Synthetic operations have block provenance.</source>
+        <translation>%1 · %2 · операций SSA: %3
+Выберите операцию для отслеживания зависимостей. Для синтетических операций указан исходный блок.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Dependency evidence — NeverD</source>
+        <translation>Свидетельства зависимостей — NeverD</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings, then compare the inputs.</source>
+        <translation>Включите свидетельства зависимостей в настройках сравнения, затем сравните входные данные.</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings.</source>
+        <translation>Включите свидетельства зависимостей в настройках сравнения.</translation>
+    </message>
+    <message>
+        <source>Include control dependencies</source>
+        <translation>Включить зависимости по управлению</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>Изучить исходную функцию</translation>
+    </message>
+    <message>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
+        <translation>Наблюдаемые зависимости SSA. Вызовы, алиасы и неразрешённый поток управления остаются явными пробелами. Семантическая проверка не проводилась.</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>Основной входной файл</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>Дополнительный входной файл</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its SSA operations.</source>
+        <translation>Выберите функцию для изучения её операций SSA.</translation>
+    </message>
+    <message>
+        <source>Select an operation, then trace its inputs or uses.</source>
+        <translation>Выберите операцию и проследите её входы или использования.</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>Проследить входы</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>Проследить использования</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>Отслеживание зависимостей %1…</translation>
+    </message>
+    <message>
+        <source>none observed within this model</source>
+        <translation>в этой модели не наблюдалось</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonGraph</name>
+    <message>
+        <source>%1 control-flow graph</source>
+        <translation>Граф потока управления: %1</translation>
+    </message>
+    <message>
+        <source>Control-flow graph</source>
+        <translation>Граф потока управления</translation>
+    </message>
+    <message>
+        <source>Incomplete control flow</source>
+        <translation>Неполный поток управления</translation>
+    </message>
+    <message>
+        <source>Laying out control flow…</source>
+        <translation>Размещение потока управления…</translation>
+    </message>
+    <message>
+        <source>No counterpart</source>
+        <translation>Нет соответствия</translation>
+    </message>
+    <message>
+        <source>Viewport limit reached — zoom in to inspect remaining blocks</source>
+        <translation>Достигнут лимит области просмотра — увеличьте масштаб для просмотра остальных блоков</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonImpactDialog</name>
+    <message>
+        <source>%1 qualified call contracts in %2 retained sites; inspection %3. Scope: calls in reached functions, including unresolved and frontier targets. Native coverage remains independent. Select a row and open Selected call for roles and assumptions.</source>
+        <translation>Квалифицированных контрактов вызовов: %1 в %2 сохранённых точках; проверка: %3. Область: вызовы в достигнутых функциях, включая неразрешённые и граничные цели. Покрытие машинного кода независимо. Выберите строку и откройте «Выбранный вызов» для просмотра ролей и допущений.</translation>
+    </message>
+    <message>
+        <source>%1 · %2 functions · %3 entries/exports · %4 call sites · %5 unresolved or coverage boundaries · %6 frontier sites
+Indexed %7 / %8 functions; %9; %10.</source>
+        <translation>%1 · функций: %2 · входов/экспортов: %3 · точек вызова: %4 · неразрешённых точек или границ покрытия: %5 · граничных точек: %6
+Проиндексировано функций: %7 / %8; %9; %10.</translation>
+    </message>
+    <message>
+        <source>%1: argument %2</source>
+        <translation>%1: аргумент %2</translation>
+    </message>
+    <message>
+        <source>All reached functions</source>
+        <translation>Все достигнутые функции</translation>
+    </message>
+    <message>
+        <source>All traversed call sites</source>
+        <translation>Все пройденные точки вызова</translation>
+    </message>
+    <message>
+        <source>Analysis limit reached</source>
+        <translation>Достигнут лимит анализа</translation>
+    </message>
+    <message>
+        <source>Assumption: the imported function resolves to the declared built-in call contract.</source>
+        <translation>Допущение: импортированная функция соответствует заявленному встроенному контракту вызова.</translation>
+    </message>
+    <message>
+        <source>Bytes: %1</source>
+        <translation>Байты: %1</translation>
+    </message>
+    <message>
+        <source>Call contracts in reached functions</source>
+        <translation>Контракты вызовов в достигнутых функциях</translation>
+    </message>
+    <message>
+        <source>Call paths and possible impact — NeverD</source>
+        <translation>Пути вызовов и возможное влияние — NeverD</translation>
+    </message>
+    <message>
+        <source>Call sites</source>
+        <translation>Точки вызова</translation>
+    </message>
+    <message>
+        <source>Caller: %1 (%2)</source>
+        <translation>Вызывающая функция: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Отменено</translation>
+    </message>
+    <message>
+        <source>Capacity</source>
+        <translation>Вместимость</translation>
+    </message>
+    <message>
+        <source>Choose a starting function, then trace its callers or callees.</source>
+        <translation>Выберите начальную функцию, затем проследите вызывающие или вызываемые функции.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>Завершено</translation>
+    </message>
+    <message>
+        <source>Destination</source>
+        <translation>Назначение</translation>
+    </message>
+    <message>
+        <source>Format</source>
+        <translation>Формат</translation>
+    </message>
+    <message>
+        <source>Function entry, e.g. 0x401000</source>
+        <translation>Точка входа в функцию, например 0x401000</translation>
+    </message>
+    <message>
+        <source>Global scanned scope, including functions with no known path to the starting function. Unknown callers may be missing.</source>
+        <translation>Глобальная область сканирования, включая функции без известного пути к начальной функции. Неизвестные вызывающие функции могут отсутствовать.</translation>
+    </message>
+    <message>
+        <source>Input buffer</source>
+        <translation>Входной буфер</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>Изучить исходную функцию</translation>
+    </message>
+    <message>
+        <source>Known edges beyond the depth or function limit</source>
+        <translation>Известные рёбра за пределами глубины или числа функций</translation>
+    </message>
+    <message>
+        <source>Known targets omitted by the depth or function limit. Work or index stops can leave further targets unobserved.</source>
+        <translation>Известные цели, пропущенные из-за лимита глубины или числа функций. Остановка работы или индексирования может оставить другие цели ненаблюдаемыми.</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>Длина</translation>
+    </message>
+    <message>
+        <source>Maximum depth</source>
+        <translation>Максимальная глубина</translation>
+    </message>
+    <message>
+        <source>Native-associated SSA node: %1</source>
+        <translation>Узел SSA, связанный с машинным кодом: %1</translation>
+    </message>
+    <message>
+        <source>No parameter/return propagation, alias, capacity, path-safety or fix-presence proof. Use the original function and SSA dependency views to continue review.</source>
+        <translation>Нет доказательств распространения параметров или возврата, алиасов, вместимости, безопасности путей или наличия исправления. Продолжите обзор по исходной функции и представлениям зависимостей SSA.</translation>
+    </message>
+    <message>
+        <source>Object / handle</source>
+        <translation>Объект / дескриптор</translation>
+    </message>
+    <message>
+        <source>Observed call paths provide possible impact context. Path feasibility, parameter and return binding, memory aliases and external callers are not modeled. Semantic validation has not been performed.</source>
+        <translation>Наблюдаемые пути вызовов дают контекст возможного влияния. Выполнимость путей, привязка параметров и возврата, алиасы памяти и внешние вызывающие функции не моделируются. Семантическая проверка не проводилась.</translation>
+    </message>
+    <message>
+        <source>Observed program entries and exports</source>
+        <translation>Наблюдаемые входы и экспорты программы</translation>
+    </message>
+    <message>
+        <source>Observed relations include admitted tail transfers and resolved imports. Double-click to inspect the caller.</source>
+        <translation>Наблюдаемые связи включают допущенные хвостовые переходы и разрешённые импорты. Дважды щёлкните для изучения вызывающей функции.</translation>
+    </message>
+    <message>
+        <source>One shortest observed witness; alternate paths remain in all call sites. Seeds have an empty path.</source>
+        <translation>Один кратчайший наблюдаемый путь-свидетель; альтернативные пути остаются в совокупности точек вызова. У затравок путь пуст.</translation>
+    </message>
+    <message>
+        <source>Original instruction: %1  %2 %3</source>
+        <translation>Исходная инструкция: %1  %2 %3</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>Основной входной файл</translation>
+    </message>
+    <message>
+        <source>Recovered arguments: %1</source>
+        <translation>Восстановленные аргументы: %1</translation>
+    </message>
+    <message>
+        <source>Release can fail; successful release has not been proved.</source>
+        <translation>Освобождение может не удаться; успешное освобождение не доказано.</translation>
+    </message>
+    <message>
+        <source>Retained SSA boundaries: %1</source>
+        <translation>Сохранённые границы SSA: %1</translation>
+    </message>
+    <message>
+        <source>Reviewing exact import identities and recovered call arguments. Collect SSA dependencies when starting the comparison to qualify contracts. Missing or ambiguous evidence remains visible.</source>
+        <translation>Проверка точных идентичностей импортов и восстановленных аргументов вызова. Соберите зависимости SSA при запуске сравнения для квалификации контрактов. Отсутствующие или неоднозначные свидетельства остаются видимыми.</translation>
+    </message>
+    <message>
+        <source>Roles (zero-based): %1</source>
+        <translation>Роли (нумерация с нуля): %1</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>Дополнительный входной файл</translation>
+    </message>
+    <message>
+        <source>Selected call</source>
+        <translation>Выбранный вызов</translation>
+    </message>
+    <message>
+        <source>Shortest witness for the selected function</source>
+        <translation>Кратчайший путь-свидетель для выбранной функции</translation>
+    </message>
+    <message>
+        <source>Source</source>
+        <translation>Источник</translation>
+    </message>
+    <message>
+        <source>Starting function entry</source>
+        <translation>Точка входа начальной функции</translation>
+    </message>
+    <message>
+        <source>Target: %1 (%2)</source>
+        <translation>Цель: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>The contract accepts unbounded input; destination capacity has not been assessed.</source>
+        <translation>Контракт принимает неограниченные входные данные; вместимость назначения не оценена.</translation>
+    </message>
+    <message>
+        <source>Time limit reached</source>
+        <translation>Достигнут лимит времени</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>Проследить</translation>
+    </message>
+    <message>
+        <source>Trace callees</source>
+        <translation>Проследить вызываемые функции</translation>
+    </message>
+    <message>
+        <source>Trace callers</source>
+        <translation>Проследить вызывающие функции</translation>
+    </message>
+    <message>
+        <source>Tracing observed call paths…</source>
+        <translation>Отслеживание наблюдаемых путей вызовов…</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>Неизвестный косвенный вызов</translation>
+    </message>
+    <message>
+        <source>Unresolved sites and coverage gaps across the input</source>
+        <translation>Неразрешённые точки и пробелы покрытия во входных данных</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>завершено</translation>
+    </message>
+    <message>
+        <source>index scan complete</source>
+        <translation>сканирование индекса завершено</translation>
+    </message>
+    <message>
+        <source>index scan partial</source>
+        <translation>сканирование индекса частичное</translation>
+    </message>
+    <message>
+        <source>input discovery complete</source>
+        <translation>обнаружение входных данных завершено</translation>
+    </message>
+    <message>
+        <source>input discovery partial</source>
+        <translation>обнаружение входных данных частичное</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonModel</name>
+    <message>
+        <source> @b%1</source>
+        <translation> @b%1</translation>
+    </message>
+    <message>
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>%1 B</source>
+        <translation>%1 Б</translation>
+    </message>
+    <message>
+        <source>Accepted pair</source>
+        <translation>Принятая пара</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Адрес</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>Неоднозначно</translation>
+    </message>
+    <message>
+        <source>Ambiguous SSA call association</source>
+        <translation>Неоднозначная связь с вызовом SSA</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>Оценка</translation>
+    </message>
+    <message>
+        <source>Association</source>
+        <translation>Связь</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>Автор</translation>
+    </message>
+    <message>
+        <source>Availability</source>
+        <translation>Доступность</translation>
+    </message>
+    <message>
+        <source>Binding / history</source>
+        <translation>Привязка / история</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original operation %2
+%3</source>
+        <translation>Блок %1 · Исходная операция %2
+%3</translation>
+    </message>
+    <message>
+        <source>Blocks</source>
+        <translation>Блоки</translation>
+    </message>
+    <message>
+        <source>Boundaries</source>
+        <translation>Границы</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Байты</translation>
+    </message>
+    <message>
+        <source>Callee</source>
+        <translation>Вызываемая функция</translation>
+    </message>
+    <message>
+        <source>Caller</source>
+        <translation>Вызывающая функция</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>Дело</translation>
+    </message>
+    <message>
+        <source>Change</source>
+        <translation>Изменение</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>Изменено</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>Достоверность</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>Контекст</translation>
+    </message>
+    <message>
+        <source>Contract / gaps</source>
+        <translation>Контракт / пробелы</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>Управление</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>Соответствующая функция</translation>
+    </message>
+    <message>
+        <source>Coverage A / B</source>
+        <translation>Покрытие A / B</translation>
+    </message>
+    <message>
+        <source>Current counterpart</source>
+        <translation>Текущая соответствующая функция</translation>
+    </message>
+    <message>
+        <source>Data + control</source>
+        <translation>Данные + управление</translation>
+    </message>
+    <message>
+        <source>Depth</source>
+        <translation>Глубина</translation>
+    </message>
+    <message>
+        <source>Direct callee unavailable</source>
+        <translation>Непосредственно вызываемая функция недоступна</translation>
+    </message>
+    <message>
+        <source>Earlier</source>
+        <translation>Ранее</translation>
+    </message>
+    <message>
+        <source>Entry evidence</source>
+        <translation>Свидетельства точки входа</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>Событие</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>Свидетельства</translation>
+    </message>
+    <message>
+        <source>Exception flow</source>
+        <translation>Поток исключений</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Экспорт</translation>
+    </message>
+    <message>
+        <source>External function body</source>
+        <translation>Тело внешней функции</translation>
+    </message>
+    <message>
+        <source>Finite SSA correspondence; open effects and control require review.
+%1</source>
+        <translation>Конечное соответствие SSA; открытые эффекты и управление требуют проверки.
+%1</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Функция</translation>
+    </message>
+    <message>
+        <source>Function entry</source>
+        <translation>Точка входа в функцию</translation>
+    </message>
+    <message>
+        <source>Gaps</source>
+        <translation>Пробелы</translation>
+    </message>
+    <message>
+        <source>Heuristic confidence; structural similarity does not prove semantic equivalence.</source>
+        <translation>Эвристическая уверенность; структурное сходство не доказывает семантическую эквивалентность.</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>Гипотеза</translation>
+    </message>
+    <message>
+        <source>Identity only</source>
+        <translation>Только идентичность</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>Неполно</translation>
+    </message>
+    <message>
+        <source>Incomplete discovery</source>
+        <translation>Неполное обнаружение</translation>
+    </message>
+    <message>
+        <source>Incomplete native coverage</source>
+        <translation>Неполное покрытие машинного кода</translation>
+    </message>
+    <message>
+        <source>Inputs</source>
+        <translation>Входные данные</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>Инструкция</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>Инструкции</translation>
+    </message>
+    <message>
+        <source>Internal callee; review its body</source>
+        <translation>Внутренняя вызываемая функция; изучите её тело</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>Последняя</translation>
+    </message>
+    <message>
+        <source>Loading…</source>
+        <translation>Загрузка…</translation>
+    </message>
+    <message>
+        <source>No applicable call contract</source>
+        <translation>Нет применимого контракта вызова</translation>
+    </message>
+    <message>
+        <source>No native-associated SSA call</source>
+        <translation>Нет вызова SSA, связанного с машинным кодом</translation>
+    </message>
+    <message>
+        <source>No qualified import identity</source>
+        <translation>Нет квалифицированной идентичности импорта</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>Узел</translation>
+    </message>
+    <message>
+        <source>Node pairs</source>
+        <translation>Пары узлов</translation>
+    </message>
+    <message>
+        <source>Nodes</source>
+        <translation>Узлы</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>Нет</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>Примечание</translation>
+    </message>
+    <message>
+        <source>Observed SSA</source>
+        <translation>Наблюдаемая SSA</translation>
+    </message>
+    <message>
+        <source>Observed call paths; feasibility and data effects remain unverified.
+%1</source>
+        <translation>Наблюдаемые пути вызовов; выполнимость и эффекты для данных не проверены.
+%1</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>Операция</translation>
+    </message>
+    <message>
+        <source>Original address</source>
+        <translation>Исходный адрес</translation>
+    </message>
+    <message>
+        <source>Pair inactive</source>
+        <translation>Неактивная пара</translation>
+    </message>
+    <message>
+        <source>Paired</source>
+        <translation>В паре</translation>
+    </message>
+    <message>
+        <source>Pairing</source>
+        <translation>Образование пар</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Основной</translation>
+    </message>
+    <message>
+        <source>Primary address</source>
+        <translation>Основной адрес</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>Основная функция</translation>
+    </message>
+    <message>
+        <source>Primary functions: %1
+Secondary functions: %2
+Heuristic explanations, not validated behavior.
+%3</source>
+        <translation>Основных функций: %1
+Дополнительных функций: %2
+Эвристические объяснения, поведение не проверено.
+%3</translation>
+    </message>
+    <message>
+        <source>Primary instruction</source>
+        <translation>Основная инструкция</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>Основной узел</translation>
+    </message>
+    <message>
+        <source>Primary operation</source>
+        <translation>Основная операция</translation>
+    </message>
+    <message>
+        <source>Primary origin</source>
+        <translation>Основной источник</translation>
+    </message>
+    <message>
+        <source>Primary root</source>
+        <translation>Основной корень</translation>
+    </message>
+    <message>
+        <source>Primary span</source>
+        <translation>Основной диапазон</translation>
+    </message>
+    <message>
+        <source>Priority</source>
+        <translation>Приоритет</translation>
+    </message>
+    <message>
+        <source>Program entry</source>
+        <translation>Точка входа программы</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract</source>
+        <translation>Квалифицированный контракт %1</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract; release may fail</source>
+        <translation>Квалифицированный контракт %1; освобождение может не удаться</translation>
+    </message>
+    <message>
+        <source>Reason</source>
+        <translation>Причина</translation>
+    </message>
+    <message>
+        <source>Recovered arguments unavailable</source>
+        <translation>Восстановленные аргументы недоступны</translation>
+    </message>
+    <message>
+        <source>Repeated seed</source>
+        <translation>Повторяющаяся затравка</translation>
+    </message>
+    <message>
+        <source>SSA unavailable in collected scope</source>
+        <translation>SSA недоступна в собранной области</translation>
+    </message>
+    <message>
+        <source>Scan incomplete</source>
+        <translation>Сканирование неполное</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Дополнительный</translation>
+    </message>
+    <message>
+        <source>Secondary address</source>
+        <translation>Дополнительный адрес</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>Дополнительная функция</translation>
+    </message>
+    <message>
+        <source>Secondary instruction</source>
+        <translation>Дополнительная инструкция</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>Дополнительный узел</translation>
+    </message>
+    <message>
+        <source>Secondary operation</source>
+        <translation>Дополнительная операция</translation>
+    </message>
+    <message>
+        <source>Secondary origin</source>
+        <translation>Дополнительный источник</translation>
+    </message>
+    <message>
+        <source>Secondary root</source>
+        <translation>Дополнительный корень</translation>
+    </message>
+    <message>
+        <source>Secondary span</source>
+        <translation>Дополнительный диапазон</translation>
+    </message>
+    <message>
+        <source>Seed evidence</source>
+        <translation>Свидетельства затравки</translation>
+    </message>
+    <message>
+        <source>Shared instructions</source>
+        <translation>Общие инструкции</translation>
+    </message>
+    <message>
+        <source>Shared nodes</source>
+        <translation>Общие узлы</translation>
+    </message>
+    <message>
+        <source>Shared normalized instruction runs are evidence for competing transformation hypotheses. They do not validate behavior, calls, memory effects or patch presence.</source>
+        <translation>Общие последовательности нормализованных инструкций служат свидетельствами для конкурирующих гипотез преобразований. Они не подтверждают поведение, вызовы, эффекты памяти или наличие исправления.</translation>
+    </message>
+    <message>
+        <source>Similarity</source>
+        <translation>Сходство</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>Состояние</translation>
+    </message>
+    <message>
+        <source>Synthetic</source>
+        <translation>Синтетический</translation>
+    </message>
+    <message>
+        <source>Unchanged</source>
+        <translation>Без изменений</translation>
+    </message>
+    <message>
+        <source>Unique seed</source>
+        <translation>Уникальная затравка</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Неизвестно</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>Неизвестный косвенный вызов</translation>
+    </message>
+    <message>
+        <source>Unknown indirect transfer</source>
+        <translation>Неизвестная косвенная передача управления</translation>
+    </message>
+    <message>
+        <source>Unmeasured</source>
+        <translation>Не измерено</translation>
+    </message>
+    <message>
+        <source>Unpaired</source>
+        <translation>Без пары</translation>
+    </message>
+    <message>
+        <source>Unresolved / boundary</source>
+        <translation>Не разрешено / граница</translation>
+    </message>
+    <message>
+        <source>Unresolved call target</source>
+        <translation>Неразрешённая цель вызова</translation>
+    </message>
+    <message>
+        <source>Unsupported ABI or input profile</source>
+        <translation>Неподдерживаемый ABI или профиль входных данных</translation>
+    </message>
+    <message>
+        <source>Width</source>
+        <translation>Разрядность</translation>
+    </message>
+    <message>
+        <source>Witness instruction</source>
+        <translation>Инструкция-свидетель</translation>
+    </message>
+    <message>
+        <source>arg %1: %2</source>
+        <translation>аргумент %1: %2</translation>
+    </message>
+    <message>
+        <source>n%1</source>
+        <translation>n%1</translation>
+    </message>
+    <message>
+        <source>param %1</source>
+        <translation>параметр %1</translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>неизвестно</translation>
+    </message>
+    <message>
+        <source>—</source>
+        <translation>—</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonRegionsDialog</name>
+    <message>
+        <source>
+Dependency scope: %1 / %2 · %3 ambiguous candidates · %4 graphs exceeded analysis allowance</source>
+        <translation>
+Область зависимостей: %1 / %2 · неоднозначных кандидатов: %3 · графов, превысивших лимит анализа: %4</translation>
+    </message>
+    <message>
+        <source>%1 hypotheses · %2 anchors · %3 frequent seed groups skipped · %4 oversized groups suppressed · %5 weak candidates skipped · %6</source>
+        <translation>Гипотез: %1 · якорей: %2 · пропущено частых групп затравок: %3 · исключено чрезмерных групп: %4 · пропущено слабых кандидатов: %5 · %6</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of decoded non-transfer instructions. Calls and control transfers need separate review.</source>
+        <translation>Основных функций: %1 / дополнительных: %2 · общих диапазонов: %3
+Покрытие: %4% / %5% декодированных инструкций без передачи управления. Вызовы и передачи управления требуют отдельного рассмотрения.</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 verified neighborhoods
+Coverage: %4% / %5% of observed SSA nodes in these functions. Control and external effects remain open; hover for original bytes.</source>
+        <translation>Основных функций: %1 / дополнительных: %2 · проверенных окрестностей: %3
+Покрытие: %4% / %5% наблюдаемых узлов SSA в этих функциях. Управление и внешние эффекты остаются открытыми вопросами; наведите указатель для просмотра исходных байтов.</translation>
+    </message>
+    <message>
+        <source>%1 shared spans. These include unfinished or unclassified candidate groups. Select a span to inspect its original instructions.</source>
+        <translation>Общих диапазонов: %1. Включают незавершённые или неклассифицированные группы кандидатов. Выберите диапазон для просмотра исходных инструкций.</translation>
+    </message>
+    <message>
+        <source>%1 verified SSA neighborhoods, including unclassified groups. Select one for paired nodes; hover for operands and original bytes.</source>
+        <translation>Проверенных окрестностей SSA: %1, включая неклассифицированные группы. Выберите окрестность для просмотра пар узлов; наведите указатель для просмотра операндов и исходных байтов.</translation>
+    </message>
+    <message>
+        <source>All hypotheses</source>
+        <translation>Все гипотезы</translation>
+    </message>
+    <message>
+        <source>All shared spans (including unclassified)</source>
+        <translation>Все общие диапазоны (включая неклассифицированные)</translation>
+    </message>
+    <message>
+        <source>Clone</source>
+        <translation>Клонирование</translation>
+    </message>
+    <message>
+        <source>Enable SSA region hypotheses in comparison Settings, then compare again.</source>
+        <translation>Включите гипотезы областей SSA в настройках сравнения и повторите сравнение.</translation>
+    </message>
+    <message>
+        <source>Enable region analysis in comparison Settings, then compare again.</source>
+        <translation>Включите анализ областей в настройках сравнения и повторите сравнение.</translation>
+    </message>
+    <message>
+        <source>Inline</source>
+        <translation>Встраивание</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload the comparison.</source>
+        <translation>Входные данные изменились. Перезагрузите сравнение.</translation>
+    </message>
+    <message>
+        <source>Inspect primary function</source>
+        <translation>Изучить основную функцию</translation>
+    </message>
+    <message>
+        <source>Inspect secondary function</source>
+        <translation>Изучить дополнительную функцию</translation>
+    </message>
+    <message>
+        <source>Merge</source>
+        <translation>Слияние</translation>
+    </message>
+    <message>
+        <source>Module movement</source>
+        <translation>Перемещение модуля</translation>
+    </message>
+    <message>
+        <source>Outline</source>
+        <translation>Обзор</translation>
+    </message>
+    <message>
+        <source>Possible transformation</source>
+        <translation>Возможное преобразование</translation>
+    </message>
+    <message>
+        <source>Redistribution</source>
+        <translation>Перераспределение</translation>
+    </message>
+    <message>
+        <source>Region hypotheses — Binary comparison</source>
+        <translation>Гипотезы областей — Сравнение бинарных файлов</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses — Binary comparison</source>
+        <translation>Гипотезы областей SSA — Сравнение бинарных файлов</translation>
+    </message>
+    <message>
+        <source>Select a hypothesis to inspect its shared spans.</source>
+        <translation>Выберите гипотезу для изучения общих диапазонов.</translation>
+    </message>
+    <message>
+        <source>Shared native instruction runs suggest possible transformations. Review competing explanations and uncovered code; these results do not validate behavior or patch presence.</source>
+        <translation>Общие последовательности машинных инструкций указывают на возможные преобразования. Изучите конкурирующие объяснения и непокрытый код; эти результаты не подтверждают поведение или наличие исправления.</translation>
+    </message>
+    <message>
+        <source>Shared region</source>
+        <translation>Общая область</translation>
+    </message>
+    <message>
+        <source>Shared tail</source>
+        <translation>Общий хвост</translation>
+    </message>
+    <message>
+        <source>Split</source>
+        <translation>Разделение</translation>
+    </message>
+    <message>
+        <source>Verified finite SSA neighborhoods suggest possible transformations. Review gaps and open dependencies; correspondence does not validate behavior or patch presence.</source>
+        <translation>Проверенные конечные окрестности SSA указывают на возможные преобразования. Изучите пробелы и открытые зависимости; соответствие не подтверждает поведение или наличие исправления.</translation>
+    </message>
+    <message>
+        <source>Waiting for comparison to finish…</source>
+        <translation>Ожидание завершения сравнения…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>завершено</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>частично</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonReviewDialog</name>
+    <message>
+        <source>%1 matching / %2 total events · newest first · manual assessments</source>
+        <translation>Подходящих событий: %1 / всего: %2 · сначала новые · ручные оценки</translation>
+    </message>
+    <message>
+        <source>Analyst review — NeverD</source>
+        <translation>Обзор аналитика — NeverD</translation>
+    </message>
+    <message>
+        <source>Analyst statements do not change computed matching or validate patch behavior. Authors are self-described. Save/export the comparison to keep this history on disk.</source>
+        <translation>Утверждения аналитика не меняют вычисленные соответствия и не подтверждают поведение исправления. Авторы указывают себя самостоятельно. Сохраните или экспортируйте сравнение, чтобы записать историю на диск.</translation>
+    </message>
+    <message>
+        <source>Append assessment</source>
+        <translation>Добавить оценку</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>Оценка</translation>
+    </message>
+    <message>
+        <source>Assessment note</source>
+        <translation>Примечание к оценке</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>Автор</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>Кандидат на исправление</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>Дело</translation>
+    </message>
+    <message>
+        <source>Case filter</source>
+        <translation>Фильтр дел</translation>
+    </message>
+    <message>
+        <source>Case: %1
+Author (self-described): %2
+Assessment: %3
+Pair: %4 ↔ %5
+Pair binding: %6 · %7 assessment
+Reference: %8
+
+%9
+
+Event: %10
+Supersedes: %11</source>
+        <translation>Дело: %1
+Автор (самоназванный): %2
+Оценка: %3
+Пара: %4 ↔ %5
+Привязка пары: %6 · оценка %7
+Ссылка: %8
+
+%9
+
+Событие: %10
+Заменяет: %11</translation>
+    </message>
+    <message>
+        <source>Draft exceeds the UTF-8 text allowance.</source>
+        <translation>Черновик превышает допустимый объём текста UTF-8.</translation>
+    </message>
+    <message>
+        <source>Draft retained for %1 ↔ %2 on its original inputs. Choose New draft to use the selected pair.</source>
+        <translation>Черновик для %1 ↔ %2 сохранён с исходными входными данными. Выберите «Новый черновик», чтобы использовать выбранную пару.</translation>
+    </message>
+    <message>
+        <source>Exact case identifier (empty: all cases)</source>
+        <translation>Точный идентификатор дела (пусто: все дела)</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>Неопределённый результат</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>Исследуется</translation>
+    </message>
+    <message>
+        <source>Latest assessments only</source>
+        <translation>Только последние оценки</translation>
+    </message>
+    <message>
+        <source>Loading analyst history…</source>
+        <translation>Загрузка истории аналитика…</translation>
+    </message>
+    <message>
+        <source>Manual assessment of %1 ↔ %2</source>
+        <translation>Ручная оценка %1 ↔ %2</translation>
+    </message>
+    <message>
+        <source>New assessment</source>
+        <translation>Новая оценка</translation>
+    </message>
+    <message>
+        <source>New draft for selected pair</source>
+        <translation>Новый черновик для выбранной пары</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>Частичное исправление</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>Исправление отсутствует</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>Исправление присутствует</translation>
+    </message>
+    <message>
+        <source>Record the evidence and limitations behind your assessment.</source>
+        <translation>Запишите свидетельства и ограничения вашей оценки.</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>Ссылка</translation>
+    </message>
+    <message>
+        <source>Refresh history</source>
+        <translation>Обновить историю</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>Связанное изменение</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>Отменённое исправление</translation>
+    </message>
+    <message>
+        <source>Save comparison…</source>
+        <translation>Сохранить сравнение…</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair to append an assessment.</source>
+        <translation>Выберите принятую пару функций для добавления оценки.</translation>
+    </message>
+    <message>
+        <source>Selected record</source>
+        <translation>Выбранная запись</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>Несвязанное изменение</translation>
+    </message>
+    <message>
+        <source>accepted</source>
+        <translation>принято</translation>
+    </message>
+    <message>
+        <source>earlier</source>
+        <translation>ранее</translation>
+    </message>
+    <message>
+        <source>inactive</source>
+        <translation>неактивно</translation>
+    </message>
+    <message>
+        <source>latest</source>
+        <translation>последняя</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSession</name>
+    <message>
+        <source>Comparison worker: %1</source>
+        <translation>Рабочий процесс сравнения: %1</translation>
+    </message>
+    <message>
+        <source>Could not replace the comparison. Your previous comparison is still available. %1</source>
+        <translation>Не удалось заменить сравнение. Предыдущее сравнение по-прежнему доступно. %1</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Ready to try again.</source>
+        <translation>Загрузка остановлена. Можно повторить попытку.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Your previous comparison is still available.</source>
+        <translation>Загрузка остановлена. Предыдущее сравнение по-прежнему доступно.</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>Рабочий процесс не смог подтвердить отмену.</translation>
+    </message>
+    <message>
+        <source>This worker does not support binary comparison.</source>
+        <translation>Этот рабочий процесс не поддерживает сравнение бинарных файлов.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonValidationDialog</name>
+    <message>
+        <source>
+Proof work: %1; completed partitions: %2; attempts: %3
+</source>
+        <translation>
+Работа по доказательству: %1; завершённых разделов: %2; попыток: %3
+</translation>
+    </message>
+    <message>
+        <source>Argument %1: %2 bits, register offset %3
+</source>
+        <translation>Аргумент %1: %2 бит, смещение регистра %3
+</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Cancelled. No equivalence conclusion.</source>
+        <translation>Отменено. Вывода об эквивалентности нет.</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>Проверить снова</translation>
+    </message>
+    <message>
+        <source>Check equal integer returns and defined termination in the lifted models, for all defined input bitvectors at matching register locations. Native-state equivalence and security are outside this check.</source>
+        <translation>Проверка равенства целочисленных возвращаемых значений и определённого завершения в моделях, переведённых в IR, для всех определённых входных битовых векторов в соответствующих регистрах. Эквивалентность машинного состояния и безопасность не входят в эту проверку.</translation>
+    </message>
+    <message>
+        <source>Detail: %1
+
+</source>
+        <translation>Подробности: %1
+
+</translation>
+    </message>
+    <message>
+        <source>Equal returns proved in the lifted scalar models.</source>
+        <translation>Равенство возвращаемых значений доказано в скалярных моделях, переведённых в IR.</translation>
+    </message>
+    <message>
+        <source>Equivalence remains unproved; this does not establish a difference.</source>
+        <translation>Эквивалентность остаётся недоказанной; это не устанавливает различие.</translation>
+    </message>
+    <message>
+        <source>Full report</source>
+        <translation>Полный отчёт</translation>
+    </message>
+    <message>
+        <source>Input assumption: defined integer bitvectors at identical register locations.
+Lift correctness is assumed. Complete native state, memory and call effects are not proved.
+This result does not assess vulnerability or fix status.
+
+</source>
+        <translation>Допущение о входе: определённые целочисленные битовые векторы в одинаковых регистрах.
+Корректность перевода в IR предполагается. Полное машинное состояние, эффекты памяти и вызовов не доказаны.
+Результат не оценивает уязвимость или наличие исправления.
+
+</translation>
+    </message>
+    <message>
+        <source>Inputs or pairing changed. Select the function pair again.</source>
+        <translation>Входные данные или пары изменились. Выберите пару функций снова.</translation>
+    </message>
+    <message>
+        <source>Inputs: retained comparison sources.
+</source>
+        <translation>Входные данные: сохранённые источники сравнения.
+</translation>
+    </message>
+    <message>
+        <source>Lifting and checking this pair… Cancellation is cooperative.</source>
+        <translation>Перевод пары в IR и проверка… Отмена выполняется кооперативно.</translation>
+    </message>
+    <message>
+        <source>Limits changed. Check again.</source>
+        <translation>Лимиты изменились. Проверьте снова.</translation>
+    </message>
+    <message>
+        <source>Live input versions rechecked: %1
+</source>
+        <translation>Текущие версии входных данных перепроверены: %1
+</translation>
+    </message>
+    <message>
+        <source>Maximum native instructions per function.</source>
+        <translation>Максимум машинных инструкций на функцию.</translation>
+    </message>
+    <message>
+        <source>Maximum work units for the scalar proof.</source>
+        <translation>Максимум единиц работы для скалярного доказательства.</translation>
+    </message>
+    <message>
+        <source>Native instructions</source>
+        <translation>Машинные инструкции</translation>
+    </message>
+    <message>
+        <source>Pairing changed. Select the function pair again.</source>
+        <translation>Пары изменились. Выберите пару функций снова.</translation>
+    </message>
+    <message>
+        <source>Primary %1 (%2) ↔ Secondary %3 (%4)</source>
+        <translation>Основной %1 (%2) ↔ Дополнительный %3 (%4)</translation>
+    </message>
+    <message>
+        <source>Profile: %1
+
+Primary SHA-256: %2
+Secondary SHA-256: %3
+</source>
+        <translation>Профиль: %1
+
+Основной SHA-256: %2
+Дополнительный SHA-256: %3
+</translation>
+    </message>
+    <message>
+        <source>Proof work</source>
+        <translation>Работа по доказательству</translation>
+    </message>
+    <message>
+        <source>Result and assumptions</source>
+        <translation>Результат и допущения</translation>
+    </message>
+    <message>
+        <source>Return width: %1 bits
+</source>
+        <translation>Разрядность возврата: %1 бит
+</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair.</source>
+        <translation>Выберите принятую пару функций.</translation>
+    </message>
+    <message>
+        <source>Selected %1 function: %2</source>
+        <translation>Выбранная функция со стороны «%1»: %2</translation>
+    </message>
+    <message>
+        <source>This pair is outside the supported scalar model.</source>
+        <translation>Эта пара выходит за рамки поддерживаемой скалярной модели.</translation>
+    </message>
+    <message>
+        <source>Time limit (ms)</source>
+        <translation>Лимит времени (мс)</translation>
+    </message>
+    <message>
+        <source>Time limit reached. No equivalence conclusion.</source>
+        <translation>Достигнут лимит времени. Вывода об эквивалентности нет.</translation>
+    </message>
+    <message>
+        <source>Validate scalar returns — NeverD</source>
+        <translation>Проверка скалярных возвращаемых значений — NeverD</translation>
+    </message>
+    <message>
+        <source>Validation limit reached. Adjust the limits and check again.</source>
+        <translation>Достигнут лимит проверки. Измените лимиты и проверьте снова.</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>нет</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>да</translation>
     </message>
 </context>
 </TS>

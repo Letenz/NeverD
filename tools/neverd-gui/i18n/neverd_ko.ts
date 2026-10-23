@@ -1103,6 +1103,14 @@
         <source>Static register value...</source>
         <translation>레지스터 정적 값...</translation>
     </message>
+    <message>
+        <source>Compare &amp;binaries…</source>
+        <translation>바이너리 비교(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>Compare two binaries, inspect changes and review function correspondence</source>
+        <translation>두 바이너리를 비교하고 변경 사항과 함수 대응 관계 검토</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -5394,6 +5402,2228 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
         <translation>실행 중인 NeverD 중 링크의 프로그램을 연 것이 없고, 최근에 연 파일 중에도 해당하는 것이 없습니다. 파일도 지정하세요: neverd-gui FILE LINK</translation>
+    </message>
+</context>
+<context>
+    <name>ComparisonDialog</name>
+    <message>
+        <source>Applying debug symbols</source>
+        <translation>디버그 기호 적용 중</translation>
+    </message>
+    <message>
+        <source>Checking ambiguous matches</source>
+        <translation>모호한 일치 확인 중</translation>
+    </message>
+    <message>
+        <source>Checking file identity</source>
+        <translation>파일 식별 정보 확인 중</translation>
+    </message>
+    <message>
+        <source>Comparing binaries</source>
+        <translation>바이너리 비교 중</translation>
+    </message>
+    <message>
+        <source>Comparing function context</source>
+        <translation>함수 맥락 비교 중</translation>
+    </message>
+    <message>
+        <source>Comparing function features</source>
+        <translation>함수 특징 비교 중</translation>
+    </message>
+    <message>
+        <source>Discovering functions</source>
+        <translation>함수 탐색 중</translation>
+    </message>
+    <message>
+        <source>Finding function entries</source>
+        <translation>함수 진입점 찾는 중</translation>
+    </message>
+    <message>
+        <source>Finding similar functions</source>
+        <translation>유사 함수 찾는 중</translation>
+    </message>
+    <message>
+        <source>Identifying file format</source>
+        <translation>파일 형식 식별 중</translation>
+    </message>
+    <message>
+        <source>Input ready</source>
+        <translation>입력 준비 완료</translation>
+    </message>
+    <message>
+        <source>Loading input</source>
+        <translation>입력 불러오는 중</translation>
+    </message>
+    <message>
+        <source>Matching exact features</source>
+        <translation>정확한 특징 일치 확인 중</translation>
+    </message>
+    <message>
+        <source>Measuring function changes</source>
+        <translation>함수 변경 측정 중</translation>
+    </message>
+    <message>
+        <source>Preparing image metadata</source>
+        <translation>이미지 메타데이터 준비 중</translation>
+    </message>
+    <message>
+        <source>Preparing input bytes</source>
+        <translation>입력 바이트 준비 중</translation>
+    </message>
+    <message>
+        <source>Primary: %1</source>
+        <translation>기본: %1</translation>
+    </message>
+    <message>
+        <source>Reading debug symbols</source>
+        <translation>디버그 기호 읽는 중</translation>
+    </message>
+    <message>
+        <source>Reading file</source>
+        <translation>파일 읽는 중</translation>
+    </message>
+    <message>
+        <source>Reading format metadata</source>
+        <translation>형식 메타데이터 읽는 중</translation>
+    </message>
+    <message>
+        <source>Reading instructions</source>
+        <translation>명령어 읽는 중</translation>
+    </message>
+    <message>
+        <source>Resolving calling convention</source>
+        <translation>호출 규약 해결 중</translation>
+    </message>
+    <message>
+        <source>Secondary: %1</source>
+        <translation>보조: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonChangesDialog</name>
+    <message>
+        <source>  %1 bytes · %2</source>
+        <translation>  %1바이트 · %2</translation>
+    </message>
+    <message>
+        <source>%1 slice · %2 operations · %3 · gaps: %4</source>
+        <translation>%1 슬라이스 · 연산 %2개 · %3 · 공백: %4</translation>
+    </message>
+    <message>
+        <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
+Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
+Boundaries: primary %12; secondary %13.</source>
+        <translation>%1 ↔ %2 · %3 · 일치 %4 / 유지된 관찰 %5개
+네이티브 행 %6 / %7; 적용 범위 %8; 모호한 연결 %9개. SSA: 기본 %10; 보조 %11.
+경계: 기본 %12; 보조 %13.</translation>
+    </message>
+    <message>
+        <source>; indexing incomplete</source>
+        <translation>; 색인 불완전</translation>
+    </message>
+    <message>
+        <source>All local changes</source>
+        <translation>모든 국소 변경</translation>
+    </message>
+    <message>
+        <source>Association: %1; native row: %2 (%3)</source>
+        <translation>연결: %1; 네이티브 행: %2 (%3)</translation>
+    </message>
+    <message>
+        <source>Call argument dependencies</source>
+        <translation>호출 인수 의존성</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>호출 경로…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Change context filter</source>
+        <translation>변경 맥락 필터</translation>
+    </message>
+    <message>
+        <source>Change review — NeverD</source>
+        <translation>변경 검토 — NeverD</translation>
+    </message>
+    <message>
+        <source>Changes: %1</source>
+        <translation>변경: %1</translation>
+    </message>
+    <message>
+        <source>Choose an accepted function pair to review its changes.</source>
+        <translation>수락된 함수 쌍을 선택하여 변경 사항을 검토하세요.</translation>
+    </message>
+    <message>
+        <source>Comparison changed. Choose a function pair for a fresh review.</source>
+        <translation>비교가 변경되었습니다. 함수 쌍을 선택하여 새로 검토하세요.</translation>
+    </message>
+    <message>
+        <source>Context: %1</source>
+        <translation>맥락: %1</translation>
+    </message>
+    <message>
+        <source>Dependency slice</source>
+        <translation>의존성 슬라이스</translation>
+    </message>
+    <message>
+        <source>Evidence input</source>
+        <translation>근거 입력</translation>
+    </message>
+    <message>
+        <source>Inspect function</source>
+        <translation>함수 살펴보기</translation>
+    </message>
+    <message>
+        <source>Memory write dependencies</source>
+        <translation>메모리 쓰기 의존성</translation>
+    </message>
+    <message>
+        <source>Native evidence only; no unique SSA association.</source>
+        <translation>네이티브 근거만 있습니다. 고유한 SSA 연결은 없습니다.</translation>
+    </message>
+    <message>
+        <source>No original instruction on this side</source>
+        <translation>이쪽에는 원본 명령어가 없음</translation>
+    </message>
+    <message>
+        <source>Operation gaps: %1</source>
+        <translation>연산 공백: %1</translation>
+    </message>
+    <message>
+        <source>Original evidence</source>
+        <translation>원본 근거</translation>
+    </message>
+    <message>
+        <source>Predicate dependencies</source>
+        <translation>술어 의존성</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>기본 입력</translation>
+    </message>
+    <message>
+        <source>Priority orders review leads; it is not severity or confidence. Context is an observed dependency. Local operands and unique direct synthetic operands are compared; deeper expressions, security effects and fix presence remain unassessed.</source>
+        <translation>우선순위는 검토 단서의 순서이며 심각도나 신뢰도가 아닙니다. 맥락은 관찰된 의존성입니다. 국소 피연산자와 고유한 직접 합성 피연산자를 비교합니다. 더 깊은 표현식, 보안 효과 및 수정 존재 여부는 아직 평가되지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Refresh review</source>
+        <translation>검토 새로 고침</translation>
+    </message>
+    <message>
+        <source>Return dependencies</source>
+        <translation>반환값 의존성</translation>
+    </message>
+    <message>
+        <source>Reviewing local changes…</source>
+        <translation>국소 변경 검토 중…</translation>
+    </message>
+    <message>
+        <source>SSA node %1: %2, result %3 bytes; native anchor node %4</source>
+        <translation>SSA 노드 %1: %2, 결과 %3바이트; 네이티브 앵커 노드 %4</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>보조 입력</translation>
+    </message>
+    <message>
+        <source>Select a change, then trace its inputs or uses.</source>
+        <translation>변경을 선택한 다음 입력이나 사용처를 추적하세요.</translation>
+    </message>
+    <message>
+        <source>Synthetic operation: linked by a direct operand; its address is not an original instruction.</source>
+        <translation>합성 연산: 직접 피연산자로 연결되며 해당 주소는 원본 명령어가 아닙니다.</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>입력 추적</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>사용처 추적</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>%1 의존성 추적 중…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>constant %1</source>
+        <translation>상수 %1</translation>
+    </message>
+    <message>
+        <source>node %1</source>
+        <translation>노드 %1</translation>
+    </message>
+    <message>
+        <source>none recorded</source>
+        <translation>기록된 항목 없음</translation>
+    </message>
+    <message>
+        <source>parameter</source>
+        <translation>매개변수</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>부분</translation>
+    </message>
+    <message>
+        <source>unknown input</source>
+        <translation>알 수 없는 입력</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonCounterpartDialog</name>
+    <message>
+        <source>
+Removes the candidate&apos;s existing pair %1 ↔ %2 · %3.</source>
+        <translation>
+후보의 기존 쌍 %1 ↔ %2 · %3을 제거합니다.</translation>
+    </message>
+    <message>
+        <source>
+Removes the existing pair %1 ↔ %2.</source>
+        <translation>
+기존 쌍 %1 ↔ %2을 제거합니다.</translation>
+    </message>
+    <message>
+        <source>
+This function has incomplete analysis.</source>
+        <translation>
+이 함수의 분석은 불완전합니다.</translation>
+    </message>
+    <message>
+        <source>
+This records your chosen correspondence. Undo restores previous pairs.</source>
+        <translation>
+선택한 대응 관계를 기록합니다. 실행 취소하면 이전 쌍을 복원합니다.</translation>
+    </message>
+    <message>
+        <source>%1 functions · Select a row to review its current pairing.</source>
+        <translation>함수 %1개 · 행을 선택하여 현재 연결된 쌍을 검토하세요.</translation>
+    </message>
+    <message>
+        <source>%1 is already paired with this function.</source>
+        <translation>%1은(는) 이미 이 함수와 연결되어 있습니다.</translation>
+    </message>
+    <message>
+        <source>%1 of %2 candidates · These are hypotheses; choose using your analysis.
+%3</source>
+        <translation>후보 %2개 중 %1개 · 가설이므로 분석 결과에 따라 선택하세요.
+%3</translation>
+    </message>
+    <message>
+        <source>Address: high to low</source>
+        <translation>주소: 내림차순</translation>
+    </message>
+    <message>
+        <source>Address: low to high</source>
+        <translation>주소: 오름차순</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>모든 함수</translation>
+    </message>
+    <message>
+        <source>Ambiguity candidates</source>
+        <translation>모호한 후보</translation>
+    </message>
+    <message>
+        <source>Candidate scope</source>
+        <translation>후보 범위</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2 · %3.</source>
+        <translation>%2 · %3에 대한 %1 측 대응 함수를 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2.</source>
+        <translation>%2에 대한 %1 측 대응 함수를 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Choose counterpart — NeverD</source>
+        <translation>대응 함수 선택 — NeverD</translation>
+    </message>
+    <message>
+        <source>Could not load candidates. %1</source>
+        <translation>후보를 불러올 수 없습니다. %1</translation>
+    </message>
+    <message>
+        <source>Counterpart functions</source>
+        <translation>대응 함수</translation>
+    </message>
+    <message>
+        <source>Current counterpart: %1. Select a replacement; Undo restores previous pairs.</source>
+        <translation>현재 대응 함수: %1. 대체할 함수를 선택하세요. 실행 취소하면 이전 쌍을 복원합니다.</translation>
+    </message>
+    <message>
+        <source>Loading functions…</source>
+        <translation>함수 불러오는 중…</translation>
+    </message>
+    <message>
+        <source>Name: A to Z</source>
+        <translation>이름: 오름차순</translation>
+    </message>
+    <message>
+        <source>Name: Z to A</source>
+        <translation>이름: 내림차순</translation>
+    </message>
+    <message>
+        <source>No ambiguity candidates match. Clear the search or choose All functions.</source>
+        <translation>일치하는 모호한 후보가 없습니다. 검색을 지우거나 모든 함수를 선택하세요.</translation>
+    </message>
+    <message>
+        <source>No functions match. Try another name or address.</source>
+        <translation>일치하는 함수가 없습니다. 다른 이름이나 주소를 시도하세요.</translation>
+    </message>
+    <message>
+        <source>Pair %1 with %2 · %3.</source>
+        <translation>%1을(를) %2 · %3과(와) 연결합니다.</translation>
+    </message>
+    <message>
+        <source>Pair functions</source>
+        <translation>함수 쌍 연결</translation>
+    </message>
+    <message>
+        <source>Search by function name or hexadecimal address</source>
+        <translation>함수 이름 또는 16진수 주소로 검색</translation>
+    </message>
+    <message>
+        <source>Search counterpart functions</source>
+        <translation>대응 함수 검색</translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation>검색 중…</translation>
+    </message>
+    <message>
+        <source>Select a function to pair. Browsing leaves your comparison unchanged.</source>
+        <translation>연결할 함수를 선택하세요. 둘러보기는 비교를 변경하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Size: large to small</source>
+        <translation>크기: 내림차순</translation>
+    </message>
+    <message>
+        <source>Size: small to large</source>
+        <translation>크기: 오름차순</translation>
+    </message>
+    <message>
+        <source>Sort functions</source>
+        <translation>함수 정렬</translation>
+    </message>
+    <message>
+        <source>The comparison changed. Close this window and choose the function again.</source>
+        <translation>비교가 변경되었습니다. 이 창을 닫고 함수를 다시 선택하세요.</translation>
+    </message>
+    <message>
+        <source>The comparison worker is unavailable. Close this window and retry the comparison.</source>
+        <translation>비교 작업 프로세스를 사용할 수 없습니다. 이 창을 닫고 비교를 다시 시도하세요.</translation>
+    </message>
+    <message>
+        <source>This function has no retained ambiguity group. Choose All functions to select a counterpart.</source>
+        <translation>이 함수에는 유지된 모호성 그룹이 없습니다. 모든 함수를 선택하여 대응 함수를 선택하세요.</translation>
+    </message>
+    <message>
+        <source>primary</source>
+        <translation>기본</translation>
+    </message>
+    <message>
+        <source>secondary</source>
+        <translation>보조</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonDialog</name>
+    <message>
+        <source>
+
+Primary identity: %1
+Secondary identity: %2
+
+Structural correspondence does not establish semantic equivalence or patch presence.</source>
+        <translation>
+
+기본 입력 식별 정보: %1
+보조 입력 식별 정보: %2
+
+구조적 대응은 의미적 동등성이나 패치의 존재를 입증하지 않습니다.</translation>
+    </message>
+    <message>
+        <source> (difference %1)</source>
+        <translation> (차이 %1)</translation>
+    </message>
+    <message>
+        <source> Function discovery is partial.</source>
+        <translation> 함수 탐색이 부분적으로 완료되었습니다.</translation>
+    </message>
+    <message>
+        <source> image base</source>
+        <translation> 이미지 기준 주소</translation>
+    </message>
+    <message>
+        <source> input format</source>
+        <translation> 입력 형식</translation>
+    </message>
+    <message>
+        <source> s</source>
+        <translation> 초</translation>
+    </message>
+    <message>
+        <source>%1  %2 / %3</source>
+        <translation>%1  %2 / %3</translation>
+    </message>
+    <message>
+        <source>%1 %2  ↔  %3 %4</source>
+        <translation>%1 %2  ↔  %3 %4</translation>
+    </message>
+    <message>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
+        <translation>일치 %1개  ·  변경 %2개  ·  모호 %3개  ·  불일치 %4 / %5개  ·  불완전 %6 / %7개</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>모든 함수</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>모호함</translation>
+    </message>
+    <message>
+        <source>Analyst review…</source>
+        <translation>분석가 검토…</translation>
+    </message>
+    <message>
+        <source>Auto format</source>
+        <translation>자동 형식</translation>
+    </message>
+    <message>
+        <source>Binary comparison</source>
+        <translation>바이너리 비교</translation>
+    </message>
+    <message>
+        <source>Bounded native instruction-run analysis for split, merge, inline and clone hypotheses. This does not validate behavior.</source>
+        <translation>분할, 병합, 인라인 확장 및 복제 가설을 위한 한도 내 네이티브 명령어 시퀀스 분석입니다. 동작을 검증하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>찾아보기…</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>호출 경로…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Cancellation requested — waiting for computation to stop…</source>
+        <translation>취소 요청됨 — 계산이 중지될 때까지 기다리는 중…</translation>
+    </message>
+    <message>
+        <source>Capture bounded SSA observations in address order. Pipeline cancellation is checked between functions. See Dependencies for omitted and unsupported functions.</source>
+        <translation>주소순으로 한도 내 SSA 관찰을 수집합니다. 파이프라인 취소는 함수 사이에서 확인합니다. 생략되거나 지원되지 않는 함수는 의존성에서 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Change review…</source>
+        <translation>변경 검토…</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>변경됨</translation>
+    </message>
+    <message>
+        <source>Compare</source>
+        <translation>비교</translation>
+    </message>
+    <message>
+        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
+        <translation>네이티브 x86/x64 입력 두 개를 비교합니다. 일치 점수는 휴리스틱입니다.</translation>
+    </message>
+    <message>
+        <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
+        <translation>비교 완료. 점수는 휴리스틱이므로 적용 범위와 근거를 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Comparison deadline</source>
+        <translation>비교 기한</translation>
+    </message>
+    <message>
+        <source>Computation stopped: %1. Partial results retained.</source>
+        <translation>계산 중지됨: %1. 부분 결과는 유지됩니다.</translation>
+    </message>
+    <message>
+        <source>Confirm pair</source>
+        <translation>쌍 확인</translation>
+    </message>
+    <message>
+        <source>Control flow</source>
+        <translation>제어 흐름</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>대응 함수</translation>
+    </message>
+    <message>
+        <source>Deadline</source>
+        <translation>기한</translation>
+    </message>
+    <message>
+        <source>Dependencies…</source>
+        <translation>의존성…</translation>
+    </message>
+    <message>
+        <source>Dependency evidence</source>
+        <translation>의존성 근거</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>디스어셈블리</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>증거</translation>
+    </message>
+    <message>
+        <source>Filter by name or address</source>
+        <translation>이름 또는 주소로 필터링</translation>
+    </message>
+    <message>
+        <source>Filter functions</source>
+        <translation>함수 필터링</translation>
+    </message>
+    <message>
+        <source>Fit graphs</source>
+        <translation>그래프 맞춤</translation>
+    </message>
+    <message>
+        <source>Function difference %1. No completed instruction comparison is available. Use Retry difference to recompute.
+
+</source>
+        <translation>함수 차이 %1. 완료된 명령어 비교가 없습니다. 차이 다시 시도로 재계산하세요.
+
+</translation>
+    </message>
+    <message>
+        <source>Function difference stopped. Use Retry difference to recompute; no completed instruction comparison is shown.</source>
+        <translation>함수 차이 계산이 중지되었습니다. 차이 다시 시도로 재계산하세요. 완료된 명령어 비교는 표시되지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Function state</source>
+        <translation>함수 상태</translation>
+    </message>
+    <message>
+        <source>Functions per input</source>
+        <translation>입력당 함수 수</translation>
+    </message>
+    <message>
+        <source>Image base</source>
+        <translation>이미지 기준 주소</translation>
+    </message>
+    <message>
+        <source>Index and verify finite dependency neighborhoods across functions. Includes dependency evidence.</source>
+        <translation>함수 간 유한한 의존성 이웃 영역을 색인하고 검증합니다. 의존성 근거를 포함합니다.</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload before continuing review.</source>
+        <translation>입력이 변경되었습니다. 검토를 계속하기 전에 다시 불러오세요.</translation>
+    </message>
+    <message>
+        <source>Inspect overlapping region and transformation hypotheses. Enable analysis in Settings before comparing.</source>
+        <translation>겹치는 영역과 변환 가설을 살펴보세요. 비교하기 전에 설정에서 분석을 활성화하세요.</translation>
+    </message>
+    <message>
+        <source>Inventory side</source>
+        <translation>목록 대상 측</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>%1 불러오는 중…</translation>
+    </message>
+    <message>
+        <source>Loading comparison inputs…</source>
+        <translation>비교 입력 불러오는 중…</translation>
+    </message>
+    <message>
+        <source>Match: %1
+%2
+
+Similarity: %3
+Heuristic confidence: %4%
+Changes: %5
+Analyst confirmed: %6
+Coverage: %7</source>
+        <translation>일치: %1
+%2
+
+유사도: %3
+휴리스틱 신뢰도: %4%
+변경: %5
+분석가 확인: %6
+적용 범위: %7</translation>
+    </message>
+    <message>
+        <source>Matched</source>
+        <translation>일치함</translation>
+    </message>
+    <message>
+        <source>Matching evidence appears here.</source>
+        <translation>일치 근거가 여기에 표시됩니다.</translation>
+    </message>
+    <message>
+        <source>Maximum dependency functions per input</source>
+        <translation>입력당 최대 의존성 함수 수</translation>
+    </message>
+    <message>
+        <source>Minimum similarity</source>
+        <translation>최소 유사도</translation>
+    </message>
+    <message>
+        <source>Native instruction regions…</source>
+        <translation>네이티브 명령어 영역…</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD 비교 (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff);;JSON (*.json)</source>
+        <translation>NeverD 비교 (*.nddiff);;JSON (*.json)</translation>
+    </message>
+    <message>
+        <source>New binary or patch</source>
+        <translation>새 바이너리 또는 패치</translation>
+    </message>
+    <message>
+        <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
+        <translation>수락된 대응 함수가 없습니다. 모호한 후보를 살펴보거나 수동으로 쌍을 선택하세요.</translation>
+    </message>
+    <message>
+        <source>No deadline</source>
+        <translation>기한 없음</translation>
+    </message>
+    <message>
+        <source>Original binary</source>
+        <translation>원본 바이너리</translation>
+    </message>
+    <message>
+        <source>Pair with…</source>
+        <translation>연결 대상…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>기본</translation>
+    </message>
+    <message>
+        <source>Pseudocode</source>
+        <translation>의사 코드</translation>
+    </message>
+    <message>
+        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
+        <translation>이 디코딩 프로필에서는 의사 코드를 사용할 수 없습니다. 원본 명령어, 피연산자 및 바이트는 디스어셈블리에서 계속 사용할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Raw x64</source>
+        <translation>원시 x64</translation>
+    </message>
+    <message>
+        <source>Raw x86</source>
+        <translation>원시 x86</translation>
+    </message>
+    <message>
+        <source>Ready to compare two native binaries.</source>
+        <translation>두 네이티브 바이너리를 비교할 준비가 되었습니다.</translation>
+    </message>
+    <message>
+        <source>Recompute a cancelled or timed-out function difference.</source>
+        <translation>취소되었거나 시간 초과된 함수 차이를 다시 계산합니다.</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>다시 실행</translation>
+    </message>
+    <message>
+        <source>Region hypotheses</source>
+        <translation>영역 가설</translation>
+    </message>
+    <message>
+        <source>Regions…</source>
+        <translation>영역…</translation>
+    </message>
+    <message>
+        <source>Reopen comparison</source>
+        <translation>비교 다시 열기</translation>
+    </message>
+    <message>
+        <source>Reopen…</source>
+        <translation>다시 열기…</translation>
+    </message>
+    <message>
+        <source>Retry difference</source>
+        <translation>차이 다시 시도</translation>
+    </message>
+    <message>
+        <source>SSA dependency regions…</source>
+        <translation>SSA 의존성 영역…</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses</source>
+        <translation>SSA 영역 가설</translation>
+    </message>
+    <message>
+        <source>Save / export…</source>
+        <translation>저장 / 내보내기…</translation>
+    </message>
+    <message>
+        <source>Save comparison</source>
+        <translation>비교 저장</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>%1 저장됨</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>보조</translation>
+    </message>
+    <message>
+        <source>Select %1 input</source>
+        <translation>%1 입력 선택</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its counterpart.</source>
+        <translation>함수를 선택하여 대응 함수를 살펴보세요.</translation>
+    </message>
+    <message>
+        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
+        <translation>블록을 선택하여 대응 블록을 추적하세요. Ctrl+휠로 확대/축소합니다.</translation>
+    </message>
+    <message>
+        <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
+        <translation>두 입력과 원래 설정을 선택한 다음 저장된 비교를 다시 여세요. 입력 해시와 분석 리비전을 확인합니다.</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>설정</translation>
+    </message>
+    <message>
+        <source>Starting comparison worker…</source>
+        <translation>비교 작업 프로세스 시작 중…</translation>
+    </message>
+    <message>
+        <source>Trace observed callers, callees and entry points of this function.</source>
+        <translation>이 함수에서 관찰된 호출자, 피호출자 및 진입점을 추적합니다.</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>실행 취소</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>일치 해제</translation>
+    </message>
+    <message>
+        <source>Unmatched</source>
+        <translation>일치 없음</translation>
+    </message>
+    <message>
+        <source>Use symbol names</source>
+        <translation>기호 이름 사용</translation>
+    </message>
+    <message>
+        <source>Validate returns…</source>
+        <translation>반환값 검증…</translation>
+    </message>
+    <message>
+        <source>decoded bodies complete</source>
+        <translation>디코딩된 본문 완전함</translation>
+    </message>
+    <message>
+        <source>identity only; no bodies available</source>
+        <translation>식별 정보만; 사용 가능한 본문 없음</translation>
+    </message>
+    <message>
+        <source>incomplete</source>
+        <translation>불완전</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>아니요</translation>
+    </message>
+    <message>
+        <source>not applicable</source>
+        <translation>해당 없음</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>예</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonFlowDialog</name>
+    <message>
+        <source>%1 slice · %2 nodes · %3
+Gaps: %4</source>
+        <translation>%1 슬라이스 · 노드 %2개 · %3
+공백: %4</translation>
+    </message>
+    <message>
+        <source>%1 · %2
+%3</source>
+        <translation>%1 · %2
+%3</translation>
+    </message>
+    <message>
+        <source>%1 · %2 available / %3 processed / %4 eligible functions · %5 unprocessed
+%6 unsupported, %7 resource limited, %8 failed. Collection state: %9.</source>
+        <translation>%1 · 사용 가능 %2 / 처리됨 %3 / 대상 함수 %4개 · 미처리 %5개
+지원 안 됨 %6개, 리소스 제한 %7개, 실패 %8개. 수집 상태: %9.</translation>
+    </message>
+    <message>
+        <source>%1 · %2 · %3 SSA operations
+Select an operation to follow dependencies. Synthetic operations have block provenance.</source>
+        <translation>%1 · %2 · SSA 연산 %3개
+연산을 선택하여 의존성을 추적하세요. 합성 연산에는 출처 블록 정보가 있습니다.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Dependency evidence — NeverD</source>
+        <translation>의존성 근거 — NeverD</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings, then compare the inputs.</source>
+        <translation>비교 설정에서 의존성 근거를 활성화한 다음 입력을 비교하세요.</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings.</source>
+        <translation>비교 설정에서 의존성 근거를 활성화하세요.</translation>
+    </message>
+    <message>
+        <source>Include control dependencies</source>
+        <translation>제어 의존성 포함</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>원본 함수 살펴보기</translation>
+    </message>
+    <message>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
+        <translation>관찰된 SSA 의존성입니다. 호출, 별칭 및 미해결 제어 흐름은 명시적인 공백으로 남습니다. 의미 검증은 수행되지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>기본 입력</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>보조 입력</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its SSA operations.</source>
+        <translation>함수를 선택하여 SSA 연산을 살펴보세요.</translation>
+    </message>
+    <message>
+        <source>Select an operation, then trace its inputs or uses.</source>
+        <translation>연산을 선택한 다음 입력이나 사용처를 추적하세요.</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>입력 추적</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>사용처 추적</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>%1 의존성 추적 중…</translation>
+    </message>
+    <message>
+        <source>none observed within this model</source>
+        <translation>이 모델 내에서 관찰된 항목 없음</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonGraph</name>
+    <message>
+        <source>%1 control-flow graph</source>
+        <translation>%1 제어 흐름 그래프</translation>
+    </message>
+    <message>
+        <source>Control-flow graph</source>
+        <translation>제어 흐름 그래프</translation>
+    </message>
+    <message>
+        <source>Incomplete control flow</source>
+        <translation>불완전한 제어 흐름</translation>
+    </message>
+    <message>
+        <source>Laying out control flow…</source>
+        <translation>제어 흐름 배치 중…</translation>
+    </message>
+    <message>
+        <source>No counterpart</source>
+        <translation>대응 함수 없음</translation>
+    </message>
+    <message>
+        <source>Viewport limit reached — zoom in to inspect remaining blocks</source>
+        <translation>표시 영역 한도 도달 — 나머지 블록을 살펴보려면 확대하세요</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonImpactDialog</name>
+    <message>
+        <source>%1 qualified call contracts in %2 retained sites; inspection %3. Scope: calls in reached functions, including unresolved and frontier targets. Native coverage remains independent. Select a row and open Selected call for roles and assumptions.</source>
+        <translation>유지된 위치 %2개에서 적격 호출 계약 %1개; 검사 %3. 범위: 미해결 대상과 탐색 경계 대상을 포함한 도달 함수 내 호출. 네이티브 적용 범위는 독립적입니다. 행을 선택하고 선택한 호출을 열어 역할과 가정을 확인하세요.</translation>
+    </message>
+    <message>
+        <source>%1 · %2 functions · %3 entries/exports · %4 call sites · %5 unresolved or coverage boundaries · %6 frontier sites
+Indexed %7 / %8 functions; %9; %10.</source>
+        <translation>%1 · 함수 %2개 · 진입점/내보내기 %3개 · 호출 위치 %4개 · 미해결 또는 적용 범위 경계 %5개 · 탐색 경계 위치 %6개
+함수 %7 / %8개 색인 완료; %9; %10.</translation>
+    </message>
+    <message>
+        <source>%1: argument %2</source>
+        <translation>%1: 인수 %2</translation>
+    </message>
+    <message>
+        <source>All reached functions</source>
+        <translation>도달한 모든 함수</translation>
+    </message>
+    <message>
+        <source>All traversed call sites</source>
+        <translation>순회한 모든 호출 위치</translation>
+    </message>
+    <message>
+        <source>Analysis limit reached</source>
+        <translation>분석 한도 도달</translation>
+    </message>
+    <message>
+        <source>Assumption: the imported function resolves to the declared built-in call contract.</source>
+        <translation>가정: 가져온 함수가 선언된 내장 호출 계약으로 해석됩니다.</translation>
+    </message>
+    <message>
+        <source>Bytes: %1</source>
+        <translation>바이트: %1</translation>
+    </message>
+    <message>
+        <source>Call contracts in reached functions</source>
+        <translation>도달한 함수 내 호출 계약</translation>
+    </message>
+    <message>
+        <source>Call paths and possible impact — NeverD</source>
+        <translation>호출 경로 및 가능한 영향 — NeverD</translation>
+    </message>
+    <message>
+        <source>Call sites</source>
+        <translation>호출 위치</translation>
+    </message>
+    <message>
+        <source>Caller: %1 (%2)</source>
+        <translation>호출자: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>취소됨</translation>
+    </message>
+    <message>
+        <source>Capacity</source>
+        <translation>용량</translation>
+    </message>
+    <message>
+        <source>Choose a starting function, then trace its callers or callees.</source>
+        <translation>시작 함수를 선택한 다음 호출자나 피호출자를 추적하세요.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>Destination</source>
+        <translation>대상</translation>
+    </message>
+    <message>
+        <source>Format</source>
+        <translation>형식</translation>
+    </message>
+    <message>
+        <source>Function entry, e.g. 0x401000</source>
+        <translation>함수 진입점(예: 0x401000)</translation>
+    </message>
+    <message>
+        <source>Global scanned scope, including functions with no known path to the starting function. Unknown callers may be missing.</source>
+        <translation>시작 함수로 향하는 알려진 경로가 없는 함수를 포함한 전체 검색 범위입니다. 알 수 없는 호출자는 빠져 있을 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Input buffer</source>
+        <translation>입력 버퍼</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>원본 함수 살펴보기</translation>
+    </message>
+    <message>
+        <source>Known edges beyond the depth or function limit</source>
+        <translation>깊이 또는 함수 한도를 넘는 알려진 간선</translation>
+    </message>
+    <message>
+        <source>Known targets omitted by the depth or function limit. Work or index stops can leave further targets unobserved.</source>
+        <translation>깊이 또는 함수 한도로 인해 생략된 알려진 대상입니다. 작업이나 색인이 중지되면 관찰되지 않은 대상이 더 남을 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>길이</translation>
+    </message>
+    <message>
+        <source>Maximum depth</source>
+        <translation>최대 깊이</translation>
+    </message>
+    <message>
+        <source>Native-associated SSA node: %1</source>
+        <translation>네이티브와 연결된 SSA 노드: %1</translation>
+    </message>
+    <message>
+        <source>No parameter/return propagation, alias, capacity, path-safety or fix-presence proof. Use the original function and SSA dependency views to continue review.</source>
+        <translation>매개변수/반환값 전파, 별칭, 용량, 경로 안전성 또는 수정 존재 여부에 대한 증명이 없습니다. 원본 함수와 SSA 의존성 보기에서 검토를 계속하세요.</translation>
+    </message>
+    <message>
+        <source>Object / handle</source>
+        <translation>객체 / 핸들</translation>
+    </message>
+    <message>
+        <source>Observed call paths provide possible impact context. Path feasibility, parameter and return binding, memory aliases and external callers are not modeled. Semantic validation has not been performed.</source>
+        <translation>관찰된 호출 경로는 가능한 영향의 맥락을 제공합니다. 경로 실행 가능성, 매개변수 및 반환값 바인딩, 메모리 별칭 및 외부 호출자는 모델링되지 않습니다. 의미 검증은 수행되지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Observed program entries and exports</source>
+        <translation>관찰된 프로그램 진입점 및 내보내기</translation>
+    </message>
+    <message>
+        <source>Observed relations include admitted tail transfers and resolved imports. Double-click to inspect the caller.</source>
+        <translation>관찰된 관계에는 허용된 꼬리 전송과 해결된 가져오기가 포함됩니다. 두 번 클릭하여 호출자를 살펴보세요.</translation>
+    </message>
+    <message>
+        <source>One shortest observed witness; alternate paths remain in all call sites. Seeds have an empty path.</source>
+        <translation>관찰된 최단 증거 경로 하나입니다. 대체 경로는 전체 호출 위치에 남아 있습니다. 시드는 경로가 비어 있습니다.</translation>
+    </message>
+    <message>
+        <source>Original instruction: %1  %2 %3</source>
+        <translation>원본 명령어: %1  %2 %3</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>기본 입력</translation>
+    </message>
+    <message>
+        <source>Recovered arguments: %1</source>
+        <translation>복구된 인수: %1</translation>
+    </message>
+    <message>
+        <source>Release can fail; successful release has not been proved.</source>
+        <translation>해제가 실패할 수 있습니다. 성공적인 해제는 증명되지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Retained SSA boundaries: %1</source>
+        <translation>유지된 SSA 경계: %1</translation>
+    </message>
+    <message>
+        <source>Reviewing exact import identities and recovered call arguments. Collect SSA dependencies when starting the comparison to qualify contracts. Missing or ambiguous evidence remains visible.</source>
+        <translation>정확한 가져오기 식별 정보와 복구된 호출 인수를 검토합니다. 비교 시작 시 SSA 의존성을 수집하여 계약의 적격성을 판단하세요. 누락되거나 모호한 근거는 계속 표시됩니다.</translation>
+    </message>
+    <message>
+        <source>Roles (zero-based): %1</source>
+        <translation>역할(0부터 시작하는 인덱스): %1</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>보조 입력</translation>
+    </message>
+    <message>
+        <source>Selected call</source>
+        <translation>선택한 호출</translation>
+    </message>
+    <message>
+        <source>Shortest witness for the selected function</source>
+        <translation>선택한 함수의 최단 증거 경로</translation>
+    </message>
+    <message>
+        <source>Source</source>
+        <translation>소스</translation>
+    </message>
+    <message>
+        <source>Starting function entry</source>
+        <translation>시작 함수 진입점</translation>
+    </message>
+    <message>
+        <source>Target: %1 (%2)</source>
+        <translation>대상: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>The contract accepts unbounded input; destination capacity has not been assessed.</source>
+        <translation>계약은 제한 없는 입력을 허용합니다. 대상 용량은 평가되지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Time limit reached</source>
+        <translation>시간 제한 도달</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>추적</translation>
+    </message>
+    <message>
+        <source>Trace callees</source>
+        <translation>피호출자 추적</translation>
+    </message>
+    <message>
+        <source>Trace callers</source>
+        <translation>호출자 추적</translation>
+    </message>
+    <message>
+        <source>Tracing observed call paths…</source>
+        <translation>관찰된 호출 경로 추적 중…</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>알 수 없는 간접 호출</translation>
+    </message>
+    <message>
+        <source>Unresolved sites and coverage gaps across the input</source>
+        <translation>입력 전체의 미해결 위치 및 적용 범위 공백</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>index scan complete</source>
+        <translation>색인 검색 완료</translation>
+    </message>
+    <message>
+        <source>index scan partial</source>
+        <translation>색인 검색 부분 완료</translation>
+    </message>
+    <message>
+        <source>input discovery complete</source>
+        <translation>입력 탐색 완료</translation>
+    </message>
+    <message>
+        <source>input discovery partial</source>
+        <translation>입력 탐색 부분 완료</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonModel</name>
+    <message>
+        <source> @b%1</source>
+        <translation> @b%1</translation>
+    </message>
+    <message>
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>%1 B</source>
+        <translation>%1 B</translation>
+    </message>
+    <message>
+        <source>Accepted pair</source>
+        <translation>수락된 쌍</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>주소</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>모호함</translation>
+    </message>
+    <message>
+        <source>Ambiguous SSA call association</source>
+        <translation>모호한 SSA 호출 연결</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>평가</translation>
+    </message>
+    <message>
+        <source>Association</source>
+        <translation>연결</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>작성자</translation>
+    </message>
+    <message>
+        <source>Availability</source>
+        <translation>사용 가능 여부</translation>
+    </message>
+    <message>
+        <source>Binding / history</source>
+        <translation>바인딩 / 기록</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original operation %2
+%3</source>
+        <translation>블록 %1 · 원본 연산 %2
+%3</translation>
+    </message>
+    <message>
+        <source>Blocks</source>
+        <translation>블록</translation>
+    </message>
+    <message>
+        <source>Boundaries</source>
+        <translation>경계</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>바이트</translation>
+    </message>
+    <message>
+        <source>Callee</source>
+        <translation>피호출자</translation>
+    </message>
+    <message>
+        <source>Caller</source>
+        <translation>호출자</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>사례</translation>
+    </message>
+    <message>
+        <source>Change</source>
+        <translation>변경</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>변경됨</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>신뢰도</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>컨텍스트</translation>
+    </message>
+    <message>
+        <source>Contract / gaps</source>
+        <translation>계약 / 공백</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>제어</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>대응 함수</translation>
+    </message>
+    <message>
+        <source>Coverage A / B</source>
+        <translation>적용 범위 A / B</translation>
+    </message>
+    <message>
+        <source>Current counterpart</source>
+        <translation>현재 대응 함수</translation>
+    </message>
+    <message>
+        <source>Data + control</source>
+        <translation>데이터 + 제어</translation>
+    </message>
+    <message>
+        <source>Depth</source>
+        <translation>깊이</translation>
+    </message>
+    <message>
+        <source>Direct callee unavailable</source>
+        <translation>직접 피호출자 사용 불가</translation>
+    </message>
+    <message>
+        <source>Earlier</source>
+        <translation>이전</translation>
+    </message>
+    <message>
+        <source>Entry evidence</source>
+        <translation>진입점 근거</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>이벤트</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>증거</translation>
+    </message>
+    <message>
+        <source>Exception flow</source>
+        <translation>예외 흐름</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>내보내기</translation>
+    </message>
+    <message>
+        <source>External function body</source>
+        <translation>외부 함수 본문</translation>
+    </message>
+    <message>
+        <source>Finite SSA correspondence; open effects and control require review.
+%1</source>
+        <translation>유한 범위의 SSA 대응입니다. 미해결 효과와 제어는 검토가 필요합니다.
+%1</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Function entry</source>
+        <translation>함수 진입점</translation>
+    </message>
+    <message>
+        <source>Gaps</source>
+        <translation>공백</translation>
+    </message>
+    <message>
+        <source>Heuristic confidence; structural similarity does not prove semantic equivalence.</source>
+        <translation>휴리스틱 신뢰도입니다. 구조적 유사성은 의미적 동등성을 증명하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>가설</translation>
+    </message>
+    <message>
+        <source>Identity only</source>
+        <translation>식별 정보만</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>불완전</translation>
+    </message>
+    <message>
+        <source>Incomplete discovery</source>
+        <translation>불완전한 탐색</translation>
+    </message>
+    <message>
+        <source>Incomplete native coverage</source>
+        <translation>불완전한 네이티브 적용 범위</translation>
+    </message>
+    <message>
+        <source>Inputs</source>
+        <translation>입력</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>명령어</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>명령어</translation>
+    </message>
+    <message>
+        <source>Internal callee; review its body</source>
+        <translation>내부 피호출자입니다. 본문을 검토하세요</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>최신</translation>
+    </message>
+    <message>
+        <source>Loading…</source>
+        <translation>불러오는 중…</translation>
+    </message>
+    <message>
+        <source>No applicable call contract</source>
+        <translation>적용 가능한 호출 계약 없음</translation>
+    </message>
+    <message>
+        <source>No native-associated SSA call</source>
+        <translation>네이티브와 연결된 SSA 호출 없음</translation>
+    </message>
+    <message>
+        <source>No qualified import identity</source>
+        <translation>적격 가져오기 식별 정보 없음</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>노드</translation>
+    </message>
+    <message>
+        <source>Node pairs</source>
+        <translation>노드 쌍</translation>
+    </message>
+    <message>
+        <source>Nodes</source>
+        <translation>노드</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>없음</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>메모</translation>
+    </message>
+    <message>
+        <source>Observed SSA</source>
+        <translation>관찰된 SSA</translation>
+    </message>
+    <message>
+        <source>Observed call paths; feasibility and data effects remain unverified.
+%1</source>
+        <translation>관찰된 호출 경로입니다. 실행 가능성과 데이터 효과는 아직 검증되지 않았습니다.
+%1</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>연산</translation>
+    </message>
+    <message>
+        <source>Original address</source>
+        <translation>원본 주소</translation>
+    </message>
+    <message>
+        <source>Pair inactive</source>
+        <translation>비활성 쌍</translation>
+    </message>
+    <message>
+        <source>Paired</source>
+        <translation>연결됨</translation>
+    </message>
+    <message>
+        <source>Pairing</source>
+        <translation>쌍 연결</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>기본</translation>
+    </message>
+    <message>
+        <source>Primary address</source>
+        <translation>기본 주소</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>기본 함수</translation>
+    </message>
+    <message>
+        <source>Primary functions: %1
+Secondary functions: %2
+Heuristic explanations, not validated behavior.
+%3</source>
+        <translation>기본 함수: %1
+보조 함수: %2
+휴리스틱 설명이며 동작은 검증되지 않았습니다.
+%3</translation>
+    </message>
+    <message>
+        <source>Primary instruction</source>
+        <translation>기본 명령어</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>기본 노드</translation>
+    </message>
+    <message>
+        <source>Primary operation</source>
+        <translation>기본 연산</translation>
+    </message>
+    <message>
+        <source>Primary origin</source>
+        <translation>기본 출처</translation>
+    </message>
+    <message>
+        <source>Primary root</source>
+        <translation>기본 루트</translation>
+    </message>
+    <message>
+        <source>Primary span</source>
+        <translation>기본 구간</translation>
+    </message>
+    <message>
+        <source>Priority</source>
+        <translation>우선순위</translation>
+    </message>
+    <message>
+        <source>Program entry</source>
+        <translation>프로그램 진입점</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract</source>
+        <translation>적격 %1 계약</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract; release may fail</source>
+        <translation>적격 %1 계약; 해제가 실패할 수 있음</translation>
+    </message>
+    <message>
+        <source>Reason</source>
+        <translation>이유</translation>
+    </message>
+    <message>
+        <source>Recovered arguments unavailable</source>
+        <translation>복구된 인수 사용 불가</translation>
+    </message>
+    <message>
+        <source>Repeated seed</source>
+        <translation>반복된 시드</translation>
+    </message>
+    <message>
+        <source>SSA unavailable in collected scope</source>
+        <translation>수집 범위에서 SSA 사용 불가</translation>
+    </message>
+    <message>
+        <source>Scan incomplete</source>
+        <translation>검색 불완전</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>보조</translation>
+    </message>
+    <message>
+        <source>Secondary address</source>
+        <translation>보조 주소</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>보조 함수</translation>
+    </message>
+    <message>
+        <source>Secondary instruction</source>
+        <translation>보조 명령어</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>보조 노드</translation>
+    </message>
+    <message>
+        <source>Secondary operation</source>
+        <translation>보조 연산</translation>
+    </message>
+    <message>
+        <source>Secondary origin</source>
+        <translation>보조 출처</translation>
+    </message>
+    <message>
+        <source>Secondary root</source>
+        <translation>보조 루트</translation>
+    </message>
+    <message>
+        <source>Secondary span</source>
+        <translation>보조 구간</translation>
+    </message>
+    <message>
+        <source>Seed evidence</source>
+        <translation>시드 근거</translation>
+    </message>
+    <message>
+        <source>Shared instructions</source>
+        <translation>공통 명령어</translation>
+    </message>
+    <message>
+        <source>Shared nodes</source>
+        <translation>공통 노드</translation>
+    </message>
+    <message>
+        <source>Shared normalized instruction runs are evidence for competing transformation hypotheses. They do not validate behavior, calls, memory effects or patch presence.</source>
+        <translation>공통 정규화 명령어 시퀀스는 경쟁하는 변환 가설의 근거입니다. 동작, 호출, 메모리 효과 또는 패치 존재 여부를 검증하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Similarity</source>
+        <translation>유사도</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>상태</translation>
+    </message>
+    <message>
+        <source>Synthetic</source>
+        <translation>합성</translation>
+    </message>
+    <message>
+        <source>Unchanged</source>
+        <translation>변경 없음</translation>
+    </message>
+    <message>
+        <source>Unique seed</source>
+        <translation>고유 시드</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>알 수 없음</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>알 수 없는 간접 호출</translation>
+    </message>
+    <message>
+        <source>Unknown indirect transfer</source>
+        <translation>알 수 없는 간접 전송</translation>
+    </message>
+    <message>
+        <source>Unmeasured</source>
+        <translation>측정 안 됨</translation>
+    </message>
+    <message>
+        <source>Unpaired</source>
+        <translation>연결되지 않음</translation>
+    </message>
+    <message>
+        <source>Unresolved / boundary</source>
+        <translation>미해결 / 경계</translation>
+    </message>
+    <message>
+        <source>Unresolved call target</source>
+        <translation>미해결 호출 대상</translation>
+    </message>
+    <message>
+        <source>Unsupported ABI or input profile</source>
+        <translation>지원되지 않는 ABI 또는 입력 프로필</translation>
+    </message>
+    <message>
+        <source>Width</source>
+        <translation>너비</translation>
+    </message>
+    <message>
+        <source>Witness instruction</source>
+        <translation>증거 명령어</translation>
+    </message>
+    <message>
+        <source>arg %1: %2</source>
+        <translation>인수 %1: %2</translation>
+    </message>
+    <message>
+        <source>n%1</source>
+        <translation>n%1</translation>
+    </message>
+    <message>
+        <source>param %1</source>
+        <translation>매개변수 %1</translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>알 수 없음</translation>
+    </message>
+    <message>
+        <source>—</source>
+        <translation>—</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonRegionsDialog</name>
+    <message>
+        <source>
+Dependency scope: %1 / %2 · %3 ambiguous candidates · %4 graphs exceeded analysis allowance</source>
+        <translation>
+의존성 범위: %1 / %2 · 모호한 후보 %3개 · 분석 한도를 초과한 그래프 %4개</translation>
+    </message>
+    <message>
+        <source>%1 hypotheses · %2 anchors · %3 frequent seed groups skipped · %4 oversized groups suppressed · %5 weak candidates skipped · %6</source>
+        <translation>가설 %1개 · 앵커 %2개 · 빈번한 시드 그룹 %3개 건너뜀 · 과대 그룹 %4개 제외 · 근거가 약한 후보 %5개 건너뜀 · %6</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of decoded non-transfer instructions. Calls and control transfers need separate review.</source>
+        <translation>기본 함수 %1개 / 보조 함수 %2개 · 공통 구간 %3개
+적용 범위: 디코딩된 비전송 명령어의 %4% / %5%. 호출과 제어 전송은 별도 검토가 필요합니다.</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 verified neighborhoods
+Coverage: %4% / %5% of observed SSA nodes in these functions. Control and external effects remain open; hover for original bytes.</source>
+        <translation>기본 함수 %1개 / 보조 함수 %2개 · 검증된 이웃 영역 %3개
+적용 범위: 이 함수들에서 관찰된 SSA 노드의 %4% / %5%. 제어와 외부 효과는 미해결 상태입니다. 포인터를 올리면 원본 바이트를 볼 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>%1 shared spans. These include unfinished or unclassified candidate groups. Select a span to inspect its original instructions.</source>
+        <translation>공통 구간 %1개. 미완료 또는 미분류 후보 그룹이 포함됩니다. 구간을 선택하여 원본 명령어를 살펴보세요.</translation>
+    </message>
+    <message>
+        <source>%1 verified SSA neighborhoods, including unclassified groups. Select one for paired nodes; hover for operands and original bytes.</source>
+        <translation>미분류 그룹을 포함한 검증된 SSA 이웃 영역 %1개. 하나를 선택하면 연결된 노드를 볼 수 있습니다. 포인터를 올리면 피연산자와 원본 바이트를 볼 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>All hypotheses</source>
+        <translation>모든 가설</translation>
+    </message>
+    <message>
+        <source>All shared spans (including unclassified)</source>
+        <translation>모든 공통 구간(미분류 포함)</translation>
+    </message>
+    <message>
+        <source>Clone</source>
+        <translation>복제</translation>
+    </message>
+    <message>
+        <source>Enable SSA region hypotheses in comparison Settings, then compare again.</source>
+        <translation>비교 설정에서 SSA 영역 가설을 활성화한 다음 다시 비교하세요.</translation>
+    </message>
+    <message>
+        <source>Enable region analysis in comparison Settings, then compare again.</source>
+        <translation>비교 설정에서 영역 분석을 활성화한 다음 다시 비교하세요.</translation>
+    </message>
+    <message>
+        <source>Inline</source>
+        <translation>인라인 확장</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload the comparison.</source>
+        <translation>입력이 변경되었습니다. 비교를 다시 불러오세요.</translation>
+    </message>
+    <message>
+        <source>Inspect primary function</source>
+        <translation>기본 함수 살펴보기</translation>
+    </message>
+    <message>
+        <source>Inspect secondary function</source>
+        <translation>보조 함수 살펴보기</translation>
+    </message>
+    <message>
+        <source>Merge</source>
+        <translation>병합</translation>
+    </message>
+    <message>
+        <source>Module movement</source>
+        <translation>모듈 이동</translation>
+    </message>
+    <message>
+        <source>Outline</source>
+        <translation>개요</translation>
+    </message>
+    <message>
+        <source>Possible transformation</source>
+        <translation>가능한 변환</translation>
+    </message>
+    <message>
+        <source>Redistribution</source>
+        <translation>재분배</translation>
+    </message>
+    <message>
+        <source>Region hypotheses — Binary comparison</source>
+        <translation>영역 가설 — 바이너리 비교</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses — Binary comparison</source>
+        <translation>SSA 영역 가설 — 바이너리 비교</translation>
+    </message>
+    <message>
+        <source>Select a hypothesis to inspect its shared spans.</source>
+        <translation>가설을 선택하여 공통 구간을 살펴보세요.</translation>
+    </message>
+    <message>
+        <source>Shared native instruction runs suggest possible transformations. Review competing explanations and uncovered code; these results do not validate behavior or patch presence.</source>
+        <translation>공통 네이티브 명령어 시퀀스는 가능한 변환을 시사합니다. 경쟁하는 설명과 포함되지 않은 코드를 검토하세요. 이 결과는 동작이나 패치 존재 여부를 검증하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Shared region</source>
+        <translation>공통 영역</translation>
+    </message>
+    <message>
+        <source>Shared tail</source>
+        <translation>공통 꼬리</translation>
+    </message>
+    <message>
+        <source>Split</source>
+        <translation>분할</translation>
+    </message>
+    <message>
+        <source>Verified finite SSA neighborhoods suggest possible transformations. Review gaps and open dependencies; correspondence does not validate behavior or patch presence.</source>
+        <translation>검증된 유한 SSA 이웃 영역은 가능한 변환을 시사합니다. 공백과 미해결 의존성을 검토하세요. 대응 관계는 동작이나 패치 존재 여부를 검증하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Waiting for comparison to finish…</source>
+        <translation>비교가 끝나기를 기다리는 중…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>부분</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonReviewDialog</name>
+    <message>
+        <source>%1 matching / %2 total events · newest first · manual assessments</source>
+        <translation>일치 %1 / 전체 이벤트 %2개 · 최신순 · 수동 평가</translation>
+    </message>
+    <message>
+        <source>Analyst review — NeverD</source>
+        <translation>분석가 검토 — NeverD</translation>
+    </message>
+    <message>
+        <source>Analyst statements do not change computed matching or validate patch behavior. Authors are self-described. Save/export the comparison to keep this history on disk.</source>
+        <translation>분석가의 진술은 계산된 일치 결과를 변경하거나 패치 동작을 검증하지 않습니다. 작성자 정보는 자체 기재입니다. 비교를 저장하거나 내보내 이 기록을 디스크에 보관하세요.</translation>
+    </message>
+    <message>
+        <source>Append assessment</source>
+        <translation>평가 추가</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>평가</translation>
+    </message>
+    <message>
+        <source>Assessment note</source>
+        <translation>평가 메모</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>작성자</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>수정 후보</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>사례</translation>
+    </message>
+    <message>
+        <source>Case filter</source>
+        <translation>사례 필터</translation>
+    </message>
+    <message>
+        <source>Case: %1
+Author (self-described): %2
+Assessment: %3
+Pair: %4 ↔ %5
+Pair binding: %6 · %7 assessment
+Reference: %8
+
+%9
+
+Event: %10
+Supersedes: %11</source>
+        <translation>사례: %1
+작성자(자체 기재): %2
+평가: %3
+쌍: %4 ↔ %5
+쌍 바인딩: %6 · %7 평가
+참조: %8
+
+%9
+
+이벤트: %10
+대체 대상: %11</translation>
+    </message>
+    <message>
+        <source>Draft exceeds the UTF-8 text allowance.</source>
+        <translation>초안이 UTF-8 텍스트 한도를 초과합니다.</translation>
+    </message>
+    <message>
+        <source>Draft retained for %1 ↔ %2 on its original inputs. Choose New draft to use the selected pair.</source>
+        <translation>원래 입력의 %1 ↔ %2 초안을 유지합니다. 선택한 쌍을 사용하려면 새 초안을 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Exact case identifier (empty: all cases)</source>
+        <translation>정확한 사례 식별자(비어 있으면 모든 사례)</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>결론 불가</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>조사 중</translation>
+    </message>
+    <message>
+        <source>Latest assessments only</source>
+        <translation>최신 평가만</translation>
+    </message>
+    <message>
+        <source>Loading analyst history…</source>
+        <translation>분석가 기록 불러오는 중…</translation>
+    </message>
+    <message>
+        <source>Manual assessment of %1 ↔ %2</source>
+        <translation>%1 ↔ %2 수동 평가</translation>
+    </message>
+    <message>
+        <source>New assessment</source>
+        <translation>새 평가</translation>
+    </message>
+    <message>
+        <source>New draft for selected pair</source>
+        <translation>선택한 쌍의 새 초안</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>부분 패치</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>패치 없음</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>패치 있음</translation>
+    </message>
+    <message>
+        <source>Record the evidence and limitations behind your assessment.</source>
+        <translation>평가의 근거와 한계를 기록하세요.</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>참조</translation>
+    </message>
+    <message>
+        <source>Refresh history</source>
+        <translation>기록 새로 고침</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>관련 변경</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>되돌린 패치</translation>
+    </message>
+    <message>
+        <source>Save comparison…</source>
+        <translation>비교 저장…</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair to append an assessment.</source>
+        <translation>수락된 함수 쌍을 선택하여 평가를 추가하세요.</translation>
+    </message>
+    <message>
+        <source>Selected record</source>
+        <translation>선택한 기록</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>관련 없는 변경</translation>
+    </message>
+    <message>
+        <source>accepted</source>
+        <translation>수락됨</translation>
+    </message>
+    <message>
+        <source>earlier</source>
+        <translation>이전</translation>
+    </message>
+    <message>
+        <source>inactive</source>
+        <translation>비활성</translation>
+    </message>
+    <message>
+        <source>latest</source>
+        <translation>최신</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSession</name>
+    <message>
+        <source>Comparison worker: %1</source>
+        <translation>비교 작업 프로세스: %1</translation>
+    </message>
+    <message>
+        <source>Could not replace the comparison. Your previous comparison is still available. %1</source>
+        <translation>비교를 바꿀 수 없습니다. 이전 비교는 계속 사용할 수 있습니다. %1</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Ready to try again.</source>
+        <translation>불러오기 중지됨. 다시 시도할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Your previous comparison is still available.</source>
+        <translation>불러오기 중지됨. 이전 비교는 계속 사용할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>작업 프로세스가 취소를 확인하지 못했습니다.</translation>
+    </message>
+    <message>
+        <source>This worker does not support binary comparison.</source>
+        <translation>이 작업 프로세스는 바이너리 비교를 지원하지 않습니다.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonValidationDialog</name>
+    <message>
+        <source>
+Proof work: %1; completed partitions: %2; attempts: %3
+</source>
+        <translation>
+증명 작업: %1; 완료된 분할: %2; 시도: %3
+</translation>
+    </message>
+    <message>
+        <source>Argument %1: %2 bits, register offset %3
+</source>
+        <translation>인수 %1: %2비트, 레지스터 오프셋 %3
+</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Cancelled. No equivalence conclusion.</source>
+        <translation>취소됨. 동등성 결론 없음.</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>다시 확인</translation>
+    </message>
+    <message>
+        <source>Check equal integer returns and defined termination in the lifted models, for all defined input bitvectors at matching register locations. Native-state equivalence and security are outside this check.</source>
+        <translation>대응하는 레지스터 위치의 모든 정의된 입력 비트 벡터에 대해 리프팅된 모델에서 정수 반환값의 동일성과 정의된 종료를 확인합니다. 네이티브 상태 동등성과 보안은 이 검사의 범위 밖입니다.</translation>
+    </message>
+    <message>
+        <source>Detail: %1
+
+</source>
+        <translation>상세: %1
+
+</translation>
+    </message>
+    <message>
+        <source>Equal returns proved in the lifted scalar models.</source>
+        <translation>리프팅된 스칼라 모델에서 반환값 동일성이 증명되었습니다.</translation>
+    </message>
+    <message>
+        <source>Equivalence remains unproved; this does not establish a difference.</source>
+        <translation>동등성은 아직 증명되지 않았습니다. 이것이 차이를 입증하지는 않습니다.</translation>
+    </message>
+    <message>
+        <source>Full report</source>
+        <translation>전체 보고서</translation>
+    </message>
+    <message>
+        <source>Input assumption: defined integer bitvectors at identical register locations.
+Lift correctness is assumed. Complete native state, memory and call effects are not proved.
+This result does not assess vulnerability or fix status.
+
+</source>
+        <translation>입력 가정: 동일한 레지스터 위치의 정의된 정수 비트 벡터.
+리프팅의 정확성을 가정합니다. 전체 네이티브 상태, 메모리 및 호출 효과는 증명되지 않습니다.
+이 결과는 취약성이나 수정 상태를 평가하지 않습니다.
+
+</translation>
+    </message>
+    <message>
+        <source>Inputs or pairing changed. Select the function pair again.</source>
+        <translation>입력 또는 쌍 연결이 변경되었습니다. 함수 쌍을 다시 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Inputs: retained comparison sources.
+</source>
+        <translation>입력: 유지된 비교 원본.
+</translation>
+    </message>
+    <message>
+        <source>Lifting and checking this pair… Cancellation is cooperative.</source>
+        <translation>이 쌍을 리프팅하고 확인하는 중… 취소는 협력 방식으로 처리됩니다.</translation>
+    </message>
+    <message>
+        <source>Limits changed. Check again.</source>
+        <translation>한도가 변경되었습니다. 다시 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Live input versions rechecked: %1
+</source>
+        <translation>현재 입력 버전 재확인됨: %1
+</translation>
+    </message>
+    <message>
+        <source>Maximum native instructions per function.</source>
+        <translation>함수당 최대 네이티브 명령어 수.</translation>
+    </message>
+    <message>
+        <source>Maximum work units for the scalar proof.</source>
+        <translation>스칼라 증명의 최대 작업 단위 수.</translation>
+    </message>
+    <message>
+        <source>Native instructions</source>
+        <translation>네이티브 명령어</translation>
+    </message>
+    <message>
+        <source>Pairing changed. Select the function pair again.</source>
+        <translation>쌍 연결이 변경되었습니다. 함수 쌍을 다시 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Primary %1 (%2) ↔ Secondary %3 (%4)</source>
+        <translation>기본 %1 (%2) ↔ 보조 %3 (%4)</translation>
+    </message>
+    <message>
+        <source>Profile: %1
+
+Primary SHA-256: %2
+Secondary SHA-256: %3
+</source>
+        <translation>프로필: %1
+
+기본 SHA-256: %2
+보조 SHA-256: %3
+</translation>
+    </message>
+    <message>
+        <source>Proof work</source>
+        <translation>증명 작업</translation>
+    </message>
+    <message>
+        <source>Result and assumptions</source>
+        <translation>결과 및 가정</translation>
+    </message>
+    <message>
+        <source>Return width: %1 bits
+</source>
+        <translation>반환값 너비: %1비트
+</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair.</source>
+        <translation>수락된 함수 쌍을 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Selected %1 function: %2</source>
+        <translation>선택한 %1 함수: %2</translation>
+    </message>
+    <message>
+        <source>This pair is outside the supported scalar model.</source>
+        <translation>이 쌍은 지원되는 스칼라 모델의 범위 밖입니다.</translation>
+    </message>
+    <message>
+        <source>Time limit (ms)</source>
+        <translation>시간 제한(ms)</translation>
+    </message>
+    <message>
+        <source>Time limit reached. No equivalence conclusion.</source>
+        <translation>시간 제한에 도달했습니다. 동등성 결론은 없습니다.</translation>
+    </message>
+    <message>
+        <source>Validate scalar returns — NeverD</source>
+        <translation>스칼라 반환값 검증 — NeverD</translation>
+    </message>
+    <message>
+        <source>Validation limit reached. Adjust the limits and check again.</source>
+        <translation>검증 한도에 도달했습니다. 한도를 조정하고 다시 확인하세요.</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>아니요</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>예</translation>
     </message>
 </context>
 </TS>
