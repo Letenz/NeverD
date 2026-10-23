@@ -183,3 +183,19 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
   target_compile_definitions(NeverDX87PortableGeneratedTests PRIVATE
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
+
+add_neverd_unittest(NeverDX87TranslationRuntimeTests
+  RuntimeX87GuestStateTests.cpp
+  RuntimeX87HelpersTests.cpp
+
+  LINK_COMPONENTS
+  Translate
+)
+
+add_neverd_unittest(NeverDX87TranslationTests
+  X87TranslationTests.cpp
+  X87TranslationFrozenTests.cpp
+
+  LINK_COMPONENTS
+  Translate
+)
