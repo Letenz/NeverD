@@ -42,6 +42,10 @@ bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     S.emitIntrinsic(Intrinsic::Id, Target, {Target});                          \
     return true;                                                               \
   }
+#define NEVERD_A64_PAUTH_UNSUPPORTED_HINT(Insn, Word)                          \
+  case Word:                                                                   \
+    reject();                                                                  \
+    return false;
 #include "neverd/ir/intrinsics/AArch64PAuth.def"
   default:
     break;

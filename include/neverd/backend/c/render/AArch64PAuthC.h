@@ -15,6 +15,8 @@
 
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -25,18 +27,35 @@ namespace neverd {
 #define NEVERD_A64_PAUTH_C_TEXT(Name, Text) inline constexpr char Name[] = Text;
 #include "neverd/backend/c/render/AArch64PAuthC.def"
 
+/// The initializer and asm inputs must refer to their enclosing C scope.
+/// Grow the name until it occurs in none of the supplied operand expressions.
+inline std::string
+aarch64PAuthTemporary(llvm::StringRef Stem,
+                      llvm::ArrayRef<llvm::StringRef> Inputs) {
+  std::string Name = Stem.str();
+  while (llvm::any_of(
+      Inputs, [&](llvm::StringRef Input) { return Input.contains(Name); }))
+    Name += '_';
+  return Name;
+}
+
 inline std::string aarch64PAuthMachineC(const AArch64PAuthOperation &Operation,
                                         llvm::StringRef Pointer,
                                         llvm::StringRef Modifier = {}) {
-  return llvm::formatv(kAArch64PAuthCPointerDeclaration, Pointer).str() +
+  const std::string Name =
+      aarch64PAuthTemporary(kAArch64PAuthCPointer, {Pointer, Modifier});
+  return "({ " +
+         llvm::formatv(kAArch64PAuthCPointerDeclaration, Name, Pointer).str() +
          llvm::formatv(
              kAArch64PAuthCMachineAsm, Operation.Mnemonic,
              Operation.Strip ? kAArch64PAuthCStripOperands
                              : kAArch64PAuthCOperands,
+             Name,
              Operation.Strip
                  ? std::string()
                  : llvm::formatv(kAArch64PAuthCModifier, Modifier).str())
-             .str();
+             .str() +
+         Name + "; })";
 }
 
 inline std::string aarch64PAuthAuthenticateC(llvm::StringRef Pointer,

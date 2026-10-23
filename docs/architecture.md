@@ -76,6 +76,8 @@ Capstone classifiers, lifter, intrinsic metadata and emitters consume those
 rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
+Generated C temporaries avoid every operand expression, preserving parameters
+and results that already use the renderer's preferred local names.
 Validated pointer-authentication operations preserve argument setup across
 both ABI recovery and C lowering. Tail-transfer proofs retain target taint
 separately from the signing modifier and restore a saved signed link only
@@ -84,8 +86,9 @@ Clang's explicit authentication-failure branch retains the setup of its sole
 continuing authenticated tail. Source C names an unassigned entry LR using
 `__builtin_return_address(0)`, as the LLVM projection already does.
 LDRAA/LDRAB authenticate the base before adding the offset, loading, and
-applying writeback. An unsupported exception return or FEAT_PAuth_LR form
-fails lifting instead of losing authentication.
+applying writeback. An unsupported exception return or FEAT_PAuth_LR form,
+including the PACM HINT that selects a second modifier, fails lifting instead
+of losing authentication.
 
 Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
 the architecture may poison a pointer without trapping immediately. The
