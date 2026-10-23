@@ -6440,11 +6440,15 @@ support.
 
 `RegistrationJumpRuntime` mutates each capture/resume/unwind binding in direct
 and indirect forms, including loader storage, DLL identity, delay imports,
-architecture, veneer opcode/slot and writable code. `RegistrationJumpCapture`
-checks physical PC and frame values, argument/admin overlap, wrong protocol,
-unknown callback roles, detached operations, source slices, caller ownership and
-work exhaustion. Its pinned xcpt4 CFG check requires all seven physical capture
-PCs to begin ordinary fallthrough blocks without becoming independent roots.
+architecture, veneer opcode/slot and writable code. Unconditional synthetic
+runtime checks also cover all four imports, truncated prefixes and full veneers,
+conflicting relocations, ambiguous storage and repeated byte/import changes.
+A matching raw prefix alone never authorizes a binding or a physical caller.
+`RegistrationJumpCapture` checks physical PC and frame values, argument/admin
+overlap, wrong protocol, unknown callback roles, detached operations, source
+slices, caller ownership and work exhaustion. Its pinned xcpt4 CFG check
+requires all seven physical capture PCs to begin ordinary fallthrough blocks
+without becoming independent roots.
 `RegistrationJumpState` checks solver-local capture/resumption, partial buffer
 writes, unused unwind-data writes, unknown intervening calls, altered IAT bytes,
 missing authentication and absent physical continuations. Buffer tests retain the
