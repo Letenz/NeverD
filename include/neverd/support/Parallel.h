@@ -121,14 +121,15 @@ inline unsigned workerThreadCount() {
 template <typename Fn> void parallelForEach(size_t Total, Fn ThreadBody) {
   if (Total == 0)
     return;
-  // `--func` is one requested entry plus expanded unwind ActionVAs
-  // (often < 32).  Spawning an 8 MiB worker per core is CLI latency.
+  // Small batches need only one worker, but still require the scheduler
+  // stack contract when invoked by an SDK caller with a small native stack.
   if (Total < limits::kMinParallelIRWorkItems) {
     size_t Claimed = 0;
     auto Claim = [&]() -> size_t {
       return Claimed < Total ? Claimed++ : Total;
     };
-    ThreadBody(Claim, Total);
+    auto Worker = [&] { ThreadBody(Claim, Total); };
+    runPipelineWorkers(1, Worker);
     return;
   }
   const unsigned NumThreads =
@@ -170,7 +171,8 @@ void parallelForEachWeighted(
   if (Total < MinWorkItems || MaxThreads <= 1) {
     size_t Pos = 0;
     auto Claim = [&]() -> size_t { return Pos < Total ? Order[Pos++] : Total; };
-    ThreadBody(Claim, Total);
+    auto Worker = [&] { ThreadBody(Claim, Total); };
+    runPipelineWorkers(1, Worker);
     return;
   }
 

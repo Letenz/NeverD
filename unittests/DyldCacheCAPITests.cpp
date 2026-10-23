@@ -123,6 +123,7 @@ protected:
 };
 
 TEST_F(DyldCacheCAPI, CatalogueAndSelectionPreserveInputIdentity) {
+  neverd_session_set_debug_info_enabled(Session, 1);
   auto Inventory = llvm::json::parse(
       take(neverd_dyld_cache_images_json(Path.string().c_str())));
   ASSERT_TRUE(bool(Inventory));

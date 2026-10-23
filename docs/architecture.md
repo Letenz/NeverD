@@ -230,6 +230,9 @@ canonicalize the real cache input before appending the install-name namespace.
 An existing session and its reanalysis preserve their selected image when
 another session changes that root file. Cache provenance does
 not make a packed projection a runnable standalone dylib.
+For a selected dyld cache image, debug discovery does not inspect the container
+or automatically attach its adjacent companions. Explicit DWARF and MAP paths
+retain the existing selected-image architecture and identity checks.
 Exception-level
 authentication, PACM state and CPA2 address arithmetic remain unsupported;
 recognizing x1's header does not claim those instruction semantics.
@@ -1592,7 +1595,9 @@ keys during object insertion. Floating-point tokens and negative zero retain
 the original numeric parser; refused SIMD input uses the original admission path.
 The default task helper uses oneTBB with checked 8 MiB worker stacks. A caller
 with enough unused stack can coordinate directly; small callers get a native
-coordinator. Nested work receives a fresh stack. It preserves per-batch
+coordinator. Small batches and explicitly serial weighted batches also use
+this admission path with one worker; their size cannot bypass the stack
+contract. Nested work receives a fresh stack. It preserves per-batch
 thread limits and synchronous exception delivery, and supplies no allocator.
 `neverd_task_scheduler` is a component-facing facade. The shared core owns
 `neverd_task_scheduler_runtime` and a private static oneTBB archive. Targets

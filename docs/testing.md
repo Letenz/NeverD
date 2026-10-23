@@ -123,6 +123,8 @@ separate arm64e bitfield and Swift declarations from native object ownership;
 the full Foundation load also requires recovered ivars and offline references
 without any `ObjCSourceReferences`. These checks qualify static cached-image analysis;
 they do not qualify native execution or standalone cache reconstruction.
+`NeverDDebugInfoTests` rejects automatic container companion discovery while
+retaining explicit per-image debug-file diagnostics.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -1209,6 +1211,9 @@ must run and pass; the jobs retain the source commit and JUnit records.
 
 The default scheduler retains oneTBB workers between synchronous calls. Large
 callers reuse spare stack headroom; small callers use a native coordinator.
+Scheduler tests exercise ordinary, weighted and explicitly serial small batches
+from a small caller stack. `NeverDBinaryDiffSDKTests` completes a deep source
+page on an asynchronous caller without relying on cancellation to avoid analysis.
 It does not support fork after first use or dynamic SDK unloading; those hosts
 must select `NEVERD_ENABLE_TBB=OFF`.
 Its task arena limits each batch, while nested batches drain on a fresh native

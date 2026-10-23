@@ -23,6 +23,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/Loader.h"
+#include "neverd/loader/MachO/DyldSharedCache.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/Parallel.h"
@@ -44,6 +45,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <tuple>
 #include <vector>
@@ -1250,6 +1252,29 @@ TEST(LoadDebugInfoTest, ReportsNothingWhenNoCompanionFileExists) {
   EXPECT_EQ(R.Kind, DebugInfoKind::None);
   // An absent companion file is an ordinary outcome, not a failure.
   EXPECT_TRUE(R.Error.empty());
+}
+
+TEST(LoadDebugInfoTest, CachedImagesDoNotSearchContainerCompanions) {
+  ScratchDir Dir;
+  Dir.write("cache", "dyld_v1  arm64e");
+  Dir.write("cache.map", kMSVCMap);
+  BinaryImage Img = makePEImage();
+  Img.Format = BinaryFormat::MachO;
+  Img.Arch = Arch::AArch64;
+  Img.MachOSharedCache = std::make_shared<macho_loader::DyldSharedCache>();
+  Img.MachOSharedCacheImagePath = "/usr/lib/A.dylib";
+  testing::internal::CaptureStderr();
+  DebugInfoResult R = loadDebugInfo(Dir.path("cache"), Img);
+  const auto Diagnostics = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(Diagnostics.empty()) << Diagnostics;
+  EXPECT_FALSE(static_cast<bool>(R));
+  EXPECT_EQ(R.Kind, DebugInfoKind::None);
+  EXPECT_TRUE(R.Error.empty());
+
+  DebugInfoRequest Req;
+  Req.DWARFPath = Dir.path("selected.dwarf");
+  R = loadDebugInfo(Dir.path("cache"), Img, Req);
+  EXPECT_NE(R.Error.find("DWARF file not found"), std::string::npos);
 }
 
 TEST(LoadDebugInfoTest, DisabledSearchIgnoresAnAvailableMap) {
