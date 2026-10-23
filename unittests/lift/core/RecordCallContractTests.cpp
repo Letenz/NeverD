@@ -888,12 +888,14 @@ int main(void) {
 }
 
 void checkWindowsStackedHFAs(bool ExecuteAArch64, bool ImportSlot,
-                             bool LocalDeclaration = false) {
+                             bool LocalDeclaration = false,
+                             bool HeaderCollision = false) {
 #if !defined(__linux__)
   GTEST_SKIP() << "Execution of the generated C requires Linux";
 #else
   SCOPED_TRACE(ImportSlot ? "import slot" : "import thunk");
   SCOPED_TRACE(LocalDeclaration ? "local declaration" : "header declaration");
+  SCOPED_TRACE(HeaderCollision);
   std::string Emulator;
   if (ExecuteAArch64) {
 #if !defined(__aarch64__)
@@ -978,26 +980,34 @@ void _start(void) {
 )");
   for (bool Double : {false, true}) {
     for (unsigned Count : {1u, 2u, 3u, 4u}) {
+      if (HeaderCollision && Count < 3)
+        continue;
       SCOPED_TRACE(Count);
       SCOPED_TRACE(Double ? "double HFA" : "float HFA");
       const std::string Scalar = Double ? "double" : "float";
+      const std::string Callee = HeaderCollision ? "memcpy" : "fixture_hfa";
       const std::string Declaration =
           "typedef struct HFA { " + Scalar + " lane[" + std::to_string(Count) +
-          "]; } HFA;\nHFA fixture_hfa(" + Scalar + ", " + Scalar + ", " +
+          "]; } HFA;\nHFA " + Callee + "(" + Scalar + ", " + Scalar + ", " +
           Scalar + ", " + Scalar + ", " + Scalar + ", " + Scalar + ", " +
           Scalar + ", HFA, " + Scalar + ", unsigned, HFA);\n";
       std::string ImportDeclaration = Declaration;
-      ImportDeclaration.insert(ImportDeclaration.find("HFA fixture_hfa("),
+      ImportDeclaration.insert(ImportDeclaration.find("HFA " + Callee + "("),
                                "HFA_IMPORT ");
       write(Header, "#ifndef HFA_IMPORT\n#define HFA_IMPORT\n#endif\n" +
                         ImportDeclaration);
       write(Provider,
             "#include \"hfa.h\"\nint _fltused;\n__declspec(dllexport) "
-            "HFA fixture_hfa(" +
-                Scalar + " a, " + Scalar + " b, " + Scalar + " c, " + Scalar +
-                " d, " + Scalar + " e, " + Scalar + " f, " + Scalar +
-                " g, HFA x, " + Scalar +
-                " h, unsigned n, HFA y) { return x; }\n");
+            "HFA " +
+                Callee + "(" + Scalar + " a, " + Scalar + " b, " + Scalar +
+                " c, " + Scalar + " d, " + Scalar + " e, " + Scalar + " f, " +
+                Scalar + " g, HFA x, " + Scalar +
+                " h, unsigned n, HFA y) { return x; }\n" +
+                (HeaderCollision
+                     ? "__declspec(dllexport) void *memset(void *p,int c,"
+                       "unsigned long long n) { volatile unsigned char *b=p; "
+                       "for(unsigned long long i=0;i<n;++i)b[i]=c;return p;}\n"
+                     : ""));
       ASSERT_TRUE(execute(Compiler,
                           {Compiler, Target, "-O2", "-ffreestanding", "-c",
                            Provider, "-o", ProviderObject},
@@ -1032,7 +1042,7 @@ void _start(void) {
                   "] : " + X[I] + ") || yb[" + Index + "] != " + Y[I];
       }
       write(Oracle,
-            "#include \"hfa.h\"\nstatic unsigned calls;\nHFA fixture_hfa(" +
+            "#include \"hfa.h\"\nstatic unsigned calls;\nHFA " + Callee + "(" +
                 Scalar + " a, " + Scalar + " b, " + Scalar + " c, " + Scalar +
                 " d, " + Scalar + " e, " + Scalar + " f, " + Scalar +
                 " g, HFA x, " + Scalar + " h, unsigned n, HFA y) {\n" + Word +
@@ -1046,17 +1056,24 @@ void _start(void) {
                 ") __builtin_trap();\n" +
                 "++calls; HFA r; __builtin_memcpy(&r, rb, sizeof(r)); return "
                 "r; }\n" +
-                "void *__imp_fixture_hfa = (void *)&fixture_hfa;\n" +
+                "void *__imp_" + Callee + " = (void *)&" + Callee + ";\n" +
                 "unsigned observed_calls(void) { return calls; }\n");
       for (bool Chain : {false, true}) {
+        if (HeaderCollision && Chain)
+          continue;
         SCOPED_TRACE(Chain);
-        const std::string Call = "fixture_hfa(1,2,3,4,5,6,7,x,9,0x12345678U,y)";
+        const std::string Call = Callee + "(1,2,3,4,5,6,7,x,9,0x12345678U,y)";
         write(Input,
               std::string(ImportSlot
                               ? "#define HFA_IMPORT __declspec(dllimport)\n"
                               : "") +
-                  "#include \"hfa.h\"\nint _fltused;\n"
+                  "#include \"hfa.h\"\nint _fltused;\n" +
+                  (HeaderCollision
+                       ? "__declspec(dllimport) void *memset(void *,int,"
+                         "unsigned long long);\n"
+                       : "") +
                   "__declspec(dllexport) void record_probe(HFA *out) {\n" +
+                  (HeaderCollision ? "memset(out,0,sizeof(*out));\n" : "") +
                   Word + " xb[] = {" + List(X) + "}, yb[] = {" + List(Y) +
                   "}; HFA x,y; __builtin_memcpy(&x,xb,sizeof(x));\n" +
                   "__builtin_memcpy(&y,yb,sizeof(y));\n" +
@@ -1137,14 +1154,14 @@ void _start(void) {
             llvm::raw_string_ostream Out(Source);
             if (LLVM) {
               ASSERT_TRUE(Result.LlvmModule);
-              const auto *Callee =
-                  Result.LlvmModule->getFunction("fixture_hfa");
-              ASSERT_NE(Callee, nullptr);
-              ASSERT_EQ(Callee->arg_size(), 11u);
+              const auto *TargetFunction =
+                  Result.LlvmModule->getFunction(Callee);
+              ASSERT_NE(TargetFunction, nullptr);
+              ASSERT_EQ(TargetFunction->arg_size(), 11u);
               EXPECT_TRUE(isAAPCS64HFAArray(
-                  Callee->getFunctionType()->getParamType(7)));
+                  TargetFunction->getFunctionType()->getParamType(7)));
               EXPECT_TRUE(isAAPCS64HFAArray(
-                  Callee->getFunctionType()->getParamType(10)));
+                  TargetFunction->getFunctionType()->getParamType(10)));
               ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
                                               &Debug, &Image));
               std::string Selected;
@@ -1157,12 +1174,13 @@ void _start(void) {
               const auto SelectedFile = Root + "/selected.c";
               write(SelectedFile, Selected);
               for (const char *COptimization : {"-O0", "-O2"})
-                ASSERT_TRUE(execute(
-                    Compiler,
-                    {Compiler, Target, "-std=gnu11", COptimization,
-                     "-ffreestanding", "-fno-builtin", "-fno-strict-aliasing",
-                     NativeInclude, "-fsyntax-only", SelectedFile},
-                    Errors))
+                ASSERT_TRUE(
+                    execute(Compiler,
+                            {Compiler, Target, "-std=gnu11", COptimization,
+                             "-Werror=strict-prototypes", "-ffreestanding",
+                             "-fno-builtin", "-fno-strict-aliasing",
+                             NativeInclude, "-fsyntax-only", SelectedFile},
+                            Errors))
                     << Selected;
             } else {
               ASSERT_TRUE(
@@ -1209,10 +1227,15 @@ void _start(void) {
               ASSERT_TRUE(execute(
                   Compiler,
                   {Compiler, Target, "-std=gnu11", COptimization,
-                   "-ffreestanding", "-fno-builtin", "-fno-strict-aliasing",
-                   NativeInclude, Include, "-c", Generated, "-o", NativeObject},
+                   "-Werror=strict-prototypes", "-ffreestanding",
+                   "-fno-builtin", "-fno-strict-aliasing", NativeInclude,
+                   Include, "-c", Generated, "-o", NativeObject},
                   Errors))
                   << Source;
+              // The synthetic API deliberately differs from libc memcpy.
+              // Compile its alias without interposing it on the host runtime.
+              if (HeaderCollision)
+                continue;
               ASSERT_TRUE(execute(Compiler,
                                   {Compiler, "-std=gnu11", COptimization,
                                    "-fno-builtin", "-fno-strict-aliasing",
@@ -1253,5 +1276,9 @@ TEST(RecordCallContract, LocalHFAImportSlotsPreserveCompleteCalls) {
 
 TEST(RecordCallContract, LocalHFAImportSlotProjectionsExecuteOnAArch64) {
   checkWindowsStackedHFAs(true, true, true);
+}
+
+TEST(RecordCallContract, LocalHFADeclarationsSurviveCHeaderNameCollisions) {
+  checkWindowsStackedHFAs(false, true, true, true);
 }
 } // namespace

@@ -446,9 +446,11 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   HeaderCallRecords.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
-  prepareSourceImportPrototypes(Mod);
   collectImageDataUses(Mod);
   writeIncludes(Mod);
+  // Header conflicts can rename a local import. Key its checked declaration
+  // by that final C identifier while retaining the original lookup name.
+  prepareSourceImportPrototypes(Mod);
   OS << "\n";
   // What follows names the program's records, whose definitions go before
   // it once it is written.
@@ -1066,15 +1068,28 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     const char *Header = libc::headerFor(CName);
     return Header && IncludedHeaders.count(Header);
   };
+  // A mirrored import initializer can reference a module declaration even
+  // when every call is indirect. Its declaration and the calls must use the
+  // same alias, including when the selected projection omits the initializer.
+  for (const llvm::Function &Fn : Mod)
+    if (Fn.isDeclaration() && !Fn.isIntrinsic() &&
+        UserImports.count(cNameOfGlobal(Fn.getName(), true).str()))
+      UserFunctions.insert(&Fn);
   for (const llvm::Function *Fn : UserFunctions)
-    if (HeaderDeclares(cNameOfGlobal(Fn->getName(), true))) {
+    if (const std::string Name = cNameOfGlobal(Fn->getName(), true).str();
+        HeaderDeclares(Name)) {
       std::string &Identifier = FunctionIdentifiers[Fn];
-      Identifier =
-          GlobalIdentifierAllocator.allocate(Identifier, "nd_function");
+      auto [Alias, Inserted] = UserImportIdentifiers.try_emplace(Name);
+      if (Inserted) {
+        Alias->second =
+            GlobalIdentifierAllocator.allocate(Identifier, "nd_function");
+        UserImportLinkNames.emplace(Alias->second, Name);
+      }
+      Identifier = Alias->second;
       FunctionIdentifierNames.insert(Identifier);
     }
   for (const std::string &Name : UserImports)
-    if (HeaderDeclares(Name)) {
+    if (HeaderDeclares(Name) && !UserImportIdentifiers.count(Name)) {
       if (!GlobalIdentifierAllocator.holds(Name))
         GlobalIdentifierAllocator.allocateVerbatim(Name);
       const std::string Identifier =
@@ -1729,7 +1744,8 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
         if (Name.empty() || Rejected.count(Name))
           continue;
         const auto Source = Dbg->resolvePrototype(
-            Direct ? cNameOfGlobal(Direct->getName(), true) : Name);
+            Direct ? cNameOfGlobal(Direct->getName(), true)
+                   : importCalleeCName(Call->getCalledOperand()));
         if (!Source || Source->PrototypeLibrary.empty() ||
             Source->PrototypeFromCLibrary)
           continue;

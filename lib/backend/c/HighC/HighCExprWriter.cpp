@@ -2255,7 +2255,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (const auto Signature =
             libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
         Signature &&
-        (Opts.TheArch == Arch::X86 || !Signature->Scalars.empty()) &&
+        (Opts.TheArch == Arch::X86 || !Signature->Scalars.empty() ||
+         Signature->ReturnElements) &&
         (!E.FloatingCallSignature || *E.FloatingCallSignature != *Signature))
       throw std::runtime_error("A mixed header call lost its checked ABI");
   const libc::LibCPrototype *Prototype = calleePrototype(E);
@@ -2327,8 +2328,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (const auto Declared = plainDeclarationArity(E))
     PrintedArgs = std::max(PrintedArgs, *Declared);
   const bool SourceRecord =
-      !Defined && Callee && Name == Callee->Name &&
-      (includesHeaderOf(Name) ||
+      !Defined && Callee &&
+      ((Name == Callee->Name && includesHeaderOf(Name)) ||
        libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format));
   const auto RecordCall =
       SourceRecord ? libc::recordCallArguments(*Callee, Opts.TheArch,
@@ -3798,9 +3799,8 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return I < Have && isCtorDisplayOperand(E.Operands[I].get());
   };
   if (const auto Callee = debugCallee(E)) {
-    if (Callee->Name == Name &&
-        (includesHeaderOf(Name) ||
-         libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format)))
+    if ((Callee->Name == Name && includesHeaderOf(Name)) ||
+        libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format))
       if (const auto Layout = libc::recordCallArguments(
               *Callee, Opts.TheArch, Opts.Format, Opts.libcVariant()))
         return Layout->Positions;
@@ -4495,7 +4495,7 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   }
   if (const auto Floating =
           libc::floatingCallArguments(FS, Opts.TheArch, Opts.Format);
-      Identifier == FS.Name && Floating &&
+      Floating &&
       (!Floating->ParameterElements.empty() || Floating->ReturnElements)) {
     const auto Declare = [&](const TypeRef &Type, const std::string &Name) {
       return Type->Kind == NdTypeKind::Struct && !Type->IsEnum
