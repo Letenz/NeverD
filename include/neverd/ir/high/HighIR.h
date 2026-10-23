@@ -15,6 +15,7 @@
 #define NEVERD_IR_HIGH_HIGHIR_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
@@ -126,6 +127,9 @@ struct HighExpr {
   /// Unresolved `INDIR_CALL` callee.  Not a printed argument.
   std::shared_ptr<HighExpr> IndirectTarget;
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
+  /// Complete fixed scalar FP signature proven by call-ABI recovery. Operand
+  /// expression types alone cannot establish a nonvariadic declaration.
+  std::shared_ptr<const FloatingCallArguments> FloatingCallSignature;
   Intrinsic IntrinsicId = Intrinsic::None;
   std::vector<MedVar> IntrinsicOutputs;
   /// The MedIR call never returns: its callee is a routine the name list

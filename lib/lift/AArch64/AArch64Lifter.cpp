@@ -11,6 +11,8 @@
 
 #include "neverd/lift/AArch64Lifter.h"
 
+#include "AArch64LiftDetail.h"
+
 #include "neverd/decode/AArch64FastClassify.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
@@ -316,10 +318,11 @@ void AArch64Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
   S.ScalarWideImmediate = ScalarWideImmediate;
 
-  bool Handled = liftCore(S, Insn, ARM64) || liftCoreNEON(S, Insn, ARM64) ||
-                 liftControl(S, Insn, ARM64) || liftMem(S, Insn, ARM64) ||
-                 liftAtomic(S, Insn, ARM64) || liftFP(S, Insn, ARM64) ||
-                 liftSIMD(S, Insn, ARM64) || liftSIMDExt(S, Insn, ARM64);
+  bool Handled = liftPAuth(*this, S, Insn, ARM64) || liftCore(S, Insn, ARM64) ||
+                 liftCoreNEON(S, Insn, ARM64) || liftControl(S, Insn, ARM64) ||
+                 liftMem(S, Insn, ARM64) || liftAtomic(S, Insn, ARM64) ||
+                 liftFP(S, Insn, ARM64) || liftSIMD(S, Insn, ARM64) ||
+                 liftSIMDExt(S, Insn, ARM64);
 
   if (!Handled) {
     if (Strict)
@@ -402,6 +405,11 @@ void AArch64Lifter::fixupDecodedInsn(cs_insn * /*I*/) {
 
 bool AArch64Lifter::isFunctionTerminator(const cs_insn *I) {
   switch (I->id) {
+#define NEVERD_A64_PAUTH_BRANCH(Insn, Mask, Word, Key, Zero, Kind)             \
+  case AARCH64_INS_##Insn:                                                     \
+    return NdOp::Kind != NdOp::INDIR_CALL;
+#include "neverd/ir/intrinsics/AArch64PAuth.def"
+
   case AARCH64_INS_RET:
   case AARCH64_INS_B:
   case AARCH64_INS_BR:

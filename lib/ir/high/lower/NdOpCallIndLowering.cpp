@@ -17,6 +17,7 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
@@ -383,6 +384,13 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
   Call->SourceCallHint = CurOp.SourceCallHint;
+  if (CurOp.CalleeFloatReturnBytes && CurMed)
+    if (const auto *Info = CurMed->findCall(CurBlock.Id, CI))
+      if (auto Signature = recoveredFloatingCallArguments(
+              CurOp, *Info, TargetArch,
+              Image ? Image->abiFormat() : BinaryFormat::Unknown))
+        Call->FloatingCallSignature =
+            std::make_shared<FloatingCallArguments>(std::move(*Signature));
   if (CurOp.SourceCallHint) {
     Call->CallAddr = CurOp.SourceCallHint->TargetAddress;
     // A bound void call has no output SSA value, but its expression still

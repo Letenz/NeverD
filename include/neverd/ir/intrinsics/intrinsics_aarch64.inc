@@ -208,3 +208,7 @@ A64LinuxSyscall,
 // A permanently undefined instruction (UDF #imm16): an undefined-instruction
 // exception, where BRK raises a breakpoint one.
 Udf_A64,
+
+// Authenticated control-flow target: pointer, key (IA=0/IB=1), modifier.
+// Unlike AUT alone, transferring control requires authentication to succeed.
+A64_AuthBranch,

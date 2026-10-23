@@ -11,11 +11,55 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/IntegerCallArguments.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 
 using namespace neverd;
 
 namespace {
+TEST(FloatingCallArguments, CompleteScalarRegistersAndConservativeBoundaries) {
+  for (Arch A : {Arch::X64, Arch::AArch64}) {
+    for (BinaryFormat F :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      for (uint16_t Bytes : {4u, 8u}) {
+        const auto T = NdType::makeFloat(Bytes);
+        const auto Layout = floatingCallArguments(A, F, T, {T, T});
+        ASSERT_TRUE(Layout);
+        EXPECT_EQ(Layout->ReturnBytes, Bytes);
+        EXPECT_EQ(Layout->ParameterBytes,
+                  (std::vector<uint16_t>{Bytes, Bytes}));
+        EXPECT_TRUE(floatingCallArguments(A, F, T, {}));
+        EXPECT_FALSE(floatingCallArguments(A, F, T, {T, NdType::makePtr()}));
+        EXPECT_FALSE(floatingCallArguments(A, F, NdType::makeInt(8), {T}));
+        EXPECT_FALSE(floatingCallArguments(A, F, T, {NdType::makeFloat(10)}));
+        EXPECT_FALSE(
+            floatingCallArguments(A, F, T, std::vector<TypeRef>(9, T)));
+        if (A == Arch::X64 && F == BinaryFormat::COFF)
+          EXPECT_FALSE(
+              floatingCallArguments(A, F, T, std::vector<TypeRef>(5, T)));
+      }
+    }
+  }
+  const auto T = NdType::makeFloat(8);
+  EXPECT_FALSE(floatingCallArguments(Arch::X86, BinaryFormat::COFF, T, {T}));
+  FunctionSym Function;
+  Function.ReturnType = T;
+  Function.Params = {{"x", T}};
+  EXPECT_FALSE(
+      libc::floatingCallArguments(Function, Arch::X64, BinaryFormat::COFF));
+  Function.PrototypeFromHeader = true;
+  EXPECT_TRUE(
+      libc::floatingCallArguments(Function, Arch::X64, BinaryFormat::COFF));
+  Function.PlatformConvention = false;
+  EXPECT_FALSE(
+      libc::floatingCallArguments(Function, Arch::X64, BinaryFormat::COFF));
+  Function.PlatformConvention = true;
+  Function.CallConv = DebugCallConv::Fastcall;
+  EXPECT_FALSE(
+      libc::floatingCallArguments(Function, Arch::X64, BinaryFormat::COFF));
+}
+
 TypeRef pointer(uint16_t Bytes = 8) {
   auto Type = NdType::makePtr();
   Type->Size = Bytes;
@@ -133,5 +177,24 @@ TEST(IntegerCallArguments, RefusesIncompleteOrDifferentCarrierContracts) {
                                     NdType::makeVoid(), {OverAligned}));
   EXPECT_FALSE(integerCallArguments(Arch::X64, BinaryFormat::ELF, {},
                                     {NdType::makePtr()}));
+}
+
+TEST(IntegerCallArguments, WindowsHiddenResultPrecedesRecordParameters) {
+  for (const Arch Architecture : {Arch::X64, Arch::X86}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto Layout =
+        integerCallArguments(Architecture, BinaryFormat::COFF, record(16, 8),
+                             {record(16, 8), record(16, 8)});
+    ASSERT_TRUE(Layout);
+    ASSERT_TRUE(Layout->ResultPointer);
+    EXPECT_EQ(*Layout->ResultPointer, 0u);
+    EXPECT_EQ(Layout->Positions, Architecture == Arch::X64 ? 3u : 9u);
+    EXPECT_EQ(Layout->Registers, Architecture == Arch::X64 ? 3u : 0u);
+    ASSERT_EQ(Layout->Parameters.size(), 2u);
+    EXPECT_EQ(Layout->Parameters[0].Pieces[0].Argument, 1u);
+    EXPECT_EQ(Layout->Parameters[1].Pieces[0].Argument,
+              Architecture == Arch::X64 ? 2u : 5u);
+    EXPECT_EQ(Layout->Parameters[0].Indirect, Architecture == Arch::X64);
+  }
 }
 } // namespace

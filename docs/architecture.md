@@ -63,6 +63,58 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Apple arm64e analysis
+
+The Mach-O loader retains the CPU subtype, including its ABI capability bits,
+and identifies `CPU_SUBTYPE_ARM64E` separately from ordinary arm64. Both use
+the AArch64 decoder. `AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
+implicit LR/SP and X17/X16 HINT aliases, and authenticated branch/call/return
+semantics. Authenticated calls read the old operands before overwriting LR.
+`AArch64PAuth.def` owns the instruction inventory, implicit HINT operands,
+authenticated transfer encodings, keys and emission contracts. The fast and
+Capstone classifiers, lifter, intrinsic metadata and emitters consume those
+rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
+`AArch64PAuthC.def` owns the C syntax shared by both projections;
+`MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
+Validated pointer-authentication operations preserve argument setup across
+both ABI recovery and C lowering. Tail-transfer proofs retain target taint
+separately from the signing modifier and restore a saved signed link only
+after authentication with the matching key and entry-SP offset (or zero).
+Clang's explicit authentication-failure branch retains the setup of its sole
+continuing authenticated tail. Source C names an unassigned entry LR using
+`__builtin_return_address(0)`, as the LLVM projection already does.
+LDRAA/LDRAB authenticate the base before adding the offset, loading, and
+applying writeback. An unsupported exception return or FEAT_PAuth_LR form
+fails lifting instead of losing authentication.
+
+Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
+the architecture may poison a pointer without trapping immediately. The
+separate `A64_AuthBranch` operation requires a valid control-flow target and
+uses `llvm.ptrauth.auth` / Clang's authentication builtin. Its effect survives
+dead-result elimination. These are analysis projections, not a guarantee that
+rebuilt code preserves the original authenticated call's resistance to spills.
+Code-identity recovery keeps the authenticated runtime value; it cannot treat
+its key or modifier as a code pointer or bypass authentication to name a callee.
+
+The loader decodes arm64e chained pointer formats 1, 7, 9, 10 and 12, including
+their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
+`ARM64_RELOC_AUTHENTICATED_POINTER` uses the same
+`MachOAuthenticatedPointer` model: target or symbol, key, diversity, address
+diversity and addend. Original authenticated slot bytes remain on-disk recipes;
+they are neither process-signed values nor ordinary raw-pointer/import proofs.
+Immutable readers reject every overlapping byte. Source projections keep
+storage containing recipes external rather than inventing global initializers.
+The formats follow Apple's [dyld definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)
+and LLVM's [pointer-authentication contract](https://llvm.org/docs/PointerAuth.html).
+
+This support covers static loading, lifting and C/LLVM inspection. Native
+rebuilding and source replacement of an arm64e image fail explicitly until
+ABI-aware signing and fixup emission are implemented; the emitted module
+retains that requirement. Checked emulation's existing disabled-key profile
+does not become an arm64e execution environment. Shared-cache-specific and
+segmented chained layouts, exception-level authentication, FEAT_PAuth_LR and
+arm64e.x1/CPA2 are not claimed as supported.
+
 ## GUI project and search ownership
 
 `CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
@@ -1099,6 +1151,32 @@ over automatic Darwin SDK source bindings; header record layouts retain them.
 Unsupported record carriers fail explicitly. This does not add ARM32 record
 placement or general mixed floating record-call support.
 
+Selected platform headers have their own prototype provenance, separate from
+the host C-library inclusion policy. Windows SDK records therefore use the
+same placement adapter even when their definitions are embedded locally.
+Windows x86/x64 hidden record results consume the first physical argument;
+both C emitters write the returned bytes to that buffer and preserve the
+EAX/RAX pointer result. x86 `stdcall` retains its stack cleanup after record
+placement. LLVM-C does not redefine a record supplied by the included header
+of the adapted call.
+
+`floatingCallArguments` uses the same placement authority for complete fixed
+float/double signatures whose arguments and result use FP registers. LLVM
+import emission verifies those exact SSA operands and widths before declaring
+the typed callee, including immutable import identities absent from libc tables.
+Windows x64 and ARM64 publish these operands before SSA and record the scalar
+return width; later call setup recovery preserves them. Writable import slots
+retain their runtime target even when the declaration establishes its ABI.
+Omitted-callee conversion and its cache include the same signatures,
+independently of the selected functions. Forwarding recovery keeps each scalar
+argument width separate from the result width and admits incoming FP parameters
+only along an unclobbered entry path. Its existing bounded summary worklist
+propagates the resulting facts. `recoveredFloatingCallArguments` checks the
+complete fixed signature for both LLVM declarations and HighC call metadata;
+expression types alone do not establish a nonvariadic external signature.
+Mixed classes, HFA records and stack overflow need their separate adapters;
+this scalar contract supplies no such coverage.
+
 LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
 signatures. Every printed call of a symbol must agree before the writer uses
 one typed declaration and matching argument/result conversions. An unused
@@ -1267,7 +1345,11 @@ analysis allocations use the executable's process allocator. Windows MSVC ABI
 executables instead import a shared mimalloc before their other dependencies;
 the matching redirection DLL overrides the dynamic CRT (`/MD` or `/MDd`),
 including later-loaded plugins. Both runtime DLLs travel with the executable.
-Applications embedding the SDK continue to own their allocator policy. On macOS, dependency
+Applications embedding the SDK continue to own their allocator policy.
+Linux executables preserve mimalloc's `MI_ALLOW_THP` build setting and the
+runtime `MIMALLOC_ALLOW_THP` override. Disabling transparent huge pages acts
+on that executable's process; loading the SDK does not impose this policy
+on its host or change system-wide kernel settings. On macOS, dependency
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
@@ -4149,6 +4231,21 @@ the return address the call pushed. HighC prints it as
 `__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
 Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
+
+The pipeline runs both annotations through `markSourceStackAccesses`, sharing
+one batch of entry-stack offset proofs and the resulting load/store ranges.
+Only annotation flags change between the two consumers. The ranges are discarded
+before returning; no result survives a later IR mutation, and the proof's
+join, provenance, depth and work-limit rules are unchanged.
+
+The entry-stack proof keeps definitions, joins, ambiguity and transient active
+flags in one ordered index. Each visit still consumes its ordinary work and
+depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
+and failed queries are not memoized, and each query clears its active flags.
+Read-only offset queries lazily reuse the shared entry-register authenticator's
+answer for the canonical defining occurrence. Every use still checks exact
+register metadata; the fact lasts only for that immutable proof. Alignment
+rewrites continue to authenticate against the current entry COPY prefix.
 
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C

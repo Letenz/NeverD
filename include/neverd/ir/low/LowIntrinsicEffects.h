@@ -9,10 +9,36 @@
 #ifndef NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 #define NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/low/LowIR.h"
 
 namespace neverd {
+
+inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 2 || Op.NumInputs > 4 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  for (unsigned I = 1; I < Op.NumInputs; ++I)
+    if (!Op.Inputs[I].isReg() && !Op.Inputs[I].isTemp() &&
+        !Op.Inputs[I].isConst())
+      return false;
+  return aarch64PAuthShapeIsValid(
+      static_cast<Intrinsic>(Op.Inputs[0].Offset),
+      {.NumInputs = Op.NumInputs,
+       .OutputBytes = Op.Output.Size,
+       .PointerBytes = Op.Inputs[1].Size,
+       .ModifierBytes =
+           Op.NumInputs > 2 ? Op.Inputs[Op.NumInputs - 1].Size : 0U,
+       .KeyBytes = Op.NumInputs == 4 ? Op.Inputs[2].Size : 0U,
+       .Key = Op.NumInputs == 4 && Op.Inputs[2].isConst()
+                  ? std::optional<uint64_t>(Op.Inputs[2].Offset)
+                  : std::nullopt});
+}
 
 /// One shared effect classification for LowIR consumers. A malformed or
 /// unknown intrinsic cannot grant address-suppression or call-barrier proofs.

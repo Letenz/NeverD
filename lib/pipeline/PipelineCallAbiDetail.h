@@ -14,6 +14,7 @@
 #define NEVERD_LIB_PIPELINE_PIPELINECALLABIDETAIL_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
@@ -55,6 +56,7 @@ struct OmittedCalleeMemo {
     std::optional<int> StackArgs;
     bool StackSlot = false;
     std::optional<int> ArgumentCount;
+    std::optional<FloatingCallArguments> FloatingArguments;
     bool operator==(const SummaryRead &) const = default;
   };
   static SummaryRead readAt(const PipelineResult &Result, va_t Key);
@@ -69,6 +71,7 @@ struct OmittedCalleeMemo {
     std::optional<int> FPArity;
     std::optional<uint16_t> FPReturnSize;
     std::optional<std::vector<uint64_t>> FPRegs;
+    std::optional<std::map<uint64_t, uint16_t>> FPScalarBytes;
     std::optional<bool> HasSret;
     std::optional<bool> IsVariadic;
     std::optional<bool> ConsumesVaList;
@@ -84,8 +87,10 @@ struct OmittedCalleeMemo {
     int RegisterArity = 0;
     int MaxArgumentIndex = -1;
     int RecoveryTotalArity = 0;
+    uint16_t FPReturnSize = 0;
     bool IsVariadic = false;
     std::vector<uint64_t> FPRegs;
+    std::map<uint64_t, uint16_t> FPScalarBytes;
     std::vector<uint64_t> IntegerArgumentRegisters;
     std::optional<int> EntryRegArity;
     std::optional<int> EntryTotalArity;
@@ -153,6 +158,7 @@ struct OmittedCalleeMemo {
     bool ConsumesVaList = false;
     int FPArity = 0;
     std::vector<uint64_t> FPRegs;
+    std::map<uint64_t, uint16_t> FPScalarBytes;
     uint16_t FPReturnSize = 0;
   };
   /// A conversion of a callee's lift.

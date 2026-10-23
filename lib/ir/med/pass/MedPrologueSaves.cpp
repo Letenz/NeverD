@@ -9,6 +9,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <map>
@@ -83,10 +84,10 @@ void frameAccessesOf(MedFunc &Func, Arch Architecture, BinaryFormat Format,
   }
 }
 
-} // namespace
-
 void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
-                                 BinaryFormat Format, StackEntryKind Entry) {
+                                 BinaryFormat Format, StackEntryKind Entry,
+                                 std::vector<FrameAccess> &Loads,
+                                 std::vector<FrameAccess> &Stores) {
   const auto &TRI = getTargetRegInfo(Architecture);
   const BinaryFormat Convention =
       Func.CC == CallingConv::Win64 ? BinaryFormat::COFF : BinaryFormat::ELF;
@@ -99,7 +100,6 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
   // Every read of a value: the operations and joins that take it.
   std::map<ValueKey, std::vector<const MedOp *>> OpReads;
   std::set<ValueKey> OtherReads;
-  std::vector<FrameAccess> Loads, Stores;
   auto NoteRead = [&](const MedVar &V, const MedOp *By) {
     if (V.isConst() || V.Id < 0)
       return;
@@ -177,23 +177,53 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
     Save->PrologueSave = true;
 }
 
-void markReturnAddressReads(MedFunc &Func, Arch Architecture,
-                            BinaryFormat Format, StackEntryKind Entry) {
+bool hasStackReturnAddress(Arch Architecture, StackEntryKind Entry) {
   const auto &TRI = getTargetRegInfo(Architecture);
-  if (!TRI.CallPushesReturnAddress || Entry != StackEntryKind::Call ||
-      !TRI.PointerSize)
-    return;
-  std::vector<FrameAccess> Loads, Stores;
-  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
+  return TRI.CallPushesReturnAddress && Entry == StackEntryKind::Call &&
+         TRI.PointerSize;
+}
+
+void markReturnAddressReads(unsigned PointerSize,
+                            llvm::ArrayRef<FrameAccess> Loads,
+                            llvm::ArrayRef<FrameAccess> Stores) {
   // A store into the slot replaces the return address, as a function that
   // returns somewhere else does.
   if (llvm::any_of(Stores, [&](const FrameAccess &Write) {
-        return Write.overlaps(0, TRI.PointerSize);
+        return Write.overlaps(0, PointerSize);
       }))
     return;
   for (const FrameAccess &Read : Loads)
-    if (Read.Offset == 0 && Read.Size == TRI.PointerSize)
+    if (Read.Offset == 0 && Read.Size == PointerSize)
       Read.Op->ReturnAddressRead = true;
+}
+
+} // namespace
+
+void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
+                                 BinaryFormat Format, StackEntryKind Entry) {
+  std::vector<FrameAccess> Loads, Stores;
+  markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores);
+}
+
+void markReturnAddressReads(MedFunc &Func, Arch Architecture,
+                            BinaryFormat Format, StackEntryKind Entry) {
+  if (!hasStackReturnAddress(Architecture, Entry))
+    return;
+  std::vector<FrameAccess> Loads, Stores;
+  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
+  markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
+                         Stores);
+}
+
+void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
+                             BinaryFormat Format, StackEntryKind Entry) {
+  std::vector<FrameAccess> Loads, Stores;
+  markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores);
+  // Both annotations only set flags, so the addresses and access ranges stay
+  // valid until both consumers finish. No proof survives an IR mutation.
+  if (hasStackReturnAddress(Architecture, Entry))
+    markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
+                           Stores);
 }
 
 } // namespace neverd

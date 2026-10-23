@@ -99,6 +99,7 @@ struct ImageImportCounts {
   std::map<va_t, int> Counts;
   std::map<va_t, int> StackArgs;
   std::set<va_t> StackSlots;
+  std::map<va_t, FloatingCallArguments> FloatingArguments;
   /// Whether these were read from \p Img as it is, with \p Dbg.
   bool readFrom(const BinaryImage &Img, const DebugContext *Dbg) const {
     return Image == &Img && Debug == Dbg && ImportData == Img.Imports.data() &&

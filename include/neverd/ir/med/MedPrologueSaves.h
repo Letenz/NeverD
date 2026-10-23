@@ -23,6 +23,13 @@ namespace neverd {
 /// its version zero, or the entry seed that copies it (`COPY RSI.1 = RSI`).
 bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff);
 
+/// Mark source-mode prologue saves and return-address reads using one frame
+/// access analysis. Only annotation flags change; the analysis is discarded
+/// before returning, so later IR mutations cannot reuse its coordinates.
+void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
+                             BinaryFormat Format,
+                             StackEntryKind Entry = StackEntryKind::Call);
+
 /// In source mode, mark each store that saves a callee-saved register's entry
 /// value into prologue storage as a PrologueSave.  Prologue storage is the
 /// function's own frame below the entry stack pointer, or on Win64 the home

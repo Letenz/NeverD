@@ -84,42 +84,76 @@ MedFunc pushedRbx(CallingConv Convention = CallingConv::SysV_AMD64) {
   return Func;
 }
 
+class MedPrologueSaves : public ::testing::TestWithParam<bool> {
+protected:
+  void markStackAccesses(MedFunc &Func, Arch Architecture, BinaryFormat Format,
+                         StackEntryKind Entry = StackEntryKind::Call) {
+    if (GetParam()) {
+      markSourceStackAccesses(Func, Architecture, Format, Entry);
+    } else {
+      markCalleeSavePrologueSaves(Func, Architecture, Format, Entry);
+      markReturnAddressReads(Func, Architecture, Format, Entry);
+    }
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(SourceStackAccesses, MedPrologueSaves,
+                         ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool> &Info) {
+                           return Info.param ? "Combined" : "Separate";
+                         });
+
 const MedOp &save(const MedFunc &Func) { return Func.Blocks[0].Ops[4]; }
 
-TEST(MedPrologueSaves, APushedEntryValueIsAPrologueSave) {
+TEST_P(MedPrologueSaves, APushedEntryValueIsAPrologueSave) {
   MedFunc Func = pushedRbx();
-  markCalleeSavePrologueSaves(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_TRUE(save(Func).PrologueSave);
   // Marking keeps every operation where call records find it.
   EXPECT_EQ(Func.Blocks[0].Ops.size(), 10u);
 }
 
-TEST(MedPrologueSaves, ARestoreTheBodyReadsKeepsItsSave) {
+TEST_P(MedPrologueSaves, SaveAndReturnAddressAnnotationsShareTheFrame) {
+  for (StackEntryKind Entry :
+       {StackEntryKind::Call, StackEntryKind::ProcessEntry}) {
+    SCOPED_TRACE(static_cast<int>(Entry));
+    MedFunc Func = pushedRbx();
+    auto &Ops = Func.Blocks[0].Ops;
+    Ops.insert(Ops.end() - 1, op(NdOp::LOAD, temp(20), {sp(2)}));
+    markStackAccesses(Func, Arch::X64, BinaryFormat::ELF, Entry);
+    EXPECT_TRUE(save(Func).PrologueSave);
+    EXPECT_EQ(Ops[9].ReturnAddressRead, Entry == StackEntryKind::Call);
+    EXPECT_FALSE(Ops[6].ReturnAddressRead);
+    EXPECT_EQ(Ops.size(), 11u);
+  }
+}
+
+TEST_P(MedPrologueSaves, ARestoreTheBodyReadsKeepsItsSave) {
   MedFunc Func = pushedRbx();
   Func.Blocks[0].Ops.back() = op(NdOp::RETURN, none(), {rbx(2)});
-  markCalleeSavePrologueSaves(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
-TEST(MedPrologueSaves, AComputedValueIsNoSave) {
+TEST_P(MedPrologueSaves, AComputedValueIsNoSave) {
   MedFunc Func = pushedRbx();
   Func.Blocks[0].Ops[4] = op(NdOp::STORE, none(), {sp(1), rbx(1)});
-  markCalleeSavePrologueSaves(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
-TEST(MedPrologueSaves, AnotherStoreIntoTheSlotKeepsTheSave) {
+TEST_P(MedPrologueSaves, AnotherStoreIntoTheSlotKeepsTheSave) {
   MedFunc Func = pushedRbx();
   auto &Ops = Func.Blocks[0].Ops;
   Ops.insert(Ops.begin() + 6, op(NdOp::STORE, none(), {sp(1), rcx(0)}));
-  markCalleeSavePrologueSaves(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
-TEST(MedPrologueSaves, AnArgumentSpillIsNoSave) {
+TEST_P(MedPrologueSaves, AnArgumentSpillIsNoSave) {
   MedFunc Func = pushedRbx();
   Func.Blocks[0].Ops[4] = op(NdOp::STORE, none(), {sp(1), rcx(0)});
-  markCalleeSavePrologueSaves(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
@@ -146,16 +180,16 @@ MedFunc homeSlotRbx(CallingConv Convention) {
   return Func;
 }
 
-TEST(MedPrologueSaves, AWin64HomeSlotSaveIsPrologueStorage) {
+TEST_P(MedPrologueSaves, AWin64HomeSlotSaveIsPrologueStorage) {
   MedFunc Func = homeSlotRbx(CallingConv::Win64);
-  markCalleeSavePrologueSaves(Func, Arch::X64, BinaryFormat::COFF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
   EXPECT_TRUE(save(Func).PrologueSave);
 }
 
-TEST(MedPrologueSaves, OnlyWin64HandsTheCalleeHomeSlots) {
+TEST_P(MedPrologueSaves, OnlyWin64HandsTheCalleeHomeSlots) {
   // Above a System V callee's return address lies its caller's frame.
   MedFunc Func = homeSlotRbx(CallingConv::SysV_AMD64);
-  markCalleeSavePrologueSaves(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
@@ -177,40 +211,40 @@ MedFunc readsReturnAddress() {
 
 const MedOp &read(const MedFunc &Func) { return Func.Blocks[0].Ops[1]; }
 
-TEST(MedPrologueSaves, ALoadOfTheEntrySlotIsTheReturnAddress) {
+TEST_P(MedPrologueSaves, ALoadOfTheEntrySlotIsTheReturnAddress) {
   MedFunc Func = readsReturnAddress();
-  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_TRUE(read(Func).ReturnAddressRead);
 }
 
-TEST(MedPrologueSaves, AFunctionThatWritesTheSlotReadsItsOwnValue) {
+TEST_P(MedPrologueSaves, AFunctionThatWritesTheSlotReadsItsOwnValue) {
   MedFunc Func = readsReturnAddress();
   auto &Ops = Func.Blocks[0].Ops;
   Ops.insert(Ops.begin() + 1, op(NdOp::STORE, none(), {sp(0), rcx(0)}));
-  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(Func.Blocks[0].Ops[2].ReturnAddressRead);
 }
 
-TEST(MedPrologueSaves, ANarrowLoadOfTheEntrySlotIsNoReturnAddress) {
+TEST_P(MedPrologueSaves, ANarrowLoadOfTheEntrySlotIsNoReturnAddress) {
   MedFunc Func = readsReturnAddress();
   MedVar Narrow = temp(20);
   Narrow.Size = 4;
   Func.Blocks[0].Ops[1].Output = Narrow;
-  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(read(Func).ReturnAddressRead);
 }
 
-TEST(MedPrologueSaves, AProcessEntryHasNoReturnAddress) {
+TEST_P(MedPrologueSaves, AProcessEntryHasNoReturnAddress) {
   // The kernel starts `_start` with argc at the stack pointer.
   MedFunc Func = readsReturnAddress();
-  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF,
-                         StackEntryKind::ProcessEntry);
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF,
+                    StackEntryKind::ProcessEntry);
   EXPECT_FALSE(read(Func).ReturnAddressRead);
 }
 
-TEST(MedPrologueSaves, AArch64KeepsItsReturnAddressInTheLinkRegister) {
+TEST_P(MedPrologueSaves, AArch64KeepsItsReturnAddressInTheLinkRegister) {
   MedFunc Func = readsReturnAddress();
-  markReturnAddressReads(Func, Arch::AArch64, BinaryFormat::ELF);
+  markStackAccesses(Func, Arch::AArch64, BinaryFormat::ELF);
   EXPECT_FALSE(read(Func).ReturnAddressRead);
 }
 
