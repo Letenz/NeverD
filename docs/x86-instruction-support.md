@@ -175,6 +175,48 @@ incomplete intermediate batch.
    environment. Compile-only checks establish operand transport and generated
    code validity; they do not establish VM-exit, enclave or fault semantics.
 
+## Native LLVM intrinsic migration checkpoints
+
+The LLVM fork's
+[`5fe573fa2301`](https://github.com/NeverSight/llvm-project/commit/5fe573fa2301)
+adds native instruction selection for the following APIs. NeverC's
+[`7b65c691c`](https://github.com/NeverSight/NeverC/commit/7b65c691c)
+includes the corresponding x86-64 frontend/backend fixes and interoperability
+tests. These are development checkpoints, not a released or pinned SDK.
+
+| Native LLVM API | Code modes | Completion and memory contract |
+| --- | --- | --- |
+| `llvm.x86.vmread`, `llvm.x86.vmwrite` | x86-64 | i8 status: 0 = success, 1 = ZF/VMfailValid, 2 = CF/VMfailInvalid. VMREAD writes its memory destination only on success. |
+| `llvm.x86.vmread32`, `llvm.x86.vmwrite32` | i386 | Same completion contract, with 32-bit field/value operands. Calling the wrong mode's API fails explicitly. |
+| `llvm.x86.vmclear`, `llvm.x86.vmptrld`, `llvm.x86.vmxon` | i386 and x86-64 | Status plus an instruction-owned m64 physical-address operand. |
+| `llvm.x86.vmptrst`, `llvm.x86.vmxoff` | i386 and x86-64 | Void APIs with real memory/state effects and EFLAGS definitions. VMPTRST writes m64 in either mode. |
+| `llvm.x86.vmlaunch`, `llvm.x86.vmresume` | i386 and x86-64 | Return status on falling-through VMfail only; VMCS-controlled transfers remain separate. |
+| `llvm.x86.rdmsr`, `llvm.x86.wrmsr` | i386 and x86-64 | i32 MSR index and full i64 value, transported through ECX and EDX:EAX. Unused reads retain their side effects. |
+
+The fork generates the instruction effects from TableGen. NeverC's pruned table
+has a checked generator for the same VMX effects. The old NeverC VMREAD register
+instruction followed by an unconditional store was shown to overwrite the
+destination on VMfail; the fixed lowering uses the actual memory instruction.
+
+Qualification includes LLVM machine verification, O0/O2 and IR-optimized output,
+ELF/COFF/Mach-O generation, and the existing VMX encoding tests. Controlled
+completion tests cover 204 LLVM cases across both word sizes, 102 NeverC cases,
+and 102 cases compiling NeverC's actual IR through the full LLVM fork. They
+check real instruction operands, full values, status results, dead-result
+retention, unchanged failed-read destinations, and absence of premature memory
+accesses. NeverC's 24 ordinary privileged-intrinsic tests also pass.
+MSR qualification adds 48 LLVM cases across both word sizes, 24 NeverC cases,
+and 24 NeverC-to-fork cases. The i386 WRMSR tests exposed and now cover the
+required custom legalization of its i64 input into EDX:EAX. The related counter
+and XCR intrinsic code-generation regressions also pass.
+
+These tests qualify compiler transport, not successful privileged VM entry.
+The current pointer APIs cover the default address space. Register-result
+VMREAD, memory-source VMWRITE, segmented/address-size forms and the other
+instruction families still need native APIs before all of NeverD's existing
+assembly paths can be replaced. The final LLVM release and pin remain gated on
+the complete work described above.
+
 ## Reproducible checks
 
 Build these targets in a configured test build (see [testing.md](testing.md)):

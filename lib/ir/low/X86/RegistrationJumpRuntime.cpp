@@ -28,6 +28,11 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
   if (!Indirect) {
     if (Target > UINT32_MAX - 6)
       return std::nullopt;
+    // Ordinary callees are not import veneers. A raw prefix can reject them
+    // before scanning fixups; a match still needs the complete storage proof.
+    const auto *Prefix = Image.readVA(Target, 2);
+    if (!Prefix || Prefix[0] != 0xff || Prefix[1] != 0x25)
+      return std::nullopt;
     const auto Bytes =
         readImmutablePE32CodeBytes(Image, Target, 6, {Target + 2});
     if (!Bytes || (*Bytes)[0] != 0xff || (*Bytes)[1] != 0x25)
@@ -35,8 +40,7 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
     Slot = readLE<uint32_t>(Bytes->data() + 2);
   }
   const auto *Imported = Image.findImportAt(Slot);
-  if (!Imported || Imported->IATAddr != Slot || Imported->IsDelayImport ||
-      !isFileBackedPEImportSlot(Image, Slot))
+  if (!Imported || Imported->IATAddr != Slot || Imported->IsDelayImport)
     return std::nullopt;
   const llvm::StringRef Module = Imported->Module;
   if (!Module.equals_insensitive("msvcrt.dll") &&
@@ -53,6 +57,8 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
   else if (Imported->Name == "_seh_longjmp_unwind4")
     Binding.Routine = JumpRuntimeBinding::Kind::EH4Unwind;
   else
+    return std::nullopt;
+  if (!isFileBackedPEImportSlot(Image, Slot))
     return std::nullopt;
   Binding.Target = Target;
   Binding.ImportSlot = Slot;
@@ -87,11 +93,11 @@ bool isSEHJumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
   if (!Call)
     return false;
   const auto Binding = checkedJumpRuntime(Image, Call->Inputs[0].Offset, false);
+  if (!Binding || (Binding->Routine != JumpRuntimeBinding::Kind::Capture &&
+                   Binding->Routine != JumpRuntimeBinding::Kind::Resume))
+    return false;
   const auto Bytes = readImmutableCodeBytes(Image, Address, Size);
-  return Binding &&
-         (Binding->Routine == JumpRuntimeBinding::Kind::Capture ||
-          Binding->Routine == JumpRuntimeBinding::Kind::Resume) &&
-         Bytes && (*Bytes)[0] == 0xe8 &&
+  return Bytes && (*Bytes)[0] == 0xe8 &&
          uint32_t(Address + Size +
                   int64_t(readLE<int32_t>(Bytes->data() + 1))) ==
              Binding->Target;
