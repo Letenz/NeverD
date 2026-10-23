@@ -1,8 +1,18 @@
+//===- ObjCRuntimeData.h - Bounded Objective-C runtime records --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Separate analysis-only metadata traversal from plain runtime value proofs.
+//===----------------------------------------------------------------------===//
+
 #ifndef NEVERD_LOADER_OBJC_OBJCRUNTIMEDATA_H
 #define NEVERD_LOADER_OBJC_OBJCRUNTIMEDATA_H
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Limits.h"
+#include "neverd/loader/MachO/MachOMetadataPointer.h"
 
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/Endian.h"
@@ -12,15 +22,21 @@
 
 namespace neverd::objc {
 
+enum class PointerView { PlainRuntimeValue, MetadataTarget };
+
 /// A bounded view of file-backed runtime records after Mach-O fixups.
 class RuntimeData {
   const BinaryImage &Image;
+  PointerView View;
 
 public:
-  explicit RuntimeData(const BinaryImage &Image) : Image(Image) {}
+  explicit RuntimeData(const BinaryImage &Image,
+                       PointerView View = PointerView::PlainRuntimeValue)
+      : Image(Image), View(View) {}
 
   bool supportsPlainObjectPointers() const {
-    if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+    if (View != PointerView::PlainRuntimeValue ||
+        Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
         Image.Bits != Bitness::Bits64 ||
         (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
         Image.MachOChainedFixupsAmbiguous)
@@ -107,6 +123,11 @@ public:
     const auto *Data = bytes(VA, 8);
     if (!Data)
       return std::nullopt;
+    if (View == PointerView::MetadataTarget)
+      return macho_loader::readMetadataPointerTarget(Image, VA);
+    if (Image.MachOChainedFixupsAmbiguous ||
+        Image.hasMachOAuthenticatedPointerIn(VA, 8))
+      return std::nullopt;
     const auto Value = llvm::support::endian::read64le(Data);
     if (Value && Image.MachOHasChainedFixups &&
         !Image.MachOResolvedChainedPointerSlots.count(VA))
@@ -162,4 +183,4 @@ public:
 
 } // namespace neverd::objc
 
-#endif
+#endif // NEVERD_LOADER_OBJC_OBJCRUNTIMEDATA_H

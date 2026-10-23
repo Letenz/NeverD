@@ -7804,5 +7804,65 @@ Secondary SHA-256: %3
         <source>Unmapped line</source>
         <translation>Строка без привязки</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>Выровнять строки кода</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>Снять ограничение объёма работы выравнивания</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>Снять ограничение байтов данных исходного кода</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>Включить объявления в выравнивание</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>Перейти к выровненной строке</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>Различия текста: + добавлено, − удалено, ~ изменено. Выберите строку для просмотра исходных инструкций.</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>Выравнивание кода… Отмена ожидает завершения текущего этапа анализа.</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>Превышен лимит выравнивания кода. Измените параметры или просматривайте код раздельно.</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>Выравнивание кода остановлено. Перезагрузите код для повторной попытки.</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>Выровненные строки %1–%2 из %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · Строка кода %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · С этой стороны строки нет</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · Изменено</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · Добавлено</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · Удалено</translation>
+    </message>
 </context>
 </TS>

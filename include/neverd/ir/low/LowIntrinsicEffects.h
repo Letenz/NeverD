@@ -9,11 +9,30 @@
 #ifndef NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 #define NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 
+#include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/low/LowIR.h"
 
 namespace neverd {
+
+inline bool lowAArch64CPAShapeIsValid(const LowOp &Op) {
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 3 || Op.NumInputs > 4 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  for (unsigned I = 1; I < Op.NumInputs; ++I)
+    if (!Op.Inputs[I].isReg() && !Op.Inputs[I].isTemp() &&
+        !Op.Inputs[I].isConst())
+      return false;
+  return aarch64CPAShapeIsValid(static_cast<Intrinsic>(Op.Inputs[0].Offset),
+                                Op.NumInputs, Op.Output.Size, Op.Inputs[1].Size,
+                                Op.Inputs[2].Size,
+                                Op.NumInputs == 4 ? Op.Inputs[3].Size : 0);
+}
 
 inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 2 || Op.NumInputs > 4 ||

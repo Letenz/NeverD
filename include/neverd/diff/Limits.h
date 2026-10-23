@@ -24,6 +24,10 @@ namespace neverd::limits::diff {
 // The caller may set the additional native instruction allowance to zero.
 inline constexpr uint64_t kDefaultSourceNativeInstructions = 4096;
 inline constexpr size_t kMaxSourceReasonBytes = 4096;
+inline constexpr uint64_t kDefaultSourceAlignmentWork = 50000000;
+// Combined UTF-8 text and serialized line evidence retained for a source pair.
+// Zero in the request removes this additional allowance, not emitter limits.
+inline constexpr uint64_t kDefaultSourceAlignmentBytes = 64 * 1024 * 1024;
 
 // On-demand lifted scalar validation; proof defaults belong to Analysis.
 inline constexpr uint64_t kDefaultValidationNativeInstructions = 2048;

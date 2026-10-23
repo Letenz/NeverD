@@ -37,6 +37,21 @@ modifiers; each key must change at least one pointer, excluding a NOP profile.
 Other architectures skip both native checks. These tests do not certify
 arm64e ABI reconstruction or invalid-signature traps.
 
+The same target checks scalar CPA instructions through both decoder routes,
+including shifts, SP, XZR and overlapping operands. Malformed widths and
+arities cannot grant call-argument proofs. LLVM O2 and both C projections
+retain the actual instruction even with a dead result; generated C compiles
+at O0/O2, with parameter-flow checks for temporary-name collisions. Vector
+CPA forms must reject instead of becoming unchecked arithmetic. These are
+instruction-preservation checks, not native CPA/CPA2 execution qualification.
+`ReturnContracts.CheckedAArch64PointersRemainReturnValues` covers all baseline
+PAC/AUT/XPAC/PACGA, authenticated target and scalar CPA results. An effectful
+instruction must not turn a returned pointer into a void function; malformed
+operand widths cannot acquire that return-value contract. C compilation rejects
+unused-value warnings, including intentionally discarded pointer results.
+LowIR instruction-boundary and MedIR verification reject malformed PAC/AUT,
+strip, generic-signature and checked-arithmetic operations before emission.
+
 The same target checks public Mach-O loading, CPU subtype capability bits,
 arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
 multi-start pages, tagged pointers, malformed chains and unsupported layouts.
@@ -50,6 +65,19 @@ and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
 also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
+Analysis-only metadata tests follow local authentication recipes for every
+supported chained format and for authenticated object relocations. Stale
+bytes, signing-field mismatches, conflicting provenance, overlapping storage
+and imported or unmapped targets reject. Initializer/finalizer discovery must
+leave recipe bytes unchanged. A real Clang arm64e Objective-C object at O0/O2
+must retain local class/metaclass record and signed IMP targets; it does not
+bypass the linked-image requirement for source types. On Apple Silicon the
+test also links a bundle with local symbols stripped and requires class,
+selector, signature, IMP and function-name recovery from its authenticated
+metadata. Category fixtures exercise authenticated class, metaclass and method records in
+`NeverDObjCSourceCallTests`; its source-binding tests retain the plain-object
+reconstruction restriction. Metadata names replace synthesized function-start
+names while preserving stated, analysis and user names.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -662,6 +690,12 @@ Zero, short and storage-limited attempts preserve the original semantics.
 Degree-32/64 machine-code fixtures execute the generated C through both
 backends and all six CLI/GUI-worker routes at O0/O2, with separate ordinary
 and enhanced caches.
+Shared-cofactor regressions require shorter degree-8/16/32/48/96 readings,
+independent APInt evaluation through 257 bits and exhaustive observed input
+pairs for the degree-32 case. The mixed degree-8 replacement also has independent
+full-width Z3 proofs and native execution through all six CLI/worker routes.
+Completion metadata must exclude opaque inputs and reset on resource refusal;
+it is not an optimality certificate.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.
@@ -1194,8 +1228,21 @@ panes, switches to LLVM C and follows a mapped line back to Disassembly. It
 also checks independent paging, Enter in the line selector, unavailable dialects,
 explicit reload and rapid representation changes. Optional captures cover both
 themes at normal/minimum sizes with long names and fractional scaling.
-These checks establish source inspection contracts, not source-line matching or
-semantic equivalence.
+`BinaryDiffSourceAlignment` checks repeated-line inputs exhaustively against an
+independent full-table edit-distance oracle, Unicode/literals/line terminators,
+random unequal/repeated inputs, long unchanged runs, exact and removed work
+allowances, cancellation and deadlines. Sparse 10k/100k-line fixtures require
+ten separated replacements, or five insertions and five deletions, to complete
+within the default work allowance with exact original-line coverage. Highly
+unequal inputs exercise both edit directions against the independent oracle.
+SDK source-difference tests reassemble both exact ordinary emissions across pages,
+check original anchors and source coordinates, exercise mapping invalidation,
+byte/work/instruction limits and cancellation/refresh, and preserve saved native
+evidence. CLI and worker checks compare textual rows, page caches, unsupported
+options and stale revisions. The Qt case checks aligned row counts, highlights,
+instruction navigation, synchronized scroll and independent-source fallback.
+These checks establish exact textual alignment and inspection contracts, not
+semantic equivalence or unique statement correspondence.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw

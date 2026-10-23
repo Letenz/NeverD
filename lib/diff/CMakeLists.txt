@@ -20,5 +20,6 @@ add_neverd_component_library(NeverDDiff
   RegionsJSON.cpp
   ReviewJournal.cpp
   ScalarValidation.cpp
+  SourceAlignment.cpp
   LINK_COMPONENTS IRMed Safety LLVMInterpreterModel WindowsEHMetadata
 )

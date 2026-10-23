@@ -740,7 +740,8 @@ SymRef synthesizeResidualResidueTable(
     SymContext &Ctx, SymRef Root, llvm::ArrayRef<Factor> Factors,
     llvm::ArrayRef<SymRef> Originals, const llvm::APInt &Scale, unsigned Bits,
     unsigned Needed, Resources &Res, bool &DecisionAttempted,
-    SymRef &DecisionResult, bool &DecisionRequested, bool &IncompatibleBase) {
+    SymRef &DecisionResult, bool &DecisionRequested, bool &IncompatibleBase,
+    bool &DecisionComplete) {
   if (!Bits || Bits > limits::kMaxAffineResidueTableBits || !Needed ||
       Needed > limits::kMaxAffineResidueTableBits ||
       Factors.size() != Originals.size() || Factors.empty() ||
@@ -887,7 +888,7 @@ SymRef synthesizeResidualResidueTable(
         const auto Exact = foldResidueDecisions(
             Ctx, Root, Res.Budget, Res.Storage,
             Needed > limits::kMaxUnconditionedResidueDecisionBits,
-            Res.optionalRemaining(), Res.StorageLimited);
+            Res.optionalRemaining(), Res.StorageLimited, &DecisionComplete);
         if (Exact != Root) {
           DecisionResult = Exact;
           return Exact;
@@ -1245,10 +1246,16 @@ SymRef synthesizeResidualResidueTable(
     }
     auto Result = Ctx.mkMul(Ctx.mkConst(Scale), Sum);
 
-    auto Reduced = foldResidueDecisions(
-        Ctx, Result, Res.Budget, Res.Storage,
-        Needed > limits::kMaxUnconditionedResidueDecisionBits,
-        Res.optionalRemaining(), Res.StorageLimited);
+    // Rebuilding an algebraically identical word cannot add information to
+    // a finished decision search over independent variables. Keep this
+    // alternative's arithmetic spelling, without repeating that bit proof.
+    auto Reduced =
+        DecisionComplete
+            ? Result
+            : foldResidueDecisions(
+                  Ctx, Result, Res.Budget, Res.Storage,
+                  Needed > limits::kMaxUnconditionedResidueDecisionBits,
+                  Res.optionalRemaining(), Res.StorageLimited);
 
     if (Reduced != Result &&
         readingScore(Ctx, Reduced) < readingScore(Ctx, Root)) {
@@ -1989,6 +1996,7 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
   PrefixConstants Prefixes{Ctx, Res, {}};
   SymRef Best = Root;
   bool DecisionAttempted = false;
+  bool DecisionComplete = false;
   bool DecisionRequested = false;
   SymRef DecisionResult;
   if (Needed <= limits::kMaxAffineResidueTableBits) {
@@ -2017,9 +2025,16 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
       auto Result = synthesizeResidualResidueTable(
           Ctx, Root, Factors, Operands, Scale, Bits, Needed, Res,
           DecisionAttempted, DecisionResult, DecisionRequested,
-          IncompatibleBase);
-      if (DecisionResult)
-        return DecisionResult;
+          IncompatibleBase, DecisionComplete);
+      if (DecisionResult &&
+          readingScore(Ctx, DecisionResult) < readingScore(Ctx, Best))
+        Best = DecisionResult;
+      // A tiny observed word may have a shorter spelling over its shared
+      // affine coordinate than over separate input bits. Keep that bounded
+      // cofactor alternative even when the first decision reading improves.
+      if (DecisionResult &&
+          Needed > limits::kMaxUnconditionedResidueDecisionBits)
+        return Best;
       if (Result != Root && readingScore(Ctx, Result) < readingScore(Ctx, Best))
         Best = Result;
       // Once the retained disturbances break the common affine coordinate,

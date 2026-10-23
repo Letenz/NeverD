@@ -193,7 +193,11 @@ int runDiff() {
       DiffSourceFunction.getNumOccurrences() ||
       DiffSourceSide.getNumOccurrences() ||
       DiffSourceRepresentation.getNumOccurrences() ||
-      DiffSourceInstructions.getNumOccurrences()) {
+      DiffSourceInstructions.getNumOccurrences() ||
+      DiffSourceDifference.getNumOccurrences() ||
+      DiffSourcePrelude.getNumOccurrences() ||
+      DiffSourceWork.getNumOccurrences() ||
+      DiffSourceBytes.getNumOccurrences()) {
     WithColor::error()
         << "structural comparison options require --structural\n";
     return 1;

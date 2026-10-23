@@ -52,6 +52,7 @@ struct API {
   ENTRY(function_json);
   ENTRY(function_page_json);
   ENTRY(source_page_json);
+  ENTRY(source_difference_json);
   ENTRY(graph_json);
   ENTRY(regions_json);
   ENTRY(region_page_json);
@@ -328,6 +329,9 @@ ComparisonService::~ComparisonService() = default;
 bool ComparisonService::sourceSupported() {
   return supported() && api().source_page_json;
 }
+bool ComparisonService::sourceDifferenceSupported() {
+  return supported() && api().source_difference_json;
+}
 bool ComparisonService::supported() { return bool(api()); }
 
 bool ComparisonService::cancellable(std::string_view Operation) {
@@ -453,6 +457,12 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
       throw Error("unsupported_operation",
                   "This engine has no comparison source view");
     return S.result(api().source_page_json(S.Handle, Payload.dump().c_str()));
+  }
+  if (Operation == "comparison_source_difference") {
+    if (!api().source_difference_json)
+      throw std::runtime_error("SDK does not support source line alignment");
+    return S.result(
+        api().source_difference_json(S.Handle, Payload.dump().c_str()));
   }
   if (Operation == "comparison_function_page")
     return S.result(api().function_page_json(S.Handle, Payload.dump().c_str()));
