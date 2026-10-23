@@ -27,6 +27,9 @@
 
 #include "neverd/symbolic/SymExec.h"
 
+#include "neverd/ir/X87GuardedValue.h"
+#include "neverd/ir/X87Stack.h"
+#include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/X87PartialRemainder.h"
@@ -174,6 +177,9 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     return unknownX87State();
 
   const Intrinsic Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (x87ValueInfo(Id) &&
+      !x87ValueShapeIsValid(x87ValueLowShape(Op, Arch::Unknown)))
+    return unknownX87State();
   if (Id == Intrinsic::X87Fninit) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
       return unknownX87State();
@@ -187,6 +193,15 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     ++Unmodelled;
     ++OpaqueOperations;
     return StepResult::Unmodelled;
+  }
+  if (isX87GuardedValueIntrinsic(Id)) {
+    if (!x87GuardedValueShapeIsValid(
+            x87GuardedValueLowShape(Op, Arch::Unknown)))
+      return unknownX87State();
+    const auto Result = unmodelled(Op);
+    State.write(SymSpace::Register, x86reg::FPU_SW,
+                State.freshInput("x87_guarded_status", 16));
+    return Result;
   }
   if (Id == Intrinsic::X87Wait) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
@@ -208,7 +223,7 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
                 Ctx.mkAnd(Status, Ctx.mkConst(16, ~uint16_t(0x80ff))));
     return StepResult::Continue;
   }
-  if (Id == Intrinsic::X87Ffree) {
+  if (const auto Stack = x87StackEffect(Id); Stack && Stack->FreesOperand) {
     if (Op.NumInputs != 3 || Op.Output.Size != 0 || !Op.Inputs[1].isReg() ||
         Op.Inputs[1].Size != x86reg::FPURegSize ||
         Op.Inputs[1].Offset < x86reg::ST0 ||
@@ -221,19 +236,26 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     // Intel also leaves every x87 condition code undefined.
     State.write(SymSpace::Register, Op.Inputs[1].Offset,
                 State.freshInput("x87_empty", 80));
+    if (Stack->Pops) {
+      const unsigned OldTop = (x86reg::stRegIndex(Op.Inputs[1].Offset) +
+                               x86reg::FPUStackDepth - Op.Inputs[2].Offset) &
+                              7;
+      State.write(SymSpace::Register, x86reg::stReg(OldTop),
+                  State.freshInput("x87_popped", 80));
+    }
     SymRef Status = State.read(SymSpace::Register, x86reg::FPU_SW, 2);
-    SymRef Preserved = Ctx.mkAnd(
-        Status, Ctx.mkConst(16, ~uint16_t(X87PartialRemainderConditionMask)));
-    SymRef UnknownCodes =
-        Ctx.mkAnd(State.freshInput("x87_ffree_codes", 16),
-                  Ctx.mkConst(16, X87PartialRemainderConditionMask));
+    const uint16_t ChangedMask =
+        X87PartialRemainderConditionMask | (Stack->Pops ? kX87TopMask : 0);
+    SymRef Preserved = Ctx.mkAnd(Status, Ctx.mkConst(16, ~ChangedMask));
+    SymRef UnknownCodes = Ctx.mkAnd(State.freshInput("x87_ffree_codes", 16),
+                                    Ctx.mkConst(16, ChangedMask));
     State.write(SymSpace::Register, x86reg::FPU_SW,
                 Ctx.mkOr(Preserved, UnknownCodes));
     ++Unmodelled;
     ++OpaqueOperations;
     return StepResult::Unmodelled;
   }
-  if (Id == Intrinsic::X87Fincstp) {
+  if (x87StackEffect(Id)) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
       return unknownX87State();
     SymRef Status = State.read(SymSpace::Register, x86reg::FPU_SW, 2);
@@ -252,9 +274,6 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     return StepResult::Unmodelled;
   }
   if (Id == Intrinsic::X87ReadStatus) {
-    if (Op.NumInputs != 1 || Op.Output.Size != 2 ||
-        (!Op.Output.isReg() && !Op.Output.isTemp()))
-      return unmodelled(Op);
     writeResult(Op.Output, State.read(SymSpace::Register, x86reg::FPU_SW, 2));
     return StepResult::Continue;
   }
@@ -280,11 +299,7 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
                 State.freshInput("x87_status", 16));
     return Result;
   };
-  if (State.byteOrder() != llvm::endianness::little || Op.NumInputs != 3 ||
-      Op.Output.Size != x86reg::FPURegSize ||
-      Op.Inputs[1].Size != x86reg::FPURegSize ||
-      Op.Inputs[2].Size != x86reg::FPURegSize ||
-      (!Op.Output.isReg() && !Op.Output.isTemp()))
+  if (State.byteOrder() != llvm::endianness::little)
     return unknownRemainder();
 
   auto concreteBytes =

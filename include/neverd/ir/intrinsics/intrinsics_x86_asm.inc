@@ -77,6 +77,8 @@ A(Intrinsic::X87Fnclex, "fnclex");
 A(Intrinsic::X87Wait, "fwait");
 A(Intrinsic::X87Ffree, "ffree");
 A(Intrinsic::X87Fincstp, "fincstp");
+A(Intrinsic::X87Fdecstp, "fdecstp");
+A(Intrinsic::X87Ffreep, "ffreep");
 A(Intrinsic::Xbegin, "xbegin");
 A(Intrinsic::Xend, "xend");
 A(Intrinsic::Xabort, "xabort");

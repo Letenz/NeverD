@@ -76,6 +76,11 @@ SIDEEFFECT(Intrinsic::X87Fnclex);
 SIDEEFFECT(Intrinsic::X87Fprem);
 SIDEEFFECT(Intrinsic::X87Fprem1);
 SIDEEFFECT(Intrinsic::X87ReadStatus);
+// Retain reserved legacy helpers until validation can reject them too.
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1,              \
+                                SamplesStatus)                                 \
+  SIDEEFFECT(Intrinsic::ID);
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
 SIDEEFFECT(Intrinsic::X87Wait);
 SIDEEFFECT(Intrinsic::X87ReadControl);
 SIDEEFFECT(Intrinsic::X87ContextBegin);
@@ -87,8 +92,15 @@ SIDEEFFECT(Intrinsic::X87ContextMMXWrite);
 SIDEEFFECT(Intrinsic::X87ContextMMXEnter);
 SIDEEFFECT(Intrinsic::X87WriteControl);
 SIDEEFFECT(Intrinsic::X87LoadConstant);
+SIDEEFFECT(Intrinsic::X87LoadPackedBCD);
+SIDEEFFECT(Intrinsic::X87StorePackedBCD);
+SIDEEFFECT(Intrinsic::X87FptanPair);
+SIDEEFFECT(Intrinsic::X87FsincosPair);
+SIDEEFFECT(Intrinsic::X87FxtractPair);
 SIDEEFFECT(Intrinsic::X87Ffree);
 SIDEEFFECT(Intrinsic::X87Fincstp);
+SIDEEFFECT(Intrinsic::X87Fdecstp);
+SIDEEFFECT(Intrinsic::X87Ffreep);
 SIDEEFFECT(Intrinsic::X64Syscall);
 SIDEEFFECT(Intrinsic::X64WindowsSyscall);
 // string ops (side-effect)

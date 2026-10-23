@@ -20,6 +20,7 @@
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-x86-sideeffect"
+#include "neverd/ir/X87Stack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -925,12 +926,14 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
       llvm::report_fatal_error(
           "invalid x87 state intrinsic output/address space");
     std::string Mnemonic;
-    if (IC == Intrinsic::X87Ffree) {
+    const auto Stack = x87StackEffect(IC);
+    if (Stack && Stack->FreesOperand) {
       if (Op.NumInputs != 3 || Op.Inputs[1].Size != 10 ||
           !Op.Inputs[2].isConst() || Op.Inputs[2].Size != 1 ||
           Op.Inputs[2].ConstVal >= 8)
-        llvm::report_fatal_error("invalid x87 FFREE operand contract");
-      Mnemonic = "ffree %st(" + std::to_string(Op.Inputs[2].ConstVal) + ")";
+        llvm::report_fatal_error("invalid x87 free-register operand contract");
+      Mnemonic = std::string(intrinsicAsmMnemonic(IC)) + " %st(" +
+                 std::to_string(Op.Inputs[2].ConstVal) + ")";
     } else {
       if (Op.NumInputs != 1)
         llvm::report_fatal_error(

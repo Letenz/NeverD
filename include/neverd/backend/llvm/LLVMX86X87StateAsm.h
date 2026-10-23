@@ -14,7 +14,7 @@
 #ifndef NEVERD_BACKEND_LLVM_LLVMX86X87STATEASM_H
 #define NEVERD_BACKEND_LLVM_LLVMX86X87STATEASM_H
 
-#include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/X87Stack.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -51,15 +51,14 @@ inline llvm::StringRef x87StateCClobbers(X87StateEffect Effect) {
 }
 
 /// The effect of the x87 state instruction the intrinsic \p Id runs, if it
-/// is one: FNINIT resets the unit, FFREE and FINCSTP change the register
+/// is one: FNINIT resets the unit, free/rotate instructions change the register
 /// stack, and FWAIT and FNCLEX touch only the status.
 inline std::optional<X87StateEffect> x87StateEffectOfIntrinsic(Intrinsic Id) {
+  if (x87StackEffect(Id))
+    return X87StateEffect::Stack;
   switch (Id) {
   case Intrinsic::X87Fninit:
     return X87StateEffect::Reset;
-  case Intrinsic::X87Ffree:
-  case Intrinsic::X87Fincstp:
-    return X87StateEffect::Stack;
   case Intrinsic::X87Wait:
   case Intrinsic::X87Fnclex:
     return X87StateEffect::Status;

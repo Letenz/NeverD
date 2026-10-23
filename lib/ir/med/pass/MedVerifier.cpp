@@ -78,6 +78,15 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
                   Id, x87ConstantControlMedShape(Op, Arch::Unknown)))
             Err("x87 constant/control intrinsic has an invalid contract",
                 Blk.Id, Op.Addr);
+          if (isX87GuardedValueIntrinsic(Id) &&
+              !x87GuardedValueShapeIsValid(
+                  x87GuardedValueMedShape(Op, Arch::Unknown)))
+            Err("guarded x87 intrinsic has an invalid value/control contract",
+                Blk.Id, Op.Addr);
+          if (x87ValueInfo(Id) &&
+              !x87ValueShapeIsValid(x87ValueMedShape(Op, Arch::Unknown)))
+            Err("x87 scalar intrinsic has an invalid value/status contract",
+                Blk.Id, Op.Addr);
           if (Id == Intrinsic::CetRdSsp &&
               !x86ShadowStackReadShapeIsValid(x86ShadowStackReadMedShape(Op)))
             Err("shadow stack read has an invalid full-GPR contract", Blk.Id,

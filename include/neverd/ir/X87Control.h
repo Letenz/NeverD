@@ -14,9 +14,15 @@
 
 namespace neverd {
 
+inline constexpr uint16_t X87ControlReservedMask = 0xe080;
+inline constexpr uint16_t X87PrecisionControlMask = 0x300;
+inline constexpr uint16_t X87ReservedPrecisionControl = 0x100;
+inline constexpr uint16_t X87ExceptionMaskBits = 0x3f;
+
 constexpr bool x87ControlWordIsValid(uint16_t Control) {
   // PC=01 and reserved control bits have no admitted architectural meaning.
-  return (Control & 0xe080) == 0 && (Control & 0x300) != 0x100;
+  return (Control & X87ControlReservedMask) == 0 &&
+         (Control & X87PrecisionControlMask) != X87ReservedPrecisionControl;
 }
 
 /// Requires x87ControlWordIsValid. PC affects precision, not exponent range.

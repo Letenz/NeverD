@@ -184,8 +184,12 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
   Result.Requirements = "explicit incoming state; validated encoding, memory "
                         "and CFG/call contract";
   Result.Evidence =
-      Owned ? "unittests/lift/x86_64/X86_64_X87ConvertStateTests.cpp"
-            : "unittests/lift/x86_32/X86_32_X87FPUTests.cpp";
+      Owned ? "unittests/lift/x86_64/X86_64_X87ConvertStateTests.cpp; "
+              "unittests/lift/x86_64/X86_64_X87FaultTests.cpp"
+            : "unittests/lift/x86_32/X86_32_X87FPUTests.cpp; "
+              "unittests/lift/x86_32/X87StackManagementTests.cpp; "
+              "unittests/lift/x86_32/X87PackedBCDTests.cpp; "
+              "unittests/lift/x86_32/X87TranscendentalTests.cpp";
   if (Q.Consumer == X87Consumer::Symbolic ||
       Q.Consumer == X87Consumer::CheckedRefinement) {
     if (Q.Backend != X87Backend::None)
@@ -254,7 +258,9 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
     Result.Requirements =
         "x86-64 GCC/Clang; FXSAVE/FXRSTOR; SSE3 for FISTTP; known CW/SW, tags "
         "and demanded payloads; valid PC/RC; no pending unmasked exception at "
-        "waiting boundaries; authenticated ordinary memory; "
+        "waiting boundaries; authenticated ordinary memory; FBLD requires "
+        "decimal digits 0-9 (undefined digits are not native-reference "
+        "inputs); "
         "processor-dependent "
         "operations require explicit non-strict native-reference mode";
     return Result;
@@ -270,7 +276,14 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
   Result.Reason = "emission-does-not-qualify-complete-state-or-exceptions";
   Result.Requirements =
       "x86 GCC/Clang GNU assembly and target x87; actual source/target ABI and "
-      "long-double layout; typed C value operations require 64-bit significand "
+      "long-double layout; FBLD numerical scope requires decimal digits 0-9; "
+      "typed BCD guards require valid CW and all exception masks; "
+      "out-of-scope typed BCD inputs trap before conversion; "
+      "typed FPTAN/FSINCOS/FXTRACT pairs require proved source/destination "
+      "tags, canonical finite input and valid all-masked CW; FPTAN/FSINCOS "
+      "require abs(input) < 2^63; other pair inputs trap before execution; "
+      "HighC sampled-status helpers require initialized TLS; "
+      "typed C value operations require 64-bit significand "
       "long double; admitted CFG/tag/control and call preconditions";
   if ((Owned && Form->ValueClass != X87ValueClass::StateOnly) ||
       Form->ValueClass == X87ValueClass::ExactValue)

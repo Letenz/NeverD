@@ -12,6 +12,7 @@
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/llvm/LLVMX86DivRemAsm.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/AsmParser/Parser.h"
@@ -64,8 +65,10 @@ void compileAndRun(const std::string &Source,
     ASSERT_FALSE(EC);
     OS << Source;
     if (NativeI386)
+      // Linux enters _start without an ABI call's return-address slot.
+      // Realign before calling C, including sanitizer-instrumented fixtures.
       OS << R"(
-__attribute__((noreturn)) void _start(void) {
+__attribute__((noreturn, force_align_arg_pointer)) void _start(void) {
   unsigned result = main();
   __asm__ __volatile__("int $0x80" : : "a"(1), "b"(result) : "memory");
   __builtin_unreachable();
@@ -110,6 +113,405 @@ __attribute__((noreturn)) void _start(void) {
   Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
                                      Redirects, 30, 0, &Error);
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+}
+
+TEST(LLVMCValues, X87MemoryViewsRetainBitsAndTenByteExtents) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires native Linux i386/x64 binary80 execution";
+#else
+  const char *IR = R"ir(
+declare void @copy_ten(ptr, ptr)
+define void @load_float_from_integer(ptr %input, ptr %output) {
+  %storage = alloca i80, align 16
+  call void @copy_ten(ptr %storage, ptr %input)
+  %value = load x86_fp80, ptr %storage, align 1
+  store x86_fp80 %value, ptr %output, align 1
+  ret void
+}
+define void @store_float_in_integer(ptr %input, ptr %output) {
+  %storage = alloca i80, align 16
+  %value = load x86_fp80, ptr %input, align 1
+  store x86_fp80 %value, ptr %storage, align 1
+  call void @copy_ten(ptr %output, ptr %storage)
+  ret void
+}
+define void @load_integer_from_float(ptr %input, ptr %output) {
+  %storage = alloca x86_fp80, align 16
+  call void @copy_ten(ptr %storage, ptr %input)
+  %value = load i80, ptr %storage, align 1
+  store i80 %value, ptr %output, align 1
+  ret void
+}
+define void @store_integer_in_float(ptr %input, ptr %output) {
+  %storage = alloca x86_fp80, align 16
+  %value = load i80, ptr %input, align 1
+  store i80 %value, ptr %storage, align 1
+  call void @copy_ten(ptr %output, ptr %storage)
+  ret void
+}
+define void @direct_mixed_view(ptr %input, ptr %output) {
+  %storage = alloca i80, align 16
+  %bits = load i80, ptr %input, align 1
+  store i80 %bits, ptr %storage, align 1
+  %value = load x86_fp80, ptr %storage, align 1
+  store x86_fp80 %value, ptr %output, align 1
+  ret void
+}
+)ir";
+  for (bool NativeI386 : {false, true})
+    for (bool PreserveTypes : {false, true})
+      for (bool Unaligned : {false, true}) {
+        SCOPED_TRACE(NativeI386);
+        SCOPED_TRACE(PreserveTypes);
+        SCOPED_TRACE(Unaligned);
+        llvm::LLVMContext Context;
+        llvm::SMDiagnostic Error;
+        auto Module = llvm::parseAssemblyString(IR, Error, Context);
+        ASSERT_TRUE(Module) << Error.getMessage().str();
+        Module->setTargetTriple(
+            llvm::Triple(NativeI386 ? "i386-linux-gnu" : "x86_64-linux-gnu"));
+        Module->setDataLayout(NativeI386 ? "e-p:32:32-i128:128-f80:32"
+                                         : "e-p:64:64-i128:128-f80:128");
+        ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+        neverd::CEmitterOptions Options;
+        Options.TheArch = NativeI386 ? neverd::Arch::X86 : neverd::Arch::X64;
+        Options.PreserveLLVMFunctionTypes = PreserveTypes;
+        Options.UseUnalignedPointers = Unaligned;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+        std::string Main = R"(
+void copy_ten(void *destination, void *source) {
+  for (unsigned i=0; i<10; ++i)
+    ((unsigned char *)destination)[i] = ((unsigned char *)source)[i];
+}
+)";
+        std::string Generated, References;
+        for (auto &Function : *Module) {
+          if (Function.isDeclaration())
+            continue;
+          const std::string Name = Function.getName().str();
+          Generated += (Generated.empty() ? "" : ", ") + Name;
+          References += (References.empty() ? "ref_" : ", ref_") + Name;
+          Function.setName("ref_" + Name);
+          Main += "extern void ref_" + Name + "(void *, void *);\n";
+        }
+        Main += "typedef void (*operation)(void *, void *);\n"
+                "static operation generated[] = {" +
+                Generated +
+                "};\n"
+                "static operation reference[] = {" +
+                References + "};\n";
+        Main += R"(
+int main(void) {
+  const uint64_t significands[] = {0, 0, 1, UINT64_C(0x8000000000000000),
+    UINT64_C(0x8000000000000008), UINT64_C(0xffffffffffffffff)};
+  const uint16_t exponents[] = {0, 0x8000, 0, 1, 0x3fff, 0x7ffe};
+  unsigned char input[32], actual[32], expected[32];
+  for (unsigned v=0; v<sizeof(exponents)/sizeof(exponents[0]); ++v) {
+    for (unsigned i=0; i<32; ++i) input[i] = 0xa5;
+    for (unsigned i=0; i<8; ++i) input[1+i] = significands[v] >> (8*i);
+    input[9] = exponents[v]; input[10] = exponents[v] >> 8;
+    for (unsigned f=0; f<sizeof(generated)/sizeof(generated[0]); ++f) {
+      for (unsigned i=0; i<32; ++i) actual[i] = expected[i] = 0xa5;
+      reference[f](input+1, expected+3);
+      generated[f](input+1, actual+3);
+      for (unsigned i=0; i<32; ++i)
+        if (actual[i] != expected[i] ||
+            actual[i] != (i>=3 && i<13 ? input[i-2] : 0xa5)) return 1;
+    }
+  }
+  return 0;
+}
+)";
+        std::string Reference;
+        llvm::raw_string_ostream ReferenceOut(Reference);
+        Module->print(ReferenceOut, nullptr);
+        for (const char *Optimization : {"-O0", "-O2"}) {
+          SCOPED_TRACE(Optimization);
+          compileAndRun(Source + Main, Optimization, Reference,
+                        /*CheckUndefinedBehavior=*/true, NativeI386);
+        }
+      }
+#endif
+}
+
+TEST(LLVMCValues, X87FiniteConstantsKeepExtendedPrecisionAndRange) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires native Linux i386/x64 binary80 execution";
+#else
+  struct Encoding {
+    uint64_t Significand;
+    uint16_t SignExponent;
+  };
+  const Encoding Cases[] = {{0, 0},
+                            {0, 0x8000},
+                            {1, 0},
+                            {UINT64_C(0x7fffffffffffffff), 0},
+                            {UINT64_C(0x8000000000000000), 1},
+                            {UINT64_C(0x8000000000000000), 0x3fff},
+                            {UINT64_C(0x8000000000000001), 0x3fff},
+                            {UINT64_C(0x8000000000000008), 0xbfff},
+                            {UINT64_C(0x8000000000000000), 0x2000},
+                            {UINT64_C(0x8000000000000000), 0x5000},
+                            {UINT64_C(0xffffffffffffffff), 0x7ffe},
+                            {UINT64_C(0xffffffffffffffff), 0xfffe}};
+  for (bool NativeI386 : {false, true})
+    for (bool PreserveTypes : {false, true}) {
+      SCOPED_TRACE(NativeI386);
+      SCOPED_TRACE(PreserveTypes);
+      llvm::LLVMContext Context;
+      llvm::Module Module("x87-finite-constants", Context);
+      Module.setTargetTriple(
+          llvm::Triple(NativeI386 ? "i386-linux-gnu" : "x86_64-linux-gnu"));
+      Module.setDataLayout(NativeI386 ? "e-p:32:32-i128:128-f80:32"
+                                      : "e-p:64:64-i128:128-f80:128");
+      auto *Function = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                  {llvm::PointerType::getUnqual(Context)},
+                                  false),
+          llvm::GlobalValue::ExternalLinkage, "finite_constants", Module);
+      llvm::IRBuilder<> Builder(
+          llvm::BasicBlock::Create(Context, "entry", Function));
+      std::string Expected;
+      unsigned Offset = 0;
+      for (const auto &Value : Cases) {
+        const uint64_t Words[] = {Value.Significand, Value.SignExponent};
+        auto *Constant = llvm::ConstantFP::get(
+            Context, llvm::APFloat(llvm::APFloat::x87DoubleExtended(),
+                                   llvm::APInt(80, Words)));
+        auto *Global = new llvm::GlobalVariable(
+            Module, Constant->getType(), true,
+            llvm::GlobalValue::PrivateLinkage, Constant,
+            "finite_value_" + std::to_string(Offset));
+        // Exercise literals in expressions and in static initializers.
+        for (bool ReadGlobal : {false, true}) {
+          llvm::Value *Stored =
+              ReadGlobal ? Builder.CreateLoad(Constant->getType(), Global)
+                         : static_cast<llvm::Value *>(Constant);
+          auto *Address = Builder.CreateConstGEP1_64(
+              Builder.getInt8Ty(), Function->getArg(0), Offset);
+          Builder.CreateStore(Stored, Address)->setAlignment(llvm::Align(1));
+          for (unsigned Byte = 0; Byte != 10; ++Byte) {
+            const auto Bits = Byte < 8 ? Value.Significand >> (8 * Byte)
+                                       : Value.SignExponent >> (8 * (Byte - 8));
+            Expected +=
+                (Expected.empty() ? "" : ",") + std::to_string(Bits & 0xff);
+          }
+          Offset += 10;
+        }
+      }
+      Builder.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      neverd::CEmitterOptions Options;
+      Options.TheArch = NativeI386 ? neverd::Arch::X86 : neverd::Arch::X64;
+      Options.PreserveLLVMFunctionTypes = PreserveTypes;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+      Function->setName("reference_constants");
+      std::string Reference;
+      llvm::raw_string_ostream ReferenceOut(Reference);
+      Module.print(ReferenceOut, nullptr);
+      const std::string Main = "\nextern void reference_constants(void *);\n"
+                               "static const unsigned char payload[] = {" +
+                               Expected + "};\n" + R"(
+int main(void) {
+  unsigned char actual[sizeof(payload)+2], reference[sizeof(actual)];
+  for (unsigned i=0; i<sizeof(actual); ++i) actual[i] = reference[i] = 0xa5;
+  finite_constants(actual+1);
+  reference_constants(reference+1);
+  for (unsigned i=0; i<sizeof(actual); ++i)
+    if (actual[i] != reference[i] ||
+        actual[i] != (i && i<=sizeof(payload) ? payload[i-1] : 0xa5)) return 1;
+  return 0;
+}
+)";
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Optimization);
+        compileAndRun(Source + Main, Optimization, Reference,
+                      /*CheckUndefinedBehavior=*/true, NativeI386);
+      }
+    }
+#endif
+}
+
+TEST(LLVMCValues, X86NativeDivideRejectsChangedContractsAndTargets) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    llvm::LLVMContext Context;
+    llvm::Module Module("invalid-native-divide", Context);
+    Module.setTargetTriple(llvm::Triple("x86_64-linux-gnu"));
+    Module.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> Builder(Context);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Builder.getVoidTy(), false),
+        llvm::GlobalValue::ExternalLinkage, "invalid_divide", Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Word = Builder.getIntNTy(Mutation == 4 ? 32 : 64);
+    auto *Pair = llvm::StructType::get(Context, {Word, Word});
+    llvm::SmallVector<llvm::Type *, 3> Types(3, Word);
+    if (Mutation == 5)
+      Types[2] = Builder.getInt16Ty();
+    if (Mutation == 6)
+      Types.pop_back();
+    auto *Assembly = llvm::InlineAsm::get(
+        llvm::FunctionType::get(Pair, Types, false),
+        neverd::x86DivRemAssembly({64, true}),
+        Mutation == 0 ? "={ax},={dx},{ax},{dx},r"
+                      : neverd::X86DivRemAsmConstraints,
+        /*hasSideEffects=*/Mutation != 1,
+        /*isAlignStack=*/Mutation == 2,
+        Mutation == 3 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
+    llvm::SmallVector<llvm::Value *, 3> Arguments;
+    for (auto *Type : Types)
+      Arguments.push_back(llvm::ConstantInt::get(Type, 1));
+    auto *Call = Builder.CreateCall(Assembly, Arguments);
+    Builder.CreateRetVoid();
+    if (Mutation < 7) {
+      EXPECT_DEATH((void)neverd::classifyX86DivRemAsm(*Call),
+                   "invalid native x86 divide assembly contract");
+      continue;
+    }
+    neverd::CEmitterOptions Options;
+    Options.TheArch = Mutation == 7 ? neverd::Arch::AArch64 : neverd::Arch::X86;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    EXPECT_DEATH((void)neverd::LLVMCEmitter().emit(Module, Out, Options),
+                 "native x86 divide target/type mismatch");
+  }
+}
+
+TEST(LLVMCValues, X86NativeDivideKeepsBothResultsAndDeadResultFaults) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires native Linux i386/x64 execution";
+#else
+  for (bool NativeI386 : {false, true}) {
+    SCOPED_TRACE(NativeI386);
+    llvm::LLVMContext Context;
+    llvm::Module Module("native-divide", Context);
+    Module.setTargetTriple(
+        llvm::Triple(NativeI386 ? "i386-linux-gnu" : "x86_64-linux-gnu"));
+    Module.setDataLayout(NativeI386 ? "e-p:32:32" : "e-p:64:64");
+    llvm::IRBuilder<> Builder(Context);
+    std::string Prototypes, Body;
+    for (unsigned Bits : {32U, 64U}) {
+      if (NativeI386 && Bits == 64)
+        continue;
+      auto *Word = Builder.getIntNTy(Bits);
+      const uint64_t Mask = Bits == 32 ? UINT32_MAX : UINT64_MAX;
+      for (bool Signed : {false, true})
+        for (bool Live : {false, true}) {
+          const std::string Name = "divide_" + std::to_string(Bits) + "_" +
+                                   std::to_string(Signed) + "_" +
+                                   std::to_string(Live);
+          auto *Function = llvm::Function::Create(
+              llvm::FunctionType::get(
+                  Builder.getVoidTy(),
+                  {Builder.getInt64Ty(), Builder.getInt64Ty(),
+                   Builder.getInt64Ty(), Builder.getPtrTy()},
+                  false),
+              llvm::GlobalValue::ExternalLinkage, Name, Module);
+          Builder.SetInsertPoint(
+              llvm::BasicBlock::Create(Context, "entry", Function));
+          auto *Pair = llvm::StructType::get(Context, {Word, Word});
+          auto *Assembly = llvm::InlineAsm::get(
+              llvm::FunctionType::get(Pair, {Word, Word, Word}, false),
+              neverd::x86DivRemAssembly({Bits, Signed}),
+              neverd::X86DivRemAsmConstraints, true);
+          auto *Result = Builder.CreateCall(
+              Assembly, {Builder.CreateZExtOrTrunc(Function->getArg(0), Word),
+                         Builder.CreateZExtOrTrunc(Function->getArg(1), Word),
+                         Builder.CreateZExtOrTrunc(Function->getArg(2), Word)});
+          if (Live)
+            for (unsigned Index : {0U, 1U}) {
+              auto *Value = Builder.CreateZExtOrTrunc(
+                  Builder.CreateExtractValue(Result, Index),
+                  Builder.getInt64Ty());
+              Builder.CreateStore(
+                  Value, Builder.CreateConstGEP1_64(
+                             Builder.getInt64Ty(), Function->getArg(3), Index));
+            }
+          Builder.CreateRetVoid();
+          Prototypes += "extern void ref_" + Name +
+                        "(uint64_t, uint64_t, uint64_t, void *);\n";
+          Body += "{ const uint64_t mask = UINT64_C(" + std::to_string(Mask) +
+                  ");\nstatic const uint64_t cases[][5] = {\n";
+          Body += Signed ? "{43,0,6,7,1}, "
+                           "{UINT64_MAX-42,UINT64_MAX,6,UINT64_MAX-6,UINT64_"
+                           "MAX}, {43,0,UINT64_MAX-5,UINT64_MAX-6,1}\n"
+                         : "{42,0,6,7,0}, {43,0,6,7,1}, {17,1,3," +
+                               std::to_string(
+                                   Bits == 32 ? UINT64_C(1431655771)
+                                              : UINT64_C(6148914691236517211)) +
+                               "ULL,0}\n";
+          Body += "};\nfor (unsigned i=0; i<3; ++i) {\n"
+                  "uint64_t actual[2]={71,73}, expected[2]={71,73};\n" +
+                  Name + "(cases[i][0],cases[i][1],cases[i][2],actual);\nref_" +
+                  Name +
+                  "(cases[i][0],cases[i][1],cases[i][2],expected);\n"
+                  "if (actual[0]!=expected[0] || actual[1]!=expected[1]) "
+                  "return 1;\n";
+          Body += Live ? "if (actual[0]!=(cases[i][3]&mask) || "
+                         "actual[1]!=(cases[i][4]&mask)) return 2;\n"
+                       : "if (actual[0]!=71 || actual[1]!=73) return 3;\n";
+          Body += "}\n";
+          if (!NativeI386) {
+            for (const std::string &Operation : {Name, "ref_" + Name}) {
+              Body += "if (check_fault(" + Operation + ",42,0,0)) return 4;\n";
+              Body += "if (check_fault(" + Operation + ",UINT64_C(" +
+                      std::to_string(Signed ? UINT64_C(1) << (Bits - 1) : 0) +
+                      "),UINT64_C(" + std::to_string(Signed ? Mask : 1) +
+                      "),UINT64_C(" + std::to_string(Signed ? Mask : 1) +
+                      "))) return 5;\n";
+            }
+          }
+          Body += "}\n";
+        }
+    }
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    neverd::CEmitterOptions Options;
+    Options.TheArch = NativeI386 ? neverd::Arch::X86 : neverd::Arch::X64;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+    for (auto &Function : Module)
+      Function.setName("ref_" + Function.getName());
+    std::string Reference;
+    llvm::raw_string_ostream ReferenceOut(Reference);
+    Module.print(ReferenceOut, nullptr);
+    std::string Main = Prototypes;
+    if (!NativeI386)
+      Main += R"(
+#include <signal.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+static void divide_fault(int code) { _Exit(code == SIGFPE ? 0 : 99); }
+static int check_fault(void (*operation)(uint64_t,uint64_t,uint64_t,void*),
+                       uint64_t low, uint64_t high, uint64_t divisor) {
+  pid_t child = fork();
+  if (child == -1) return 1;
+  if (!child) {
+    if (signal(SIGFPE, divide_fault) == SIG_ERR) _Exit(2);
+    uint64_t result[2];
+    operation(low, high, divisor, result);
+    _Exit(3);
+  }
+  int status;
+  return waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status);
+}
+)";
+    Main += "\nint main(void) {\n" + Body + "return 0;\n}\n";
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      compileAndRun(Source + Main, Optimization, Reference,
+                    /*CheckUndefinedBehavior=*/true, NativeI386);
+    }
+  }
+#endif
 }
 
 TEST(LLVMCValues, RepeatedParameterFieldAddressesPreserveMemoryObservations) {

@@ -120,8 +120,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       Op.Inputs[0].isConst() &&
       static_cast<Intrinsic>(Op.Inputs[0].ConstVal) == Intrinsic::X87ReadStatus;
   if (!IsSyntheticX87StatusRead) {
-    PendingX87FpremStatus = nullptr;
-    PendingX87FpremBlock = nullptr;
+    PendingX87Status = nullptr;
+    PendingX87StatusBlock = nullptr;
   }
 
   if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
