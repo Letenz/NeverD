@@ -5473,6 +5473,16 @@ existing SSA rule. Mutating the marker or function entry between calls must
 invalidate authentication. Run these batched and standalone checks across
 x86, x64, ARM32 and AArch64 in COFF, ELF and Mach-O.
 
+Read-only stack-offset queries may reuse a successful proof only for an exact
+occurrence when it did not depend on a loop assumption or active definition.
+Reuse charges the original traversal's work and checks its maximum depth;
+shared joins must still refuse at the same limits. The mutation case repeats
+queries in separate batches before and after changing the entry marker or
+address. Mutable alignment rewrites continue to prove against the current IR.
+`LoopAssumptionsDoNotBecomeIndependentProofs` checks a join and backedge copy
+where the copy succeeds only under the join's assumed offset;
+querying it independently must still refuse in either batch order.
+
 `Win64SourceCallsKeepTheirDeclaredCarrierWidths` checks declared scalar carriers
 against whole-register scans. `NeverDWorkerCallSiteTypes` also checks explicit
 Win64 argument counts from zero through five, both C routes and partial-stack
