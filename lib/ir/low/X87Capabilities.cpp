@@ -229,7 +229,9 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
         "object/registry/credential "
         "binding; exact-span memory; raw transport preserves encodings; "
         "RejectExecutableWrites or "
-        "InvalidateOnWrite; masked finite instruction domain; no integer-flag "
+        "InvalidateOnExecutableWrite; RejectExecutableWrites requires no "
+        "writable executable mappings; masked finite instruction domain; no "
+        "integer-flag "
         "x87 forms, floating call ABI, MMX or general environment operations; "
         "legacy C/Python/CLI translation object interfaces remain scalar-only";
     Result.Evidence =

@@ -403,7 +403,8 @@ runtime profile, state layout, helper protocol and exact-span memory policy.
 Registry shape identity cannot authenticate a forged helper address. Object
 publication alone is not permission to invoke: the actual linked object needs
 matching code-generation credentials and memory policy. Only
-`RejectExecutableWrites` and `InvalidateOnWrite` are admitted;
+`RejectExecutableWrites` and `InvalidateOnExecutableWrite` are admitted. The
+former rejects writable executable mappings during session creation;
 `ValidateBeforeDispatch` is refused for this profile. A completed executable
 store invalidates its credential even when cancellation takes exit priority.
 
