@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
+#include "neverd/backend/llvm/X86SystemRegisterAsm.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-x86-sideeffect"
 #include "neverd/ir/X87Stack.h"
@@ -605,27 +606,30 @@ static bool isX86MpxOrTransactional(Intrinsic IC) {
 
 bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
                                        llvm::IRBuilder<> &Builder) {
-  const bool SystemRegisterWrite =
-      IC == Intrinsic::WriteCr0 || IC == Intrinsic::WriteCr2 ||
-      IC == Intrinsic::WriteCr3 || IC == Intrinsic::WriteCr4 ||
-      IC == Intrinsic::WriteCr8 || IC == Intrinsic::WriteDr;
-  if (auto Reg = !SystemRegisterWrite
-                     ? std::nullopt
-                     : x86SystemRegisterName(IC, Op.NumInputs > 1 &&
-                                                         Op.Inputs[1].isConst()
-                                                     ? Op.Inputs[1].ConstVal
-                                                     : UINT64_MAX)) {
-    // WriteDr carries the register number before the value.
+  if (x86SystemRegisterName(IC, 0)) {
+    const auto P = x86SystemRegisterAsm(
+        IC, TargetArch,
+        Op.NumInputs > 1 && Op.Inputs[1].isConst() ? Op.Inputs[1].ConstVal
+                                                   : UINT64_MAX);
+    // A read is handled by the value emitter, including a dead result.
+    if (P && !P->Write)
+      return false;
     const uint16_t ValueInput = IC == Intrinsic::WriteDr ? 2 : 1;
-    if (Op.NumInputs <= ValueInput)
-      llvm::report_fatal_error("x86 system register write has no value");
+    if (!P || Op.NumInputs != ValueInput + 1 || Op.Output.Size != 0 ||
+        Op.Inputs[ValueInput].Size != P->Bytes ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      llvm::report_fatal_error("invalid x86 system register write contract");
     llvm::Value *Value = getVar(Op.Inputs[ValueInput], Builder);
+    if (Value->getType()->isPointerTy())
+      Value =
+          Builder.CreatePtrToInt(Value, sizeToType(P->Bytes), "sysreg_value");
+    if (!Value->getType()->isIntegerTy(8 * P->Bytes))
+      llvm::report_fatal_error(
+          "x86 system register write has a non-native value");
     auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
                                          {Value->getType()}, false);
-    // CR/DR MOV leaves the arithmetic flags undefined.
-    auto *IA =
-        llvm::InlineAsm::get(FnTy, "mov $0, " + *Reg, "r,~{flags},~{memory}",
-                             /*hasSideEffects=*/true);
+    auto *IA = llvm::InlineAsm::get(FnTy, P->Text, P->Constraints,
+                                    /*hasSideEffects=*/true);
     Builder.CreateCall(IA, {Value});
     return true;
   }

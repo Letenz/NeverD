@@ -25,6 +25,28 @@
 
 using namespace neverd;
 
+TEST(X86InstructionCoverage, RexRDoesNotCreateExtraDebugRegisters) {
+  for (unsigned Index = 0; Index < 8; ++Index)
+    for (bool Write : {false, true})
+      for (bool ForLift : {false, true}) {
+        const std::vector<uint8_t> Bytes = {0x44, 0x0f,
+                                            uint8_t(Write ? 0x23 : 0x21),
+                                            uint8_t(0xc0 + 8 * Index)};
+        Decoder D;
+        ASSERT_TRUE(D.init(Arch::X64));
+        DecodedInsn I{};
+        const auto Length =
+            ForLift ? D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I)
+                    : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I);
+        if (!Length)
+          continue;
+        ASSERT_EQ(Length, Bytes.size());
+        std::vector<LowOp> Ops;
+        EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+      }
+}
+
 TEST(X86InstructionCoverage, PinnedDecoderCorpusHasExplicitLiftResults) {
   const std::filesystem::path Directory = NEVERD_X86_MC_DIRECTORY;
   ASSERT_TRUE(std::filesystem::is_directory(Directory));

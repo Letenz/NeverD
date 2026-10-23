@@ -10,11 +10,14 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../X86SystemRegister.h"
+
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/X86SystemRegisterAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 
@@ -24,6 +27,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/AtomicOrdering.h"
+#include "llvm/Support/ModRef.h"
 
 #include <cstring>
 #include <stdexcept>
@@ -40,6 +44,61 @@ static const AsmToCEntry X86AsmTable[] = {
 };
 
 } // anonymous namespace
+
+std::optional<InlineAsmRender>
+renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
+                            const llvm::CallInst &Call,
+                            const std::string &ResultName, bool ResultLive,
+                            const std::vector<std::string> &Args) {
+  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (!Asm)
+    return std::nullopt;
+  llvm::StringRef Text = Asm->getAsmString();
+  if (!Text.contains("%cr") && !Text.contains("%dr"))
+    return std::nullopt;
+  auto Reject = []() -> std::optional<InlineAsmRender> {
+    throw std::invalid_argument(
+        "unsupported x86 system register assembly contract");
+  };
+  if (!Text.consume_front("mov "))
+    return Reject();
+  auto [First, Second] = Text.split(',');
+  First = First.trim();
+  Second = Second.trim();
+  const bool Read = Second == "$0";
+  const auto Reg = Read ? First : Second;
+  uint64_t Index;
+  if ((!Reg.starts_with("%cr") && !Reg.starts_with("%dr")) ||
+      Reg.drop_front(3).getAsInteger(10, Index))
+    return Reject();
+  const bool Debug = Reg.starts_with("%dr");
+  const std::string CName = std::string(Read ? "__read" : "__write") +
+                            (Debug ? "dr" : "cr" + std::to_string(Index));
+  const auto P =
+      x86SystemRegisterAsm(intrinsicFromName(CName.c_str()), TheArch, Index);
+  if (!P || P->Text != Asm->getAsmString() ||
+      P->Constraints != Asm->getConstraintString() || !Asm->hasSideEffects() ||
+      Asm->isAlignStack() || Asm->canThrow() ||
+      Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
+      Call.getNumOperandBundles() ||
+      Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
+      Call.doesNotReturn() || Call.getFunctionType()->isVarArg() ||
+      Call.arg_size() != (P->Write ? 1 : 0) || Args.size() != Call.arg_size() ||
+      (P->Write
+           ? !Call.getType()->isVoidTy() ||
+                 !Call.getArgOperand(0)->getType()->isIntegerTy(8 * P->Bytes)
+           : !Call.getType()->isIntegerTy(8 * P->Bytes)) ||
+      (ResultLive && !P->Write && ResultName.empty()))
+    return Reject();
+
+  const bool Microsoft = Format == BinaryFormat::COFF;
+  const std::string Prefix = P->Write     ? ""
+                             : ResultLive ? ResultName + " = "
+                                          : "(void)";
+  return InlineAsmRender{
+      Prefix + renderX86SystemRegisterExpression(*P, Microsoft, Args) + ";\n",
+      Microsoft};
+}
 
 std::optional<X86RepStos> classifyX86RepStos(Arch TheArch,
                                              const llvm::CallInst &Call) {
@@ -248,8 +307,12 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
             false};
   }
 
-  // MOV to/from a control or debug register, as MedLLVM emits it
-  // (`mov %cr8, $0` / `mov $0, %cr8`): print the MSVC intrinsic.
+  // CR/DR accesses require the complete CallInst contract, not just text.
+  if (llvm::StringRef(AsmStr).contains("%cr") ||
+      llvm::StringRef(AsmStr).contains("%dr"))
+    throw std::invalid_argument(
+        "x86 system register assembly needs a checked call");
+
   {
     llvm::StringRef Text(AsmStr);
     if (Text.consume_front("mov ")) {
@@ -258,25 +321,6 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
       Second = Second.trim();
       const bool Read = Second == "$0";
       const llvm::StringRef Reg = Read ? First : Second;
-      const bool IsCr = Reg.starts_with("%cr");
-      const bool IsDr = Reg.starts_with("%dr");
-      unsigned N = 0;
-      if ((IsCr || IsDr) && !Reg.drop_front(3).getAsInteger(10, N) && N <= 15 &&
-          (Read || First == "$0")) {
-        const std::string Index = std::to_string(N);
-        std::string Result;
-        if (Read) {
-          if (ResultLive && !ResultName.empty())
-            Result = ResultName + " = ";
-          Result +=
-              IsCr ? "__readcr" + Index + "()" : "__readdr(" + Index + ")";
-        } else {
-          const std::string Value = Args.empty() ? "0" : Args[0];
-          Result = IsCr ? "__writecr" + Index + "(" + Value + ")"
-                        : "__writedr(" + Index + ", " + Value + ")";
-        }
-        return {Result + ";\n", true};
-      }
       // A segment selector move (`mov %cs, $0` / `mov ${0:w}, %ds`).
       llvm::StringRef Segment = Reg;
       if (Segment.consume_front("%") && x86SegmentRegisterNamed(Segment) &&

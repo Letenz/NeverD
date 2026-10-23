@@ -119,11 +119,15 @@ std::optional<bool> liftSystemRegisterMove(X86Lifter::LiftState &S,
     return false;
   }
   if (int Dr = DrIndex(Src); Dr >= 0 && Dst.type == X86_OP_REG) {
+    if (!x86SystemRegisterName(Intrinsic::ReadDr, Dr))
+      return false;
     S.emitIntrinsic(Intrinsic::ReadDr, GPR(Dst),
                     {NdVar::scalar(static_cast<uint64_t>(Dr), 4)});
     return true;
   }
   if (int Dr = DrIndex(Dst); Dr >= 0 && Src.type == X86_OP_REG) {
+    if (!x86SystemRegisterName(Intrinsic::WriteDr, Dr))
+      return false;
     S.emitIntrinsic(Intrinsic::WriteDr, NdVar(),
                     {NdVar::scalar(static_cast<uint64_t>(Dr), 4), GPR(Src)});
     return true;

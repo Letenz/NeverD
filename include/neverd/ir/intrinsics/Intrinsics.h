@@ -1269,7 +1269,7 @@ constexpr bool preservesCallSetup(Intrinsic Id) {
 
 /// The control or debug register (`%cr8`, `%dr7`) that a ReadCr*/WriteCr*
 /// intrinsic names, or that ReadDr/WriteDr names by its constant first
-/// operand \p DebugIndex; nullopt for any other intrinsic.
+/// operand \p DebugIndex (DR0..7); nullopt for any other intrinsic or index.
 std::optional<std::string> x86SystemRegisterName(Intrinsic Id,
                                                  uint64_t DebugIndex);
 
