@@ -1269,6 +1269,17 @@ void recoverCallAbi(
       constexpr int MaxArgs = limits::kMaxCallArgs;
       std::vector<MedVar> Found(MaxArgs);
       std::vector<bool> FoundMask(MaxArgs, false);
+      // A callee-read summary publishes its register uses before SSA. Those
+      // reaching operands survive propagation and call clobbers; scanning the
+      // physical registers again cannot replace them by incoming parameters
+      // or discard an unknown value that the callee still reads.
+      const bool SummarizedIntegerOperands =
+          Convention && Convention->RegisterArgumentsFromCalleeSummary &&
+          IntegerSummary &&
+          Op.CalleeRegisterArgs <= static_cast<int>(IntParamRegs.size()) &&
+          Op.NumInputs >= 1u + Op.CalleeRegisterArgs;
+      if (SummarizedIntegerOperands)
+        CalleeRegArgs = Op.CalleeRegisterArgs;
       // Slots filled by the stack-store scan (vs the register scan).  On i386 a
       // stack-argument slot index can fall into the integer-register slot range
       // (0,1) when the callee takes no integer register argument but does take
@@ -1277,7 +1288,7 @@ void recoverCallAbi(
       std::vector<bool> FromStackScan(MaxArgs, false);
       // The checked prefix and proven register tail already passed through
       // SSA. Keep those values when no setup write exists in this block.
-      if (HeaderVariadic)
+      if (HeaderVariadic || SummarizedIntegerOperands)
         for (int K = 0;
              K < Op.CalleeRegisterArgs && K < MaxArgs && K + 1 < Op.NumInputs;
              ++K) {
@@ -1675,7 +1686,8 @@ void recoverCallAbi(
 
       // An earlier call in the block may have clobbered the register of the
       // first argument (a Win64 thiscall helper clobbers rcx).
-      if (!CI.IsIndirect && Policy && Policy->ResolveFirstArgAfterCall)
+      if (!CI.IsIndirect && !SummarizedIntegerOperands && Policy &&
+          Policy->ResolveFirstArgAfterCall)
         Policy->ResolveFirstArgAfterCall(Ctx, Arg0FromInBlock);
 
       // A verified selector stub overwrites x1 before reading it. Even a
