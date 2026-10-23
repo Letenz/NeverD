@@ -683,13 +683,14 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         E.Kind == ExprKind::Load && useMsvcSegmentedRead(Opts, CurrentFunc);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
-      // The virtualization renderer passes a raw offset to an instruction.
-      // It does not form a C pointer in the segmented address space.
-      const bool VirtualizationMemory =
+      // These renderers pass raw offsets to native instructions. They do not
+      // form C pointers in a target-specific segmented address space.
+      const bool InstructionMemory =
           E.Kind == ExprKind::Call &&
-          x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0;
+          (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
+           x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0);
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
-      if (!MsvcSegmentedScalar && !VirtualizationMemory)
+      if (!MsvcSegmentedScalar && !InstructionMemory)
         HasSegmentedMemory = true;
       else if (MsvcSegmentedScalar && Opts.Format == BinaryFormat::COFF)
         NeedsMsvcIntrinsics = true;

@@ -87,7 +87,9 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
   const auto Native = x86SystemStateNative(
       Id, TargetArch, x86SystemStateWidth(Id, Shape), Op.MemoryAddressSpace);
   llvm::CallInst *Call;
-  if (Native && llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32")) {
+  if (Native && llvm::Intrinsic::lookupIntrinsicID(
+                    Native->AddressBits ? "llvm.x86.lar.mem16.address"
+                                        : "llvm.x86.invlpgb.addr32")) {
     const auto IID = llvm::Intrinsic::lookupIntrinsicID(Native->LLVMName);
     if (!IID)
       llvm::report_fatal_error("native system SDK is incomplete");
@@ -96,6 +98,12 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
       auto *High = Builder.CreateZExt(Arguments[2], Builder.getInt64Ty());
       Arguments = {Arguments[0],
                    Builder.CreateOr(Low, Builder.CreateShl(High, 32))};
+    }
+    if (Native->AddressBits) {
+      // computeEA already wraps at the source instruction's address size.
+      // Keep that offset separate from the CPU's FS/GS base addition.
+      Arguments.push_back(Builder.getInt32(Native->AddressBits));
+      Arguments.push_back(Builder.getInt32(Native->SegmentPrefix));
     }
     if (Native->DescriptorQuery)
       Arguments.push_back(

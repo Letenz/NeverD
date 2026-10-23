@@ -193,9 +193,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`a8095b8deea9`](https://github.com/NeverSight/llvm-project/commit/a8095b8deea9)
+[`46df4a78335d`](https://github.com/NeverSight/llvm-project/commit/46df4a78335d)
 adds native instruction selection for the following APIs. NeverC's
-[`f47d72b0b`](https://github.com/NeverSight/NeverC/commit/f47d72b0b)
+[`d6b197cf5`](https://github.com/NeverSight/NeverC/commit/d6b197cf5)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -219,6 +219,8 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.int` | i386 and x86-64 | Immediate interrupt vector; native instruction with ordered memory effects and a resumable continuation under the handler ABI. NeverC exposes the raw `__builtin_ia32_int` and retains the separate Microsoft `__int2c` non-returning assertion contract. |
 | `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
 | `llvm.x86.{lar,lsl}.{reg,mem}{16,32,64}` | i386 and x86-64; 64-bit results require x86-64 | Returns `{value, i8 ZF}`. Success retains the native result; failure returns the supplied prior value. Memory forms own their m16 selector read. |
+| `llvm.x86.{lar,lsl}.mem{16,32,64}.address`, plus `.address32` for 16/32-bit results | x86-64 and i386 respectively | Integer offset, constant address width and segment-prefix byte, followed by the prior destination. The native m16 read and value/ZF completion stay together. |
+| `llvm.x86.lkgs.address` | x86-64 | Integer offset plus constant address width and segment prefix; the actual instruction owns the selector read and privileged descriptor effects. |
 | `llvm.x86.lsl` | i386 and x86-64 | Compatibility with NeverC's Microsoft `__segmentlimit`; ordered query with a 32-bit result, unspecified on failure. |
 | `llvm.x86.arpl.reg`, `llvm.x86.arpl.mem` | i386 | Register form returns the adjusted i16 destination and i8 ZF; memory form owns m16 access, conditional update and permission checks. Native flags other than ZF are preserved. |
 | `llvm.x86.hreset` | i386 and x86-64 | Full i32 EAX control input, canonical ignored imm8 zero and native privilege/feature validation. |
@@ -711,11 +713,12 @@ effects. INVLPGB retains the code-mode distinction and long-mode address-size
 override. Native API calls with an incompatible mode, result or memory effect
 are rejected by the C projection.
 
-Segmented LKGS still uses the assembly contract because the current pointer
-API cannot represent a separate segment offset. This mapping does not replace
-other system instruction families with mismatched native interfaces. The
-production SDK continues to use assembly IR, while the same generated C can
-select NeverC's existing header-free builtins.
+FS/GS selector accesses now use the explicit-address native APIs for LKGS,
+LAR and LSL. The lifted address arithmetic wraps before the native segment-base
+addition; no ordinary selector load or linear-pointer conversion replaces it.
+Other system families retain their existing contracts. The production SDK
+continues to use assembly IR, while the same generated C can select NeverC's
+header-free builtins.
 
 Qualification passes 84 native modules and 240 NeverC C-to-IR compilations
 across both source routes, three formats and O0/O2, with explicit RSI/RDI
@@ -732,13 +735,18 @@ validity queries or an eager selector load. Its two new serialized IDs are
 appended without renumbering older families, and share the existing descriptor
 result/ZF contract with LAR. A failed 32-bit query in long mode preserves all
 64 destination bits; only a successful query clears the upper half. The other
-arithmetic flags remain unchanged. Segmented selectors retain the assembly
-contract until their explicit-address native APIs are integrated.
+arithmetic flags remain unchanged. Both C routes use the same native mapping
+for FS/GS selectors without requiring Clang-specific C address-space pointers.
 
 Raw native LLVM descriptor calls also retain their supplied prior when
 projected to C. The prior is evaluated once before either the builtin or
 assembly operation, and both the value and ZF remain tied to that operation.
 Malformed mode, output and memory-effect contracts fail explicitly.
+The eleven raw descriptor-address APIs also retain their explicit address
+width and segment controls when projected to C. Width and prefix must be
+constant i32 values valid for the target mode. The assembly fallback uses a
+fixed BX-family base, keeps the actual narrow-address prefix and defaults to
+DS; its selector access remains inside the native instruction.
 
 Descriptor-query qualification passes 204 native modules and 528 NeverC
 C-to-IR compilations across both C routes, three object formats and O0/O2.
@@ -749,6 +757,15 @@ LAR's architecturally undefined result bits are excluded only from successful
 comparisons. The native profile also passes all 116 LLVM-to-C value tests,
 including raw native calls with explicit failed-query priors. The focused
 lifter, effect, malformed-contract and coverage checks pass on both profiles.
+
+The native SDK passes 252 FS/GS-inclusive modules. Both SDK profiles pass 672
+NeverC C-to-IR compilations each. Raw address-call projection adds 462 functions
+across both code modes and three object formats, 12 stock-Clang C-object
+compilations and six NeverC C-to-IR compilations. Its Linux x64 oracle checks
+96 real queries per compiler at O0/O2 with a nonzero GS base, narrow offsets
+whose high bits differ, and null/current-CS selectors. All 117 LLVM-to-C value
+tests pass. Invalid mode, dynamic controls, unsupported prefixes and malformed
+effects fail explicitly. These checks do not qualify successful CPL0 LKGS.
 
 ## Reproducible checks
 
