@@ -148,6 +148,10 @@ public:
       const std::map<va_t, FloatingCallArguments> *M) {
     CallEntryFloatingArguments = M;
   }
+  void setCallEntryVariadicArguments(
+      const std::map<va_t, std::vector<uint16_t>> *M) {
+    CallEntryVariadicArguments = M;
+  }
   /// Imports whose supported user prototypes already own the argument
   /// summaries (PipelineResult::CallUserPrototypes). Automatic Darwin SDK
   /// bindings must leave those summaries intact; explicit call-site contracts
@@ -436,6 +440,8 @@ private:
   const std::set<va_t> *CallDispatchThunks = nullptr;
   std::set<va_t> *CallSummaryKeysRead = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
+  const std::map<va_t, std::vector<uint16_t>> *CallEntryVariadicArguments =
+      nullptr;
   const std::map<va_t, FormattedCall> *FormattedCalls = nullptr;
   /// Argument registers DispatchCallDefinedArgs tracks, one bit each.
   static constexpr size_t kTrackedArgSlots = 8;

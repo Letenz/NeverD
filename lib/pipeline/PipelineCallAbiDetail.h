@@ -57,6 +57,7 @@ struct OmittedCalleeMemo {
     bool StackSlot = false;
     std::optional<int> ArgumentCount;
     std::optional<FloatingCallArguments> FloatingArguments;
+    std::optional<std::vector<uint16_t>> VariadicArguments;
     bool operator==(const SummaryRead &) const = default;
   };
   static SummaryRead readAt(const PipelineResult &Result, va_t Key);

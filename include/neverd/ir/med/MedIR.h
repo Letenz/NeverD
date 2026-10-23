@@ -253,6 +253,9 @@ struct MedOp {
   /// Win64 register arguments the direct callee reads (RCX, RDX, R8, R9 in
   /// order), published as Inputs[1..N]; -1 when the callee is unsummarized.
   int8_t CalleeRegisterArgs = -1;
+  /// Fixed scalar prefix of a checked header variadic call, or -1.
+  /// Its explicit register operands and recovered stack tail remain open.
+  int8_t CalleeVariadicFrom = -1;
   /// The vector argument registers the summarized callee reads, published
   /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
   /// when the convention publishes none.

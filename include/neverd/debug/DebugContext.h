@@ -52,6 +52,8 @@ struct FunctionSym {
   SourceLoc DeclLoc;
   TypeRef ReturnType;
   std::vector<std::pair<std::string, TypeRef>> Params;
+  /// Params names only the fixed prefix of a variadic declaration.
+  bool IsVariadic = false;
   DebugCallConv CallConv = DebugCallConv::Unknown;
   /// The function follows the platform's C calling convention, as C, C++,
   /// Objective-C and Rust code does.  False for a language with conventions
@@ -72,6 +74,9 @@ struct FunctionSym {
   /// that prototype as the library declares it, in C.  Empty otherwise.
   std::string PrototypeLibrary;
   std::string PrototypeDeclaration;
+  /// The same declaration with portable scalar spellings, retaining source
+  /// qualifiers for C output that does not include the target platform SDK.
+  std::string PortablePrototypeDeclaration;
   /// The prototype comes from a selected platform header library, including
   /// Windows SDK/WDK headers that are rendered without a host header include.
   bool PrototypeFromHeader = false;

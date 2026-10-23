@@ -140,9 +140,16 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   ASSERT_TRUE(Next.has_value());
   EXPECT_FALSE(
       isMsvcIndirectReturn(Next->ReturnType, Arch::X64, BinaryFormat::COFF));
-  // A variadic prototype's calls pass more than it declares; a name
-  // without one, an interior address and a typed declaration stay.
-  EXPECT_TRUE(Context.resolveFunction(0x3000)->Params.empty());
+  // A variadic prototype retains its fixed prefix and its open tail.
+  ASSERT_TRUE(Context.resolvePrototype("Print"));
+  EXPECT_TRUE(Context.resolvePrototype("Print")->IsVariadic);
+  EXPECT_EQ(Context.resolvePrototype("Print")->PortablePrototypeDeclaration,
+            "uint32_t Print(const char *Format, ...)");
+  EXPECT_EQ(Context.resolvePrototype("Print")->Params.size(), 1u);
+  EXPECT_TRUE(Context.resolveFunction(0x3000)->IsVariadic);
+  EXPECT_EQ(Context.resolveFunction(0x3000)->Params.size(), 1u);
+  // A name without a prototype, an interior address and a typed declaration
+  // stay.
   EXPECT_TRUE(Context.resolveFunction(0x4000)->Params.empty());
   EXPECT_TRUE(Context.resolveFunction(0x1008)->Params.empty());
   EXPECT_TRUE(Context.resolveFunction(0x5000)->Params.empty());
