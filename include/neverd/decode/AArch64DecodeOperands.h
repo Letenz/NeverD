@@ -179,6 +179,7 @@ inline cs_aarch64 &begin(cs_insn &Insn, cs_detail &Detail, uint32_t Word,
   Insn.mnemonic[0] = '\0';
   Insn.op_str[0] = '\0';
   Insn.is_alias = false;
+  Insn.illegal = false;
   Insn.detail = &Detail;
 
   // Reset the cs_detail fields the lifter reads outside the aarch64 sub-struct.

@@ -90,6 +90,18 @@ metadata. Category fixtures exercise authenticated class, metaclass and method r
 reconstruction restriction. Metadata names replace synthesized function-start
 names while preserving stated, analysis and user names.
 
+`NeverDDyldSharedCacheTests` checks immutable arm64e cache mappings, old/new
+subcache tables, suffix/UUID/placement validation, embedded image layouts and
+cross-file reads. Independently serialized v2/v3/v5 fixtures cover extra
+chains, null/tagged targets, all signing fields, page boundaries, duplicate
+chains, arithmetic overflow and transactional failure. Section VM/file-offset
+tests include the original-offset layout retained by signed cached images.
+Cancellation is checked before and during chain traversal. Set
+`NEVERD_DYLD_CACHE` to a local main arm64e cache with its matching subcaches to
+validate every image layout and every slide record without altering bytes;
+without it the real-cache check explicitly skips. This tests the cache reader,
+not yet CLI cached-image selection or native execution/reconstruction.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
@@ -1273,6 +1285,24 @@ options and stale revisions. The Qt case checks aligned row counts, highlights,
 instruction navigation, synchronized scroll and independent-source fallback.
 These checks establish exact textual alignment and inspection contracts, not
 semantic equivalence or unique statement correspondence.
+AArch64 SDK comparison cases distinguish operand modifiers and scalar changes
+from page-aligned placement, retain >4 GiB and negative literal references, and
+exercise TBZ bit-index/target collisions and partial-page ADRP movement. Profile
+selection preserves x86 identities; unsupported ISA/ABI/bitness and illegal
+instructions cannot acquire complete evidence. Worker/CLI cases compile the
+same change to ELF relocatable, COFF object and Mach-O object inputs, inspect
+owned source alignment, SSA origins, slices and region correspondences, and
+reopen the same saved report. A raw unsized conditional-branch case retains
+both successors, a changed fallthrough constant and its ordinary call reference;
+the COFF cell exercises the same walk without a recorded function size.
+The Qt case selects
+raw AArch64, views aligned source and navigates to original instructions. These
+object cells do not qualify every linked image or transformation family.
+`NeverDAArch64DecodeValidityTests` verifies decoded illegal operands and the
+illegal-to-valid transition through full, light and native-fast routes, including
+direct permissive lifter calls. It also runs the existing independent Capstone
+parity sweeps with poisoned reused-buffer validity state. The SDK case requires
+incomplete DIFF evidence and no invented flow/reference facts for the same bytes.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw
@@ -5320,6 +5350,10 @@ HighIR when CFG threading leaves a sole successor without a branch operation.
 Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
+`SiblingSkipsKeepSharedReadersOutsideThePrefix` checks repeated variable reads
+and an expression shared by a guard and a later return. Early and late guard
+folding must retain the live prefix; the late pass still folds a prefix without
+outside readers. Both entry points also run on repeated visits.
 
 The same suite checks shared-expression liveness with independent return-value
 oracles, multiple branch definitions, dead cycles and nested observable effects.

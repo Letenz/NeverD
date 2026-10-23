@@ -173,7 +173,18 @@ requires an executable arm64e process and checks that each signing key changes
 pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
-Shared-cache-specific layouts require a cache address model. Exception-level
+`macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
+placement validation, sorted disjoint mappings, and the cache image catalogue.
+Its bounded slide reader retains v2 ordinary pointers and v3/v5 authentication
+recipes without rewriting bytes. V2 extra chains, v3's four keys and v5's
+IA/DA layout remain distinct. Embedded image file offsets resolve through that
+image's segments and the cache mappings; they are not relative to its header
+or necessarily in the same file. Cached section reads use their VM layout:
+some real signed images retain original section offsets in their headers.
+This public reader is the address-space foundation; the ordinary loader and
+CLI do not yet select or analyse cached images through it. The layouts follow
+[Apple's cache definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h).
+Exception-level
 authentication, PACM state and CPA2 address arithmetic remain unsupported;
 recognizing x1's header does not claim those instruction semantics.
 
@@ -401,6 +412,27 @@ forwards actual per-side stages and preserves the old comparison on stop.
 exception-chunk traversal. The adapter preserves original bytes/operands and
 binds the snapshot to input content, ABI, settings and normalization revisions.
 Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+Profile selection and ISA/bitness admission belong to this adapter, with the
+default in `diff/Limits.h`; consumers do not guess an input's architecture.
+The AArch64 reader consumes its own typed operand details and ordinary lifted
+flow/reference facts. It binds transfer targets to their final operand rather
+than numeric equality with another immediate, uses lifted literal addresses,
+and retains ADRP page fragments relative to the exact image base. Mach-O subtype
+bits participate in AArch64 ABI identity. Existing x86 hash events and identity
+remain unchanged. Unsupported architectures do not enter another ISA's operand
+union, and structural admission does not qualify scalar or call-effect proofs.
+Native AArch64 operand decoding declines ambiguous writeback/load overlaps to
+the full decoder, preserving its illegal-instruction evidence. Every reused
+decoder occurrence resets that validity flag. `AArch64Lifter::lift` owns the
+refusal to emit semantics for a decoded illegal instruction, including permissive
+calls; ordinary flow queries and DIFF therefore retain bytes without inventing
+transfers or references. This is distinct from a decode failure: the original
+spelling remains inspectable.
+The shared unsized function traversal follows both successors of ordinary
+lifted conditional flow. A straight-line decoder terminator can end only a
+basic block (as with AArch64 B.cond); it does not discard the fallthrough path.
+The existing function-entry, instruction-mode and coverage boundaries still
+govern the walk, so reference queries and DIFF capture the same body.
 `ComparisonDataFlow` runs bounded selected-function native pipeline jobs, then
 projects their verified SSA into immutable `FlowEvidence` collections. It owns
 the session/loader boundary; graph validation, persistence and binding remain in

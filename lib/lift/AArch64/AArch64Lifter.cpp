@@ -311,6 +311,11 @@ NdVar AArch64Lifter::operandWrite(const cs_aarch64_op &Op) {
 
 void AArch64Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
                          bool ScalarWideImmediate) {
+  // A decoded spelling is still useful for inspection, but an illegal or
+  // architecturally unpredictable encoding has no ordinary LowIR semantics.
+  // Refuse it even in permissive mode, before emitting any operations.
+  if (Insn->illegal)
+    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   auto *Detail = Insn->detail;
   if (!Detail)
     return;

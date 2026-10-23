@@ -31,7 +31,8 @@ NEVERD_API void neverd_comparison_destroy(neverd_comparison_t Comparison);
 /// must remain alive and exclusively owned for the duration of this call. The
 /// completed snapshot owns its data and survives destruction of both sessions.
 /// Options is a bounded JSON object (NULL means defaults). Profile defaults to
-/// native-x86-v1. See docs/binary-diff.md for options and evidence limitations.
+/// native-same-isa-v1, selecting qualified x86/x64 or AArch64 inputs with the
+/// same ISA and ABI. See docs/binary-diff.md for options and evidence limits.
 /// Progress runs on this thread; it may request cancellation or read status,
 /// but must not destroy the handle or invoke other operations on it.
 /// Returns 1 for a published result, including an explicitly partial result,

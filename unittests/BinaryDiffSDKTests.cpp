@@ -20,8 +20,10 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <initializer_list>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -92,7 +94,238 @@ protected:
   static std::vector<uint8_t> body(uint8_t Immediate = 7) {
     return {0xb8, Immediate, 0, 0, 0, 0x83, 0xc0, 3, 0xc3};
   }
+  static std::vector<uint8_t> words(std::initializer_list<uint32_t> Words) {
+    std::vector<uint8_t> Bytes;
+    for (const uint32_t Word : Words)
+      for (unsigned Shift = 0; Shift < 32; Shift += 8)
+        Bytes.push_back(static_cast<uint8_t>(Word >> Shift));
+    return Bytes;
+  }
 };
+
+TEST_F(BinaryDiffSDK, AArch64ProfilesPreservePlacementAndOriginalInstructions) {
+  const auto EvidenceSnapshot = [](neverd_comparison_t C) {
+    auto Document = parsed(neverd_comparison_export_json(C));
+    Document.getAsObject()->erase("timings");
+    return render(Document);
+  };
+  // mov x0, #7; add x0, x0, #3; ret
+  const auto Code = words({0xd28000e0, 0x91000c00, 0xd65f03c0});
+  auto A = input(Code, 0x1000, "aarch64");
+  auto B = input(Code, 0x8000, "aarch64");
+  auto C = compare(A, B, R"({"discover":false,"use_names":false})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Document = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(Document));
+  const auto *Primary = Document->getAsObject()->getObject("primary");
+  ASSERT_TRUE(Primary);
+  EXPECT_EQ(Primary->getString("architecture"), "aarch64");
+  EXPECT_EQ(Primary->getInteger("bits"), 64);
+  EXPECT_EQ(Primary->getString("normalization"), "native-aarch64-operands-v1");
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(Evidence) << render(Detail);
+  EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"), true);
+  const auto *Rows = Detail.getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows);
+  ASSERT_EQ(Rows->size(), 3u);
+  EXPECT_EQ(
+      Rows->front().getAsObject()->getObject("primary")->getString("bytes"),
+      "E00080D2");
+  const auto Explicit = compare(
+      A, B,
+      R"({"discover":false,"use_names":false,"profile":"native-aarch64-v1"})");
+  EXPECT_EQ(EvidenceSnapshot(Explicit), EvidenceSnapshot(C));
+  EXPECT_EQ(neverd_comparison_restore_json(Explicit, Saved.c_str()), 1);
+  EXPECT_EQ(neverd_comparison_validate_inputs(Explicit, A, B), 1);
+  auto Validation = parsed(neverd_comparison_scalar_validation_json(
+      C, A, B, R"({"address":"0x1000"})"));
+  EXPECT_EQ(Validation.getAsObject()->getString("status"), "unsupported");
+
+  auto X = input(body()), Y = input(body(9));
+  const auto DefaultX86 = compare(X, Y);
+  const auto ExplicitX86 =
+      compare(X, Y, R"({"discover":false,"profile":"native-x86-v1"})");
+  EXPECT_EQ(EvidenceSnapshot(DefaultX86), EvidenceSnapshot(ExplicitX86));
+  const auto AutomaticX86 =
+      compare(X, Y, R"({"discover":false,"profile":"native-same-isa-v1"})");
+  EXPECT_EQ(EvidenceSnapshot(DefaultX86), EvidenceSnapshot(AutomaticX86));
+  for (const auto &[Left, Right, Options] :
+       {std::tuple{A, B, R"({"discover":false,"profile":"native-x86-v1"})"},
+        std::tuple{X, Y, R"({"discover":false,"profile":"native-aarch64-v1"})"},
+        std::tuple{A, X, R"({"discover":false})"}}) {
+    auto Rejected = neverd_comparison_create();
+    Comparisons.push_back(Rejected);
+    EXPECT_EQ(
+        neverd_comparison_run(Rejected, Left, Right, Options, nullptr, nullptr),
+        0);
+    EXPECT_FALSE(take(neverd_comparison_last_error(Rejected)).empty());
+  }
+}
+
+TEST_F(BinaryDiffSDK, AArch64OperandModifiersRemainObservableChanges) {
+  // Independently assembled instruction pairs, each with an observable change.
+  const struct {
+    const char *Name;
+    uint32_t A, B;
+  } Cases[] = {{"mov x0, #7 / #9", 0xd28000e0, 0xd2800120},
+               {"add x0, x1, x2, lsl #1 / #2", 0x8b020420, 0x8b020820},
+               {"add x0, x1, w2, uxtw #1 / sxtw #1", 0x8b224420, 0x8b22c420},
+               {"ldr x0, [x1, #8] / [x1, #8]!", 0xf9400420, 0xf8408c20},
+               {"ldr x0, [x1, #8]! / [x1], #8", 0xf8408c20, 0xf8408420},
+               {"csel x0, x1, x2, eq / ne", 0x9a820020, 0x9a821020},
+               {"fadd v0.4s, v1.4s, v2.4s / v0.2s, v1.2s, v2.2s", 0x4e22d420,
+                0x0e22d420},
+               {"fmov d0, #1.0 / #2.0", 0x1e6e1000, 0x1e601000},
+               {"mrs x0, nzcv / fpcr", 0xd53b4200, 0xd53b4400},
+               {"CPYFP register tuples", 0x19010440, 0x190404a3},
+               {"lsl x0, x1, x2 / x3", 0x9ac22020, 0x9ac32020},
+               {"lsr x0, x1, x2 / x3", 0x9ac22420, 0x9ac32420},
+               {"asr x0, x1, x2 / x3", 0x9ac22820, 0x9ac32820},
+               {"ror x0, x1, x2 / x3", 0x9ac22c20, 0x9ac32c20},
+               {"SVE merging / zeroing", 0x05904020, 0x05900020},
+               {"MOVPRFX merging / zeroing", 0x04912020, 0x04902020}};
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    auto A = input(words({0xd28000e3, Case.A, 0x91000c00, 0xd65f03c0}), 0x1000,
+                   "aarch64");
+    auto B = input(words({0xd28000e3, Case.B, 0x91000c00, 0xd65f03c0}), 0x8000,
+                   "aarch64");
+    auto C = compare(
+        A, B,
+        R"({"discover":false,"overrides":[{"kind":"match","primary":"0x1000","secondary":"0x8000"}]})");
+    auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+    const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+    ASSERT_TRUE(Evidence) << render(Detail);
+    EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"), false);
+    auto Saved = parsed(neverd_comparison_export_json(C));
+    ASSERT_TRUE(Saved.getAsObject()->getArray("matches"));
+    EXPECT_EQ(Saved.getAsObject()
+                  ->getArray("matches")
+                  ->front()
+                  .getAsObject()
+                  ->getBoolean("analysis_complete"),
+              true);
+  }
+}
+
+TEST_F(BinaryDiffSDK, AArch64BranchBitIndexIsNotASecondTargetOperand) {
+  // At base 0, TBZ's bit index and target both equal 12. At base 8 they both
+  // equal 20. The CFG and relative branch displacement agree, but the tested
+  // bit changes. Numeric equality must not erase that change.
+  auto A =
+      input(words({0x36600060, 0xd28000e0, 0xd65f03c0, 0xd2800120, 0xd65f03c0}),
+            0, "aarch64");
+  auto B =
+      input(words({0x36a00060, 0xd28000e0, 0xd65f03c0, 0xd2800120, 0xd65f03c0}),
+            8, "aarch64");
+  auto C = compare(
+      A, B,
+      R"({"discover":false,"overrides":[{"kind":"match","primary":"0x0","secondary":"0x8"}]})");
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0));
+  const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(Evidence) << render(Detail);
+  EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"), false);
+}
+
+TEST_F(BinaryDiffSDK,
+       AArch64UnsizedConditionalFallthroughKeepsChangesAndCalls) {
+  // cmp w0, #17; b.eq taken; mov w0, #7/#9; bl callee; ret;
+  // taken: ret; callee: ret. Both exits belong to the unsized caller.
+  auto A = input(words({0x7100441f, 0x54000080, 0x528000e0, 0x94000003,
+                        0xd65f03c0, 0xd65f03c0, 0xd65f03c0}),
+                 0x1000, "aarch64");
+  auto B = input(words({0x7100441f, 0x54000080, 0x52800120, 0x94000003,
+                        0xd65f03c0, 0xd65f03c0, 0xd65f03c0}),
+                 0x8000, "aarch64");
+  ASSERT_EQ(neverd_func_create(A, 0x1018), 0);
+  ASSERT_EQ(neverd_func_create(B, 0x8018), 0);
+  auto C = compare(A, B);
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(Evidence) << render(Detail);
+  EXPECT_EQ(Evidence->getBoolean("analysis_complete"), true);
+  EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"), false);
+  const auto *Rows = Detail.getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows);
+  EXPECT_EQ(Rows->size(), 6u);
+  EXPECT_TRUE(std::any_of(Rows->begin(), Rows->end(), [](const auto &Row) {
+    const auto *O = Row.getAsObject();
+    const auto *Primary = O->getObject("primary");
+    return O->getString("kind") == "constant" && Primary &&
+           Primary->getString("address") == "0x1008";
+  }));
+  auto References = parsed(neverd_code_refs_json(A, 0x1000, 1));
+  const auto *Refs = References.getAsObject()->getArray("refs");
+  ASSERT_TRUE(Refs);
+  EXPECT_TRUE(std::any_of(Refs->begin(), Refs->end(), [](const auto &Ref) {
+    const auto &Fields = *Ref.getAsArray();
+    return Fields[0].getAsString() == "0x100C" &&
+           Fields[1].getAsString() == "0x1018" &&
+           Fields[2].getAsString() == "call";
+  })) << render(References);
+}
+
+TEST_F(BinaryDiffSDK,
+       AArch64IllegalInstructionsRetainBytesWithoutCompleteFacts) {
+  auto A =
+      input(words({0xf8408c00, 0x91000c00, 0xd65f03c0}), 0x1000, "aarch64");
+  auto B =
+      input(words({0xf8408c00, 0x91000c00, 0xd65f03c0}), 0x8000, "aarch64");
+  auto C = compare(A, B);
+  auto Document = parsed(neverd_comparison_export_json(C));
+  const auto *Matches = Document.getAsObject()->getArray("matches");
+  ASSERT_TRUE(Matches);
+  ASSERT_EQ(Matches->size(), 1u);
+  EXPECT_EQ(Matches->front().getAsObject()->getBoolean("analysis_complete"),
+            false);
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(Evidence);
+  EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"), false);
+  const auto *Rows = Detail.getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows);
+  ASSERT_FALSE(Rows->empty());
+  const auto *Original = Rows->front().getAsObject()->getObject("primary");
+  ASSERT_TRUE(Original);
+  EXPECT_EQ(Original->getString("bytes"), "008C40F8");
+  EXPECT_EQ(render(*Original->get("target")), "null");
+  EXPECT_EQ(render(*Original->get("callee")), "null");
+  auto Listing =
+      parsed(neverd_disasm_json_ex(A, 0x1000, 2, NEVERD_DISASM_FLOW));
+  ASSERT_TRUE(Listing.getAsArray());
+  ASSERT_EQ(Listing.getAsArray()->size(), 2u);
+  const auto *First = Listing.getAsArray()->front().getAsObject();
+  EXPECT_EQ(First->getString("flow"), "unlifted");
+  EXPECT_FALSE(First->get("target"));
+  EXPECT_FALSE(First->get("refs"));
+  EXPECT_FALSE(Listing.getAsArray()->back().getAsObject()->get("flow"));
+}
+
+TEST_F(BinaryDiffSDK,
+       AArch64PCRelativeEvidenceKeepsFullAddressesAndPageFragments) {
+  // ADR x0, .+16; ADRP x1, current page; LDR x0, .+16; LDR x0, .-4; RET.
+  const auto Code =
+      words({0x10000080, 0x90000001, 0x58000080, 0x58ffffe0, 0xd65f03c0});
+  auto A = input(Code, 0x100000000, "aarch64");
+  auto B = input(Code, 0x200000000, "aarch64");
+  auto C = compare(A, B);
+  auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x100000000));
+  const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(Evidence) << render(Detail);
+  EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"), true);
+
+  // A partial-page move changes ADRP's fragment relative to the image's data.
+  auto Shifted = input(Code, 0x200000004, "aarch64");
+  auto NearMiss = compare(
+      A, Shifted,
+      R"({"discover":false,"overrides":[{"kind":"match","primary":"0x100000000","secondary":"0x200000004"}]})");
+  auto Changed =
+      parsed(neverd_comparison_function_json(NearMiss, 0, 0x100000000));
+  const auto *ChangedEvidence = Changed.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(ChangedEvidence) << render(Changed);
+  EXPECT_EQ(ChangedEvidence->getBoolean("normalized_unchanged"), false);
+}
 
 TEST_F(BinaryDiffSDK, OwnedSourcePagesRetainEmitterTextAndOriginalAnchors) {
   auto A = input(body(7)), B = input(body(9), 0x8000);
