@@ -957,6 +957,26 @@ The x64 convention duplicates variadic FP arguments in integer registers
 A tail's machine carriers alone do not certify a portable source type or a
 complete function-pointer signature.
 
+Ordinary header imports also retain source qualifiers through the portable
+declaration. `c_library::portableScalarDeclaration` is shared by both C
+writers after their call-layout checks; by-value aggregates, custom entry
+locations, non-C conventions and undeclared type names retain their existing
+lowering. Outer cdecl/stdcall is carried separately from the declaration's
+type spelling, while qualifiers inside a returned or nested pointer stay.
+Pointer-to-record tags are still registered before LLVMC prints the original
+declaration, so a tag does not accidentally acquire prototype scope.
+The LLVM source route passes header declarations to the same return-contract
+owner as HighC; binary lifting does not gain source return contracts.
+LLVMC's printed-use check reads the shared no-value return contract even
+before per-function rendering. A machine return-register use cannot reject
+a void header prototype when that return is absent from C; an observed
+store or another real use still rejects the incompatible prototype.
+
+Low-to-Med applies a known callee's stack cleanup only to returning calls.
+A decoded tail jump has no local continuation; inserting a post-call stack
+adjustment would separate its synthetic CALL/RETURN pair and hide the
+incoming stack arguments from shared ABI recovery.
+
 A C or C++ header rendered for a program joined to a library of a system's
 headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
 libSystem, whose platform `<TargetConditionals.h>` tells) takes

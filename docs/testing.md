@@ -223,6 +223,25 @@ record or split-width variadic tails. `check_windows_ucrt_calls.py --function
 UseCRTVarargs` separately compiles the actual `_wopen` output against the
 retained original Microsoft UCRT declarations on x86, x64 and ARM64.
 
+`Win64CallContract.HeaderPointerQualifiersAgreeWithIndependentDefinitions`
+executes both C routes against independent definitions with const return and
+parameter pointers, nested pointer qualifiers, volatile output pointers and
+opaque record tags. `I386CallContract.HeaderQualifiersKeepTheOuterCallingConvention`
+cross-compiles both routes against independently declared cdecl/stdcall
+function-pointer types and checks that a tail jump forwards both incoming
+stack arguments. The existing stdcall cleanup tests check that ordinary
+calls still restore the caller's stack. The local type bridge checks nested
+qualifiers, convention ownership and `_Noreturn`. The original SDK check's
+`UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
+Windows architectures, independently of the synthetic import names.
+The qualifier execution cases also cover void results.
+`Win64CallContract.AVoidSourceReturnDoesNotEraseAnObservedCallResult` checks
+that a volatile store of the machine result keeps it live despite a proposed
+void import prototype and a wrapper with a void source return.
+`Win64CallContract.HeaderVoidReturnFactsAreSourceOnly` checks that only source
+projection gains a header's void contract while both routes retain the
+machine return-register type in LLVM IR.
+
 `NeverDIntegerCallArgumentsTests` checks integer record carriers, unused
 register positions before memory arguments, register exhaustion, i386 slots,
 indirect copies and refusal of incomplete layouts. `NeverDRecordCallContractTests`

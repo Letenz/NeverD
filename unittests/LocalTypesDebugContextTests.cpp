@@ -76,6 +76,31 @@ TEST(LocalTypesDebugContext,
   }
 }
 
+TEST(LocalTypesDebugContext,
+     PortableDeclarationsRetainQualifiersAndConvention) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>(types::DataModel::ILP32);
+  ASSERT_TRUE(types::parseCTypes(R"(
+    const unsigned short *__stdcall ReadText(const unsigned short *const *Input,
+                                             volatile unsigned int *Output);
+    _Noreturn void __cdecl Stop(void);
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  sdk::LocalTypesDebugContext Context(Names, Library);
+  const auto Signature = Context.resolvePrototype("ReadText");
+  ASSERT_TRUE(Signature);
+  EXPECT_EQ(Signature->CallConv, DebugCallConv::Stdcall);
+  EXPECT_EQ(Signature->PortablePrototypeDeclaration,
+            "const uint16_t *ReadText(const uint16_t *const *Input, volatile "
+            "uint32_t *Output)");
+  const auto Stop = Context.resolvePrototype("Stop");
+  ASSERT_TRUE(Stop);
+  EXPECT_TRUE(Stop->NoReturn);
+  EXPECT_EQ(Stop->PortablePrototypeDeclaration, "_Noreturn void Stop(void)");
+}
+
 TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();

@@ -762,12 +762,14 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   if (!Portable)
     Portable = std::make_unique<types::TypeSpeller>(*Types, Options);
   auto PortableFunction = Function->second;
-  if (PortableFunction->Convention == types::CallingConvention::Cdecl) {
+  if (PortableFunction->Convention == types::CallingConvention::Cdecl ||
+      PortableFunction->Convention == types::CallingConvention::Stdcall) {
     auto Unspecified = std::make_shared<types::FunctionDef>(*PortableFunction);
     Unspecified->Convention = types::CallingConvention::Unspecified;
     PortableFunction = std::move(Unspecified);
   }
   Signature->PortablePrototypeDeclaration =
+      (PortableFunction->NoReturn ? "_Noreturn " : "") +
       Portable->spell(*types::makeFunction(PortableFunction), Name.str());
   return Signature;
 }
