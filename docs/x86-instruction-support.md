@@ -46,7 +46,7 @@ complete instruction support or semantic test coverage.
 | INVLPGB, TLBSYNC | Address-width-specific rAX plus EDX/ECX inputs, real broadcast invalidation and synchronization. The control/address value is not an ordinary memory operand. |
 | UMONITOR | Address-size wrapping and FS/GS offset ownership; no ordinary preload. |
 | UMWAIT, TPAUSE | Explicit control operand and EDX:EAX deadline; actual CF completion; other arithmetic flags cleared. |
-| LAR | Actual ZF completion; failure preserves the entire destination, including the upper half of a 32-bit destination in long mode. Memory selectors remain instruction-owned. |
+| LAR, LSL | One query returns the value and actual ZF; failure preserves the entire destination, including the upper half of a 32-bit destination in long mode. Memory selectors remain instruction-owned. |
 | ARPL | 32-bit target only; actual ZF and adjusted selector; conditional memory write remains inside the instruction. |
 | VSHA512MSG1, VSHA512MSG2, VSHA512RNDS2 | Integer LowIR, independent scalar oracle, source aliasing, upper-lane clearing and executable LLVM/HighC/LLVMC tests without SHA512 hardware. |
 | VMASKMOVPS/PD and VPMASKMOVD/Q stores | A void output replaces an invalid zero-width RAX result. Tests cover both vector widths, both architectures and inactive lanes over unmapped memory. |
@@ -725,6 +725,30 @@ extension regressions; native-only checks explicitly skip on the old SDK.
 NeverC-compiled C passes the controlled MSR fault/completion/restart oracle,
 including dead outputs and empty masks. The 115 LLVM-to-C value tests pass on
 the native SDK. These checks do not establish successful privileged execution.
+
+The descriptor-query mapping adds all twelve register/default-memory LAR/LSL
+interfaces to LLVM and both C routes. LSL no longer performs separate value and
+validity queries or an eager selector load. Its two new serialized IDs are
+appended without renumbering older families, and share the existing descriptor
+result/ZF contract with LAR. A failed 32-bit query in long mode preserves all
+64 destination bits; only a successful query clears the upper half. The other
+arithmetic flags remain unchanged. Segmented selectors retain the assembly
+contract until their explicit-address native APIs are integrated.
+
+Raw native LLVM descriptor calls also retain their supplied prior when
+projected to C. The prior is evaluated once before either the builtin or
+assembly operation, and both the value and ZF remain tied to that operation.
+Malformed mode, output and memory-effect contracts fail explicitly.
+
+Descriptor-query qualification passes 204 native modules and 528 NeverC
+C-to-IR compilations across both C routes, three object formats and O0/O2.
+The same C matrix passes with the old pinned SDK. Both SDK profiles execute
+48 result/flag fixtures against original instructions with stock Clang and
+NeverC, including null selectors, current-CS selectors and full prior values.
+LAR's architecturally undefined result bits are excluded only from successful
+comparisons. The native profile also passes all 116 LLVM-to-C value tests,
+including raw native calls with explicit failed-query priors. The focused
+lifter, effect, malformed-contract and coverage checks pass on both profiles.
 
 ## Reproducible checks
 

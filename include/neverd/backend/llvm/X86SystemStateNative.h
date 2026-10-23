@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace neverd {
 
@@ -23,13 +24,17 @@ inline constexpr Intrinsic X86SystemStateNativeInventory[] = {
     Intrinsic::X86ClearTaskSwitched,   Intrinsic::X86WriteMsrNonSerializing,
     Intrinsic::X86ReadMsrList,         Intrinsic::X86WriteMsrList,
     Intrinsic::X86LoadKernelGs,        Intrinsic::X86LoadKernelGsMemory,
-    Intrinsic::X86InvalidateBroadcast, Intrinsic::X86TlbSync};
+    Intrinsic::X86InvalidateBroadcast, Intrinsic::X86TlbSync,
+    Intrinsic::X86LoadAccessRights,    Intrinsic::X86LoadAccessRightsMemory,
+    Intrinsic::X86LoadSegmentLimit,    Intrinsic::X86LoadSegmentLimitMemory};
 
 struct X86SystemStateNative {
   X86SystemStateAsm Assembly;
   std::string LLVMName;
   std::string Builtin;
+  std::vector<uint16_t> InputBytes;
   bool PackMsr = false;
+  bool DescriptorQuery = false;
 };
 
 inline std::optional<X86SystemStateNative>
@@ -50,8 +55,16 @@ x86SystemStateNative(Intrinsic Id, Arch TargetArch, uint16_t Width,
   X86SystemStateNative Plan;
   Plan.Assembly = *Assembly;
   Plan.PackMsr = Id == Intrinsic::X86WriteMsrNonSerializing;
-  std::string Name = x86SystemStateContract(Id).Mnemonic;
-  if (Id == Intrinsic::X86LoadKernelGs)
+  const auto C = x86SystemStateContract(Id);
+  Plan.DescriptorQuery = C.Kind == X86SystemStateKind::AccessRights;
+  Plan.InputBytes =
+      Plan.PackMsr ? std::vector<uint16_t>{4, 8} : Assembly->InputBytes;
+  std::string Name = C.Mnemonic;
+  if (Plan.DescriptorQuery) {
+    Name += C.MemoryArgument == 0 ? ".mem" : ".reg";
+    Name += std::to_string(8 * Width);
+    Plan.InputBytes.push_back(Width);
+  } else if (Id == Intrinsic::X86LoadKernelGs)
     Name += ".reg";
   else if (Id == Intrinsic::X86LoadKernelGsMemory)
     Name += ".mem";

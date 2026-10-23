@@ -86,6 +86,7 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
   }
   const auto Native = x86SystemStateNative(
       Id, TargetArch, x86SystemStateWidth(Id, Shape), Op.MemoryAddressSpace);
+  llvm::CallInst *Call;
   if (Native && llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32")) {
     const auto IID = llvm::Intrinsic::lookupIntrinsicID(Native->LLVMName);
     if (!IID)
@@ -96,19 +97,22 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
       Arguments = {Arguments[0],
                    Builder.CreateOr(Low, Builder.CreateShl(High, 32))};
     }
-    auto *Call = Builder.CreateCall(
-        llvm::Intrinsic::getOrInsertDeclaration(Mod, IID), Arguments);
-    return P->OutputBytes.empty() ? nullptr : Call;
+    if (Native->DescriptorQuery)
+      Arguments.push_back(
+          llvm::ConstantInt::get(sizeToType(P->OutputBytes[0]), 0));
+    Call = Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(Mod, IID),
+                              Arguments);
+  } else {
+    llvm::Type *Return = Builder.getVoidTy();
+    if (P->OutputBytes.size() == 1)
+      Return = sizeToType(P->OutputBytes[0]);
+    else if (P->OutputBytes.size() == 2)
+      Return = llvm::StructType::get(
+          *Ctx, {sizeToType(P->OutputBytes[0]), Builder.getInt8Ty()});
+    auto *Signature = llvm::FunctionType::get(Return, Types, false);
+    auto *Asm = llvm::InlineAsm::get(Signature, P->Text, P->Constraints, true);
+    Call = Builder.CreateCall(Asm, Arguments);
   }
-  llvm::Type *Return = Builder.getVoidTy();
-  if (P->OutputBytes.size() == 1)
-    Return = sizeToType(P->OutputBytes[0]);
-  else if (P->OutputBytes.size() == 2)
-    Return = llvm::StructType::get(
-        *Ctx, {sizeToType(P->OutputBytes[0]), Builder.getInt8Ty()});
-  auto *Signature = llvm::FunctionType::get(Return, Types, false);
-  auto *Asm = llvm::InlineAsm::get(Signature, P->Text, P->Constraints, true);
-  auto *Call = Builder.CreateCall(Asm, Arguments);
   if (P->OutputBytes.empty())
     return nullptr;
   if (P->OutputBytes.size() == 1)
