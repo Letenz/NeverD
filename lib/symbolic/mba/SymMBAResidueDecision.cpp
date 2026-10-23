@@ -1304,6 +1304,10 @@ class LowWordDecisions {
     return Result;
   }
 
+  // With U=2^(N-2), matched odd factors satisfy B=A+U*d. Thus
+  // AB=A^2+U*A*d. For N>=4, U^2 vanishes and every odd square is 1 mod 4:
+  // all paired corrections add modulo 4, multiplied only by unpaired factors.
+  // The product of representatives can be squared from N-1 observed bits.
   Bits widePairedProduct(PairingState &State, llvm::ArrayRef<SymRef> Factors,
                          unsigned Count) {
     if (Count < 4)
@@ -1491,10 +1495,10 @@ public:
     if (OddProductOnly && !Assumption)
       return Root;
 
-    // Favor full power-of-two degree blocks: partial blocks can spend their
-    // allowance building a pairing index and still need the full carry graph.
-    // This only selects a search. Every pair requires an exact signature and
-    // every factor must independently be odd under the current assumption.
+    // Full power-of-two blocks favor single-bit pairing. A partial block can
+    // also use two-bit pairing when it spans a complete lower-precision block.
+    // These are search hints: every pair needs an exact signature and every
+    // factor must independently be odd under the current assumption.
     const size_t PairingBlock = size_t(1) << (Observed - 1);
     const size_t WideBlock = size_t(1) << (Observed - std::min(Observed, 2u));
     const bool FullBlock =

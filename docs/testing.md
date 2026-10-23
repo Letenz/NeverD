@@ -747,6 +747,13 @@ input words and has independent full-width Z3 proofs at 8/16/32/64 bits. Nearby
 parity changes and exact/one-short work plus short storage check refusal and
 cumulative accounting. Real worker and CLI source tests also execute degree-64
 and degree-128 mixed pairs through all six source routes at O0/O2.
+`SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
+normalized products, nested additions, multi-input XOR carries and changed
+parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor
+fixture retains variable corrections and has full-width Z3 proofs at
+8/16/32/64 bits. Short work/storage budgets check refusal without increasing
+production limits. The worker source test also executes both degree-128
+masked carry fixtures through the six CLI/worker routes at O0/O2.
 `SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
 exhaustive small-word perturbations, nonzero coefficient/offset controls,
 zero-prefix versus zero-word refusal, exact/short resource budgets and Z3
