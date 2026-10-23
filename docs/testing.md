@@ -690,6 +690,10 @@ work counts to the CLI report before computing per-case medians and percentiles.
 The independent evaluator handles explicit word widths, extracts, extensions
 and modular shifts. Check it with
 `python3 tools/neverd-bench/tests/test_symbolic_masks.py`.
+Expression interning regressions retain deliberately colliding variable and
+literal identities, all-bit hash values, and references across table growth,
+context copies, assignment and moves. Full symbolic and source-route coverage
+checks the shared table underneath both CLI and GUI simplification.
 Paired-product regressions cover degree-64–128 mixed carry frontiers with
 independent 8–257-bit arithmetic oracles. A separate 32-factor fixture retains
 an input-dependent highest-bit correction, exhausts its three relevant low

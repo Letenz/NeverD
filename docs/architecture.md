@@ -1762,6 +1762,11 @@ rewrite; the full-width verifier must accept it before the normal type,
 effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
+Expression interning beneath these passes uses a flat hash table, avoiding a
+separate allocation for each distinct node hash. A tagged key admits every
+64-bit hash, including values reserved by the table implementation. Colliding
+hashes still compare the complete operator, width, auxiliary value and operand
+sequence; context copies and moves own their complete tables and node arenas.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every
