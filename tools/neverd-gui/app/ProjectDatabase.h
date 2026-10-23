@@ -1,5 +1,7 @@
 #pragma once
 
+#include "neverd/support/ProjectDatabase.h"
+
 #include <QByteArray>
 #include <QHash>
 #include <QJsonArray>
@@ -19,8 +21,8 @@ namespace neverd::gui {
 ///
 /// Every write is one SQLite transaction, so a database is never left half
 /// written.  The input is stored in independently compressed chunks that are
-/// compressed and expanded in parallel.  A file that is not a NeverD database
-/// is never written to.
+/// compressed in parallel and expanded through the shared streaming reader.  A
+/// file that is not a NeverD database is never written to.
 class ProjectDatabase final {
 public:
   static constexpr char Extension[] = ".nddb";
@@ -40,7 +42,7 @@ public:
   /// The SQLite application id in every database header: "NDDB" in ASCII,
   /// so NeverD and tools such as file(1) tell a database from other SQLite
   /// files whatever its name.
-  static constexpr qint32 ApplicationId = 0x4E444442;
+  static constexpr qint32 ApplicationId = project_database::ApplicationId;
   /// The database of \p binary: the binary's file name plus `.nddb`.
   static QString pathFor(const QString &binary);
   /// Whether \p path is opened as a database: it has the `.nddb` suffix or

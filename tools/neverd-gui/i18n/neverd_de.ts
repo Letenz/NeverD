@@ -1542,24 +1542,8 @@
         <translation>%1 ist keine NeverD-Datenbank.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 existiert nicht.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 verwendet das Datenbankformat %2, das diese NeverD-Version nicht lesen kann.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 verweist auf eine ungültige Eingabedatei.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>%1 kann nicht geschrieben werden: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>Die in %1 gespeicherte Eingabe ist beschädigt.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>Die Datenbank wurde geändert, während wiederhergestellte Änderungen ausstehen. Sichern Sie die Arbeitskopie vor dem erneuten Öffnen.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>Dieser Eingabedateiname kann nicht in einem portablen Projekt gespeichert werden.</translation>
     </message>
 </context>
 <context>
@@ -5534,6 +5522,22 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
         <source>Secondary: %1</source>
         <translation>Sekundär: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>Gespeichertes Projekt wird geöffnet</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>Gespeicherte Projekteinstellungen werden gelesen</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>Gespeicherte Eingabe wird entpackt und geprüft</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>Gespeicherte Analyse wird angewendet</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6134,20 +6138,12 @@ Abdeckung: %7</translation>
         <translation>NeverD-Vergleich (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>Neue Binärdatei oder Patch</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>Kein akzeptiertes Gegenstück. Prüfen Sie mehrdeutige Kandidaten oder wählen Sie manuell ein Paar.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>Keine Zeitgrenze</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>Originalbinärdatei</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6300,6 +6296,18 @@ Abdeckung: %7</translation>
     <message>
         <source>yes</source>
         <translation>ja</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>Neue Binärdatei oder gespeichertes Projekt</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>Ursprüngliche Binärdatei oder gespeichertes Projekt</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>Wählen Sie eine Binärdatei oder ein gespeichertes NDDB-Projekt. Gespeicherte Projekte verwenden ihre gespeicherten Ladeeinstellungen und eine separate Arbeitskopie.</translation>
     </message>
 </context>
 <context>

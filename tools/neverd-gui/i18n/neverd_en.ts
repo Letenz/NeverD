@@ -1542,24 +1542,8 @@
         <translation>%1 is not a NeverD database.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 does not exist.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 uses database format %2, which this NeverD cannot read.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 names an invalid input file.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>Cannot write %1: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>The input stored in %1 is damaged.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>The database changed while recovered edits are pending. Preserve the working copy before reopening.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>The input filename cannot be stored in a portable project.</translation>
     </message>
 </context>
 <context>
@@ -5534,6 +5522,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <source>Secondary: %1</source>
         <translation>Secondary: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>Opening saved project</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>Reading saved project settings</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>Unpacking and checking saved input</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>Applying saved analysis</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6134,20 +6138,12 @@ Coverage: %7</translation>
         <translation>NeverD comparison (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>New binary or patch</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>No deadline</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>Original binary</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6300,6 +6296,18 @@ Coverage: %7</translation>
     <message>
         <source>yes</source>
         <translation>yes</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>New binary or saved project</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>Original binary or saved project</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</translation>
     </message>
 </context>
 <context>

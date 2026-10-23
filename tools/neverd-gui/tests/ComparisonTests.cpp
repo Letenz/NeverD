@@ -18,6 +18,7 @@
 #include "ComparisonRegionsDialog.h"
 #include "ComparisonReviewDialog.h"
 #include "ComparisonValidationDialog.h"
+#include "ProjectDatabase.h"
 #include "Theme.h"
 
 #include <QCheckBox>
@@ -64,6 +65,87 @@ private slots:
                        Directory.path());
     Theme::instance().apply();
   }
+  void savedProjectsCompareThroughTheSharedReader() {
+    const auto A = Directory.filePath("saved-before.bin");
+    const auto B = Directory.filePath("saved-after.bin");
+    const auto DA = ProjectDatabase::pathFor(A);
+    const auto DB = ProjectDatabase::pathFor(B);
+    QVERIFY(write(A, QByteArray::fromHex("b811000000c3")));
+    QVERIFY(write(B, QByteArray::fromHex("b809000000c3")));
+    const auto Load = QJsonDocument(QJsonObject{{"loader", "binary"},
+                                                {"processor", "x86_64"},
+                                                {"platform", "sysv"},
+                                                {"base", "0x1000"}});
+    for (const auto &Path : {A, B}) {
+      QCOMPARE(
+          ProjectDatabase::writeProjectFile(Path, ".neverd-load.json", Load),
+          QString());
+      QCOMPARE(ProjectDatabase::writeProjectFile(
+                   Path, ".neverd-renames.json",
+                   QJsonDocument(QJsonArray{QJsonObject{
+                       {"addr", "0x1000"}, {"renamed", "saved_check"}}})),
+               QString());
+      QCOMPARE(ProjectDatabase::save(ProjectDatabase::pathFor(Path), Path, {}),
+               QString());
+      QVERIFY(QFile::remove(Path));
+      QVERIFY(QDir(ProjectDatabase::projectFolder(Path)).removeRecursively());
+    }
+    const auto Read = [](const QString &Path) {
+      QFile F(Path);
+      return F.open(QIODevice::ReadOnly) ? F.readAll() : QByteArray();
+    };
+    const auto Before = Read(DA);
+    const auto After = Read(DB);
+    // A user's normal unpack/recovery copy must remain separate from DIFF.
+    const auto Recovery = ProjectDatabase::workingDirectory(DA);
+    QVERIFY(QDir().mkpath(Recovery));
+    const auto Sentinel = QDir(Recovery).filePath("pending-edit.txt");
+    QVERIFY(write(Sentinel, "local recovery remains intact"));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    View.findChild<QLineEdit *>("comparisonPrimary")->setText(DA);
+    View.findChild<QLineEdit *>("comparisonSecondary")->setText(DB);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonStart"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Failures.size(), 0);
+    const auto Primary = Session.summary()["primary"].toObject();
+    QCOMPARE(Primary["path"].toString(), DA);
+    QCOMPARE(Primary["project"].toObject()["input_name"].toString(),
+             QString("saved-before.bin"));
+    auto *Inventory = View.findChild<QTableView *>("comparisonFunctions");
+    auto *Model = qobject_cast<ComparisonModel *>(Inventory->model());
+    QTRY_VERIFY_WITH_TIMEOUT(Model->rowCount() > 0, Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(Model->row(0)["name"].toString() == "saved_check",
+                             Timeout);
+    Inventory->setCurrentIndex(Model->index(0, 0));
+    auto *Instructions = View.findChild<QTableView *>("comparisonInstructions");
+    QTRY_VERIFY_WITH_TIMEOUT(Instructions->model()->rowCount() > 0, Timeout);
+    View.resize(1280, 800);
+    QCOMPARE(Read(DA), Before);
+    QCOMPARE(Read(DB), After);
+    QCOMPARE(Read(Sentinel), QByteArray("local recovery remains intact"));
+    QVERIFY(!QFileInfo::exists(A));
+    QVERIFY(!QFileInfo::exists(B));
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (const auto &ThemeName : {QString("light"), QString("dark")}) {
+        Theme::instance().setMode(ThemeName == "dark" ? Theme::Mode::Dark
+                                                      : Theme::Mode::Light);
+        QTest::qWait(40);
+        QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+        QVERIFY(View.grab().save(Captures + "/" + ThemeName +
+                                 "-saved-projects.png"));
+      }
+    }
+    QVERIFY(QFile::remove(Sentinel));
+  }
+
   void counterpartPickerPagesSearchesAndPreservesMappingIntent() {
     constexpr int Count = 417;
     const auto A = Directory.filePath("candidate-before.bin");

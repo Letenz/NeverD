@@ -154,6 +154,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallEntryStackSlots(&Result.CallEntryStackSlots);
     Local.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
     Local.setCallEntryFloatingArguments(&Result.CallEntryFloatingArguments);
+    Local.setCallEntryVariadicArguments(&Result.CallEntryVariadicArguments);
     Local.setUserPrototypeCallees(&Result.CallUserPrototypes);
     Local.setCallDispatchThunks(&Result.CallDispatchThunks);
     Local.setCallVariadicFrom(&Result.CallVariadicFrom);
@@ -280,6 +281,8 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallDispatchThunks);
   COPY_SOURCE_FACT(CallEntryArgumentCounts);
   COPY_SOURCE_FACT(CallEntryFloatingArguments);
+  COPY_SOURCE_FACT(CallEntryVariadicArguments);
+  COPY_SOURCE_FACT(OmittedCalleeVariadicArguments);
   COPY_SOURCE_FACT(CallEntryReadGPRs);
   COPY_SOURCE_FACT(CallEntryStackArgs);
   COPY_SOURCE_FACT(CallEntryStackPops);

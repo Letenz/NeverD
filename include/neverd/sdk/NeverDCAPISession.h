@@ -48,6 +48,12 @@ NEVERD_API void neverd_session_destroy(neverd_session_t Sess);
 /// usable with its existing image, analysis, and edits. See
 /// neverd_last_error().
 /// Path is UTF-8 on every platform, including Windows.
+/// NDDB saved projects are read through one read-only snapshot, checked against
+/// their embedded input SHA-256, and extracted into a session-owned temporary
+/// workspace. Known project files supply the usual load choices and edits.
+/// The source database and normal desktop recovery workspace are unchanged.
+/// session_file_path names the extracted binary until replacement/destruction;
+/// comparison provenance retains the caller's original database path.
 NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 /// Same transactional load with cooperative cancellation: 1 on completion,
 /// 0 on failure, -2 when a preparation checkpoint observes a stop. Cancellation
@@ -55,6 +61,8 @@ NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 /// callbacks are borrowed only for this synchronous call. Progress uses the
 /// session's load-progress callback. I/O and individual parser operations may
 /// delay a checkpoint. A stop after final preparation may complete normally.
+/// NDDB phases are project-open, project-files, project-unpack and
+/// project-apply.
 NEVERD_API int neverd_session_load_cancellable(neverd_session_t Sess,
                                                const char *Path,
                                                neverd_cancel_probe_fn Cancelled,

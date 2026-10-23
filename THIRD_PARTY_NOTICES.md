@@ -1,5 +1,14 @@
 # Third-Party Notices
 
+## SQLite
+
+The SDK and desktop share a native NDDB reader built with the unchanged SQLite
+3.54.1 amalgamation. Its archive is pinned by SHA-256. Source provenance and the
+public-domain dedication are preserved in
+[`LICENSES/sqlite/SOURCE.md`](LICENSES/sqlite/SOURCE.md), installed under
+`share/neverd/licenses/sqlite`. Loadable extensions are disabled. The GUI writer
+continues to use Qt SQL's driver and Qt's distributed notices.
+
 ## Capstone
 
 NeverD links the Capstone fork at the exact submodule revision recorded by its
@@ -507,6 +516,9 @@ stage these notices with the library and SDK and install them under
 executed by this implementation.
 
 ## zlib
+
+The shared NDDB reader also uses native zlib to stream compressed chunks written
+by Qt, with the same installed-library or pinned-static fallback policy.
 
 Offline package gzip admission links the installed native zlib library when
 available, using only its in-process stream decoder and checksum validation.

@@ -439,6 +439,26 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   const int8_t Slots =
       static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));
   if (Convention && Convention->ImportArgumentsFromPrototype &&
+      CallEntryVariadicArguments && MOp.NumInputs == 1)
+    if (const auto V = CallEntryVariadicArguments->find(ArgumentsKey);
+        V != CallEntryVariadicArguments->end()) {
+      const auto &Prefix = V->second;
+      MOp.CalleeVariadicFrom = static_cast<int8_t>(Prefix.size());
+      const int8_t RegisterSlots =
+          Convention->RegparmOnlyForInternalCalls ? 0 : Slots;
+      int8_t Count = std::min<int>(Prefix.size(), RegisterSlots);
+      for (int8_t I = Count; I < RegisterSlots; ++I)
+        if ((DispatchCallDefinedArgs >> I) & 1)
+          Count = I + 1;
+      for (int8_t I = 0; I < Count; ++I)
+        MOp.addInput(ndVarToMedVar(NdVar::reg(
+            ArgRegs[I], I < Prefix.size() ? Prefix[I] : TRI.PointerSize)));
+      MOp.CalleeRegisterArgs = Count;
+      // The fixed stack prefix is a minimum, including untouched tail-call
+      // inputs; the rest is recovered from setup without an upper bound.
+      MOp.CalleeStackArgs = Prefix.size() > RegisterSlots ? Prefix.size() : 0;
+    }
+  if (Convention && Convention->ImportArgumentsFromPrototype &&
       CallEntryFloatingArguments && MOp.NumInputs == 1)
     if (const auto F = CallEntryFloatingArguments->find(ArgumentsKey);
         F != CallEntryFloatingArguments->end()) {
@@ -836,11 +856,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   const size_t ArgSlots = std::min<size_t>(ArgRegs.size(), kTrackedArgSlots);
   const uint8_t AllArgs = static_cast<uint8_t>((1u << ArgSlots) - 1);
   const bool TrackDispatchArgs =
-      Convention && ((Convention->DispatcherTargetRegister &&
-                      CallDispatchThunks && !CallDispatchThunks->empty()) ||
-                     (Convention->VariadicFromSummary && CallVariadicFrom &&
-                      !CallVariadicFrom->empty()) ||
-                     (Convention->VariadicImportArgumentsInRegisters && Image));
+      Convention &&
+      ((Convention->DispatcherTargetRegister && CallDispatchThunks &&
+        !CallDispatchThunks->empty()) ||
+       (Convention->VariadicFromSummary && CallVariadicFrom &&
+        !CallVariadicFrom->empty()) ||
+       (Convention->VariadicImportArgumentsInRegisters && Image) ||
+       (CallEntryVariadicArguments && !CallEntryVariadicArguments->empty()));
   auto ArgBit = [&](const NdVar &V) -> uint8_t {
     if (!V.isReg())
       return 0;

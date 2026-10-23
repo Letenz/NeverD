@@ -1542,24 +1542,8 @@
         <translation>%1 non è un database NeverD.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 non esiste.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 usa il formato di database %2, che questa versione di NeverD non può leggere.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 indica un file di input non valido.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>Impossibile scrivere %1: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>L&apos;input memorizzato in %1 è danneggiato.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>Il database è cambiato mentre sono presenti modifiche recuperate in sospeso. Conservare la copia di lavoro prima di riaprirlo.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>Questo nome del file di input non può essere salvato in un progetto portabile.</translation>
     </message>
 </context>
 <context>
@@ -5534,6 +5522,22 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <source>Secondary: %1</source>
         <translation>Secondario: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>Apertura del progetto salvato</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>Lettura delle impostazioni del progetto salvato</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>Decompressione e verifica dei dati salvati</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>Applicazione dell’analisi salvata</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6134,20 +6138,12 @@ Copertura: %7</translation>
         <translation>Confronto NeverD (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>Nuovo binario o patch</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>Nessuna controparte accettata. Esamina i candidati ambigui o scegli una coppia manualmente.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>Nessuna scadenza</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>Binario originale</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6300,6 +6296,18 @@ Copertura: %7</translation>
     <message>
         <source>yes</source>
         <translation>sì</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>Nuovo binario o progetto salvato</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>Binario originale o progetto salvato</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>Seleziona un binario o un progetto NDDB salvato. I progetti salvati utilizzano le impostazioni di caricamento memorizzate e una copia di lavoro indipendente.</translation>
     </message>
 </context>
 <context>

@@ -41,6 +41,12 @@ void writeIdentity(llvm::json::OStream &J, const Program &P) {
   const ProgramIdentity &I = P.Identity;
   J.attribute("path", text(I.Path));
   J.attribute("sha256", I.SHA256);
+  if (!I.ProjectInputName.empty())
+    J.attributeObject("project", [&] {
+      J.attribute("format", "nddb-v1");
+      J.attribute("input_name", text(I.ProjectInputName));
+      J.attribute("state_sha256", I.ProjectStateSHA256);
+    });
   J.attribute("format", text(I.Format));
   J.attribute("architecture", text(I.Architecture));
   J.attribute("abi", text(I.ABI));
@@ -170,6 +176,18 @@ private:
 void readIdentity(Reader &In, const llvm::json::Object &O, ProgramIdentity &I) {
   I.Path = In.string(O, "path");
   I.SHA256 = In.string(O, "sha256");
+  if (O.get("project")) {
+    if (const auto *Project = In.object(O, "project")) {
+      if (In.string(*Project, "format") != "nddb-v1")
+        In.fail("unsupported project provenance format");
+      I.ProjectInputName = In.string(*Project, "input_name");
+      I.ProjectStateSHA256 = In.string(*Project, "state_sha256");
+      if (I.ProjectInputName.empty() || I.ProjectStateSHA256.size() != 64 ||
+          !llvm::all_of(I.ProjectStateSHA256,
+                        [](char C) { return llvm::isHexDigit(C); }))
+        In.fail("invalid project provenance");
+    }
+  }
   I.Format = In.string(O, "format");
   I.Architecture = In.string(O, "architecture");
   I.ABI = In.string(O, "abi");
@@ -750,6 +768,8 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
                       Now->SHA256 + ", the comparison was made from " +
                       Was->SHA256);
     if (Was->Analysis != Now->Analysis || Was->Revision != Now->Revision ||
+        Was->ProjectInputName != Now->ProjectInputName ||
+        Was->ProjectStateSHA256 != Now->ProjectStateSHA256 ||
         Was->Architecture != Now->Architecture || Was->Format != Now->Format ||
         Was->Bits != Now->Bits || Was->Endian != Now->Endian ||
         Was->ABI != Now->ABI || Was->Normalization != Now->Normalization ||

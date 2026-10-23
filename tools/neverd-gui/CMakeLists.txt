@@ -8,6 +8,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp" "${CMAKE_BINARY_DIR}/mcp")
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDProjectDatabase.cmake)
+neverd_add_project_database()
+
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Network LinguistTools Svg
   Sql Concurrent)
 # Qt 6.8 exports private targets from the public module packages. Newer Qt
@@ -62,7 +65,7 @@ target_include_directories(neverd_gui_app PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
   "${neverd_docking_SOURCE_DIR}/src")
 target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core neverd_gui_web Qt6::Widgets Qt6::Svg
-  Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets)
+  Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets NeverDProjectDatabase)
 # A window that draws its own frame tells the Wayland compositor where its
 # shadow ends, and drops the Windows caption, through Qt's private native
 # window interfaces.
@@ -93,6 +96,11 @@ qt_add_resources(neverd_gui_app "brand_assets" PREFIX /neverd
 
 qt_add_executable(neverd-gui WIN32 MACOSX_BUNDLE main.cpp)
 target_link_libraries(neverd-gui PRIVATE neverd_gui_app)
+add_custom_command(TARGET neverd-gui POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:neverd-gui>/licenses/sqlite"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSES/sqlite/SOURCE.md"
+    "$<TARGET_FILE_DIR:neverd-gui>/licenses/sqlite")
 
 file(GLOB NEVERD_TRANSLATIONS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/i18n/*.ts")
 if(NEVERD_TRANSLATIONS)

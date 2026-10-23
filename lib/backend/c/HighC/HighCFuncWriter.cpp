@@ -25,6 +25,7 @@
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/LibCResult.h"
+#include "neverd/libc/LibCVariadicArguments.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -4795,6 +4796,9 @@ std::string HighCWriter::debugParamName(const HighFunc &Func,
 }
 
 bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
+  if (FS.IsVariadic)
+    return libc::variadicCallArguments(FS, Opts.TheArch, Opts.Format)
+        .has_value();
   // A call's arguments come in the order of the registers they travel in,
   // which a function the debug information says enters with them in
   // registers need not follow.

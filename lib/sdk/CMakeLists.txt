@@ -36,6 +36,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPITypeFit.cpp
     capi/LocalTypesDebugContext.cpp
     capi/SessionSidecar.cpp
+    capi/ProjectInput.cpp
     capi/NeverDCAPIOptimize.cpp
     capi/NeverDCAPIPatch.cpp
     capi/NeverDCAPISourcePatch.cpp
@@ -77,6 +78,8 @@ if(NEVERD_PYTHON_PLUGIN_HOST_ENABLED)
         plugin/PythonPluginRuntime.cpp)
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDProjectDatabase.cmake)
+neverd_add_project_database()
 add_library(neverd_shared SHARED ${NEVERD_SDK_SOURCES})
 if(BUILD_TESTING)
     target_sources(neverd_shared PRIVATE capi/SessionTestAccess.cpp)
@@ -112,6 +115,7 @@ target_compile_features(neverd_shared PUBLIC cxx_std_20)
 # Tools that need LLVM command-line infra (InitLLVM, cl::opt, WithColor)
 # resolve those symbols from libneverd.dylib at link time.
 target_link_libraries(neverd_shared PRIVATE
+    NeverDProjectDatabase
     NeverDPipeline
     NeverDBackendC
     NeverDBackendSwift
@@ -300,6 +304,15 @@ add_custom_command(TARGET neverd_shared POST_BUILD
         "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
         "${NEVERD_STAGED_SDK_DIRECTORY}"
     COMMENT "Copying SDK headers and legal notices next to libneverd")
+
+foreach(_neverd_sqlite_notices_dir
+    "$<TARGET_FILE_DIR:neverd_shared>/licenses/sqlite"
+    "${NEVERD_STAGED_SDK_DIRECTORY}/licenses/sqlite")
+  add_custom_command(TARGET neverd_shared POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_neverd_sqlite_notices_dir}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/LICENSES/sqlite/SOURCE.md" "${_neverd_sqlite_notices_dir}")
+endforeach()
 
 foreach(_neverd_windows_type_notices_dir
     "$<TARGET_FILE_DIR:neverd_shared>/licenses/windows-types"

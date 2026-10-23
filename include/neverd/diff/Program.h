@@ -201,6 +201,9 @@ struct ProgramIdentity {
   std::string Path;
   /// SHA-256 of the input file, in lowercase hex; empty when unknown.
   std::string SHA256;
+  /// When Path names an NDDB container, SHA256 still identifies its embedded
+  /// binary. This names that input and binds its saved analysis project files.
+  std::string ProjectInputName, ProjectStateSHA256;
   std::string Format;
   std::string Architecture;
   std::string ABI;

@@ -159,6 +159,19 @@ incidental physical RAX value from a C `void` function cannot pass the oracle.
 
 `DriverMSRExecution.*` and `DriverMSRDeclaration.*` check explicit MSR values, full-width splitting, preserved state, repeated reads, exact instruction limits, missing/invalid inputs, and lack of memory authority across available backends. `KernelMSRRead.*` retains unused-declaration dependencies. Run the native driver, driver emulation and kernel snapshot owners; unavailable WHP/HVF execution is a skip, not native qualification.
 
+Windows header variadic prefixes are covered by `NeverDWin64CallContractTests`,
+`NeverDI386CallContractTests`, `NeverDAAPCS64CallContractTests`,
+`NeverDIntegerCallArgumentsTests` and `NeverDLocalTypesDebugContextTests`.
+The synthetic import is absent from the curated runtime tables. Both C routes
+are compiled and executed with an independent `va_arg` provider checking the
+forwarded fixed argument, each integer tail value and the returned low bits.
+The matrix includes zero and multiple tail arguments, x64/ARM64 stack overflow,
+register-loaded import slots, and ARM64 selection/omitted-callee cache reuse.
+These host C tests do not qualify native Windows execution or arbitrary FP,
+record or split-width variadic tails. `check_windows_ucrt_calls.py --function
+UseCRTVarargs` separately compiles the actual `_wopen` output against the
+retained original Microsoft UCRT declarations on x86, x64 and ARM64.
+
 `NeverDIntegerCallArgumentsTests` checks integer record carriers, unused
 register positions before memory arguments, register exhaustion, i386 slots,
 indirect copies and refusal of incomplete layouts. `NeverDRecordCallContractTests`
@@ -1149,6 +1162,15 @@ fixtures do not qualify arbitrary compiler transformations or cross-ISA matching
 Build `NeverDBinaryDiffTests`, `NeverDBinaryDiffFlowPipelineTests`,
 `NeverDBinaryDiffSDKTests`, `neverd`,
 `neverd-worker` and, with Qt enabled, `neverd-gui-comparison-tests`.
+For saved projects also build `NeverDProjectDatabaseTests` and
+`neverd-gui-unit-tests`. `ProjectDatabaseTest.*` checks streaming, integrity,
+concurrent WAL saves, budgets, path admission and cancellation with independent
+SQLite/zlib fixtures. `NeverDBinaryDiffProjectInputs` covers SDK/CLI/worker
+workspace lifetime, failed/cancelled replacement, saved names/types/settings,
+provenance, reopen, project-state changes and WAL-only edits. The Qt comparison
+test saves real projects, removes the originals, compares through the worker,
+and checks a normal recovery-workspace sentinel. GUI units retain roundtrip and
+recovery-journal coverage.
 The core tests check matching, ambiguity, deltas, deterministic correspondence,
 manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker
@@ -6424,11 +6446,15 @@ support.
 
 `RegistrationJumpRuntime` mutates each capture/resume/unwind binding in direct
 and indirect forms, including loader storage, DLL identity, delay imports,
-architecture, veneer opcode/slot and writable code. `RegistrationJumpCapture`
-checks physical PC and frame values, argument/admin overlap, wrong protocol,
-unknown callback roles, detached operations, source slices, caller ownership and
-work exhaustion. Its pinned xcpt4 CFG check requires all seven physical capture
-PCs to begin ordinary fallthrough blocks without becoming independent roots.
+architecture, veneer opcode/slot and writable code. Unconditional synthetic
+runtime checks also cover all four imports, truncated prefixes and full veneers,
+conflicting relocations, ambiguous storage and repeated byte/import changes.
+A matching raw prefix alone never authorizes a binding or a physical caller.
+`RegistrationJumpCapture` checks physical PC and frame values, argument/admin
+overlap, wrong protocol, unknown callback roles, detached operations, source
+slices, caller ownership and work exhaustion. Its pinned xcpt4 CFG check
+requires all seven physical capture PCs to begin ordinary fallthrough blocks
+without becoming independent roots.
 `RegistrationJumpState` checks solver-local capture/resumption, partial buffer
 writes, unused unwind-data writes, unknown intervening calls, altered IAT bytes,
 missing authentication and absent physical continuations. Buffer tests retain the

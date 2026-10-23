@@ -60,7 +60,7 @@ inline std::optional<IntegerCallArguments>
 recordCallArguments(const FunctionSym &Function, Arch Architecture,
                     BinaryFormat Format, LibCVariant Variant) {
   if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary) ||
-      !Function.PlatformConvention ||
+      !Function.PlatformConvention || Function.IsVariadic ||
       Function.CallConv == DebugCallConv::Fastcall ||
       Function.CallConv == DebugCallConv::Thiscall)
     return std::nullopt;

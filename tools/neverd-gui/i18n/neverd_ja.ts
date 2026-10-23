@@ -1542,24 +1542,8 @@
         <translation>%1 は NeverD データベースではありません。</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 は存在しません。</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 はデータベース形式 %2 を使用しており、この NeverD では読み込めません。</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 に無効な入力ファイルが指定されています。</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>%1 に書き込めません：%2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>%1 に保存されている入力が破損しています。</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>復元した編集が保留中にデータベースが変更されました。再度開く前に作業コピーを保存してください。</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>この入力ファイル名は、他の環境でも使用できるプロジェクトには保存できません。</translation>
     </message>
 </context>
 <context>
@@ -5498,6 +5486,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Secondary: %1</source>
         <translation>副入力: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>保存済みプロジェクトを開いています</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>保存済みプロジェクトの設定を読み込んでいます</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>保存済み入力を展開して検証しています</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>保存済みの解析を適用しています</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6098,20 +6102,12 @@ Coverage: %7</source>
         <translation>NeverD 比較 (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>新しいバイナリまたはパッチ</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>承認済みの対応する関数がありません。曖昧な候補を調べるか、手動でペアを選択してください。</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>期限なし</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>元のバイナリ</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6264,6 +6260,18 @@ Coverage: %7</source>
     <message>
         <source>yes</source>
         <translation>はい</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>新しいバイナリまたは保存済みプロジェクト</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>元のバイナリまたは保存済みプロジェクト</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>バイナリまたは保存済みの NDDB プロジェクトを選択します。保存済みプロジェクトでは、保存された読み込み設定と専用の作業コピーを使用します。</translation>
     </message>
 </context>
 <context>

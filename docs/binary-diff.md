@@ -6,6 +6,31 @@ binaries…**. Both use the shared comparison C API; the GUI runs it in a separa
 worker and does not replace the open project. The original name-based `diff`
 command remains available without `--structural`.
 
+Both inputs may be NDDB saved projects, including a project compared with an
+ordinary binary. Select the `.nddb` file in the desktop, pass it to `-a`/`-b`,
+or use the same worker input `path`. Auto format uses the saved loader,
+processor, platform and placement; an explicit load choice takes precedence.
+The SDK extracts the embedded binary and known project files into a private
+session-owned directory, retained through comparison-owned validation. It never
+reuses the desktop's editing or crash-recovery directory.
+
+The shared reader holds one read-only SQLite snapshot and checks chunk sequence,
+exact compression framing, lengths, filenames and input SHA-256. Input extraction
+streams through fixed buffers without a total-size policy ceiling. Aggregate
+metadata/sidecar/state budgets fail explicitly and are configurable through the
+shared reader. Cancellation removes unfinished extraction and preserves the
+previous comparison. A malformed database is an input error, never raw code.
+
+Provenance keeps `path` as the original database and `sha256` as the embedded
+binary's digest. Optional `project` metadata records `format:"nddb-v1"`,
+`input_name` and `state_sha256`. Saved analysis project files bind the analysis
+revision independently of SQLite layout, compression, temporary paths, desktop
+state and undo history. Source decorations and bookmarks do not become native
+matching evidence. External debug files are not embedded: saved choices use the
+normal debug loaders, missing files fail explicitly, and unchecked selections
+require their recorded file stamps. Relative companion paths resolve beside the
+NDDB file. Worker freshness checks include WAL and rollback-journal changes.
+
 This is an experimental foundation for issue #1462. The implemented profile is
 `native-x86-v1`, for two x86 inputs or two x86-64 inputs with the same ABI. Other
 ISA/ABI pairs fail explicitly. Raw and compiled ELF fixtures exercise the real
@@ -21,6 +46,7 @@ neverd diff --structural -a original.exe -b patched.exe --reopen review.nddiff -
 neverd diff --structural -a original.exe -b patched.exe --list changed --limit 200
 neverd diff --structural -a original.exe -b patched.exe --func 0x140001000 --json
 neverd diff --structural -a original.exe -b patched.exe --ignore-names --timeout-ms 30000
+neverd diff --structural -a original.nddb -b patched.nddb --json --save review.nddiff
 ```
 
 Progress goes to stderr. `--list` supports `all`, `matched`, `changed`,
@@ -705,7 +731,7 @@ LTO/PGO/obfuscation coverage remain outstanding.
 The GUI uses bounded function/instruction page caches and worker-owned CFG
 viewport indexes. Its graph viewport reports when a display allowance is reached.
 The decoded profile explicitly reports pseudocode unavailable. Source/IR anchored
-comparison, saved-session inputs, full reference provenance and broader profile
+comparison, full reference provenance and broader profile
 qualification remain work in progress.
 
 Native runs and verified finite SSA neighborhoods are parts of the required

@@ -17,6 +17,7 @@
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
 #include "neverd/sdk/NeverDCAPISigs.h"
+#include "neverd/support/FileStamp.h"
 #include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
 
@@ -55,22 +56,12 @@ namespace {
 // A signature source is external to the image. Never silently replay a
 // different file/tree into a replica of an already loaded project.
 Json signatureStamp(const fs::path &path) {
-  if (!fs::exists(path))
+  const auto stamp = fileStamp(path);
+  if (!stamp)
     return nullptr;
-  std::map<std::string, Json> files;
-  const auto add = [&](const fs::path &file) {
-    const auto name = file.generic_u8string();
-    files[std::string(name.begin(), name.end())] = {
-        fs::file_size(file),
-        fs::last_write_time(file).time_since_epoch().count()};
-  };
-  if (fs::is_directory(path)) {
-    for (const auto &entry : fs::recursive_directory_iterator(path))
-      if (entry.is_regular_file())
-        add(entry.path());
-  } else {
-    add(path);
-  }
+  Json files = Json::object();
+  for (const auto &[name, identity] : *stamp)
+    files[name] = {identity.first, identity.second};
   return files;
 }
 

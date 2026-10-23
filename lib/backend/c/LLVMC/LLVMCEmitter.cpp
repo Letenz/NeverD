@@ -55,6 +55,7 @@
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/libc/LibCResult.h"
+#include "neverd/libc/LibCVariadicArguments.h"
 #include "neverd/libc/MinGWHeaderFunctions.h"
 #include "neverd/loader/DataSymbolBinding.h"
 
@@ -1703,10 +1704,13 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
             Source->PrototypeLibrary == UserPrototypeLibrary ||
             Source->PrototypeFromCLibrary)
           continue;
-        bool Fits = Source->PlatformConvention &&
-                    Source->CallConv != DebugCallConv::Fastcall &&
-                    Source->CallConv != DebugCallConv::Thiscall &&
-                    Source->ReturnType;
+        bool Fits =
+            Source->PlatformConvention &&
+            Source->CallConv != DebugCallConv::Fastcall &&
+            Source->CallConv != DebugCallConv::Thiscall && Source->ReturnType &&
+            (!Source->IsVariadic ||
+             libc::variadicCallArguments(*Source, Opts.TheArch, Opts.Format)
+                 .has_value());
         std::vector<TypeRef> Parameters;
         for (const auto &Param : Source->Params) {
           Fits &= Scalar(Param.second);
@@ -1716,8 +1720,9 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
             Fits ? integerCallArguments(Opts.TheArch, Opts.Format,
                                         Source->ReturnType, Parameters)
                  : std::nullopt;
-        Fits &= Layout && Layout->Positions == Call->arg_size() &&
-                Parameters.size() == Call->arg_size();
+        Fits &= Layout && Layout->Positions == Parameters.size() &&
+                (Source->IsVariadic ? Parameters.size() <= Call->arg_size()
+                                    : Parameters.size() == Call->arg_size());
         for (unsigned I = 0; Fits && I < Parameters.size(); ++I) {
           const auto &Param = Layout->Parameters[I];
           auto *Carrier = Call->getArgOperand(I)->getType();
@@ -1758,6 +1763,10 @@ LLVMCWriter::sourceImportCallee(const llvm::CallBase &Call) const {
 
 std::string LLVMCWriter::sourceImportDeclaration(const FunctionSym &Function,
                                                  llvm::StringRef Name) {
+  if (Function.IsVariadic && Name == Function.Name &&
+      c_library::selfContainedDeclaration(Function.PortablePrototypeDeclaration,
+                                          Name))
+    return Function.PortablePrototypeDeclaration;
   const auto NotePointers = [&](const TypeRef &Type) {
     const NdType *Target = Type.get();
     while (Target && Target->Kind == NdTypeKind::Ptr)
@@ -1774,6 +1783,8 @@ std::string LLVMCWriter::sourceImportDeclaration(const FunctionSym &Function,
     Params +=
         declarationToC(cDisplayType(Type), Names.allocate(ParamName, "arg"));
   }
+  if (Function.IsVariadic)
+    Params += Params.empty() ? "..." : ", ...";
   NotePointers(Function.ReturnType);
   const std::string Convention =
       Opts.TheArch == Arch::X86 && Function.CallConv == DebugCallConv::Stdcall

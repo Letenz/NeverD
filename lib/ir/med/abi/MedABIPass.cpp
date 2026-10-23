@@ -1001,6 +1001,7 @@ void recoverCallAbi(
       const bool IntegerSummary = Op.CalleeRegisterArgs >= 0 &&
                                   Op.CalleeVectorSlots == 0 &&
                                   Op.CalleeVectorArgs <= 0;
+      const bool HeaderVariadic = Op.CalleeVariadicFrom >= 0;
       // An import whose prototype the user declares takes what that prototype
       // declares, as its summary counts it, not what the tables give a
       // routine of its name: through its stub, its slot, or a variable that
@@ -1023,7 +1024,7 @@ void recoverCallAbi(
       // one the tables know does, and no register it happens to hold, through
       // its slot or through the thunk an import library links (MinGW's
       // `_NlsValidateLocale@8`).
-      if (!ExternalArity &&
+      if (!HeaderVariadic && !ExternalArity &&
           (IsIndirectImport || IsDirectImport || PrototypeArguments) &&
           IntegerSummary) {
         libc::LibCArity Declared;
@@ -1031,6 +1032,9 @@ void recoverCallAbi(
             std::max<int>(Op.CalleeRegisterArgs, Op.CalleeStackArgs);
         ExternalArity = Declared;
       }
+
+      if (HeaderVariadic)
+        ExternalArity.reset();
 
       // The callee's integer register-argument count, if it is a known direct
       // intra-module target; -1 when unknown (external / indirect).  Used to
@@ -1106,6 +1110,13 @@ void recoverCallAbi(
           CalleeRegArgs = Op.CalleeRegisterArgs;
           CalleeArgs = std::max<int>(Op.CalleeRegisterArgs, Op.CalleeStackArgs);
         }
+      }
+      if (HeaderVariadic) {
+        CalleeRegArgs =
+            Convention && Convention->RegparmOnlyForInternalCalls
+                ? 0
+                : std::min<int>(Op.CalleeVariadicFrom, IntParamRegs.size());
+        CalleeArgs = Op.CalleeVariadicFrom;
       }
       // An external routine whose floats the base AAPCS passes in the
       // integer registers takes each float in the next one (doubles, which
@@ -1212,6 +1223,15 @@ void recoverCallAbi(
       // floating-point register arguments; such slots must be assembled as
       // stack arguments (after the FP arguments), not as register arguments.
       std::vector<bool> FromStackScan(MaxArgs, false);
+      // The checked prefix and proven register tail already passed through
+      // SSA. Keep those values when no setup write exists in this block.
+      if (HeaderVariadic)
+        for (int K = 0;
+             K < Op.CalleeRegisterArgs && K < MaxArgs && K + 1 < Op.NumInputs;
+             ++K) {
+          Found[K] = Op.Inputs[K + 1];
+          FoundMask[K] = true;
+        }
 
       // i386 passes arguments in a parameter register (ECX/EDX) only for the
       // internal regparm convention clang gives a *directly*-called static
@@ -1503,7 +1523,8 @@ void recoverCallAbi(
             if (isAbiRecoveryBarrier(Prev))
               break;
           }
-      if ((!CI.IsIndirect || UseExternalArity || UseVariableArity) &&
+      if ((!CI.IsIndirect || UseExternalArity || UseVariableArity ||
+           HeaderVariadic) &&
           IntRegArgsApply)
         for (int K = 0; K < NumIntParamRegs && K < MaxArgs; ++K) {
           if ((UseExternalArity || UseVariableArity) && K >= CalleeRegArgs)
@@ -2063,7 +2084,7 @@ void recoverCallAbi(
           auto &Subs = S.second;
           if (Slot < 0 || Slot >= MaxArgs)
             continue;
-          if (CalleeArgs >= 0 && Slot >= CalleeArgs)
+          if (!HeaderVariadic && CalleeArgs >= 0 && Slot >= CalleeArgs)
             continue; // beyond the callee's arity: would be truncated anyway
           if (Subs.size() < 2)
             continue; // a lone sub-store is already the slot model's value
@@ -2361,7 +2382,7 @@ void recoverCallAbi(
       // (printf("p[%d]=%.3f", i, v) then prints "p[0]=0.000").
       std::vector<MedVar> FoundFP;
       if (RegArgsApply && !FPParamRegs.empty() && DarwinVarArgBase < 0 &&
-          !CoreRegisterFloats) {
+          !CoreRegisterFloats && !HeaderVariadic) {
         // The FP-argument registers to probe, in ABI order.  Default to the
         // architecture's FP parameter registers (XMM0-7 / V0-7 / ARM D0-7); for
         // a direct call whose callee's exact FP layout is known, use it instead
@@ -2563,7 +2584,7 @@ void recoverCallAbi(
       // above.) Gated to an import, relocation-named external, or call whose
       // arity is otherwise unknown, so an intra-module function that happens
       // to share a registered name keeps its recovered signature.
-      if (UseExternalArity) {
+      if (UseExternalArity && !HeaderVariadic) {
         const int Integers = ExternalArity->IntArgs +
                              (CoreRegisterFloats ? ExternalArity->FpArgs : 0);
         for (int K = std::max(0, Integers); K < MaxArgs; ++K) {
@@ -2649,7 +2670,7 @@ void recoverCallAbi(
           if (FoundMask[K])
             LastFound = K;
         AssembleEnd = LastFound + 1;
-        if (CalleeArgs > 0 && CalleeArgs < AssembleEnd)
+        if (!HeaderVariadic && CalleeArgs > 0 && CalleeArgs < AssembleEnd)
           AssembleEnd = CalleeArgs;
       }
       bool IndirectSretSetup = false;
@@ -2938,7 +2959,8 @@ void recoverCallAbi(
       }
       // A dedicated indirect-result register (AArch64 x8) carries an
       // indirect callee's result buffer too.
-      bool IndirectSret = CI.IsIndirect && TRI.indirectResultReg() != 0;
+      bool IndirectSret =
+          CI.IsIndirect && !HeaderVariadic && TRI.indirectResultReg() != 0;
       if (DirectSret || IndirectSret) {
         uint64_t IRR = TRI.indirectResultReg();
         for (int J = static_cast<int>(OI) - 1; IRR != 0 && J >= 0; --J) {
@@ -2977,7 +2999,9 @@ void recoverCallAbi(
         }
       }
 
-      if (!CI.IsIndirect && DarwinVarArgBase >= 0)
+      if (HeaderVariadic)
+        CI.VarArgFixedCount = Op.CalleeVariadicFrom;
+      else if (!CI.IsIndirect && DarwinVarArgBase >= 0)
         CI.VarArgFixedCount = DarwinVarArgBase;
       // A variadic routine of the image whose save area says how many named
       // register parameters it has takes the rest variadically, which a
