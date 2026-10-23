@@ -64,48 +64,6 @@ namespace neverd {
 
 namespace {
 
-/// Whether \p Declaration, a C library's own declaration of the routine
-/// \p Name, names only what every unit that includes headers has: C's own
-/// types, <stdint.h>'s, and record and enumeration tags.  Such a unit then
-/// declares the routine as its header does, `const` and all, and agrees with
-/// the header wherever it includes it too.
-bool selfContainedDeclaration(llvm::StringRef Declaration,
-                              llvm::StringRef Name) {
-  static const std::set<std::string, std::less<>> Known = {
-      "void",      "char",     "short",    "int",        "long",
-      "signed",    "unsigned", "float",    "double",     "_Bool",
-      "const",     "volatile", "restrict", "__restrict", "__restrict__",
-      "_Noreturn", "struct",   "union",    "enum",       "int8_t",
-      "int16_t",   "int32_t",  "int64_t",  "uint8_t",    "uint16_t",
-      "uint32_t",  "uint64_t", "intptr_t", "uintptr_t",  "intmax_t",
-      "uintmax_t"};
-  llvm::StringRef Previous;
-  for (size_t I = 0; I < Declaration.size();) {
-    if (!llvm::isAlpha(Declaration[I]) && Declaration[I] != '_') {
-      ++I;
-      continue;
-    }
-    size_t End = I;
-    while (End < Declaration.size() &&
-           (llvm::isAlnum(Declaration[End]) || Declaration[End] == '_'))
-      ++End;
-    const llvm::StringRef Word = Declaration.slice(I, End);
-    size_t Next = End;
-    while (Next < Declaration.size() && Declaration[Next] == ' ')
-      ++Next;
-    // The routine's name, a tag, and a parameter's name, which a comma,
-    // bracket or closing parenthesis follows, name no type.
-    const bool Parameter = Next < Declaration.size() &&
-                           llvm::StringRef(",)[").contains(Declaration[Next]);
-    if (Word != Name && !Parameter && !Known.count(Word) &&
-        Previous != "struct" && Previous != "union" && Previous != "enum")
-      return false;
-    Previous = Word;
-    I = End;
-  }
-  return true;
-}
-
 /// Whether one pair of parentheses encloses all of \p Text.
 bool enclosed(llvm::StringRef Text) {
   bool Enclosed = Text.size() >= 2 && Text.front() == '(';
@@ -2370,7 +2328,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       const FunctionSym &Library = DebugExternSigs[Name];
       if (Opts.EmitIncludes && Library.PrototypeFromCLibrary &&
           Identifier == Name && Declared == Identifier && LinkLabel.empty() &&
-          selfContainedDeclaration(Library.PrototypeDeclaration, Name))
+          c_library::selfContainedDeclaration(Library.PrototypeDeclaration,
+                                              Name))
         OS << "extern " << Library.PrototypeDeclaration;
       else
         OS << debugExternPrototype(Library, Identifier, Name) << LinkLabel;

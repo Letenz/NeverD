@@ -3718,7 +3718,7 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
         return Layout->Positions;
     // The call passes the machine arguments of another signature, whatever
     // their count.
-    if (!positionalDebugSignature(*Callee))
+    if (Callee->IsVariadic || !positionalDebugSignature(*Callee))
       return Have;
     const bool Indirect =
         isMsvcIndirectReturn(Callee->ReturnType, Opts.TheArch, Opts.Format);
@@ -4332,7 +4332,7 @@ std::string HighCWriter::debugSignatureKey(const FunctionSym &FS) {
   auto Spell = [](const TypeRef &Ty) {
     return hasCSpelling(Ty) ? typeToC(Ty) : std::string("?");
   };
-  std::string Key;
+  std::string Key = FS.IsVariadic ? "variadic/" : "fixed/";
   if (FS.ReturnType)
     Key += Spell(FS.ReturnType);
   Key += "/";
@@ -4396,6 +4396,10 @@ std::string
 HighCWriter::debugExternPrototype(const FunctionSym &FS,
                                   const std::string &Identifier,
                                   llvm::StringRef ExternName) const {
+  if (FS.IsVariadic && positionalDebugSignature(FS) && Identifier == FS.Name &&
+      c_library::selfContainedDeclaration(FS.PortablePrototypeDeclaration,
+                                          Identifier))
+    return "extern " + FS.PortablePrototypeDeclaration;
   // A symbol the debug information names without a type returns what its
   // register holds, whole: a narrower type would drop the upper bytes of a
   // pointer or a 64-bit result at every call.
@@ -4458,7 +4462,9 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   // A debug signature without parameters says nothing about them:
   // debugCallArgLimit keeps every recovered argument for such a callee, so
   // `(void)` would reject the call.  Leave the declaration unprototyped.
-  if (Emitted == 0 && !FS.Params.empty())
+  if (FS.IsVariadic)
+    Declarator += Emitted ? ", ..." : "...";
+  else if (Emitted == 0 && !FS.Params.empty())
     Declarator += "void";
   std::string Prefix = "extern ";
   if (Opts.TheArch == Arch::X64 &&

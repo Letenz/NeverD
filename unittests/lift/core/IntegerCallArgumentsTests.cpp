@@ -14,6 +14,7 @@
 #include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/libc/LibCFloatingArguments.h"
+#include "neverd/libc/LibCVariadicArguments.h"
 
 using namespace neverd;
 
@@ -58,6 +59,39 @@ TEST(FloatingCallArguments, CompleteScalarRegistersAndConservativeBoundaries) {
   Function.CallConv = DebugCallConv::Fastcall;
   EXPECT_FALSE(
       libc::floatingCallArguments(Function, Arch::X64, BinaryFormat::COFF));
+}
+
+TEST(VariadicCallArguments, HeaderPrefixIsNotAnExactOrFloatingSignature) {
+  for (Arch A : {Arch::X86, Arch::X64, Arch::AArch64}) {
+    FunctionSym Function;
+    Function.IsVariadic = true;
+    Function.PrototypeFromHeader = true;
+    Function.ReturnType = NdType::makeInt(4, true);
+    auto Pointer = NdType::makePtr();
+    Pointer->Size = getTargetRegInfo(A).PointerSize;
+    Function.Params = {{"name", Pointer}, {"flags", NdType::makeInt(4)}};
+    const auto Prefix =
+        libc::variadicCallArguments(Function, A, BinaryFormat::COFF);
+    ASSERT_TRUE(Prefix);
+    EXPECT_EQ(*Prefix, (std::vector<uint16_t>{Pointer->Size, 4}));
+    EXPECT_FALSE(libc::variadicCallArguments(Function, A, BinaryFormat::ELF));
+    Function.IsVariadic = false;
+    EXPECT_FALSE(libc::variadicCallArguments(Function, A, BinaryFormat::COFF));
+    Function.IsVariadic = true;
+    Function.CallConv = DebugCallConv::Stdcall;
+    EXPECT_FALSE(libc::variadicCallArguments(Function, A, BinaryFormat::COFF));
+    Function.CallConv = DebugCallConv::Cdecl;
+    Function.PrototypeFromHeader = false;
+    EXPECT_FALSE(libc::variadicCallArguments(Function, A, BinaryFormat::COFF));
+    Function.PrototypeFromHeader = true;
+    Function.Params[0].second = NdType::makeFloat(8);
+    EXPECT_FALSE(libc::variadicCallArguments(Function, A, BinaryFormat::COFF));
+    Function.Params[1].second = NdType::makeFloat(8);
+    Function.ReturnType = NdType::makeFloat(8);
+    EXPECT_FALSE(libc::floatingCallArguments(Function, A, BinaryFormat::COFF));
+    Function.Params.clear();
+    EXPECT_FALSE(libc::variadicCallArguments(Function, A, BinaryFormat::COFF));
+  }
 }
 
 TypeRef pointer(uint16_t Bytes = 8) {

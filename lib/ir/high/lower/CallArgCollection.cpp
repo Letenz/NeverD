@@ -1115,6 +1115,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     const MedOp &Call = Ops[CallIdx];
     Scan.CalleeRegisterArgs = Call.CalleeRegisterArgs;
     Scan.CalleeStackArgs = Call.CalleeStackArgs;
+    Scan.HeaderVariadic = Call.CalleeVariadicFrom >= 0;
     Scan.CalleeInImage =
         Call.Opcode == NdOp::CALL && Call.NumInputs >= 1 &&
         Call.Inputs[0].isConst() &&

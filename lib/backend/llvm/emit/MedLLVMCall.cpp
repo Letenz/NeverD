@@ -28,6 +28,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCVariadicArguments.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/safety/CountedWriteSemantics.h"
@@ -767,6 +768,27 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
           : nullptr;
   std::string IndirectImportName;
   bool PreserveHeaderTarget = false;
+  std::optional<FunctionSym> VariadicHeader;
+  if (Op.CalleeVariadicFrom >= 0 && Img && CI && Dbg) {
+    const std::string Name = importCalleeName(*Img, CI->TargetAddr);
+    if (!Name.empty())
+      if (auto Header = Dbg->resolvePrototype(Name);
+          Header &&
+          libc::variadicCallArguments(*Header, TargetArch, TargetFormat) &&
+          Header->Params.size() == static_cast<size_t>(Op.CalleeVariadicFrom) &&
+          CI->VarArgFixedCount == Op.CalleeVariadicFrom &&
+          Args.size() >= Header->Params.size()) {
+        VariadicHeader = std::move(*Header);
+        IndirectImportName = Name;
+        PreserveHeaderTarget = Target && !KnownTarget;
+      }
+    if (!VariadicHeader) {
+      syncError() << "med_llvm_emitter: variadic header call lost its checked "
+                     "fixed prefix\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
+  }
   if (Op.CalleeFloatReturnBytes && Target && Img && CI && Dbg) {
     const std::string Name = importCalleeName(*Img, CI->TargetAddr);
     if (!Name.empty())
@@ -1040,6 +1062,25 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         }
       }
 
+      if (VariadicHeader) {
+        std::vector<llvm::Type *> Parameters;
+        for (const auto &[Name, Type] : VariadicHeader->Params)
+          Parameters.push_back(mapNdtype(Type));
+        auto *FT = llvm::FunctionType::get(
+            mapNdtype(VariadicHeader->ReturnType), Parameters, true);
+        Callee = Mod->getFunction(CalleeName);
+        if (Callee && Callee->getFunctionType() != FT) {
+          syncError() << "med_llvm_emitter: conflicting variadic import ABI\n";
+          FatalCodePointerResolution = true;
+          return;
+        }
+        if (!Callee)
+          Callee = llvm::Function::Create(
+              FT, llvm::GlobalValue::ExternalLinkage, CalleeName, Mod);
+        Callee->setCallingConv(TargetArch == Arch::X64
+                                   ? llvm::CallingConv::Win64
+                                   : llvm::CallingConv::C);
+      }
       if (Op.X87ImportArguments) {
         Callee = Mod->getFunction(CalleeName);
         if (!Callee && !CalleeName.empty())

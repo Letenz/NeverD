@@ -76,6 +76,13 @@ omittedCalleeFloatingArguments(const PipelineResult &Result) {
              : Result.CallEntryFloatingArguments;
 }
 
+const std::map<va_t, std::vector<uint16_t>> &
+omittedCalleeVariadicArguments(const PipelineResult &Result) {
+  return Result.OmittedCalleeVariadicArguments
+             ? *Result.OmittedCalleeVariadicArguments
+             : Result.CallEntryVariadicArguments;
+}
+
 const std::map<va_t, int> &
 omittedCalleeStackArgs(const PipelineResult &Result) {
   return Result.OmittedCalleeStackArgs ? *Result.OmittedCalleeStackArgs
@@ -108,6 +115,9 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   const auto &Floating = omittedCalleeFloatingArguments(Result);
   if (const auto It = Floating.find(Key); It != Floating.end())
     Read.FloatingArguments = It->second;
+  const auto &Variadic = omittedCalleeVariadicArguments(Result);
+  if (const auto It = Variadic.find(Key); It != Variadic.end())
+    Read.VariadicArguments = It->second;
   return Read;
 }
 
@@ -456,6 +466,8 @@ public:
           &omittedCalleeArgumentCounts(Result));
       Converter.setCallEntryFloatingArguments(
           &omittedCalleeFloatingArguments(Result));
+      Converter.setCallEntryVariadicArguments(
+          &omittedCalleeVariadicArguments(Result));
       Converter.setCallSummaryKeysRead(&Keys);
       Converter.setRuntimeRoutineCalls(&runtimeRoutineCalls());
       Converter.setCodePointerTargets(&codePointerTargets());

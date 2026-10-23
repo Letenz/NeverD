@@ -55,8 +55,8 @@ TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
                          const types::TypeExpr &Type);
 
 /// \p Function's signature, named \p Name, as the decompiler's types
-/// describe it.  None for a variadic one, whose calls pass more than it
-/// declares, or one with a type the decompiler cannot describe.
+/// describe it. Variadic declarations retain their fixed prefix and ellipsis.
+/// None for a type the decompiler cannot describe.
 std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
                                        const types::FunctionDef &Function,
                                        llvm::StringRef Name);
@@ -188,8 +188,7 @@ public:
 
   /// The signature the library gives \p Name: its return type and named
   /// parameters, the library that declares it and the declaration.  None
-  /// for a name without a prototype, a variadic one, whose calls pass more
-  /// than it declares, or one with a type the decompiler cannot describe.
+  /// for a name without a prototype or a type the decompiler cannot describe.
   std::optional<FunctionSym>
   resolvePrototype(llvm::StringRef Name) const override;
 

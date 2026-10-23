@@ -5373,7 +5373,8 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
     const bool Integer = Operand->getType()->isIntegerTy();
-    if (const auto *Source = sourceImportCallee(Call)) {
+    if (const auto *Source = sourceImportCallee(Call);
+        Source && ArgIdx < Source->Params.size()) {
       const auto &Type = Source->Params[ArgIdx].second;
       const std::string Bridge =
           Integer || PointerSpelling || Operand->getType()->isPointerTy()

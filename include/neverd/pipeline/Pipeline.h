@@ -341,6 +341,10 @@ struct PipelineResult {
   /// Complete fixed scalar FP import signatures, with no integer or stack
   /// parameters. Their register uses must reach SSA before call setup scans.
   std::map<va_t, FloatingCallArguments> CallEntryFloatingArguments;
+  /// Fixed scalar widths of header variadic imports; the tail stays open.
+  std::map<va_t, std::vector<uint16_t>> CallEntryVariadicArguments;
+  std::shared_ptr<const std::map<va_t, std::vector<uint16_t>>>
+      OmittedCalleeVariadicArguments;
   /// The same signatures for imports reached only by omitted callees.
   std::shared_ptr<const std::map<va_t, FloatingCallArguments>>
       OmittedCalleeFloatingArguments;

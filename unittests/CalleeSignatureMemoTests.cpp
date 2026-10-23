@@ -33,6 +33,7 @@ TEST(CalleeSignatureMemo, AKeptBodyServesWhileTheSummariesItReadHold) {
     R.CallEntryStackArgs[0x2000] = 2;
     R.CallEntryStackSlots.insert(0x2000);
     R.CallEntryArgumentCounts[0x2000] = 3;
+    R.CallEntryVariadicArguments[0x2000] = {8, 4};
   };
   neverd::PipelineResult Read;
   State(Read);
@@ -45,6 +46,7 @@ TEST(CalleeSignatureMemo, AKeptBodyServesWhileTheSummariesItReadHold) {
   Elsewhere.CallMayWriteGPRs[0x3000] = 0x1;
   Elsewhere.CallEntryReadGPRs[0x3000][2] = 4;
   Elsewhere.CallEntryArgumentCounts[0x3000] = 4;
+  Elsewhere.CallEntryVariadicArguments[0x3000] = {4};
   EXPECT_TRUE(Callee.readsHold(Elsewhere));
   // A summary under a key it read that changes, appears or goes away does.
   void (*const Changes[])(neverd::PipelineResult &) = {
@@ -57,6 +59,12 @@ TEST(CalleeSignatureMemo, AKeptBodyServesWhileTheSummariesItReadHold) {
       [](neverd::PipelineResult &R) { R.CallEntryStackSlots.erase(0x2000); },
       [](neverd::PipelineResult &R) { R.CallEntryStackSlots.insert(0x1000); },
       [](neverd::PipelineResult &R) { R.CallEntryArgumentCounts[0x2000] = 2; },
+      [](neverd::PipelineResult &R) {
+        R.CallEntryVariadicArguments[0x2000][1] = 8;
+      },
+      [](neverd::PipelineResult &R) {
+        R.CallEntryVariadicArguments.erase(0x2000);
+      },
       [](neverd::PipelineResult &R) {
         R.CallEntryArgumentCounts.erase(0x2000);
       },
