@@ -36,7 +36,7 @@ struct SourceLinePair {
 };
 
 struct SourceAlignmentOptions {
-  /// Charges input bytes, line comparisons, split searches and output rows.
+  /// Charges input bytes, frontier storage/search, comparisons and output rows.
   /// Zero removes the extra work allowance; cancellation remains available.
   uint64_t MaxWork = limits::diff::kDefaultSourceAlignmentWork;
 };
@@ -49,7 +49,8 @@ struct SourceAlignment {
 };
 
 /// Exact-line longest-common-subsequence alignment with linear scratch space.
-/// Prefix/suffix stripping preserves long unchanged runs. Ties are
+/// Bidirectional edit-path search makes sparse edits output-sensitive, while
+/// prefix/suffix stripping preserves long unchanged runs. Ties are
 /// deterministic but do not imply unique source correspondence. Stopped work
 /// publishes no classified rows. Neither spelling equality nor this alignment
 /// proves behavior.

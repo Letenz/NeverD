@@ -427,8 +427,10 @@ or semantic claims. Source pages are transient and revision-bound; saved native
 evidence is independent of source inspection. Cancellation discards the page,
 with checkpoints around the existing indivisible analysis and rendering steps.
 `lib/diff/SourceAlignment` owns exact textual line alignment independently of
-native matching. It uses a linear-space LCS with prefix/suffix stripping,
-deterministic ties, explicit work charging and cooperative cancellation.
+native matching. It uses a linear-space bidirectional shortest-edit-path search
+with prefix/suffix stripping, deterministic ties, explicit work charging and
+cooperative cancellation. Sparse edits do not require a Cartesian line search;
+frontier buffers are released before solving the two smaller edit problems.
 `ComparisonSource` collects complete renderings through ordinary source pages,
 checks their coordinates and preserves exact text and original row evidence.
 The byte allowance covers text plus serialized evidence across both inputs.

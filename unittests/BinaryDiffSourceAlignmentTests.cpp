@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -25,7 +26,7 @@ std::vector<llvm::StringRef> lines(const std::vector<std::string> &Text) {
 }
 
 // Independent full-table edit distance. A replacement costs a deletion and
-// insertion; the production implementation uses linear-space LCS splitting.
+// insertion; the production implementation searches edit diagonals.
 size_t distance(const std::vector<std::string> &A,
                 const std::vector<std::string> &B) {
   std::vector<std::vector<size_t>> D(A.size() + 1,
@@ -42,7 +43,7 @@ size_t distance(const std::vector<std::string> &A,
 }
 
 void check(const std::vector<std::string> &A, const std::vector<std::string> &B,
-           const SourceAlignment &R) {
+           const SourceAlignment &R, size_t ExpectedCost) {
   ASSERT_TRUE(R.ComputationComplete);
   ASSERT_EQ(R.State, ComparisonState::Complete);
   size_t I = 0, J = 0, Cost = 0;
@@ -82,7 +83,12 @@ void check(const std::vector<std::string> &A, const std::vector<std::string> &B,
   }
   EXPECT_EQ(I, A.size());
   EXPECT_EQ(J, B.size());
-  EXPECT_EQ(Cost, distance(A, B));
+  EXPECT_EQ(Cost, ExpectedCost);
+}
+
+void check(const std::vector<std::string> &A, const std::vector<std::string> &B,
+           const SourceAlignment &R) {
+  check(A, B, R, distance(A, B));
 }
 } // namespace
 
@@ -119,6 +125,69 @@ TEST(BinaryDiffSourceAlignment, TextChangesKeepLiteralsNamesAndLineEndings) {
   EXPECT_EQ(R.Rows[1].Kind, SourceLineKind::Unchanged);
   EXPECT_EQ(R.Rows[2].Kind, SourceLineKind::Changed);
   EXPECT_EQ(R.Rows[3].Kind, SourceLineKind::Changed);
+}
+
+TEST(BinaryDiffSourceAlignment,
+     RandomUnequalRepeatedLinesMatchIndependentOracle) {
+  std::mt19937 Random(0x4D594552);
+  for (size_t Trial = 0; Trial < 1500; ++Trial) {
+    SCOPED_TRACE(Trial);
+    const auto Alphabet = 1 + Random() % 11;
+    std::vector<std::string> A(Random() % 97), B(Random() % 97);
+    for (auto *Text : {&A, &B})
+      for (auto &Line : *Text)
+        Line = std::to_string(Random() % Alphabet);
+    const auto R = alignSourceLines(lines(A), lines(B));
+    check(A, B, R);
+    EXPECT_EQ(alignSourceLines(lines(A), lines(B)).Rows, R.Rows);
+    check(B, A, alignSourceLines(lines(B), lines(A)));
+  }
+}
+
+TEST(BinaryDiffSourceAlignment, HighlyUnequalInputsKeepOptimalCoverage) {
+  for (const size_t Count : {1, 2, 3, 7}) {
+    SCOPED_TRACE(Count);
+    std::vector<std::string> A(Count, "left"), B(10000, "right");
+    for (const bool Shared : {false, true}) {
+      SCOPED_TRACE(Shared);
+      if (Shared) {
+        A[Count / 2] = "shared";
+        B[B.size() / 2] = "shared";
+      }
+      check(A, B, alignSourceLines(lines(A), lines(B)));
+      check(B, A, alignSourceLines(lines(B), lines(A)));
+    }
+  }
+}
+
+TEST(BinaryDiffSourceAlignment, SparseEditsFinishWithinDefaultWorkAllowance) {
+  for (const size_t Count : {10000, 100000}) {
+    SCOPED_TRACE(Count);
+    std::vector<std::string> A, B;
+    for (size_t I = 0; I < Count; ++I) {
+      const auto Line = "  value_" + std::to_string(I) + " = input + ";
+      A.push_back(Line + "7;\n");
+      B.push_back(Line + (I % (Count / 10) == 0 ? "9;\n" : "7;\n"));
+    }
+    // All original lines are unique; ten replacements cost exactly 20 edits.
+    const auto Changed = alignSourceLines(lines(A), lines(B));
+    check(A, B, Changed, 20);
+    EXPECT_EQ(Changed.Rows.size(), Count);
+
+    B.clear();
+    for (size_t I = 0; I < Count; ++I) {
+      if (I % (Count / 10) == 0) {
+        if ((I / (Count / 10)) % 2 != 0)
+          continue;
+        B.push_back("  added_" + std::to_string(I) + "();\n");
+      }
+      B.push_back(A[I]);
+    }
+    // Five insertions and five deletions are separated by unchanged runs.
+    const auto Gapped = alignSourceLines(lines(A), lines(B));
+    check(A, B, Gapped, 10);
+    EXPECT_EQ(Gapped.Rows.size(), Count + 5);
+  }
 }
 
 TEST(BinaryDiffSourceAlignment, LongUnchangedRunsAvoidQuadraticWork) {

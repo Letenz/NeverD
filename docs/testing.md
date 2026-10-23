@@ -1230,7 +1230,11 @@ explicit reload and rapid representation changes. Optional captures cover both
 themes at normal/minimum sizes with long names and fractional scaling.
 `BinaryDiffSourceAlignment` checks repeated-line inputs exhaustively against an
 independent full-table edit-distance oracle, Unicode/literals/line terminators,
-long unchanged runs, exact and removed work allowances, cancellation and deadlines.
+random unequal/repeated inputs, long unchanged runs, exact and removed work
+allowances, cancellation and deadlines. Sparse 10k/100k-line fixtures require
+ten separated replacements, or five insertions and five deletions, to complete
+within the default work allowance with exact original-line coverage. Highly
+unequal inputs exercise both edit directions against the independent oracle.
 SDK source-difference tests reassemble both exact ordinary emissions across pages,
 check original anchors and source coordinates, exercise mapping invalidation,
 byte/work/instruction limits and cancellation/refresh, and preserve saved native

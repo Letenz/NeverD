@@ -592,8 +592,11 @@ windows. The `neverd.bindiff.source.difference` version 1 response has original
 line records and checked native anchors on each side of `rows`, plus a textual
 `kind`: `unchanged`, `changed`, `inserted` or `deleted`. A missing side is null.
 Changed rows pair adjacent removals and additions for display; this does not
-establish statement or instruction correspondence. Exact line LCS uses linear
-scratch space and deterministic ties; repeated text can have other valid pairings.
+establish statement or instruction correspondence. Exact line LCS uses a
+bidirectional shortest-edit-path search with linear scratch space. Sparse edits
+avoid a full line-by-line Cartesian search. Ties are deterministic; repeated text
+can have other valid pairings. Recipe `sdk-source-difference-v2` records this
+search and its work accounting; the response schema remains version 1.
 
 Queries accept the source-page fields plus `max_work`, `max_source_bytes` and
 `include_prelude`. Declarations are excluded by default; enable **Include

@@ -1135,7 +1135,7 @@ const char *neverd_comparison_source_difference_json(neverd_comparison_t Handle,
         {"cached", Cached},
         {"representation", Options.Source.Representation},
         {"scope", Options.IncludePrelude ? "whole_emission" : "function_body"},
-        {"recipe", std::string(VersionString) + ":sdk-source-difference-v1"},
+        {"recipe", std::string(VersionString) + ":sdk-source-difference-v2"},
         {"input_source_binding", "owned_sessions"},
         {"source_alignment", Difference.Alignment.ComputationComplete
                                  ? "exact_text_lines"

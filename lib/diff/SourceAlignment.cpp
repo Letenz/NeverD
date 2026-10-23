@@ -4,8 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Linear-space LCS over exact interned source lines, with explicit stop
-/// states.
+/// Linear-space shortest edit paths over exact source lines with explicit
+/// stop states and output-sensitive work for sparse changes.
 //===----------------------------------------------------------------------===//
 
 #include "neverd/diff/SourceAlignment.h"
@@ -43,42 +43,80 @@ class Alignment {
     return A[I] == B[J];
   }
 
-  // One in-place row of the LCS recurrence; reverse reads suffixes without
-  // copying input. Only two such rows survive a split search, and both are
-  // released before recursion. Recursion halves A, so its depth is logarithmic.
-  std::vector<size_t> scores(size_t ABegin, size_t AEnd, size_t BBegin,
-                             size_t BEnd, bool Reverse) {
-    std::vector<size_t> Row(BEnd - BBegin + 1);
-    for (size_t I = 0; I < AEnd - ABegin; ++I) {
-      size_t Diagonal = 0;
-      for (size_t J = 1; J <= BEnd - BBegin; ++J) {
-        const auto Previous = Row[J];
-        Row[J] = equal(Reverse ? AEnd - I - 1 : ABegin + I,
-                       Reverse ? BEnd - J : BBegin + J - 1)
-                     ? Diagonal + 1
-                     : std::max(Row[J], Row[J - 1]);
-        Diagonal = Previous;
-      }
+  struct Snake {
+    size_t ABegin, BBegin, AEnd, BEnd;
+  };
+
+  // Bidirectional shortest-edit-path search (Myers, 1986, section 4b;
+  // doi:10.1007/BF01840446). Each frontier keeps only its furthest position
+  // per edit diagonal. The first overlap identifies an optimal middle snake;
+  // its buffers are released before descending into either subproblem.
+  Snake middle(size_t ABegin, size_t AEnd, size_t BBegin, size_t BEnd) {
+    const uint64_t ASize = AEnd - ABegin, BSize = BEnd - BBegin;
+    const auto MaxCoordinates = std::min<uint64_t>(INT64_MAX, SIZE_MAX);
+    // Leave room for both frontier sentinels and round-up to an even width.
+    if (ASize > MaxCoordinates - 4 || BSize > MaxCoordinates - 4 - ASize)
+      throw Interrupted{ComparisonState::ResourceLimited};
+    const int64_t N = ASize, M = BSize, Delta = N - M;
+    const int64_t Radius = (N + M + 1) / 2, Base = Radius + 1;
+    const size_t Storage = 2 * Radius + 3;
+    charge(uint64_t(Storage) * 2);
+    std::vector<int64_t> Forward(Storage, -1), Backward(Storage, -1);
+    const bool Odd = Delta % 2 != 0;
+    for (int64_t Distance = 0; Distance <= Radius; ++Distance) {
       if (Control.Progress)
         Control.Progress("source_alignment", Result.Work, 0);
-    }
-    return Row;
-  }
-
-  size_t split(size_t ABegin, size_t AMiddle, size_t AEnd, size_t BBegin,
-               size_t BEnd) {
-    const auto Forward = scores(ABegin, AMiddle, BBegin, BEnd, false);
-    const auto Backward = scores(AMiddle, AEnd, BBegin, BEnd, true);
-    size_t Best = 0, Position = 0;
-    for (size_t I = 0; I <= BEnd - BBegin; ++I) {
-      charge();
-      const auto Score = Forward[I] + Backward[BEnd - BBegin - I];
-      if (Score > Best) {
-        Best = Score;
-        Position = I;
+      // A path cannot delete more than N lines or insert more than M.
+      // Restricting the diagonals also keeps highly unequal inputs efficient.
+      const int64_t First = -Distance + 2 * std::max<int64_t>(0, Distance - M);
+      const int64_t Last = Distance - 2 * std::max<int64_t>(0, Distance - N);
+      for (const bool Reverse : {false, true}) {
+        auto &Frontier = Reverse ? Backward : Forward;
+        const auto &Opposite = Reverse ? Forward : Backward;
+        for (int64_t Diagonal = First; Diagonal <= Last; Diagonal += 2) {
+          charge();
+          const auto At = Base + Diagonal;
+          int64_t X = Distance == 0 ? 0 : -1;
+          const auto Accept = [&](int64_t Candidate) {
+            const int64_t Y = Candidate - Diagonal;
+            if (Candidate >= 0 && Candidate <= N && Y >= 0 && Y <= M)
+              X = std::max(X, Candidate);
+          };
+          if (Diagonal > -Distance && Frontier[At - 1] >= 0)
+            Accept(Frontier[At - 1] + 1);
+          if (Diagonal < Distance && Frontier[At + 1] >= 0)
+            Accept(Frontier[At + 1]);
+          if (X < 0) {
+            Frontier[At] = -1;
+            continue;
+          }
+          int64_t Y = X - Diagonal;
+          const int64_t StartX = X, StartY = Y;
+          while (X < N && Y < M &&
+                 equal(Reverse ? AEnd - X - 1 : ABegin + X,
+                       Reverse ? BEnd - Y - 1 : BBegin + Y)) {
+            ++X;
+            ++Y;
+          }
+          Frontier[At] = X;
+          const int64_t OtherDiagonal = Delta - Diagonal;
+          const int64_t OtherDistance = Reverse ? Distance : Distance - 1;
+          if (Reverse == Odd || OtherDistance < 0 ||
+              OtherDiagonal < -OtherDistance +
+                                  2 * std::max<int64_t>(0, OtherDistance - M) ||
+              OtherDiagonal >
+                  OtherDistance - 2 * std::max<int64_t>(0, OtherDistance - N))
+            continue;
+          const int64_t Other = Opposite[Base + OtherDiagonal];
+          if (Other < 0 || X < N - Other)
+            continue;
+          if (Reverse)
+            return {AEnd - X, BEnd - Y, AEnd - StartX, BEnd - StartY};
+          return {ABegin + StartX, BBegin + StartY, ABegin + X, BBegin + Y};
+        }
       }
     }
-    return BBegin + Position;
+    llvm_unreachable("finite source edit graph has no middle snake");
   }
 
   void match(size_t ABegin, size_t AEnd, size_t BBegin, size_t BEnd) {
@@ -98,10 +136,13 @@ class Alignment {
             break;
           }
       } else {
-        const size_t AMiddle = ABegin + (AEnd - ABegin) / 2;
-        const size_t BMiddle = split(ABegin, AMiddle, AEnd, BBegin, BEnd);
-        match(ABegin, AMiddle, BBegin, BMiddle);
-        match(AMiddle, AEnd, BMiddle, BEnd);
+        const auto Middle = middle(ABegin, AEnd, BBegin, BEnd);
+        match(ABegin, Middle.ABegin, BBegin, Middle.BBegin);
+        for (size_t I = 0; I < Middle.AEnd - Middle.ABegin; ++I) {
+          charge();
+          Matches.emplace_back(Middle.ABegin + I, Middle.BBegin + I);
+        }
+        match(Middle.AEnd, AEnd, Middle.BEnd, BEnd);
       }
     }
     for (size_t I = 0; I < OriginalAEnd - AEnd; ++I) {
