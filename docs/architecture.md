@@ -173,7 +173,18 @@ requires an executable arm64e process and checks that each signing key changes
 pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
-Shared-cache-specific layouts require a cache address model. Exception-level
+`macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
+placement validation, sorted disjoint mappings, and the cache image catalogue.
+Its bounded slide reader retains v2 ordinary pointers and v3/v5 authentication
+recipes without rewriting bytes. V2 extra chains, v3's four keys and v5's
+IA/DA layout remain distinct. Embedded image file offsets resolve through that
+image's segments and the cache mappings; they are not relative to its header
+or necessarily in the same file. Cached section reads use their VM layout:
+some real signed images retain original section offsets in their headers.
+This public reader is the address-space foundation; the ordinary loader and
+CLI do not yet select or analyse cached images through it. The layouts follow
+[Apple's cache definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h).
+Exception-level
 authentication, PACM state and CPA2 address arithmetic remain unsupported;
 recognizing x1's header does not claim those instruction semantics.
 

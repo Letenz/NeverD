@@ -90,6 +90,18 @@ metadata. Category fixtures exercise authenticated class, metaclass and method r
 reconstruction restriction. Metadata names replace synthesized function-start
 names while preserving stated, analysis and user names.
 
+`NeverDDyldSharedCacheTests` checks immutable arm64e cache mappings, old/new
+subcache tables, suffix/UUID/placement validation, embedded image layouts and
+cross-file reads. Independently serialized v2/v3/v5 fixtures cover extra
+chains, null/tagged targets, all signing fields, page boundaries, duplicate
+chains, arithmetic overflow and transactional failure. Section VM/file-offset
+tests include the original-offset layout retained by signed cached images.
+Cancellation is checked before and during chain traversal. Set
+`NEVERD_DYLD_CACHE` to a local main arm64e cache with its matching subcaches to
+validate every image layout and every slide record without altering bytes;
+without it the real-cache check explicitly skips. This tests the cache reader,
+not yet CLI cached-image selection or native execution/reconstruction.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
