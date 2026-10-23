@@ -136,7 +136,7 @@ class RuntimeReader {
       return;
     }
     Method.TypeHint = std::move(Hint);
-    Method.Status = "supported";
+    Method.Status = kSupportedMethod;
     Method.Diagnostics.push_back("Runtime type hint is unverified; fixed "
                                  "parameters only, variadic tail unknown");
   }
@@ -467,7 +467,7 @@ void parseObjCMethods(BinaryImage &Img) {
         // Dispatch order does not erase a validated declaration's ABI. Calls
         // still require every matching declaration to agree; body selection
         // separately requires supported status and must not pick an override.
-        if (Method->Status == "supported")
+        if (Method->Status == kSupportedMethod)
           Method->Status = "ambiguous_dispatch";
         Method->Diagnostics.push_back(
             "Duplicate class/category selector declarations have no unique "

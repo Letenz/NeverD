@@ -32,6 +32,7 @@ NEVERD_OBJC_RELATIVE_LIST_TEXT(
     "Relative Objective-C lists require a shared-cache address space")
 NEVERD_OBJC_RELATIVE_LIST_TEXT(kExternalImplementation,
                                "external_implementation")
+NEVERD_OBJC_RELATIVE_LIST_TEXT(kSupportedMethod, "supported")
 NEVERD_OBJC_RELATIVE_LIST_TEXT(
     kExternalImplementationDiagnostic,
     "Method IMP belongs to executable cache storage outside this image")
