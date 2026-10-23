@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SourceCallExecution.h"
+#include "WindowsQualifiedFixture.h"
 #include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
@@ -721,6 +722,66 @@ TEST(Win64CallContract, AFloatArgumentReachesItsImportsSlot) {
       << Body;
   EXPECT_NE(Body.find("return sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+}
+
+TEST(Win64CallContract,
+     HeaderPointerQualifiersAgreeWithIndependentDefinitions) {
+  auto Image = makeImage(throughSlot(Text, Iat, true),
+                         {{Text, "forward_qualified"}}, {"fixture_qualified"});
+  ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_qualified", 0,
+                                            ImportStorageEvidence::LoaderBind));
+  for (bool Nested : {false, true})
+    for (bool Record : {false, true})
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(Nested);
+        SCOPED_TRACE(Record);
+        SCOPED_TRACE(LLVM);
+        windows_qualified_test::Header Debug;
+        Debug.Slot = Iat;
+        Debug.Nested = Nested;
+        Debug.Record = Record;
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = LLVM;
+        Options.OnlyFunctionEntries = {Text};
+        auto Result = Pipeline().run(Image, Context, Options, &Debug);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                          &Debug, &Image));
+        } else {
+          ASSERT_TRUE(
+              HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+        }
+        // Independent C definitions require the same qualifiers, including
+        // those behind a pointer and on an opaque record's returned pointer.
+        const std::string Element =
+            Record ? "struct fixture_record" : "uint16_t";
+        const std::string Definition =
+            "\nstruct fixture_record { uint16_t value; };\nconst " + Element +
+            " *fixture_qualified(const " + Element +
+            (Nested ? " *const *input" : " *input") +
+            ", volatile uint32_t *output) {\n"
+            "  if (*output != 41) __builtin_trap();\n"
+            "  *output = 42; return " +
+            (Nested ? "*input" : "input") + ";\n}\nint main(void) {\n  " +
+            Element + " value = {0x1234};\n  const " + Element +
+            " *input = &value;\n  uint32_t output = 41;\n"
+            "  uintptr_t result = forward_qualified((uintptr_t)" +
+            (Nested ? "&input" : "input") +
+            ", (uintptr_t)&output);\n"
+            "  return result != (uintptr_t)&value || output != 42;\n}\n";
+        source_call_execution_test::compileAndRun(Source + Definition);
+      }
 }
 
 TEST(Win64CallContract, HeaderVariadicPrefixKeepsEveryProvenTailArgument) {

@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../CRecordCall.h"
+#include "../HeaderPrototype.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
@@ -4406,10 +4407,15 @@ std::string
 HighCWriter::debugExternPrototype(const FunctionSym &FS,
                                   const std::string &Identifier,
                                   llvm::StringRef ExternName) const {
-  if (FS.IsVariadic && positionalDebugSignature(FS) && Identifier == FS.Name &&
-      c_library::selfContainedDeclaration(FS.PortablePrototypeDeclaration,
-                                          Identifier))
-    return "extern " + FS.PortablePrototypeDeclaration;
+  if (const auto Declaration =
+          c_library::portableScalarDeclaration(FS, Identifier);
+      !Declaration.empty() && positionalDebugSignature(FS)) {
+    const std::string Convention =
+        Opts.TheArch == Arch::X86 && FS.CallConv == DebugCallConv::Stdcall
+            ? debugCallConvAttribute(FS.CallConv).str()
+            : "";
+    return "extern " + Convention + Declaration.str();
+  }
   // A symbol the debug information names without a type returns what its
   // register holds, whole: a narrower type would drop the upper bytes of a
   // pointer or a 64-bit result at every call.
