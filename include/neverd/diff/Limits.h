@@ -127,6 +127,8 @@ inline constexpr double kRegionIncompleteConfidenceFactor = 0.5;
 inline constexpr double kRegionMaxConfidence = 0.95;
 
 // SSA dependency snapshots, neighborhood candidates and slices.
+inline constexpr char kMedSSAProfile[] = "med-ssa-v2";
+inline constexpr char kLLVMSSAProfile[] = "llvm-ssa-v1";
 inline constexpr uint32_t kDefaultFlowMaxNodes = 65536;
 inline constexpr uint32_t kMaxFlowNodes = 1u << 20;
 inline constexpr uint32_t kDefaultFlowMaxBlocks = 1024;
@@ -138,6 +140,7 @@ inline constexpr unsigned kMaxFlowRounds = 16;
 inline constexpr unsigned kFlowPollWork = 1024;
 inline constexpr unsigned kMaxFlowIdentityBytes = 4096;
 inline constexpr unsigned kMaxFlowOpcodeBytes = 64;
+inline constexpr unsigned kMaxFlowSemanticsBytes = 4096;
 inline constexpr unsigned kDefaultFlowFunctions = 16;
 inline constexpr unsigned kMaxFlowFunctions = 4096;
 inline constexpr uint64_t kDefaultFlowTotalNodes = 1u << 18;

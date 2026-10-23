@@ -142,6 +142,109 @@ private slots:
     QVERIFY(Tabs->currentWidget() != Source);
     QCOMPARE(Failures.size(), 0);
   }
+  void optimizedSSASelectionShowsPluralNativeOrigins() {
+    const auto A = Directory.filePath("optimized-ssa-before.bin");
+    const auto B = Directory.filePath("optimized-ssa-after.bin");
+    // Owned AArch64 compiler_regions_fixture.c at O0/O2; analysis only.
+    QVERIFY(
+        write(A, QByteArray::fromHex(
+                     "ff4300d1e00f00b9e10b00b9e80f40b9e90b40b90801090be90280520"
+                     "801094ae80700b9e80740b9e9008052087d091b08250011e80700b9e9"
+                     "0740b9e80740b9081105530815492ae80700b9e80740b9e90b40b9aa0"
+                     "18052297d0a1b294500110801094a000d0011ff430091c0035fd6")));
+    QVERIFY(write(B, QByteArray::fromHex(
+                         "e80280522900000baa0180522801084a2b0280522a2c0a1b09711"
+                         "d532801084b082500114815c84a000d0011c0035fd6")));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    View.findChild<QLineEdit *>("comparisonPrimary")->setText(A);
+    View.findChild<QLineEdit *>("comparisonSecondary")->setText(B);
+    for (const auto *Name : {"primaryLoader", "secondaryLoader"}) {
+      auto *Loader = View.findChild<QComboBox *>(Name);
+      Loader->setCurrentIndex(Loader->findData("aarch64"));
+    }
+    View.findChild<QLineEdit *>("primaryBase")->setText("0x1000");
+    View.findChild<QLineEdit *>("secondaryBase")->setText("0x8000");
+    auto *Profile = View.findChild<QComboBox *>("comparisonFlowProfile");
+    QVERIFY(Profile && !Profile->isEnabled());
+    View.findChild<QCheckBox *>("comparisonAnalyzeFlowRegions")
+        ->setChecked(true);
+    QVERIFY(Profile->isEnabled());
+    Profile->setCurrentIndex(Profile->findData("llvm-ssa-v1"));
+    QTest::mouseClick(View.findChild<QToolButton *>("comparisonSettings"),
+                      Qt::LeftButton);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonStart"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Failures.size(), 0);
+    QCOMPARE(Session.summary()["settings"]
+                 .toObject()["dataflow"]
+                 .toObject()["profile"]
+                 .toString(),
+             QString("llvm-ssa-v1"));
+    QVERIFY(
+        Session.summary()["flow_regions"].toObject()["anchor_count"].toInt() >
+        0);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonFlowReview"),
+                      Qt::LeftButton);
+    auto *Dialog =
+        View.findChild<ComparisonFlowDialog *>("comparisonFlowDialog");
+    QVERIFY(Dialog);
+    auto *Table = Dialog->findChild<QTableView *>("flowNodes");
+    auto *Rows = qobject_cast<ComparisonModel *>(Table->model());
+    QTRY_VERIFY_WITH_TIMEOUT(Rows->rowCount() > 0 && !Rows->row(0).isEmpty(),
+                             Timeout);
+    int Plural = -1;
+    for (int N = 0; N < Rows->rowCount(); ++N) {
+      QStringList Addresses;
+      for (const auto &O : Rows->row(N)["origins"].toArray())
+        Addresses << O.toObject()["address"].toString();
+      Addresses.removeDuplicates();
+      if (Addresses.size() > 1) {
+        Plural = N;
+        const auto Display =
+            Rows->data(Rows->index(N, 1), Qt::DisplayRole).toString();
+        for (const auto &Address : Addresses)
+          QVERIFY(Display.contains(Address));
+        break;
+      }
+    }
+    QVERIFY(Plural >= 0);
+    QVERIFY(!Rows->data(Rows->index(Plural, 4), Qt::DisplayRole)
+                 .toString()
+                 .isEmpty());
+    QVERIFY(Rows->data(Rows->index(Plural, 1), Qt::ToolTipRole)
+                .toString()
+                .contains("Original addresses:"));
+    Table->selectRow(Plural);
+    QTest::mouseClick(Dialog->findChild<QPushButton *>("flowBackward"),
+                      Qt::LeftButton);
+    auto *Slice = Dialog->findChild<QTableView *>("flowSlice");
+    QTRY_VERIFY_WITH_TIMEOUT(Slice->model()->rowCount() > 0, Timeout);
+    QVERIFY(Dialog->findChild<QLabel *>("flowSummary")
+                ->text()
+                .contains("Optimized SSA"));
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        View.resize(1280, 800);
+        Dialog->resize(1280, 800);
+        QTest::qWait(40);
+        const auto Suffix = Mode == Theme::Mode::Dark ? "dark" : "light";
+        QVERIFY(View.grab().save(Captures + "/optimized-settings-" + Suffix +
+                                 ".png"));
+        QVERIFY(Dialog->grab().save(Captures + "/optimized-origins-" + Suffix +
+                                    ".png"));
+      }
+    }
+    QCOMPARE(Failures.size(), 0);
+  }
   void savedProjectsCompareThroughTheSharedReader() {
     const auto A = Directory.filePath("saved-before.bin");
     const auto B = Directory.filePath("saved-after.bin");

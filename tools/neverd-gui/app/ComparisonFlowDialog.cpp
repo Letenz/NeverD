@@ -14,6 +14,8 @@
 #include "ComparisonSession.h"
 #include "Icons.h"
 
+#include "neverd/diff/Limits.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QHeaderView>
@@ -243,6 +245,10 @@ void ComparisonFlowDialog::selectSide() {
     const auto SideName = Side->currentData().toString();
     const auto E =
         Session.summary()["dataflow"].toObject()[SideName].toObject();
+    const auto Profile = Session.summary()["settings"]
+                             .toObject()["dataflow"]
+                             .toObject()["profile"]
+                             .toString(::neverd::limits::diff::kMedSSAProfile);
     Summary->setText(tr("%1 · %2 available / %3 processed / %4 eligible "
                         "functions · %5 unprocessed\n%6 unsupported, %7 "
                         "resource limited, %8 failed. Collection state: %9.")
@@ -255,6 +261,11 @@ void ComparisonFlowDialog::selectSide() {
                          .arg(E["resource_limited"].toInt())
                          .arg(E["failed"].toInt())
                          .arg(E["state"].toString().replace('_', ' ')));
+    Summary->setText(Summary->text() + '\n' +
+                     tr("SSA representation: %1")
+                         .arg(Profile == ::neverd::limits::diff::kLLVMSSAProfile
+                                  ? tr("Optimized SSA")
+                                  : tr("Original SSA")));
     Functions->setQuery({{"side", SideName}, {"kind", "functions"}});
   }
   controls();

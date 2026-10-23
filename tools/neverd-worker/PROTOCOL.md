@@ -169,6 +169,15 @@ revision checks and cooperative cancellation contract as source inspection.
 `comparison_slice` accepts `side`, `address`, `seeds` (node IDs), `direction`
 (`backward`/`forward`), `control`, `timeout_ms`, `offset`, `limit`, and optional
 `refresh`. Both require `dataflow:true` or a bounded settings object at start.
+The settings object accepts `profile:"med-ssa-v2"` (default) or
+`profile:"llvm-ssa-v1"` (optimized machine integer SSA). LLVM dependency schema 3
+adds typed `semantics` and plural `origins:[{address,sequence}]`; operands have an
+eighth exact type/attribute field. Its region profile is `llvm-neighborhoods-v1`.
+Optimized region nodes return `originals` for every distinct native address and
+leave singular `original` null. Unsupported effects/types/metadata remain
+unavailable with reasons. Med-only change associations report
+`availability:"unsupported_profile"` explicitly. Saved settings select the same
+profile on fresh reopen, including early-cancelled reports.
 Unavailable records, graph origins, effect gaps and actual slice stop states are
 retained. Neither operation validates behavior or vulnerability elimination.
 Restart with `restore_path` reuses the saved comparison settings before fresh

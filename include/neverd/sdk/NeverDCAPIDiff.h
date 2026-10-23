@@ -209,9 +209,14 @@ NEVERD_API const char *
 neverd_comparison_flow_regions_json(neverd_comparison_t Comparison,
                                     const char *Query);
 /// Bounded SSA observations from run option dataflow:true or settings object.
-/// Query: side, kind (functions/nodes/blocks), offset, limit; nodes/blocks also
-/// require address. Unavailable functions return their explicit reason. Saved
-/// graphs bind to fresh native pipeline evidence; hashes are not equivalence.
+/// Settings profile: med-ssa-v2 (default) or llvm-ssa-v1 (optimized integer
+/// SSA). LLVM schema 3 retains exact semantics and plural {address,sequence}
+/// origins; unsupported effects/types remain unavailable with reasons. Region
+/// nodes return plural originals rather than inventing a singular native
+/// origin. Query: side, kind (functions/nodes/blocks), offset, limit;
+/// nodes/blocks also require address. Unavailable functions return their
+/// explicit reason. Saved graphs bind to fresh native pipeline evidence; hashes
+/// are not equivalence.
 NEVERD_API const char *
 neverd_comparison_dataflow_json(neverd_comparison_t Comparison,
                                 const char *Query);

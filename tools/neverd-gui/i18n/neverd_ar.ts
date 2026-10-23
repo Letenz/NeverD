@@ -6453,6 +6453,22 @@ Coverage: %7</source>
         <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
         <translation>اختر ملفًا ثنائيًا أو مشروع NDDB محفوظًا. تستخدم المشاريع المحفوظة إعدادات التحميل المخزنة ونسخة عمل مستقلة.</translation>
     </message>
+    <message>
+        <source>SSA representation</source>
+        <translation>تمثيل SSA</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>SSA الأصلية</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>SSA المحسّنة</translation>
+    </message>
+    <message>
+        <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
+        <translation>تقلّل SSA المحسّنة البنى المساعدة التي يضيفها المترجم لتسهيل المقارنة. تبقى الدوال غير المدعومة مدرجة مع توضيح السبب.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6539,6 +6555,18 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>none observed within this model</source>
         <translation>لم يُرصد أي منها ضمن هذا النموذج</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>SSA الأصلية</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>SSA المحسّنة</translation>
+    </message>
+    <message>
+        <source>SSA representation: %1</source>
+        <translation>تمثيل SSA: %1</translation>
     </message>
 </context>
 <context>
@@ -7310,6 +7338,12 @@ Heuristic explanations, not validated behavior.
     <message>
         <source>—</source>
         <translation>—</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original addresses: %2
+%3</source>
+        <translation>الكتلة %1 · العناوين الأصلية: %2
+%3</translation>
     </message>
 </context>
 <context>

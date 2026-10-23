@@ -93,35 +93,13 @@ void poll(const ComparisonControl &Control) {
     throw Refusal{Status::Cancelled, "scalar validation stopped"};
 }
 
-bool exceptionContract(const llvm::Function &F,
-                       exception_rewrite::SourceState Source) {
-  using namespace exception_rewrite;
-  const auto *M = F.getMetadata(FunctionAttachment);
-  if (!M || M->getNumOperands() != OperandCount)
-    return false;
-  const uint64_t Values[] = {SchemaVersion,
-                             uint64_t(Source),
-                             uint64_t(LoweringState::NotRequired),
-                             0,
-                             0,
-                             0};
-  const unsigned Widths[] = {32, 8, 8, 64, 64, 64};
-  for (unsigned I = 0; I < OperandCount; ++I) {
-    const auto *C =
-        llvm::mdconst::dyn_extract_or_null<llvm::ConstantInt>(M->getOperand(I));
-    if (!C || C->getBitWidth() != Widths[I] || C->getZExtValue() != Values[I])
-      return false;
-  }
-  return true;
-}
-
 void bindExceptions(const Program &P, const Function &Native,
                     const ScalarValidationLift &Lift,
                     const ComparisonControl &Control) {
   using namespace exception_rewrite;
   const auto &F = Lift.Function;
   if (!Lift.Exceptions) {
-    require(exceptionContract(F, SourceState::Absent) &&
+    require(hasUnloweredContract(F, SourceState::Absent) &&
                 !F.getMetadata(windows_eh_md::FunctionAttachment),
             "absent source exceptions require an absent lift contract");
     return;
@@ -129,7 +107,7 @@ void bindExceptions(const Program &P, const Function &Native,
   const auto &EH = *Lift.Exceptions;
   require(EH.describesUnwindOnly(),
           "only complete source unwind-only records are supported");
-  require(exceptionContract(F, SourceState::Complete),
+  require(hasUnloweredContract(F, SourceState::Complete),
           "unwind-only source requires complete, unlowered exception metadata");
   require((Lift.ABI == BinaryFormat::ELF || Lift.ABI == BinaryFormat::COFF ||
            Lift.ABI == BinaryFormat::MachO) &&

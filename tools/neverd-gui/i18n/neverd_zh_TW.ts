@@ -6273,6 +6273,22 @@ Coverage: %7</source>
         <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
         <translation>選擇二進位檔案或已儲存的 NDDB 專案。專案會使用儲存的載入設定，並建立獨立的工作副本。</translation>
     </message>
+    <message>
+        <source>SSA representation</source>
+        <translation>SSA 表示</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>原始 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>最佳化後 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
+        <translation>最佳化後 SSA 會精簡編譯器引入的輔助結構，以便比較。尚未支援的函式仍會列出，並說明原因。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6359,6 +6375,18 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>none observed within this model</source>
         <translation>此模型內未觀察到</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>原始 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>最佳化後 SSA</translation>
+    </message>
+    <message>
+        <source>SSA representation: %1</source>
+        <translation>SSA 表示：%1</translation>
     </message>
 </context>
 <context>
@@ -7130,6 +7158,12 @@ Heuristic explanations, not validated behavior.
     <message>
         <source>—</source>
         <translation>—</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original addresses: %2
+%3</source>
+        <translation>基本區塊 %1 · 原始位址：%2
+%3</translation>
     </message>
 </context>
 <context>

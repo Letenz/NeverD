@@ -6309,6 +6309,22 @@ Coverage: %7</translation>
         <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
         <translation>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</translation>
     </message>
+    <message>
+        <source>SSA representation</source>
+        <translation>SSA representation</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>Original SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>Optimized SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
+        <translation>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6395,6 +6411,18 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>none observed within this model</source>
         <translation>none observed within this model</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>Original SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>Optimized SSA</translation>
+    </message>
+    <message>
+        <source>SSA representation: %1</source>
+        <translation>SSA representation: %1</translation>
     </message>
 </context>
 <context>
@@ -7166,6 +7194,12 @@ Heuristic explanations, not validated behavior.
     <message>
         <source>—</source>
         <translation>—</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original addresses: %2
+%3</source>
+        <translation>Block %1 · Original addresses: %2
+%3</translation>
     </message>
 </context>
 <context>

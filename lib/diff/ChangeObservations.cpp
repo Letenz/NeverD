@@ -126,7 +126,7 @@ GraphView graphView(const DataFlowGraph *G, const Program &P, uint32_t F,
                     const NativeScope &Scope, const DataFlowOptions &Options,
                     Budget &Work) {
   GraphView View;
-  if (!G)
+  if (!G || G->Profile != DataFlowProfile)
     return View;
   require(G->Function == P.Functions[F].Address &&
               G->Revision == P.Identity.Revision && G->ABI == P.Identity.ABI,

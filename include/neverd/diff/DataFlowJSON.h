@@ -17,6 +17,11 @@
 
 namespace neverd::diff {
 inline constexpr unsigned DataFlowSchemaVersion = 2;
+inline constexpr unsigned LLVMDataFlowSchemaVersion = 3;
+inline unsigned dataFlowSchemaVersion(llvm::StringRef Profile) {
+  return Profile == LLVMDataFlowProfile ? LLVMDataFlowSchemaVersion
+                                        : DataFlowSchemaVersion;
+}
 llvm::json::Object dataFlowOptionsJSON(const DataFlowOptions &Options);
 DataFlowOptions readDataFlowOptions(const llvm::json::Value &Value);
 llvm::json::Object dataFlowSettingsJSON(const DataFlowSettings &Settings);

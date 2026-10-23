@@ -1353,6 +1353,20 @@ hashes, tool versions, flags, output and a status manifest under
 `unittests/bindiff-compiler-regions` in the build tree. Missing GCC is reported as
 a skipped optional profile; this small family is not held-out accuracy,
 optimization-family, LTO/PGO or competitive qualification.
+The same compiler regression also exercises the opt-in `llvm-ssa-v1` profile
+for AArch64 ELF, COFF and Mach-O at Clang O0/O1/O2/O3/Os. It requires finite
+O0/O2 anchors, preserves an exact changed final scalar across optimization
+levels, keeps same-level native constant deltas, and reopens saved reports.
+Cross-level native function pairing may abstain; SSA evidence does not invent
+an accepted native pair. `BinaryDiffLLVMDataFlow` checks exact widths/flags,
+attributes, intrinsic immediates, PHI/switch edges, plural versus derived origins,
+unsupported effects/metadata and bounded stops. SDK tests cover typed/origin/
+profile tampering, explicit Med-association abstention, unsupported memory and
+early native-capture cancellation. Worker tests check all three formats' plural
+original instructions, slices and saved CLI parity. The real Qt test selects the
+optimized profile and displays plural origins with optional light/dark captures.
+These remain owned functional fixtures, not held-out accuracy or general
+optimization/obfuscation qualification.
 `NeverDBinaryDiffFlowPipelineTests` projects owned x64/AArch64 bytes through the
 actual strict lifter and SSA pipeline, checking native origins and that a changed
 scalar survives beyond a short fingerprint's reported open frontier. It neither

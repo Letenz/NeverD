@@ -293,6 +293,21 @@ machine ABI preparation, including omitted-callee summaries, ends after final
 MedIR verification and before LLVM emission. `usesMachineMedIR()` keeps source
 presentation hints out of analysis as it does for lifting. Deferred source
 HighIR is a different stage and may not yet contain System V call arguments.
+The opt-in `llvm-ssa-v1` comparison adapter instead requests ordinary machine
+`LiftMode` and `RetainLLVMSourceObservations`. It retains the strict native audit
+and final LLVM verification gates. `LLVMDataFlow` observes that optimized body;
+it neither implements stack promotion nor enables source-only ABI hints. Typed
+integer contracts are exact; unsupported effects/types/metadata refuse the
+projection with a reason. The EH owner supplies `hasUnloweredContract` for both
+this admission and existing scalar validation, avoiding two numeric decoders.
+`LLVMSourceObservation::ExpressionDerived` distinguishes library expression
+ancestry from direct emission observations through RAUW, cloning and shard
+serialization. The comparison graph retains only direct observations of values
+still in the selected function; deleted, detached or foreign values never acquire
+invented origins. Schema 3 keeps sorted plural origins and typed signatures;
+original Med schema 2, recipes and fingerprints stay unchanged. Region profile
+identity follows the requested graph profile even before extraction completes.
+Med-only change/call associations abstain explicitly for optimized graphs.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
