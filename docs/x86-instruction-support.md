@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`c28e7f5f82ad`](https://github.com/NeverSight/llvm-project/commit/c28e7f5f82ad)
+[`d6d146470804`](https://github.com/NeverSight/llvm-project/commit/d6d146470804)
 adds native instruction selection for the following APIs. NeverC's
-[`d121bd265`](https://github.com/NeverSight/NeverC/commit/d121bd265)
+[`6032fd7ac`](https://github.com/NeverSight/NeverC/commit/6032fd7ac)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -203,6 +203,10 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
 | `llvm.x86.{lar,lsl}.{reg,mem}{16,32,64}` | i386 and x86-64; 64-bit results require x86-64 | Returns `{value, i8 ZF}`. Success retains the native result; failure returns the supplied prior value. Memory forms own their m16 selector read. |
 | `llvm.x86.lsl` | i386 and x86-64 | Compatibility with NeverC's Microsoft `__segmentlimit`; ordered query with a 32-bit result, unspecified on failure. |
+| `llvm.x86.hreset` | i386 and x86-64 | Full i32 EAX control input, canonical ignored imm8 zero and native privilege/feature validation. |
+| `llvm.x86.invlpgb`, `llvm.x86.invlpgb32` | x86-64 and i386 respectively | Integer rAX control/address, i32 EDX identifiers and i32 ECX count/page-size inputs. No compiler memory dereference; wrong-mode APIs fail explicitly. |
+| `llvm.x86.tlbsync` | i386 and x86-64 | Actual ordered translation synchronization; no invented completion or replacement compiler fence. |
+| `llvm.x86.lkgs.reg`, `llvm.x86.lkgs.mem` | x86-64 | i16 register selector or instruction-owned m16 read; native GS descriptor/selector and IA32_KERNEL_GS_BASE effects. |
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
 | `llvm.x86.readcr/readdr`, `llvm.x86.writecr/writedr` | x86-64 | Immediate register selector, full i64 values and ordered, potentially trapping accesses. CR0/2/3/4/8 and DR0..7 retain their native encodings and undefined arithmetic flags. |
 | `llvm.x86.readcr32/readdr32`, `llvm.x86.writecr32/writedr32` | i386 | Same contract with i32 values; CR8, invalid selectors and wrong-mode APIs fail explicitly. |
@@ -377,6 +381,27 @@ by the full fork. Ten LLVM regressions, optimized-IR retention, all 39 NeverC
 intrinsic tests, 81 existing binary checks and 20 generator tests pass. The
 complete overload audit reports zero mismatches. VMCS completion regressions
 remain green after sharing the frontend's value/status extraction helper.
+
+Native HRESET, INVLPGB, TLBSYNC and both LKGS forms now have matching NeverC
+builtins. INVLPGB's original machine descriptions omitted ECX; both forks now
+retain its count/page-size input alongside rAX and EDX. The five NeverC builtin
+names are `__builtin_ia32_hreset`, `__builtin_ia32_invlpgb`,
+`__builtin_ia32_tlbsync`, `__builtin_ia32_lkgs_reg` and
+`__builtin_ia32_lkgs_mem`. The full fork also exposes the i386 INVLPGB API.
+NeverC's standard `_hreset` wrapper in `<x86gprintrin.h>` emits native IR and is
+qualified through an isolated resource-header installation.
+
+These additions pass 424 full-LLVM checks and 340 checks each on NeverC and
+NeverC-to-fork. The matrices retain all input bits, repeated operations,
+surrounding memory and conditions, nonvolatile registers and unmapped LKGS
+boundaries. Both assembly dialects and all three object formats cover every
+one of the 16 LKGS register operands and memory-base registers. Eleven LLVM
+regressions, 41 NeverC intrinsic tests, 81 binary checks, 23 generator tests,
+12 plugin tests and a zero-mismatch overload audit pass. The plugin schema adds
+only the two LKGS opcodes and INVLPGB's missing implicit ECX; all prior opcode,
+register and feature identities stay unchanged. These are compiler-transport
+checks with controlled native boundaries, not hardware qualification of TLB
+broadcasts, descriptor loading or processor-history reset.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
