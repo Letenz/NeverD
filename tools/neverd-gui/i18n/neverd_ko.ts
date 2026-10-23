@@ -1542,24 +1542,8 @@
         <translation>%1은(는) NeverD 데이터베이스가 아닙니다.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1이(가) 없습니다.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1은(는) 데이터베이스 형식 %2을(를) 사용하므로 이 버전의 NeverD에서는 읽을 수 없습니다.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1에 잘못된 입력 파일이 지정되어 있습니다.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>%1에 쓸 수 없습니다: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>%1에 저장된 입력 파일이 손상되었습니다.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>복구된 편집 내용이 보류 중인 동안 데이터베이스가 변경되었습니다. 다시 열기 전에 작업 사본을 보존하세요.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>이 입력 파일명은 다른 환경에서도 사용할 수 있는 프로젝트에 저장할 수 없습니다.</translation>
     </message>
 </context>
 <context>
@@ -5498,6 +5486,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Secondary: %1</source>
         <translation>보조: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>저장된 프로젝트 여는 중</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>저장된 프로젝트 설정 읽는 중</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>저장된 입력의 압축을 풀고 검증하는 중</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>저장된 분석 적용 중</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6098,20 +6102,12 @@ Coverage: %7</source>
         <translation>NeverD 비교 (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>새 바이너리 또는 패치</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>수락된 대응 함수가 없습니다. 모호한 후보를 살펴보거나 수동으로 쌍을 선택하세요.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>기한 없음</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>원본 바이너리</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6264,6 +6260,18 @@ Coverage: %7</source>
     <message>
         <source>yes</source>
         <translation>예</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>새 바이너리 또는 저장된 프로젝트</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>원본 바이너리 또는 저장된 프로젝트</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>바이너리 또는 저장된 NDDB 프로젝트를 선택하세요. 저장된 프로젝트는 기존 불러오기 설정과 별도의 작업 복사본을 사용합니다.</translation>
     </message>
 </context>
 <context>

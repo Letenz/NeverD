@@ -1542,24 +1542,8 @@
         <translation>%1 не является базой данных NeverD.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 не существует.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 использует формат базы данных %2, который эта версия NeverD не может прочитать.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>В %1 указано недопустимое имя входного файла.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>Не удалось записать %1: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>Входной файл, сохранённый в %1, повреждён.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>База данных изменилась, пока восстановленные правки ожидают обработки. Сохраните рабочую копию перед повторным открытием.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>Это имя входного файла нельзя сохранить в переносимом проекте.</translation>
     </message>
 </context>
 <context>
@@ -5570,6 +5558,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Secondary: %1</source>
         <translation>Дополнительный: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>Открытие сохранённого проекта</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>Чтение настроек сохранённого проекта</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>Распаковка и проверка сохранённых входных данных</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>Применение сохранённого анализа</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6170,20 +6174,12 @@ Coverage: %7</source>
         <translation>Сравнение NeverD (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>Новый бинарный файл или исправление</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>Принятого соответствия нет. Изучите неоднозначных кандидатов или выберите пару вручную.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>Без срока</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>Исходный бинарный файл</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6336,6 +6332,18 @@ Coverage: %7</source>
     <message>
         <source>yes</source>
         <translation>да</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>Новый двоичный файл или сохранённый проект</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>Исходный двоичный файл или сохранённый проект</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>Выберите двоичный файл или сохранённый проект NDDB. Для сохранённых проектов используются сохранённые настройки загрузки и отдельная рабочая копия.</translation>
     </message>
 </context>
 <context>

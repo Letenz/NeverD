@@ -1542,24 +1542,8 @@
         <translation>%1 no es una base de datos de NeverD.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 no existe.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 usa el formato de base de datos %2, que esta versión de NeverD no puede leer.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 indica un archivo de entrada no válido.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>No se puede escribir %1: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>El archivo de entrada almacenado en %1 está dañado.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>La base de datos cambió mientras hay ediciones recuperadas pendientes. Conserve la copia de trabajo antes de volver a abrirla.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>Este nombre de archivo de entrada no puede guardarse en un proyecto portátil.</translation>
     </message>
 </context>
 <context>
@@ -5534,6 +5522,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Secondary: %1</source>
         <translation>Secundario: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>Abriendo el proyecto guardado</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>Leyendo la configuración del proyecto guardado</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>Descomprimiendo y verificando la entrada guardada</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>Aplicando el análisis guardado</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6134,20 +6138,12 @@ Cobertura: %7</translation>
         <translation>Comparación NeverD (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>Nuevo binario o parche</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>No hay una contraparte aceptada. Examine los candidatos ambiguos o elija una pareja manualmente.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>Sin plazo</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>Binario original</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6300,6 +6296,18 @@ Cobertura: %7</translation>
     <message>
         <source>yes</source>
         <translation>sí</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>Binario nuevo o proyecto guardado</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>Binario original o proyecto guardado</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>Seleccione un binario o un proyecto NDDB guardado. Los proyectos guardados utilizan su configuración de carga y una copia de trabajo independiente.</translation>
     </message>
 </context>
 <context>

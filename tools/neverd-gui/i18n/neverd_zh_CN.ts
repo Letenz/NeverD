@@ -1542,24 +1542,8 @@
         <translation>%1 不是 NeverD 数据库。</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 不存在。</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 使用数据库格式 %2，此版本的 NeverD 无法读取它。</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 指定了无效的输入文件。</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>无法写入 %1：%2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>%1 中存储的输入文件已损坏。</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>恢复的编辑尚未处理时，数据库已发生变化。重新打开前请保留工作副本。</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>此输入文件名无法保存在跨平台项目中。</translation>
     </message>
 </context>
 <context>
@@ -5498,6 +5486,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Secondary: %1</source>
         <translation>次文件：%1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>正在打开已保存的项目</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>正在读取项目设置</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>正在解包并校验保存的输入</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>正在应用保存的分析</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6098,20 +6102,12 @@ Coverage: %7</source>
         <translation>NeverD 对比 (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>新二进制文件或补丁</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>没有已接受的对应函数。请检查歧义候选项或手动选择配对。</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>无时限</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>原始二进制文件</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6264,6 +6260,18 @@ Coverage: %7</source>
     <message>
         <source>yes</source>
         <translation>是</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>新二进制文件或已保存的项目</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>原二进制文件或已保存的项目</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>选择二进制文件或已保存的 NDDB 项目。项目会使用保存的加载设置，并创建独立的工作副本。</translation>
     </message>
 </context>
 <context>

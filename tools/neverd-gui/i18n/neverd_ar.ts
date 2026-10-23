@@ -1542,24 +1542,8 @@
         <translation>الملف %1 ليس قاعدة بيانات NeverD.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>الملف %1 غير موجود.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>يستخدم %1 تنسيق قاعدة البيانات %2، ولا يستطيع هذا الإصدار من NeverD قراءته.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>يشير %1 إلى ملف إدخال غير صالح.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>تعذّرت كتابة %1: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>الإدخال المخزّن في %1 تالف.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>تغيرت قاعدة البيانات بينما توجد تعديلات مستعادة معلقة. احتفظ بنسخة العمل قبل إعادة الفتح.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>لا يمكن حفظ اسم ملف الإدخال هذا في مشروع قابل للنقل.</translation>
     </message>
 </context>
 <context>
@@ -5678,6 +5666,22 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Secondary: %1</source>
         <translation>الثانوي: %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>جارٍ فتح المشروع المحفوظ</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>جارٍ قراءة إعدادات المشروع المحفوظ</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>جارٍ فك ضغط المدخل المحفوظ والتحقق منه</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>جارٍ تطبيق التحليل المحفوظ</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6278,20 +6282,12 @@ Coverage: %7</source>
         <translation>مقارنة NeverD (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>ملف ثنائي أو تصحيح جديد</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>لا يوجد نظير مقبول. افحص المرشحين الملتبسين أو اختر زوجًا يدويًا.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>دون موعد نهائي</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>الملف الثنائي الأصلي</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6444,6 +6440,18 @@ Coverage: %7</source>
     <message>
         <source>yes</source>
         <translation>نعم</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>ملف ثنائي جديد أو مشروع محفوظ</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>الملف الثنائي الأصلي أو مشروع محفوظ</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>اختر ملفًا ثنائيًا أو مشروع NDDB محفوظًا. تستخدم المشاريع المحفوظة إعدادات التحميل المخزنة ونسخة عمل مستقلة.</translation>
     </message>
 </context>
 <context>

@@ -1542,24 +1542,8 @@
         <translation>%1 n&apos;est pas une base de données NeverD.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 n&apos;existe pas.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 utilise le format de base de données %2, que cette version de NeverD ne peut pas lire.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 désigne un fichier d&apos;entrée invalide.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>Impossible d&apos;écrire %1 : %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>Le fichier d&apos;entrée stocké dans %1 est endommagé.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1576,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>La base de données a changé alors que des modifications récupérées sont en attente. Conservez la copie de travail avant de la rouvrir.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>Ce nom de fichier ne peut pas être enregistré dans un projet portable.</translation>
     </message>
 </context>
 <context>
@@ -5534,6 +5522,22 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <source>Secondary: %1</source>
         <translation>Secondaire : %1</translation>
     </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>Ouverture du projet enregistré</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>Lecture des paramètres du projet enregistré</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>Décompression et vérification des données enregistrées</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>Application de l’analyse enregistrée</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6134,20 +6138,12 @@ Couverture : %7</translation>
         <translation>Comparaison NeverD (*.nddiff);;JSON (*.json)</translation>
     </message>
     <message>
-        <source>New binary or patch</source>
-        <translation>Nouveau binaire ou correctif</translation>
-    </message>
-    <message>
         <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
         <translation>Aucune contrepartie acceptée. Examinez les candidats ambigus ou choisissez une paire manuellement.</translation>
     </message>
     <message>
         <source>No deadline</source>
         <translation>Sans délai limite</translation>
-    </message>
-    <message>
-        <source>Original binary</source>
-        <translation>Binaire d&apos;origine</translation>
     </message>
     <message>
         <source>Pair with…</source>
@@ -6300,6 +6296,18 @@ Couverture : %7</translation>
     <message>
         <source>yes</source>
         <translation>oui</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>Nouveau binaire ou projet enregistré</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>Binaire d’origine ou projet enregistré</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>Sélectionnez un binaire ou un projet NDDB enregistré. Les projets enregistrés utilisent leurs paramètres de chargement et une copie de travail indépendante.</translation>
     </message>
 </context>
 <context>
