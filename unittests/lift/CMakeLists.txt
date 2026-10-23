@@ -1874,7 +1874,7 @@ endif()
 
 add_neverd_unittest(NeverDDyldSharedCacheTests
   format/DyldSharedCacheTests.cpp
-  LINK_COMPONENTS Loader
+  LINK_COMPONENTS Loader Support
 )
 
 add_neverd_unittest(NeverDArm64eAnalysisTests

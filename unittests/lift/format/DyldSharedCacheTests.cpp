@@ -15,10 +15,14 @@
 
 #include "neverd/loader/BinaryImageFlags.h"
 #include "neverd/loader/MachO/DyldSharedCache.h"
+#include "neverd/loader/MachO/MachOLoader.h"
+#include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/MachO/MachOMetadataPointer.h"
 #include "neverd/loader/ObjC/ObjCMetadataJSON.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/BinaryLoading.h"
+#include "neverd/support/SHA256.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
@@ -138,6 +142,72 @@ struct CacheFixture {
     set<uint32_t>(0x6f0, 3);
     set<uint32_t>(0x6f4, 3);
     Data[0x900] = 0x42;
+  }
+
+  void imageProjection() {
+    imageLayout();
+    set<uint32_t>(0x60c, 6);
+    set<uint32_t>(0x610, 8);
+    set<uint32_t>(0x614, 488);
+    set<uint64_t>(0x6d8, 0x1000);
+    set<uint64_t>(0x6e8, 0x1000);
+    set<uint32_t>(0x700, 0x19);
+    set<uint32_t>(0x704, 72);
+    std::memcpy(Data.data() + 0x708, "__LINKEDIT", 11);
+    set<uint64_t>(0x718, Base + 0x4000);
+    set<uint64_t>(0x720, 0x1000);
+    set<uint64_t>(0x728, 0x3000);
+    set<uint64_t>(0x730, 0x1000);
+    set<uint32_t>(0x738, 1);
+    set<uint32_t>(0x73c, 1);
+    set<uint32_t>(0x748, 2);
+    set<uint32_t>(0x74c, 24);
+    set<uint32_t>(0x750, 0x3000);
+    set<uint32_t>(0x754, 3);
+    set<uint32_t>(0x758, 0x3400);
+    set<uint32_t>(0x75c, 0x400);
+    set<uint32_t>(0x760, 0xb);
+    set<uint32_t>(0x764, 80);
+    set<uint32_t>(0x774, 2);
+    set<uint32_t>(0x778, 2);
+    set<uint32_t>(0x77c, 1);
+    set<uint32_t>(0x788, 0x3100);
+    set<uint32_t>(0x78c, 1);
+    set<uint32_t>(0x798, 0x3180);
+    set<uint32_t>(0x79c, 3);
+    set<uint32_t>(0x7b0, 0x29);
+    set<uint32_t>(0x7b4, 16);
+    set<uint32_t>(0x7b8, 0x3200);
+    set<uint32_t>(0x7bc, 8);
+    set<uint32_t>(0x7c0, 0x26);
+    set<uint32_t>(0x7c4, 16);
+    set<uint32_t>(0x7c8, 0x3220);
+    set<uint32_t>(0x7cc, 3);
+    set<uint32_t>(0x7d0, 0xd);
+    set<uint32_t>(0x7d4, 56);
+    set<uint32_t>(0x7d8, 24);
+    std::memcpy(Data.data() + 0x7e8, "/usr/lib/libfixture.dylib", 25);
+    set<uint32_t>(0x3000, 0x100);
+    set<uint8_t>(0x3004, 0xf);
+    set<uint8_t>(0x3005, 1);
+    set<uint64_t>(0x3008, Base + 0x900);
+    set<uint32_t>(0x3010, 0x120);
+    set<uint8_t>(0x3014, 0xb);
+    set<uint64_t>(0x3018, 0x100);
+    set<uint32_t>(0x3020, 0x140);
+    set<uint8_t>(0x3024, 1);
+    set<uint32_t>(0x3100, 0x160);
+    for (uint32_t I = 0; I < 3; ++I)
+      set<uint32_t>(0x3180 + I * 4, I);
+    set<uint32_t>(0x3200, 0x900);
+    set<uint16_t>(0x3204, 4);
+    set<uint16_t>(0x3206, 1);
+    set<uint8_t>(0x3220, 0x80);
+    set<uint8_t>(0x3221, 6);
+    std::memcpy(Data.data() + 0x3500, "_target", 8);
+    std::memcpy(Data.data() + 0x3520, "_alias", 7);
+    std::memcpy(Data.data() + 0x3540, "_import", 8);
+    std::memcpy(Data.data() + 0x3560, "_module", 8);
   }
 
   void v2Slides() {
@@ -1021,6 +1091,305 @@ TEST(DyldSharedCache, RelativeListsAcceptEmptyHeadersAndExtendedImageRows) {
         objc::readMethodList(Image, Base + 0x2301, Remaining, Diagnostic));
     EXPECT_FALSE(Diagnostic.empty());
   }
+}
+
+TEST(DyldSharedCache, ImageProjectionPreservesAddressesAndCompactsSymbolNames) {
+  CacheFixture Fixture;
+  Fixture.imageProjection();
+  // Signed cached images can retain a stale original section file offset.
+  Fixture.set<uint32_t>(0x698, 0x11);
+  auto Cache = Fixture.parse();
+  ASSERT_TRUE(bool(Cache));
+  auto Prepared = Cache->prepareImage(0);
+  ASSERT_TRUE(bool(Prepared)) << llvm::toString(Prepared.takeError());
+  EXPECT_LT(Prepared->size(), 0x2000u);
+  const auto U32 = [&](size_t At) {
+    return readLE<uint32_t>(Prepared->data() + At);
+  };
+  const auto U64 = [&](size_t At) {
+    return readLE<uint64_t>(Prepared->data() + At);
+  };
+  EXPECT_EQ(U64(0x38), Base + 0x600);
+  EXPECT_EQ(U64(0x48), 0u);
+  EXPECT_EQ(U32(0x98), 0x300u);
+  EXPECT_EQ((*Prepared)[0x300], 0x42u);
+  EXPECT_EQ(U64(0xe0), 0x400u);
+  EXPECT_EQ(U64(0x128), 0x1400u);
+  EXPECT_EQ(U64(0x130), Prepared->size() - 0x1400);
+  const size_t Symbols = U32(0x150), Strings = U32(0x158);
+  EXPECT_EQ(U32(0x154), 3u);
+  EXPECT_EQ(U32(0x15c), 32u);
+  EXPECT_EQ(U64(Symbols + 8), Base + 0x900);
+  const auto Text = [&](size_t Index) {
+    return llvm::StringRef(
+        reinterpret_cast<const char *>(Prepared->data() + Strings + Index));
+  };
+  EXPECT_EQ(Text(U32(Symbols)), "_target");
+  EXPECT_EQ(Text(U32(Symbols + 16)), "_alias");
+  EXPECT_EQ(Text(U64(Symbols + 24)), "_target");
+  EXPECT_EQ(Text(U32(Symbols + 32)), "_import");
+  EXPECT_EQ(Text(U32(U32(0x188))), "_module");
+  for (uint32_t I = 0; I < 3; ++I)
+    EXPECT_EQ(U32(U32(0x198) + I * 4), I);
+  EXPECT_EQ(U32(U32(0x1b8)), 0x300u);
+  auto Source = Cache->readImageFileBytes(0, 0x3000, 48);
+  ASSERT_TRUE(bool(Source)) << llvm::toString(Source.takeError());
+  EXPECT_EQ(readLE<uint32_t>(Source->data()), 0x100u);
+  EXPECT_EQ(readLE<uint64_t>(Source->data() + 24), 0x100u);
+  const llvm::StringRef Bytes(reinterpret_cast<const char *>(Prepared->data()),
+                              Prepared->size());
+  auto Object = openMachOBuffer(llvm::MemoryBufferRef(Bytes, "cached-image"));
+  ASSERT_TRUE(bool(Object)) << llvm::toString(Object.takeError());
+  EXPECT_EQ((*Object)->getHeader64().cpusubtype, 2u);
+}
+
+TEST(DyldSharedCache,
+     ImageProjectionRejectsInvalidOffsetsAndUnsupportedCommands) {
+  using Mutation = std::function<void(CacheFixture &)>;
+  const std::vector<Mutation> Cases = {
+      [](auto &F) { F.template set<uint32_t>(0x754, 0xffffffff); },
+      [](auto &F) { F.template set<uint32_t>(0x750, 0x3ff0); },
+      [](auto &F) { F.template set<uint32_t>(0x758, 0x3fff); },
+      [](auto &F) { F.template set<uint32_t>(0x3000, 0x400); },
+      [](auto &F) { F.template set<uint64_t>(0x3018, uint64_t(-1)); },
+      [](auto &F) { F.template set<uint32_t>(0x3100, 0x400); },
+      [](auto &F) { F.template set<uint32_t>(0x798, 0x3fff); },
+      [](auto &F) { F.template set<uint32_t>(0x3200, 0x100); },
+      [](auto &F) { F.template set<uint32_t>(0x7bc, 7); },
+      [](auto &F) { F.template set<uint32_t>(0x7c0, 2); },
+      [](auto &F) { F.template set<uint32_t>(0x7c0, 0x80000035); },
+  };
+  for (size_t I = 0; I < Cases.size(); ++I) {
+    SCOPED_TRACE(I);
+    CacheFixture Fixture;
+    Fixture.imageProjection();
+    Cases[I](Fixture);
+    auto Cache = Fixture.parse();
+    ASSERT_TRUE(bool(Cache));
+    auto Prepared = Cache->prepareImage(0);
+    ASSERT_FALSE(bool(Prepared));
+    llvm::consumeError(Prepared.takeError());
+  }
+  CacheFixture Fixture;
+  Fixture.imageProjection();
+  auto Cache = Fixture.parse();
+  ASSERT_TRUE(bool(Cache));
+  LoadProgress Progress;
+  Progress.Stop = [](void *) { return 1; };
+  EXPECT_THROW((void)Cache->prepareImage(0, Progress), LoadCancelled);
+}
+
+TEST(DyldSharedCache, ProjectionHandlesCommandOrderAndSectionRelocations) {
+  CacheFixture Fixture;
+  Fixture.imageProjection();
+  std::vector<uint8_t> Symtab(Fixture.Data.begin() + 0x748,
+                              Fixture.Data.begin() + 0x760);
+  std::memmove(Fixture.Data.data() + 0x748, Fixture.Data.data() + 0x760, 80);
+  std::memcpy(Fixture.Data.data() + 0x798, Symtab.data(), Symtab.size());
+  Fixture.set<uint32_t>(0x6a0, 0x3240);
+  Fixture.set<uint32_t>(0x6a4, 1);
+  Fixture.set<uint32_t>(0x3240, 4);
+  Fixture.set<uint32_t>(0x3244, 0x06000000);
+  auto Cache = Fixture.parse();
+  ASSERT_TRUE(bool(Cache));
+  auto Prepared = Cache->prepareImage(0);
+  ASSERT_TRUE(bool(Prepared)) << llvm::toString(Prepared.takeError());
+  const uint32_t Relocations = readLE<uint32_t>(Prepared->data() + 0xa0);
+  EXPECT_GE(Relocations, 0x1400u);
+  ASSERT_LE(size_t(Relocations) + 8, Prepared->size());
+  EXPECT_EQ(readLE<uint32_t>(Prepared->data() + Relocations), 4u);
+  EXPECT_EQ(readLE<uint32_t>(Prepared->data() + Relocations + 4), 0x06000000u);
+  const llvm::StringRef Bytes(reinterpret_cast<const char *>(Prepared->data()),
+                              Prepared->size());
+  auto Object = openMachOBuffer(llvm::MemoryBufferRef(Bytes, "command-order"));
+  ASSERT_TRUE(bool(Object)) << llvm::toString(Object.takeError());
+  EXPECT_EQ((*Object)->getSymtabLoadCommand().strsize, 32u);
+}
+
+TEST(DyldSharedCache, SelectedImageLoadingRetainsSlideAndInputIdentity) {
+  CacheFixture Fixture;
+  Fixture.imageProjection();
+  // Add a pointer section while keeping the source linkedit offsets fixed.
+  std::memmove(Fixture.Data.data() + 0x750, Fixture.Data.data() + 0x700, 0x108);
+  std::memset(Fixture.Data.data() + 0x700, 0, 80);
+  Fixture.set<uint32_t>(0x614, 568);
+  Fixture.set<uint32_t>(0x6bc, 152);
+  Fixture.set<uint32_t>(0x6f8, 1);
+  std::memcpy(Fixture.Data.data() + 0x700, "__got", 6);
+  std::memcpy(Fixture.Data.data() + 0x710, "__DATA", 7);
+  Fixture.set<uint64_t>(0x720, Base + 0x2008);
+  Fixture.set<uint64_t>(0x728, 24);
+  Fixture.set<uint32_t>(0x730, 0x1008);
+  Fixture.set<uint32_t>(0x734, 3);
+  Fixture.set<uint32_t>(0x740, 6);
+  // The isolated __LINKEDIT does not belong to the projected VM address space.
+  Fixture.set<uint16_t>(0x441c, 0xffff);
+  Fixture.set<uint32_t>(0x900, 0xd65f03c0);
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-cache-load", Directory));
+  const auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  const std::filesystem::path Path =
+      std::filesystem::path(Directory.str().str()) / "cache";
+  {
+    std::ofstream File(Path, std::ios::binary);
+    File.write(reinterpret_cast<const char *>(Fixture.Data.data()),
+               Fixture.Data.size());
+    ASSERT_TRUE(File.good());
+  }
+  BinaryLoadOptions Options;
+  Options.Choice.MachOSharedCacheImage = "/usr/lib/libfixture.dylib";
+  Options.OnlyFunctionEntries = {Base + 0x900};
+  auto Image = loadBinary(Path, Options);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  ASSERT_TRUE(Image->MachOSharedCache);
+  EXPECT_EQ(Image->MachOSharedCacheImagePath,
+            Options.Choice.MachOSharedCacheImage);
+  EXPECT_EQ(Image->InputFileSHA256, sha256(Fixture.Data));
+  ASSERT_EQ(Image->MachOSharedCacheFileSHA256.size(), 1u);
+  EXPECT_EQ(Image->MachOSharedCacheFileSHA256[0], Image->InputFileSHA256);
+  EXPECT_NE(sha256(Image->Raw), Image->InputFileSHA256);
+  EXPECT_EQ(readLE<uint64_t>(Image->readVA(Base + 0x2008, 8)),
+            0xab00000000000000ull | (Base + 0x80));
+  EXPECT_TRUE(Image->MachOResolvedChainedPointerSlots.count(Base + 0x2008));
+  EXPECT_EQ(readLE<uint64_t>(Image->readVA(Base + 0x2018, 8)),
+            readLE<uint64_t>(Fixture.Data.data() + 0x1018));
+  EXPECT_EQ(Image->MachOAuthenticatedPointers.at(Base + 0x2018).Target,
+            Base + 0x700);
+  EXPECT_EQ(Image->MachOSharedCacheSymbolPointers.at(Base + 0x2018), "_import");
+  EXPECT_FALSE(Image->ImportPtrSlots.count(Base + 0x2018));
+  EXPECT_FALSE(Image->ImportStorageSlots.count(Base + 0x2018));
+  EXPECT_FALSE(Image->CodePtrRelocSlots.count(Base + 0x2018));
+  EXPECT_FALSE(Image->DataPtrRelocSlots.count(Base + 0x2018));
+  EXPECT_EQ(readMetadataPointerTarget(*Image, Base + 0x2018), Base + 0x700);
+  EXPECT_FALSE(Image->getSegmentFor(Base + 0x4000));
+  EXPECT_TRUE(readMetadataBytes(*Image, Base + 0x4000, 8));
+  // Optimized cache GOTs retain surviving entries at their original indices.
+  for (const char *Name : {"__got", "__auth_got"}) {
+    SCOPED_TRACE(Name);
+    std::memset(Fixture.Data.data() + 0x700, 0, 16);
+    std::memcpy(Fixture.Data.data() + 0x700, Name, std::strlen(Name));
+    Fixture.set<uint32_t>(0x740, 0);
+    {
+      std::ofstream File(Path, std::ios::binary);
+      File.write(reinterpret_cast<const char *>(Fixture.Data.data()),
+                 Fixture.Data.size());
+      ASSERT_TRUE(File.good());
+    }
+    auto Optimized = loadBinary(Path, Options);
+    ASSERT_TRUE(bool(Optimized)) << llvm::toString(Optimized.takeError());
+    EXPECT_EQ(Optimized->MachOSharedCacheSymbolPointers.at(Base + 0x2018),
+              "_import");
+    EXPECT_TRUE(Optimized->ImportPtrSlots.empty());
+    EXPECT_TRUE(Optimized->ImportStorageSlots.empty());
+  }
+  Fixture.set<uint32_t>(0x744, UINT32_MAX);
+  {
+    std::ofstream File(Path, std::ios::binary);
+    File.write(reinterpret_cast<const char *>(Fixture.Data.data()),
+               Fixture.Data.size());
+    ASSERT_TRUE(File.good());
+  }
+  auto InvalidIndices = loadBinary(Path, Options);
+  ASSERT_FALSE(bool(InvalidIndices));
+  llvm::consumeError(InvalidIndices.takeError());
+  auto MissingSelection = loadBinary(Path);
+  ASSERT_FALSE(bool(MissingSelection));
+  EXPECT_NE(llvm::toString(MissingSelection.takeError()).find("--cache-image"),
+            std::string::npos);
+  Options.Choice.MachOSharedCacheImage = "/absent";
+  auto MissingImage = loadBinary(Path, Options);
+  ASSERT_FALSE(bool(MissingImage));
+  llvm::consumeError(MissingImage.takeError());
+  Options.Choice.Format = BinaryFormat::Raw;
+  auto WrongChoice = loadBinary(Path, Options);
+  ASSERT_FALSE(bool(WrongChoice));
+  llvm::consumeError(WrongChoice.takeError());
+  Options.Choice.Format = BinaryFormat::Unknown;
+  auto Buffer = Fixture.buffer();
+  auto BufferLoad = loadBinaryBuffer(Buffer->getMemBufferRef(), Options);
+  ASSERT_FALSE(bool(BufferLoad));
+  llvm::consumeError(BufferLoad.takeError());
+}
+
+TEST(DyldSharedCache, OptionalRealCacheAllImagesHaveValidAnalysisProjections) {
+  const char *Path = std::getenv("NEVERD_DYLD_CACHE");
+  if (!Path)
+    GTEST_SKIP() << "set NEVERD_DYLD_CACHE to an arm64e cache";
+  auto Cache = DyldSharedCache::open(Path);
+  ASSERT_TRUE(bool(Cache)) << llvm::toString(Cache.takeError());
+  size_t BytesTotal = 0;
+  for (size_t I = 0; I < Cache->images().size(); ++I) {
+    SCOPED_TRACE(Cache->images()[I].Path);
+    auto Prepared = Cache->prepareImage(I);
+    ASSERT_TRUE(bool(Prepared)) << llvm::toString(Prepared.takeError());
+    BytesTotal += Prepared->size();
+    const llvm::StringRef Bytes(
+        reinterpret_cast<const char *>(Prepared->data()), Prepared->size());
+    auto Object =
+        openMachOBuffer(llvm::MemoryBufferRef(Bytes, Cache->images()[I].Path));
+    ASSERT_TRUE(bool(Object)) << llvm::toString(Object.takeError());
+  }
+  RecordProperty("images", Cache->images().size());
+  RecordProperty("total_projection_bytes", BytesTotal);
+}
+
+TEST(DyldSharedCache, OptionalRealCacheLoadsFoundationThroughSharedLoader) {
+  const char *Path = std::getenv("NEVERD_DYLD_CACHE");
+  if (!Path)
+    GTEST_SKIP() << "set NEVERD_DYLD_CACHE to a cache containing Foundation";
+  BinaryLoadOptions Options;
+  Options.Choice.MachOSharedCacheImage =
+      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation";
+  auto Image = loadBinary(Path, Options);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  EXPECT_FALSE(Image->ObjCClasses.empty());
+  EXPECT_FALSE(Image->ObjCMethods.empty());
+  for (const auto &Diagnostic : Image->ObjCMetadataDiagnostics)
+    ADD_FAILURE() << Diagnostic;
+  EXPECT_FALSE(Image->MachOAuthenticatedPointers.empty());
+  EXPECT_FALSE(Image->MachOSharedCacheSymbolPointers.empty());
+  EXPECT_TRUE(Image->ObjCSourceReferences.empty());
+  EXPECT_FALSE(Image->ObjCMetadataReferences.empty());
+  size_t Ivars = 0;
+  for (const auto &Class : Image->ObjCClasses) {
+    EXPECT_EQ(Class.IvarStatus, "metadata_only") << Class.Name;
+    Ivars += Class.Ivars.size();
+  }
+  EXPECT_GT(Ivars, 0u);
+  RecordProperty("ivars", Ivars);
+  RecordProperty("metadata_references", Image->ObjCMetadataReferences.size());
+  EXPECT_EQ(Image->MachOSharedCacheFileSHA256.size(), 2u);
+  RecordProperty("methods", Image->ObjCMethods.size());
+  RecordProperty("auth_slots", Image->MachOAuthenticatedPointers.size());
+  RecordProperty("symbol_slots", Image->MachOSharedCacheSymbolPointers.size());
+}
+
+TEST(DyldSharedCache,
+     OptionalRealCacheImageProjectionHasBoundedLinkeditStorage) {
+  const char *Path = std::getenv("NEVERD_DYLD_CACHE");
+  if (!Path)
+    GTEST_SKIP() << "set NEVERD_DYLD_CACHE to a cache containing Foundation";
+  auto Cache = DyldSharedCache::open(Path);
+  ASSERT_TRUE(bool(Cache)) << llvm::toString(Cache.takeError());
+  const auto Entry = llvm::find_if(Cache->images(), [](const auto &Image) {
+    return llvm::StringRef(Image.Path).ends_with("/Foundation");
+  });
+  ASSERT_NE(Entry, Cache->images().end());
+  auto Prepared = Cache->prepareImage(Entry - Cache->images().begin());
+  ASSERT_TRUE(bool(Prepared)) << llvm::toString(Prepared.takeError());
+  EXPECT_LT(Prepared->size(), 64u << 20);
+  const llvm::StringRef Bytes(reinterpret_cast<const char *>(Prepared->data()),
+                              Prepared->size());
+  auto Object =
+      openMachOBuffer(llvm::MemoryBufferRef(Bytes, "cached-Foundation"));
+  ASSERT_TRUE(bool(Object)) << llvm::toString(Object.takeError());
+  EXPECT_GT((*Object)->getSymtabLoadCommand().nsyms, 0u);
+  EXPECT_LT((*Object)->getSymtabLoadCommand().strsize, 16u << 20);
+  RecordProperty("projection_bytes", Prepared->size());
+  RecordProperty("symbol_string_bytes",
+                 (*Object)->getSymtabLoadCommand().strsize);
 }
 
 TEST(DyldSharedCache, OptionalRealCachePreservesAllSlideRecipes) {

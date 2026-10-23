@@ -13,9 +13,11 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/codegen/CodeGen.h"
+#include "neverd/backend/codegen/SourcePatch.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/lift/AArch64Regs.h"
+#include "neverd/loader/MachO/DyldSharedCache.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/MachO/MachOMetadataPointer.h"
@@ -28,6 +30,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 using namespace neverd;
@@ -340,12 +343,15 @@ TEST(MachOArm64e, RetainsAllSigningFieldsWithoutInventingPACBits) {
 }
 
 TEST(MachOArm64e, X1CannotBypassAuthenticatedABIRebuildRequirements) {
-  for (uint32_t Subtype : {12u, 0x8200000cu}) {
+  for (uint32_t Subtype : {0u, 12u, 0x8200000cu}) {
     BinaryImage Image;
     Image.Format = BinaryFormat::MachO;
     Image.Arch = Arch::AArch64;
     Image.Bits = Bitness::Bits64;
     Image.MachOCPUSubtype = Subtype;
+    if (!Subtype)
+      Image.MachOSharedCache =
+          std::make_shared<macho_loader::DyldSharedCache>();
     MedFunc F;
     F.Name = "x1_constant";
     F.Entry = Base;
@@ -361,9 +367,13 @@ TEST(MachOArm64e, X1CannotBypassAuthenticatedABIRebuildRequirements) {
     auto Module = MedLLVMEmitter().emit({F}, Context, "x1", Arch::AArch64, {},
                                         &Image, BinaryFormat::MachO);
     ASSERT_TRUE(Module);
-    EXPECT_TRUE(Module->getModuleFlag("neverd.arm64e-analysis"));
+    EXPECT_TRUE(Module->getModuleFlag(Subtype ? "neverd.arm64e-analysis"
+                                              : "neverd.dyld-cache-analysis"));
     EXPECT_FALSE(
         Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO).Success);
+    auto Replacement = sourcePatchTargetTriple(Image);
+    ASSERT_FALSE(bool(Replacement));
+    llvm::consumeError(Replacement.takeError());
   }
 }
 

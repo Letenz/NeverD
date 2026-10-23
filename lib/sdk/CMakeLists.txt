@@ -34,6 +34,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIGraph.cpp
     capi/NeverDCAPIHexDump.cpp
     capi/NeverDCAPIInfo.cpp
+    capi/NeverDCAPIDyldCache.cpp
     capi/NeverDCAPILocalTypes.cpp
     capi/NeverDCAPITypeFit.cpp
     capi/LocalTypesDebugContext.cpp

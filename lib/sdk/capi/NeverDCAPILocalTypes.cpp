@@ -266,11 +266,12 @@ void redeclare(Session &S) {
 }
 
 std::filesystem::path declarationsPath(const Session &S) {
-  return project_files::path(S.FilePath, project_files::File::Types);
+  return project_files::path(S.projectInputPath(), project_files::File::Types);
 }
 
 std::filesystem::path librariesPath(const Session &S) {
-  return project_files::path(S.FilePath, project_files::File::TypeLibraries);
+  return project_files::path(S.projectInputPath(),
+                             project_files::File::TypeLibraries);
 }
 
 /// The libraries \p Value's \p Key names, or none with \p Error.
@@ -1388,7 +1389,7 @@ int neverd_type_libraries_save(neverd_session_t Sess) {
   S->clearError();
   if (!S->requireFileBacked() || !S->Loaded)
     return -1;
-  ProjectWriteLock Lock(S->FilePath);
+  ProjectWriteLock Lock(S->FilePath, S->projectNamespaceSuffix());
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
@@ -1453,7 +1454,7 @@ int neverd_type_declarations_save(neverd_session_t Sess) {
   S->clearError();
   if (!S->requireFileBacked() || !S->Loaded)
     return -1;
-  ProjectWriteLock Lock(S->FilePath);
+  ProjectWriteLock Lock(S->FilePath, S->projectNamespaceSuffix());
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;

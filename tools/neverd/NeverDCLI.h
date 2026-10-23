@@ -563,6 +563,8 @@ extern UnsignedNumericOption ItemElementSize;
 extern llvm::cl::opt<std::string> ItemEncoding;
 extern llvm::cl::opt<std::string> OperandAddr;
 extern llvm::cl::opt<std::string> LoadLoader;
+extern llvm::cl::opt<std::string> LoadCacheImage;
+extern llvm::cl::opt<bool> ListCacheImages;
 extern llvm::cl::opt<std::string> LoadProcessor;
 extern llvm::cl::opt<std::string> LoadPlatform;
 extern llvm::cl::opt<std::string> LoadBase;
