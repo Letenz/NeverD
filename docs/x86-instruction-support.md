@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`66103c658ea7`](https://github.com/NeverSight/llvm-project/commit/66103c658ea7)
+[`c28e7f5f82ad`](https://github.com/NeverSight/llvm-project/commit/c28e7f5f82ad)
 adds native instruction selection for the following APIs. NeverC's
-[`64c1fafe9`](https://github.com/NeverSight/NeverC/commit/64c1fafe9)
+[`d121bd265`](https://github.com/NeverSight/NeverC/commit/d121bd265)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -201,6 +201,8 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.inbyte/inword/indword`, `llvm.x86.outbyte/outword/outdword` | i386 and x86-64 | Native port I/O through DX and AL/AX/EAX; unused reads remain observable. |
 | `llvm.x86.cli`, `llvm.x86.sti`, `llvm.x86.invlpg` | i386 and x86-64 | Ordered state effects; CLI/STI preserve arithmetic flags, and INVLPG does not preload its address. |
 | `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
+| `llvm.x86.{lar,lsl}.{reg,mem}{16,32,64}` | i386 and x86-64; 64-bit results require x86-64 | Returns `{value, i8 ZF}`. Success retains the native result; failure returns the supplied prior value. Memory forms own their m16 selector read. |
+| `llvm.x86.lsl` | i386 and x86-64 | Compatibility with NeverC's Microsoft `__segmentlimit`; ordered query with a 32-bit result, unspecified on failure. |
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
 | `llvm.x86.readcr/readdr`, `llvm.x86.writecr/writedr` | x86-64 | Immediate register selector, full i64 values and ordered, potentially trapping accesses. CR0/2/3/4/8 and DR0..7 retain their native encodings and undefined arithmetic flags. |
 | `llvm.x86.readcr32/readdr32`, `llvm.x86.writecr32/writedr32` | i386 | Same contract with i32 values; CR8, invalid selectors and wrong-mode APIs fail explicitly. |
@@ -353,6 +355,28 @@ header probe emits native AMX IR. The plugin target schema is regenerated for
 the new instructions/features and earlier register-effect fixes; both target
 schemas pass their generator check. Its lockstep digest changes, so plugins
 must negotiate the updated schema instead of retaining old feature IDs.
+
+LAR/LSL now have twelve native result/status interfaces, covering 16/32/64-bit
+results and register/memory selectors. NeverC's spellings are
+`__builtin_ia32_{lar,lsl}_{reg,mem}{16,32,64}(selector, prior, zf_pointer)`.
+The memory selector is a `const void *`; the m16 access remains inside the
+instruction. The ZF pointer receives an ordinary C store after completion.
+These result widths name the operand size, independently of code mode. A
+lifted 32-bit destination in long mode must still merge its full old register
+on failure; an i32 intrinsic alone cannot retain those upper bits.
+
+The full LLVM route passes 1,972 encoding/completion checks, and NeverC plus
+NeverC-to-fork each pass 1,174. They cover independent result/ZF uses, failure
+preservation, dead/repeated reads, live inputs, memory ordering, saved registers,
+unmapped selector boundaries, O0/O2, ELF/COFF/Mach-O and both assembly dialects.
+The two C routes additionally pass 25 real Linux x64 user-mode cases each,
+comparing null and current-CS selectors with an independent assembly oracle.
+LAR's undefined result bits are masked only in the comparison, not invented by
+the intrinsic. The legacy `__segmentlimit` is now chained in NeverC and accepted
+by the full fork. Ten LLVM regressions, optimized-IR retention, all 39 NeverC
+intrinsic tests, 81 existing binary checks and 20 generator tests pass. The
+complete overload audit reports zero mismatches. VMCS completion regressions
+remain green after sharing the frontend's value/status extraction helper.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
