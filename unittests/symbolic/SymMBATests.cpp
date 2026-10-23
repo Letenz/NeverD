@@ -160,6 +160,23 @@ TEST(SymMBA, HasNoArityAtWhichItStopsWritingTheAnswerDown) {
                "a ^ b ^ c ^ d ^ e ^ f ^ g ^ h ^ i ^ j");
 }
 
+TEST(SymMBA, AtomColumnsMatchEveryAssignmentAcrossStorageWords) {
+  EXPECT_TRUE(atomTruthTable(0, 0).isZero());
+  for (unsigned Arity = 1; Arity <= 18; ++Arity) {
+    for (unsigned Index = 0; Index < Arity; ++Index) {
+      SCOPED_TRACE(::testing::Message() << Arity << ":" << Index);
+      const auto Table = atomTruthTable(Index, Arity);
+      ASSERT_EQ(Table.numVars(), Arity);
+      ASSERT_EQ(Table.entries(), size_t(1) << Arity);
+      EXPECT_EQ(Table.count(), Table.entries() / 2);
+      for (size_t Assignment = 0; Assignment < Table.entries(); ++Assignment)
+        ASSERT_EQ(Table.at(Assignment), bool((Assignment >> Index) & 1))
+            << Assignment;
+    }
+    EXPECT_TRUE(atomTruthTable(Arity, Arity).isZero());
+  }
+}
+
 TEST(SymMBA, HoldsATableWiderThanTheWordThatUsedToBeOne) {
   // The container on its own, below the solver that drives it.  Every arity
   // ceiling in the solver used to trace back to this one object being a

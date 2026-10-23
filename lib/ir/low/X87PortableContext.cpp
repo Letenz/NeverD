@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 /// \file
 /// Operate on the existing raw context, then publish only a completed step.
-/// Guest memory authentication and pending-fault address ordering remain with
-/// the concrete executor; this owner also checks its independent call boundary.
+/// Guest memory authentication remains with adapters; shared preflight owns
+/// the instruction/environment checks that must precede operand access.
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/low/X87PortableContext.h"
@@ -304,25 +304,36 @@ const char *x87PortableOutcomeName(X87PortableOutcome Outcome) {
 }
 
 X87PortableOutcome
-executePortableX87Context(uint32_t Selector, std::array<uint8_t, 512> &State,
-                          uint8_t &KnownPayload, std::span<uint8_t> Memory,
-                          uint64_t IP, uint64_t DP, uint64_t &Result) {
+preflightPortableX87Context(uint32_t Selector,
+                            const std::array<uint8_t, 512> &State) {
   const auto Spec = x87ContextInstruction(Selector);
   const auto *Form = x87InstructionForm(Selector);
   if (!Spec || !Form)
     return Outcome::InvalidInstruction;
   const auto Op = Form->PortableOperation;
+  const uint16_t Control = word(State), Status = word(State, 2);
+  if (Spec->Waiting && x87HasPendingException(Control, Status))
+    return Outcome::PendingException;
   if (Op == Operation::None)
     return Outcome::UnsupportedInstruction;
-  const uint16_t Control = word(State), Status = word(State, 2);
-  if (Spec->Waiting && ((Status & 0x80) || (Status & ~Control & 0x3f)))
-    return Outcome::PendingException;
   if (Op != Operation::Initialize &&
       (!x87ControlWordIsValid(Control) || !(Control & 0x0040)))
     return Outcome::InvalidControl;
   if (x87ContextUpdatesInstructionPointer(Selector) &&
       (Control & ExceptionFlags) != ExceptionFlags)
     return Outcome::UnmaskedControl;
+  return Outcome::Completed;
+}
+
+X87PortableOutcome
+executePortableX87Context(uint32_t Selector, std::array<uint8_t, 512> &State,
+                          uint8_t &KnownPayload, std::span<uint8_t> Memory,
+                          uint64_t IP, uint64_t DP, uint64_t &Result) {
+  const auto Preflight = preflightPortableX87Context(Selector, State);
+  if (Preflight != Outcome::Completed)
+    return Preflight;
+  const auto Spec = x87ContextInstruction(Selector);
+  const auto Op = x87InstructionForm(Selector)->PortableOperation;
   if (Memory.size() != Spec->MemoryBytes)
     return Outcome::InvalidMemory;
 

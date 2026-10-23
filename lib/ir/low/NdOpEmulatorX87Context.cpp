@@ -141,7 +141,7 @@ bool NdOpEmulator::executeX87Context(const LowOp &Op) {
   const uint16_t CW = word(State, 0), SW = word(State, 2);
   // Pending #MF precedes address evaluation. Neither state nor output is
   // changed on this refusal, including in the lenient switch-tracing mode.
-  if (Spec->Waiting && ((SW & 0x80) || (SW & ~CW & 0x3f)))
+  if (!X87PortableMode && Spec->Waiting && x87HasPendingException(CW, SW))
     return false;
   if (!X87PortableMode && (State[4] & ~X87PayloadKnown) && !Initialize &&
       Selector != 0x770f)
@@ -157,8 +157,8 @@ bool NdOpEmulator::executeX87Context(const LowOp &Op) {
   if (Approximate && (StrictMode || !X87NativeReferenceMode))
     return false;
   if (X87PortableMode) {
-    const auto *Form = x87InstructionForm(Selector);
-    if (!Form || Form->PortableOperation == X87PortableOperation::None)
+    if (preflightPortableX87Context(Selector, State) !=
+        X87PortableOutcome::Completed)
       return false;
   }
   const auto Flags =

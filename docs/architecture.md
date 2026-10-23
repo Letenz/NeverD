@@ -1431,8 +1431,19 @@ only along an unclobbered entry path. Its existing bounded summary worklist
 propagates the resulting facts. `recoveredFloatingCallArguments` checks the
 complete fixed signature for both LLVM declarations and HighC call metadata;
 expression types alone do not establish a nonvariadic external signature.
-Mixed classes, HFA records and stack overflow need their separate adapters;
-this scalar contract supplies no such coverage.
+Mixed scalar arguments and dense AAPCS64 HFAs use the same checked placement
+model, with source groups retained separately from their physical scalar
+operands. A spilled HFA occupies one stack object; its float members remain
+four bytes apart and exhausting the FP bank does not exhaust the integer bank.
+The native LLVM adapter uses an array for each HFA parameter: flattening it,
+or using an LLVM literal struct, can split a record between registers and the
+stack. Both C routes rebuild the original source record and retain complete
+return fields, including a single float and a three-float result whose C
+integer carrier has padding. Locally supplied header records get complete
+value definitions; records supplied by an included header are not redefined.
+Padded or over-aligned HFAs, special conventions and Apple stack packing remain
+outside this adapter. A source aggregate return for an untyped wrapper still
+needs independent source or caller evidence.
 
 LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
 signatures. Every printed call of a symbol must agree before the writer uses
@@ -6881,6 +6892,47 @@ generation-mismatch, and policy faults. Instruction/block budgets,
 cancellation, generation tracking, and the `RejectExecutableWrites`,
 `InvalidateOnExecutableWrite`, and `ValidateBeforeDispatch` code-write policies
 also produce coherent typed records rather than implicit host-side behavior.
+
+Exact byte-span loads/stores use the same access-planning owner as scalar
+accesses. The complete nonempty range is checked before copying any byte,
+including operands such as binary80 that cross region boundaries. Stores need
+write permission only; failed accesses leave output bytes, guest storage and
+generations unchanged. Executable writes preserve the existing policy, including
+refusal across multiple executable regions. `SelfModification` denotes a
+completed store followed by invalidation/exit, so an instruction adapter must
+commit its corresponding architectural state before honoring that exit. This
+is failure atomicity within the runtime's confined execution thread, not an
+inter-thread atomic guest instruction or an expansion of translation admission.
+The scalar-v1 control protocol still rejects non-scalar data extents. The
+separate exact-span-v1 validator preserves the 128-byte layout and all other
+invariants while accepting bounded nonempty data extents. Its limit derives
+from `MemoryFaultExit::AccessWidthBits`; oversized spans fail before access.
+Protocol identity must be bound by a trusted profile/invocation and included in
+artifact/cache identity before activation. It cannot be inferred from a control
+record, including a successful or eight-byte record, or selected by retrying a
+failed scalar validation. This foundational validator enables no new profile;
+existing integer dispatch, artifact admission and helpers remain scalar-v1.
+
+`X87PortableRuntime` adapts the existing portable semantic owner to this checked
+memory boundary. Its separate versioned state includes explicit environment
+and physical-payload provenance; the original integer state/frame is unchanged.
+Waiting-exception preflight precedes memory checks, and store preflight precedes
+operand evaluation without publishing bytes or generations. Final stores repeat
+those checks. A store fault keeps the current x87 state; a completed executable
+store commits the matching stack/pop state before returning self-modification.
+The result carries a stable refusal code, completion flag and success-only
+scalar validity, plus only this operation's memory result. Callers still own
+PC/accounting and profile admission. This C++ adapter alone does not enable a
+generated-code, JIT, public API or cross-architecture capability cell.
+
+`X87PortableABI.def` and `X87PortableStatus.def` own the separate generated-call
+C contract. IRLowValidation derives the emitter signature view from its C
+header without linking to Translate. The `neverd_x87_runtime` shared target
+exports only those helper symbols and adapts a trusted, explicitly constructed
+`PortableX87ExecutionV1` to the existing transactional owner. Scalar-result
+consumption is a stateful, single-use operation; failure and nonproducing steps
+invalidate it. The internal C++ embedding layout must match the runtime build.
+The bridge itself establishes no generated-code or translation qualification.
 
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,

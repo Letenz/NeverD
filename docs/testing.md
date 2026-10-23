@@ -323,9 +323,28 @@ register HFAs preserve both returned fields through single and chained calls,
 including NaN payloads and signed zero; output sentinels bound every write.
 ARM64 explicitly stores both fields, so the test does not infer a wrapper's
 source return type from unused scratch registers. The shared placement suite
-covers one through four float/double HFA members on COFF/ELF/Mach-O and rejects
-incomplete, padded and spilled records. Native Windows/ARM64 execution and
-unobserved wrapper return-type recovery are separate coverage.
+covers one through four float/double HFA members on COFF/ELF/Mach-O, including
+whole-record COFF/ELF stack placement, and rejects incomplete, padded,
+over-aligned and unsupported Mach-O stack layouts.
+`RecordCallContract.WindowsStackedHFAsPreserveGroupsAndFollowingArguments`
+uses an independent header/provider and linked ARM64 PE fixtures for one through
+four float/double members, seven preceding floats, a following float, an integer
+and another HFA. Single/chained calls and O0/O2 inputs produce both C routes,
+executed at O0/O2 with address/undefined-behavior sanitizers. Every parameter,
+result member and output sentinel is observed, including signed zero and NaN
+payloads; malformed stack offsets and source groups fail the bound validator.
+LLVM parameters must retain HFA arrays instead of flattened or struct operands.
+`LLVMCValues.HFAArrayBoundariesRequireOrdinaryAAPCS64Parameters` rejects other
+architectures, nested/oversized arrays, unproved mixed array classes, array
+returns, variadic calls and special ABI attributes. The scalar/aggregate
+nonfinite constant test also checks exact quiet/signaling NaN, infinity and
+signed-zero bits. Native Windows/ARM64 execution and unobserved wrapper
+return-type recovery are separate coverage.
+The generated C matrix executes on the host. It does not establish native
+AArch64 C compilation of wide aggregate-result bridges: the paired Clang
+currently rejects `_BitInt` wider than 128 bits on AArch64. Three/four-double
+HighC result carriers still have that native-C limitation; native LLVM HFA
+carriers and ordinary SVE ACLE projections do not use that C scalar type.
 `ReturnContract.ExplicitX87PrecisionRequiresAnExactIEEEValue` keeps arithmetic,
 raw byte changes and unknown loads at eighty bits while exact IEEE extensions
 and identity copies retain their declared precision. SDK checks use the
@@ -813,6 +832,10 @@ work, storage and refusal checks remain shared with the full residue suite.
 Run `SymParse.*` and `SymParseLexer.*` when changing text operator dispatch:
 precedence, associativity, diagnostics and printed-expression round trips
 must stay identical while measuring the complete parse/prove/render query.
+`SymMBA.AtomColumnsMatchEveryAssignmentAcrossStorageWords` checks every input
+column and assignment through 18 inputs, including the inline/heap storage
+boundary and columns spanning whole words. Batched truth-table construction
+must preserve the same tables and existing proof budgets.
 `SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
 exhaustive small-word perturbations, nonzero coefficient/offset controls,
 zero-prefix versus zero-word refusal, exact/short resource budgets and Z3
@@ -3525,6 +3548,31 @@ python3 scripts/generate_x87_capabilities.py --neverd build-release/bin/neverd -
 Use your configured Release build directory in place of `build-release`.
 `NeverDX87ArithmeticTests` checks direct PC/RC rounding, extended exponents,
 signed zero, masked overflow/underflow numerical results and invalid domains.
+`X87PortableContext.PreflightOrdersWaitingExceptionsBeforeOperandAccess`
+checks waiting/nonwaiting precedence and rejects stale preflight state.
+The translation contract target's `GuestMemoryRuntime.Binary80*` and
+`ExactSpanBoundsAndAlignmentRemainFailureAtomic` cases cover exact ten-byte
+accesses, inaccessible final bytes, adjacent and write-only regions, unchanged
+fault outputs, address/alignment failures, and completed executable writes under
+each invalidation policy. Exact-span protocol tests use actual wide runtime
+faults and executable stores to check old-protocol rejection, lossless details,
+generation overflow and retained reserved-field, scalar, generation, size and
+fault/access invariants. Existing scalar and runtime ABI tests remain required
+because both access shapes share the same memory owner.
+`NeverDX87PortableExecutionTests` links the separate runtime library and compiles
+its consumer as C11 with short enums where supported. It checks explicit incoming
+state, exact status/scalar returns and current-instruction diagnostics. Death
+tests check missing, reused and stale scalar results; an unavailable death-test
+backend supplies no qualification for those fatal contract violations.
+`X87PortableRuntime.*` in the translation contract target exercises the checked
+adapter with every TOP and all twelve valid PC/RC combinations using a sum
+distinguishable from binary64. It checks exact ten-byte results, sticky status,
+physical provenance, FIP/FDP, write-only output and canaries. Additional cases
+check a faulting final byte after a completed load, completed executable-store
+pop, pending/unknown/invalid input state, stale memory faults, unsupported
+operations, memory-before-stack-fault precedence and success-only scalar output.
+Store-preflight regression checks that a successful check neither writes nor
+increments generations and cannot authorize a later overflowing generation.
 LLVM and Unicorn are independent numerical references; the native x64 test
 compares original instruction bits and defined arithmetic status and skips on
 other hosts. `NeverDX87PortableContextTests` checks all TOP values, retained raw
@@ -5059,6 +5107,12 @@ that same slot, in either operand order.
 strings, generic builtins compiled for a different source ISA, and dead image
 address calculations. The latter must retain volatile/atomic loads and
 observable calls while leaving the input LLVM module unchanged.
+`OwnedImageMirrorsRetainBytesBeyondStringPrefixes` reads complete SIMD-sized
+constant-pool objects behind empty, ASCII and UTF-16 prefixes through ordinary
+and volatile loads. Both section storage and pointer mirrors retain their
+bytes and the identity of pointer-to-integer views, including interior offsets.
+The generated C executes at O0/O2 with undefined-behavior checks for x64/ELF
+and ARM64/COFF writer options; a prefix cannot replace the owned byte object.
 Integer-initializer regressions give scalars, arrays and records values that
 match known image string addresses, then compile and execute their generated C
 at O0/O2 with x64 and AArch64 writer options. Symbolic global references retain
