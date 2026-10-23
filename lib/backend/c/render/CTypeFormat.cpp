@@ -17,6 +17,7 @@
 #include "neverd/backend/Limits.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/SourceFrameBytes.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/RelocationProvenance.h"
@@ -474,22 +475,34 @@ private:
 };
 } // namespace
 
-std::optional<std::string> imageStringComment(const BinaryImage *Img,
-                                              va_t Addr) {
-  const auto Bytes = readableDataBytes(
-      Img, Addr, ::neverd::limits::backend::kCTypeFormatStringWindow);
-  if (!Bytes)
-    return std::nullopt;
+static std::optional<std::string>
+bytesStringComment(llvm::ArrayRef<uint8_t> Bytes) {
   strings::ScanOptions Options;
   // Comments describe the stored bytes without replacing them by a host C
   // literal. They can therefore show big-endian Unicode on a little-endian
   // target too; imageCString retains its stricter replacement contract.
   Options.Encodings |= strings::encodingBit(strings::Encoding::UTF16BE) |
                        strings::encodingBit(strings::Encoding::UTF32BE);
-  const auto First = stringAtStart(*Bytes, Options);
+  const auto First = stringAtStart(Bytes, Options);
   if (!First)
     return std::nullopt;
   return quotedStringText(First->Kind, First->Text);
+}
+
+std::optional<std::string> imageStringComment(const BinaryImage *Img,
+                                              va_t Addr) {
+  const auto Bytes = readableDataBytes(
+      Img, Addr, ::neverd::limits::backend::kCTypeFormatStringWindow);
+  return Bytes ? bytesStringComment(*Bytes) : std::nullopt;
+}
+
+std::optional<std::string>
+sourceFrameStringComment(const SourceFrameBytes &Value) {
+  const auto Text = bytesStringComment(Value.Bytes);
+  return Text ? std::optional<std::string>("stack text at 0x" +
+                                           llvm::utohexstr(Value.Instruction) +
+                                           ": " + *Text)
+              : std::nullopt;
 }
 
 std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr) {

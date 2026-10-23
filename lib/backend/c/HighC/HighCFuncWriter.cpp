@@ -6205,6 +6205,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       Declarator += "void";
     OS << declaredAs(ReturnType, Declarator + ")") << " {\n";
   }
+  if (Opts.EmitComments)
+    for (const auto &Bytes : Func.FrameBytes)
+      if (const auto Text = sourceFrameStringComment(Bytes)) {
+        emitIndent(1);
+        OS << "/* " << *Text << " */\n";
+      }
   if (Func.Body.empty()) {
     // Conversion produced no statements.  An empty `{ }` looks like a
     // successful leaf; trap instead so coverage cannot treat this as a body.
