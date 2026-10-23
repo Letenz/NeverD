@@ -1,4 +1,4 @@
-//===- AArch64Decoder.cpp - AArch64 decoder support ===//
+//===- AArch64Decoder.cpp - AArch64 decoder support ----------------------===//
 //
 // NeverD Decompiler
 //

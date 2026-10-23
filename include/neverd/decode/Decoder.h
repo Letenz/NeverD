@@ -55,7 +55,7 @@ private:
     S += ": ";
     S += (M ? M : "?");
     if (O && *O) {
-      S += " ";
+      S += ' ';
       S += O;
     }
     return S;

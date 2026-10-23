@@ -391,13 +391,15 @@ static bool fixLiftedStackPointers(llvm::Module &Mod) {
       for (llvm::Instruction &I : BB) {
         auto FixIntToPtr = [&](llvm::Instruction *User, unsigned OpNo) -> bool {
           llvm::Value *PtrOp = User->getOperand(OpNo);
-          llvm::Value *Addr = PtrOp;
+          // Only an inttoptr constant expression carries an integer address
+          // here; a pointer operand is never a bare ConstantInt.
+          llvm::Value *Addr = nullptr;
           if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(PtrOp)) {
             if (CE->getOpcode() != llvm::Instruction::IntToPtr)
               return false;
             Addr = CE->getOperand(0);
           }
-          auto *CI = llvm::dyn_cast<llvm::ConstantInt>(Addr);
+          auto *CI = llvm::dyn_cast_or_null<llvm::ConstantInt>(Addr);
           if (!CI)
             return false;
           int64_t Disp = CI->getSExtValue();

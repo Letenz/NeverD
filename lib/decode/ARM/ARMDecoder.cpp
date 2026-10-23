@@ -1,4 +1,4 @@
-//===- ARMDecoder.cpp - ARM and Thumb decoder support ===//
+//===- ARMDecoder.cpp - ARM and Thumb decoder support --------------------===//
 //
 // NeverD Decompiler
 //
