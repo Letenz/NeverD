@@ -39,7 +39,9 @@ inline constexpr double kComparisonZoomStep = 1.2;
 inline constexpr int kComparisonInitialWidth = 1280;
 inline constexpr int kComparisonInitialHeight = 800;
 inline constexpr int kComparisonMinimumWidth = 760;
-inline constexpr int kComparisonMinimumHeight = 540;
+/// Keep source code readable below the comparison and paging controls.
+inline constexpr int kComparisonMinimumHeight = 640;
+inline constexpr int kComparisonSourceMinimumVisibleLines = 6;
 inline constexpr int kComparisonCounterpartInitialWidth = 940;
 inline constexpr int kComparisonCounterpartInitialHeight = 620;
 inline constexpr int kComparisonCounterpartMinimumWidth = 700;

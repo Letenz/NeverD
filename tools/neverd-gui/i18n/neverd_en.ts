@@ -7768,5 +7768,65 @@ Secondary SHA-256: %3
         <source>Unmapped line</source>
         <translation>Unmapped line</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>Align source lines</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>Remove alignment work allowance</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>Remove source evidence byte allowance</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>Include declarations in alignment</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>Go to aligned row</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>Aligning source… Cancellation waits for the current analysis step.</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>Source alignment exceeds its allowance. Adjust Options or view independent source.</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>Source alignment stopped. Reload source to try again.</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>Aligned rows %1–%2 of %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · Source line %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · No line on this side</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · Changed</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · Inserted</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · Deleted</translation>
+    </message>
 </context>
 </TS>

@@ -209,8 +209,17 @@ int runStructuralDiff() {
     const bool SourceView = !DiffSourceFunction.empty();
     if (!SourceView && (DiffSourceSide.getNumOccurrences() ||
                         DiffSourceRepresentation.getNumOccurrences() ||
-                        DiffSourceInstructions.getNumOccurrences()))
+                        DiffSourceInstructions.getNumOccurrences() ||
+                        DiffSourceDifference.getNumOccurrences() ||
+                        DiffSourcePrelude.getNumOccurrences() ||
+                        DiffSourceWork.getNumOccurrences() ||
+                        DiffSourceBytes.getNumOccurrences()))
       throw std::runtime_error("source options require --source-function");
+    if (!DiffSourceDifference && (DiffSourcePrelude.getNumOccurrences() ||
+                                  DiffSourceWork.getNumOccurrences() ||
+                                  DiffSourceBytes.getNumOccurrences()))
+      throw std::runtime_error(
+          "source alignment options require --source-difference");
     if (!ValidationView && (DiffValidationSide.getNumOccurrences() ||
                             DiffValidationWork.getNumOccurrences() ||
                             DiffValidationInstructions.getNumOccurrences()))
@@ -423,15 +432,24 @@ int runStructuralDiff() {
       Output = take(
           neverd_comparison_reviews_json(C, render(std::move(Query)).c_str()));
     } else if (SourceView) {
-      const auto Query = render(llvm::json::Object{
+      llvm::json::Object SourceQuery{
           {"side", DiffSourceSide.getValue()},
           {"address", DiffSourceFunction.getValue()},
           {"representation", DiffSourceRepresentation.getValue()},
           {"offset", unsigned(DiffOffset)},
           {"limit", unsigned(DiffLimit)},
           {"max_native_instructions", unsigned(DiffSourceInstructions)},
-          {"timeout_ms", uint64_t(DiffTimeout)}});
-      Output = take(neverd_comparison_source_page_json(C, Query.c_str()));
+          {"timeout_ms", uint64_t(DiffTimeout)}};
+      if (DiffSourceDifference) {
+        SourceQuery["max_work"] = uint64_t(DiffSourceWork);
+        SourceQuery["max_source_bytes"] = uint64_t(DiffSourceBytes);
+        SourceQuery["include_prelude"] = bool(DiffSourcePrelude);
+      }
+      const auto Query = render(std::move(SourceQuery));
+      Output =
+          take(DiffSourceDifference
+                   ? neverd_comparison_source_difference_json(C, Query.c_str())
+                   : neverd_comparison_source_page_json(C, Query.c_str()));
       if (!Output.empty())
         Partial |= parse(Output).getAsObject()->getString("availability") !=
                    "available";

@@ -14,6 +14,7 @@
 #include <QWidget>
 
 class QAction;
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QPlainTextEdit;
@@ -48,16 +49,22 @@ private:
     QComboBox *Anchors = nullptr;
     QPushButton *Instruction = nullptr;
     QSpinBox *Line = nullptr;
+    QString RangeText;
     bool Pending = false, Initial = true, NeedsLoad = true, Refresh = false;
     int Offset = 0;
   } Panes[2];
   ComparisonSession &Session;
   QComboBox *Representation;
-  QAction *Unlimited;
+  QCheckBox *AlignmentMode;
+  QLabel *Hint;
+  QAction *Unlimited, *UnlimitedWork, *UnlimitedBytes, *IncludePrelude;
   QString Revision;
   quint64 Generation = 0;
   void reset(bool Refresh = false);
   void load(int Side, int Offset = 0);
+  bool aligned() const;
+  void loadDifference(int Offset);
+  void highlight(int Side);
   void cursor(int Side);
   void updateControls(int Side);
 };

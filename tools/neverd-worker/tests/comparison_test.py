@@ -172,6 +172,31 @@ def main():
             assert cli_source["document"]["text"] == source["document"]["text"]
             limited_source = ok(client, "comparison_source_page", {**source_query, "max_native_instructions": 1})
             assert limited_source["state"] == "resource_limited" and not limited_source["document"]
+            assert "comparison_source_difference" in client.hello["capabilities"]
+            assert "comparison_source_difference" in client.hello["comparison_cancellable_operations"]
+            aligned = ok(client, "comparison_source_difference", source_query)
+            assert aligned["availability"] == "available" and aligned["computation_complete"], aligned
+            assert aligned["comparison_revision"] == page["comparison_revision"]
+            assert any(row["kind"] == "changed" for row in aligned["rows"]), aligned
+            for row in aligned["rows"]:
+                for side in ("primary", "secondary"):
+                    if row[side]:
+                        assert all(anchor["address"] in row[side]["addresses"]
+                                   for anchor in row[side]["comparison_anchors"]), row
+            aligned_page = ok(client, "comparison_source_difference", {**source_query, "limit": 2})
+            assert aligned_page["cached"] and aligned_page["rows"] == aligned["rows"][:2]
+            aligned_cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(root / "17.o"),
+                "-b", str(root / "9.o"), "--source-function", address, "--source-difference"],
+                text=True, capture_output=True, timeout=60)
+            assert aligned_cli.returncode in (2, 3), aligned_cli.stderr
+            # CLI has not requested native alignment for navigation yet.
+            cli_aligned = json.loads(aligned_cli.stdout)
+            def textual_rows(rows):
+                return [(row["kind"], *(row[side]["text"] if row[side] else None
+                         for side in ("primary", "secondary"))) for row in rows]
+            assert textual_rows(cli_aligned["rows"]) == textual_rows(aligned["rows"])
+            limited_alignment = ok(client, "comparison_source_difference", {**source_query, "max_work": 1})
+            assert limited_alignment["state"] == "resource_limited" and not limited_alignment["rows"]
             graph = ok(client, "comparison_cfg_summary", {"address": address})
             bounds = graph["bounds"]
             view = ok(client, "comparison_cfg_viewport", {"address": address,
@@ -186,6 +211,8 @@ def main():
             assert edited["can_undo"] and not edited["can_redo"]
             stale_source = client.call("comparison_source_page", source_query)
             assert stale_source["error"]["code"] == "stale_comparison", stale_source
+            stale_alignment = client.call("comparison_source_difference", source_query)
+            assert stale_alignment["error"]["code"] == "stale_comparison", stale_alignment
             refused = client.call("comparison_override", {"kind": "unmatch", "primary": address,
                         "secondary": other, "expected_comparison_revision": revision})
             assert refused["error"]["code"] == "stale_comparison", refused

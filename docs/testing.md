@@ -701,6 +701,12 @@ Zero, short and storage-limited attempts preserve the original semantics.
 Degree-32/64 machine-code fixtures execute the generated C through both
 backends and all six CLI/GUI-worker routes at O0/O2, with separate ordinary
 and enhanced caches.
+Shared-cofactor regressions require shorter degree-8/16/32/48/96 readings,
+independent APInt evaluation through 257 bits and exhaustive observed input
+pairs for the degree-32 case. The mixed degree-8 replacement also has independent
+full-width Z3 proofs and native execution through all six CLI/worker routes.
+Completion metadata must exclude opaque inputs and reset on resource refusal;
+it is not an optimality certificate.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.
@@ -1233,8 +1239,21 @@ panes, switches to LLVM C and follows a mapped line back to Disassembly. It
 also checks independent paging, Enter in the line selector, unavailable dialects,
 explicit reload and rapid representation changes. Optional captures cover both
 themes at normal/minimum sizes with long names and fractional scaling.
-These checks establish source inspection contracts, not source-line matching or
-semantic equivalence.
+`BinaryDiffSourceAlignment` checks repeated-line inputs exhaustively against an
+independent full-table edit-distance oracle, Unicode/literals/line terminators,
+random unequal/repeated inputs, long unchanged runs, exact and removed work
+allowances, cancellation and deadlines. Sparse 10k/100k-line fixtures require
+ten separated replacements, or five insertions and five deletions, to complete
+within the default work allowance with exact original-line coverage. Highly
+unequal inputs exercise both edit directions against the independent oracle.
+SDK source-difference tests reassemble both exact ordinary emissions across pages,
+check original anchors and source coordinates, exercise mapping invalidation,
+byte/work/instruction limits and cancellation/refresh, and preserve saved native
+evidence. CLI and worker checks compare textual rows, page caches, unsupported
+options and stale revisions. The Qt case checks aligned row counts, highlights,
+instruction navigation, synchronized scroll and independent-source fallback.
+These checks establish exact textual alignment and inspection contracts, not
+semantic equivalence or unique statement correspondence.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw

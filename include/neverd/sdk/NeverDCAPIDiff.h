@@ -115,6 +115,21 @@ neverd_comparison_function_page_json(neverd_comparison_t Comparison,
 NEVERD_API const char *
 neverd_comparison_source_page_json(neverd_comparison_t Comparison,
                                    const char *Query);
+/// Exact textual line alignment of an accepted function pair, collected from
+/// complete comparison-owned source renderings. Query: side, address,
+/// representation, offset, limit, max_native_instructions, max_work,
+/// max_source_bytes, include_prelude, timeout_ms and refresh. Zero removes each
+/// additional work/byte/instruction allowance. Pages reuse one retained pair;
+/// mapping edits retire it. Stopped computations have no classified rows and
+/// require refresh to retry the same settings. Rows retain original source
+/// coordinates and checked instruction anchors. Changed rows pair adjacent
+/// insertions/deletions for display only; no statement correspondence or
+/// semantic equivalence is established. Ordinary source inspection remains
+/// independently available. Cancellation is cooperative, with checks between
+/// synchronous analysis/rendering and within line collection/alignment.
+NEVERD_API const char *
+neverd_comparison_source_difference_json(neverd_comparison_t Comparison,
+                                         const char *Query);
 /// Bounded CFG topology for a viewer: side, address, node_limit, edge_limit.
 /// Returns explicit failure when the caller's graph allowance is exceeded.
 /// Also accepts timeout_ms and refresh for shared delta computation. A stopped
