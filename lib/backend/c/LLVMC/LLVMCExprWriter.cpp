@@ -1220,14 +1220,10 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
         auto Text = Self(Self, Operand);
         if (!Text)
           return std::nullopt;
-        uint64_t Bits = 0;
-        int64_t Signed = 0;
-        if (llvm::StringRef(*Text).getAsInteger(0, Bits)) {
-          if (llvm::StringRef(*Text).getAsInteger(0, Signed))
-            return std::nullopt;
-          Bits = static_cast<uint64_t>(Signed);
-        }
-        Operands.push_back(llvm::ConstantInt::get(Ty, Bits));
+        const auto Bits = ParseInteger(*Text, Ty->getBitWidth());
+        if (!Bits)
+          return std::nullopt;
+        Operands.push_back(llvm::ConstantInt::get(Ty->getContext(), *Bits));
       }
       if (CurMod)
         if (const auto *C = llvm::dyn_cast_or_null<llvm::ConstantInt>(

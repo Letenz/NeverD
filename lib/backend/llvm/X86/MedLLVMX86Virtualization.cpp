@@ -10,10 +10,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/backend/llvm/X86VirtualizationAsm.h"
+#include "neverd/backend/llvm/X86VirtualizationNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <vector>
@@ -64,21 +65,61 @@ llvm::Value *MedLLVMEmitter::emitX86Virtualization(const MedOp &Op,
     Arguments.push_back(Value);
     Types.push_back(Type);
   }
-  llvm::Type *Return = Builder.getVoidTy();
-  if (C.Result == X86VirtualizationResult::Read)
-    Return =
-        llvm::StructType::get(*Ctx, {sizeToType(Word), Builder.getInt16Ty()});
-  else if (C.Result == X86VirtualizationResult::Flags)
-    Return = Builder.getInt16Ty();
-  auto *Signature = llvm::FunctionType::get(Return, Types, false);
-  auto *Asm = llvm::InlineAsm::get(Signature, P->Text, P->Constraints, true);
-  auto *Call = Builder.CreateCall(Asm, Arguments);
+  llvm::Value *Value = nullptr;
+  llvm::Value *Flags = nullptr;
+  const auto Native =
+      x86VirtualizationNative(Id, TargetArch, Op.MemoryAddressSpace,
+                              C.PhysicalAddress ? Op.Inputs[1].Size : 0);
+  // The production SDK remains pinned until the complete instruction release.
+  // This marker identifies the fork's qualified VMX/SVM interfaces; older
+  // SDKs retain the exact assembly contract rather than declaring fake APIs.
+  if (Native && llvm::Intrinsic::lookupIntrinsicID("llvm.x86.vmread.address")) {
+    const auto IID = llvm::Intrinsic::lookupIntrinsicID(Native->LLVMName);
+    if (!IID)
+      llvm::report_fatal_error("native virtualization SDK is incomplete");
+    if (Native->Result == X86VirtualizationResult::Read)
+      Arguments.push_back(llvm::ConstantInt::get(sizeToType(Word), 0));
+    if (Native->AddressControls) {
+      // computeEA already performs architectural address-size truncation.
+      // The offset remains separate from the native FS/GS base addition.
+      Arguments.push_back(Builder.getInt32(8 * Word));
+      Arguments.push_back(Builder.getInt32(Native->SegmentPrefix));
+    }
+    auto *Call = Builder.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(Mod, IID), Arguments);
+    if (Native->Result == X86VirtualizationResult::None)
+      Flags = Builder.getInt16(0);
+    else {
+      llvm::Value *Status = Call;
+      if (Native->Result == X86VirtualizationResult::Read) {
+        Value = Builder.CreateExtractValue(Call, 0);
+        Status = Builder.CreateExtractValue(Call, 1);
+      }
+      Status = Builder.CreateZExt(Status, Builder.getInt16Ty());
+      Flags =
+          Builder.CreateOr(Builder.CreateAnd(Builder.CreateLShr(Status, 1), 1),
+                           Builder.CreateShl(Builder.CreateAnd(Status, 1), 8));
+    }
+  } else {
+    llvm::Type *Return = Builder.getVoidTy();
+    if (C.Result == X86VirtualizationResult::Read)
+      Return =
+          llvm::StructType::get(*Ctx, {sizeToType(Word), Builder.getInt16Ty()});
+    else if (C.Result == X86VirtualizationResult::Flags)
+      Return = Builder.getInt16Ty();
+    auto *Signature = llvm::FunctionType::get(Return, Types, false);
+    auto *Asm = llvm::InlineAsm::get(Signature, P->Text, P->Constraints, true);
+    auto *Call = Builder.CreateCall(Asm, Arguments);
+    if (C.Result == X86VirtualizationResult::Read) {
+      Value = Builder.CreateExtractValue(Call, 0);
+      Flags = Builder.CreateExtractValue(Call, 1);
+    } else if (C.Result == X86VirtualizationResult::Flags)
+      Flags = Call;
+  }
   if (C.Result == X86VirtualizationResult::None)
     return nullptr;
   if (C.Result == X86VirtualizationResult::Flags)
-    return Call;
-  auto *Value = Builder.CreateExtractValue(Call, 0);
-  auto *Flags = Builder.CreateExtractValue(Call, 1);
+    return Flags;
   // A failed VMREAD does not define a new architectural value. Only the
   // success arm can demand the physical output; the lifter merges the old
   // destination on failure without speculatively reading unknown old bits.

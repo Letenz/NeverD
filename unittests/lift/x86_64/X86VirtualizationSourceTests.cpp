@@ -9,6 +9,8 @@
 /// compare faults with the original bytes on the same host.
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/render/X86SystemState.h"
+#include "../../../lib/backend/c/render/X86Virtualization.h"
 #include "X86AMXFixtures.h"
 #include "X86SHA512Reference.h"
 #include "X86SystemStateFixtures.h"
@@ -34,6 +36,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
@@ -46,6 +49,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iterator>
 #include <optional>
 #include <ostream>
@@ -96,7 +100,8 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                   llvm::StringRef LLVMMnemonic = {},
                   std::string *NativeOutput = nullptr,
                   std::vector<uint8_t> *NativeObject = nullptr,
-                  uint16_t RequiredReturnBytes = 0) {
+                  uint16_t RequiredReturnBytes = 0,
+                  bool *UsesForkNative = nullptr) {
   if (HighMnemonic.empty())
     HighMnemonic = Mnemonic;
   if (LLVMMnemonic.empty())
@@ -163,6 +168,10 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
     llvm::raw_string_ostream OS(*NativeOutput);
     Module->print(OS, nullptr);
   }
+  if (UsesForkNative)
+    for (const auto &F : *Module)
+      *UsesForkNative |= isX86VirtualizationNativeName(F.getName()) ||
+                         isX86SystemStateNativeName(F.getName());
   if (NativeObject) {
     auto Copy = llvm::CloneModule(*Module);
     auto Object = Codegen().compile(*Copy, Image.Arch, Image.Format);
@@ -199,6 +208,24 @@ std::vector<uint8_t> function(Arch A, const std::vector<uint8_t> &Instruction,
     Bytes.push_back(0x48);
   Bytes.insert(Bytes.end(), {0x83, 0xc4, 0x20, 0xc3});
   return Bytes;
+}
+
+std::vector<Encoding> nativeVirtualizationEncodings(Arch A) {
+  std::vector<Encoding> Result(std::begin(Encodings), std::end(Encodings));
+  if (A == Arch::X64)
+    for (const auto &E : Encodings)
+      if (x86VirtualizationContract(E.Id).PhysicalAddress) {
+        auto Narrow = E;
+        Narrow.Bytes.insert(Narrow.Bytes.begin(), 0x67);
+        Result.push_back(std::move(Narrow));
+      }
+  return Result;
+}
+
+uint16_t physicalAddressBytes(const Encoding &E, Arch A) {
+  if (!x86VirtualizationContract(E.Id).PhysicalAddress)
+    return 0;
+  return A == Arch::X86 || E.Bytes.front() == 0x67 ? 4 : 8;
 }
 } // namespace
 
@@ -477,11 +504,14 @@ TEST(X86VirtualizationSource, VmreadMemoryInvalidatesThePriorStackValue) {
       for (const auto &B : F) {
         bool Read = false;
         for (const auto &I : B) {
-          if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
+          if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I)) {
+            if (const auto *Callee = Call->getCalledFunction())
+              Read |= Callee->getName() == "llvm.x86.vmread";
             if (const auto *Asm =
                     llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand()))
               Read |=
                   llvm::StringRef(Asm->getAsmString()).starts_with("vmread");
+          }
           LoadedAfterRead |= Read && llvm::isa<llvm::LoadInst>(I) &&
                              I.getType()->isIntegerTy(64);
         }
@@ -692,7 +722,8 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                    llvm::StringRef CustomDriver = {},
                    llvm::ArrayRef<uint8_t> ExpectedInstruction = {},
                    uint16_t RequiredReturnBytes = 0,
-                   bool CompileForImageFormat = false) {
+                   bool CompileForImageFormat = false,
+                   llvm::StringRef NativeCCompiler = {}) {
   const bool Execute = Expected || CompareFaults || !CustomDriver.empty();
 #if !defined(__linux__) || !defined(__x86_64__)
   if (Execute)
@@ -717,8 +748,9 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
       [&] { (void)llvm::sys::fs::remove_directories(Directory); });
   std::string High, LLVM, Native;
   std::vector<uint8_t> NativeObject;
+  bool UsesForkNative = false;
   sourceRoutes(Image, NoOpt, Address, Mnemonic, &High, &LLVM, {}, {}, &Native,
-               &NativeObject, RequiredReturnBytes);
+               &NativeObject, RequiredReturnBytes, &UsesForkNative);
   if (::testing::Test::HasFailure())
     return;
   if (!ExpectedInstruction.empty())
@@ -730,6 +762,12 @@ void compileRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   for (auto Source : {High, LLVM, Native}) {
     SCOPED_TRACE(Route);
     const bool IR = Route++ == 2;
+    // A stock Clang cannot consume the fork's new native intrinsic IDs.
+    // sourceRoutes already compiles these with the linked SDK, and the native
+    // object execution below uses that result. Both C routes still compile at
+    // O0/O2 with stock Clang to check their assembly fallback.
+    if (IR && UsesForkNative)
+      continue;
     if (!IR)
       Source = freestandingC(std::move(Source));
     llvm::SmallString<128> Input(Directory), Output(Directory),
@@ -791,8 +829,13 @@ void _start(void) {
           Target = Image.Arch == Arch::X86 ? "--target=i386-apple-darwin"
                                            : "--target=x86_64-apple-darwin";
       }
+      const llvm::StringRef SourceCompiler =
+          !IR && !NativeCCompiler.empty() ? NativeCCompiler : Compiler;
       std::vector<llvm::StringRef> Arguments = {
-          Compiler, Target, Optimization, "-c", Input, "-o", Output};
+          SourceCompiler, Target, Optimization, "-c", Input, "-o", Output};
+      if (!IR && !NativeCCompiler.empty())
+        Arguments.insert(Arguments.end(),
+                         {"-fno-lto", "-fno-builtin-mimalloc"});
       // Match Codegen's x86 SSE2 baseline. Clang's plain i386 target has no
       // XMM register class for the emitted floating-point assembly operands.
       if (Image.Arch == Arch::X86)
@@ -804,7 +847,7 @@ void _start(void) {
                           "-Werror=implicit-function-declaration"});
       const std::optional<llvm::StringRef> Redirects[] = {
           std::nullopt, std::nullopt, ErrorFile.str()};
-      const int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments,
+      const int Status = llvm::sys::ExecuteAndWait(SourceCompiler, Arguments,
                                                    std::nullopt, Redirects);
       const auto Diagnostics = llvm::MemoryBuffer::getFile(ErrorFile);
       ASSERT_EQ(Status, 0) << (Diagnostics ? (*Diagnostics)->getBuffer().str()
@@ -1038,6 +1081,148 @@ TEST(X86VirtualizationSource,
     }
 }
 
+TEST(X86VirtualizationSource, QualifiedSdkUsesNativeVirtualizationCalls) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.vmread.address"))
+    GTEST_SKIP() << "requires the qualified native virtualization SDK";
+  unsigned Cases = 0;
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true})
+        for (const auto &E : nativeVirtualizationEncodings(A)) {
+          const auto C = x86VirtualizationContract(E.Id);
+          for (const auto Space :
+               {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+                NdMemoryAddressSpace::X86GS}) {
+            const auto Plan = x86VirtualizationNative(
+                E.Id, A, Space, physicalAddressBytes(E, A));
+            if (!Plan)
+              continue;
+            SCOPED_TRACE(Plan->LLVMName);
+            SCOPED_TRACE(static_cast<unsigned>(Format));
+            SCOPED_TRACE(NoOpt);
+            auto Bytes = E.Bytes;
+            if (Space != NdMemoryAddressSpace::Default)
+              Bytes.insert(Bytes.begin(), Plan->SegmentPrefix);
+            size_t Offset;
+            auto Image = image(A, Format, function(A, Bytes, Offset));
+            std::string IR;
+            std::vector<uint8_t> Object;
+            sourceRoutes(Image, NoOpt, Entry + Offset, C.Mnemonic, nullptr,
+                         nullptr, {}, {}, &IR, &Object);
+            if (::testing::Test::HasFailure())
+              return;
+            EXPECT_NE(IR.find("@" + Plan->LLVMName + "("), std::string::npos)
+                << IR;
+            EXPECT_EQ(IR.find("asm sideeffect \"" + std::string(C.Mnemonic)),
+                      std::string::npos)
+                << IR;
+            ++Cases;
+          }
+        }
+  RecordProperty("native_modules", Cases);
+}
+
+namespace {
+void compileNativeC(const std::string &Compiler, llvm::StringRef Directory,
+                    BinaryFormat Format, const std::string &Source,
+                    const std::string &LLVMName, unsigned &Cases) {
+  llvm::SmallString<128> Input(Directory), Output(Directory), Errors(Directory);
+  llvm::sys::path::append(Input, "source.c");
+  llvm::sys::path::append(Output, "source.ll");
+  llvm::sys::path::append(Errors, "compiler.err");
+  std::error_code Error;
+  llvm::raw_fd_ostream OS(Input, Error);
+  ASSERT_FALSE(Error);
+  OS << freestandingC(Source);
+  OS.close();
+  for (const char *Opt : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Opt);
+    const char *Target =
+        Format == BinaryFormat::COFF    ? "--target=x86_64-pc-windows-msvc"
+        : Format == BinaryFormat::MachO ? "--target=x86_64-apple-darwin"
+                                        : "--target=x86_64-linux-gnu";
+    const std::vector<llvm::StringRef> Arguments = {
+        Compiler,
+        Target,
+        "-std=gnu23",
+        "-ffreestanding",
+        "-fno-lto",
+        "-fno-builtin-mimalloc",
+        "-Werror=implicit-function-declaration",
+        "-S",
+        "-emit-llvm",
+        Opt,
+        Input,
+        "-o",
+        Output};
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, Errors.str()};
+    const int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments,
+                                                 std::nullopt, Redirects, 30);
+    const auto Diagnostics = llvm::MemoryBuffer::getFile(Errors);
+    ASSERT_EQ(Status, 0) << (Diagnostics ? (*Diagnostics)->getBuffer().str()
+                                         : "")
+                         << Source;
+    const auto IR = llvm::MemoryBuffer::getFile(Output);
+    ASSERT_TRUE(IR);
+    EXPECT_TRUE((*IR)->getBuffer().contains("@" + LLVMName + "("))
+        << (*IR)->getBuffer().str() << '\n'
+        << Source;
+    EXPECT_FALSE((*IR)->getBuffer().contains(" asm "))
+        << (*IR)->getBuffer().str();
+    ++Cases;
+  }
+}
+} // namespace
+
+TEST(X86VirtualizationSource, NeverCCompilesBothRoutesToNativeIntrinsics) {
+  const char *Configured = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Configured || !llvm::sys::fs::exists(Configured))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  const std::string Compiler = Configured;
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-native-vmx-c", Directory));
+  const auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  unsigned Cases = 0;
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool NoOpt : {false, true})
+      for (const auto &E : nativeVirtualizationEncodings(Arch::X64)) {
+        const auto C = x86VirtualizationContract(E.Id);
+        for (const auto Space :
+             {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+              NdMemoryAddressSpace::X86GS}) {
+          const auto Plan = x86VirtualizationNative(
+              E.Id, Arch::X64, Space, physicalAddressBytes(E, Arch::X64));
+          if (!Plan)
+            continue;
+          SCOPED_TRACE(Plan->LLVMName);
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          auto Bytes = E.Bytes;
+          if (Space != NdMemoryAddressSpace::Default)
+            Bytes.insert(Bytes.begin(), Plan->SegmentPrefix);
+          size_t Offset;
+          auto Image =
+              image(Arch::X64, Format, function(Arch::X64, Bytes, Offset));
+          std::string High, LLVM;
+          sourceRoutes(Image, NoOpt, Entry + Offset, C.Mnemonic, &High, &LLVM);
+          if (::testing::Test::HasFailure())
+            return;
+          for (const auto &Source : {High, LLVM}) {
+            compileNativeC(Compiler, Directory, Format, Source, Plan->LLVMName,
+                           Cases);
+            if (::testing::Test::HasFailure())
+              return;
+          }
+        }
+      }
+  RecordProperty("native_c_compilations", Cases);
+}
+
 namespace {
 // Intel SDM 093 and APX revision 9: RAX is the data operand and RCX the
 // register selector. In particular, URDMSR writes ModRM.r/m, not ModRM.reg.
@@ -1229,7 +1414,7 @@ TEST(X86MsrAccessSource, MalformedLLVMAssemblyCannotBypassTheContract) {
       std::vector<llvm::Value *> Values;
       for (unsigned I = 0; I < Types.size(); ++I)
         Values.push_back(I == 0 && Immediate && Mutation != 8
-                             ? llvm::ConstantInt::get(Types[I], 0xffffffff)
+                             ? llvm::ConstantInt::getAllOnesValue(Types[I])
                              : static_cast<llvm::Value *>(Function->getArg(I)));
       std::string Constraints = P->Constraints;
       if (Mutation == 1)
@@ -1290,6 +1475,180 @@ TEST(X86MsrAccessSource, RegisterFormsAcceptRecoveredFunctionArguments) {
         if (::testing::Test::HasFailure())
           return;
       }
+  }
+}
+
+namespace {
+std::vector<uint8_t> nativeSystemFunction(Arch A, const SystemEncoding &E,
+                                          size_t &Offset) {
+  auto Bytes = function(A, E.Bytes, Offset);
+  if (A == Arch::X64) {
+    // RSI/RDI are implicit inputs to LKGS/MSRLIST. They are not Win64
+    // parameters, so initialize them rather than qualifying an unknown-state
+    // trap that an optimizer can remove together with the tested instruction.
+    const std::vector<uint8_t> Inputs = {
+        0x48, 0xbe, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
+        0x48, 0xbf, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+    Bytes.insert(Bytes.begin() + Offset, Inputs.begin(), Inputs.end());
+    Offset += Inputs.size();
+  }
+  return Bytes;
+}
+
+std::string nativeSystemName(const SystemEncoding &E, Arch A) {
+  switch (E.Id) {
+  case Intrinsic::X86ClearTaskSwitched:
+    return "llvm.x86.clts";
+  case Intrinsic::X86WriteMsrNonSerializing:
+    return "llvm.x86.wrmsrns";
+  case Intrinsic::X86ReadMsrList:
+    return "llvm.x86.rdmsrlist";
+  case Intrinsic::X86WriteMsrList:
+    return "llvm.x86.wrmsrlist";
+  case Intrinsic::X86LoadKernelGs:
+    return "llvm.x86.lkgs.reg";
+  case Intrinsic::X86LoadKernelGsMemory:
+    if (E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
+      return {};
+    return "llvm.x86.lkgs.mem";
+  case Intrinsic::X86InvalidateBroadcast:
+    return A == Arch::X86            ? "llvm.x86.invlpgb32"
+           : E.Bytes.front() == 0x67 ? "llvm.x86.invlpgb.addr32"
+                                     : "llvm.x86.invlpgb";
+  case Intrinsic::X86TlbSync:
+    return "llvm.x86.tlbsync";
+  default:
+    return {};
+  }
+}
+} // namespace
+
+TEST(X86SystemStateSource, QualifiedSdkUsesNativeSystemCalls) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
+    GTEST_SKIP() << "requires the qualified native system SDK";
+  unsigned Cases = 0;
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (const bool NoOpt : {false, true})
+        for (const auto &E : systemEncodings(A)) {
+          const auto Name = nativeSystemName(E, A);
+          if (Name.empty())
+            continue;
+          SCOPED_TRACE(Name);
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(NoOpt);
+          size_t Offset;
+          auto Image = image(A, Format, nativeSystemFunction(A, E, Offset));
+          std::string IR;
+          std::vector<uint8_t> Object;
+          sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, nullptr,
+                       nullptr, {}, {}, &IR, &Object);
+          if (::testing::Test::HasFailure())
+            return;
+          EXPECT_NE(IR.find("@" + Name + "("), std::string::npos) << IR;
+          EXPECT_EQ(IR.find(" asm "), std::string::npos) << IR;
+          ++Cases;
+        }
+  EXPECT_EQ(Cases, 84u);
+  RecordProperty("native_system_modules", Cases);
+}
+
+TEST(X86SystemStateSource, NeverCCompilesBothRoutesToNativeSystemCalls) {
+  const char *Configured = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Configured || !llvm::sys::fs::exists(Configured))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  const std::string Compiler = Configured;
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-native-system-c",
+                                                    Directory));
+  const auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  unsigned Cases = 0;
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (const bool NoOpt : {false, true})
+      for (const auto &E : systemEncodings(Arch::X64)) {
+        const auto Name = nativeSystemName(E, Arch::X64);
+        if (Name.empty())
+          continue;
+        SCOPED_TRACE(Name);
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(NoOpt);
+        size_t Offset;
+        auto Image = image(Arch::X64, Format,
+                           nativeSystemFunction(Arch::X64, E, Offset));
+        std::string High, LLVM;
+        sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, &High, &LLVM);
+        if (::testing::Test::HasFailure())
+          return;
+        for (const auto &Source : {High, LLVM}) {
+          compileNativeC(Compiler, Directory, Format, Source, Name, Cases);
+          if (::testing::Test::HasFailure())
+            return;
+        }
+      }
+  EXPECT_EQ(Cases, 240u);
+  RecordProperty("native_system_c_compilations", Cases);
+}
+
+TEST(X86SystemStateSource, NativeCallsCannotLoseModeResultsOrEffects) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
+    GTEST_SKIP() << "requires the qualified native system SDK";
+  for (const char *Name :
+       {"llvm.x86.clts", "llvm.x86.wrmsrns", "llvm.x86.rdmsrlist",
+        "llvm.x86.wrmsrlist", "llvm.x86.lkgs.reg", "llvm.x86.lkgs.mem",
+        "llvm.x86.invlpgb", "llvm.x86.invlpgb32", "llvm.x86.invlpgb.addr32",
+        "llvm.x86.tlbsync"}) {
+    SCOPED_TRACE(Name);
+    llvm::LLVMContext Context;
+    llvm::Module Module("native-system-contract", Context);
+    const auto IID = llvm::Intrinsic::lookupIntrinsicID(Name);
+    ASSERT_NE(IID, llvm::Intrinsic::not_intrinsic);
+    auto *Callee = llvm::Intrinsic::getOrInsertDeclaration(&Module, IID);
+    auto *Function = llvm::Function::Create(Callee->getFunctionType(),
+                                            llvm::GlobalValue::ExternalLinkage,
+                                            "native_system", Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    std::vector<llvm::Value *> Inputs;
+    for (auto &Argument : Function->args())
+      Inputs.push_back(&Argument);
+    auto *Call = Builder.CreateCall(Callee, Inputs);
+    if (Call->getType()->isVoidTy())
+      Builder.CreateRetVoid();
+    else
+      Builder.CreateRet(Call);
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    const Arch A =
+        llvm::StringRef(Name) == "llvm.x86.invlpgb32" ? Arch::X86 : Arch::X64;
+    const bool Live = !Call->getType()->isVoidTy();
+    const std::vector<std::string> Arguments(Inputs.size(), "input");
+    EXPECT_TRUE(
+        renderX86SystemStateNativeCall(A, *Call, "result", Live, Arguments));
+    for (const auto Effects :
+         {llvm::MemoryEffects::none(), llvm::MemoryEffects::readOnly(),
+          llvm::MemoryEffects::writeOnly()}) {
+      Call->setMemoryEffects(Effects);
+      EXPECT_THROW((void)renderX86SystemStateNativeCall(A, *Call, "result",
+                                                        Live, Arguments),
+                   std::invalid_argument);
+    }
+    Call->setMemoryEffects(llvm::MemoryEffects::unknown());
+    Call->setDoesNotReturn();
+    EXPECT_THROW((void)renderX86SystemStateNativeCall(A, *Call, "result", Live,
+                                                      Arguments),
+                 std::invalid_argument);
+    Call->removeFnAttr(llvm::Attribute::NoReturn);
+    if (Live)
+      EXPECT_THROW(
+          (void)renderX86SystemStateNativeCall(A, *Call, "", true, Arguments),
+          std::invalid_argument);
+    if (llvm::StringRef(Name).starts_with("llvm.x86.invlpgb"))
+      EXPECT_THROW((void)renderX86SystemStateNativeCall(
+                       A == Arch::X86 ? Arch::X64 : Arch::X86, *Call, "result",
+                       Live, Arguments),
+                   std::invalid_argument);
   }
 }
 
@@ -1466,6 +1825,37 @@ TEST(X86ImplicitMsrSource, FaultsRegisterTransportAndRestartMatchEveryRoute) {
   }
 }
 
+TEST(X86ImplicitMsrSource, NeverCRetainsNativeCompletionAndRestart) {
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  for (const auto &E : systemEncodings(Arch::X64)) {
+    const auto Kind = x86SystemStateContract(E.Id).Kind;
+    if (Kind != X86SystemStateKind::MsrList &&
+        Kind != X86SystemStateKind::WriteMsr)
+      continue;
+    for (const bool NoOpt : {false, true})
+      for (const bool Dead : {false, true})
+        for (const bool EmptyMask : {false, true}) {
+          if (EmptyMask && (Kind == X86SystemStateKind::WriteMsr || Dead))
+            continue;
+          SCOPED_TRACE(E.Mnemonic);
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(Dead);
+          SCOPED_TRACE(EmptyMask);
+          size_t Offset;
+          auto Image = image(Arch::X64, BinaryFormat::ELF,
+                             implicitMsrFunction(E, Dead, EmptyMask, Offset));
+          compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                        false, false,
+                        implicitMsrDriver(Image, E, Dead, EmptyMask), E.Bytes,
+                        Dead ? 0 : 8, false, Compiler);
+          if (::testing::Test::HasFailure())
+            return;
+        }
+  }
+}
+
 TEST(X86ImplicitMsrSource, CompletionSurvivesEveryNativeObjectFormat) {
   for (const auto &E : systemEncodings(Arch::X64)) {
     const auto Kind = x86SystemStateContract(E.Id).Kind;
@@ -1522,7 +1912,7 @@ TEST(X86ImplicitMsrSource, MalformedNativeContractsAreRejected) {
           Types[1] = B.getPtrTy(256);
         llvm::Type *Return = List ? B.getInt64Ty() : B.getVoidTy();
         if (Mutation == 9)
-          Return = List ? B.getVoidTy() : B.getInt64Ty();
+          Return = List ? B.getInt32Ty() : B.getInt64Ty();
         auto *Signature = llvm::FunctionType::get(Return, Types, false);
         auto *Function = llvm::Function::Create(
             Signature, llvm::GlobalValue::ExternalLinkage, "effect", Module);
@@ -1531,6 +1921,10 @@ TEST(X86ImplicitMsrSource, MalformedNativeContractsAreRejected) {
         for (auto &Arg : Function->args())
           Values.push_back(&Arg);
         std::string Constraints = P->Constraints;
+        // Keep the malformed owned contract valid LLVM assembly so the
+        // emitter, rather than InlineAsm's constructor, rejects the result.
+        if (Mutation == 9 && !List)
+          Constraints = "=r," + Constraints;
         if (Mutation == 1)
           Constraints.erase(Constraints.find(",~{memory}"));
         if (Mutation == 10)
@@ -2408,6 +2802,8 @@ TEST(X86SystemExtensionsSource, MalformedOwnedAssemblyCannotLoseItsEffects) {
       for (auto &Arg : Function->args())
         Values.push_back(&Arg);
       auto Constraints = P->Constraints;
+      if (Mutation == 4 && P->OutputBytes.empty())
+        Constraints = "=r," + Constraints;
       if (Mutation == 1) {
         auto Pos = Constraints.find("~{memory}");
         if (Pos)

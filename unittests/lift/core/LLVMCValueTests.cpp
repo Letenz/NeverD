@@ -8,11 +8,13 @@
 #include "../../../lib/backend/c/LLVMC/LLVMCFrameLayout.h"
 #include "../../../lib/backend/c/pass/LLVMC/LLVMCBitTests.h"
 #include "../../../lib/backend/c/pass/LLVMC/LLVMCCommonBranches.h"
+#include "../../../lib/backend/c/render/X86Virtualization.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/LLVMX86DivRemAsm.h"
+#include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/AsmParser/Parser.h"
@@ -24,6 +26,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/ModRef.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/TargetParser/Host.h"
@@ -113,6 +116,124 @@ __attribute__((noreturn, force_align_arg_pointer)) void _start(void) {
   Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
                                      Redirects, 30, 0, &Error);
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+}
+
+TEST(LLVMCValues, NativeVirtualizationKeepsStatusAndFailedReadPrior) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.vmread.reg"))
+    GTEST_SKIP() << "requires the qualified native virtualization SDK";
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+declare {i64, i8} @llvm.x86.vmread.reg(i64, i64)
+declare i8 @llvm.x86.vmwrite(i64, i64)
+define {i64, i8} @raw_read(i64 %field, i64 %prior) {
+  %result = call {i64, i8} @llvm.x86.vmread.reg(i64 %field, i64 %prior)
+  ret {i64, i8} %result
+}
+define i8 @raw_write(i64 %field, i64 %value) {
+  %result = call i8 @llvm.x86.vmwrite(i64 %field, i64 %value)
+  ret i8 %result
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  Module->setTargetTriple(llvm::Triple("x86_64-linux-gnu"));
+  Module->setDataLayout("e-p:64:64-i64:64-i128:128");
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X64;
+  Options.PreserveLLVMFunctionTypes = true;
+  // Controlled completion tests the projection's status conversion separately
+  // from the native builtin/backend transport tests. No VMX instruction runs.
+  std::string Source = R"c(
+#include <stdint.h>
+#define NEVERD_X86_VIRTUALIZATION(native, ...) native
+#define __builtin_ia32_vmread_reg mock_read
+#define __builtin_ia32_vmwrite mock_write
+static unsigned char completion;
+static unsigned calls, bad;
+static const uint64_t field_bits = UINT64_C(0xf1e2d3c44002a5b6);
+static const uint64_t value_bits = UINT64_C(0x9172536485a6b7c8);
+static unsigned long long mock_read(unsigned long long field,
+                                    unsigned long long prior,
+                                    unsigned char *status) {
+  ++calls; bad |= field != field_bits; *status = completion;
+  return completion ? prior : value_bits;
+}
+static unsigned char mock_write(unsigned long long field,
+                                unsigned long long value) {
+  ++calls; bad |= field != field_bits || value != value_bits;
+  return completion;
+}
+)c";
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  neverd::HighExpr Write;
+  Write.Kind = neverd::ExprKind::Call;
+  Write.IntrinsicId = neverd::Intrinsic::VmxWrite;
+  Write.Type = neverd::NdType::makeInt(2);
+  Write.Operands = {neverd::HighExpr::makeConst(0, 8),
+                    neverd::HighExpr::makeConst(0, 8)};
+  neverd::HighExpr Read;
+  Read.Kind = neverd::ExprKind::Call;
+  Read.IntrinsicId = neverd::Intrinsic::VmxRead;
+  Read.Type = neverd::NdType::makeInt(16);
+  Read.Operands = {neverd::HighExpr::makeConst(0, 8)};
+  Source += "\nstatic uint16_t lifted_write(void) { return " +
+            neverd::renderX86VirtualizationExpression(
+                neverd::Arch::X64, Write, {"field_bits", "value_bits"}) +
+            "; }\nstatic __uint128_t lifted_read(void) { return " +
+            neverd::renderX86VirtualizationExpression(neverd::Arch::X64, Read,
+                                                      {"field_bits"}) +
+            "; }\n";
+  Source += R"c(
+int main(void) {
+  const unsigned short flags[] = {0, 0x100, 1};
+  const uint64_t prior = UINT64_C(0x18273645aabbccdd);
+  for (completion = 0; completion < 3; ++completion) {
+    calls = bad = 0;
+    if (raw_write(field_bits, value_bits) != completion) return 1;
+    __auto_type raw = raw_read(field_bits, prior);
+    if (raw.field_0 != (completion ? prior : value_bits) ||
+        raw.field_1 != completion) return 2;
+    if (lifted_write() != flags[completion]) return 3;
+    __uint128_t packed = lifted_read();
+    if ((uint64_t)packed != (completion ? 0 : value_bits) ||
+        (packed >> 64) != flags[completion]) return 4;
+    if (calls != 4 || bad) return 5;
+  }
+  return 0;
+}
+)c";
+  for (const char *Opt : {"-O0", "-O2"})
+    compileAndRun(Source, Opt);
+
+  const auto *ReadCall = llvm::cast<llvm::CallInst>(
+      &Module->getFunction("raw_read")->getEntryBlock().front());
+  EXPECT_THROW(
+      (void)neverd::renderX86VirtualizationNativeCall(
+          neverd::Arch::X86, *ReadCall, "result", true, {"field", "prior"}),
+      std::invalid_argument);
+  EXPECT_THROW((void)neverd::renderX86VirtualizationNativeCall(
+                   neverd::Arch::X64, *ReadCall, "", true, {"field", "prior"}),
+               std::invalid_argument);
+  auto *WriteCall = llvm::cast<llvm::CallInst>(
+      &Module->getFunction("raw_write")->getEntryBlock().front());
+  for (const auto Effects :
+       {llvm::MemoryEffects::none(), llvm::MemoryEffects::readOnly(),
+        llvm::MemoryEffects::writeOnly()}) {
+    WriteCall->setMemoryEffects(Effects);
+    EXPECT_THROW(
+        (void)neverd::renderX86VirtualizationNativeCall(
+            neverd::Arch::X64, *WriteCall, "result", true, {"field", "value"}),
+        std::invalid_argument);
+  }
+  WriteCall->setMemoryEffects(llvm::MemoryEffects::unknown());
+  WriteCall->setDoesNotReturn();
+  EXPECT_THROW(
+      (void)neverd::renderX86VirtualizationNativeCall(
+          neverd::Arch::X64, *WriteCall, "result", true, {"field", "value"}),
+      std::invalid_argument);
 }
 
 TEST(LLVMCValues, TargetIndexWidthKeepsNegativeFrameOffsets) {
@@ -397,8 +518,9 @@ TEST(LLVMCValues, X86NativeDivideRejectsChangedContractsAndTargets) {
     auto *Assembly = llvm::InlineAsm::get(
         llvm::FunctionType::get(Pair, Types, false),
         neverd::x86DivRemAssembly({64, true}),
-        Mutation == 0 ? "={ax},={dx},{ax},{dx},r"
-                      : neverd::X86DivRemAsmConstraints,
+        Mutation == 0   ? "={ax},={dx},{ax},{dx},r"
+        : Mutation == 6 ? "={ax},={dx},{ax},{dx},~{flags}"
+                        : neverd::X86DivRemAsmConstraints,
         /*hasSideEffects=*/Mutation != 1,
         /*isAlignStack=*/Mutation == 2,
         Mutation == 3 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);

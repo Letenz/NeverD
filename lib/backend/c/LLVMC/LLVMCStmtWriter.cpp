@@ -3839,6 +3839,29 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (isX86VirtualizationNativeName(Callee->getName()) ||
+      isX86SystemStateNativeName(Callee->getName())) {
+    std::vector<std::string> Arguments;
+    for (const auto &Argument : Call.args())
+      Arguments.push_back(valueStr(Argument.get()));
+    const bool ResultLive =
+        !Call.getType()->isVoidTy() && valueFeedsPrintedUse(&Call);
+    if (const auto Code = renderX86VirtualizationNativeCall(
+            Opts.TheArch, Call, ResultLive ? getName(&Call) : "", ResultLive,
+            Arguments)) {
+      emitIndent(Indent);
+      OS << *Code;
+      return true;
+    }
+    if (const auto Code = renderX86SystemStateNativeCall(
+            Opts.TheArch, Call, ResultLive ? getName(&Call) : "", ResultLive,
+            Arguments)) {
+      emitIndent(Indent);
+      OS << *Code;
+      return true;
+    }
+  }
+
   auto IID = Callee->getIntrinsicID();
   if (IID == llvm::Intrinsic::x86_fxsave ||
       IID == llvm::Intrinsic::x86_fxsave64 ||

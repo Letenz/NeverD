@@ -9,10 +9,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/backend/llvm/X86SystemStateAsm.h"
+#include "neverd/backend/llvm/X86SystemStateNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <vector>
@@ -82,6 +83,22 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
                                       : Builder.CreateZExtOrTrunc(V, T);
     Arguments.push_back(V);
     Types.push_back(T);
+  }
+  const auto Native = x86SystemStateNative(
+      Id, TargetArch, x86SystemStateWidth(Id, Shape), Op.MemoryAddressSpace);
+  if (Native && llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32")) {
+    const auto IID = llvm::Intrinsic::lookupIntrinsicID(Native->LLVMName);
+    if (!IID)
+      llvm::report_fatal_error("native system SDK is incomplete");
+    if (Native->PackMsr) {
+      auto *Low = Builder.CreateZExt(Arguments[1], Builder.getInt64Ty());
+      auto *High = Builder.CreateZExt(Arguments[2], Builder.getInt64Ty());
+      Arguments = {Arguments[0],
+                   Builder.CreateOr(Low, Builder.CreateShl(High, 32))};
+    }
+    auto *Call = Builder.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(Mod, IID), Arguments);
+    return P->OutputBytes.empty() ? nullptr : Call;
   }
   llvm::Type *Return = Builder.getVoidTy();
   if (P->OutputBytes.size() == 1)

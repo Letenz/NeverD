@@ -2085,6 +2085,26 @@ EAX/ECX inputs, Windows subleaf spelling and ordered effects, including CLI/STI.
 The CPUID C execution check replaces only the intrinsic environment, verifies
 one query with leaf 7/subleaf 1, and stores four high-bit output words into
 64-bit cells at O0/O2 across all three formats and default/NoOpt.
+The qualified native LLVM SDK adds a 426-module virtualization matrix covering
+both word sizes, three formats, default/NoOpt, FS/GS and long-mode narrow SVM
+addresses. Older SDKs explicitly skip that native-IR requirement while retaining
+the assembly route. Set `NEVERD_TEST_NEVERC=/path/to/neverc` to exercise 888 C
+compilations from both source routes at O0/O2, checking native intrinsic calls
+and the absence of inline assembly. That C test also runs with the old SDK's
+assembly IR. Stock Clang still compiles both C fallbacks; fork-only LLVM IR is
+compiled by the linked SDK rather than sent to an incompatible system Clang.
+`LLVMCValues.NativeVirtualizationKeepsStatusAndFailedReadPrior` supplies controlled
+VMX completion values to check C status conversion, exact operand evaluation
+and failed-read preservation without executing privileged instructions.
+`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 84 modules for
+CLTS, WRMSRNS, MSRLIST, default-address LKGS, INVLPGB and TLBSYNC. The corresponding
+NeverC test requires 240 C-to-native-IR compilations with no inline assembly;
+its fixtures explicitly initialize RSI/RDI across ABIs. The native-call refusal
+test checks mode, result identity and lost memory/nonreturning effects.
+`X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart` compiles both C
+routes with NeverC and executes the existing fault/register/completion/restart
+oracle at O0/O2. This uses controlled signal continuation and does not qualify
+successful privileged MSR access. Both NeverC tests use `NEVERD_TEST_NEVERC`.
 `SessionCAPITest.IntrinsicSourcePagesKeepTheExecutedInstruction` checks CPUID in
 C, LLVMC, pseudocode and HighIR, alongside CLI/STI effect rows. Native HighIR
 paging also shares the UTF-8,
