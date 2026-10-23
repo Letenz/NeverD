@@ -489,8 +489,6 @@ static int runComparison(neverd_comparison_t Handle, neverd_session_t A,
               "max_candidates", "max_instructions", "max_functions",
               "max_memory_bytes", "timeout_ms", "primary", "secondary",
               "overrides", "regions", "dataflow", "flow_regions"});
-    require(string(*O, "profile", "native-x86-v1") == "native-x86-v1",
-            "unsupported comparison profile");
     ComparisonSettings Settings;
     Settings.UseNames = flag(*O, "use_names", Settings.UseNames);
     Settings.Approximate = flag(*O, "approximate", Settings.Approximate);
@@ -514,6 +512,7 @@ static int runComparison(neverd_comparison_t Handle, neverd_session_t A,
     if (auto E = Settings.validate())
       throw std::runtime_error(*E);
     auto &PO = C.PrimaryOptions;
+    PO.Profile = string(*O, "profile", diffLimits::kDefaultNativeProfile);
     PO.DataFlow = Settings.DataFlow;
     PO.Discover = flag(*O, "discover", true);
     PO.MaxInstructions = count(*O, "max_instructions", PO.MaxInstructions,
@@ -569,7 +568,7 @@ static int runComparison(neverd_comparison_t Handle, neverd_session_t A,
                     Secondary->Program.Identity.Architecture &&
                 Primary->Program.Identity.ABI ==
                     Secondary->Program.Identity.ABI,
-            "unsupported ISA or ABI pair for native-x86-v1");
+            "unsupported ISA or ABI pair for " + PO.Profile);
     require(Primary->Stopped || Secondary->Stopped ||
                 (!Primary->Program.Instructions.empty() &&
                  !Secondary->Program.Instructions.empty()),

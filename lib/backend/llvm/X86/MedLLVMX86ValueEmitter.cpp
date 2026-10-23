@@ -1622,8 +1622,10 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
                                                          : UINT64_MAX);
       Reg && Op.Output.Size > 0) {
     auto *FnTy = llvm::FunctionType::get(sizeToType(Op.Output.Size), false);
+    // CR/DR MOV leaves the arithmetic flags undefined.
     auto *IA = llvm::InlineAsm::get(FnTy, "mov " + *Reg + ", $0",
-                                    "=r,~{memory}", /*hasSideEffects=*/true);
+                                    "=r,~{flags},~{memory}",
+                                    /*hasSideEffects=*/true);
     return Builder.CreateCall(IA, {}, "sysreg");
   }
 

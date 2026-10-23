@@ -68,6 +68,125 @@ def ambiguity_pages(client, root):
         assert client.call("comparison_functions", {**query, "ambiguous_with": source})["status"] == "error"
 
 
+def aarch64_profiles(client, args, root, fixture):
+    """Qualified object-format cells, original evidence and CLI/worker parity."""
+    for target, format_name in (("aarch64-unknown-linux-gnu", "elf"),
+                                ("aarch64-pc-windows-msvc", "coff"),
+                                ("arm64-apple-macos11", "macho")):
+        paths = [root / f"aarch64-{format_name}-{limit}.o" for limit in (17, 9)]
+        for limit, path in zip((17, 9), paths):
+            subprocess.run([args.cc, f"--target={target}", "-c", "-O1",
+                            "-fno-asynchronous-unwind-tables", f"-DPATCH_LIMIT={limit}",
+                            str(fixture), "-o", str(path)], check=True, capture_output=True)
+        start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paths[1])},
+                 "options": {"use_names": False, "dataflow": True,
+                             "flow_regions": {"min_nodes": 2}}}
+        summary = ok(client, "comparison_start", start)
+        for side in ("primary", "secondary"):
+            assert summary[side]["architecture"] == "aarch64", summary
+            assert summary[side]["bits"] == 64 and summary[side]["format"] == format_name
+            assert summary[side]["normalization"] == "native-aarch64-operands-v1"
+        inventory = ok(client, "comparison_functions")
+        address = next(row["address"] for row in inventory["items"]
+                       if row["name"].lstrip("_") == "checked")
+        detail = ok(client, "comparison_function", {"address": address})
+        assert detail["computation_complete"], detail
+        assert not detail["evidence"]["normalized_unchanged"], detail
+        assert any(row["kind"] == "constant" for row in detail["rows"]), detail
+        nodes = ok(client, "comparison_dataflow", {
+            "address": address, "kind": "nodes", "limit": 200})
+        assert nodes["availability"] == "available", nodes
+        assert nodes["abi"] == summary["primary"]["abi"], nodes
+        native_nodes = [row for row in nodes["rows"] if row["origin_sequence"] >= 0]
+        original_addresses = {row["primary"]["address"].lower() for row in detail["rows"]
+                              if row["primary"] is not None}
+        assert native_nodes and all(row["address"].lower() in original_addresses
+                                    for row in native_nodes), nodes
+        sliced = ok(client, "comparison_slice", {
+            "address": address, "seeds": [native_nodes[0]["id"]], "limit": 200})
+        assert sliced["state"] == "complete" and sliced["rows"], sliced
+        assert sliced["semantic_validation"] == "not_performed", sliced
+        regions = ok(client, "comparison_flow_regions", {"limit": 1})
+        assert regions["total"] > 0, regions
+        anchors = ok(client, "comparison_flow_regions", {
+            "region_id": regions["items"][0]["id"], "limit": 1})
+        aligned = ok(client, "comparison_flow_regions", {
+            "anchor": anchors["items"][0]["anchor"], "limit": 1})
+        assert aligned["rows"] and aligned["view"] == "nodes", aligned
+        assert aligned["analysis"]["semantic_validation"] == "not_performed", aligned
+        source = ok(client, "comparison_source_difference", {"address": address})
+        assert source["computation_complete"] and source["availability"] == "available", source
+        assert any(row["kind"] == "changed" for row in source["rows"]), source
+        document = ok(client, "comparison_export")
+        saved = root / f"aarch64-{format_name}.nddiff"
+        saved.write_text(json.dumps(document))
+        cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(paths[0]),
+                              "-b", str(paths[1]), "--reopen", str(saved), "--json"],
+                             capture_output=True, text=True, timeout=60)
+        assert cli.returncode in (2, 3), cli.stderr
+        assert json.loads(cli.stdout) == document
+        explicit = ok(client, "comparison_start", {
+            **start, "options": {**start["options"], "profile": "native-aarch64-v1"},
+            "restore_path": str(saved)})
+        assert explicit["primary"] == summary["primary"]
+        assert ok(client, "comparison_export") == document
+        refused = client.call("comparison_start", {
+            **start, "options": {"profile": "native-x86-v1"}})
+        assert refused["status"] == "error", refused
+        assert ok(client, "comparison_export") == document
+    # Preserve the complete Mach-O subtype, including ARM64e variants/ABI bits.
+    original = paths[0].read_bytes()
+    for subtype in (2, 12, 0x80000002):
+        variant = root / f"aarch64-subtype-{subtype:x}.o"
+        modified = bytearray(original)
+        modified[8:12] = subtype.to_bytes(4, "little")
+        variant.write_bytes(modified)
+        same = {"primary": {"path": str(variant)}, "secondary": {"path": str(variant)}}
+        identified = ok(client, "comparison_start", same)
+        assert identified["primary"]["abi"] != summary["primary"]["abi"], identified
+        refused = client.call("comparison_start", {
+            "primary": {"path": str(paths[0])}, "secondary": {"path": str(variant)}})
+        assert refused["status"] == "error" and "ABI" in refused["error"]["message"], refused
+
+    # An ELF class and machine tag are independent: do not admit AArch64/32.
+    wrong_bits = root / "aarch64-wrong-bits.o"
+    subprocess.run([args.cc, "--target=i386-unknown-linux-gnu", "-c", "-O1",
+                    str(fixture), "-o", str(wrong_bits)], check=True, capture_output=True)
+    modified = bytearray(wrong_bits.read_bytes())
+    modified[18:20] = (183).to_bytes(2, "little")  # EM_AARCH64 in ELFCLASS32.
+    wrong_bits.write_bytes(modified)
+    invalid = {"path": str(wrong_bits)}
+    refused = client.call("comparison_start", {"primary": invalid, "secondary": invalid})
+    assert refused["status"] == "error", refused
+
+    imported = root / "aarch64-import.c"
+    imported.write_text("extern void *malloc(unsigned long);\n"
+                        "unsigned long allocate(unsigned long n) {\n"
+                        "  return (unsigned long)malloc(n) + 1;\n}\n")
+    imported_object = root / "aarch64-import.o"
+    subprocess.run([args.cc, "--target=aarch64-unknown-linux-gnu", "-c", "-O1",
+                    "-fno-asynchronous-unwind-tables", str(imported), "-o", str(imported_object)],
+                   check=True, capture_output=True)
+    imported_input = {"path": str(imported_object)}
+    ok(client, "comparison_start", {"primary": imported_input, "secondary": imported_input})
+    rows = ok(client, "comparison_functions")["items"]
+    allocate = next(row["address"] for row in rows if row["name"] == "allocate")
+    effects = ok(client, "comparison_impact", {"seeds": [allocate], "kind": "effects"})
+    assert effects["effect_review"]["qualified_contracts"] == 0, effects
+    # An object's undefined symbol alone is not a qualified runtime import.
+    assert any(row["effect"]["status"] == "unqualified_identity" for row in effects["rows"]), effects
+
+    truncated = root / "aarch64-truncated.bin"
+    truncated.write_bytes(bytes.fromhex("e00080d2000c0091c0035f"))
+    raw = {"path": str(truncated), "load_options": {
+        "loader": "binary", "processor": "aarch64", "base": "0x1000"}}
+    partial = ok(client, "comparison_start", {"primary": raw, "secondary": raw,
+                                               "options": {"discover": False}})
+    assert partial["coverage"]["primary"]["incomplete"] > 0, partial
+    assert partial["counts"]["normalized_unchanged"] == 0, partial
+    print("AArch64 ELF/COFF/Mach-O comparison, source, SSA/slices/regions and saved CLI parity passed")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("worker")
@@ -90,6 +209,7 @@ def main():
                         client.hello["comparison_cancellable_operations"])
             assert client.call("comparison_functions")["error"]["code"] == "comparison_not_loaded"
             ambiguity_pages(client, root)
+            aarch64_profiles(client, args, root, fixture)
             start = {"primary": {"path": str(a)}, "secondary": {"path": str(b)}, "options": {"regions": True, "dataflow": True, "flow_regions": {"min_nodes": 2}}}
             summary = ok(client, "comparison_start", start)
             assert summary["schema"] == "neverd.bindiff.summary"

@@ -15,6 +15,7 @@
 
 #include "../../../lib/pipeline/PipelineCallAbiDetail.h"
 #include "SourceCallExecution.h"
+#include "WindowsQualifiedFixture.h"
 #include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
@@ -93,6 +94,58 @@ BinaryImage makeImage(std::vector<uint8_t> Code,
   Function.Name = "_wrap";
   Img.Symbols.push_back(std::move(Function));
   return Img;
+}
+
+TEST(I386CallContract, HeaderQualifiersKeepTheOuterCallingConvention) {
+  auto Code = callThroughSlot(Iat);
+  Code[1] = 0x25; // jmp [IAT], forwarding the two incoming stack arguments.
+  auto Image = makeImage(Code, {"fixture_qualified"});
+  ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_qualified", 0,
+                                            ImportStorageEvidence::LoaderBind));
+  for (bool Stdcall : {false, true})
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(Stdcall);
+      SCOPED_TRACE(LLVM);
+      windows_qualified_test::Header Debug;
+      Debug.Slot = Iat;
+      Debug.PointerBytes = 4;
+      Debug.Convention =
+          Stdcall ? DebugCallConv::Stdcall : DebugCallConv::Cdecl;
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = LLVM;
+      Options.OnlyFunctionEntries = {Text};
+      auto Result = Pipeline().run(Image, Context, Options, &Debug);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_EQ(Result.MedFuncs.size(), 1u);
+      EXPECT_EQ(Result.MedFuncs.front().Params.size(), 2u);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      COptions.EmitIncludes = false;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                        &Debug, &Image));
+      } else {
+        ASSERT_TRUE(
+            HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+      }
+      const std::string Convention = Stdcall ? "__attribute__((stdcall)) " : "";
+      source_call_execution_test::checkSyntax(
+          "#include <stdint.h>\n" + Source + "\ntypedef const uint16_t *(" +
+              Convention +
+              "*Expected)(const uint16_t *, volatile uint32_t *);\n"
+              "_Static_assert(__builtin_types_compatible_p("
+              "__typeof__(&fixture_qualified), Expected), \"qualified "
+              "ABI\");\n",
+          {"--target=i686-pc-windows-msvc", "-ffreestanding", "-Werror"});
+    }
 }
 
 TEST(I386CallContract, LLVMCCallbackFactoryKeepsBothCallingConventions) {

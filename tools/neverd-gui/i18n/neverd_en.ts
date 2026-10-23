@@ -5984,8 +5984,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>Compare</translation>
     </message>
     <message>
-        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
-        <translation>Compare two native x86/x64 inputs. Matching scores are heuristic.</translation>
+        <source>Compare two x86, x64 or AArch64 inputs with the same architecture and ABI. Matching scores are heuristic.</source>
+        <translation>Compare two x86, x64 or AArch64 inputs with the same architecture and ABI. Matching scores are heuristic.</translation>
     </message>
     <message>
         <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
@@ -6156,6 +6156,10 @@ Coverage: %7</translation>
     <message>
         <source>Pseudocode</source>
         <translation>Pseudocode</translation>
+    </message>
+    <message>
+        <source>Raw AArch64</source>
+        <translation>Raw AArch64</translation>
     </message>
     <message>
         <source>Raw x64</source>

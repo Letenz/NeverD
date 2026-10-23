@@ -5948,8 +5948,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>비교</translation>
     </message>
     <message>
-        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
-        <translation>네이티브 x86/x64 입력 두 개를 비교합니다. 일치 점수는 휴리스틱입니다.</translation>
+        <source>Compare two x86, x64 or AArch64 inputs with the same architecture and ABI. Matching scores are heuristic.</source>
+        <translation>아키텍처와 ABI가 같은 두 x86, x64 또는 AArch64 입력을 비교합니다. 일치 점수는 휴리스틱 평가입니다.</translation>
     </message>
     <message>
         <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
@@ -6120,6 +6120,10 @@ Coverage: %7</source>
     <message>
         <source>Pseudocode</source>
         <translation>의사 코드</translation>
+    </message>
+    <message>
+        <source>Raw AArch64</source>
+        <translation>원시 AArch64</translation>
     </message>
     <message>
         <source>Raw x64</source>

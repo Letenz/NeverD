@@ -370,6 +370,7 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
             Terminated = true;
             return false;
           }
+          Terminated = Dec.isFunctionTerminator(DI);
           if (FollowsJumps) {
             const InstructionFlow Flow = Scratch.summarize(Img, Dec, DI);
             Status.Incomplete |=
@@ -378,8 +379,12 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
                 Flow.Target != InvalidVA && !OtherEntry(Flow.Target) &&
                 !Body.count(Flow.Target))
               Pending.push_back(Flow.Target);
+            // A straight-line terminator can end only the current block:
+            // AArch64 B.cond shares B's decode classification. The ordinary
+            // lift's conditional flow still reaches the next instruction.
+            if (Flow.Kind == "cjump")
+              Terminated = false;
           }
-          Terminated = Dec.isFunctionTerminator(DI);
           return !Terminated;
         });
     Status.Incomplete |= !ModeKnown || !Terminated;

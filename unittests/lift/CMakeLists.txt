@@ -1872,6 +1872,11 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
 
+add_neverd_unittest(NeverDDyldSharedCacheTests
+  format/DyldSharedCacheTests.cpp
+  LINK_COMPONENTS Loader
+)
+
 add_neverd_unittest(NeverDArm64eAnalysisTests
   aarch64/AArch64PAuthSemanticTests.cpp
   aarch64/AArch64_FastClassifyParityTests.cpp
@@ -1892,6 +1897,16 @@ add_neverd_unittest(NeverDAArch64DivisionSemanticTests
 target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
+)
+
+add_neverd_unittest(NeverDAArch64DecodeValidityTests
+  aarch64/AArch64DecodeValidityTests.cpp
+  aarch64/AArch64_NativeDecodeParityTests.cpp
+  aarch64/AArch64_NativeDecodeParityControlTests.cpp
+  aarch64/AArch64_NativeDecodeParityFPTests.cpp
+  aarch64/AArch64_NativeDecodeParityLoadStoreTests.cpp
+  aarch64/AArch64_NativeDecodeParitySweepTests.cpp
+  LINK_COMPONENTS Decode IRLow Support
 )
 
 add_neverd_unittest(NeverDCMemoryCopyTests

@@ -1,0 +1,54 @@
+//===- HeaderPrototype.h - Qualified source declarations ------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Shared admission of portable header spellings after call-layout checks.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_BACKEND_C_HEADERPROTOTYPE_H
+#define NEVERD_BACKEND_C_HEADERPROTOTYPE_H
+
+#include "LibraryPrototype.h"
+
+#include "neverd/debug/DebugContext.h"
+
+#include "llvm/ADT/StringRef.h"
+
+namespace neverd::c_library {
+/// Source qualifiers belong to the selected header, not to the machine
+/// carrier type. Reuse that spelling only after the caller has checked the
+/// call layout, and never replace an aggregate's lowered ABI with its source
+/// signature. The outer calling convention is supplied separately.
+inline llvm::StringRef portableScalarDeclaration(const FunctionSym &Function,
+                                                 llvm::StringRef Name) {
+  if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary) ||
+      !Function.PlatformConvention || !Function.ParamEntryLocations.empty() ||
+      (Function.CallConv != DebugCallConv::Unknown &&
+       Function.CallConv != DebugCallConv::Cdecl &&
+       Function.CallConv != DebugCallConv::Stdcall) ||
+      Function.Name != Name)
+    return {};
+  const auto Scalar = [](const TypeRef &Type) {
+    return Type &&
+           (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Float ||
+            Type->Kind == NdTypeKind::Ptr ||
+            (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+  };
+  if (!Function.ReturnType || (Function.ReturnType->Kind != NdTypeKind::Void &&
+                               !Scalar(Function.ReturnType)))
+    return {};
+  for (const auto &[Parameter, Type] : Function.Params)
+    if (!Scalar(Type))
+      return {};
+  return selfContainedDeclaration(Function.PortablePrototypeDeclaration, Name)
+             ? llvm::StringRef(Function.PortablePrototypeDeclaration)
+             : llvm::StringRef();
+}
+
+} // namespace neverd::c_library
+
+#endif // NEVERD_BACKEND_C_HEADERPROTOTYPE_H

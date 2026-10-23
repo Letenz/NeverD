@@ -76,6 +76,7 @@ struct FunctionSym {
   std::string PrototypeDeclaration;
   /// The same declaration with portable scalar spellings, retaining source
   /// qualifiers for C output that does not include the target platform SDK.
+  /// Its outer cdecl/stdcall is carried by CallConv, not the spelling.
   std::string PortablePrototypeDeclaration;
   /// The prototype comes from a selected platform header library, including
   /// Windows SDK/WDK headers that are rendered without a host header include.

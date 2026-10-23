@@ -173,7 +173,18 @@ requires an executable arm64e process and checks that each signing key changes
 pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
-Shared-cache-specific layouts require a cache address model. Exception-level
+`macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
+placement validation, sorted disjoint mappings, and the cache image catalogue.
+Its bounded slide reader retains v2 ordinary pointers and v3/v5 authentication
+recipes without rewriting bytes. V2 extra chains, v3's four keys and v5's
+IA/DA layout remain distinct. Embedded image file offsets resolve through that
+image's segments and the cache mappings; they are not relative to its header
+or necessarily in the same file. Cached section reads use their VM layout:
+some real signed images retain original section offsets in their headers.
+This public reader is the address-space foundation; the ordinary loader and
+CLI do not yet select or analyse cached images through it. The layouts follow
+[Apple's cache definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h).
+Exception-level
 authentication, PACM state and CPA2 address arithmetic remain unsupported;
 recognizing x1's header does not claim those instruction semantics.
 
@@ -401,6 +412,27 @@ forwards actual per-side stages and preserves the old comparison on stop.
 exception-chunk traversal. The adapter preserves original bytes/operands and
 binds the snapshot to input content, ABI, settings and normalization revisions.
 Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+Profile selection and ISA/bitness admission belong to this adapter, with the
+default in `diff/Limits.h`; consumers do not guess an input's architecture.
+The AArch64 reader consumes its own typed operand details and ordinary lifted
+flow/reference facts. It binds transfer targets to their final operand rather
+than numeric equality with another immediate, uses lifted literal addresses,
+and retains ADRP page fragments relative to the exact image base. Mach-O subtype
+bits participate in AArch64 ABI identity. Existing x86 hash events and identity
+remain unchanged. Unsupported architectures do not enter another ISA's operand
+union, and structural admission does not qualify scalar or call-effect proofs.
+Native AArch64 operand decoding declines ambiguous writeback/load overlaps to
+the full decoder, preserving its illegal-instruction evidence. Every reused
+decoder occurrence resets that validity flag. `AArch64Lifter::lift` owns the
+refusal to emit semantics for a decoded illegal instruction, including permissive
+calls; ordinary flow queries and DIFF therefore retain bytes without inventing
+transfers or references. This is distinct from a decode failure: the original
+spelling remains inspectable.
+The shared unsized function traversal follows both successors of ordinary
+lifted conditional flow. A straight-line decoder terminator can end only a
+basic block (as with AArch64 B.cond); it does not discard the fallthrough path.
+The existing function-entry, instruction-mode and coverage boundaries still
+govern the walk, so reference queries and DIFF capture the same body.
 `ComparisonDataFlow` runs bounded selected-function native pipeline jobs, then
 projects their verified SSA into immutable `FlowEvidence` collections. It owns
 the session/loader boundary; graph validation, persistence and binding remain in
@@ -924,6 +956,26 @@ The x64 convention duplicates variadic FP arguments in integer registers
 ([Microsoft x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention#varargs)).
 A tail's machine carriers alone do not certify a portable source type or a
 complete function-pointer signature.
+
+Ordinary header imports also retain source qualifiers through the portable
+declaration. `c_library::portableScalarDeclaration` is shared by both C
+writers after their call-layout checks; by-value aggregates, custom entry
+locations, non-C conventions and undeclared type names retain their existing
+lowering. Outer cdecl/stdcall is carried separately from the declaration's
+type spelling, while qualifiers inside a returned or nested pointer stay.
+Pointer-to-record tags are still registered before LLVMC prints the original
+declaration, so a tag does not accidentally acquire prototype scope.
+The LLVM source route passes header declarations to the same return-contract
+owner as HighC; binary lifting does not gain source return contracts.
+LLVMC's printed-use check reads the shared no-value return contract even
+before per-function rendering. A machine return-register use cannot reject
+a void header prototype when that return is absent from C; an observed
+store or another real use still rejects the incompatible prototype.
+
+Low-to-Med applies a known callee's stack cleanup only to returning calls.
+A decoded tail jump has no local continuation; inserting a post-call stack
+adjustment would separate its synthetic CALL/RETURN pair and hide the
+incoming stack arguments from shared ABI recovery.
 
 A C or C++ header rendered for a program joined to a library of a system's
 headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's

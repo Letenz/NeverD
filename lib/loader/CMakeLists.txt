@@ -102,6 +102,7 @@ add_neverd_component_library(NeverDLoader
   PointerRelocation.cpp
   StaticSymbolTable.cpp
   MachO/DarwinRuntimeCalls.cpp
+  MachO/DyldSharedCache.cpp
   MachO/DarwinSourceDeclarations.cpp
   MachO/CFunctionParameterCalls.cpp
   MachO/ImmutableNativeCalls.cpp

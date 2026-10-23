@@ -90,6 +90,18 @@ metadata. Category fixtures exercise authenticated class, metaclass and method r
 reconstruction restriction. Metadata names replace synthesized function-start
 names while preserving stated, analysis and user names.
 
+`NeverDDyldSharedCacheTests` checks immutable arm64e cache mappings, old/new
+subcache tables, suffix/UUID/placement validation, embedded image layouts and
+cross-file reads. Independently serialized v2/v3/v5 fixtures cover extra
+chains, null/tagged targets, all signing fields, page boundaries, duplicate
+chains, arithmetic overflow and transactional failure. Section VM/file-offset
+tests include the original-offset layout retained by signed cached images.
+Cancellation is checked before and during chain traversal. Set
+`NEVERD_DYLD_CACHE` to a local main arm64e cache with its matching subcaches to
+validate every image layout and every slide record without altering bytes;
+without it the real-cache check explicitly skips. This tests the cache reader,
+not yet CLI cached-image selection or native execution/reconstruction.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
@@ -210,6 +222,25 @@ These host C tests do not qualify native Windows execution or arbitrary FP,
 record or split-width variadic tails. `check_windows_ucrt_calls.py --function
 UseCRTVarargs` separately compiles the actual `_wopen` output against the
 retained original Microsoft UCRT declarations on x86, x64 and ARM64.
+
+`Win64CallContract.HeaderPointerQualifiersAgreeWithIndependentDefinitions`
+executes both C routes against independent definitions with const return and
+parameter pointers, nested pointer qualifiers, volatile output pointers and
+opaque record tags. `I386CallContract.HeaderQualifiersKeepTheOuterCallingConvention`
+cross-compiles both routes against independently declared cdecl/stdcall
+function-pointer types and checks that a tail jump forwards both incoming
+stack arguments. The existing stdcall cleanup tests check that ordinary
+calls still restore the caller's stack. The local type bridge checks nested
+qualifiers, convention ownership and `_Noreturn`. The original SDK check's
+`UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
+Windows architectures, independently of the synthetic import names.
+The qualifier execution cases also cover void results.
+`Win64CallContract.AVoidSourceReturnDoesNotEraseAnObservedCallResult` checks
+that a volatile store of the machine result keeps it live despite a proposed
+void import prototype and a wrapper with a void source return.
+`Win64CallContract.HeaderVoidReturnFactsAreSourceOnly` checks that only source
+projection gains a header's void contract while both routes retain the
+machine return-register type in LLVM IR.
 
 `NeverDIntegerCallArgumentsTests` checks integer record carriers, unused
 register positions before memory arguments, register exhaustion, i386 slots,
@@ -1261,6 +1292,24 @@ options and stale revisions. The Qt case checks aligned row counts, highlights,
 instruction navigation, synchronized scroll and independent-source fallback.
 These checks establish exact textual alignment and inspection contracts, not
 semantic equivalence or unique statement correspondence.
+AArch64 SDK comparison cases distinguish operand modifiers and scalar changes
+from page-aligned placement, retain >4 GiB and negative literal references, and
+exercise TBZ bit-index/target collisions and partial-page ADRP movement. Profile
+selection preserves x86 identities; unsupported ISA/ABI/bitness and illegal
+instructions cannot acquire complete evidence. Worker/CLI cases compile the
+same change to ELF relocatable, COFF object and Mach-O object inputs, inspect
+owned source alignment, SSA origins, slices and region correspondences, and
+reopen the same saved report. A raw unsized conditional-branch case retains
+both successors, a changed fallthrough constant and its ordinary call reference;
+the COFF cell exercises the same walk without a recorded function size.
+The Qt case selects
+raw AArch64, views aligned source and navigates to original instructions. These
+object cells do not qualify every linked image or transformation family.
+`NeverDAArch64DecodeValidityTests` verifies decoded illegal operands and the
+illegal-to-valid transition through full, light and native-fast routes, including
+direct permissive lifter calls. It also runs the existing independent Capstone
+parity sweeps with poisoned reused-buffer validity state. The SDK case requires
+incomplete DIFF evidence and no invented flow/reference facts for the same bytes.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw

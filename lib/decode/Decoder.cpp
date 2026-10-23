@@ -203,6 +203,9 @@ int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
   size_t Sz = Len;
   uint64_t A = Addr;
 
+  // Capstone records soft decode failures on the reused instruction object.
+  // Validity belongs to this occurrence, never the previously decoded bytes.
+  InsnBuf->illegal = false;
   if (!cs_disasm_iter(Handle, &Code, &Sz, &A, InsnBuf) &&
       !decodeArchitectureFallback(Bytes, Len, Addr))
     return 0;
@@ -237,6 +240,7 @@ int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
   size_t Sz = Len;
   uint64_t A = Addr;
 
+  InsnBuf->illegal = false;
   if (!cs_disasm_iter(Handle, &Code, &Sz, &A, InsnBuf) &&
       !decodeArchitectureFallback(Bytes, Len, Addr))
     return 0;

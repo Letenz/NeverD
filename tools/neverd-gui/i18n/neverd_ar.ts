@@ -6128,8 +6128,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>مقارنة</translation>
     </message>
     <message>
-        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
-        <translation>قارن إدخالين أصليين من نوع x86/x64. درجات المطابقة استدلالية.</translation>
+        <source>Compare two x86, x64 or AArch64 inputs with the same architecture and ABI. Matching scores are heuristic.</source>
+        <translation>قارن مدخلين من نوع x86 أو x64 أو AArch64 لهما المعمارية وواجهة ABI نفسيهما. درجات المطابقة تقديرات استدلالية.</translation>
     </message>
     <message>
         <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
@@ -6300,6 +6300,10 @@ Coverage: %7</source>
     <message>
         <source>Pseudocode</source>
         <translation>الشيفرة الزائفة</translation>
+    </message>
+    <message>
+        <source>Raw AArch64</source>
+        <translation>AArch64 خام</translation>
     </message>
     <message>
         <source>Raw x64</source>

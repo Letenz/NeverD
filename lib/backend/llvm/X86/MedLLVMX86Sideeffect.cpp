@@ -621,8 +621,10 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
     llvm::Value *Value = getVar(Op.Inputs[ValueInput], Builder);
     auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
                                          {Value->getType()}, false);
-    auto *IA = llvm::InlineAsm::get(FnTy, "mov $0, " + *Reg, "r,~{memory}",
-                                    /*hasSideEffects=*/true);
+    // CR/DR MOV leaves the arithmetic flags undefined.
+    auto *IA =
+        llvm::InlineAsm::get(FnTy, "mov $0, " + *Reg, "r,~{flags},~{memory}",
+                             /*hasSideEffects=*/true);
     Builder.CreateCall(IA, {Value});
     return true;
   }

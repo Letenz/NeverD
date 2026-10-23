@@ -16,6 +16,7 @@
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
 #include "../FloatConversion.h"
+#include "../HeaderPrototype.h"
 #include "../LibraryPrototype.h"
 #include "../StdcallImportPops.h"
 #include "../UnalignedMemory.h"
@@ -1763,10 +1764,6 @@ LLVMCWriter::sourceImportCallee(const llvm::CallBase &Call) const {
 
 std::string LLVMCWriter::sourceImportDeclaration(const FunctionSym &Function,
                                                  llvm::StringRef Name) {
-  if (Function.IsVariadic && Name == Function.Name &&
-      c_library::selfContainedDeclaration(Function.PortablePrototypeDeclaration,
-                                          Name))
-    return Function.PortablePrototypeDeclaration;
   const auto NotePointers = [&](const TypeRef &Type) {
     const NdType *Target = Type.get();
     while (Target && Target->Kind == NdTypeKind::Ptr)
@@ -1790,6 +1787,10 @@ std::string LLVMCWriter::sourceImportDeclaration(const FunctionSym &Function,
       Opts.TheArch == Arch::X86 && Function.CallConv == DebugCallConv::Stdcall
           ? "__attribute__((stdcall)) "
           : "";
+  if (const auto Declaration =
+          c_library::portableScalarDeclaration(Function, Name);
+      !Declaration.empty())
+    return Convention + Declaration.str();
   // This convention belongs to the imported function. Keeping it inside
   // the return declarator would attach it to a returned callback instead.
   return Convention +

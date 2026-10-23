@@ -220,7 +220,10 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   bindFloatCallResults(Img, Result);
 
-  settleReturnContracts(Img, Result);
+  // LLVM-to-C uses the same declared source returns as HighC. Binary lifting
+  // keeps its machine contract; a display prototype cannot authorize a
+  // different executable return ABI.
+  settleReturnContracts(Img, Result, Opts.SourceProjection ? Dbg : nullptr);
 
   recoverModuleCallAbi(Img, Result, AllFuncNames);
 
