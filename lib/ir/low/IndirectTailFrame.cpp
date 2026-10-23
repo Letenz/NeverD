@@ -473,8 +473,11 @@ class TailFrameGuard {
       const bool LocalCode = A.MayBeLocalCode || B.MayBeLocalCode;
       if (A.K != B.K || A.Offset != B.Offset ||
           A.AuthenticationKey != B.AuthenticationKey ||
-          A.ZeroModifier != B.ZeroModifier)
+          A.ZeroModifier != B.ZeroModifier ||
+          A.SecondModifier != B.SecondModifier)
         A = {};
+      if (A.Constant != B.Constant)
+        A.Constant.reset();
       A.MayBeStack = May;
       A.MayBeLocalCode = LocalCode;
       return A;
@@ -484,7 +487,7 @@ class TailFrameGuard {
       It->second =
           Merge(It->second, Found == Other.end() ? FrameWord{} : Found->second);
       if (It->second.K == FrameWord::Unknown && !It->second.MayBeStack &&
-          !It->second.MayBeLocalCode)
+          !It->second.MayBeLocalCode && !It->second.Constant)
         It = Into.erase(It);
       else
         ++It;

@@ -111,10 +111,13 @@ register-modifier forms retain both diversifiers. Authentication of a return
 target remains observable without writing LR, including a poison check before
 an otherwise unused C return target is discarded. Fast and Capstone scanners
 both terminate at these returns. Frame proofs require a matching key and both
-modifiers before restoring a signed link. The machine operations use the
-implicit X17/X16/X15 forms so relocation cannot silently replace the original
-PC with the generated instruction's PC. Exception returns and the PACM HINT
-still fail until their architectural state is modelled.
+modifiers before restoring a signed link. Joins discard conflicting signing
+recipes and preserve ordinary modifier constants only when every incoming
+path agrees. This applies equally to live registers and saved return cells.
+The machine operations use the implicit X17/X16/X15 forms so relocation cannot
+silently replace the original PC with the generated instruction's PC.
+Exception returns and the PACM HINT still fail until their architectural state
+is modelled.
 
 Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
 the architecture may poison a pointer without trapping immediately. The
