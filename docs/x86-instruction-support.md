@@ -193,9 +193,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`e1d9d12ab12f`](https://github.com/NeverSight/llvm-project/commit/e1d9d12ab12f)
+[`a8095b8deea9`](https://github.com/NeverSight/llvm-project/commit/a8095b8deea9)
 adds native instruction selection for the following APIs. NeverC's
-[`1c26d656f`](https://github.com/NeverSight/NeverC/commit/1c26d656f)
+[`f47d72b0b`](https://github.com/NeverSight/NeverC/commit/f47d72b0b)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -210,6 +210,7 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.vmlaunch`, `llvm.x86.vmresume` | i386 and x86-64 | Return status on falling-through VMfail only; VMCS-controlled transfers remain separate. |
 | `llvm.x86.invept`, `llvm.x86.invvpid` | x86-64 | Full i64 type selector, instruction-owned m128 descriptor and the same VMX completion status. |
 | `llvm.x86.invept32`, `llvm.x86.invvpid32` | i386 | Full i32 type selector and the same m128 descriptor/status contract. Wrong-mode APIs fail explicitly. |
+| `llvm.x86.{vmread,vmwrite.mem,invept,invvpid,vmclear,vmptrld,vmptrst,vmxon}.address` and `.address32` | x86-64 and i386 respectively | Integer offset, constant address width and architectural segment-prefix byte; native access and VMX completion remain instruction-owned. VMPTRST is void; the other seven return i8 status. |
 | `llvm.x86.rdmsr`, `llvm.x86.wrmsr` | i386 and x86-64 | i32 MSR index and full i64 value, transported through ECX and EDX:EAX. Unused reads retain their side effects. |
 | `llvm.x86.wrmsrns`, `llvm.x86.clts` | i386 and x86-64 | Operand-free WRMSRNS uses ECX and EDX:EAX; CLTS retains its ordered processor-state effect. |
 | `llvm.x86.rdmsrlist`, `llvm.x86.wrmsrlist` | x86-64 | Two table pointers and a full i64 mask, with actual RCX completion; table memory and fault ordering stay inside the instruction. |
@@ -627,16 +628,36 @@ implicit RDX definition changes in the plugin schema; all 18,495 opcode IDs
 remain stable. These are compiler-transport and CPL3-boundary checks, not
 successful measured-environment qualification.
 
-Pointer APIs still need explicit segment/address width and forced-encoding
-selection. These checkpoints therefore do not yet replace NeverD's complete
-architectural-bank ASM contract.
+VMX explicit-address APIs accept the natural-width selector (when present),
+natural-width offset, constant address bits and constant segment-prefix byte.
+Widths are 32/64 in long mode and 16/32 in i386; code16 and mismatched API modes
+fail explicitly. Prefix zero selects native DS, and `26/2e/36/3e/64/65` select
+ES/CS/SS/DS/FS/GS. These are prefix bytes, not LLVM address-space IDs. The
+offset is truncated before native segment-base addition; the base uses the
+B register so allocator selection cannot silently switch DS to SS.
+Dedicated machine nodes retain normal pointer register classes, memory effects
+and EFLAGS definitions until final encoding selects the narrow BX/EBX address.
+The APIs do not introduce ordinary loads or stores around the VMX operation.
+NeverC exposes all eight matching `__builtin_ia32_*_address` builtins.
 
-These tests qualify compiler transport, not successful privileged VM entry.
-The current pointer APIs cover the default address space. Segmented/address-size
-forms and the other instruction families still need native APIs before all of
-NeverD's existing
-assembly paths can be replaced. The final LLVM release and pin remain gated on
-the complete work described above.
+Qualification passes 8,416 full-LLVM checks and 4,208 checks on each C route,
+plus 896 real CPL3 fault boundaries per C route against independent raw bytes.
+It covers every width/prefix choice, three formats, both assembly dialects,
+all VMX status values, conditional VMREAD stores, repeated/dead results,
+live values, callee-saved registers, memory ordering and unmapped addresses.
+All 27 LLVM regression files, 58 focused compiler tests, 81 binary checks,
+29 generator tests and 12 plugin checks pass, with no overload-bitmap mismatch.
+Existing VMCS register/memory and management completion matrices still pass on
+all three routes. NeverC appends eight machine opcode records (18,503 total),
+leaving all prior records, register IDs and features unchanged. Its new schema
+digest is `65dca7dac754d4d908794896a9b9619c64eb112604cd2da8acd79ac230f7ec1e`.
+
+These tests qualify compiler transport and CPL3 faults, not successful
+privileged VM entry or segment descriptor validation. Other memory instruction
+families still need explicit segment/address-width APIs; forced EVEX/APX
+selection is separate. NeverD's existing assembly paths still need migration
+to these native APIs. The final LLVM release and pin remain gated on the
+complete work described above.
 
 ## Reproducible checks
 
