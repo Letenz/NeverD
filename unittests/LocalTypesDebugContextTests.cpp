@@ -101,6 +101,73 @@ TEST(LocalTypesDebugContext,
   EXPECT_EQ(Stop->PortablePrototypeDeclaration, "_Noreturn void Stop(void)");
 }
 
+TEST(LocalTypesDebugContext, PortablePrototypesRetainIntegerKeywordIdentity) {
+  using namespace neverd;
+  for (auto Model : {types::DataModel::ILP32, types::DataModel::LLP64,
+                     types::DataModel::LP64}) {
+    auto Library = std::make_shared<types::TypeLibrary>(Model);
+    ASSERT_TRUE(types::parseCTypes(R"(
+      typedef unsigned long DWORD;
+      typedef enum { OpFirst = 1, OpSecond = 2 } Operation;
+      double Scalar(DWORD Flags, Operation Op, double Value, long *Output);
+    )",
+                                   *Library)
+                    .ok());
+    NamesOnlyDebugContext Names;
+    sdk::LocalTypesDebugContext Context(Names, Library);
+    const auto Signature = Context.resolvePrototype("Scalar");
+    ASSERT_TRUE(Signature);
+    const std::string Bytes = Model == types::DataModel::LP64 ? "8" : "4";
+    const std::string Bits = Model == types::DataModel::LP64 ? "64" : "32";
+    EXPECT_NE(Signature->PortablePrototypeDeclaration.find(
+                  "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == " +
+                  Bytes + ", (unsigned long)0, (uint" + Bits + "_t)0)) Flags"),
+              std::string::npos)
+        << Signature->PortablePrototypeDeclaration;
+    EXPECT_NE(Signature->PortablePrototypeDeclaration.find("Operation Op"),
+              std::string::npos);
+    EXPECT_EQ(Signature->Params[0].second->Size,
+              Model == types::DataModel::LP64 ? 8u : 4u);
+    EXPECT_EQ(Context.resolvePrototype("Scalar")->PortablePrototypeDeclaration,
+              Signature->PortablePrototypeDeclaration);
+  }
+}
+
+TEST(LocalTypesDebugContext, PointerDeclarationsDoNotRequireRecordLayouts) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>(types::DataModel::LLP64);
+  ASSERT_TRUE(types::parseCTypes(R"(
+    struct Item { int Value; };
+    union Choice { int Number; void *Pointer; };
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  sdk::LocalTypesDebugContext Context(Names, Library);
+  const auto Item = NdType::makeNamedRecord("Item");
+  const auto Choice = NdType::makeNamedRecord("Choice");
+  const auto ItemPointer = NdType::makePtr(Item);
+  const auto ChoicePointer = NdType::makePtr(Choice);
+  const auto Declarations = Context.definitions({ItemPointer, ChoicePointer});
+  EXPECT_TRUE(Declarations.Text.empty());
+  EXPECT_TRUE(Declarations.Records.empty());
+  ASSERT_EQ(Declarations.Tags.size(), 2u);
+  EXPECT_FALSE(Declarations.Tags.at("Item"));
+  EXPECT_TRUE(Declarations.Tags.at("Choice"));
+  EXPECT_TRUE(Context.readTypes().contains("Item"));
+  EXPECT_TRUE(Context.readTypes().contains("Choice"));
+  // Requiring a value or a member layout wins regardless of query order.
+  for (const auto &Requests :
+       {std::vector<TypeRef>{ItemPointer, ChoicePointer, Item, Choice},
+        std::vector<TypeRef>{Item, Choice, ItemPointer, ChoicePointer}}) {
+    const auto Definitions = Context.definitions(Requests);
+    EXPECT_NE(Definitions.Text.find("int32_t Value"), std::string::npos);
+    EXPECT_EQ(Definitions.Records.size(), 2u);
+    EXPECT_FALSE(Definitions.Records.at("Item"));
+    EXPECT_TRUE(Definitions.Records.at("Choice"));
+  }
+}
+
 TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();
@@ -169,7 +236,8 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   ASSERT_TRUE(Context.resolvePrototype("Print"));
   EXPECT_TRUE(Context.resolvePrototype("Print")->IsVariadic);
   EXPECT_EQ(Context.resolvePrototype("Print")->PortablePrototypeDeclaration,
-            "uint32_t Print(const char *Format, ...)");
+            "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == 4, "
+            "(unsigned long)0, (uint32_t)0)) Print(const char *Format, ...)");
   EXPECT_EQ(Context.resolvePrototype("Print")->Params.size(), 1u);
   EXPECT_TRUE(Context.resolveFunction(0x3000)->IsVariadic);
   EXPECT_EQ(Context.resolveFunction(0x3000)->Params.size(), 1u);

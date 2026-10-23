@@ -692,12 +692,14 @@ struct X87CallGraphCacheLimits {
 /// ImmutableEntries names an entry inventory whose owner never changes it
 /// while the cache lives.  A request that borrows that inventory matches a
 /// context frozen from it by identity, without comparing every entry.
-std::shared_ptr<X87CallGraphCache>
-createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
-                        const libc::NoReturnTargetIndex *NonReentrantTargets,
-                        bool RetainCallRegisterBodies,
-                        const X87CallGraphCacheLimits &Limits,
-                        const std::set<va_t> *ImmutableEntries = nullptr);
+/// DeclaredFloatingImports is an owned immutable snapshot of ordinary i386
+/// header return widths. It adds no callbacks or borrowed lifetime to proofs.
+std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
+    const NoReturnCalleeProver *NonReentrantProver,
+    const libc::NoReturnTargetIndex *NonReentrantTargets,
+    bool RetainCallRegisterBodies, const X87CallGraphCacheLimits &Limits,
+    const std::set<va_t> *ImmutableEntries = nullptr,
+    std::map<std::string, uint16_t> DeclaredFloatingImports = {});
 
 class CFGBuilder {
   friend class X87CallEffectIndex;

@@ -75,6 +75,9 @@ struct RenderOptions {
   /// How builtins are named; the language's default when unset, or when
   /// the language does not take it.
   std::optional<BuiltinSpelling> Spelling;
+  /// Portable C prototypes retain integer keyword identity when the host has
+  /// the target width; otherwise they select the target's exact-width type.
+  bool PrototypeIntegerIdentity = false;
   /// A comment with each member's offset.
   bool Offsets = true;
   /// Offsets in hexadecimal rather than decimal.

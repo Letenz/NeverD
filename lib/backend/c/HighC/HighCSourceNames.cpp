@@ -61,6 +61,19 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
         !Type->SourceName.empty() && Named.insert(Type->SourceName).second)
       Records.push_back(Type);
   };
+  // Import pointers need the library's tag kind, but do not require its
+  // layout. In particular, a union must not acquire a struct forward tag.
+  std::set<std::string> ImportRecords;
+  const auto VisitImportType = [&](TypeRef Type) {
+    VisitEnumeration(Type);
+    while (Type && Type->Kind == NdTypeKind::Ptr) {
+      if (Type->Pointee && Type->Pointee->Kind == NdTypeKind::Struct &&
+          !Type->Pointee->IsEnum &&
+          ImportRecords.insert(Type->Pointee->SourceName).second)
+        Records.push_back(Type);
+      Type = Type->Pointee;
+    }
+  };
   std::function<void(const HighExpr &)> VisitExpr = [&](const HighExpr &E) {
     Visit(E.Type);
     if (E.SourceCallHint) {
@@ -70,9 +83,9 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
     }
     if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None)
       if (const std::optional<FunctionSym> Callee = debugCallee(E)) {
-        VisitEnumeration(Callee->ReturnType);
+        VisitImportType(Callee->ReturnType);
         for (const auto &[Name, Type] : Callee->Params)
-          VisitEnumeration(Type);
+          VisitImportType(Type);
       }
     E.forEachChildExpr([&](const ExprPtr &Child) { VisitExpr(*Child); });
   };
@@ -107,7 +120,8 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
   // with.
   if (Dbg)
     for (const TypeRef &Record : Records)
-      Dbg->completeType(Record);
+      if (Record->Kind != NdTypeKind::Ptr)
+        Dbg->completeType(Record);
   RecordDefinitions = Opts.RecordDefinitions(Records);
 }
 

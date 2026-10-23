@@ -645,7 +645,9 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
             Enumerators.try_emplace(Name, Local);
   CRecordDefinitions Result;
   std::vector<const types::LocalType *> Roots;
-  for (const TypeRef &Record : Records) {
+  for (const TypeRef &Requested : Records) {
+    const bool Declaration = Requested && Requested->Kind == NdTypeKind::Ptr;
+    const TypeRef &Record = Declaration ? Requested->Pointee : Requested;
     if (!Record || Record->Kind != NdTypeKind::Struct ||
         Record->SourceName.empty() || RenamedInC->contains(Record->SourceName))
       continue;
@@ -668,6 +670,11 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
     if (Local->Kind == types::TypeKind::Struct ||
         Local->Kind == types::TypeKind::Union)
       Result.Tags[Record->SourceName] = Local->Kind == types::TypeKind::Union;
+    if (Declaration) {
+      Read.insert(Local->Name);
+      Result.DeclaredTypes.push_back(Local->Name);
+      continue;
+    }
     if (Record->IsEnum || (Spelled && Local->Kind == types::TypeKind::Enum)) {
       if (Local->Kind == types::TypeKind::Enum && AllAgree(*Record, *Local))
         Roots.push_back(Local);
@@ -704,7 +711,7 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
       Result.Enumerations.push_back(Name);
   }
   Result.Types = Embedded.Types;
-  Result.DeclaredTypes = Embedded.DeclaredTypes;
+  llvm::append_range(Result.DeclaredTypes, Embedded.DeclaredTypes);
   Result.HeaderTypedefs = Embedded.HeaderTypedefs;
   return Result;
 }
@@ -758,7 +765,8 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
       (Function->second->NoReturn ? "_Noreturn " : "") +
       Speller->spell(*types::makeFunction(Function->second), Name.str());
   Options.Spelling = types::BuiltinSpelling::Portable;
-  auto &Portable = Spellers[types::spellingOf(Options)];
+  Options.PrototypeIntegerIdentity = true;
+  auto &Portable = PortablePrototypeSpeller;
   if (!Portable)
     Portable = std::make_unique<types::TypeSpeller>(*Types, Options);
   auto PortableFunction = Function->second;

@@ -5468,6 +5468,15 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   }
   Expr += ")";
   RenderingCalls.pop_back();
+  if (RecordCall && RecordCall->FloatingResult) {
+    if (!Call.getType()->isStructTy() ||
+        Call.getModule()->getDataLayout().getTypeStoreSize(Call.getType()) !=
+            Function->ReturnType->Size)
+      throw std::runtime_error(
+          "A record call has an incompatible result carrier");
+    return "__builtin_bit_cast(" + typeToCLLVM(Call.getType()) + ", " + Expr +
+           ")";
+  }
   if (RecordCall && RecordCall->ResultPointer)
     return c_detail::recordCallResult(
         c_detail::recordCallType(Function->ReturnType, Opts),

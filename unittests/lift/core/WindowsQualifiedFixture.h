@@ -24,11 +24,13 @@ public:
   va_t Slot = 0;
   bool Nested = false;
   bool Record = false;
+  bool Union = false;
   bool VoidResult = false;
   uint16_t PointerBytes = 8;
   DebugCallConv Convention = DebugCallConv::Cdecl;
   std::string element() const {
-    return Record ? "struct fixture_record" : "uint16_t";
+    return Record ? (Union ? "union fixture_record" : "struct fixture_record")
+                  : "uint16_t";
   }
   std::string declaration() const {
     return (VoidResult ? "void " : "const " + element() + " *") +

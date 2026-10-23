@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SourceCallExecution.h"
+#include "WindowsMixedScalarFixture.h"
 #include "WindowsQualifiedFixture.h"
 #include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
@@ -21,6 +22,7 @@
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -733,7 +735,7 @@ TEST(Win64CallContract,
   ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_qualified", 0,
                                             ImportStorageEvidence::LoaderBind));
   for (bool Nested : {false, true})
-    for (bool Record : {false, true})
+    for (unsigned Record : {0u, 1u, 2u})
       for (bool VoidResult : {false, true})
         for (bool LLVM : {false, true}) {
           SCOPED_TRACE(Nested);
@@ -744,6 +746,7 @@ TEST(Win64CallContract,
           Debug.Slot = Iat;
           Debug.Nested = Nested;
           Debug.Record = Record;
+          Debug.Union = Record == 2;
           Debug.VoidResult = VoidResult;
           llvm::LLVMContext Context;
           PipelineOptions Options;
@@ -757,6 +760,21 @@ TEST(Win64CallContract,
           COptions.TheArch = Image.Arch;
           COptions.Format = Image.Format;
           COptions.Image = &Image;
+          COptions.RecordDefinitions = [&](const std::vector<TypeRef> &Types) {
+            CRecordDefinitions Definitions;
+            for (const TypeRef &Requested : Types) {
+              const bool Pointer = Requested->Kind == NdTypeKind::Ptr;
+              const auto &Type = Pointer ? Requested->Pointee : Requested;
+              if (!Type || Type->SourceName != "fixture_record")
+                continue;
+              Definitions.Tags["fixture_record"] = Debug.Union;
+              if (!Pointer) {
+                Definitions.Records["fixture_record"] = Debug.Union;
+                Definitions.Text = Debug.element() + " { uint16_t value; };";
+              }
+            }
+            return Definitions;
+          };
           std::string Source;
           llvm::raw_string_ostream Out(Source);
           if (LLVM) {
@@ -769,13 +787,13 @@ TEST(Win64CallContract,
           }
           // Independent C definitions require the same qualifiers, including
           // those behind a pointer and on an opaque record's returned pointer.
-          const std::string Element =
-              Record ? "struct fixture_record" : "uint16_t";
+          const std::string Element = Debug.element();
           const std::string Value =
               Record ? (Nested ? "(*input)->value" : "input->value")
                      : (Nested ? "**input" : "*input");
           const std::string Definition =
-              "\nstruct fixture_record { uint16_t value; };\n" +
+              std::string("\n") + (Debug.Union ? "union" : "struct") +
+              " fixture_record { uint16_t value; };\n" +
               (VoidResult ? "void " : "const " + Element + " *") +
               "fixture_qualified(const " + Element +
               (Nested ? " *const *input" : " *input") +
@@ -800,6 +818,81 @@ TEST(Win64CallContract,
               "output != 42;\n}\n";
           source_call_execution_test::compileAndRun(Source + Definition);
         }
+}
+
+TEST(Win64CallContract, MixedHeaderScalarsKeepRegistersAndStackArguments) {
+  windows_mixed_scalar_test::Header Debug(Iat);
+  std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x38, // sub rsp, 38h
+      0xb9, 7,    0,    0,    0,    0xba, 9, 0, 0,    0,
+      0x48, 0xb8, 0,    0,    0,    0,    0, 0, 4,    0x40, // 2.5
+      0x66, 0x48, 0x0f, 0x6e, 0xd0,                         // movq xmm2, rax
+      0x48, 0xb8, 0,    0,    0,    0,    0, 0, 0x1a, 0xc0, // -6.5
+      0x66, 0x48, 0x0f, 0x6e, 0xd8,                         // movq xmm3, rax
+      0xc7, 0x44, 0x24, 0x20, 11,   0,    0, 0, 0x48, 0xc7,
+      0x44, 0x24, 0x28, 0x34, 0x12, 0,    0};
+  const auto Call = throughSlot(Text + Code.size(), Iat);
+  Code.insert(Code.end(), Call.begin(), Call.end());
+  Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x38, 0xc3});
+  auto Image = makeImage(Code, {{Text, "mixed_wrapper"}}, {"fixture_mixed"});
+  ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_mixed", 0,
+                                            ImportStorageEvidence::LoaderBind));
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Text};
+    Options.LiftMode = LLVM;
+    Options.SourceProjection = LLVM;
+    auto Result = Pipeline().run(Image, Context, Options, &Debug);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    for (const auto &Function : Result.MedFuncs)
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops) {
+          if (!Op.ScalarCallSignature)
+            continue;
+          ASSERT_TRUE(boundFloatingCallArguments(Op, Image.Arch, Image.Format));
+          MedOp Broken = Op;
+          auto Wrong =
+              std::make_shared<FloatingCallArguments>(*Op.ScalarCallSignature);
+          Wrong->Scalars.back().StackOffset += 8;
+          Broken.ScalarCallSignature = Wrong;
+          EXPECT_FALSE(
+              boundFloatingCallArguments(Broken, Image.Arch, Image.Format));
+          Broken = Op;
+          Broken.Output.RegOff = x86reg::RAX;
+          EXPECT_FALSE(
+              boundFloatingCallArguments(Broken, Image.Arch, Image.Format));
+          Broken = Op;
+          Broken.CalleeVariadicFrom = 1;
+          EXPECT_FALSE(
+              boundFloatingCallArguments(Broken, Image.Arch, Image.Format));
+          Broken = Op;
+          Broken.Inputs[3].Size = 4;
+          EXPECT_FALSE(
+              boundFloatingCallArguments(Broken, Image.Arch, Image.Format));
+        }
+    CEmitterOptions COptions;
+    COptions.TheArch = Image.Arch;
+    COptions.Format = Image.Format;
+    COptions.Image = &Image;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(
+        LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions, &Debug,
+                                   &Image)
+             : HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+    source_call_execution_test::compileAndRun(
+        Source + windows_mixed_scalar_test::Provider + R"(
+int main(void) {
+  __auto_type output = mixed_wrapper();
+  double result;
+  __builtin_memcpy(&result, &output, sizeof(result));
+  return result != 42.25;
+}
+)");
+  }
 }
 
 TEST(Win64CallContract, AVoidSourceReturnDoesNotEraseAnObservedCallResult) {

@@ -590,6 +590,7 @@ private:
   TypeRef sourceCallResultType(const MedOp &Op) const;
   VarKeyMap<ExprPtr> DefExpr;
   VarKeyMap<TypeRef> SourceRecordValues;
+  VarKeyMap<TypeRef> SourceFloatCallValues;
   std::vector<SourceABIParameter> SourceParameters;
   VarKeySet CallOutputs;
   VarKeySet PhiOutputVars;

@@ -1689,6 +1689,7 @@ LLVMCWriter::frameRecordDeclaration(const llvm::AllocaInst &Frame) const {
       continue;
     if (Off > At)
       Members += Gap(At, Off - At);
+    noteRecordValue(Slot.MemberType);
     Members += "        " +
                (Slot.MemberType ? declarationToC(Slot.MemberType, Slot.Name)
                                 : "uint64_t " + Slot.Name) +

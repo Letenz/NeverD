@@ -380,7 +380,9 @@ unsigned LowToMedConverter::variadicImportFixedCount(va_t Key) const {
   return libc::varArgFixedCount(Name, libc::libcVariantOf(*Image));
 }
 
-void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
+void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
+                                                const LowOp &LOp,
+                                                bool TailCall) {
   if ((LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
       LOp.NumInputs == 0)
     return;
@@ -461,13 +463,75 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   if (Convention && Convention->ImportArgumentsFromPrototype &&
       CallEntryFloatingArguments && MOp.NumInputs == 1)
     if (const auto F = CallEntryFloatingArguments->find(ArgumentsKey);
-        F != CallEntryFloatingArguments->end()) {
+        F != CallEntryFloatingArguments->end() &&
+        (TargetArch != Arch::X86 ||
+         (LOp.Output.isReg() && TRI.isX87StackReg(LOp.Output.Offset) &&
+          LOp.Output.Size == x86reg::FPURegSize))) {
       const auto &Signature = F->second;
-      if (Signature.ParameterBytes.size() <= FPParamRegs.size() &&
-          Signature.ParameterBytes.size() <=
-              sizeof(MOp.CalleeVectorArgWidths) * 2 &&
-          (Signature.ReturnBytes == sizeof(float) ||
-           Signature.ReturnBytes == sizeof(double))) {
+      if (TargetArch == Arch::X86 || !Signature.Scalars.empty() ||
+          Signature.ReturnElements) {
+        // TOP normalization owns the physical x87 result slot. A declaration
+        // cannot overwrite an unproved or context-based call with guessed ST0.
+        MOp.ScalarCallSignature =
+            std::make_shared<FloatingCallArguments>(Signature);
+        MOp.CalleeRegisterArgs = -1;
+        MOp.CalleeStackArgs = -1;
+        MOp.CalleeVectorArgs = -1;
+        auto Temporary = [&](uint16_t Bytes) {
+          MedVar Value;
+          Value.Kind = MedVar::Temp;
+          Value.Id = allocVarId();
+          Value.Size = Bytes;
+          Value.TheArch = TargetArch;
+          return Value;
+        };
+        for (const auto &Parameter : Signature.Scalars) {
+          if (Parameter.Kind != SourceABICarrierKind::Stack) {
+            MOp.addInput(ndVarToMedVar(NdVar::reg(
+                Parameter.Register,
+                Parameter.Kind == SourceABICarrierKind::FloatingRegister
+                    ? TRI.FPABIRegWidth
+                : TargetArch == Arch::AArch64
+                    ? std::max<uint16_t>(4, Parameter.Bytes)
+                    : Parameter.Bytes)));
+            continue;
+          }
+          // Ordinary x64 CALL pushes a return PC; the lift is SP-neutral.
+          // A tail jump already sees the callee's entry stack position.
+          const int64_t Bias =
+              (TargetArch == Arch::X64 || TargetArch == Arch::X86) && !TailCall
+                  ? TRI.PointerSize
+                  : 0;
+          MedOp Address;
+          Address.Opcode = NdOp::INT_ADD;
+          Address.Addr = LOp.Addr;
+          Address.Output = Temporary(TRI.PointerSize);
+          Address.addInput(
+              ndVarToMedVar(NdVar::reg(TRI.StackPointer, TRI.PointerSize)));
+          Address.addInput(
+              MedVar::makeConst(Parameter.StackOffset - Bias, TRI.PointerSize,
+                                ConstantAddressProvenance::Scalar));
+          MedOp Load;
+          Load.Opcode = NdOp::LOAD;
+          Load.Addr = LOp.Addr;
+          Load.Output = Temporary(Parameter.Bytes);
+          Load.addInput(Address.Output);
+          MOp.addInput(Load.Output);
+          Block.Ops.push_back(std::move(Address));
+          Block.Ops.push_back(std::move(Load));
+        }
+        MOp.CalleeFloatReturnBytes =
+            Signature.ReturnElements ? 0 : Signature.ReturnBytes;
+        MOp.Output =
+            Signature.ReturnElements ? Temporary(Signature.ReturnBytes)
+            : TargetArch == Arch::X86
+                ? ndVarToMedVar(LOp.Output)
+                : ndVarToMedVar(NdVar::reg(TRI.FPReturnReg, TRI.FPABIRegWidth));
+      } else if (Signature.ParameterBytes.size() <= FPParamRegs.size() &&
+                 Signature.ParameterBytes.size() <=
+                     sizeof(MOp.CalleeVectorArgWidths) * 2 &&
+                 (Signature.ReturnBytes == sizeof(float) ||
+                  Signature.ReturnBytes == sizeof(double))) {
         MOp.CalleeRegisterArgs = 0;
         MOp.CalleeStackArgs = 0;
         MOp.CalleeVectorArgs = Signature.ParameterBytes.size();
@@ -487,7 +551,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   // integer arguments, the registers' first: its calls pass those and no
   // other register.  The setup supplies the values.  Its stack arguments
   // are counted as positions, the registers' included, or 0 for none.
-  if (Convention && Convention->ArgumentsFromCallSetup &&
+  if (!MOp.ScalarCallSignature && Convention &&
+      Convention->ArgumentsFromCallSetup &&
       Convention->ImportArgumentsFromPrototype &&
       !Convention->RegparmOnlyForInternalCalls && CallEntryArgumentCounts)
     if (auto C = CallEntryArgumentCounts->find(ArgumentsKey);
@@ -1142,7 +1207,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         MOp.CalleeStackArgs = 0;
         MOp.CalleeVectorArgs = 0;
       } else if (!bindFormattedCall(MB, MOp, LOp))
-        applyCallRegisterEffect(MOp, LOp);
+        applyCallRegisterEffect(MB, MOp, LOp, TailCall);
       if (X87Arguments && LOp.NumInputs == X87Arguments + 1) {
         MOp.X87ArgumentInput = MOp.NumInputs;
         MOp.X87ImportArguments = LOp.X87ImportArguments;
@@ -1204,6 +1269,30 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                        Proof.TargetOwnerVA));
       }
       MB.Ops.push_back(MOp);
+      if (MOp.ScalarCallSignature && MOp.ScalarCallSignature->ReturnElements) {
+        // The selected header owns every HFA result register before SSA.
+        // A following call may consume those fields without a single move.
+        const auto &Signature = *MOp.ScalarCallSignature;
+        const uint16_t Bytes = Signature.ReturnBytes / Signature.ReturnElements;
+        for (uint16_t I = 0; I < Signature.ReturnElements; ++I) {
+          MedOp Field;
+          Field.Opcode = NdOp::SUBBYTES;
+          Field.Addr = LOp.Addr;
+          Field.Output =
+              ndVarToMedVar(NdVar::reg(ConventionRegs.FPReturnRegs[I], Bytes));
+          Field.addInput(MOp.Output);
+          Field.addInput(MedVar::makeConst(I * Bytes, 4,
+                                           ConstantAddressProvenance::Scalar));
+          MedOp Register;
+          Register.Opcode = NdOp::INT_ZEXT;
+          Register.Addr = LOp.Addr;
+          Register.Output = ndVarToMedVar(NdVar::reg(
+              ConventionRegs.FPReturnRegs[I], ConventionRegs.FPABIRegWidth));
+          Register.addInput(Field.Output);
+          MB.Ops.push_back(std::move(Field));
+          MB.Ops.push_back(std::move(Register));
+        }
+      }
 
       // i386 callee-cleanup: a checked runtime import or direct callee pops on
       // return (x86 `ret imm`, the SysV hidden struct-return (sret) pointer

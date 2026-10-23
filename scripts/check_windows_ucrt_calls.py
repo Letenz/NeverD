@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import time
 
@@ -32,6 +33,55 @@ def run(command, log, timeout):
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     log.write_text(result.stderr, encoding="utf-8")
     return result
+
+
+def sdk_checked_source(source):
+    """Compare emitted enum definitions with the independently included SDK.
+
+    The SDK sometimes typedefs an anonymous enum, while the standalone output
+    must give it a tag. Including both definitions in one translation unit
+    redeclares every enumerator. Keep a separately named shadow of the emitted
+    enum and assert its size, signedness and every value against the SDK. Only
+    that definition and its type spelling change: references to its emitted
+    tag use the SDK's independently checked typedef. Parameters and expressions
+    remain intact. The unmodified unit is also compiled below.
+    """
+    pattern = re.compile(
+        r"#ifndef (?P<guard>NEVERD_TYPE_\w+)\n#define (?P=guard)\n"
+        r"(?://[^\n]*\n)?enum (?P<name>\w+)\s*\{(?P<body>[^{}]*)\};\s*"
+        r'static_assert\(sizeof\(enum (?P=name)\) == (?P<size>\d+), "(?P=name)"\);'
+        r"\s*#endif")
+    aliases = []
+
+    def replace(match):
+        name, body, size = match["name"], match["body"], match["size"]
+        item = r"\s*(\w+)\s*=\s*(-?(?:0[xX][0-9a-fA-F]+|[0-9]+))\s*,"
+        values = re.findall(item, body)
+        if not values or re.sub(item, "", body).strip():
+            raise ValueError(f"Cannot independently check the emitted enum {name}")
+        prefix = "__neverd_sdk_check_" + name
+        if prefix in source:
+            raise ValueError(f"SDK check identifier already in output: {prefix}")
+        declarations = ",\n".join(f"{prefix}_{index} = {value}"
+                                    for index, (_, value) in enumerate(values))
+        checks = [f"enum {prefix} {{\n{declarations}\n}};",
+                  f'_Static_assert(sizeof(enum {prefix}) == {size}, "emitted enum size");',
+                  f'_Static_assert(sizeof({name}) == sizeof(enum {prefix}), "SDK enum size");',
+                  f'_Static_assert((({name})-1 < ({name})0) == '
+                  f'((enum {prefix})-1 < (enum {prefix})0), "SDK enum signedness");']
+        checks += [f'_Static_assert({identifier} == {prefix}_{index}, "SDK {identifier}");'
+                   for index, (identifier, _) in enumerate(values)]
+        aliases.append(name)
+        return "\n".join(checks)
+
+    checked = pattern.sub(replace, source)
+    for name in aliases:
+        checked, count = re.subn(rf"\btypedef enum {re.escape(name)} {re.escape(name)};",
+                                "", checked)
+        if count > 1:
+            raise ValueError(f"Repeated emitted enum typedef for {name}: {count}")
+        checked = re.sub(rf"\benum {re.escape(name)}\b", name, checked)
+    return checked
 
 
 def check(args):
@@ -80,20 +130,27 @@ def check(args):
                                    if not line.startswith(("=== NeverD", "File:", "Arch:")))
                 path = stem.with_suffix(".c")
                 path.write_text(source + "\n", encoding="utf-8")
+                standalone_command = compiler + ["-fsyntax-only", str(path)]
+                standalone = run(standalone_command,
+                                 stem.with_suffix(".standalone.log"), args.timeout)
                 # An invented old-style extern can compile while passing no
                 # arguments. Force the original declarations into the check.
+                checked_path = stem.with_suffix(".sdk.c")
+                checked_path.write_text(sdk_checked_source(source) + "\n", encoding="utf-8")
                 compile_command = compiler + [
                     "-include", str(inputs / "UCRT-inputs/UCRT.c"),
                     "-include", str(inputs / "UCRT-inputs/UCRTCompatibility.c"),
-                    "-fsyntax-only", str(path)]
+                    "-fsyntax-only", str(checked_path)]
                 compiled = run(compile_command, stem.with_suffix(".clang.log"), args.timeout)
-                success = (result.returncode == 0 and compiled.returncode == 0 and
+                success = (result.returncode == 0 and standalone.returncode == 0 and
+                           compiled.returncode == 0 and
                            api + "(" in source and "__builtin_trap" not in source and
                            "unknown value" not in source)
                 row = {"architecture": arch, "function": function, "api": api,
                        "route": route, "success": success, "seconds": elapsed,
                        "exit": result.returncode, "clang_exit": compiled.returncode,
-                       "commands": [command, compile_command]}
+                       "standalone_clang_exit": standalone.returncode,
+                       "commands": [command, standalone_command, compile_command]}
                 records.append(row)
                 print(f"{arch} {function} {route}: {'PASS' if success else 'FAIL'}", flush=True)
     (args.output / "results.json").write_text(

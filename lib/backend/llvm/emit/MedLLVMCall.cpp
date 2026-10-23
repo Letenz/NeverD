@@ -67,6 +67,12 @@ bool floatingHeaderCall(const FunctionSym &Function, Arch Architecture,
   const auto Signature =
       libc::floatingCallArguments(Function, Architecture, Format);
   const auto &Registers = getTargetRegInfo(Architecture);
+  if (Signature && (Architecture == Arch::X86 || !Signature->Scalars.empty() ||
+                    Signature->ReturnElements)) {
+    const auto Recovered =
+        recoveredFloatingCallArguments(Op, Call, Architecture, Format);
+    return Recovered && *Recovered == *Signature;
+  }
   if (!Signature || Signature->ParameterBytes.size() != Call.Args.size() ||
       Op.NumInputs != Call.Args.size() + 1 || Op.Output.Kind != MedVar::Reg ||
       Op.Output.RegOff != Registers.FPReturnReg ||
@@ -591,6 +597,26 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   const MedCallInfo *CI =
       CurMedFunc ? CurMedFunc->findCall(BlockId, OpIdx) : nullptr;
+  if (Op.ScalarCallSignature &&
+      (!CI ||
+       !recoveredFloatingCallArguments(Op, *CI, TargetArch, TargetFormat))) {
+    syncError() << "med_llvm_emitter: header call lost its checked scalar "
+                   "or HFA carriers\n";
+    FatalCodePointerResolution = true;
+    return;
+  }
+  if (Op.ScalarCallSignature && Dbg && Img) {
+    const std::string Name = importCalleeName(*Img, CI->TargetAddr);
+    if (!Name.empty())
+      if (const auto Header = Dbg->resolvePrototype(Name);
+          Header &&
+          !floatingHeaderCall(*Header, TargetArch, TargetFormat, Op, *CI)) {
+        syncError() << "med_llvm_emitter: selected header disagrees with the "
+                       "bound call carriers\n";
+        FatalCodePointerResolution = true;
+        return;
+      }
+  }
   // Address fragments are legal only while an address-forming expression is
   // being completed. Audit every call escape before ABI classification: an
   // indirect target, integer-class argument, FP/vector argument, or variadic
@@ -789,7 +815,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       return;
     }
   }
-  if (Op.CalleeFloatReturnBytes && Target && Img && CI && Dbg) {
+  if ((Op.CalleeFloatReturnBytes || Op.ScalarCallSignature) && Target && Img &&
+      CI && Dbg) {
     const std::string Name = importCalleeName(*Img, CI->TargetAddr);
     if (!Name.empty())
       if (const auto Header = Dbg->resolvePrototype(Name);
@@ -1179,11 +1206,30 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         if (const auto Function = Dbg->resolvePrototype(CalleeName);
             Function &&
             floatingHeaderCall(*Function, TargetArch, TargetFormat, Op, *CI)) {
+          const auto Signature =
+              libc::floatingCallArguments(*Function, TargetArch, TargetFormat);
           std::vector<llvm::Type *> Parameters;
-          for (const auto &[Name, Type] : Function->Params)
-            Parameters.push_back(mapNdtype(Type));
-          auto *FT = llvm::FunctionType::get(mapNdtype(Function->ReturnType),
-                                             Parameters, false);
+          llvm::Type *Return = mapNdtype(Function->ReturnType);
+          if (!Signature->ParameterElements.empty() ||
+              Signature->ReturnElements) {
+            for (const auto &Parameter : Signature->Scalars)
+              Parameters.push_back(mapNdtype(
+                  Parameter.Floating ? NdType::makeFloat(Parameter.Bytes)
+                  : Parameter.Pointer
+                      ? NdType::makePtr()
+                      : NdType::makeInt(Parameter.Bytes, false)));
+            if (Signature->ReturnElements) {
+              auto *Element = mapNdtype(NdType::makeFloat(
+                  Signature->ReturnBytes / Signature->ReturnElements));
+              Return = llvm::StructType::get(
+                  *Ctx, std::vector<llvm::Type *>(Signature->ReturnElements,
+                                                  Element));
+            }
+          } else {
+            for (const auto &[Name, Type] : Function->Params)
+              Parameters.push_back(mapNdtype(Type));
+          }
+          auto *FT = llvm::FunctionType::get(Return, Parameters, false);
           Callee = llvm::Function::Create(
               FT, llvm::GlobalValue::ExternalLinkage, CalleeName, Mod);
           Callee->setCallingConv(TargetArch == Arch::X64 &&
@@ -1201,16 +1247,28 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
           std::vector<llvm::Type *> Types;
           for (uint16_t Bytes : Signature->ParameterBytes)
             Types.push_back(mapNdtype(NdType::makeFloat(Bytes)));
+          for (const auto &Parameter : Signature->Scalars)
+            Types.push_back(mapNdtype(
+                Parameter.Floating  ? NdType::makeFloat(Parameter.Bytes)
+                : Parameter.Pointer ? NdType::makePtr()
+                                    : NdType::makeInt(Parameter.Bytes, false)));
           const std::string Name =
               CalleeName.empty()
                   ? (kAutoFuncPrefix + llvm::utohexstr(CallAddr)).str()
                   : CalleeName;
           Callee = Mod->getFunction(Name);
           if (!Callee) {
+            llvm::Type *Return =
+                mapNdtype(NdType::makeFloat(Signature->ReturnBytes));
+            if (Signature->ReturnElements) {
+              auto *Element = mapNdtype(NdType::makeFloat(
+                  Signature->ReturnBytes / Signature->ReturnElements));
+              Return = llvm::StructType::get(
+                  *Ctx, std::vector<llvm::Type *>(Signature->ReturnElements,
+                                                  Element));
+            }
             Callee = llvm::Function::Create(
-                llvm::FunctionType::get(
-                    mapNdtype(NdType::makeFloat(Signature->ReturnBytes)), Types,
-                    false),
+                llvm::FunctionType::get(Return, Types, false),
                 llvm::GlobalValue::ExternalLinkage, Name, Mod);
             Callee->setCallingConv(TargetArch == Arch::X64 &&
                                            TargetFormat == BinaryFormat::COFF

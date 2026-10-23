@@ -366,7 +366,9 @@ TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
         Type && Type->Size == Op.Output.Size)
       return Type;
   if (Op.CalleeFloatReturnBytes && Op.Output.Kind == MedVar::Reg &&
-      Op.Output.RegOff == getTargetRegInfo(TargetArch).FPReturnReg)
+      (Op.Output.RegOff == getTargetRegInfo(TargetArch).FPReturnReg ||
+       (Op.ScalarCallSignature && TargetArch == Arch::X86 &&
+        getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))))
     return NdType::makeFloat(Op.CalleeFloatReturnBytes);
   if (Op.Output.Kind == MedVar::Reg && Op.Output.Size == 10 &&
       getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))
@@ -496,6 +498,17 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
         return Scalar;
       return HighExpr::makeVar(Param, Type);
     }
+  }
+
+  // Store a header's scalar result in its declared source type. Machine
+  // consumers still see the numerically extended eighty-bit x87 carrier;
+  // merely forwarding the result need not materialize its raw storage.
+  if (auto It = SourceFloatCallValues.find(varKey(V));
+      It != SourceFloatCallValues.end() && V.Size == 10) {
+    auto Value = HighExpr::makeVar(V, It->second);
+    auto Extended = HighExpr::makeUnary(NdOp::FLOAT_FLOAT2FLOAT, Value);
+    Extended->Type = NdType::makeFloat(10);
+    return HighExpr::makeBitCast(Extended, NdType::makeInt(10, false));
   }
 
   if (auto It = SourceRecordValues.find(varKey(V));
@@ -909,6 +922,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   UseCount.clear();
   DefExpr.clear();
   SourceRecordValues.clear();
+  SourceFloatCallValues.clear();
   collectI386GotBase(Med);
   collectI386PcRootedValues(Med);
   for (const auto &Block : Med.Blocks)
@@ -918,6 +932,10 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
         const auto Type = sourceCallResultType(Op);
         if (Type->Kind == NdTypeKind::Struct)
           SourceRecordValues.emplace(varKey(Op.Output), Type);
+        else if (Type->Kind == NdTypeKind::Float && Type->Size <= 8 &&
+                 Op.Output.Size == 10 && Op.Output.Kind == MedVar::Reg &&
+                 getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))
+          SourceFloatCallValues.emplace(varKey(Op.Output), Type);
       }
   CallOutputs.clear();
   PhiOutputVars.clear();

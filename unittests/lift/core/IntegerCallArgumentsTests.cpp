@@ -19,6 +19,45 @@
 using namespace neverd;
 
 namespace {
+
+TEST(FloatingCallArguments, HFAPlacementKeepsCompleteRecordsAndResultFields) {
+  for (uint16_t Bytes : {4u, 8u})
+    for (unsigned Count : {1u, 2u, 3u, 4u}) {
+      const auto Scalar = NdType::makeFloat(Bytes);
+      const auto Record =
+          NdType::makeStruct(std::vector<TypeRef>(Count, Scalar));
+      ASSERT_TRUE(Record);
+      Record->Passing = NdRecordPassing::ByValue;
+      for (BinaryFormat Format :
+           {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+        const auto Layout = floatingCallArguments(Arch::AArch64, Format, Record,
+                                                  {Record, Record});
+        ASSERT_TRUE(Layout);
+        EXPECT_EQ(Layout->ReturnBytes, Bytes * Count);
+        EXPECT_EQ(Layout->ReturnElements, Count);
+        EXPECT_EQ(Layout->Scalars.size(), 2 * Count);
+        EXPECT_EQ(Layout->ParameterElements,
+                  (std::vector<uint16_t>{uint16_t(Count), uint16_t(Count)}));
+        const auto Mixed =
+            floatingCallArguments(Arch::AArch64, Format, Scalar,
+                                  {Record, NdType::makeInt(4), Record});
+        ASSERT_TRUE(Mixed);
+        EXPECT_EQ(Mixed->Scalars.size(), 2 * Count + 1);
+        EXPECT_FALSE(Mixed->Scalars[Count].Floating);
+        std::vector<TypeRef> Overflow(9 - Count, Scalar);
+        Overflow.push_back(Record);
+        EXPECT_FALSE(
+            floatingCallArguments(Arch::AArch64, Format, Scalar, Overflow));
+      }
+      Record->Size += Bytes;
+      EXPECT_FALSE(floatingCallArguments(Arch::AArch64, BinaryFormat::COFF,
+                                         Scalar, {Record}));
+      Record->Size -= Bytes;
+      Record->Passing = NdRecordPassing::Unknown;
+      EXPECT_FALSE(floatingCallArguments(Arch::AArch64, BinaryFormat::COFF,
+                                         Scalar, {Record}));
+    }
+}
 TEST(FloatingCallArguments, CompleteScalarRegistersAndConservativeBoundaries) {
   for (Arch A : {Arch::X64, Arch::AArch64}) {
     for (BinaryFormat F :
@@ -31,7 +70,16 @@ TEST(FloatingCallArguments, CompleteScalarRegistersAndConservativeBoundaries) {
         EXPECT_EQ(Layout->ParameterBytes,
                   (std::vector<uint16_t>{Bytes, Bytes}));
         EXPECT_TRUE(floatingCallArguments(A, F, T, {}));
-        EXPECT_FALSE(floatingCallArguments(A, F, T, {T, NdType::makePtr()}));
+        const auto Mixed =
+            floatingCallArguments(A, F, T, {T, NdType::makePtr()});
+        ASSERT_TRUE(Mixed);
+        ASSERT_EQ(Mixed->Scalars.size(), 2u);
+        EXPECT_TRUE(Mixed->Scalars[0].Floating);
+        EXPECT_TRUE(Mixed->Scalars[1].Pointer);
+        EXPECT_EQ(Mixed->Scalars[0].Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Mixed->Scalars[1].Kind,
+                  SourceABICarrierKind::IntegerRegister);
         EXPECT_FALSE(floatingCallArguments(A, F, NdType::makeInt(8), {T}));
         EXPECT_FALSE(floatingCallArguments(A, F, T, {NdType::makeFloat(10)}));
         EXPECT_FALSE(
@@ -43,7 +91,18 @@ TEST(FloatingCallArguments, CompleteScalarRegistersAndConservativeBoundaries) {
     }
   }
   const auto T = NdType::makeFloat(8);
-  EXPECT_FALSE(floatingCallArguments(Arch::X86, BinaryFormat::COFF, T, {T}));
+  for (BinaryFormat F :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    const auto Stack = floatingCallArguments(Arch::X86, F, T, {T, T});
+    ASSERT_TRUE(Stack);
+    ASSERT_EQ(Stack->Scalars.size(), 2u);
+    EXPECT_EQ(Stack->Scalars[0].StackOffset, 4);
+    EXPECT_EQ(Stack->Scalars[1].StackOffset, 12);
+    EXPECT_EQ(Stack->Scalars[0].Kind, SourceABICarrierKind::Stack);
+    EXPECT_TRUE(Stack->Scalars[0].Floating);
+    EXPECT_TRUE(floatingCallArguments(Arch::X86, F, T, {}));
+    EXPECT_FALSE(floatingCallArguments(Arch::X86, F, T, {NdType::makePtr()}));
+  }
   FunctionSym Function;
   Function.ReturnType = T;
   Function.Params = {{"x", T}};

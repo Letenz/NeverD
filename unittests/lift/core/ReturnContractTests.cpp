@@ -15,6 +15,7 @@
 
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -97,6 +98,37 @@ MedFunc branching(va_t Entry, MedOp Last) {
                          {}, {1, 2}),
                    block({returning(rax(0))}, {0}),
                    block({std::move(Last), returning(Value)}, {0})});
+}
+
+TEST(ReturnContract, ExplicitX87PrecisionRequiresAnExactIEEEValue) {
+  MedVar IEEE = temporary(1);
+  IEEE.Size = 8;
+  MedVar Extended = temporary(2);
+  Extended.Size = 10;
+  MedVar Result = temporary(3);
+  Result.Size = 10;
+  const MedOp Widen = operation(NdOp::FLOAT_FLOAT2FLOAT, Extended, {IEEE});
+  auto Width = [&](std::vector<MedOp> Ops) {
+    Ops.push_back(returning(Result));
+    auto Func = function(CalleeEntry, {block(std::move(Ops))});
+    Func.ExplicitX87ReturnValue = true;
+    inferMedTypes(Func, Arch::X86);
+    return Func.ReturnType->Size;
+  };
+  EXPECT_EQ(Width({Widen, operation(NdOp::COPY, Result, {Extended})}), 8u);
+  EXPECT_EQ(Width({Widen, operation(NdOp::SUBBYTES, Result,
+                                    {Extended, MedVar::makeConst(0, 4)})}),
+            8u);
+  EXPECT_EQ(Width({Widen, operation(NdOp::SUBBYTES, Result,
+                                    {Extended, MedVar::makeConst(1, 4)})}),
+            10u);
+  EXPECT_EQ(
+      Width({Widen, operation(NdOp::FLOAT_ADD, Result, {Extended, Extended})}),
+      10u);
+  EXPECT_EQ(Width({Widen, operation(NdOp::INT_XOR, Result,
+                                    {Extended, MedVar::makeConst(1, 10)})}),
+            10u);
+  EXPECT_EQ(Width({operation(NdOp::LOAD, Result, {IEEE})}), 10u);
 }
 
 MedOp callTo(va_t Target, int Version) {

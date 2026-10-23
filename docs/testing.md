@@ -243,6 +243,28 @@ qualifiers, convention ownership and `_Noreturn`. The original SDK check's
 `UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
 Windows architectures, independently of the synthetic import names.
 The qualifier execution cases also cover void results.
+They supply complete local struct/union layouts as well: pointer-only imports
+must keep forward declarations and compile alongside independent definitions.
+`LocalTypesDebugContext.PointerDeclarationsDoNotRequireRecordLayouts` checks
+tag kinds, type-dependency tracking and that a complete-layout request still
+wins in either order. The original SDK cases `UseCRTExceptionCopy`,
+`UseCRTTypeName` and `UseCRTTypeCleanup` cover both routes on x86/x64/ARM64.
+`RecordCallContract.WindowsRecordResultsPreserveEveryByte` executes HighC and
+LLVMC from O0/O2 PE fixtures against an independent host provider, at O0/O2
+with address/undefined-behavior sanitizers. x64 hidden buffers and ARM64
+register HFAs preserve both returned fields through single and chained calls,
+including NaN payloads and signed zero; output sentinels bound every write.
+ARM64 explicitly stores both fields, so the test does not infer a wrapper's
+source return type from unused scratch registers. The shared placement suite
+covers one through four float/double HFA members on COFF/ELF/Mach-O and rejects
+incomplete, padded and spilled records. Native Windows/ARM64 execution and
+unobserved wrapper return-type recovery are separate coverage.
+`ReturnContract.ExplicitX87PrecisionRequiresAnExactIEEEValue` keeps arithmetic,
+raw byte changes and unknown loads at eighty bits while exact IEEE extensions
+and identity copies retain their declared precision. SDK checks use the
+original integer keyword identity and compare generated anonymous-enum
+members, signedness and size before using the SDK typedef; unmodified output
+must also compile independently.
 `Win64CallContract.AVoidSourceReturnDoesNotEraseAnObservedCallResult` checks
 that a volatile store of the machine result keeps it live despite a proposed
 void import prototype and a wrapper with a void source return.

@@ -8795,9 +8795,10 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
     if (Slot.Name.empty() || !DeclaredSlots.insert(Slot.Name).second)
       continue;
     emitIndent(1);
-    if (Slot.Type)
+    if (Slot.Type) {
+      noteRecordValue(Slot.Type);
       OS << declarationToC(Slot.Type, Slot.Name) << ";\n";
-    else
+    } else
       OS << "uint64_t " << Slot.Name << ";\n";
     CallDeclNames.push_back(Slot.Name);
     EmittedLocal = true;

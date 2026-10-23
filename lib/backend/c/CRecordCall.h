@@ -62,8 +62,17 @@ recordCallArgument(const std::string &Type,
       throw std::runtime_error("A record call carrier is wider than a word");
     const std::string Integer = "uint" + std::to_string(Word * 8) + "_t";
     const std::string Name = "__neverd_piece" + std::to_string(I);
-    Text += Integer + " " + Name + " = (" + Integer + ")(uintptr_t)(" +
-            Operand(Piece.Argument) + "); ";
+    if (Piece.Floating) {
+      if (Piece.Bytes != 4 && Piece.Bytes != 8)
+        throw std::runtime_error(
+            "A floating record piece has unsupported width");
+      const std::string Float = Piece.Bytes == 4 ? "float" : "double";
+      Text += Integer + " " + Name + " = __builtin_bit_cast(" + Integer +
+              ", (" + Float + ")(" + Operand(Piece.Argument) + ")); ";
+    } else {
+      Text += Integer + " " + Name + " = (" + Integer + ")(uintptr_t)(" +
+              Operand(Piece.Argument) + "); ";
+    }
     Text += "__builtin_memcpy((unsigned char *)&__neverd_record + " +
             std::to_string(Piece.Offset) + ", &" + Name + ", " +
             std::to_string(Piece.Bytes) + "); ";

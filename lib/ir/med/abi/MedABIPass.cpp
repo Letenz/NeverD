@@ -395,8 +395,103 @@ extern const AbiCallPolicy Win64AbiCallPolicy;
 extern const AbiCallPolicy I386AbiCallPolicy;
 
 std::optional<FloatingCallArguments>
+boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
+  const auto &Registers = getTargetRegInfo(A);
+  if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+      !Op.ScalarCallSignature || Op.SourceCallHint ||
+      Op.CalleeVariadicFrom >= 0 ||
+      Op.NumInputs != Op.ScalarCallSignature->Scalars.size() + 1)
+    return std::nullopt;
+  const auto &Signature = *Op.ScalarCallSignature;
+  if (Signature.ReturnElements) {
+    if (A != Arch::AArch64 || Op.CalleeFloatReturnBytes ||
+        Op.Output.Kind != MedVar::Temp ||
+        Op.Output.Size != Signature.ReturnBytes ||
+        Signature.ReturnElements > Registers.FPReturnRegs.size())
+      return std::nullopt;
+  } else if ((A != Arch::X86 && Signature.Scalars.empty()) ||
+             Op.CalleeFloatReturnBytes != Signature.ReturnBytes ||
+             Op.Output.Kind != MedVar::Reg ||
+             (A == Arch::X86 ? (!Registers.isX87StackReg(Op.Output.RegOff) ||
+                                Op.Output.Size != 10)
+                             : Op.Output.RegOff != Registers.FPReturnReg) ||
+             Op.Output.Size < Op.CalleeFloatReturnBytes) {
+    return std::nullopt;
+  }
+  std::vector<TypeRef> Parameters;
+  for (size_t I = 0; I < Op.ScalarCallSignature->Scalars.size(); ++I) {
+    const auto &Parameter = Op.ScalarCallSignature->Scalars[I];
+    if (Op.Inputs[I + 1].Size < Parameter.Bytes ||
+        (Parameter.Pointer &&
+         (Parameter.Floating || Parameter.Bytes != Registers.PointerSize)))
+      return std::nullopt;
+    Parameters.push_back(Parameter.Floating ? NdType::makeFloat(Parameter.Bytes)
+                         : Parameter.Pointer
+                             ? NdType::makePtr()
+                             : NdType::makeInt(Parameter.Bytes));
+    Parameters.back()->Size = Parameter.Bytes;
+  }
+  const auto Record = [](llvm::ArrayRef<TypeRef> Members) -> TypeRef {
+    if (Members.empty())
+      return nullptr;
+    for (const auto &Member : Members)
+      if (Member->Kind != NdTypeKind::Float ||
+          Member->Size != Members.front()->Size)
+        return nullptr;
+    auto Type = NdType::makeStruct(
+        std::vector<TypeRef>(Members.begin(), Members.end()));
+    if (Type)
+      Type->Passing = NdRecordPassing::ByValue;
+    return Type;
+  };
+  if (!Signature.ParameterElements.empty()) {
+    std::vector<TypeRef> Source;
+    size_t At = 0;
+    for (uint16_t Count : Signature.ParameterElements) {
+      const size_t Pieces = std::max<uint16_t>(Count, 1);
+      if (Pieces > Parameters.size() - At)
+        return std::nullopt;
+      TypeRef Type = Count
+                         ? Record(llvm::ArrayRef(Parameters).slice(At, Pieces))
+                         : Parameters[At];
+      if (!Type)
+        return std::nullopt;
+      Source.push_back(std::move(Type));
+      At += Pieces;
+    }
+    if (At != Parameters.size())
+      return std::nullopt;
+    Parameters = std::move(Source);
+  }
+  TypeRef Result = NdType::makeFloat(Signature.ReturnBytes);
+  if (Signature.ReturnElements) {
+    if (Signature.ReturnBytes % Signature.ReturnElements)
+      return std::nullopt;
+    std::vector<TypeRef> Members(
+        Signature.ReturnElements,
+        NdType::makeFloat(Signature.ReturnBytes / Signature.ReturnElements));
+    Result = Record(Members);
+  }
+  const auto Expected = floatingCallArguments(A, F, Result, Parameters);
+  return Expected && *Expected == *Op.ScalarCallSignature ? Expected
+                                                          : std::nullopt;
+}
+
+std::optional<FloatingCallArguments>
 recoveredFloatingCallArguments(const MedOp &Op, const MedCallInfo &Call, Arch A,
                                BinaryFormat F) {
+  if (Op.ScalarCallSignature) {
+    const auto Bound = boundFloatingCallArguments(Op, A, F);
+    if (!Bound || Call.VarArgFixedCount >= 0 ||
+        Call.Args.size() != Bound->Scalars.size() ||
+        Call.ArgReadBytes.size() != Call.Args.size())
+      return std::nullopt;
+    for (size_t I = 0; I < Call.Args.size(); ++I)
+      if (!(Call.Args[I] == Op.Inputs[I + 1]) ||
+          Call.ArgReadBytes[I] != Bound->Scalars[I].Bytes)
+        return std::nullopt;
+    return Bound;
+  }
   const auto &Registers = getTargetRegInfo(A);
   if (!Op.CalleeFloatReturnBytes || Op.SourceCallHint ||
       Call.VarArgFixedCount >= 0 || Call.IntegerRegisterArgCount != 0 ||
@@ -942,6 +1037,14 @@ void recoverCallAbi(
         noteRead(*CallSlot);
       // These complete header operands were bound before SSA. Recovering
       // them again from local setup would lose untouched forwarding inputs.
+      if (Op.ScalarCallSignature &&
+          Op.NumInputs == Op.ScalarCallSignature->Scalars.size() + 1) {
+        CI.Args.assign(Op.Inputs.begin() + 1, Op.Inputs.begin() + Op.NumInputs);
+        for (const auto &Parameter : Op.ScalarCallSignature->Scalars)
+          CI.ArgReadBytes.push_back(Parameter.Bytes);
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
       if (Op.CalleeFloatReturnBytes && Op.CalleeRegisterArgs == 0 &&
           Op.CalleeStackArgs == 0 && Op.CalleeVectorArgs >= 0 &&
           Op.NumInputs == 1u + Op.CalleeVectorArgs) {

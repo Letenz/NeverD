@@ -17,7 +17,10 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
+
+#include <algorithm>
 
 namespace neverd::libc {
 
@@ -53,10 +56,17 @@ recordCallScalarParameter(const FunctionSym &Function,
   return std::nullopt;
 }
 
+struct RecordCallArguments : IntegerCallArguments {
+  /// The complete dense HFA is returned in the FP register bank, rather
+  /// than through ResultPointer. Its source object is reinterpreted as the
+  /// checked machine result carrier by the C emitter.
+  bool FloatingResult = false;
+};
+
 /// A user's declaration keeps its own call model. Header declarations retain
 /// their original name and header while their record pieces take the places
 /// SourceParameterPlacement assigns. Transparent pointer unions stay pointers.
-inline std::optional<IntegerCallArguments>
+inline std::optional<RecordCallArguments>
 recordCallArguments(const FunctionSym &Function, Arch Architecture,
                     BinaryFormat Format, LibCVariant Variant) {
   if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary) ||
@@ -78,9 +88,30 @@ recordCallArguments(const FunctionSym &Function, Arch Architecture,
     }
     Types.push_back(std::move(Type));
   }
-  return HasRecord ? integerCallArguments(Architecture, Format,
-                                          Function.ReturnType, Types)
-                   : std::nullopt;
+  if (HasRecord)
+    if (auto Integer = integerCallArguments(Architecture, Format,
+                                            Function.ReturnType, Types))
+      return RecordCallArguments{std::move(*Integer), false};
+  const auto Floating = floatingCallArguments(Function, Architecture, Format);
+  if (!Floating ||
+      (Floating->ParameterElements.empty() && !Floating->ReturnElements))
+    return std::nullopt;
+  RecordCallArguments Result;
+  Result.FloatingResult = Floating->ReturnElements != 0;
+  size_t At = 0;
+  for (uint16_t Count : Floating->ParameterElements) {
+    IntegerCallParameter Parameter;
+    uint16_t Offset = 0;
+    for (uint16_t I = 0; I < std::max<uint16_t>(Count, 1); ++I, ++At) {
+      const auto &Scalar = Floating->Scalars[At];
+      Parameter.Pieces.push_back(
+          {static_cast<unsigned>(At), Offset, Scalar.Bytes, Scalar.Floating});
+      Offset += Scalar.Bytes;
+    }
+    Result.Parameters.push_back(std::move(Parameter));
+  }
+  Result.Positions = Floating->Scalars.size();
+  return Result;
 }
 
 } // namespace neverd::libc

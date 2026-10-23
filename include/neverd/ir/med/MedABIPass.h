@@ -29,9 +29,14 @@ namespace neverd {
 
 int regToArgIdx(uint64_t RegOff, Arch TheArch);
 
-/// A complete fixed scalar FP call established by ABI recovery. Result and
-/// argument lane evidence is required independently; variadic, mixed-bank,
-/// stack and incomplete calls do not acquire a scalar source declaration.
+/// A complete source-ordered scalar call bound before SSA. Recheck its stored
+/// placement and the surviving operands/result; HighC does not need a second
+/// argument-recovery pass for conventions with callee summaries.
+std::optional<FloatingCallArguments>
+boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F);
+
+/// A complete fixed scalar FP call established by ABI recovery. Bound mixed
+/// calls additionally require agreement with the recovered operand list.
 std::optional<FloatingCallArguments>
 recoveredFloatingCallArguments(const MedOp &Op, const MedCallInfo &Call, Arch A,
                                BinaryFormat F);

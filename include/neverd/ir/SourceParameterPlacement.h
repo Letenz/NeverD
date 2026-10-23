@@ -55,6 +55,11 @@ struct SourceParameterPlacement {
   std::optional<SourceABIValueLocation> ResultPointer;
 };
 
+/// AAPCS64's homogeneous floating aggregate classification, shared by
+/// parameter placement and complete header-call result transport.
+std::optional<std::vector<NdScalarLeaf>>
+aapcs64FloatingAggregate(const TypeRef &Type);
+
 /// The placement of the parameters \p ParamTypes, returning \p ReturnType, in
 /// the ordinary convention of code for \p A in a \p F image; none when
 /// NeverD has no rules for that convention.

@@ -371,6 +371,7 @@ class X87CallGraphCache {
   const NoReturnCalleeProver *NonReentrantProver;
   const libc::NoReturnTargetIndex *NonReentrantTargets;
   const std::set<va_t> *ImmutableEntries;
+  const std::map<std::string, uint16_t> DeclaredFloatingImports;
   std::list<std::shared_ptr<PendingGraph>> Pending;
   size_t PendingBytes = 0;
   size_t Leaders = 0, Waits = 0, NonWaitingMisses = 0;
@@ -420,10 +421,12 @@ public:
   X87CallGraphCache(const NoReturnCalleeProver *Prover,
                     const libc::NoReturnTargetIndex *Targets, bool RetainBodies,
                     const X87CallGraphCacheLimits &Limits,
-                    const std::set<va_t> *Entries)
+                    const std::set<va_t> *Entries,
+                    std::map<std::string, uint16_t> FloatingImports)
       : MaxGraphs(Limits.Entries), MaxBytes(Limits.GraphBytes),
         MaxSummaryBytes(Limits.BodyBytes), NonReentrantProver(Prover),
         NonReentrantTargets(Targets), ImmutableEntries(Entries),
+        DeclaredFloatingImports(std::move(FloatingImports)),
         RetainCallRegisterBodies(RetainBodies) {}
 
 private:
@@ -966,15 +969,15 @@ createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
                                  X87CallGraphCacheLimits());
 }
 
-std::shared_ptr<X87CallGraphCache>
-createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
-                        const libc::NoReturnTargetIndex *NonReentrantTargets,
-                        bool RetainCallRegisterBodies,
-                        const X87CallGraphCacheLimits &Limits,
-                        const std::set<va_t> *ImmutableEntries) {
+std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
+    const NoReturnCalleeProver *NonReentrantProver,
+    const libc::NoReturnTargetIndex *NonReentrantTargets,
+    bool RetainCallRegisterBodies, const X87CallGraphCacheLimits &Limits,
+    const std::set<va_t> *ImmutableEntries,
+    std::map<std::string, uint16_t> DeclaredFloatingImports) {
   return std::make_shared<X87CallGraphCache>(
       NonReentrantProver, NonReentrantTargets, RetainCallRegisterBodies, Limits,
-      ImmutableEntries);
+      ImmutableEntries, std::move(DeclaredFloatingImports));
 }
 
 std::array<size_t, 3> CFGBuilder::x87CallGraphCacheStatsForTesting() const {
@@ -1052,6 +1055,14 @@ class X87CallEffectIndex {
   bool UnrecordedLift = false;
 
   std::optional<int> importEffect(llvm::StringRef Name) const {
+    if (Image.Arch == Arch::X86 && Settings.SharedX87CallGraphs) {
+      const auto &Declared =
+          Settings.SharedX87CallGraphs->DeclaredFloatingImports;
+      if (const auto It = Declared.find(Name.str());
+          It != Declared.end() &&
+          (It->second == sizeof(float) || It->second == sizeof(double)))
+        return -1;
+    }
     bool Floating = false, LongDouble = false, Complex = false;
     if (const auto *Prototype =
             libc::libcPrototype(Name.str(), Image.abiFormat())) {
