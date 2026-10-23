@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
@@ -47,6 +48,22 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
                                    bool ResultLive,
                                    const std::vector<std::string> &Args) {
   const bool AArch64 = TheArch == Arch::AArch64;
+  if (AArch64 && AsmStr == kAArch64AuthenticatedTargetUseAsm &&
+      Args.size() == 1 && !ResultLive)
+    return {aarch64PAuthTargetUseC(Args[0]) + "\n", false};
+  // Preserve the tied input/output of machine PAC/AUT/XPAC; the generic asm
+  // renderer cannot infer that constraint from operand numbers alone.
+  if (AArch64) {
+    for (const auto &Auth : kAArch64PAuthOperations) {
+      if (AsmStr != Auth.llvmAsm() || Args.size() != (Auth.Strip ? 1 : 2))
+        continue;
+      const std::string Value =
+          aarch64PAuthMachineC(Auth, Args[0], Auth.Strip ? "" : Args[1]);
+      const std::string Prefix =
+          ResultLive && !ResultName.empty() ? ResultName + " = " : "(void)";
+      return {Prefix + Value + ";\n", false};
+    }
+  }
   if (Mnemonic == "sel" && Args.size() >= 2) {
     std::string Result;
     if (ResultLive && !ResultName.empty())

@@ -438,6 +438,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   EmittedGlobalNames.clear();
   DeclaredCalleeNames.clear();
   RecordPointerTags.clear();
+  HeaderCallRecords.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
   prepareSourceImportPrototypes(Mod);
@@ -512,7 +513,7 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   auto DeclareIncomplete = [&](const std::set<std::string> &Defined) {
     bool Any = false;
     for (const std::string &Tag : RecordPointerTags) {
-      if (Defined.count(Tag))
+      if (Defined.count(Tag) || HeaderCallRecords.count(Tag))
         continue;
       if (Held(Tag) || libc::isKnownFunction(Tag) ||
           libc::headerOfDataObject(Tag)) {
@@ -547,10 +548,11 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   std::vector<TypeRef> Named;
   Named.reserve(Words.size());
   for (const std::string &Word : Words)
-    Named.push_back(NdType::makeNamedRecord(Word, 0));
+    if (!HeaderCallRecords.count(Word))
+      Named.push_back(NdType::makeNamedRecord(Word, 0));
   // And the records whose members it reads, which it need not spell.
   for (const std::string &Name : MemberRecords)
-    if (!Words.count(Name))
+    if (!Words.count(Name) && !HeaderCallRecords.count(Name))
       Named.push_back(NdType::makeNamedRecord(Name, 0));
   CRecordDefinitions Definitions = Opts.RecordDefinitions(Named);
   // The records and enumerations the text spells by their tags' names,

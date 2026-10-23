@@ -46,7 +46,6 @@
 
 namespace neverd {
 
-namespace {
 /// A call whose callee returns a scalar float in the vector return register
 /// defines that register, not the integer one (promoteFloatCallResult). The
 /// callees are the imports their C declarations describe and the functions
@@ -95,6 +94,7 @@ void bindFloatCallResults(const BinaryImage &Img, PipelineResult &Result) {
   }
 }
 
+namespace {
 /// The import-address names of one run, plus the names of the functions it
 /// lifts. When those imports come from the session cache, every name this run
 /// adds is removed afterwards: the next run must still see imports only. A

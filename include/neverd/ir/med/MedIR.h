@@ -285,6 +285,9 @@ struct MedOp {
   /// four bits per argument, or per slot, in four-byte units (1 float, 2
   /// double, 4 all).
   uint32_t CalleeVectorArgWidths = 0;
+  /// The proven scalar FP result width. A complete header signature also
+  /// binds the explicit FP inputs. Zero means no scalar result contract.
+  uint16_t CalleeFloatReturnBytes = 0;
   /// The bytes the callee reads of input \p Input, a vector argument, or 0.
   uint16_t vectorArgumentWidth(unsigned Input) const {
     if (CalleeVectorSlots) {

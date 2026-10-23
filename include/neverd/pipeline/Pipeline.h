@@ -17,6 +17,7 @@
 #include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/evm/EVMIR.h"
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceMap.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
@@ -337,6 +338,12 @@ struct PipelineResult {
   /// (Windows on ARM64): a call to one passes that many and no other
   /// register.
   std::map<va_t, int> CallEntryArgumentCounts;
+  /// Complete fixed scalar FP import signatures, with no integer or stack
+  /// parameters. Their register uses must reach SSA before call setup scans.
+  std::map<va_t, FloatingCallArguments> CallEntryFloatingArguments;
+  /// The same signatures for imports reached only by omitted callees.
+  std::shared_ptr<const std::map<va_t, FloatingCallArguments>>
+      OmittedCalleeFloatingArguments;
   /// CallEntryArgumentCounts for every import of the image, which the
   /// conversions of omitted callees read: their own calls reach imports the
   /// selected functions need not call.  Null where the convention counts

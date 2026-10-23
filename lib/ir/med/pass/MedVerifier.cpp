@@ -98,6 +98,9 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
               !x86SgxShapeIsValid(Id, x86SgxMedShape(Op)))
             Err("x86 SGX intrinsic has an invalid completion contract", Blk.Id,
                 Op.Addr);
+          const bool IsAmxState = Id == Intrinsic::X86AMXState;
+          if (IsAmxState && !x86AmxShapeIsValid(x86AmxMedShape(Op)))
+            Err("invalid AMX architectural bank operation", Blk.Id, Op.Addr);
           const bool IsSystemState = isX86SystemStateIntrinsic(Id);
           if (IsSystemState &&
               !x86SystemStateShapeIsValid(Id, x86SystemStateMedShape(Op)))
@@ -157,7 +160,7 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
                   Op.NumInputs > 1 ? Op.Inputs[1].Size : 0);
           if (IsMemoryIntrinsic && !IsDefaultString && !IsDefaultRegisterForm &&
               !IsApxAtomic && !IsX86Invalidate && !IsVirtualization &&
-              !IsSystemState &&
+              !IsSystemState && !IsAmxState &&
               !intrinsicMemoryAddressSpaceShapeIsValid(
                   Id, Op.NumInputs, Op.Output.Size,
                   Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,

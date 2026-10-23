@@ -66,6 +66,19 @@ struct ImportBindSlot {
   bool WeakImport = false;
 };
 
+/// A dyld signing recipe, not a runtime pointer value. The original slot bytes
+/// remain encoded: offline loading cannot manufacture the process's PAC.
+struct MachOAuthenticatedPointer {
+  va_t Target = InvalidVA;
+  std::string Symbol;
+  std::string Module;
+  int64_t Addend = 0;
+  uint16_t Diversity = 0;
+  uint8_t Key = 0;
+  bool AddressDiversity = false;
+  bool WeakImport = false;
+};
+
 /// One dependency load command, including duplicate names and invalid-name
 /// placeholders. Its position, not a deduplicated library list, owns the
 /// one-based dyld library ordinal.
@@ -347,11 +360,28 @@ struct BinaryImage {
   /// be loaded away from address zero, so unrelocated absolute instruction
   /// immediates cannot denote its own link-time image addresses.
   bool MachOIsDylib = false;
+  uint32_t MachOCPUSubtype = 0;
+  bool isArm64e() const {
+    return isMachO() && Arch == Arch::AArch64 &&
+           (MachOCPUSubtype & ~uint32_t(llvm::MachO::CPU_SUBTYPE_MASK)) ==
+               llvm::MachO::CPU_SUBTYPE_ARM64E;
+  }
   /// Exact slots decoded by the supported chained-fixup reader. A raw nonzero
   /// slot in a chained image is not a pointer merely because it looks mapped.
   bool MachOHasChainedFixups = false;
   bool MachOChainedFixupsAmbiguous = false;
   std::set<va_t> MachOResolvedChainedPointerSlots;
+  std::map<va_t, MachOAuthenticatedPointer> MachOAuthenticatedPointers;
+  std::string MachOChainedFixupsError;
+  /// Any byte of an encoded signing recipe overlaps this storage range.
+  bool hasMachOAuthenticatedPointerIn(va_t Address, uint64_t Size) const {
+    if (!Size)
+      return false;
+    const auto It =
+        MachOAuthenticatedPointers.lower_bound(Address >= 7 ? Address - 7 : 0);
+    return It != MachOAuthenticatedPointers.end() &&
+           (It->first <= Address || It->first - Address < Size);
+  }
   std::vector<MachODylibReference> MachODylibReferences;
   /// A requested module is not a specific-provider proof under flat lookup.
   /// Filled from MH_TWOLEVEL only when MH_FORCE_FLAT is absent.
@@ -1323,6 +1353,8 @@ struct BinaryImage {
   /// being loaded.  hasRelocationProvenanceIn (RelocationProvenance.h) asks
   /// the same of a range of bytes; the two read the same sources.
   bool hasRelocationProvenanceAt(va_t Address) const {
+    if (MachOAuthenticatedPointers.count(Address))
+      return true;
     if (CodePtrRelocSlots.count(Address) || DataPtrRelocSlots.count(Address) ||
         RelDataPtrRelocSlots.count(Address) || RelCodeRelocSlots.count(Address))
       return true;
@@ -2099,7 +2131,8 @@ struct BinaryImage {
   /// import veneers or a coarse stub range.
   bool isValidImportStorageSlot(va_t SlotVA, llvm::StringRef Name) const {
     const uint32_t PointerSize = getPointerSize();
-    if (PointerSize == 0 || SlotVA % PointerSize != 0 || Name.empty())
+    if (PointerSize == 0 || SlotVA % PointerSize != 0 || Name.empty() ||
+        hasMachOAuthenticatedPointerIn(SlotVA, PointerSize))
       return false;
     const Segment *Seg = getSegmentFor(SlotVA);
     return Seg && !Seg->isExecutable() && readVA(SlotVA, PointerSize);

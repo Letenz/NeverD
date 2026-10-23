@@ -756,7 +756,8 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   // anchor at its start address before the first surviving statement, so the
   // entry keeps its code, its label, and its address range for the EH
   // structurer.
-  if (CurMed)
+  if (CurMed) {
+    std::optional<std::unordered_set<va_t>> AnchoredEntries;
     for (size_t B = 1; B < CurMed->Blocks.size(); ++B) {
       const MedBlock &Block = CurMed->Blocks[B];
       if (!Block.Preds.empty() || Block.StartAddr == 0 ||
@@ -765,11 +766,15 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
       Entries.insert(Block.StartAddr);
       // DCE runs repeatedly; an anchor from an earlier round, possibly
       // wrapped since, already carries the address.
-      bool Anchored = false;
-      walkStmts(Func.Body, [&](const HighStmt &S) {
-        Anchored |= S.Addr == Block.StartAddr;
-      });
-      if (Anchored)
+      // This loop only inserts anchors. Index the existing nested addresses
+      // once, on demand, and add each new anchor before checking another
+      // block. The index never survives a statement rewrite or DCE round.
+      if (!AnchoredEntries) {
+        AnchoredEntries.emplace();
+        walkStmts(Func.Body,
+                  [&](const HighStmt &S) { AnchoredEntries->insert(S.Addr); });
+      }
+      if (AnchoredEntries->count(Block.StartAddr))
         continue;
       auto First = std::find_if(
           Func.Body.begin(), Func.Body.end(), [&](const HighStmt &S) {
@@ -781,7 +786,9 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
       Anchor.Kind = StmtKind::Block;
       Anchor.Addr = Block.StartAddr;
       Func.Body.insert(First, std::move(Anchor));
+      AnchoredEntries->insert(Block.StartAddr);
     }
+  }
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 0: unreachable (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");

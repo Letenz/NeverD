@@ -363,29 +363,6 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
     S.emitVoidIntrinsic(Intrinsic::A64_Clrex);
     break;
 
-  // --- Pointer authentication (ARMv8.3) ---
-  // Capstone 6 consolidates PACIASP/PACIAZ → PACIA, PACIBSP/PACIBZ → PACIB,
-  // etc.
-  case AARCH64_INS_PACIA:
-  case AARCH64_INS_PACIZA:
-    S.emitIntrinsic(Intrinsic::Pacia);
-    break;
-  case AARCH64_INS_PACIB:
-  case AARCH64_INS_PACIZB:
-    S.emitIntrinsic(Intrinsic::Pacib);
-    break;
-  case AARCH64_INS_AUTIA:
-  case AARCH64_INS_AUTIZA:
-    S.emitIntrinsic(Intrinsic::Autia);
-    break;
-  case AARCH64_INS_AUTIB:
-  case AARCH64_INS_AUTIZB:
-    S.emitIntrinsic(Intrinsic::Autib);
-    break;
-  case AARCH64_INS_XPACI:
-    S.emitIntrinsic(Intrinsic::Xpaci);
-    break;
-
   default:
     return false;
   }

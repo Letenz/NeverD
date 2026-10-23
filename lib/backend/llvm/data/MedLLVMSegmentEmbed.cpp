@@ -137,6 +137,12 @@ MedLLVMEmitter::embedRodataRun(uint64_t SegVA) {
   std::vector<const Segment *> Run;
   if (!collectRodataRun(Img, SegVA, Run, RunStart, RunEnd))
     return {nullptr, 0};
+  if (Img->hasMachOAuthenticatedPointerIn(RunStart, RunEnd - RunStart)) {
+    uint64_t Base = 0;
+    auto *Global = llvm::dyn_cast_or_null<llvm::GlobalVariable>(
+        buildCodePtrSegmentGlobal(SegVA, Base));
+    return {Global, Base};
+  }
   if (auto It = SegmentDataGlobals.find(RunStart);
       It != SegmentDataGlobals.end()) {
     const auto Base = SegmentDataBases.find(RunStart);
@@ -234,6 +240,7 @@ bool MedLLVMEmitter::segHasPtrRelocSlots(const Segment *S) const {
   };
   return segmentHoldsSlot(*S, Img->CodePtrRelocSlots) ||
          segmentHoldsSlot(*S, Img->DataPtrRelocSlots) ||
+         Img->hasMachOAuthenticatedPointerIn(S->VA, S->Size) ||
          segmentHoldsSlot(*S, EffectiveImportStorageSlots) ||
          segmentHoldsSlot(*S, ConflictingImportStorageSlots) ||
          segmentHoldsSlot(*S, ExternalFunctionPointerSlots) ||
@@ -247,7 +254,8 @@ bool MedLLVMEmitter::segHasLoaderPtrRelocSlots(const Segment *S) const {
     auto It = Slots.lower_bound(S->VA);
     return It != Slots.end() && S->contains(*It);
   };
-  return holds(Img->CodePtrRelocSlots) || holds(Img->DataPtrRelocSlots);
+  return holds(Img->CodePtrRelocSlots) || holds(Img->DataPtrRelocSlots) ||
+         Img->hasMachOAuthenticatedPointerIn(S->VA, S->Size);
 }
 
 llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
@@ -286,6 +294,8 @@ llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
   uint64_t MirrorBegin = 0, MirrorEnd = 0;
   readOnlyAfterRelocRun(Seg, MirrorBegin, MirrorEnd);
   if (CodePtrTableGlobals.count(MirrorBegin) ||
+      Img->hasMachOAuthenticatedPointerIn(MirrorBegin,
+                                          MirrorEnd - MirrorBegin) ||
       preservesRegistrationImageStorage(MirrorBegin, MirrorEnd))
     return nullptr;
   // These ranges belong to live original-image storage, not a private copy of

@@ -721,4 +721,133 @@ TEST(Win64CallContract, AFloatArgumentReachesItsImportsSlot) {
   EXPECT_NE(Body.find("return sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
 }
+
+TEST(Win64CallContract, HeaderOnlyFloatingImportRetainsItsTypedABI) {
+  class Header : public NullDebugContext {
+  public:
+    unsigned Bytes = 8;
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "fixture_fp")
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Name = Name.str();
+      Function.ReturnType = NdType::makeFloat(Bytes);
+      Function.Params = {{"x", NdType::makeFloat(Bytes)},
+                         {"y", NdType::makeFloat(Bytes)}};
+      Function.PrototypeFromHeader = true;
+      Function.PrototypeLibrary = "test-windows-header";
+      return Function;
+    }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      auto Result =
+          Address == Iat ? resolvePrototype("fixture_fp") : std::nullopt;
+      if (Result)
+        Result->Addr = Address;
+      return Result;
+    }
+  } Debug;
+  for (bool RegisterTarget : {false, true}) {
+    for (bool Writable : {false, true}) {
+      std::vector<uint8_t> Call = throughSlot(Text + 4, Iat);
+      if (RegisterTarget) {
+        Call = {0x48, 0x8B, 0x05}; // mov rax, [rip + Iat]; call rax
+        const auto Displacement = rel32(Text + 4 + 7, Iat);
+        Call.insert(Call.end(), Displacement.begin(), Displacement.end());
+        Call.insert(Call.end(), {0xFF, 0xD0});
+      }
+      BinaryImage Image =
+          makeImage(framed({Call}), {{Text, "forward_fp"}}, {"fixture_fp"});
+      ASSERT_TRUE(Image.recordImportStorageSlot(
+          Iat, "fixture_fp", 0, ImportStorageEvidence::LoaderBind));
+      if (Writable)
+        Image.Segments.back().Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+      for (unsigned Bytes : {4u, 8u}) {
+        Debug.Bytes = Bytes;
+        for (bool LLVM : {false, true}) {
+          SCOPED_TRACE(Bytes);
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(RegisterTarget);
+          SCOPED_TRACE(Writable);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = LLVM;
+          Options.OnlyFunctionEntries.insert(Text);
+          auto Result = Pipeline().run(Image, Context, Options, &Debug);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            const auto *Callee = Result.LlvmModule->getFunction("fixture_fp");
+            std::string IR;
+            llvm::raw_string_ostream IROut(IR);
+            Result.LlvmModule->print(IROut, nullptr);
+            ASSERT_NE(Callee, nullptr) << IR;
+            ASSERT_EQ(Callee->arg_size(), 2u);
+            const auto *Type = Bytes == 4 ? llvm::Type::getFloatTy(Context)
+                                          : llvm::Type::getDoubleTy(Context);
+            EXPECT_EQ(Callee->getReturnType(), Type);
+            EXPECT_EQ(Callee->getFunctionType()->getParamType(0), Type);
+            EXPECT_EQ(Callee->getFunctionType()->getParamType(1), Type);
+            EXPECT_EQ(Callee->getCallingConv(), llvm::CallingConv::Win64);
+            if (Writable && RegisterTarget) {
+              const auto *Forward =
+                  Result.LlvmModule->getFunction("forward_fp");
+              ASSERT_NE(Forward, nullptr);
+              bool Indirect = false;
+              for (const auto &Block : *Forward)
+                for (const auto &Instruction : Block)
+                  if (const auto *Call =
+                          llvm::dyn_cast<llvm::CallBase>(&Instruction);
+                      Call && Call->isIndirectCall()) {
+                    Indirect = true;
+                    EXPECT_EQ(Call->getFunctionType(),
+                              Callee->getFunctionType());
+                  }
+              EXPECT_TRUE(Indirect) << IR;
+            }
+            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                            &Debug, &Image));
+          } else {
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+          }
+          const std::string Type = Bytes == 4 ? "float" : "double";
+          std::string Oracle =
+              "\n" + Type + " fixture_fp(" + Type + " x, " + Type +
+              " y) {\n"
+              "  if (x != 1.25 || y != -2.5) __builtin_trap();\n"
+              "  return 7.75;\n}\n";
+          if (LLVM) {
+            // The machine LLVM entry retains complete vector register carriers.
+            // Its external import must still consume/produce scalar FP values.
+            Oracle +=
+                "typedef uint64_t carrier __attribute__((vector_size(16)));\n"
+                "int main(void) {\n"
+                "  carrier x = {0, 0}, y = {0, 0};\n  " +
+                Type +
+                " a = 1.25, b = -2.5, result;\n"
+                "  __builtin_memcpy(&x, &a, sizeof(a));\n"
+                "  __builtin_memcpy(&y, &b, sizeof(b));\n"
+                "  carrier out = forward_fp(x, y);\n"
+                "  __builtin_memcpy(&result, &out, sizeof(result));\n"
+                "  return result != 7.75;\n}\n";
+          } else {
+            Oracle +=
+                "int main(void) { return forward_fp(1.25, -2.5) != 7.75; }\n";
+          }
+          source_call_execution_test::compileAndRun(Source + Oracle);
+        }
+      }
+    }
+  }
+}
 } // namespace

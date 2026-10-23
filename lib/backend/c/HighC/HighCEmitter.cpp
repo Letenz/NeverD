@@ -24,6 +24,7 @@
 
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/FloatingPointContract.h"
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
@@ -1904,6 +1905,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // reads none.
   std::map<std::string, uint16_t> ResultBytes;
   std::map<std::string, TypeRef> FloatingResults;
+  std::map<std::string, std::vector<uint16_t>> FloatingParameters;
+  std::set<std::string> ConflictingFloatingParameters;
   const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
   for (const HighFunc &F : Funcs)
     walkStmts(F.Body, [&](const HighStmt &S) {
@@ -1918,7 +1921,27 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
             if (!Inserted && It->second->Size != E.Type->Size)
               throw std::runtime_error(
                   "HighC external calls disagree on floating return width");
-          }
+            const std::string Name = callIdentifier(E);
+            std::vector<uint16_t> Parameters;
+            for (const auto &Argument : E.Operands)
+              if (Argument && Argument->Type &&
+                  Argument->Type->Kind == NdTypeKind::Float &&
+                  (Argument->Type->Size == sizeof(float) ||
+                   Argument->Type->Size == sizeof(double)))
+                Parameters.push_back(Argument->Type->Size);
+            if (!E.FloatingCallSignature ||
+                E.FloatingCallSignature->ReturnBytes != E.Type->Size ||
+                Parameters.size() != E.Operands.size() ||
+                E.FloatingCallSignature->ParameterBytes != Parameters)
+              ConflictingFloatingParameters.insert(Name);
+            else {
+              const auto [Position, New] =
+                  FloatingParameters.emplace(Name, Parameters);
+              if (!New && Position->second != Parameters)
+                ConflictingFloatingParameters.insert(Name);
+            }
+          } else
+            ConflictingFloatingParameters.insert(callIdentifier(E));
           if (&E != Top)
             Bytes = std::max<uint16_t>(Bytes,
                                        E.Type ? E.Type->Size : RegisterBytes);
@@ -2416,8 +2439,19 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
                                           pointerBytes(Opts.TheArch);
         OS << "extern " << (Stdcall ? "__attribute__((stdcall)) " : "")
            << Return << " " << Declared << "(";
-        if (auto Arity = Known;
-            Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
+        if (Floating != FloatingResults.end() &&
+            FloatingParameters.count(Name) &&
+            !ConflictingFloatingParameters.count(Name)) {
+          const auto &Parameters = FloatingParameters.at(Name);
+          if (Parameters.empty())
+            OS << "void";
+          for (size_t I = 0; I < Parameters.size(); ++I) {
+            if (I)
+              OS << ", ";
+            OS << typeToC(NdType::makeFloat(Parameters[I]));
+          }
+        } else if (auto Arity = Known;
+                   Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
           // Each argument fills one integer register: an int64_t on a 32-bit
           // target would take two, and the arguments after it would move.
           if (Arity->IntArgs == 0)
@@ -3809,9 +3843,14 @@ void HighCWriter::writeImageObjects() {
          << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
     if (Backing.Align > 1)
       OS << "_Alignas(" << Backing.Align << ") ";
+    const bool Authenticated = Opts.Image->hasMachOAuthenticatedPointerIn(
+        Backing.Base, Backing.End - Backing.Base);
+    if (Authenticated)
+      OS << "extern ";
     OS << "unsigned char " << Backing.Name << "["
        << Backing.Pad + (Backing.End - Backing.Base) << "]";
-    writeBackingBytes(Backing);
+    if (!Authenticated)
+      writeBackingBytes(Backing);
     OS << ";\n";
   }
   // Every object has its name before any initializer names it.
@@ -3840,6 +3879,14 @@ void HighCWriter::writeImageObjects() {
     // An object a C library header declares is the header's.
     if (imageBackingAddress(Addr) || !Obj.Header.empty())
       continue;
+    const uint64_t ObjectBytes = std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.Type ? Obj.Type->Size : pointerBytes(Opts.TheArch));
+    if (Opts.Image->hasMachOAuthenticatedPointerIn(Addr, ObjectBytes)) {
+      OS << "extern " << declarationToC(Obj.Type, Obj.Name) << ";"
+         << kArm64eAuthenticatedStorageComment << "\n";
+      continue;
+    }
     if (!Obj.String && !Obj.PointsTo && relocatedSlotInitializer(Addr, Obj)) {
       Deferred.push_back(Addr);
       continue;
@@ -4017,6 +4064,9 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   }
   for (const ImageBacking &Backing : ImageBackings) {
     if (Backing.Words.empty())
+      continue;
+    if (Opts.Image->hasMachOAuthenticatedPointerIn(Backing.Base,
+                                                   Backing.End - Backing.Base))
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"

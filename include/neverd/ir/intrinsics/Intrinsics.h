@@ -393,6 +393,7 @@ enum class Intrinsic : uint16_t {
   X86Enclv,
   // Append-only: i386 source-segment/implicit-ES block transaction.
   X86SegmentedBlockMemory,
+  X86AMXState,
 
   _Count = 16000
 };
@@ -493,6 +494,7 @@ constexpr bool isX86VirtualizationIntrinsic(Intrinsic Id) {
 /// memory forms as a family is not sufficient at backend boundaries.
 constexpr bool isAMXIntrinsic(Intrinsic Id) {
   switch (Id) {
+  case Intrinsic::X86AMXState:
   case Intrinsic::AMXLoadConfig:
   case Intrinsic::AMXStoreConfig:
   case Intrinsic::AMXTileLoad:
@@ -768,6 +770,8 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   if (isX86SystemStateIntrinsic(Id))
     return x86SystemStateContract(Id).MemoryArgument >= 0;
   switch (Id) {
+  case Intrinsic::X86AMXState:
+    return true;
   case Intrinsic::X86FPRoundMemoryState:
   case Intrinsic::X86FPMaskCompareMemoryState:
   case Intrinsic::X86FPComiMemoryState:
@@ -980,6 +984,13 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize, uint16_t AddressSize,
     uint16_t MaskSize, uint16_t DataSize) {
   switch (Id) {
+  case Intrinsic::X86AMXState:
+    // [id, base, versioned descriptor, optional stride]. The shared AMX
+    // shape additionally validates the descriptor and owns non-memory forms.
+    return (NumInputs == 3 || NumInputs == 4) && OutputSize == 0 &&
+           AddressSize == 8 && MaskSize == 4 &&
+           (DataSize == 0 || DataSize == 8);
+
   case Intrinsic::X87ContextStep:
     // [id,context,selector,address,flags,source-PC]; the full selector and
     // architecture contract belongs to X87Context.h.

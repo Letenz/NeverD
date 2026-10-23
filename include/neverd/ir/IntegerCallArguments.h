@@ -34,6 +34,9 @@ struct IntegerCallParameter {
 
 struct IntegerCallArguments {
   std::vector<IntegerCallParameter> Parameters;
+  /// Windows x86/x64 returns this caller-owned buffer's address in EAX/RAX.
+  /// It is a physical operand, not a source parameter.
+  std::optional<unsigned> ResultPointer;
   /// The integer-register prefix actually read by this signature.
   unsigned Registers = 0;
   /// Recovered operand positions, including unused register positions before
@@ -42,7 +45,7 @@ struct IntegerCallArguments {
 };
 
 /// Describe every parameter or return none. Floating carriers, hidden result
-/// pointers, over-aligned stack values, unsupported conventions, and incomplete
+/// pointers outside Windows x86/x64, over-aligned stack values, and incomplete
 /// placements are rejected.
 /// The result uses recoverCallAbi's integer register/stack operand order.
 std::optional<IntegerCallArguments>

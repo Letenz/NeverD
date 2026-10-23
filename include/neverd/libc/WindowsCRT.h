@@ -13,6 +13,13 @@ namespace neverd::libc {
 /// inline printf and scanf of its headers call: `__stdio_common_vfprintf`
 /// implements vfprintf and, like it, takes a va_list rather than `...`.
 inline constexpr std::string_view kUCRTStdioPrefix = "stdio_common_";
+// The reviewed conio and OS-state forms also forward a va_list. These are
+// implementation-family prefixes, not a general rule for arbitrary _o_ names.
+inline constexpr auto kUCRTCommonPrefixes =
+    std::to_array<std::string_view>({kUCRTStdioPrefix, "conio_common_",
+                                     "o___stdio_common_", "o___conio_common_"});
+inline constexpr auto kUCRTCommonSuffixes =
+    std::to_array<std::string_view>({"_s", "_p"});
 
 /// The prototype of a routine a Windows C runtime DLL exports.
 constexpr LibCPrototype

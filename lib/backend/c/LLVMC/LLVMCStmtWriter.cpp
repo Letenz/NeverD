@@ -14,6 +14,7 @@
 #include "../CRecordCall.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
+#include "../render/X86AmxState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
@@ -29,6 +30,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/MachineInstructionText.h"
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
@@ -3911,6 +3913,18 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     OS << "}\n";
     return true;
   }
+  if (IID == llvm::Intrinsic::ptrauth_auth) {
+    if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 3)
+      throw std::runtime_error(kAArch64PAuthRequiresAArch64);
+    emitIndent(Indent);
+    if (!Call.use_empty())
+      OS << getName(&Call) << " = ";
+    OS << aarch64PAuthAuthenticateC(valueStr(Call.getArgOperand(0)),
+                                    valueStr(Call.getArgOperand(1)),
+                                    valueStr(Call.getArgOperand(2)))
+       << ";\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::aarch64_neon_bfmmla) {
     if (!isNativeVectorIntrinsic(Call, Opts.TheArch))
       throw std::runtime_error("BFMMLA requires an AArch64 C projection");
@@ -4842,6 +4856,11 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Amx = renderX86AmxCall(Opts.TheArch, Call, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *Amx;
+    return true;
+  }
   if (auto Sgx =
           renderX86SgxCall(Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);
@@ -5102,6 +5121,10 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
   unsigned Params = Type->getNumParams();
   if (const std::optional<unsigned> Typed = typedSlotParamCount(Call))
     Params = std::min(Params, *Typed);
+  // The ordinary source projection can omit trailing unknown/live-in
+  // arguments. Its cast must describe the same argument list it prints.
+  if (!Strict)
+    Params = std::min(Params, printedCallArgLimit(Call, {}));
   std::string Parameters;
   for (unsigned I = 0; I < Params; ++I) {
     if (!Parameters.empty())
@@ -5313,11 +5336,23 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
                                       libcVariant())
           : std::nullopt;
   if (Function && Library && Function->Name == Library.Name && !RecordCall &&
-      Function->PrototypeFromCLibrary &&
+      (Function->PrototypeFromHeader || Function->PrototypeFromCLibrary) &&
       libc::hasRecordCallParameters(*Function, libcVariant()))
     throw std::runtime_error("The header's record call ABI is unsupported");
   if (RecordCall && RecordCall->Positions > Call.arg_size())
     throw std::runtime_error("A record call argument is incomplete");
+  const char *RecordHeader =
+      RecordCall ? libc::headerFor(Library.Name) : nullptr;
+  if (RecordHeader && IncludedHeaders.count(RecordHeader)) {
+    const auto NoteRecord = [&](const TypeRef &Type) {
+      if (Type && Type->Kind == NdTypeKind::Struct && !Type->IsEnum &&
+          !Type->SourceName.empty())
+        HeaderCallRecords.insert(cNamedTypeSpelling(Type->SourceName));
+    };
+    NoteRecord(Function->ReturnType);
+    for (const auto &Parameter : Function->Params)
+      NoteRecord(Parameter.second);
+  }
   const unsigned Printed = RecordCall ? RecordCall->Parameters.size() : Limit;
   for (unsigned ArgIdx = 0; ArgIdx < Printed; ++ArgIdx) {
     if (ArgIdx > 0)
@@ -5417,6 +5452,10 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   }
   Expr += ")";
   RenderingCalls.pop_back();
+  if (RecordCall && RecordCall->ResultPointer)
+    return c_detail::recordCallResult(
+        c_detail::recordCallType(Function->ReturnType, Opts),
+        valueStr(Call.getArgOperand(*RecordCall->ResultPointer)), Expr);
   return Statement ? Expr : callResult(Call, std::move(Expr));
 }
 

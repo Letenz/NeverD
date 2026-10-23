@@ -153,6 +153,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
     Local.setCallEntryStackSlots(&Result.CallEntryStackSlots);
     Local.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
+    Local.setCallEntryFloatingArguments(&Result.CallEntryFloatingArguments);
     Local.setUserPrototypeCallees(&Result.CallUserPrototypes);
     Local.setCallDispatchThunks(&Result.CallDispatchThunks);
     Local.setCallVariadicFrom(&Result.CallVariadicFrom);
@@ -189,9 +190,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
           simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(),
                                        MF.EntryKind);
           // Source views keep no prologue storage of the caller's registers.
-          markCalleeSavePrologueSaves(MF, Img.Arch, Img.abiFormat(),
-                                      MF.EntryKind);
-          markReturnAddressReads(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
+          markSourceStackAccesses(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
         }
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
@@ -280,6 +279,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallArgumentSources);
   COPY_SOURCE_FACT(CallDispatchThunks);
   COPY_SOURCE_FACT(CallEntryArgumentCounts);
+  COPY_SOURCE_FACT(CallEntryFloatingArguments);
   COPY_SOURCE_FACT(CallEntryReadGPRs);
   COPY_SOURCE_FACT(CallEntryStackArgs);
   COPY_SOURCE_FACT(CallEntryStackPops);
@@ -288,6 +288,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallVariadicFrom);
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
+  COPY_SOURCE_FACT(OmittedCalleeFloatingArguments);
   COPY_SOURCE_FACT(OmittedCalleeStackArgs);
   COPY_SOURCE_FACT(OmittedCalleeStackSlots);
   COPY_SOURCE_FACT(OmittedCallees);

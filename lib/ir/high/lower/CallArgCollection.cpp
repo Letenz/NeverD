@@ -1454,13 +1454,24 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         for (size_t K = 0; K < Recovered; ++K) {
           ExprPtr Arg = medvarToExpr(CI->Args[K]);
           // The callee reads only the low lane's scalar.
-          if (const uint16_t Read =
-                  K < CI->ArgReadBytes.size() ? CI->ArgReadBytes[K] : 0;
-              Read && Arg && Arg->Type && Read < Arg->Type->Size) {
+          const uint16_t Read =
+              K < CI->ArgReadBytes.size() ? CI->ArgReadBytes[K] : 0;
+          if (Read && Arg && Arg->Type && Read < Arg->Type->Size) {
             Arg = HighExpr::makeBinop(NdOp::SUBBYTES, Arg,
                                       HighExpr::makeConst(0, 4));
             Arg->Type = NdType::makeInt(Read, false);
           }
+          const bool FloatingLane =
+              CI->IntegerRegisterArgCount >= 0 &&
+              K >= static_cast<size_t>(CI->IntegerRegisterArgCount) &&
+              K - CI->IntegerRegisterArgCount <
+                  static_cast<size_t>(
+                      std::max(0, CI->FloatingRegisterArgCount));
+          if (Read && FloatingLane && Ops[CallIdx].CalleeFloatReturnBytes &&
+              Arg && Arg->Type && Arg->Type->Kind == NdTypeKind::Int &&
+              Arg->Type->Size == Read)
+            Arg =
+                HighExpr::makeBitCast(std::move(Arg), NdType::makeFloat(Read));
           if (Ops[CallIdx].X87ArgumentInput && K + 1 == CI->Args.size() &&
               Arg && Arg->Type && Arg->Type->Size == 10 &&
               Arg->Type->Kind != NdTypeKind::Float)
