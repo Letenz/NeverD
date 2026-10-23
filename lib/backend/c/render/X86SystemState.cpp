@@ -30,6 +30,8 @@ std::string unsignedType(uint16_t Bytes) {
 std::string gnuConstraint(const std::string &Text) {
   if (Text == "{ax}")
     return "a";
+  if (Text == "{bx}")
+    return "b";
   if (Text == "={ax}")
     return "=a";
   if (Text == "{cx}")
@@ -120,7 +122,7 @@ std::string nativeBody(const X86SystemStateNative &Plan,
     if (I)
       Text += ", ";
     std::string Type = unsignedType(Plan.InputBytes[I]);
-    if (isX86SystemStateAddressArgument(Id, I))
+    if (isX86SystemStateAddressArgument(Id, I) && !Plan.AddressBits)
       Type =
           Id == Intrinsic::X86ReadMsrList && I == 1 ? "void *" : "const void *";
     Text += "(" + Type + ")(" + Arguments[I] + ")";
@@ -143,6 +145,10 @@ std::string renderInstruction(const X86SystemStateAsm &Plan, Arch TargetArch,
     Arguments = {Inputs[0], "((uint64_t)(uint32_t)(" + Inputs[1] +
                                 ") | ((uint64_t)(uint32_t)(" + Inputs[2] +
                                 ") << 32))"};
+  if (Native->AddressBits) {
+    Arguments.push_back(std::to_string(Native->AddressBits));
+    Arguments.push_back(std::to_string(Native->SegmentPrefix));
+  }
   if (Native->DescriptorQuery)
     Arguments.push_back("0");
   return "NEVERD_X86_SYSTEM_STATE(({ " +
@@ -462,10 +468,26 @@ renderX86SystemStateNativeCall(Arch TargetArch, const llvm::CallBase &Call,
   const auto *Callee = Call.getCalledFunction();
   if (!Callee || !isX86SystemStateNativeName(Callee->getName()))
     return {};
+  std::optional<X86SystemStateNativeAddress> Address;
+  if (Callee->getName().ends_with(".address") ||
+      Callee->getName().ends_with(".address32")) {
+    if (Call.arg_size() < 3)
+      throw std::invalid_argument("native descriptor address has no controls");
+    const auto *Bits = llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(1));
+    const auto *Segment =
+        llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(2));
+    if (!Bits || !Segment || !Bits->getType()->isIntegerTy(32) ||
+        !Segment->getType()->isIntegerTy(32))
+      throw std::invalid_argument(
+          "native descriptor address controls must be constant i32");
+    Address = X86SystemStateNativeAddress{
+        static_cast<unsigned>(Bits->getZExtValue()),
+        static_cast<unsigned>(Segment->getZExtValue())};
+  }
   for (const auto Id : X86SystemStateNativeInventory)
     for (const uint16_t Width : {0, 2, 4, 8}) {
-      const auto P = x86SystemStateNative(Id, TargetArch, Width,
-                                          NdMemoryAddressSpace::Default);
+      const auto P = x86SystemStateNative(
+          Id, TargetArch, Width, NdMemoryAddressSpace::Default, Address);
       if (!P || P->LLVMName != Callee->getName())
         continue;
       const auto &Assembly = P->Assembly;
@@ -479,7 +501,7 @@ renderX86SystemStateNativeCall(Arch TargetArch, const llvm::CallBase &Call,
       bool Valid = true;
       for (size_t I = 0; I < Count; ++I) {
         const auto *T = Call.getArgOperand(I)->getType();
-        Valid &= isX86SystemStateAddressArgument(Id, I)
+        Valid &= isX86SystemStateAddressArgument(Id, I) && !P->AddressBits
                      ? T->isPointerTy() && T->getPointerAddressSpace() == 0
                      : T->isIntegerTy(8 * P->InputBytes[I]);
       }
@@ -489,6 +511,8 @@ renderX86SystemStateNativeCall(Arch TargetArch, const llvm::CallBase &Call,
         throw std::invalid_argument("native system result has no C identity");
       auto NativeArguments = Arguments;
       auto AsmArguments = Arguments;
+      if (P->AddressBits)
+        AsmArguments.erase(AsmArguments.begin() + 1, AsmArguments.begin() + 3);
       std::string Text = "{ ";
       if (P->PackMsr) {
         // Both halves come from one LLVM operand. Materialize it once before

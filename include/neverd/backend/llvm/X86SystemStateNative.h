@@ -35,15 +35,18 @@ struct X86SystemStateNative {
   std::vector<uint16_t> InputBytes;
   bool PackMsr = false;
   bool DescriptorQuery = false;
+  unsigned AddressBits = 0;
+  unsigned SegmentPrefix = 0;
 };
 
-inline std::optional<X86SystemStateNative>
-x86SystemStateNative(Intrinsic Id, Arch TargetArch, uint16_t Width,
-                     NdMemoryAddressSpace Space) {
-  // The current memory APIs own flat linear pointers. A segmented selector
-  // needs a separate explicit-address intrinsic; never erase its segment.
-  if (Space != NdMemoryAddressSpace::Default)
-    return std::nullopt;
+struct X86SystemStateNativeAddress {
+  unsigned Bits;
+  unsigned SegmentPrefix;
+};
+
+inline std::optional<X86SystemStateNative> x86SystemStateNative(
+    Intrinsic Id, Arch TargetArch, uint16_t Width, NdMemoryAddressSpace Space,
+    std::optional<X86SystemStateNativeAddress> Address = std::nullopt) {
   bool Known = false;
   for (const auto Candidate : X86SystemStateNativeInventory)
     Known |= Id == Candidate;
@@ -57,17 +60,34 @@ x86SystemStateNative(Intrinsic Id, Arch TargetArch, uint16_t Width,
   Plan.PackMsr = Id == Intrinsic::X86WriteMsrNonSerializing;
   const auto C = x86SystemStateContract(Id);
   Plan.DescriptorQuery = C.Kind == X86SystemStateKind::AccessRights;
+  const unsigned WordBits = TargetArch == Arch::X64 ? 64 : 32;
+  if (!Address && Space != NdMemoryAddressSpace::Default)
+    Address = X86SystemStateNativeAddress{
+        WordBits, Space == NdMemoryAddressSpace::X86FS ? 0x64u : 0x65u};
+  if (Address) {
+    const auto Explicit = x86SystemStateAddressAsm(
+        Id, TargetArch, Width, Address->Bits, Address->SegmentPrefix);
+    if (!Explicit)
+      return std::nullopt;
+    Plan.Assembly = *Explicit;
+    Plan.AddressBits = Address->Bits;
+    Plan.SegmentPrefix = Address->SegmentPrefix;
+  }
   Plan.InputBytes =
       Plan.PackMsr ? std::vector<uint16_t>{4, 8} : Assembly->InputBytes;
+  if (Plan.AddressBits)
+    Plan.InputBytes.insert(Plan.InputBytes.end(), {4, 4});
   std::string Name = C.Mnemonic;
   if (Plan.DescriptorQuery) {
     Name += C.MemoryArgument == 0 ? ".mem" : ".reg";
     Name += std::to_string(8 * Width);
+    if (Plan.AddressBits)
+      Name += ".address";
     Plan.InputBytes.push_back(Width);
   } else if (Id == Intrinsic::X86LoadKernelGs)
     Name += ".reg";
   else if (Id == Intrinsic::X86LoadKernelGsMemory)
-    Name += ".mem";
+    Name += Plan.AddressBits ? ".address" : ".mem";
   else if (Id == Intrinsic::X86InvalidateBroadcast && TargetArch == Arch::X64 &&
            Width == 4)
     Name += ".addr32";
@@ -75,7 +95,8 @@ x86SystemStateNative(Intrinsic Id, Arch TargetArch, uint16_t Width,
   for (char &Character : Plan.Builtin)
     if (Character == '.')
       Character = '_';
-  if (Id == Intrinsic::X86InvalidateBroadcast && TargetArch == Arch::X86)
+  if ((Id == Intrinsic::X86InvalidateBroadcast || Plan.AddressBits) &&
+      TargetArch == Arch::X86)
     Name += "32";
   Plan.LLVMName = "llvm.x86." + Name;
   return Plan;

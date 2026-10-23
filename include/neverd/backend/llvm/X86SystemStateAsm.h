@@ -174,6 +174,68 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   return P;
 }
 
+/// Explicit descriptor offsets carry their own address width and segment.
+/// Shared by native-call C projection and the assembly fallback.
+inline std::optional<X86SystemStateAsm>
+x86SystemStateAddressAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
+                         unsigned AddressBits, unsigned SegmentPrefix) {
+  auto Plan =
+      x86SystemStateAsm(Id, TargetArch, Width, NdMemoryAddressSpace::Default);
+  const auto C = x86SystemStateContract(Id);
+  const bool Query = C.Kind == X86SystemStateKind::AccessRights;
+  const unsigned WordBits = TargetArch == Arch::X64 ? 64 : 32;
+  if (!Plan || C.MemoryArgument != 0 ||
+      (!Query && Id != Intrinsic::X86LoadKernelGsMemory) ||
+      (AddressBits != WordBits && AddressBits != WordBits / 2))
+    return std::nullopt;
+  const char *Segment = nullptr;
+  switch (SegmentPrefix) {
+  case 0:
+    Segment = "";
+    break;
+  case 0x26:
+    Segment = "%es:";
+    break;
+  case 0x2e:
+    Segment = "%cs:";
+    break;
+  case 0x36:
+    Segment = "%ss:";
+    break;
+  case 0x3e:
+    Segment = "%ds:";
+    break;
+  case 0x64:
+    Segment = "%fs:";
+    break;
+  case 0x65:
+    Segment = "%gs:";
+    break;
+  default:
+    return std::nullopt;
+  }
+  // A fixed BX base is legal in both i386 address sizes and retains DS
+  // when no override is present. Narrow modifiers retain the actual address
+  // prefix in the fallback instead of relying on a numeric pointer cast.
+  auto &A = *Plan;
+  const auto Offset = std::to_string(A.OutputBytes.size());
+  const auto Base = AddressBits == WordBits ? "$" + Offset
+                    : AddressBits == 16     ? "${" + Offset + ":w}"
+                                            : "${" + Offset + ":k}";
+  A.Text = std::string(C.Mnemonic) + " " + Segment + "(" + Base + ")";
+  if (Query)
+    A.Text += ", $0\n\tsetz $1";
+  A.InputConstraints = {"{bx}"};
+  A.Constraints.clear();
+  for (const auto &Constraint : A.OutputConstraints)
+    A.Constraints += Constraint + ",";
+  A.Constraints += "{bx},";
+  if (A.ChangesFlags)
+    A.Constraints += "~{cc},";
+  A.Constraints += "~{memory}";
+  return Plan;
+}
+
 /// Fixed RAX data and RCX selector operands keep the documented ModRM roles.
 /// LLVM 23's URDMSR register assembler reverses those roles. Exact bytes also
 /// retain APX feature checks when an EVEX operand is allocated a low register.

@@ -31,6 +31,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/TargetParser/Host.h"
 
+#include <cstdlib>
 #include <stdexcept>
 #include <tuple>
 
@@ -39,15 +40,17 @@ namespace {
 void compileAndRun(const std::string &Source,
                    llvm::StringRef Optimization = "-O2",
                    const std::string &ReferenceIR = {},
-                   bool CheckUndefinedBehavior = false,
-                   bool NativeI386 = false) {
+                   bool CheckUndefinedBehavior = false, bool NativeI386 = false,
+                   const std::string &CompilerOverride = {}) {
 #ifdef NEVERD_TEST_CLANG
-  const std::string Compiler = NEVERD_TEST_CLANG;
+  std::string Compiler = NEVERD_TEST_CLANG;
 #else
   auto Program = llvm::sys::findProgramByName("clang");
   ASSERT_TRUE(bool(Program)) << "clang is required for emitted C execution";
-  const std::string Compiler = *Program;
+  std::string Compiler = *Program;
 #endif
+  if (!CompilerOverride.empty())
+    Compiler = CompilerOverride;
   llvm::SmallString<128> SourcePath, BinaryPath, ErrorPath;
   llvm::SmallString<128> ReferencePath;
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-llvmc-value", "ll",
@@ -85,14 +88,19 @@ __attribute__((noreturn, force_align_arg_pointer)) void _start(void) {
   }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
-  llvm::SmallVector<llvm::StringRef, 12> Arguments{Compiler,
-                                                   "-std=c11",
-                                                   Optimization,
-                                                   "-Werror=uninitialized",
-                                                   "-Werror=return-type",
-                                                   SourcePath,
-                                                   "-o",
-                                                   BinaryPath};
+  llvm::SmallVector<llvm::StringRef, 12> Arguments{
+      Compiler,
+      CompilerOverride.empty() ? "-std=c11" : "-std=c23",
+      Optimization,
+      "-Werror=uninitialized",
+      "-Werror=return-type",
+      SourcePath,
+      "-o",
+      BinaryPath};
+  if (!CompilerOverride.empty()) {
+    Arguments.push_back("-fno-lto");
+    Arguments.push_back("-fno-builtin-mimalloc");
+  }
   if (!ReferenceIR.empty())
     Arguments.push_back(ReferencePath);
   if (NativeI386) {
@@ -296,6 +304,122 @@ int main(void) {
 )c";
   for (const char *Opt : {"-O0", "-O2"})
     compileAndRun(Source, Opt);
+}
+
+TEST(LLVMCValues, NativeDescriptorAddressesKeepSegmentWidthAndPrior) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires native Linux x86-64 descriptor queries";
+#endif
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.lar.mem16.address"))
+    GTEST_SKIP() << "requires the explicit descriptor-address SDK";
+  llvm::LLVMContext Context;
+  llvm::Module Module("descriptor-addresses", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-linux-gnu"));
+  Module.setDataLayout("e-p:64:64-i64:64-i128:128");
+  std::string Checks;
+  unsigned Cases = 0;
+  for (const bool Limit : {false, true})
+    for (const unsigned Width : {16, 32, 64})
+      for (const unsigned AddressBits : {32, 64})
+        for (const unsigned Segment : {0, 0x65}) {
+          const std::string Op = Limit ? "lsl" : "lar";
+          const auto Name = Op + std::to_string(Width) + "_" +
+                            std::to_string(AddressBits) + "_" +
+                            std::to_string(Segment);
+          auto *Function = llvm::Function::Create(
+              llvm::FunctionType::get(llvm::Type::getInt64Ty(Context),
+                                      {llvm::Type::getInt64Ty(Context),
+                                       llvm::Type::getInt64Ty(Context),
+                                       llvm::PointerType::getUnqual(Context)},
+                                      false),
+              llvm::GlobalValue::ExternalLinkage, Name, Module);
+          llvm::IRBuilder<> B(
+              llvm::BasicBlock::Create(Context, "entry", Function));
+          const auto IID = llvm::Intrinsic::lookupIntrinsicID(
+              "llvm.x86." + Op + ".mem" + std::to_string(Width) + ".address");
+          ASSERT_NE(IID, llvm::Intrinsic::not_intrinsic);
+          auto *Callee = llvm::Intrinsic::getOrInsertDeclaration(&Module, IID);
+          auto *Call = B.CreateCall(
+              Callee,
+              {Function->getArg(0), B.getInt32(AddressBits),
+               B.getInt32(Segment),
+               B.CreateZExtOrTrunc(Function->getArg(1), B.getIntNTy(Width))});
+          B.CreateStore(B.CreateExtractValue(Call, 1), Function->getArg(2));
+          B.CreateRet(B.CreateZExtOrTrunc(B.CreateExtractValue(Call, 0),
+                                          B.getInt64Ty()));
+          const auto Type = "uint" + std::to_string(Width) + "_t";
+          std::string Bytes = Segment ? "0x65," : "";
+          if (AddressBits == 32)
+            Bytes += "0x67,";
+          if (Width == 16)
+            Bytes += "0x66,";
+          if (Width == 64)
+            Bytes += "0x48,";
+          Bytes += Limit ? "0x0f,0x03,0x03" : "0x0f,0x02,0x03";
+          Checks += "{ uint64_t offset = " +
+                    std::string(Segment ? "0x205ULL" : "(uintptr_t)selector") +
+                    (AddressBits == 32 ? " | 0x9182736400000000ULL" : "") +
+                    "; " + Type + " expected = (" + Type +
+                    ")prior; "
+                    "uint8_t expected_zf, actual_zf;\n"
+                    "__asm__ volatile(\".byte " +
+                    Bytes +
+                    "; setz %1\" : \"+a\"(expected), \"=qm\"(expected_zf)"
+                    " : \"b\"(offset) : \"cc\", \"memory\");\n"
+                    "uint64_t actual = " +
+                    Name +
+                    "(offset, prior, &actual_zf);\n"
+                    "uint64_t mask = " +
+                    std::string(!Limit && Width != 16
+                                    ? "expected_zf ? ~0xf0000ULL : ~0ULL"
+                                    : "~0ULL") +
+                    "; if (((actual ^ expected) & mask) || "
+                    "actual_zf != expected_zf) return " +
+                    std::to_string(++Cases) + "; }\n";
+        }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X64;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source = "#define _GNU_SOURCE\n";
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  Source += R"c(
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+int main(void) {
+  uint16_t *selector = mmap(0, 4096, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+  if (selector == MAP_FAILED) return 100;
+  unsigned long saved_gs = 0;
+  if (syscall(SYS_arch_prctl, 0x1004, &saved_gs)) return 101;
+  if (syscall(SYS_arch_prctl, 0x1001, (uintptr_t)selector - 0x205)) return 102;
+  uint16_t cs;
+  __asm__ volatile("mov %%cs, %0" : "=r"(cs));
+  for (unsigned i = 0; i < 2; ++i) {
+    *selector = i ? cs : 0;
+    const uint64_t prior = 0xabcdef0123456789ULL;
+)c";
+  Source += Checks;
+  Source += R"c(
+  }
+  if (syscall(SYS_arch_prctl, 0x1001, saved_gs)) return 103;
+  return munmap(selector, 4096) != 0;
+}
+)c";
+  for (const char *Opt : {"-O0", "-O2"}) {
+    compileAndRun("#define NEVERD_X86_SYSTEM_STATE(native, ...) __VA_ARGS__\n" +
+                      Source,
+                  Opt);
+    if (::testing::Test::HasFailure())
+      return;
+    const char *NeverC = std::getenv("NEVERD_TEST_NEVERC");
+    if (NeverC && llvm::sys::fs::exists(NeverC))
+      compileAndRun(Source, Opt, {}, false, false, NeverC);
+  }
+  RecordProperty("descriptor_address_hardware_queries_per_compiler",
+                 2 * 2 * Cases);
 }
 
 TEST(LLVMCValues, TargetIndexWidthKeepsNegativeFrameOffsets) {

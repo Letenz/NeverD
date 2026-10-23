@@ -1501,15 +1501,14 @@ std::string nativeSystemName(const SystemEncoding &E, Arch A) {
   case Intrinsic::X86LoadAccessRightsMemory:
   case Intrinsic::X86LoadSegmentLimit:
   case Intrinsic::X86LoadSegmentLimitMemory: {
-    if (E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
-      return {};
+    const bool Segmented = E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65;
     const bool Memory = E.Id == Intrinsic::X86LoadAccessRightsMemory ||
                         E.Id == Intrinsic::X86LoadSegmentLimitMemory;
-    const unsigned Width = E.Bytes.front() == 0x66   ? 16
-                           : E.Bytes.front() == 0x48 ? 64
-                                                     : 32;
+    const auto Prefix = E.Bytes[Segmented ? 1 : 0];
+    const unsigned Width = Prefix == 0x66 ? 16 : Prefix == 0x48 ? 64 : 32;
     return "llvm.x86." + std::string(E.Mnemonic) + (Memory ? ".mem" : ".reg") +
-           std::to_string(Width);
+           std::to_string(Width) +
+           (Segmented ? A == Arch::X86 ? ".address32" : ".address" : "");
   }
   case Intrinsic::X86ClearTaskSwitched:
     return "llvm.x86.clts";
@@ -1523,7 +1522,7 @@ std::string nativeSystemName(const SystemEncoding &E, Arch A) {
     return "llvm.x86.lkgs.reg";
   case Intrinsic::X86LoadKernelGsMemory:
     if (E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
-      return {};
+      return "llvm.x86.lkgs.address";
     return "llvm.x86.lkgs.mem";
   case Intrinsic::X86InvalidateBroadcast:
     return A == Arch::X86            ? "llvm.x86.invlpgb32"
@@ -1564,7 +1563,7 @@ TEST(X86SystemStateSource, QualifiedSdkUsesNativeSystemCalls) {
           EXPECT_EQ(IR.find(" asm "), std::string::npos) << IR;
           ++Cases;
         }
-  EXPECT_EQ(Cases, 204u);
+  EXPECT_EQ(Cases, 252u);
   RecordProperty("native_system_modules", Cases);
 }
 
@@ -1602,22 +1601,46 @@ TEST(X86SystemStateSource, NeverCCompilesBothRoutesToNativeSystemCalls) {
             return;
         }
       }
-  EXPECT_EQ(Cases, 528u);
+  EXPECT_EQ(Cases, 672u);
   RecordProperty("native_system_c_compilations", Cases);
 }
 
 TEST(X86SystemStateSource, NativeCallsCannotLoseModeResultsOrEffects) {
   if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
     GTEST_SKIP() << "requires the qualified native system SDK";
-  for (const char *Name :
-       {"llvm.x86.clts",      "llvm.x86.wrmsrns",   "llvm.x86.rdmsrlist",
-        "llvm.x86.wrmsrlist", "llvm.x86.lkgs.reg",  "llvm.x86.lkgs.mem",
-        "llvm.x86.invlpgb",   "llvm.x86.invlpgb32", "llvm.x86.invlpgb.addr32",
-        "llvm.x86.tlbsync",   "llvm.x86.lar.reg16", "llvm.x86.lar.reg32",
-        "llvm.x86.lar.reg64", "llvm.x86.lar.mem16", "llvm.x86.lar.mem32",
-        "llvm.x86.lar.mem64", "llvm.x86.lsl.reg16", "llvm.x86.lsl.reg32",
-        "llvm.x86.lsl.reg64", "llvm.x86.lsl.mem16", "llvm.x86.lsl.mem32",
-        "llvm.x86.lsl.mem64"}) {
+  for (const char *Name : {"llvm.x86.clts",
+                           "llvm.x86.wrmsrns",
+                           "llvm.x86.rdmsrlist",
+                           "llvm.x86.wrmsrlist",
+                           "llvm.x86.lkgs.reg",
+                           "llvm.x86.lkgs.mem",
+                           "llvm.x86.invlpgb",
+                           "llvm.x86.invlpgb32",
+                           "llvm.x86.invlpgb.addr32",
+                           "llvm.x86.tlbsync",
+                           "llvm.x86.lar.reg16",
+                           "llvm.x86.lar.reg32",
+                           "llvm.x86.lar.reg64",
+                           "llvm.x86.lar.mem16",
+                           "llvm.x86.lar.mem32",
+                           "llvm.x86.lar.mem64",
+                           "llvm.x86.lsl.reg16",
+                           "llvm.x86.lsl.reg32",
+                           "llvm.x86.lsl.reg64",
+                           "llvm.x86.lsl.mem16",
+                           "llvm.x86.lsl.mem32",
+                           "llvm.x86.lsl.mem64",
+                           "llvm.x86.lkgs.address",
+                           "llvm.x86.lar.mem16.address",
+                           "llvm.x86.lar.mem32.address",
+                           "llvm.x86.lar.mem64.address",
+                           "llvm.x86.lsl.mem16.address",
+                           "llvm.x86.lsl.mem32.address",
+                           "llvm.x86.lsl.mem64.address",
+                           "llvm.x86.lar.mem16.address32",
+                           "llvm.x86.lar.mem32.address32",
+                           "llvm.x86.lsl.mem16.address32",
+                           "llvm.x86.lsl.mem32.address32"}) {
     SCOPED_TRACE(Name);
     llvm::LLVMContext Context;
     llvm::Module Module("native-system-contract", Context);
@@ -1632,18 +1655,59 @@ TEST(X86SystemStateSource, NativeCallsCannotLoseModeResultsOrEffects) {
     std::vector<llvm::Value *> Inputs;
     for (auto &Argument : Function->args())
       Inputs.push_back(&Argument);
+    const bool Address = llvm::StringRef(Name).contains(".address");
+    const Arch A = llvm::StringRef(Name) == "llvm.x86.invlpgb32" ||
+                           llvm::StringRef(Name).ends_with(".address32")
+                       ? Arch::X86
+                       : Arch::X64;
+    if (Address) {
+      Inputs[1] = Builder.getInt32(A == Arch::X64 ? 32 : 16);
+      Inputs[2] = Builder.getInt32(0x65);
+    }
     auto *Call = Builder.CreateCall(Callee, Inputs);
     if (Call->getType()->isVoidTy())
       Builder.CreateRetVoid();
     else
       Builder.CreateRet(Call);
     ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
-    const Arch A =
-        llvm::StringRef(Name) == "llvm.x86.invlpgb32" ? Arch::X86 : Arch::X64;
     const bool Live = !Call->getType()->isVoidTy();
     const std::vector<std::string> Arguments(Inputs.size(), "input");
     EXPECT_TRUE(
         renderX86SystemStateNativeCall(A, *Call, "result", Live, Arguments));
+    if (Address) {
+      for (const auto Bits : {0u, 8u, 24u, 128u, A == Arch::X64 ? 16u : 64u}) {
+        Call->setArgOperand(1, Builder.getInt32(Bits));
+        EXPECT_THROW((void)renderX86SystemStateNativeCall(A, *Call, "result",
+                                                          Live, Arguments),
+                     std::invalid_argument);
+      }
+      Call->setArgOperand(1, Inputs[1]);
+      for (const auto Segment : {1u, 0x66u, 0x67u, 0xffffffffu}) {
+        Call->setArgOperand(2, Builder.getInt32(Segment));
+        EXPECT_THROW((void)renderX86SystemStateNativeCall(A, *Call, "result",
+                                                          Live, Arguments),
+                     std::invalid_argument);
+      }
+      Call->setArgOperand(2, Inputs[2]);
+      for (unsigned Index : {1u, 2u}) {
+        Call->setArgOperand(Index, Function->getArg(Index));
+        EXPECT_THROW((void)renderX86SystemStateNativeCall(A, *Call, "result",
+                                                          Live, Arguments),
+                     std::invalid_argument);
+        Call->setArgOperand(Index, Inputs[Index]);
+      }
+      for (const auto Bits :
+           {A == Arch::X64 ? 32u : 16u, A == Arch::X64 ? 64u : 32u})
+        for (const auto Segment :
+             {0u, 0x26u, 0x2eu, 0x36u, 0x3eu, 0x64u, 0x65u}) {
+          Call->setArgOperand(1, Builder.getInt32(Bits));
+          Call->setArgOperand(2, Builder.getInt32(Segment));
+          EXPECT_TRUE(renderX86SystemStateNativeCall(A, *Call, "result", Live,
+                                                     Arguments));
+        }
+      Call->setArgOperand(1, Inputs[1]);
+      Call->setArgOperand(2, Inputs[2]);
+    }
     for (const auto Effects :
          {llvm::MemoryEffects::none(), llvm::MemoryEffects::readOnly(),
           llvm::MemoryEffects::writeOnly()}) {
@@ -1662,12 +1726,128 @@ TEST(X86SystemStateSource, NativeCallsCannotLoseModeResultsOrEffects) {
       EXPECT_THROW(
           (void)renderX86SystemStateNativeCall(A, *Call, "", true, Arguments),
           std::invalid_argument);
-    if (llvm::StringRef(Name).starts_with("llvm.x86.invlpgb"))
+    if (Address || llvm::StringRef(Name).starts_with("llvm.x86.invlpgb"))
       EXPECT_THROW((void)renderX86SystemStateNativeCall(
                        A == Arch::X86 ? Arch::X64 : Arch::X86, *Call, "result",
                        Live, Arguments),
                    std::invalid_argument);
   }
+}
+
+TEST(X86SystemStateSource,
+     NativeDescriptorAddressControlsCompileAcrossFormats) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.lar.mem16.address"))
+    GTEST_SKIP() << "requires the explicit descriptor-address SDK";
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "Clang is unavailable";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(
+      "neverd-descriptor-address-c", Directory));
+  auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  unsigned NativeFunctions = 0, CCompilations = 0, NeverCCompilations = 0;
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      llvm::LLVMContext Context;
+      llvm::Module Module("descriptor-address-controls", Context);
+      const unsigned Word = A == Arch::X64 ? 64 : 32;
+      const std::string Triple =
+          std::string(A == Arch::X64 ? "x86_64" : "i386") +
+          (Format == BinaryFormat::COFF    ? "-pc-windows-msvc"
+           : Format == BinaryFormat::MachO ? "-apple-darwin"
+                                           : "-linux-gnu");
+      Module.setTargetTriple(llvm::Triple(Triple));
+      Module.setDataLayout(A == Arch::X64 ? "e-p:64:64-i64:64-i128:128"
+                                          : "e-p:32:32-i64:64");
+      for (const auto Id : {Intrinsic::X86LoadAccessRightsMemory,
+                            Intrinsic::X86LoadSegmentLimitMemory,
+                            Intrinsic::X86LoadKernelGsMemory})
+        for (const uint16_t Width : {0, 2, 4, 8})
+          for (const unsigned Bits : {Word / 2, Word})
+            for (const unsigned Segment :
+                 {0u, 0x26u, 0x2eu, 0x36u, 0x3eu, 0x64u, 0x65u}) {
+              if ((Id == Intrinsic::X86LoadKernelGsMemory) != (Width == 0))
+                continue;
+              const auto Plan = x86SystemStateNative(
+                  Id, A, Width, NdMemoryAddressSpace::Default,
+                  X86SystemStateNativeAddress{Bits, Segment});
+              if (!Plan)
+                continue;
+              const auto IID =
+                  llvm::Intrinsic::lookupIntrinsicID(Plan->LLVMName);
+              ASSERT_NE(IID, llvm::Intrinsic::not_intrinsic);
+              auto *Callee =
+                  llvm::Intrinsic::getOrInsertDeclaration(&Module, IID);
+              const auto Name = "query_" + std::to_string(NativeFunctions++);
+              auto *Function = llvm::Function::Create(
+                  Callee->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+                  Name, Module);
+              llvm::IRBuilder<> B(
+                  llvm::BasicBlock::Create(Context, "entry", Function));
+              std::vector<llvm::Value *> Inputs;
+              for (auto &Argument : Function->args())
+                Inputs.push_back(&Argument);
+              Inputs[1] = B.getInt32(Bits);
+              Inputs[2] = B.getInt32(Segment);
+              auto *Call = B.CreateCall(Callee, Inputs);
+              if (Call->getType()->isVoidTy())
+                B.CreateRetVoid();
+              else
+                B.CreateRet(Call);
+            }
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      auto Native = llvm::CloneModule(Module);
+      const auto Object = Codegen().compile(*Native, A, Format);
+      ASSERT_TRUE(Object.Success);
+      ASSERT_FALSE(Object.ObjectData.empty());
+      CEmitterOptions Options;
+      Options.TheArch = A;
+      Options.Format = Format;
+      Options.PreserveLLVMFunctionTypes = true;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(LLVMCEmitter().emit(Module, Out, Options));
+      llvm::SmallString<128> Input(Directory), Output(Directory),
+          Errors(Directory);
+      llvm::sys::path::append(Input, "fallback.c");
+      llvm::sys::path::append(Output, "fallback.o");
+      llvm::sys::path::append(Errors, "fallback.err");
+      std::error_code Error;
+      llvm::raw_fd_ostream File(Input, Error);
+      ASSERT_FALSE(Error);
+      File << "#define NEVERD_X86_SYSTEM_STATE(native, ...) __VA_ARGS__\n"
+           << freestandingC(Source);
+      File.close();
+      const std::string Target = "--target=" + Triple;
+      for (const char *Opt : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Triple);
+        SCOPED_TRACE(Opt);
+        const std::vector<llvm::StringRef> Arguments = {
+            Compiler, Target, "-std=gnu23", "-ffreestanding", "-c", Opt,
+            Input,    "-o",   Output};
+        const std::optional<llvm::StringRef> Redirects[] = {
+            std::nullopt, std::nullopt, Errors.str()};
+        const auto Status = llvm::sys::ExecuteAndWait(
+            Compiler, Arguments, std::nullopt, Redirects, 30);
+        const auto Diagnostics = llvm::MemoryBuffer::getFile(Errors);
+        ASSERT_EQ(Status, 0)
+            << (Diagnostics ? (*Diagnostics)->getBuffer().str() : "") << Source;
+        ++CCompilations;
+      }
+      const char *NeverC = std::getenv("NEVERD_TEST_NEVERC");
+      if (A == Arch::X64 && NeverC && llvm::sys::fs::exists(NeverC))
+        compileNativeC(NeverC, Directory, Format, Source,
+                       "llvm.x86.lar.mem16.address", NeverCCompilations);
+      if (::testing::Test::HasFailure())
+        return;
+    }
+  EXPECT_EQ(NativeFunctions, 462u);
+  EXPECT_EQ(CCompilations, 12u);
+  RecordProperty("descriptor_address_native_functions", NativeFunctions);
+  RecordProperty("descriptor_address_c_compilations", CCompilations);
+  RecordProperty("descriptor_address_neverc_compilations", NeverCCompilations);
 }
 
 TEST(X86SystemStateSource, EveryOwnedInstructionSurvivesBothSourceRoutes) {
