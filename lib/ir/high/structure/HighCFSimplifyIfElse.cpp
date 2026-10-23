@@ -24,7 +24,6 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/support/Diagnostic.h"
 
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -4008,13 +4007,14 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
   // reads it, for the prefix checks below.  One walk serves every check
   // until a fold rewrites the body.
   using VarKey = std::tuple<int, int, int>;
-  std::optional<llvm::DenseMap<VarKey, std::vector<const HighStmt *>>> Readers;
+  std::optional<std::map<VarKey, std::vector<const HighStmt *>>> Readers;
   const auto readOutside = [&](const MedVar &V,
                                const std::set<const HighStmt *> &Skip) {
     if (!Readers) {
       Readers.emplace();
       walkStmts(IfElseFunctionBody ? *IfElseFunctionBody : Body,
                 [&](const HighStmt &S) {
+                  std::set<VarKey> Read;
                   HighExprSet Seen;
                   llvm::SmallVector<const HighExpr *, 32> Work;
                   for (const ExprPtr *Slot :
@@ -4028,18 +4028,14 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
                     const HighExpr *E = Work.pop_back_val();
                     if (!E || !Seen.insert(E).second)
                       continue;
-                    if (E->Kind == ExprKind::Var) {
-                      auto &Uses =
-                          (*Readers)[{E->Var.Kind, E->Var.Id, E->Var.SSAVer}];
-                      // Each statement is visited once. Its repeated reads
-                      // are adjacent in this variable's list of readers.
-                      if (Uses.empty() || Uses.back() != &S)
-                        Uses.push_back(&S);
-                    }
+                    if (E->Kind == ExprKind::Var)
+                      Read.emplace(E->Var.Kind, E->Var.Id, E->Var.SSAVer);
                     E->forEachChildExpr([&](const ExprPtr &Child) {
                       Work.push_back(Child.get());
                     });
                   }
+                  for (const VarKey &Key : Read)
+                    (*Readers)[Key].push_back(&S);
                 });
     }
     const auto It = Readers->find({V.Kind, V.Id, V.SSAVer});
