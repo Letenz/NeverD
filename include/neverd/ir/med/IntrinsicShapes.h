@@ -16,6 +16,7 @@
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86AmxState.h"
@@ -52,6 +53,24 @@ inline bool aarch64PAuthMedShapeIsValid(const MedOp &Op) {
        .Key = Op.NumInputs == 4 && Op.Inputs[2].isConst()
                   ? std::optional<uint64_t>(Op.Inputs[2].ConstVal)
                   : std::nullopt});
+}
+
+inline bool aarch64CPAMedShapeIsValid(const MedOp &Op) {
+  if (!hasValidMedIntrinsicId(Op) || Op.NumInputs < 3 || Op.NumInputs > 4 ||
+      Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      !Op.IntrinsicOutputs.empty() ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  for (unsigned I = 1; I < Op.NumInputs; ++I)
+    if (!Op.Inputs[I].isConst() && Op.Inputs[I].Kind != MedVar::Reg &&
+        Op.Inputs[I].Kind != MedVar::Temp && Op.Inputs[I].Kind != MedVar::Param)
+      return false;
+  return aarch64CPAShapeIsValid(static_cast<Intrinsic>(Op.Inputs[0].ConstVal),
+                                Op.NumInputs, Op.Output.Size, Op.Inputs[1].Size,
+                                Op.Inputs[2].Size,
+                                Op.NumInputs == 4 ? Op.Inputs[3].Size : 0);
 }
 
 inline bool x87ContextMedShapeIsValid(const MedOp &Op, Arch A) {
@@ -313,7 +332,7 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
   if (static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal)
     return true;
   return !preservesCallSetup(Id) && !onlyChecksForAFault(Id) &&
-         !aarch64PAuthMedShapeIsValid(Op) &&
+         !aarch64PAuthMedShapeIsValid(Op) && !aarch64CPAMedShapeIsValid(Op) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
 }
 

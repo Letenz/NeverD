@@ -269,6 +269,50 @@ TEST(ReturnContracts, ASystemRegisterReadIsAValue) {
             std::vector<bool>{false});
 }
 
+TEST(ReturnContracts, CheckedAArch64PointersRemainReturnValues) {
+  const auto Pointer = MedVar::makeConst(0x1234, 8);
+  const auto Modifier = MedVar::makeConst(0x5678, 8);
+  const struct {
+    Intrinsic Id;
+    std::vector<MedVar> Inputs;
+  } Cases[] = {
+      {Intrinsic::Pacia, {Pointer, Modifier}},
+      {Intrinsic::Pacib, {Pointer, Modifier}},
+      {Intrinsic::Pacda, {Pointer, Modifier}},
+      {Intrinsic::Pacdb, {Pointer, Modifier}},
+      {Intrinsic::Autia, {Pointer, Modifier}},
+      {Intrinsic::Autib, {Pointer, Modifier}},
+      {Intrinsic::Autda, {Pointer, Modifier}},
+      {Intrinsic::Autdb, {Pointer, Modifier}},
+      {Intrinsic::Xpaci, {Pointer}},
+      {Intrinsic::Xpacd, {Pointer}},
+      {Intrinsic::A64_Pacga, {Pointer, Modifier}},
+      {Intrinsic::A64_AuthBranch, {Pointer, MedVar::makeConst(0, 4), Modifier}},
+      {Intrinsic::A64_Addpt, {Pointer, Modifier}},
+      {Intrinsic::A64_Subpt, {Pointer, Modifier}},
+      {Intrinsic::A64_Maddpt, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Msubpt, {Pointer, Modifier, Pointer}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(static_cast<unsigned>(Case.Id));
+    for (bool Malformed : {false, true}) {
+      MedOp Op = intrinsic(Case.Id, Case.Inputs);
+      Op.Output.TheArch = Arch::AArch64;
+      Op.Output.RegOff = 0; // AArch64 x0, the integer result register.
+      if (Malformed)
+        Op.Inputs[1].Size = 4;
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Format = BinaryFormat::MachO;
+      PipelineResult Result;
+      Result.MedFuncs = {
+          function(CalleeEntry, {block({Op, returning(Op.Output)})})};
+      settleReturnContracts(Image, Result);
+      EXPECT_EQ(Result.MedFuncs.front().ReturnsNoValue, Malformed);
+    }
+  }
+}
+
 TEST(ReturnContracts, ValidatedX86SystemCompletionsRemainReturnValues) {
   const auto Constant = [](uint64_t Value, uint16_t Size) {
     return MedVar::makeConst(Value, Size);

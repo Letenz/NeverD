@@ -65,6 +65,10 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
                  Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isAArch64PAuthIntrinsic(Id) && !aarch64PAuthMedShapeIsValid(Op))
+            Err(kAArch64PAuthMalformedOperation, Blk.Id, Op.Addr);
+          if (aarch64CPAOperation(Id) && !aarch64CPAMedShapeIsValid(Op))
+            Err(kAArch64CPAMalformedOperation, Blk.Id, Op.Addr);
           if (isX87ContextIntrinsic(Id) &&
               !x87ContextMedShapeIsValid(Op, Arch::Unknown))
             Err("x87 context intrinsic has an invalid state/operand contract",

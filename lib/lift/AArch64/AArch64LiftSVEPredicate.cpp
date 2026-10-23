@@ -67,9 +67,9 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     if (Multiplier.type != AARCH64_OP_IMM || Multiplier.imm == 1)
       return Count;
     NdVar Scaled = S.makeTemp(Count.Size);
-    S.emit(NdOp::INT_MULT, Scaled,
-           {Count,
-            NdVar::cst(static_cast<uint64_t>(Multiplier.imm), Count.Size)});
+    S.emit(
+        NdOp::INT_MULT, Scaled,
+        {Count, NdVar::cst(static_cast<uint64_t>(Multiplier.imm), Count.Size)});
     return Scaled;
   };
 
@@ -132,8 +132,7 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   case AARCH64_INS_RDVL:
   case AARCH64_INS_ADDPL:
   case AARCH64_INS_ADDSPL:
-  case AARCH64_INS_ADDSVL:
-  case AARCH64_INS_ADDPT: {
+  case AARCH64_INS_ADDSVL: {
     if (ARM64.op_count >= 2) {
       NdVar Dst = L.operandWrite(ARM64.operands[0]);
       NdVar Src = L.operandRead(S, ARM64.operands[1]);
@@ -152,8 +151,7 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   case AARCH64_INS_CNTW: {
     if (ARM64.op_count >= 1) {
       NdVar Dst = L.operandWrite(ARM64.operands[0]);
-      S.emitIntrinsic(sveCountIntrinsic(Insn->id), Dst,
-                      {NdVar::cst(31, 4)});
+      S.emitIntrinsic(sveCountIntrinsic(Insn->id), Dst, {NdVar::cst(31, 4)});
     }
     break;
   }
@@ -171,11 +169,9 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     if (ARM64.op_count >= 1) {
       NdVar Dst = L.operandWrite(ARM64.operands[0]);
       NdVar Count = S.makeTemp(Dst.Size);
-      S.emitIntrinsic(sveCountIntrinsic(Insn->id), Count,
-                      {NdVar::cst(31, 4)});
+      S.emitIntrinsic(sveCountIntrinsic(Insn->id), Count, {NdVar::cst(31, 4)});
       Count = scaleSVECount(Count);
-      S.emit(NdOp::INT_ADD, Dst,
-             {NdVar::reg(Dst.Offset, Dst.Size), Count});
+      S.emit(NdOp::INT_ADD, Dst, {NdVar::reg(Dst.Offset, Dst.Size), Count});
     }
     break;
   }
@@ -194,11 +190,9 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     if (ARM64.op_count >= 1) {
       NdVar Dst = L.operandWrite(ARM64.operands[0]);
       NdVar Count = S.makeTemp(Dst.Size);
-      S.emitIntrinsic(sveCountIntrinsic(Insn->id), Count,
-                      {NdVar::cst(31, 4)});
+      S.emitIntrinsic(sveCountIntrinsic(Insn->id), Count, {NdVar::cst(31, 4)});
       Count = scaleSVECount(Count);
-      S.emit(NdOp::INT_SUB, Dst,
-             {NdVar::reg(Dst.Offset, Dst.Size), Count});
+      S.emit(NdOp::INT_SUB, Dst, {NdVar::reg(Dst.Offset, Dst.Size), Count});
     }
     break;
   }

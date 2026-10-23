@@ -24,6 +24,7 @@
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64PointerC.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -48,6 +49,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -5746,7 +5748,10 @@ std::string HighCWriter::intrinsicInstructionComment(const HighExpr &E) const {
 }
 
 std::string HighCWriter::callStatementText(const HighExpr &Call) {
-  return statementCallText(Call) + ";" + intrinsicInstructionComment(Call);
+  std::string Text = statementCallText(Call);
+  if (aarch64PointerCRequiresDiscard(Call.IntrinsicId))
+    Text = llvm::formatv(kAArch64PointerCDiscardExpression, Text).str();
+  return Text + ";" + intrinsicInstructionComment(Call);
 }
 
 const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
