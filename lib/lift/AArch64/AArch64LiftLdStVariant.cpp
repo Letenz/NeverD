@@ -238,11 +238,28 @@ bool liftLdStVariant(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   }
   case AARCH64_INS_LDRAA:
   case AARCH64_INS_LDRAB: {
-    if (ARM64.op_count < 2)
-      break;
+    if (ARM64.op_count != 2 || ARM64.operands[0].type != AARCH64_OP_REG ||
+        ARM64.operands[1].type != AARCH64_OP_MEM ||
+        ARM64.operands[1].mem.index != AARCH64_REG_INVALID ||
+        (Insn->detail->writeback &&
+         ARM64.operands[0].reg == ARM64.operands[1].mem.base))
+      return false;
     NdVar Dst = L.operandWrite(ARM64.operands[0]);
-    NdVar EA = L.operandEffAddr(S, ARM64.operands[1]);
+    const auto &Mem = ARM64.operands[1];
+    auto BaseInfo = mapCapstoneReg(static_cast<aarch64_reg>(Mem.mem.base));
+    NdVar Base = NdVar::reg(BaseInfo.Offset, 8);
+    NdVar Authenticated = S.makeTemp(8);
+    // LDRA* authenticates the base (DA/DB, zero modifier), then applies the
+    // signed byte offset; it does not authenticate the value loaded there.
+    S.emitIntrinsic(Insn->id == AARCH64_INS_LDRAA ? Intrinsic::Autda
+                                                  : Intrinsic::Autdb,
+                    Authenticated, {Base, NdVar::cst(0, 8)});
+    NdVar EA = S.makeTemp(8);
+    S.emit(NdOp::INT_ADD, EA,
+           {Authenticated, NdVar::cst(static_cast<uint64_t>(Mem.mem.disp), 8)});
     S.emit(NdOp::LOAD, Dst, {EA});
+    if (Insn->detail->writeback)
+      S.emit(NdOp::COPY, Base, {EA});
     break;
   }
   case AARCH64_INS_LDIAPP: {
@@ -387,8 +404,7 @@ bool liftLdStVariant(AArch64Lifter &L, AArch64Lifter::LiftState &S,
 
     S.emit(NdOp::ATOMIC_XCHG, OldPair, {EA, NewPair}, Ordering);
     S.emit(NdOp::SUBBYTES, LowDst, {OldPair, NdVar::cst(0, 4)});
-    S.emit(NdOp::SUBBYTES, HighDst,
-           {OldPair, NdVar::cst(LowDst.Size, 4)});
+    S.emit(NdOp::SUBBYTES, HighDst, {OldPair, NdVar::cst(LowDst.Size, 4)});
     break;
   }
 

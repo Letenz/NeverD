@@ -818,7 +818,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     if (CI && !CI->TargetName.empty() &&
         !CI->TargetName.starts_with(kAutoFuncPrefix))
       return canonicalizeObjectCallee(CI->TargetName);
-    if (CallAddr != 0) {
+    if (CallAddr != 0 ||
+        (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())) {
       auto FnIt = FuncNames.find(CallAddr);
       if (FnIt != FuncNames.end())
         return canonicalizeObjectCallee(FnIt->second);
@@ -1023,7 +1024,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     }
     if (!CalleeName.empty() && CallAddr == 0)
       CallAddr = 1; // force direct-call resolution below
-    if (CallAddr != 0) {
+    if (CallAddr != 0 ||
+        (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())) {
       // A pointer-table bind can prove a symbol's external identity before a
       // call proves its ABI.  The mirror represents that unresolved identity
       // as an external i8 global.  Temporarily free the canonical name so the
@@ -1564,6 +1566,11 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     Call->setCallingConv(Callee->getCallingConv());
     Result = Call;
   } else {
+    if (!Target) {
+      syncError() << "med_llvm_emitter: call has no resolved target\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
     // Indirect call: the callee is unknown, so its LLVM signature is rebuilt
     // from the recovered register classes.  A target with a separate FP
     // register file (AArch64 v0-v7, x86-64 xmm0-7) passes a floating-point

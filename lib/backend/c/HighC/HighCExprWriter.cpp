@@ -5451,6 +5451,10 @@ std::string HighCWriter::unknownVarUse(const HighExpr &E,
       !isEmittedParamName(RawName) &&
       !(CurrentFunc &&
         isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch))) {
+    const auto &TRI = getTargetRegInfo(Opts.TheArch);
+    if (Opts.TheArch == Arch::AArch64 && E.Var.Kind == MedVar::Reg &&
+        TRI.isLinkRegister(E.Var.RegOff) && E.Var.Size == TRI.PointerSize)
+      return "(uintptr_t)__builtin_return_address(0)";
     if (x87HelperFor(E) == X87CHelper::ControlWord)
       return useX87Helper(X87CHelper::ControlWord) + "()";
     return "(__builtin_trap(), 0 /* unknown register */)";
@@ -7286,7 +7290,8 @@ bool HighCWriter::isImageDataAddress(va_t Addr) const {
 std::optional<uint64_t> HighCWriter::foldReadonlyScalar(va_t Addr,
                                                         uint16_t Size) const {
   if (!isImageDataAddress(Addr) || !Opts.Image ||
-      DataSymbolBindings.count(Addr))
+      DataSymbolBindings.count(Addr) ||
+      Opts.Image->hasMachOAuthenticatedPointerIn(Addr, Size))
     return std::nullopt;
   const Segment *Seg = Opts.Image->getSegmentFor(Addr);
   if (!Seg || Seg->isWritable())

@@ -32,6 +32,7 @@
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -799,6 +800,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   Ctx = &LCtx;
   auto Mod_ = std::make_unique<llvm::Module>(ModName, LCtx);
   Mod = Mod_.get();
+  if (Img_ && (Img_->isArm64e() || !Img_->MachOAuthenticatedPointers.empty()))
+    Mod_->addModuleFlag(llvm::Module::Error, kArm64eAnalysisModuleFlag, 1);
   if (const char *Triple = llvmEmitTriple(TheArch, Fmt)) {
     Mod_->setTargetTriple(llvm::Triple(Triple));
     // Address folding, aggregate layout and C projection run before native

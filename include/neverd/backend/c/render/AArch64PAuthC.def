@@ -1,0 +1,39 @@
+//===- AArch64PAuthC.def - Pointer authentication C syntax ------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// NEVERD_A64_PAUTH_C_TEXT(Name, Text) defines source fragments and
+/// llvm::formatv templates shared by HighC and LLVMC. These are GNU C
+/// expressions/assembly; the intrinsic table owns instruction mnemonics and
+/// builtin names.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_A64_PAUTH_C_TEXT
+#error "Define NEVERD_A64_PAUTH_C_TEXT before including AArch64PAuthC.def"
+#endif
+
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCPointerDeclaration,
+                        "uint64_t __pointer = (uint64_t)({0}); ")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCMachineAsm,
+                        "__asm__ volatile(\"{0}{1}\" : \"+r\"(__pointer){2}); ")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCOperands, " %0, %1")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCStripOperands, " %0")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCModifier, " : \"r\"((uint64_t)({0}))")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCPointerResult, "__pointer; ")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCCopyResult, "{0} = __pointer; ")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCAuthenticate,
+                        "(uint64_t){0}((void *)(uintptr_t)({1}), {2}, "
+                        "(uintptr_t)({3}))")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCTargetDeclaration,
+                        "uint64_t __target = {0}; ")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCTarget, "__target")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCTargetUse,
+                        "__asm__ volatile(\"{0}\" : : \"r\"({1})); ")
+NEVERD_A64_PAUTH_C_TEXT(kArm64eAuthenticatedStorageComment,
+                        " /* arm64e: dyld-authenticated storage */")
+
+#undef NEVERD_A64_PAUTH_C_TEXT

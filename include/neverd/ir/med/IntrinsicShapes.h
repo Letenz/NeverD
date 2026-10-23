@@ -16,6 +16,7 @@
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86SystemState.h"
@@ -29,6 +30,27 @@ namespace neverd {
 inline bool hasValidMedIntrinsicId(const MedOp &Op) {
   return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
          Op.NumInputs <= Op.Inputs.size() && Op.Inputs.front().isConst();
+}
+
+inline bool aarch64PAuthMedShapeIsValid(const MedOp &Op) {
+  if (!hasValidMedIntrinsicId(Op) || Op.NumInputs < 2 || Op.NumInputs > 4 ||
+      Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      !Op.IntrinsicOutputs.empty() ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return aarch64PAuthShapeIsValid(
+      static_cast<Intrinsic>(Op.Inputs[0].ConstVal),
+      {.NumInputs = Op.NumInputs,
+       .OutputBytes = Op.Output.Size,
+       .PointerBytes = Op.Inputs[1].Size,
+       .ModifierBytes =
+           Op.NumInputs > 2 ? Op.Inputs[Op.NumInputs - 1].Size : 0U,
+       .KeyBytes = Op.NumInputs == 4 ? Op.Inputs[2].Size : 0U,
+       .Key = Op.NumInputs == 4 && Op.Inputs[2].isConst()
+                  ? std::optional<uint64_t>(Op.Inputs[2].ConstVal)
+                  : std::nullopt});
 }
 
 inline bool x87ContextMedShapeIsValid(const MedOp &Op, Arch A) {
@@ -290,6 +312,7 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
   if (static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal)
     return true;
   return !preservesCallSetup(Id) && !onlyChecksForAFault(Id) &&
+         !aarch64PAuthMedShapeIsValid(Op) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
 }
 

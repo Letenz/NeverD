@@ -1,0 +1,69 @@
+//===- MachOArm64e.def - Authenticated Mach-O pointer layouts ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Apple's dyld arm64e chain formats and ARM64_RELOC_AUTHENTICATED_POINTER.
+/// NEVERD_MACHO_ARM64E_FORMAT(Name, Stride, Offset, OrdinalBits) names an LLVM
+/// MachO enumerator. FIELD(Name, Low, Width) describes an on-disk 64-bit word;
+/// VALUE(Type, Name, Value) and TEXT(Name, Text) expose typed layout constants
+/// and diagnostics. Undefined macros ignore their rows.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_MACHO_ARM64E_FORMAT
+#define NEVERD_MACHO_ARM64E_FORMAT(Name, Stride, Offset, OrdinalBits)
+#endif
+#ifndef NEVERD_MACHO_ARM64E_FIELD
+#define NEVERD_MACHO_ARM64E_FIELD(Name, Low, Width)
+#endif
+#ifndef NEVERD_MACHO_ARM64E_VALUE
+#define NEVERD_MACHO_ARM64E_VALUE(Type, Name, Value)
+#endif
+#ifndef NEVERD_MACHO_ARM64E_TEXT
+#define NEVERD_MACHO_ARM64E_TEXT(Name, Text)
+#endif
+
+NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E, 8, false, 16)
+NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_KERNEL, 4, true, 16)
+NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_USERLAND, 8, true, 16)
+NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_FIRMWARE, 4, false, 16)
+NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_USERLAND24, 8, true, 24)
+
+NEVERD_MACHO_ARM64E_FIELD(kAuthentication, 63, 1)
+NEVERD_MACHO_ARM64E_FIELD(kBind, 62, 1)
+NEVERD_MACHO_ARM64E_FIELD(kNext, 51, 11)
+NEVERD_MACHO_ARM64E_FIELD(kDiversity, 32, 16)
+NEVERD_MACHO_ARM64E_FIELD(kAddressDiversity, 48, 1)
+NEVERD_MACHO_ARM64E_FIELD(kKey, 49, 2)
+NEVERD_MACHO_ARM64E_FIELD(kAuthenticatedTarget, 0, 32)
+NEVERD_MACHO_ARM64E_FIELD(kTarget, 0, 43)
+NEVERD_MACHO_ARM64E_FIELD(kHigh8, 43, 8)
+NEVERD_MACHO_ARM64E_FIELD(kInlineAddend, 32, 19)
+NEVERD_MACHO_ARM64E_FIELD(kOrdinalStorage, 0, 32)
+NEVERD_MACHO_ARM64E_FIELD(kObjectAddend, 0, 32)
+NEVERD_MACHO_ARM64E_FIELD(kObjectReserved, 51, 12)
+
+NEVERD_MACHO_ARM64E_VALUE(unsigned, kHigh8Shift, 56)
+NEVERD_MACHO_ARM64E_VALUE(unsigned, kSmallPageBytes, 0x1000)
+NEVERD_MACHO_ARM64E_VALUE(unsigned, kLargePageBytes, 0x4000)
+NEVERD_MACHO_ARM64E_VALUE(unsigned, kPointerBytes, sizeof(uint64_t))
+NEVERD_MACHO_ARM64E_VALUE(unsigned, kObjectPointerLength, 3)
+
+NEVERD_MACHO_ARM64E_TEXT(kMalformedChainedFixups,
+                         "macho: malformed arm64e chained fixups")
+NEVERD_MACHO_ARM64E_TEXT(kUnsupportedChainFormatPrefix,
+                         "macho: unsupported arm64e chained pointer format ")
+NEVERD_MACHO_ARM64E_TEXT(kInvalidObjectPointer,
+                         "invalid ARM64 authenticated pointer")
+NEVERD_MACHO_ARM64E_TEXT(kInvalidObjectPointerBits,
+                         "invalid ARM64 authenticated pointer bits")
+NEVERD_MACHO_ARM64E_TEXT(kConflictingObjectPointer,
+                         "ARM64 authenticated pointer overflows or conflicts")
+
+#undef NEVERD_MACHO_ARM64E_FORMAT
+#undef NEVERD_MACHO_ARM64E_FIELD
+#undef NEVERD_MACHO_ARM64E_VALUE
+#undef NEVERD_MACHO_ARM64E_TEXT

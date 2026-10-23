@@ -68,7 +68,11 @@ Arch cpuTypeToArch(uint32_t CpuType, bool Is64) {
 }
 
 /// How the load dialog names a cputype value.
-std::string cpuName(uint32_t CpuType) {
+std::string cpuName(uint32_t CpuType, uint32_t CpuSubtype = 0) {
+#define NEVERD_MACHO_CPU_SUBTYPE(CPU, Subtype, Name)                           \
+  if (CpuType == CPU && (CpuSubtype & ~uint32_t(CPU_SUBTYPE_MASK)) == Subtype) \
+    return Name;
+#include "neverd/loader/MachO/MachONames.def"
   switch (CpuType) {
 #define NEVERD_MACHO_CPU(Value, Name)                                          \
   case Value:                                                                  \
@@ -143,6 +147,8 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
 
   uint32_t CpuType = Is64 ? Obj.getHeader64().cputype : Obj.getHeader().cputype;
   Img.Arch = cpuTypeToArch(CpuType, Is64);
+  Img.MachOCPUSubtype =
+      Is64 ? Obj.getHeader64().cpusubtype : Obj.getHeader().cpusubtype;
   Img.Bits = Is64 ? Bitness::Bits64 : Bitness::Bits32;
   if (Img.Arch == Arch::Unknown)
     return llvm::make_error<llvm::StringError>(
@@ -542,6 +548,9 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
                                           Img);
   macho_loader::parseChainedFixupsRebases(BasePtr, FileSize, ChainedFixups,
                                           TextVMAddr, Img);
+  if (!Img.MachOChainedFixupsError.empty())
+    return llvm::make_error<llvm::StringError>(Img.MachOChainedFixupsError,
+                                               llvm::inconvertibleErrorCode());
   macho_loader::parseRuntimeFunctionSections(Sections, TextVMAddr, Img);
   macho_loader::parseExportTrie(BasePtr, FileSize, DyldInfo, TextVMAddr, Img);
   macho_loader::parseUUID(Obj, Img);
@@ -613,15 +622,16 @@ void MachOLoader::identify(llvm::MemoryBufferRef Buffer,
     size_t Index = 0;
     for (const auto &Slice : Universal->objects())
       if (Index++ == Chosen)
-        ChosenName = cpuName(Slice.getCPUType());
+        ChosenName = cpuName(Slice.getCPUType(), Slice.getCPUSubType());
     Index = 0;
     for (const auto &Slice : Universal->objects()) {
       LoadCandidate Row;
       Row.Row = LoadRow::FatMachO;
       Row.Format = BinaryFormat::MachO;
-      Row.Description = llvm::formatv(getLoadRowText(LoadRow::FatMachO).data(),
-                                      Index + 1, cpuName(Slice.getCPUType()))
-                            .str();
+      Row.Description =
+          llvm::formatv(getLoadRowText(LoadRow::FatMachO).data(), Index + 1,
+                        cpuName(Slice.getCPUType(), Slice.getCPUSubType()))
+              .str();
       if (auto Obj = Slice.getAsObjectFile()) {
         judge(**Obj, Row);
       } else {
@@ -653,9 +663,12 @@ void MachOLoader::identify(llvm::MemoryBufferRef Buffer,
       Obj->is64Bit() ? Obj->getHeader64().filetype : Obj->getHeader().filetype;
   const uint32_t CpuType =
       Obj->is64Bit() ? Obj->getHeader64().cputype : Obj->getHeader().cputype;
-  Row.Description = llvm::formatv(getLoadRowText(LoadRow::MachO).data(),
-                                  fileTypeName(FileType), cpuName(CpuType))
-                        .str();
+  const uint32_t CpuSubtype = Obj->is64Bit() ? Obj->getHeader64().cpusubtype
+                                             : Obj->getHeader().cpusubtype;
+  Row.Description =
+      llvm::formatv(getLoadRowText(LoadRow::MachO).data(),
+                    fileTypeName(FileType), cpuName(CpuType, CpuSubtype))
+          .str();
   judge(*Obj, Row);
   Rows.push_back(std::move(Row));
 }

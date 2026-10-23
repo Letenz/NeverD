@@ -29,6 +29,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/MachineInstructionText.h"
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
@@ -3911,6 +3912,18 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     OS << "}\n";
     return true;
   }
+  if (IID == llvm::Intrinsic::ptrauth_auth) {
+    if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 3)
+      throw std::runtime_error(kAArch64PAuthRequiresAArch64);
+    emitIndent(Indent);
+    if (!Call.use_empty())
+      OS << getName(&Call) << " = ";
+    OS << aarch64PAuthAuthenticateC(valueStr(Call.getArgOperand(0)),
+                                    valueStr(Call.getArgOperand(1)),
+                                    valueStr(Call.getArgOperand(2)))
+       << ";\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::aarch64_neon_bfmmla) {
     if (!isNativeVectorIntrinsic(Call, Opts.TheArch))
       throw std::runtime_error("BFMMLA requires an AArch64 C projection");
@@ -5102,6 +5115,10 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
   unsigned Params = Type->getNumParams();
   if (const std::optional<unsigned> Typed = typedSlotParamCount(Call))
     Params = std::min(Params, *Typed);
+  // The ordinary source projection can omit trailing unknown/live-in
+  // arguments. Its cast must describe the same argument list it prints.
+  if (!Strict)
+    Params = std::min(Params, printedCallArgLimit(Call, {}));
   std::string Parameters;
   for (unsigned I = 0; I < Params; ++I) {
     if (!Parameters.empty())

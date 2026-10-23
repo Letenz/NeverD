@@ -24,6 +24,7 @@
 
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/FloatingPointContract.h"
+#include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
@@ -3842,9 +3843,14 @@ void HighCWriter::writeImageObjects() {
          << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
     if (Backing.Align > 1)
       OS << "_Alignas(" << Backing.Align << ") ";
+    const bool Authenticated = Opts.Image->hasMachOAuthenticatedPointerIn(
+        Backing.Base, Backing.End - Backing.Base);
+    if (Authenticated)
+      OS << "extern ";
     OS << "unsigned char " << Backing.Name << "["
        << Backing.Pad + (Backing.End - Backing.Base) << "]";
-    writeBackingBytes(Backing);
+    if (!Authenticated)
+      writeBackingBytes(Backing);
     OS << ";\n";
   }
   // Every object has its name before any initializer names it.
@@ -3873,6 +3879,14 @@ void HighCWriter::writeImageObjects() {
     // An object a C library header declares is the header's.
     if (imageBackingAddress(Addr) || !Obj.Header.empty())
       continue;
+    const uint64_t ObjectBytes = std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.Type ? Obj.Type->Size : pointerBytes(Opts.TheArch));
+    if (Opts.Image->hasMachOAuthenticatedPointerIn(Addr, ObjectBytes)) {
+      OS << "extern " << declarationToC(Obj.Type, Obj.Name) << ";"
+         << kArm64eAuthenticatedStorageComment << "\n";
+      continue;
+    }
     if (!Obj.String && !Obj.PointsTo && relocatedSlotInitializer(Addr, Obj)) {
       Deferred.push_back(Addr);
       continue;
@@ -4050,6 +4064,9 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   }
   for (const ImageBacking &Backing : ImageBackings) {
     if (Backing.Words.empty())
+      continue;
+    if (Opts.Image->hasMachOAuthenticatedPointerIn(Backing.Base,
+                                                   Backing.End - Backing.Base))
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
