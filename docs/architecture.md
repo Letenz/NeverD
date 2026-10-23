@@ -394,6 +394,22 @@ forwards actual per-side stages and preserves the old comparison on stop.
 exception-chunk traversal. The adapter preserves original bytes/operands and
 binds the snapshot to input content, ABI, settings and normalization revisions.
 Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+Profile selection and ISA/bitness admission belong to this adapter, with the
+default in `diff/Limits.h`; consumers do not guess an input's architecture.
+The AArch64 reader consumes its own typed operand details and ordinary lifted
+flow/reference facts. It binds transfer targets to their final operand rather
+than numeric equality with another immediate, uses lifted literal addresses,
+and retains ADRP page fragments relative to the exact image base. Mach-O subtype
+bits participate in AArch64 ABI identity. Existing x86 hash events and identity
+remain unchanged. Unsupported architectures do not enter another ISA's operand
+union, and structural admission does not qualify scalar or call-effect proofs.
+Native AArch64 operand decoding declines ambiguous writeback/load overlaps to
+the full decoder, preserving its illegal-instruction evidence. Every reused
+decoder occurrence resets that validity flag. `AArch64Lifter::lift` owns the
+refusal to emit semantics for a decoded illegal instruction, including permissive
+calls; ordinary flow queries and DIFF therefore retain bytes without inventing
+transfers or references. This is distinct from a decode failure: the original
+spelling remains inspectable.
 `ComparisonDataFlow` runs bounded selected-function native pipeline jobs, then
 projects their verified SSA into immutable `FlowEvidence` collections. It owns
 the session/loader boundary; graph validation, persistence and binding remain in

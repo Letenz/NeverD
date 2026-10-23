@@ -20,6 +20,9 @@
 
 namespace neverd::limits::diff {
 
+/// Select a qualified same-ISA profile from the loaded inputs.
+inline constexpr const char *kDefaultNativeProfile = "native-same-isa-v1";
+
 // Optional source inspection reuses SDK source-page byte/line ceilings.
 // The caller may set the additional native instruction allowance to zero.
 inline constexpr uint64_t kDefaultSourceNativeInstructions = 4096;

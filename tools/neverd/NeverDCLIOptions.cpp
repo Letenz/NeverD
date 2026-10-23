@@ -1476,7 +1476,8 @@ cl::opt<bool>
                    cl::sub(DiffCmd));
 cl::opt<std::string> DiffProfile("profile",
                                  cl::desc("Structural comparison profile"),
-                                 cl::init("native-x86-v1"), cl::sub(DiffCmd));
+                                 cl::init(limits::diff::kDefaultNativeProfile),
+                                 cl::sub(DiffCmd));
 cl::opt<std::string>
     DiffOptions("options", cl::desc("Structural comparison options JSON file"),
                 cl::sub(DiffCmd));

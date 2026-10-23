@@ -1243,6 +1243,20 @@ options and stale revisions. The Qt case checks aligned row counts, highlights,
 instruction navigation, synchronized scroll and independent-source fallback.
 These checks establish exact textual alignment and inspection contracts, not
 semantic equivalence or unique statement correspondence.
+AArch64 SDK comparison cases distinguish operand modifiers and scalar changes
+from page-aligned placement, retain >4 GiB and negative literal references, and
+exercise TBZ bit-index/target collisions and partial-page ADRP movement. Profile
+selection preserves x86 identities; unsupported ISA/ABI/bitness and illegal
+instructions cannot acquire complete evidence. Worker/CLI cases compile the
+same change to ELF relocatable, COFF object and Mach-O object inputs, inspect
+owned source alignment and reopen the same saved report. The Qt case selects
+raw AArch64, views aligned source and navigates to original instructions. These
+object cells do not qualify every linked image or transformation family.
+`NeverDAArch64DecodeValidityTests` verifies decoded illegal operands and the
+illegal-to-valid transition through full, light and native-fast routes, including
+direct permissive lifter calls. It also runs the existing independent Capstone
+parity sweeps with poisoned reused-buffer validity state. The SDK case requires
+incomplete DIFF evidence and no invented flow/reference facts for the same bytes.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw

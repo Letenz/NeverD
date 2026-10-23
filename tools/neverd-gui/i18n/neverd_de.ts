@@ -5984,8 +5984,8 @@ Strukturelle Zuordnung belegt weder semantische Äquivalenz noch das Vorhandense
         <translation>Vergleichen</translation>
     </message>
     <message>
-        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
-        <translation>Zwei native x86/x64-Eingaben vergleichen. Die Zuordnungswerte sind heuristisch.</translation>
+        <source>Compare two x86, x64 or AArch64 inputs with the same architecture and ABI. Matching scores are heuristic.</source>
+        <translation>Zwei x86-, x64- oder AArch64-Eingaben mit gleicher Architektur und ABI vergleichen. Die Übereinstimmungswerte sind heuristisch.</translation>
     </message>
     <message>
         <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
@@ -6156,6 +6156,10 @@ Abdeckung: %7</translation>
     <message>
         <source>Pseudocode</source>
         <translation>Pseudocode</translation>
+    </message>
+    <message>
+        <source>Raw AArch64</source>
+        <translation>Rohes AArch64</translation>
     </message>
     <message>
         <source>Raw x64</source>

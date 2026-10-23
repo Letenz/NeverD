@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Builds compact, revision-bound x86 snapshots from the SDK's shared native
+/// Builds compact, revision-bound snapshots from the SDK's shared native
 /// traversal. Operand normalization consumes exact relocation occurrences and
 /// lifted control-flow facts; numeric resemblance to an address is
 /// insufficient.
@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -99,6 +100,118 @@ struct AddressKeys {
     return StableHash().add(Bytes.take_front(End)).value();
   }
 };
+
+// Operand occurrences, not equality with some other operand's numeric value,
+// decide address roles. All control-flow and literal-read targets come from
+// the ordinary lift; in particular, literal operands can carry lossy addresses
+// in decoder detail, while the lift retains their full signed PC displacement.
+bool readAArch64Operands(const BinaryImage &Image, const DecodedInsn &I,
+                         const neverd::sdk::InstructionFlow &Flow,
+                         llvm::function_ref<void(uint64_t)> Both,
+                         llvm::function_ref<void(uint64_t)> Scalar,
+                         llvm::function_ref<void(uint64_t, bool)> Address) {
+  const cs_aarch64 &A = I.Raw->detail->aarch64;
+  Both(A.cc);
+  Both(A.update_flags);
+  Both(I.Raw->detail->writeback);
+  Both(A.post_index);
+  Both(A.op_count);
+  bool Complete = true;
+  for (unsigned N = 0; N < A.op_count; ++N) {
+    const cs_aarch64_op &O = A.operands[N];
+    Both(O.type);
+    Both(O.vector_index);
+    Both(O.vas);
+    Both(O.shift.type);
+    Both(O.shift.value);
+    Both(O.ext);
+    Both(O.is_vreg);
+    Both(O.is_list_member);
+    switch (O.type) {
+    case AARCH64_OP_REG:
+    case AARCH64_OP_MEM_REG:
+      Both(O.reg);
+      break;
+    case AARCH64_OP_IMM:
+    case AARCH64_OP_MEM_IMM:
+      // TBZ/TBNZ also have a bit-index immediate. Only the final operand
+      // denotes the transfer destination, even when both values happen to
+      // agree.
+      if (N + 1 == A.op_count && Flow.Target != InvalidVA &&
+          static_cast<uint64_t>(O.imm) == Flow.Target)
+        Address(Flow.Target, true);
+      else if (I.Id == AARCH64_INS_ADR && N == 1 && A.op_count == 2)
+        Address(static_cast<uint64_t>(O.imm), false);
+      else if (I.Id == AARCH64_INS_ADRP && N == 1 && A.op_count == 2) {
+        // ADRP materializes an address fragment. Keep the actual image page;
+        // no object identity or ADRP+ADD pairing follows from this operand.
+        Both(hashText("aarch64_image_page"));
+        // Preserve the base's low bits too: moving by a partial page can
+        // change the fragment relative to the rest of the image.
+        Both(static_cast<uint64_t>(O.imm) - Image.Base);
+      } else
+        Scalar(static_cast<uint64_t>(O.imm));
+      break;
+    case AARCH64_OP_CIMM:
+    case AARCH64_OP_IMPLICIT_IMM_0:
+      Scalar(static_cast<uint64_t>(O.imm));
+      break;
+    case AARCH64_OP_MEM:
+      Both(O.mem.base);
+      Both(O.mem.index);
+      if (N == 1 && A.op_count == 2 && O.mem.base == AARCH64_REG_INVALID &&
+          O.mem.index == AARCH64_REG_INVALID && Flow.Refs.size() == 1 &&
+          Flow.Refs.front().Kind == "read")
+        Address(Flow.Refs.front().To, false);
+      else
+        Scalar(static_cast<uint64_t>(O.mem.disp));
+      break;
+    case AARCH64_OP_FP:
+      Scalar(std::bit_cast<uint64_t>(O.fp));
+      break;
+    case AARCH64_OP_SYSREG:
+      Both(O.sysop.sub_type);
+      Both(O.sysop.reg.raw_val);
+      break;
+    case AARCH64_OP_SYSIMM:
+      Both(O.sysop.sub_type);
+      Scalar(O.sysop.imm.raw_val);
+      break;
+    case AARCH64_OP_SYSALIAS:
+      Both(O.sysop.sub_type);
+      Both(O.sysop.alias.raw_val);
+      break;
+    case AARCH64_OP_IMM_RANGE:
+      Scalar(O.imm_range.first);
+      Scalar(O.imm_range.offset);
+      break;
+    case AARCH64_OP_PRED:
+      Both(O.pred.reg);
+      Both(O.pred.vec_select);
+      Scalar(O.pred.imm_index);
+      break;
+    case AARCH64_OP_SME:
+      Both(O.sme.type);
+      Both(O.sme.tile);
+      if (O.sme.type == AARCH64_SME_OP_TILE_VEC) {
+        Both(O.sme.slice_reg);
+        Both(O.sme.is_vertical);
+        Both(O.sme.has_range_offset);
+        if (O.sme.has_range_offset) {
+          Scalar(O.sme.slice_offset.imm_range.first);
+          Scalar(O.sme.slice_offset.imm_range.offset);
+        } else
+          Scalar(O.sme.slice_offset.imm);
+      } else if (O.sme.type != AARCH64_SME_OP_TILE)
+        Complete = false;
+      break;
+    default:
+      Complete = false;
+      break;
+    }
+  }
+  return Complete;
+}
 
 ReadInstruction readInstruction(const BinaryImage &Image,
                                 const AddressKeys &Keys, Decoder &D,
@@ -179,60 +292,65 @@ ReadInstruction readInstruction(const BinaryImage &Image,
         return Rel.TargetVA;
     return {};
   };
-  const cs_x86 &X = I.Raw->detail->x86;
-  for (uint8_t Prefix : X.prefix)
-    Both(Prefix);
-  Both(X.addr_size);
-  Both(X.op_count);
-  Both(X.xop_cc);
-  Both(X.sse_cc);
-  Both(X.avx_cc);
-  Both(X.avx_sae);
-  Both(X.avx_rm);
-  for (unsigned N = 0; N < X.op_count; ++N) {
-    const cs_x86_op &O = X.operands[N];
-    Both(O.type);
-    Both(O.avx_bcast);
-    Both(O.avx_zero_opmask);
-    // Direct transfer encoding width can change when the same blocks move.
-    if (!(O.type == X86_OP_IMM && R.Target && Flow.Target != InvalidVA))
-      Both(O.size);
-    switch (O.type) {
-    case X86_OP_REG:
-      Both(O.reg);
-      break;
-    case X86_OP_IMM:
-      if (R.Target && Flow.Target != InvalidVA &&
-          static_cast<uint64_t>(O.imm) == Flow.Target)
-        Address(Flow.Target, true);
-      else if (auto A = Relocated(X.encoding.imm_offset, X.encoding.imm_size))
-        Address(*A, false);
-      else
-        Scalar(static_cast<uint64_t>(O.imm));
-      break;
-    case X86_OP_MEM:
-      Both(O.mem.segment);
-      Both(O.mem.base);
-      Both(O.mem.index);
-      Both(O.mem.scale);
-      if (O.mem.base == X86_REG_RIP || O.mem.base == X86_REG_EIP) {
-        uint64_t A = I.Addr + I.Size + O.mem.disp;
-        if (O.mem.base == X86_REG_EIP)
-          A = static_cast<uint32_t>(A);
-        Address(A, false);
-      } else if (auto A =
-                     Relocated(X.encoding.disp_offset, X.encoding.disp_size))
-        Address(*A, false);
-      else
-        Scalar(static_cast<uint64_t>(O.mem.disp));
-      break;
-    default:
-      // Unsupported operand classes retain all encoding evidence and are
-      // explicitly incomplete, never an invented normalized instruction.
+  if (Image.Arch == Arch::AArch64) {
+    if (!readAArch64Operands(Image, I, Flow, Both, Scalar, Address))
       R.Flow = diff::InstructionFlow::Unknown;
-      Shape.add(R.Bytes);
-      Skeleton.add(R.Bytes);
-      break;
+  } else {
+    const cs_x86 &X = I.Raw->detail->x86;
+    for (uint8_t Prefix : X.prefix)
+      Both(Prefix);
+    Both(X.addr_size);
+    Both(X.op_count);
+    Both(X.xop_cc);
+    Both(X.sse_cc);
+    Both(X.avx_cc);
+    Both(X.avx_sae);
+    Both(X.avx_rm);
+    for (unsigned N = 0; N < X.op_count; ++N) {
+      const cs_x86_op &O = X.operands[N];
+      Both(O.type);
+      Both(O.avx_bcast);
+      Both(O.avx_zero_opmask);
+      // Direct transfer encoding width can change when the same blocks move.
+      if (!(O.type == X86_OP_IMM && R.Target && Flow.Target != InvalidVA))
+        Both(O.size);
+      switch (O.type) {
+      case X86_OP_REG:
+        Both(O.reg);
+        break;
+      case X86_OP_IMM:
+        if (R.Target && Flow.Target != InvalidVA &&
+            static_cast<uint64_t>(O.imm) == Flow.Target)
+          Address(Flow.Target, true);
+        else if (auto A = Relocated(X.encoding.imm_offset, X.encoding.imm_size))
+          Address(*A, false);
+        else
+          Scalar(static_cast<uint64_t>(O.imm));
+        break;
+      case X86_OP_MEM:
+        Both(O.mem.segment);
+        Both(O.mem.base);
+        Both(O.mem.index);
+        Both(O.mem.scale);
+        if (O.mem.base == X86_REG_RIP || O.mem.base == X86_REG_EIP) {
+          uint64_t A = I.Addr + I.Size + O.mem.disp;
+          if (O.mem.base == X86_REG_EIP)
+            A = static_cast<uint32_t>(A);
+          Address(A, false);
+        } else if (auto A =
+                       Relocated(X.encoding.disp_offset, X.encoding.disp_size))
+          Address(*A, false);
+        else
+          Scalar(static_cast<uint64_t>(O.mem.disp));
+        break;
+      default:
+        // Unsupported operand classes retain all encoding evidence and are
+        // explicitly incomplete, never an invented normalized instruction.
+        R.Flow = diff::InstructionFlow::Unknown;
+        Shape.add(R.Bytes);
+        Skeleton.add(R.Bytes);
+        break;
+      }
     }
   }
   if (R.Flow == diff::InstructionFlow::Unknown) {
@@ -393,8 +511,21 @@ std::optional<ComparisonInput>
 readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
                         const diff::ComparisonControl &Control,
                         std::string &Error, bool Serial) {
-  if (!S.Loaded || (S.Img.Arch != Arch::X64 && S.Img.Arch != Arch::X86)) {
-    Error = "native-x86-v1 requires a loaded x86 or x86-64 binary";
+  const bool X86 = S.Img.Arch == Arch::X64 || S.Img.Arch == Arch::X86;
+  const bool AArch64 = S.Img.Arch == Arch::AArch64;
+  const auto &Profile = Options.Profile;
+  if (Profile != limits::kDefaultNativeProfile && Profile != "native-x86-v1" &&
+      Profile != "native-aarch64-v1") {
+    Error = "unsupported comparison profile: " + Profile;
+    return {};
+  }
+  if (S.Loaded && AArch64 && S.Img.Bits != Bitness::Bits64) {
+    Error = "native-aarch64-v1 requires 64-bit AArch64 inputs";
+    return {};
+  }
+  if (!S.Loaded || !(X86 || AArch64) || (Profile == "native-x86-v1" && !X86) ||
+      (Profile == "native-aarch64-v1" && !AArch64)) {
+    Error = Profile + " does not support the loaded processor";
     return {};
   }
   if (!S.synchronizeFunctions()) {
@@ -428,12 +559,17 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
                     : S.Img.isCOFF()  ? "coff"
                     : S.Img.isMachO() ? "macho"
                                       : "raw";
-  Identity.Architecture = S.Img.Arch == Arch::X64 ? "x86-64" : "x86";
+  Identity.Architecture = AArch64                   ? "aarch64"
+                          : S.Img.Arch == Arch::X64 ? "x86-64"
+                                                    : "x86";
   Identity.Bits = S.Img.getPointerSize() * kBitsPerByte;
   Identity.Endian = "little";
   Identity.ABI = std::to_string(static_cast<unsigned>(S.Img.abiFormat())) +
                  ":" + Identity.Architecture;
-  Identity.Normalization = "native-x86-operands-v1";
+  if (AArch64 && S.Img.isMachO())
+    Identity.ABI += ":macho-subtype:" + llvm::utohexstr(S.Img.MachOCPUSubtype);
+  Identity.Normalization =
+      AArch64 ? "native-aarch64-operands-v1" : "native-x86-operands-v1";
   Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v1:" +
                       (Options.Discover ? "discover" : "known-functions");
   if (S.PackedProject)

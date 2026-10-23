@@ -167,6 +167,14 @@ TEST(BinaryDiffCallEffects, ExactEnvironmentAndFallibleReleaseStayDistinct) {
   F.P.Identity.Bits = 32;
   EXPECT_EQ(F.review().Records[1].Status,
             CallEffectStatus::UnsupportedEnvironment);
+  F.P.Identity.Bits = 64;
+  F.P.Identity.Architecture = "aarch64";
+  F.P.Identity.ABI = std::to_string(unsigned(BinaryFormat::COFF)) + ":aarch64";
+  F.P.Identity.Normalization = "native-aarch64-operands-v1";
+  F.graph().ABI = F.P.Identity.ABI;
+  EXPECT_EQ(F.review().Records[1].Status,
+            CallEffectStatus::UnsupportedEnvironment);
+  EXPECT_EQ(F.review().Qualified, 0u);
 }
 
 TEST(BinaryDiffCallEffects,

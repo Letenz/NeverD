@@ -126,6 +126,12 @@ Comparison replies carry `comparison_revision`, and the payload's optional
 `expected_comparison_revision` rejects obsolete reads and edits. Failed starts
 preserve the previous comparison. File stamp changes invalidate interactive reads;
 explicit validation/reopening also re-reads and checks content identity.
+`comparison_start.options.profile` defaults to `native-same-isa-v1`; the SDK
+selects qualified x86/x64 or 64-bit AArch64 inputs with matching ISA and ABI.
+Explicit `native-x86-v1` and `native-aarch64-v1` restrict admission. The worker
+does not infer a profile from filenames. AArch64 Mach-O subtype/ABI bits remain
+part of input identity. This structural profile does not extend the separate
+x86 scalar-validation or import-effect qualification.
 
 `comparison_source_page` is advertised when the SDK exposes the optional source
 page API. It accepts `side`, `address`, `representation` (`c`, `llvmc`, `source`,

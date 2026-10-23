@@ -21,6 +21,7 @@ namespace neverd::sdk {
 struct Session;
 
 struct ComparisonInputOptions {
+  std::string Profile = limits::diff::kDefaultNativeProfile;
   bool Discover = true;
   uint64_t MaxInstructions = limits::diff::kDefaultMaxInstructions;
   uint64_t MaxFunctions = limits::diff::kDefaultMaxFunctions;

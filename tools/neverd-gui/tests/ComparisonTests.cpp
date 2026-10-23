@@ -68,6 +68,80 @@ private slots:
                        Directory.path());
     Theme::instance().apply();
   }
+  void aarch64RawInputsReachSourceAndOriginalInstructions() {
+    const auto A = Directory.filePath("aarch64-before.bin");
+    const auto B = Directory.filePath("aarch64-after.bin");
+    QVERIFY(write(A, QByteArray::fromHex("e00080d2000c0091c0035fd6")));
+    QVERIFY(write(B, QByteArray::fromHex("200180d2000c0091c0035fd6")));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    View.findChild<QLineEdit *>("comparisonPrimary")->setText(A);
+    View.findChild<QLineEdit *>("comparisonSecondary")->setText(B);
+    for (const auto *Name : {"primaryLoader", "secondaryLoader"}) {
+      auto *Loader = View.findChild<QComboBox *>(Name);
+      QVERIFY(Loader);
+      const int Index = Loader->findData("aarch64");
+      QVERIFY(Index >= 0);
+      Loader->setCurrentIndex(Index);
+    }
+    View.findChild<QLineEdit *>("primaryBase")->setText("0x1000");
+    View.findChild<QLineEdit *>("secondaryBase")->setText("0x8000");
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonStart"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Failures.size(), 0);
+    QCOMPARE(Session.summary()["primary"].toObject()["architecture"].toString(),
+             QString("aarch64"));
+    auto *Inventory = View.findChild<QTableView *>("comparisonFunctions");
+    QTRY_VERIFY_WITH_TIMEOUT(Inventory->model()->rowCount() > 0, Timeout);
+    Inventory->setCurrentIndex(Inventory->model()->index(0, 0));
+    auto *Instructions = View.findChild<QTableView *>("comparisonInstructions");
+    QTRY_VERIFY_WITH_TIMEOUT(Instructions->model()->rowCount() == 3, Timeout);
+    auto *Source = View.findChild<ComparisonSourceView *>("comparisonSource");
+    auto *Tabs = View.findChild<QTabWidget *>();
+    QVERIFY(Source && Tabs);
+    Tabs->setCurrentWidget(Source);
+    auto *Primary = View.findChild<QPlainTextEdit *>("comparisonPrimarySource");
+    auto *Secondary =
+        View.findChild<QPlainTextEdit *>("comparisonSecondarySource");
+    QTRY_VERIFY_WITH_TIMEOUT(Primary->toPlainText().contains("return"),
+                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(Secondary->toPlainText().contains("return"),
+                             Timeout);
+    QVERIFY(Primary->toPlainText() != Secondary->toPlainText());
+    QVERIFY(!Primary->extraSelections().isEmpty());
+    QCOMPARE(Primary->blockCount(), Secondary->blockCount());
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        View.resize(1280, 800);
+        QTest::qWait(40);
+        QVERIFY(
+            View.grab().save(Captures + (Mode == Theme::Mode::Dark
+                                             ? "/aarch64-dark-source.png"
+                                             : "/aarch64-light-source.png")));
+      }
+    }
+    auto *Navigate =
+        View.findChild<QPushButton *>("comparisonPrimarySourceInstruction");
+    QVERIFY(Navigate);
+    for (auto Block = Primary->document()->begin(); Block.isValid();
+         Block = Block.next()) {
+      Primary->setTextCursor(QTextCursor(Block));
+      if (Navigate->isEnabled())
+        break;
+    }
+    QVERIFY(Navigate->isEnabled());
+    QTest::mouseClick(Navigate, Qt::LeftButton);
+    QVERIFY(Tabs->currentWidget() != Source);
+    QCOMPARE(Failures.size(), 0);
+  }
   void savedProjectsCompareThroughTheSharedReader() {
     const auto A = Directory.filePath("saved-before.bin");
     const auto B = Directory.filePath("saved-after.bin");

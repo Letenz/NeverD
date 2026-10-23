@@ -31,11 +31,31 @@ normal debug loaders, missing files fail explicitly, and unchecked selections
 require their recorded file stamps. Relative companion paths resolve beside the
 NDDB file. Worker freshness checks include WAL and rollback-journal changes.
 
-This is an experimental foundation for issue #1462. The implemented profile is
-`native-x86-v1`, for two x86 inputs or two x86-64 inputs with the same ABI. Other
-ISA/ABI pairs fail explicitly. Raw and compiled ELF fixtures exercise the real
-loader and decoder. Acceptance for other native formats, optimized transformation
-families and large production inputs requires separate evidence.
+This is an experimental foundation for issue #1462. The default
+`native-same-isa-v1` selects the qualified x86/x64 or 64-bit AArch64 reader.
+Explicit `native-x86-v1` and `native-aarch64-v1` restrict that selection. Both
+inputs must have the same ISA, bitness and ABI; unsupported pairs fail clearly.
+The x86 normalization and saved identity are unchanged by profile selection.
+The desktop adds **Raw AArch64** alongside automatic format detection.
+
+AArch64 qualification covers authored raw instructions and compiled ELF
+relocatable, COFF object and Mach-O object fixtures through the real loaders,
+CLI, worker, source views and saved comparison binding. It does not establish
+qualification for linked applications, every relocation/transformation family
+or large production corpora. Mach-O AArch64 identity preserves the complete CPU
+subtype, including ARM64e ABI bits; differing subtypes and raw Darwin inputs
+without a subtype are not silently paired with them.
+
+The AArch64 reader retains operand widths, register identities, conditions,
+shifts/extensions, writeback, vector/predicate modifiers and typed system fields.
+Branch destinations are bound to their operand occurrence, so TBZ/TBNZ bit
+indices remain scalar evidence. Literal reads use the ordinary lift's full
+address, including addresses above 4 GiB. ADRP keeps an image-relative page
+fragment with the exact base offset; it does not invent an ADRP+ADD object
+correspondence. Other immediates/addends remain scalar unless their architectural
+address role is established. Illegal or unsupported instructions retain their
+original bytes with incomplete analysis. AArch64 matching does not broaden the
+separately qualified x86 scalar-validation and import-effect proof profiles.
 
 ## Command line
 
@@ -92,7 +112,7 @@ Changed comparison revisions invalidate the picker until it is reopened.
 
 | Option | Meaning |
 | --- | --- |
-| `profile` | `native-x86-v1` |
+| `profile` | `native-same-isa-v1` (default), `native-x86-v1` or `native-aarch64-v1` |
 | `discover`, `use_names`, `approximate` | Enable discovery, stated names, approximate candidates |
 | `min_similarity`, `min_context_similarity`, `ambiguity_margin` | Heuristic thresholds in `[0,1]` |
 | `max_candidates` | Bounded candidates per unmatched function |

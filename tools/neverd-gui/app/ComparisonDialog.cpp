@@ -185,6 +185,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
     Loaders[I]->addItem(tr("Auto format"), "");
     Loaders[I]->addItem(tr("Raw x64"), "x86_64");
     Loaders[I]->addItem(tr("Raw x86"), "x86");
+    Loaders[I]->addItem(tr("Raw AArch64"), "aarch64");
     Loaders[I]->setAccessibleName(Name + tr(" input format"));
     Bases[I] = new QLineEdit("0x0", this);
     Bases[I]->setObjectName(I ? "secondaryBase" : "primaryBase");
@@ -336,7 +337,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
 
   Summary = label(
       this,
-      tr("Compare two native x86/x64 inputs. Matching scores are heuristic."));
+      tr("Compare two x86, x64 or AArch64 inputs with the same architecture "
+         "and ABI. Matching scores are heuristic."));
   Summary->setObjectName("comparisonSummary");
   Root->addWidget(Summary);
   auto *Split = new QSplitter(this);
