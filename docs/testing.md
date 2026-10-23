@@ -5201,6 +5201,10 @@ HighIR when CFG threading leaves a sole successor without a branch operation.
 Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
+`SiblingSkipsKeepSharedReadersOutsideThePrefix` checks repeated variable reads
+and an expression shared by a guard and a later return. Early and late guard
+folding must retain the live prefix; the late pass still folds a prefix without
+outside readers. Both entry points also run on repeated visits.
 
 The same suite checks shared-expression liveness with independent return-value
 oracles, multiple branch definitions, dead cycles and nested observable effects.
