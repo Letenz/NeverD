@@ -7732,5 +7732,65 @@ Secondary SHA-256: %3
         <source>Unmapped line</source>
         <translation>매핑되지 않은 행</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>소스 행 정렬</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>정렬 작업량 제한 해제</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>소스 근거 바이트 제한 해제</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>선언을 포함하여 정렬</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>정렬된 행으로 이동</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>텍스트 차이: + 추가, − 삭제, ~ 변경. 행을 선택하면 원본 명령어를 확인할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>소스 정렬 중…취소는 현재 분석 단계가 끝날 때까지 기다립니다.</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>소스 정렬이 제한을 초과했습니다. 옵션을 조정하거나 소스를 개별적으로 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>소스 정렬이 중지되었습니다. 소스를 다시 불러와 재시도하세요.</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>정렬된 행 %1–%2 / %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · 소스 행 %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · 이쪽에는 행이 없음</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · 변경됨</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · 추가됨</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · 삭제됨</translation>
+    </message>
 </context>
 </TS>

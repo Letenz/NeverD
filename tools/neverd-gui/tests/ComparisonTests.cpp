@@ -34,6 +34,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -153,6 +154,11 @@ private slots:
                              Timeout);
     QVERIFY(PrimarySource->toPlainText().contains("return"));
     QVERIFY(PrimarySource->toPlainText() != SecondarySource->toPlainText());
+    auto *Alignment = View.findChild<QCheckBox *>("comparisonSourceAlignment");
+    QVERIFY(Alignment && Alignment->isChecked());
+    QCOMPARE(PrimarySource->blockCount(), SecondarySource->blockCount());
+    QVERIFY(!PrimarySource->extraSelections().isEmpty());
+    QVERIFY(!SecondarySource->extraSelections().isEmpty());
     QVERIFY(View.findChild<QLabel *>("comparisonPrimarySourceTitle")
                 ->text()
                 .contains("saved_check"));
@@ -167,6 +173,13 @@ private slots:
     QVERIFY(Instructions->currentIndex().isValid());
     QCOMPARE(Instructions->currentIndex().column(), 0);
     Tabs->setCurrentWidget(Source);
+    QTest::mouseClick(Alignment, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(PrimarySource->toPlainText().contains("return"),
+                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(SecondarySource->toPlainText().contains("return"),
+                             Timeout);
+    QVERIFY(PrimarySource->extraSelections().isEmpty());
     const auto SecondaryPage = SecondarySource->toPlainText();
     auto *PrimaryLine =
         View.findChild<QSpinBox *>("comparisonPrimarySourceLine");
@@ -221,6 +234,27 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(SecondarySource->toPlainText().contains("return"),
                              Timeout);
     QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    QTest::mouseClick(Alignment, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!PrimarySource->extraSelections().isEmpty(),
+                             Timeout);
+    QCOMPARE(PrimarySource->blockCount(), SecondarySource->blockCount());
+    const int PrimaryMinimum = PrimarySource->minimumHeight();
+    const int SecondaryMinimum = SecondarySource->minimumHeight();
+    PrimarySource->setMinimumHeight(0);
+    SecondarySource->setMinimumHeight(0);
+    PrimarySource->setMaximumHeight(PrimarySource->fontMetrics().height() * 2);
+    SecondarySource->setMaximumHeight(SecondarySource->fontMetrics().height() *
+                                      2);
+    QTRY_VERIFY_WITH_TIMEOUT(PrimarySource->verticalScrollBar()->maximum() > 0,
+                             Timeout);
+    PrimarySource->verticalScrollBar()->setValue(1);
+    QCOMPARE(SecondarySource->verticalScrollBar()->value(), 1);
+    PrimarySource->setMaximumHeight(QWIDGETSIZE_MAX);
+    SecondarySource->setMaximumHeight(QWIDGETSIZE_MAX);
+    PrimarySource->setMinimumHeight(PrimaryMinimum);
+    SecondarySource->setMinimumHeight(SecondaryMinimum);
+    PrimarySource->verticalScrollBar()->setValue(0);
     const auto SourceCaptures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
     if (!SourceCaptures.isEmpty()) {
       QVERIFY(QDir().mkpath(SourceCaptures));
@@ -241,6 +275,9 @@ private slots:
                            {{"name", LongName}, {"address", "0x1000"}});
       QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
       View.resize(View.minimumSize());
+      QTRY_VERIFY_WITH_TIMEOUT(PrimarySource->viewport()->height() >=
+                                   PrimarySource->fontMetrics().height() * 6,
+                               Timeout);
       auto *Title = View.findChild<QLabel *>("comparisonPrimarySourceTitle");
       QTRY_VERIFY_WITH_TIMEOUT(Title->text().contains(QChar(0x2026)), Timeout);
       QVERIFY(Title->toolTip().contains(LongName));
