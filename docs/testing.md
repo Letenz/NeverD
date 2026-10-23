@@ -1579,11 +1579,13 @@ changing these shared cancellation boundaries. No input instructions execute.
 on x86/x64/ARM/Thumb/AArch64 in ELF and Mach-O. A long unlabelled callee can gain
 candidate identity from an observed callable exit; a trap, closed cycle,
 indirect-only transfer, truncated input or exhausted probe cannot supply it.
-An exit on one branch does not hide a truncated, escaping, unlifted PACM or
-over-budget arm. `LongCalleesVerifyUnprovenTailTargets` distinguishes a scanned
+An exit on one branch does not hide a truncated, escaping, unlifted scalable
+ADDPT or over-budget arm. `LongCalleesVerifyUnprovenTailTargets` distinguishes a scanned
 tail's observed return from trap/cycle bodies and authenticated function metadata.
 An indirect frontier alongside a known exit keeps the existing candidate policy;
-this is not complete control-flow or semantic validation. The real musl fixture
+this is not complete control-flow or semantic validation. The discovery fixture
+also retains callable identity through a reachable PACM/return arm now that
+PACM has executed-prefix semantics. The real musl fixture
 also requires all five whole-function and mapped direct-callee identities through
 HighC and optimized/unoptimized LLVMC. Run the image-boundary, relocated-entry,
 x86-discovery, library-recognition and session suites for this shared decision.
