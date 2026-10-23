@@ -25,6 +25,12 @@ constexpr bool x87ControlWordIsValid(uint16_t Control) {
          (Control & X87PrecisionControlMask) != X87ReservedPrecisionControl;
 }
 
+/// Waiting instructions observe the pending exception before operand access.
+/// Callers decide whether an instruction waits from the shared encoding owner.
+constexpr bool x87HasPendingException(uint16_t Control, uint16_t Status) {
+  return (Status & 0x80) || (Status & ~Control & X87ExceptionMaskBits);
+}
+
 /// Requires x87ControlWordIsValid. PC affects precision, not exponent range.
 constexpr unsigned x87PrecisionBits(uint16_t Control) {
   return (Control & 0x300) == 0 ? 24 : (Control & 0x300) == 0x200 ? 53 : 64;

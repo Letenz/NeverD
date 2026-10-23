@@ -116,8 +116,20 @@ recipes and preserve ordinary modifier constants only when every incoming
 path agrees. This applies equally to live registers and saved return cells.
 The machine operations use the implicit X17/X16/X15 forms so relocation cannot
 silently replace the original PC with the generated instruction's PC.
-Exception returns and the PACM HINT still fail until their architectural state
-is modelled.
+`AArch64PAuthM.def` owns PACM's ten implicit consumers. CFG normalization
+resolves the immediately next executed instruction, including empty NOP bodies,
+repeated prefixes, ordinary joins and loop backedges. Mixed edges carry an
+explicit function temporary into SSA; direct branches cannot inherit a prefix
+from the preceding bytes. Generated LLVM and both C projections materialize
+operands before one indivisible PACM/consumer assembly pair, preserving original
+PC values and the execution host's enable controls. Frame proofs keep implicit
+PACM recipes separate from explicit PAuth_LR recipes because FEAT_PACIMP does
+not guarantee their equivalence. They retain declared function temporaries
+across instruction boundaries without treating declaration as initialization.
+An unresolved prefix at the end of available code, or a prefixed incoming edge
+at an independently enterable/exception root, fails explicitly; its pending
+marker cannot become ordinary source or native assembly. Exception returns and
+those implicit-entry state cases still require architectural state modelling.
 
 Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
 the architecture may poison a pointer without trapping immediately. The
@@ -176,6 +188,25 @@ requires an executable arm64e process and checks that each signing key changes
 pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
+
+`dwarf_eh::evaluateAArch64ReturnAddressState` owns static interpretation of
+the DWARF return-address signing column. It preserves absolute unsigned,
+SP and SP/PC states, legacy toggles, CIE initial rules, remembered states,
+key selection and the `N` non-HINT PAuth_LR augmentation. Constants,
+diagnostics and bounded-query defaults come from
+`AArch64ReturnAddressState.def`, which pins the Arm specification revision;
+the absolute-state extension is still Alpha. Runtime register/expression
+rules stay unknown, and incomplete or reserved CFI never supplies an unsigned
+default. The query validates the entire program before publishing a result.
+This describes a signing recipe, without authenticating a live return address.
+Callback relocation rejects PC-dependent recipes and the new absolute-state
+operations until its code-position mapping is modelled. Mach-O metadata-only
+layout growth preserves original code addresses and CFI bytes, reencodes only
+FDE initial-location references, and compares every statically known signing
+recipe at each CFI boundary before publication. A cumulative comparison budget
+bounds repeated queries; unknown, incomplete, expression and language-dependent
+recipes remain inadmissible.
+
 `macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
 placement validation, sorted disjoint mappings, and the cache image catalogue.
 Its bounded slide reader retains v2 ordinary pointers and v3/v5 authentication
@@ -388,6 +419,16 @@ and SSA region paths share `regionExplanations` for topology/call/module facts.
 `FlowRegionsJSON` owns strict streaming persistence and bounded previews; restore
 recomputes mappings before publication. Neither frontend may infer equivalence
 from these hypotheses or replace the native function delta with them.
+The optional `FlowFragments` verifier owns finite-depth matching with explicit
+external definition pairs. It shares exact operation/operand contracts with
+`DataFlow` and `FlowMatch`; it does not rewrite the observations or relax their
+types, flags or function signatures. One bijection covers included and external
+nodes, while only included nodes contribute to origin admission and coverage.
+Depth-local fingerprints nominate candidates; exact verification decides them.
+`FlowRegions` prefers deeper candidates, counts each depth nomination, and owns
+cross-anchor binding ambiguity. New `med-fragments-v1` / `llvm-fragments-v1`
+recipes keep these boundaries separate from the unchanged legacy neighborhood
+contract. The C API, CLI, worker and Qt inspect the same retained frontier pairs.
 Saved work counters are bounded historical diagnostics; cache and host sort
 changes must not make identical observed mappings fail evidence binding.
 `CallImpact` indexes admitted native `Instruction::Callee` relations, including
@@ -1400,8 +1441,19 @@ only along an unclobbered entry path. Its existing bounded summary worklist
 propagates the resulting facts. `recoveredFloatingCallArguments` checks the
 complete fixed signature for both LLVM declarations and HighC call metadata;
 expression types alone do not establish a nonvariadic external signature.
-Mixed classes, HFA records and stack overflow need their separate adapters;
-this scalar contract supplies no such coverage.
+Mixed scalar arguments and dense AAPCS64 HFAs use the same checked placement
+model, with source groups retained separately from their physical scalar
+operands. A spilled HFA occupies one stack object; its float members remain
+four bytes apart and exhausting the FP bank does not exhaust the integer bank.
+The native LLVM adapter uses an array for each HFA parameter: flattening it,
+or using an LLVM literal struct, can split a record between registers and the
+stack. Both C routes rebuild the original source record and retain complete
+return fields, including a single float and a three-float result whose C
+integer carrier has padding. Locally supplied header records get complete
+value definitions; records supplied by an included header are not redefined.
+Padded or over-aligned HFAs, special conventions and Apple stack packing remain
+outside this adapter. A source aggregate return for an untyped wrapper still
+needs independent source or caller evidence.
 
 LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
 signatures. Every printed call of a symbol must agree before the writer uses
@@ -6851,6 +6903,47 @@ cancellation, generation tracking, and the `RejectExecutableWrites`,
 `InvalidateOnExecutableWrite`, and `ValidateBeforeDispatch` code-write policies
 also produce coherent typed records rather than implicit host-side behavior.
 
+Exact byte-span loads/stores use the same access-planning owner as scalar
+accesses. The complete nonempty range is checked before copying any byte,
+including operands such as binary80 that cross region boundaries. Stores need
+write permission only; failed accesses leave output bytes, guest storage and
+generations unchanged. Executable writes preserve the existing policy, including
+refusal across multiple executable regions. `SelfModification` denotes a
+completed store followed by invalidation/exit, so an instruction adapter must
+commit its corresponding architectural state before honoring that exit. This
+is failure atomicity within the runtime's confined execution thread, not an
+inter-thread atomic guest instruction or an expansion of translation admission.
+The scalar-v1 control protocol still rejects non-scalar data extents. The
+separate exact-span-v1 validator preserves the 128-byte layout and all other
+invariants while accepting bounded nonempty data extents. Its limit derives
+from `MemoryFaultExit::AccessWidthBits`; oversized spans fail before access.
+Protocol identity must be bound by a trusted profile/invocation and included in
+artifact/cache identity before activation. It cannot be inferred from a control
+record, including a successful or eight-byte record, or selected by retrying a
+failed scalar validation. This foundational validator enables no new profile;
+existing integer dispatch, artifact admission and helpers remain scalar-v1.
+
+`X87PortableRuntime` adapts the existing portable semantic owner to this checked
+memory boundary. Its separate versioned state includes explicit environment
+and physical-payload provenance; the original integer state/frame is unchanged.
+Waiting-exception preflight precedes memory checks, and store preflight precedes
+operand evaluation without publishing bytes or generations. Final stores repeat
+those checks. A store fault keeps the current x87 state; a completed executable
+store commits the matching stack/pop state before returning self-modification.
+The result carries a stable refusal code, completion flag and success-only
+scalar validity, plus only this operation's memory result. Callers still own
+PC/accounting and profile admission. This C++ adapter alone does not enable a
+generated-code, JIT, public API or cross-architecture capability cell.
+
+`X87PortableABI.def` and `X87PortableStatus.def` own the separate generated-call
+C contract. IRLowValidation derives the emitter signature view from its C
+header without linking to Translate. The `neverd_x87_runtime` shared target
+exports only those helper symbols and adapts a trusted, explicitly constructed
+`PortableX87ExecutionV1` to the existing transactional owner. Scalar-result
+consumption is a stateful, single-use operation; failure and nonproducing steps
+invalidate it. The internal C++ embedding layout must match the runtime build.
+The bridge itself establishes no generated-code or translation qualification.
+
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
 composes proof-gated semantic simplification with LLVM optimization at `O0`
@@ -8237,6 +8330,20 @@ proved. When the final section is absent, generated compact rows are not
 installed and the transaction may proceed only through the exact authenticated
 DWARF-FDE closure above; an existing but undersized or malformed final section
 still fails closed. A linked native throw/catch proof is still pending.
+
+ARM64 frame mode PAuth_LR retains the PACIBSPPC instruction offset relative to
+each compact recipe's start, including a present zero offset. The shared
+`CompactUnwindARM64.def` supplies payload masks and instruction units to the
+loader and native patcher. Both reject reserved bits, overflowing or unaligned
+signing PCs and signing instructions outside their complete code range.
+Preserved rows keep their original boundaries; splitting one would change its
+signing PC. Original callback preparation rejects these signed frames, including
+interior entries, until it can preserve the incoming signed LR state. This does
+not relax the arm64e native-rebuild restriction.
+Raw and semantic compact-page readers share offset, ordering and page-bound
+validation for every architecture. A malformed page contributes no recipes;
+its omission cannot extend a preceding valid row across the missing page.
+Discarded rows still consume the parser's work budget.
 
 External references are classified from the complete MC fixup contract. Calls
 may select only authenticated callable targets; generated compact-unwind

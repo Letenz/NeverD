@@ -417,3 +417,212 @@ TEST(BinaryDiffFlowRegions, OptimizedPluralAndUnstartedProfilesRoundTrip) {
     EXPECT_EQ(readFlowRegionAnalysis(*Value, Options), Input);
   }
 }
+
+TEST(BinaryDiffFlowRegions, FragmentsKeepChangedProducersOutsideCoverage) {
+  auto X = chains(0x1000, {17}), Y = chains(0x8000, {17});
+  Y.Nodes[0].Opcode = "INT_SUB";
+  auto A = program({X}), B = program({Y});
+  auto Options = regionSettings();
+  EXPECT_TRUE(
+      findFlowRegions(A, B, evidenceSettings(), Options).Anchors.empty());
+  Options.Fragments = true;
+  const auto R = findFlowRegions(A, B, evidenceSettings(), Options);
+  ASSERT_EQ(R.State, ComparisonState::Complete);
+  ASSERT_EQ(R.Anchors.size(), 1u);
+  EXPECT_EQ(R.Profile, FlowFragmentProfile);
+  const auto &F = R.Anchors.front();
+  EXPECT_EQ(F.Depth, 4u);
+  EXPECT_EQ(F.Nodes.size(), 4u);
+  EXPECT_EQ(F.Frontier, (std::vector<std::pair<uint32_t, uint32_t>>{{0, 0}}));
+  EXPECT_EQ(F.PrimaryOrigins, 4u);
+  ASSERT_EQ(R.Hypotheses.size(), 1u);
+  EXPECT_EQ(R.Hypotheses.front().PrimaryNodes, 4u);
+  EXPECT_DOUBLE_EQ(R.Hypotheses.front().PrimaryCoverage, 0.8);
+  EXPECT_TRUE(R.Hypotheses.front().OpenDataFrontier);
+  Y.Nodes[1].Inputs[1].Value ^= 1;
+  EXPECT_TRUE(findFlowRegions(A, program({Y}), evidenceSettings(), Options)
+                  .Anchors.empty());
+  Options.MaxNodePairs = 4;
+  const auto Limited = findFlowRegions(A, B, evidenceSettings(), Options);
+  EXPECT_EQ(Limited.State, ComparisonState::ResourceLimited);
+  EXPECT_TRUE(Limited.Anchors.empty());
+  EXPECT_FALSE(validateFlowRegions(Limited, A, B, evidenceSettings(), Options));
+  Options.MaxNodePairs = 5;
+  EXPECT_EQ(findFlowRegions(A, B, evidenceSettings(), Options).Anchors.size(),
+            1u);
+  Options.MaxSeeds = 1;
+  EXPECT_EQ(findFlowRegions(A, B, evidenceSettings(), Options).State,
+            ComparisonState::ResourceLimited);
+}
+
+TEST(BinaryDiffFlowRegions, FragmentBoundariesAndRecipesRebindAfterSaving) {
+  for (bool Optimized : {false, true}) {
+    auto X = chains(0x1000, {17}), Y = chains(0x8000, {17});
+    Y.Nodes[0].Opcode = "INT_SUB";
+    auto Evidence = evidenceSettings();
+    if (Optimized) {
+      Evidence.Profile = LLVMDataFlowProfile.str();
+      for (auto *G : {&X, &Y}) {
+        G->Profile = Evidence.Profile;
+        for (uint32_t I = 0; I < G->Nodes.size(); ++I) {
+          auto &N = G->Nodes[I];
+          N.Semantics = "owned-exact-contract";
+          N.Origins = {{G->Function + 2 * I, 0}, {G->Function + 2 * I + 1, 1}};
+          N.Address = 0;
+          N.OriginSequence = -1;
+          for (auto &V : N.Inputs)
+            V.Semantics = "i64";
+        }
+      }
+    }
+    const auto A = program({X}), B = program({Y});
+    ComparisonSettings Settings;
+    Settings.DataFlow = Evidence;
+    Settings.FlowRegions = regionSettings();
+    Settings.FlowRegions.Fragments = true;
+    const auto R = compare(A, B, Settings);
+    ASSERT_FALSE(R.FlowRegions.Anchors.empty());
+    std::string Text, Error;
+    llvm::raw_string_ostream OS(Text);
+    writeComparison(OS, R, A, B);
+    auto Saved = readComparison(Text, Error);
+    ASSERT_TRUE(Saved) << Error;
+    ComparisonResult Bound;
+    EXPECT_FALSE(bindComparison(*Saved, A, B, Bound));
+    EXPECT_EQ(Bound.FlowRegions, R.FlowRegions);
+    for (unsigned Case = 0; Case < 4; ++Case) {
+      auto Bad = *Saved;
+      switch (Case) {
+      case 0:
+        ++Bad.FlowRegions.Anchors[0].Depth;
+        break;
+      case 1:
+        Bad.FlowRegions.Anchors[0].Frontier.clear();
+        break;
+      case 2:
+        ++Bad.FlowRegions.Anchors[0].Frontier[0].second;
+        break;
+      case 3:
+        Bad.Settings.FlowRegions.Fragments = false;
+        break;
+      }
+      EXPECT_TRUE(bindComparison(Bad, A, B, Bound)) << Case;
+    }
+    auto JSON = llvm::json::parse(Text);
+    ASSERT_TRUE(bool(JSON));
+    auto *FR = JSON->getAsObject()->getObject("flow_regions");
+    (*FR)["profile"] = Optimized ? LLVMFlowRegionProfile : FlowRegionProfile;
+    (*JSON->getAsObject()
+          ->getObject("settings")
+          ->getObject("flow_regions"))["fragments"] = false;
+    Text.clear();
+    OS << *JSON;
+    EXPECT_FALSE(readComparison(Text, Error));
+  }
+}
+
+TEST(BinaryDiffFlowRegions, FragmentPublicationKeepsStoppedPrefixesStable) {
+  auto A = program({chains(0x1000, {17, 73})});
+  auto B = program({chains(0x8000, {17, 73})});
+  auto Options = regionSettings();
+  Options.Fragments = true;
+  const auto Full = findFlowRegions(A, B, evidenceSettings(), Options);
+  ASSERT_FALSE(Full.Anchors.empty());
+  std::atomic<bool> Cancel{false};
+  ComparisonControl Control;
+  Control.Cancel = &Cancel;
+  Control.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
+    if (Phase == "flow-regions:groups")
+      Cancel = true;
+  };
+  const auto Stopped =
+      findFlowRegions(A, B, evidenceSettings(), Options, Control);
+  EXPECT_EQ(Stopped.State, ComparisonState::Cancelled);
+  EXPECT_EQ(Stopped.Anchors, Full.Anchors);
+  EXPECT_TRUE(Stopped.Hypotheses.empty());
+  EXPECT_FALSE(validateFlowRegions(Stopped, A, B, evidenceSettings(), Options));
+  const auto Early =
+      findFlowRegions(A, B, evidenceSettings(), Options, Control);
+  EXPECT_EQ(Early.Profile, FlowFragmentProfile);
+  EXPECT_TRUE(Early.Anchors.empty());
+  EXPECT_FALSE(validateFlowRegions(Early, A, B, evidenceSettings(), Options));
+  EXPECT_EQ(readFlowRegionSettings(flowRegionSettingsJSON(Options)), Options);
+  EXPECT_THROW(readFlowRegionSettings(llvm::json::Object{{"fragments", 1}}),
+               std::invalid_argument);
+}
+
+TEST(BinaryDiffFlowRegions, CrossAnchorBoundaryConflictsOnlyMarkAmbiguity) {
+  for (bool Internal : {false, true}) {
+    auto X = chains(0x1000, {17, 73}), Y = chains(0x8000, {17, 73});
+    X.Nodes[6].Inputs[0].Node = 0;
+    if (Internal) {
+      Y.Nodes[0].Opcode = "INT_SUB";
+      const auto Address = Y.Nodes[5].Address;
+      Y.Nodes[5] = X.Nodes[0];
+      Y.Nodes[5].Address = Address;
+    } else {
+      for (auto *G : {&X, &Y})
+        for (auto I : {0u, 5u})
+          G->Nodes[I].Gaps = FlowMemoryAlias;
+    }
+    auto Options = regionSettings();
+    Options.Fragments = true;
+    const auto R = findFlowRegions(program({X}), program({Y}),
+                                   evidenceSettings(), Options);
+    ASSERT_EQ(R.State, ComparisonState::Complete);
+    ASSERT_EQ(R.Hypotheses.size(), 1u);
+    EXPECT_TRUE(R.Hypotheses[0].Ambiguous) << Internal;
+    EXPECT_FALSE(
+        llvm::is_contained(R.Hypotheses[0].Explanations, RegionKind::Clone));
+    std::set<uint32_t> Matched;
+    for (const auto &A : R.Anchors)
+      for (const auto &[P, S] : A.Nodes) {
+        (void)S;
+        Matched.insert(P);
+      }
+    EXPECT_EQ(R.Hypotheses[0].PrimaryNodes, Matched.size());
+    EXPECT_EQ(Matched.count(0), unsigned(Internal));
+  }
+}
+
+TEST(BinaryDiffFlowRegions, LegacyStoppedAndCompleteRecipesKeepTheirEncoding) {
+  for (bool Optimized : {false, true}) {
+    auto X = chains(0x1000, {17}), Y = chains(0x8000, {17});
+    auto Evidence = evidenceSettings();
+    if (Optimized) {
+      Evidence.Profile = LLVMDataFlowProfile.str();
+      for (auto *G : {&X, &Y}) {
+        G->Profile = Evidence.Profile;
+        for (auto &N : G->Nodes) {
+          N.Semantics = "owned-exact-contract";
+          N.Origins = {{N.Address, N.OriginSequence}};
+          N.Address = 0;
+          N.OriginSequence = -1;
+          for (auto &V : N.Inputs)
+            V.Semantics = "i64";
+        }
+      }
+    }
+    auto A = program({X}), B = program({Y});
+    for (unsigned Case = 0; Case < 3; ++Case) {
+      auto Options = regionSettings();
+      if (Case == 1)
+        Options.MaxAnchors = 1;
+      std::atomic<bool> Cancel{Case == 2};
+      ComparisonControl Control;
+      Control.Cancel = &Cancel;
+      const auto R = findFlowRegions(A, B, Evidence, Options, Control);
+      EXPECT_FALSE(validateFlowRegions(R, A, B, Evidence, Options));
+      std::string Text;
+      llvm::raw_string_ostream OS(Text);
+      llvm::json::OStream JSON(OS);
+      JSON.object([&] { writeFlowRegionAnalysisFields(JSON, R, false); });
+      auto Value = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Value));
+      EXPECT_EQ(readFlowRegionAnalysis(*Value, Options), R);
+      EXPECT_EQ(Text.find("\"depth\""), std::string::npos);
+      EXPECT_EQ(Text.find("\"frontier\""), std::string::npos);
+      EXPECT_FALSE(flowRegionSettingsJSON(Options).get("fragments"));
+    }
+  }
+}

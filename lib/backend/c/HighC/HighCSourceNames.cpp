@@ -15,6 +15,10 @@
 #include "HighCWriter.h"
 
 #include "neverd/backend/c/CSourceMap.h"
+#include "neverd/debug/UserPrototype.h"
+#include "neverd/libc/LibCFloatingArguments.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include <map>
 
@@ -64,8 +68,14 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
   // Import pointers need the library's tag kind, but do not require its
   // layout. In particular, a union must not acquire a struct forward tag.
   std::set<std::string> ImportRecords;
-  const auto VisitImportType = [&](TypeRef Type) {
+  const auto VisitImportType = [&](TypeRef Type, bool NeedsDeclaration) {
     VisitEnumeration(Type);
+    // A callee's included header already owns its opaque parameter types.
+    // Requesting a fresh tag here can redeclare an anonymous header typedef
+    // (pthread_mutex_t) as a different struct. Body-used types still go
+    // through Visit and the shared record-definition owner above.
+    if (!NeedsDeclaration)
+      return;
     while (Type && Type->Kind == NdTypeKind::Ptr) {
       if (Type->Pointee && Type->Pointee->Kind == NdTypeKind::Struct &&
           !Type->Pointee->IsEnum &&
@@ -83,9 +93,31 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
     }
     if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None)
       if (const std::optional<FunctionSym> Callee = debugCallee(E)) {
-        VisitImportType(Callee->ReturnType);
+        // This precedes the collection of DebugExternSigs. Use the actual
+        // resolved prototype, not the later name-only user-declaration cache.
+        // Indirect calls do not request a callee header at all.
+        const std::string Name =
+            cNameOfSymbol(resolvedCallTarget(E), Opts.Format, Opts.TheArch)
+                .str();
+        const bool NeedsDeclaration =
+            E.IsIndirectCall || !Callee->PrototypeFromCLibrary ||
+            Callee->PrototypeLibrary == UserPrototypeLibrary ||
+            Name != Callee->Name || isOwnFunctionName(Callee->Name, Funcs) ||
+            calleeHeaders(Callee->Name).empty();
+        VisitImportType(Callee->ReturnType, NeedsDeclaration);
         for (const auto &[Name, Type] : Callee->Params)
-          VisitImportType(Type);
+          VisitImportType(Type, NeedsDeclaration);
+        // Definitions are collected before headers are written. Known
+        // library headers supply their own value records.
+        if (const auto Floating =
+                libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
+            Floating && !libc::headerFor(Callee->Name) &&
+            (!Floating->ParameterElements.empty() ||
+             Floating->ReturnElements)) {
+          Visit(Callee->ReturnType);
+          for (const auto &[Name, Type] : Callee->Params)
+            Visit(Type);
+        }
       }
     E.forEachChildExpr([&](const ExprPtr &Child) { VisitExpr(*Child); });
   };

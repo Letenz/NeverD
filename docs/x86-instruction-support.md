@@ -157,9 +157,10 @@ incomplete intermediate batch.
    with separate expectations for decoding, strict lifting and each emitter.
    Include positive and negative forms for widths, register banks, masks,
    address sizes, segments and privilege-sensitive operations.
-2. Extend the bounded SGX contract to ENCLU query/memory leaves, with explicit
-   enclave execution requirements. Its entry/exit/resume leaves remain part of
-   the complete-state continuation work below.
+2. Integrate the native bounded ENCLU APIs below into NeverD's shared SGX
+   state contract, including leaf proofs, exact register dependencies and
+   incoming flag preservation. Its entry/exit/resume leaves remain part of the
+   complete-state continuation work below.
 3. Introduce a versioned complete-machine-state boundary and explicit
    continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
@@ -178,9 +179,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`041bb785b2b6`](https://github.com/NeverSight/llvm-project/commit/041bb785b2b6)
+[`e3b29f4dffd9`](https://github.com/NeverSight/llvm-project/commit/e3b29f4dffd9)
 adds native instruction selection for the following APIs. NeverC's
-[`7079d135e`](https://github.com/NeverSight/NeverC/commit/7079d135e)
+[`8506f06c7`](https://github.com/NeverSight/NeverC/commit/8506f06c7)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -200,17 +201,21 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.rdmsrlist`, `llvm.x86.wrmsrlist` | x86-64 | Two table pointers and a full i64 mask, with actual RCX completion; table memory and fault ordering stay inside the instruction. |
 | `llvm.x86.inbyte/inword/indword`, `llvm.x86.outbyte/outword/outdword` | i386 and x86-64 | Native port I/O through DX and AL/AX/EAX; unused reads remain observable. |
 | `llvm.x86.cli`, `llvm.x86.sti`, `llvm.x86.invlpg` | i386 and x86-64 | Ordered state effects; CLI/STI preserve arithmetic flags, and INVLPG does not preload its address. |
+| `llvm.x86.int` | i386 and x86-64 | Immediate interrupt vector; native instruction with ordered memory effects and a resumable continuation under the handler ABI. NeverC exposes the raw `__builtin_ia32_int` and retains the separate Microsoft `__int2c` non-returning assertion contract. |
 | `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
 | `llvm.x86.{lar,lsl}.{reg,mem}{16,32,64}` | i386 and x86-64; 64-bit results require x86-64 | Returns `{value, i8 ZF}`. Success retains the native result; failure returns the supplied prior value. Memory forms own their m16 selector read. |
 | `llvm.x86.lsl` | i386 and x86-64 | Compatibility with NeverC's Microsoft `__segmentlimit`; ordered query with a 32-bit result, unspecified on failure. |
+| `llvm.x86.arpl.reg`, `llvm.x86.arpl.mem` | i386 | Register form returns the adjusted i16 destination and i8 ZF; memory form owns m16 access, conditional update and permission checks. Native flags other than ZF are preserved. |
 | `llvm.x86.hreset` | i386 and x86-64 | Full i32 EAX control input, canonical ignored imm8 zero and native privilege/feature validation. |
 | `llvm.x86.invlpgb`, `llvm.x86.invlpgb32` | x86-64 and i386 respectively | Integer rAX control/address, i32 EDX identifiers and i32 ECX count/page-size inputs. No compiler memory dereference; wrong-mode APIs fail explicitly. |
+| `llvm.x86.invlpgb.addr32` | x86-64 | Explicit `67` address-size override, complete EAX address/control and i32 EDX/ECX inputs, without compiler dereferencing. |
 | `llvm.x86.tlbsync` | i386 and x86-64 | Actual ordered translation synchronization; no invented completion or replacement compiler fence. |
 | `llvm.x86.lkgs.reg`, `llvm.x86.lkgs.mem` | x86-64 | i16 register selector or instruction-owned m16 read; native GS descriptor/selector and IA32_KERNEL_GS_BASE effects. |
 | `llvm.x86.{verr,verw}.{reg,mem}` | i386 and x86-64 | i16 register selector or instruction-owned m16 read, returning actual i8 ZF; implicit descriptor reads stay native. |
 | `llvm.x86.{sldt,str,smsw}.reg{16,32,64}`, `llvm.x86.{sldt,str,smsw}.mem` | i386 and x86-64; reg64 requires x86-64 | Raw native register result or an exact m16 store; wider SMSW results retain their architectural upper bits. |
 | `llvm.x86.{lldt,ltr,lmsw}.{reg,mem}`, `llvm.x86.invd` | i386 and x86-64 | Native selector/control input and processor-state effects, including LTR's descriptor busy-bit write. |
 | `llvm.x86.encls`, `llvm.x86.enclv` and their `32` variants | x86-64 and i386 respectively | Four natural-width register inputs/results plus `CF | (ZF << 1)`; leaf selection uses EAX and all memory/state validation stays native. Flag-preserving leaves have no defined scalar status. |
+| `llvm.x86.enclu.bounded`, `llvm.x86.enclu.bounded32` | x86-64 and i386 respectively | Constant natural-width rAX selects one of nine fallthrough leaves through low EAX; four register results and CF/ZF retain native completion. Entry/exit/resume, dynamic and unknown leaves are rejected. |
 | `llvm.x86.vmload`, `llvm.x86.vmsave`, `llvm.x86.invlpga` and their `32` variants | x86-64 and i386 respectively | Integer rAX VMCB physical address or linear invalidation address; INVLPGA also reads the complete ECX ASID. No compiler dereference; default address width only. |
 | `llvm.x86.{vmload,vmsave,invlpga}.addr32` and `.addr16` | x86-64 and i386 respectively | Explicit address-size override with i32 or i16 address input; the native `67` prefix, full i32 INVLPGA ASID and instruction-owned memory effects survive lowering. |
 | `llvm.x86.stgi/clgi/clac/stac/hlt`, `llvm.x86.swapgs` | i386 and x86-64; SWAPGS requires x86-64 | Ordered native GIF, AC, halt/resume and GS-base effects, preserving arithmetic flags. HLT is resumable, with neither `noreturn` nor `willreturn`. |
@@ -284,6 +289,40 @@ clobber, preventing compiler condition codes from surviving the access. The
 source-route regression compiles 48 read/write cases across both word sizes,
 all three object formats and both pipeline optimization settings; it and the
 six existing virtualization source tests pass.
+
+CR/DR access now has one native-width assembly plan shared by LLVM emission
+and both C projections. LLVM-to-C checks the complete call: exact operands,
+types, legal register/mode, ATT text, side effects and flags/memory clobbers.
+Missing write operands cannot become a write of zero, and malformed contracts
+cannot bypass validation through the string-only renderer. COFF selects the
+Microsoft intrinsic only for MSVC or NeverC; Clang uses native GNU assembly,
+as it declares several CR/DR names without implementing them as builtins.
+ELF and Mach-O use the same native assembly effects. DR4/5 retain their CR4.DE-dependent behavior; DR8..15 are rejected
+by strict lifting because REX.R does not extend the debug-register bank.
+Regressions cover every legal CR/DR read/write, dead reads, all three object
+formats, both C routes, O0/O2 compilation, and original-byte CPL3 fault
+comparisons. The malformed-call matrix also covers missing effects, wrong
+widths, extra/missing operands, memory attributes, bundles and dialect changes.
+The 225 source fixtures check the native opcode in every generated object,
+including dead reads in all formats. All four source-contract tests, two
+coverage tests, six side-effect tests and 24 return-contract tests pass.
+
+The raw software-interrupt API requires a constant vector in 0..255 and
+preserves the continuation after an interrupt handler returns. NeverC's
+Microsoft `__int2c` spelling deliberately retains its existing `noreturn`
+assertion convention; it now also uses the shared `llvm.x86.int` IR instead of
+an unresolved private call in the full LLVM fork. The distinction is covered
+at O0/O2, including negative immediate-range checks.
+
+Interrupt qualification passes 72 full-LLVM and 36 cases per C route across
+both code modes and all three object formats. Controlled completions check
+input liveness, repeated operations, ordered memory, preserved nonvolatile
+registers and stack restoration. Each route also passes 524 Linux x64 native
+sigreturn comparisons and four unhandled-fault checks against independent
+INT 2C bytes. Both C routes retain two Microsoft assertion contracts through
+object emission. All 54 focused intrinsic/header tests and 81 binary
+regressions pass. This does not qualify privileged interrupt gates or an
+arbitrary handler's machine-state ABI.
 
 REP qualification adds 1,000 LLVM cases across both code modes and 544 cases
 on each NeverC builtin spelling and the NeverC-to-fork route. MOVS/STOS execute
@@ -448,6 +487,28 @@ explicitly. For leaves that preserve arithmetic flags, callers must preserve
 their explicit incoming flag state; the returned flag byte is not a status.
 ENCLU's entry/exit/resume continuations remain outside these APIs.
 
+The subsequent bounded ENCLU batch adds EREPORT, EGETKEY, EACCEPT, EMODPE,
+EACCEPTCOPY, EVERIFYREPORT2, EDECCSSA, EREPORT2 and EGETKEY256 (leaves 0, 1,
+5..11). The first argument is `immarg`; the backend materializes its complete
+value in rAX instead of copying an unselected target constant to a register.
+The shared leaf predicate rejects EENTER, ERESUME, EEXIT and unknown leaves.
+NeverC provides `__builtin_ia32_enclu_bounded` and the installed
+`_enclu_bounded_u32` macro, which evaluates its data-array expression once.
+Code-mode and feature checks include rejecting code16.
+
+The bounded ENCLU matrix passes 6,048 full-LLVM checks and 3,528 on each C
+route, plus 36 real CPL3 fault boundaries per C route. It covers every allowed
+leaf, upper RAX bits, independent and combined outputs, dead/repeated calls,
+ordering, unmapped implicit memory, callee-saved registers, O0/O2, ELF/COFF/
+Mach-O and assembly round trips. The original ENCLS/ENCLV matrices also pass
+again. Twenty-five LLVM regression files, 51 NeverC intrinsic/header tests,
+81 binary checks, 26 generator tests, 12 plugin tests and six isolated
+installed-header probes pass; the overload audit has zero mismatches. Only
+ENCLU's implicit register uses/defs change in the plugin schema, retaining all
+18,495 opcode identities. This does not qualify successful enclave execution,
+incoming flag preservation, AEX or nonlocal continuations. NeverD's strict
+lifter still rejects ENCLU until those selected-leaf semantics are integrated.
+
 SGX qualification passes 1,344 full-LLVM checks and 784 each for NeverC and
 the bridge, covering every register/status output, dead/repeated operations,
 unmapped integer inputs, ordering, nonvolatile-register restoration, O0/O2,
@@ -501,6 +562,32 @@ tests pass; the overload audit has zero mismatches. Installed Microsoft
 interfaces retain their intended default-width native calls. These results
 include the earlier default-width operations; physical TLB behavior and
 successful VMFUNC retain the qualification limits above.
+
+The next bounded batch adds native i386 ARPL register/memory APIs and a
+long-mode INVLPGB addr32 API. ARPL's machine description now ties the prior
+destination to its result and declares EFLAGS plus native memory read/write
+effects. No ordinary preload or unconditional store replaces the instruction.
+`verify-arpl-completion.py` passes 960 compiler/ISA cases across three formats
+and O0/O2, plus 16,480 real Linux IA32 result/fault comparisons. Its independent
+raw-instruction oracle includes read-only and inaccessible pages. NeverC's
+x86-64/AArch64 target set cannot encode ARPL; these two APIs belong to the full
+LLVM fork's i386 backend.
+
+NeverC exposes `__builtin_ia32_invlpgb_addr32` with three unsigned i32 operands.
+The INVLPGB matrix passes 452 full-LLVM checks and 368 each for NeverC and the
+bridge, retaining the explicit address prefix, full EDX/ECX and live wide
+source values. Twenty LLVM regressions, 46 NeverC intrinsic tests, 81 binary
+checks, 26 generator tests and 12 plugin tests pass; overload metadata has zero
+mismatches. The plugin schema appends only `INVLPGB64_ADDR32` at opcode 18494;
+every earlier instruction, register and feature record remains unchanged.
+This transport evidence does not independently qualify hardware TLB broadcasts.
+
+NeverC's public `_mm_extract_ps` now reinterprets the vector before its
+integer-lane extraction instead of requiring an unsupported C23
+`__builtin_bit_cast`. Three header regressions and all 46 intrinsic regressions
+pass. They include 8,288 native lane/bit-pattern checks, single evaluation,
+immediate diagnostics, and all three formats at O0/O2; six isolated installed-
+header compilation checks pass too.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete

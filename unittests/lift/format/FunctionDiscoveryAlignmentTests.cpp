@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/loader/FunctionDiscovery.h"
@@ -53,8 +54,12 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
     TruncatedArm,
     ExhaustedArm,
     MixedIndirect,
-    UnsupportedArm
+    UnsupportedArm,
+    PACMArm
   };
+  // Scalable ADDPT remains decodable but unmodelled. PACM now has executed
+  // prefix semantics and must no longer stand in for an unsupported opcode.
+  constexpr uint32_t ScalableAddpt = 0x04e20820;
   const std::pair<Arch, InstructionMode> Targets[] = {
       {Arch::X86, InstructionMode::Default},
       {Arch::X64, InstructionMode::Default},
@@ -68,7 +73,7 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
             Shape::Trap, Shape::Indirect, Shape::Cycle, Shape::Truncated,
             Shape::CFGBoundary, Shape::Exhausted, Shape::EscapingBranch,
             Shape::TruncatedArm, Shape::ExhaustedArm, Shape::MixedIndirect,
-            Shape::UnsupportedArm}) {
+            Shape::UnsupportedArm, Shape::PACMArm}) {
         SCOPED_TRACE(testing::Message()
                      << unsigned(Architecture) << ':' << unsigned(Mode) << ':'
                      << unsigned(Format) << ':' << unsigned(Form));
@@ -76,7 +81,7 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         const bool X86 = Architecture == Arch::X86 || Architecture == Arch::X64;
         const bool Thumb = Mode == InstructionMode::Thumb;
         const bool A64 = Architecture == Arch::AArch64;
-        if (Form == Shape::UnsupportedArm && !A64)
+        if ((Form == Shape::UnsupportedArm || Form == Shape::PACMArm) && !A64)
           continue;
         // Pin both the 64/65 linear-prefix and 256/257 reachable-probe edges.
         size_t Prefix = limits::kMaxVerifyInsns;
@@ -87,7 +92,8 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         const bool Conditional =
             Form == Shape::Conditional || Form == Shape::EscapingBranch ||
             Form == Shape::TruncatedArm || Form == Shape::ExhaustedArm ||
-            Form == Shape::MixedIndirect || Form == Shape::UnsupportedArm;
+            Form == Shape::MixedIndirect || Form == Shape::UnsupportedArm ||
+            Form == Shape::PACMArm;
         std::vector<uint8_t> Body;
         const auto Word = [&](uint32_t Value) {
           const size_t At = Body.size();
@@ -145,8 +151,10 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         else if (Form == Shape::Indirect || Form == Shape::MixedIndirect)
           Indirect();
         else if (Form == Shape::UnsupportedArm) {
-          Word(0xd50324ff); // PACM: decodable, but its machine state is
-                            // unmodelled.
+          Word(ScalableAddpt);
+          Return();
+        } else if (Form == Shape::PACMArm) {
+          Word(kAArch64PACMEncoding);
           Return();
         } else if (Form == Shape::Trap) {
           if (X86)
@@ -198,7 +206,7 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         ASSERT_TRUE(Dec.init(Img));
         if (Form == Shape::UnsupportedArm) {
           uint8_t Bytes[4];
-          writeLE<uint32_t>(Bytes, 0xd50324ff);
+          writeLE<uint32_t>(Bytes, ScalableAddpt);
           DecodedInsn I;
           ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), Callee, I), 4);
           ASSERT_FALSE(I.Raw->illegal);
@@ -212,7 +220,7 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         const bool Expected =
             Form == Shape::PrefixBoundary || Form == Shape::Straight ||
             Form == Shape::Conditional || Form == Shape::CFGBoundary ||
-            Form == Shape::MixedIndirect;
+            Form == Shape::MixedIndirect || Form == Shape::PACMArm;
         EXPECT_EQ(
             llvm::any_of(Functions,
                          [&](const auto &F) { return F.first == Callee; }),

@@ -83,6 +83,15 @@ public:
 
 namespace {
 
+// Windows headers retain long's source identity when the host has the same
+// width, with exact-width fallback on LP64. These are declaration expectations,
+// independent of the renderer used by the public source views.
+constexpr char WindowsLongC[] =
+    "__typeof__(__builtin_choose_expr(sizeof(long) == 4, (long)0, (int32_t)0))";
+constexpr char WindowsUnsignedLongC[] =
+    "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == 4, "
+    "(unsigned long)0, (uint32_t)0))";
+
 TEST(SessionInterpreterRecovery, RejectsTruncatedOptionsBeforeReadingFields) {
   neverd_session_t Session = neverd_session_create();
   ASSERT_NE(Session, nullptr);
@@ -6069,12 +6078,12 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   ASSERT_GE(Index, 0);
   const std::string Probe =
       takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
-  EXPECT_NE(Probe.find("extern " + Process + "* IoThreadToProcess(" + Thread +
-                       "* Thread);"),
+  EXPECT_NE(Probe.find("extern struct " + Process +
+                       " *IoThreadToProcess(struct " + Thread + " *Thread);"),
             std::string::npos)
       << Probe;
-  EXPECT_NE(Probe.find("extern void ExFreePoolWithTag(void* P, uint32_t "
-                       "Tag);"),
+  EXPECT_NE(Probe.find(std::string("extern void ExFreePoolWithTag(void *P, ") +
+                       WindowsUnsignedLongC + " Tag);"),
             std::string::npos)
       << Probe;
   EXPECT_NE(
@@ -6109,7 +6118,7 @@ TEST_F(SessionCAPITest, DriverProviderImportsUseTheirDeclaredSourceABI) {
       ASSERT_TRUE(Source.has_value()) << Text;
       EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
       EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
-      EXPECT_TRUE(Source->contains("extern void NdisCloseConfiguration(void*"))
+      EXPECT_TRUE(Source->contains("extern void NdisCloseConfiguration(void *"))
           << Source->str();
       EXPECT_TRUE(Source->contains("extern int32_t NdisOpenConfigurationEx("))
           << Source->str();
@@ -6164,7 +6173,8 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // native API declares, take the handle.
   const std::string Probe = decompile("Probe");
   EXPECT_NE(Probe.find(" = GetLastError();"), std::string::npos) << Probe;
-  EXPECT_NE(Probe.find("extern int32_t ZwClose(void* Handle);"),
+  EXPECT_NE(Probe.find(std::string("extern ") + WindowsLongC +
+                       " ZwClose(void *Handle);"),
             std::string::npos)
       << Probe;
   EXPECT_NE(Probe.find("ZwClose((void*)(uintptr_t)arg0)"), std::string::npos)
@@ -6175,10 +6185,12 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
       Session,
       neverd_func_entry(Session, neverd_func_find_by_name(Session, "Probe")),
       0));
-  EXPECT_NE(Lowered.find("extern uint32_t GetLastError(void);"),
+  EXPECT_NE(Lowered.find(std::string("extern ") + WindowsUnsignedLongC +
+                         " GetLastError(void);"),
             std::string::npos)
       << Lowered;
-  EXPECT_NE(Lowered.find("extern int32_t ZwClose(void* Handle);"),
+  EXPECT_NE(Lowered.find(std::string("extern ") + WindowsLongC +
+                         " ZwClose(void *Handle);"),
             std::string::npos)
       << Lowered;
   EXPECT_NE(Lowered.find("(GetLastError())"), std::string::npos) << Lowered;
@@ -6232,8 +6244,8 @@ TEST_F(SessionCAPITest, X86ImportsTakeTheirStdcallPrototypes) {
   };
   // The declarations say the callee pops its arguments, as it does.
   const std::string Open = decompile("Open");
-  EXPECT_NE(Open.find("extern __attribute__((stdcall)) void* CreateFileW("
-                      "uint16_t* lpFileName,"),
+  EXPECT_NE(Open.find("extern __attribute__((stdcall)) void *CreateFileW("
+                      "const uint16_t *lpFileName,"),
             std::string::npos)
       << Open;
   EXPECT_NE(Open.find("CreateFileW((uint16_t*)(uintptr_t)arg0, 0x80000000, "
@@ -6241,8 +6253,8 @@ TEST_F(SessionCAPITest, X86ImportsTakeTheirStdcallPrototypes) {
             std::string::npos)
       << Open;
   const std::string Probe = decompile("Probe");
-  EXPECT_NE(Probe.find("extern __attribute__((stdcall)) int32_t "
-                       "ZwClose(void* Handle);"),
+  EXPECT_NE(Probe.find(std::string("extern __attribute__((stdcall)) ") +
+                       WindowsLongC + " ZwClose(void *Handle);"),
             std::string::npos)
       << Probe;
   // ExitProcess returns to no caller.  Finish is found though only its
@@ -6307,7 +6319,8 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
   const std::string Probe = decompile("Probe");
   EXPECT_NE(Probe.find("GetLastError()"), std::string::npos) << Probe;
   EXPECT_EQ(Probe.find("GetLastError(arg0"), std::string::npos) << Probe;
-  EXPECT_NE(Probe.find("extern int32_t ZwClose(void* Handle);"),
+  EXPECT_NE(Probe.find(std::string("extern ") + WindowsLongC +
+                       " ZwClose(void *Handle);"),
             std::string::npos)
       << Probe;
   // ExitProcess takes the code and returns to no caller.
@@ -6477,11 +6490,17 @@ TEST_F(SessionCAPITest, AndroidProgramsJoinTheirBionicLibrary) {
     // again.
     const int LockIndex = neverd_func_find_by_name(Android, "Lock");
     ASSERT_GE(LockIndex, 0);
-    const std::string Lock = takeString(
-        neverd_decompile(Android, neverd_func_entry(Android, LockIndex)));
-    EXPECT_NE(Lock.find("pthread_mutex_init("), std::string::npos) << Lock;
-    EXPECT_EQ(Lock.find("typedef struct pthread_mutex_t"), std::string::npos)
-        << Lock;
+    for (bool Lowered : {false, true}) {
+      SCOPED_TRACE(Lowered ? "LLVM C" : "High C");
+      const auto Entry = neverd_func_entry(Android, LockIndex);
+      const std::string Lock =
+          takeString(Lowered ? neverd_decompile_llvm_ex(Android, Entry, 0)
+                             : neverd_decompile(Android, Entry));
+      EXPECT_NE(Lock.find("#include <pthread.h>"), std::string::npos) << Lock;
+      EXPECT_NE(Lock.find("pthread_mutex_init("), std::string::npos) << Lock;
+      EXPECT_EQ(Lock.find("typedef struct pthread_mutex_t"), std::string::npos)
+          << Lock;
+    }
   }
 }
 
@@ -6741,40 +6760,72 @@ TEST_F(SessionCAPITest, AUserDeclarationOfAHeadersRoutineDeclaresItself) {
   for (const Case &C : {Case{"linux_libc_calls_x64", "Read", false},
                         Case{"user_declared_calls_x64", "Copy", true}}) {
     SCOPED_TRACE(C.Fixture);
-    std::ifstream Input(std::filesystem::path(__FILE__).parent_path() /
-                            "types" / "fixtures" / C.Fixture,
-                        std::ios::binary);
-    const std::string Path = write(
-        C.Fixture, std::string(std::istreambuf_iterator<char>(Input), {}));
-    neverd_session_t Own = neverd_session_create();
-    ASSERT_NE(Own, nullptr);
-    auto Close = llvm::make_scope_exit([&] { neverd_session_destroy(Own); });
-    ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
-        << takeString(neverd_last_error(Own));
-    ASSERT_GE(neverd_session_discover_functions(Own), 0);
-    const int Index = neverd_func_find_by_name(Own, C.Function);
-    ASSERT_GE(Index, 0);
-    const neverd_va_t Entry = neverd_func_entry(Own, Index);
-    const std::string Declared = takeString(
-        neverd_local_types_declare(Own, "long read(int File);", nullptr));
-    ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
-    const std::string Callee = C.Header ? "read_2" : "read";
-    for (const std::string &Text :
-         {takeString(neverd_decompile(Own, Entry)),
-          takeString(neverd_decompile_llvm(Own, Entry))}) {
-      EXPECT_EQ(Text.find("#include <unistd.h>") != std::string::npos, C.Header)
-          << Text;
-      // The routine is declared before the function that calls it.
-      const size_t Definition = Text.find(std::string(C.Function) + "(");
-      ASSERT_NE(Definition, std::string::npos) << Text;
-      const llvm::StringRef Declarations =
-          llvm::StringRef(Text).take_front(Definition);
-      EXPECT_TRUE(Declarations.contains(" " + Callee + "(")) << Text;
-      EXPECT_EQ(Declarations.contains("__asm__(\"read\")"), C.Header) << Text;
-      const std::vector<std::string> Arguments =
-          callArguments(Text, C.Function, Callee);
-      ASSERT_EQ(Arguments.size(), 1u) << Text;
-      EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+    for (bool Opaque : {false, true}) {
+      SCOPED_TRACE(Opaque);
+      std::ifstream Input(std::filesystem::path(__FILE__).parent_path() /
+                              "types" / "fixtures" / C.Fixture,
+                          std::ios::binary);
+      const std::string Path =
+          write(std::string(C.Fixture) + (Opaque ? "-opaque" : ""),
+                std::string(std::istreambuf_iterator<char>(Input), {}));
+      neverd_session_t Own = neverd_session_create();
+      ASSERT_NE(Own, nullptr);
+      auto Close = llvm::make_scope_exit([&] { neverd_session_destroy(Own); });
+      ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
+          << takeString(neverd_last_error(Own));
+      ASSERT_GE(neverd_session_discover_functions(Own), 0);
+      const int Index = neverd_func_find_by_name(Own, C.Function);
+      ASSERT_GE(Index, 0);
+      const neverd_va_t Entry = neverd_func_entry(Own, Index);
+      const char *Declaration =
+          Opaque ? "union Token; long read(union Token *Value);"
+                 : "long read(int File);";
+      const std::string Declared =
+          takeString(neverd_local_types_declare(Own, Declaration, nullptr));
+      ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
+      const std::string Callee = C.Header ? "read_2" : "read";
+      for (bool Reopen : {false, true}) {
+        SCOPED_TRACE(Reopen);
+        if (Reopen) {
+          ASSERT_EQ(neverd_type_declarations_save(Own), 0)
+              << takeString(neverd_last_error(Own));
+          neverd_session_destroy(Own);
+          Own = neverd_session_create();
+          ASSERT_NE(Own, nullptr);
+          ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
+              << takeString(neverd_last_error(Own));
+          ASSERT_GE(neverd_session_discover_functions(Own), 0);
+        }
+        for (bool Lowered : {false, true}) {
+          SCOPED_TRACE(Lowered);
+          const std::string Text =
+              takeString(Lowered ? neverd_decompile_llvm(Own, Entry)
+                                 : neverd_decompile(Own, Entry));
+          EXPECT_EQ(Text.find("#include <unistd.h>") != std::string::npos,
+                    C.Header)
+              << Text;
+          // The routine is declared before the function that calls it.
+          const size_t Definition = Text.find(std::string(C.Function) + "(");
+          ASSERT_NE(Definition, std::string::npos) << Text;
+          const llvm::StringRef Declarations =
+              llvm::StringRef(Text).take_front(Definition);
+          EXPECT_TRUE(Declarations.contains(" " + Callee + "(")) << Text;
+          EXPECT_EQ(Declarations.contains("__asm__(\"read\")"), C.Header)
+              << Text;
+          if (Opaque) {
+            // LLVM-C currently retains machine carriers for this user-only
+            // prototype. HighC renders its pointer and needs the union tag.
+            if (!Lowered)
+              EXPECT_TRUE(Declarations.contains("typedef union Token Token;"))
+                  << Text;
+            EXPECT_EQ(Text.find("struct Token"), std::string::npos) << Text;
+          }
+          const std::vector<std::string> Arguments =
+              callArguments(Text, C.Function, Callee);
+          ASSERT_EQ(Arguments.size(), 1u) << Text;
+          EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+        }
+      }
     }
   }
 }

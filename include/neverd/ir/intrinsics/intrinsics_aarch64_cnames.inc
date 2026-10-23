@@ -189,3 +189,9 @@ C(Intrinsic::A64LinuxSyscall, "neverd_a64_linux_syscall");
 #define NEVERD_A64_PAUTH_LR_OPERATION(Id, Mnemonic, ...)                       \
   C(Intrinsic::Id, "__" Mnemonic);
 #include "neverd/ir/intrinsics/AArch64PAuthLR.def"
+
+#define NEVERD_A64_PAUTH_M_OPERATION(Id, Mnemonic, ...)                        \
+  C(Intrinsic::Id, "__" Mnemonic);
+#include "neverd/ir/intrinsics/AArch64PAuthM.def"
+#define NEVERD_A64_PAUTH_M_MARKER(Id, Name) C(Intrinsic::Id, Name);
+#include "neverd/ir/intrinsics/AArch64PAuthM.def"

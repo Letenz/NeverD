@@ -13,6 +13,7 @@
 
 #include "../../UnalignedMemory.h"
 #include "../X86FPStateHelpers.h"
+#include "../X86SystemRegister.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -37,6 +38,7 @@
 #include <cctype>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -1807,6 +1809,27 @@ std::string renderX86TypedIntrinsicCall(
   if (Call.IntrinsicId == I::CetRdSsp)
     llvm::report_fatal_error(
         "RDSSP C projection requires a caller-scoped full-GPR expression");
+  if (x86SystemRegisterName(Call.IntrinsicId, 0)) {
+    const bool Debug =
+        Call.IntrinsicId == I::ReadDr || Call.IntrinsicId == I::WriteDr;
+    const auto *Index = Debug && !Call.Operands.empty()
+                            ? unwrapX86IntegerView(Call.Operands[0].get())
+                            : nullptr;
+    const auto P = x86SystemRegisterAsm(
+        Call.IntrinsicId, TheArch,
+        Index && Index->Kind == ExprKind::Const ? Index->ConstVal : UINT64_MAX);
+    if (!P || Call.Operands.size() != unsigned(P->Debug) + unsigned(P->Write) ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        (!P->Write && (!Call.Type || Call.Type->Size != P->Bytes)) ||
+        (P->Write && (!Call.Operands.back() || !Call.Operands.back()->Type ||
+                      Call.Operands.back()->Type->Size != P->Bytes)))
+      throw std::invalid_argument("invalid x86 system register C contract");
+    HasCIntrinsics |= !GnuToolchain;
+    return renderX86SystemRegisterExpression(
+        *P, !GnuToolchain,
+        P->Write ? std::vector<std::string>{ExprFn(*Call.Operands.back())}
+                 : std::vector<std::string>{});
+  }
   if (isX86FPStateIntrinsic(Call.IntrinsicId)) {
     const unsigned ResultBytes = Call.Type ? Call.Type->Size : 0;
     if (ResultBytes && Call.Type->Kind != NdTypeKind::Int)

@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>Compare two binaries, inspect changes and review function correspondence</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>Inspect x87 support and requirements</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>x87 &amp;support…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6325,6 +6333,14 @@ Coverage: %7</translation>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>Shared SSA fragments</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7201,6 +7217,12 @@ Heuristic explanations, not validated behavior.
         <translation>Block %1 · Original addresses: %2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>External input binding; the producers have not been compared.
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7333,6 +7355,30 @@ Coverage: %4% / %5% of observed SSA nodes in these functions. Control and extern
     <message>
         <source>partial</source>
         <translation>partial</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>Fragment evidence</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>Matched operations</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>External inputs</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+SSA recipe: %1</translation>
     </message>
 </context>
 <context>
@@ -7865,6 +7911,184 @@ Secondary SHA-256: %3
     <message>
         <source> · Deleted</source>
         <translation> · Deleted</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>%1 instruction forms. Static inventory; no host probe, execution or proof.</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>&amp;Backend:</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>&amp;Consumer:</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>&amp;Destination:</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>&amp;Reload</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>&amp;Source mode:</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>Call contract: %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>Could not load x87 support: %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>Filter instructions, operands or support…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>Filter x87 instructions</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>Loading x87 support…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>No</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>Reason: %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>Regression sources: %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>Requirements: %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>Selected instruction requirements and limits</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>Source &amp;ABI:</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>Source path available: %1; default for this ABI: %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>State &amp;path:</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>The analysis worker is disconnected.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>This combination is not listed; it is unsupported.</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>This engine does not provide an x87 support report.</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>This source mode / ABI / state path is not listed.</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>Waiting for the analysis worker.</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Yes</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double: %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>x87 instruction support</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>x87 support</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>Architectural state</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>Implemented</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>Instruction</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>No</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>Numerical result</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>Operands</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>Profile</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>The engine returned an incompatible x87 capability report.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>This combination is not listed; it is unsupported.</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>Unlisted</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Yes</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>unqualified</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>unsupported</translation>
     </message>
 </context>
 </TS>

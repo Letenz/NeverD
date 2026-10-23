@@ -25,6 +25,7 @@
 #include "neverd/backend/llvm/LLVMX87GuardedValueAsm.h"
 #include "neverd/backend/llvm/LLVMX87ValueAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86SystemRegisterAsm.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
@@ -1624,14 +1625,17 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
   if (IC == I::In)
     return emitX86PortIn(Op, Builder);
 
-  if (auto Reg = x86SystemRegisterName(
-          IC, Op.NumInputs > 1 && Op.Inputs[1].isConst() ? Op.Inputs[1].ConstVal
-                                                         : UINT64_MAX);
-      Reg && Op.Output.Size > 0) {
+  if (x86SystemRegisterName(IC, 0)) {
+    const auto P = x86SystemRegisterAsm(
+        IC, TargetArch,
+        Op.NumInputs > 1 && Op.Inputs[1].isConst() ? Op.Inputs[1].ConstVal
+                                                   : UINT64_MAX);
+    if (!P || P->Write || Op.Output.Size != P->Bytes ||
+        Op.NumInputs != (P->Debug ? 2 : 1) ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      llvm::report_fatal_error("invalid x86 system register read contract");
     auto *FnTy = llvm::FunctionType::get(sizeToType(Op.Output.Size), false);
-    // CR/DR MOV leaves the arithmetic flags undefined.
-    auto *IA = llvm::InlineAsm::get(FnTy, "mov " + *Reg + ", $0",
-                                    "=r,~{flags},~{memory}",
+    auto *IA = llvm::InlineAsm::get(FnTy, P->Text, P->Constraints,
                                     /*hasSideEffects=*/true);
     return Builder.CreateCall(IA, {}, "sysreg");
   }

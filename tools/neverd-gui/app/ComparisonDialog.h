@@ -53,7 +53,8 @@ private:
   ComparisonGraph *PrimaryGraph, *SecondaryGraph;
   QLineEdit *Paths[2], *Bases[2], *Search;
   QComboBox *Loaders[2], *Side, *Kind, *FlowProfile;
-  QCheckBox *Names, *AnalyzeRegions, *AnalyzeDataFlow, *AnalyzeFlowRegions;
+  QCheckBox *Names, *AnalyzeRegions, *AnalyzeDataFlow, *AnalyzeFlowRegions,
+      *FlowFragments;
   QDoubleSpinBox *Threshold;
   QSpinBox *Timeout, *FlowFunctions;
   QTableView *FunctionTable, *InstructionTable;

@@ -193,7 +193,8 @@ std::optional<std::string> x86SystemRegisterName(Intrinsic Id,
     return "%cr8";
   case Intrinsic::ReadDr:
   case Intrinsic::WriteDr:
-    if (DebugIndex > 15)
+    // REX.R does not extend the debug register bank: DR8..15 encode #UD.
+    if (DebugIndex > 7)
       return std::nullopt;
     return "%dr" + std::to_string(DebugIndex);
   default:

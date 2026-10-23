@@ -180,6 +180,49 @@ TEST(X87PortableContext, ArithmeticFormsPreserveOperandOrderAndPop) {
       }
 }
 
+TEST(X87PortableContext, PreflightOrdersWaitingExceptionsBeforeOperandAccess) {
+  auto S = initial(0, 0);
+  putWord(S, 0, 0x37e);
+  putWord(S, 2, 1);
+  const auto Before = S;
+  for (const auto Selector :
+       {mem(0xdb, 5), mem(0xdb, 7), uint32_t(0xe3db | X87ContextWaitPrefix),
+        uint32_t(0xfad9)}) {
+    EXPECT_EQ(preflightPortableX87Context(Selector, S),
+              Outcome::PendingException);
+    uint8_t Known = 0;
+    uint64_t Output = 0x1234;
+    EXPECT_EQ(executePortableX87Context(Selector, S, Known, {}, GuestIP,
+                                        GuestDP, Output),
+              Outcome::PendingException);
+    EXPECT_EQ(S, Before);
+    EXPECT_EQ(Known, 0);
+    EXPECT_EQ(Output, 0x1234u);
+  }
+  // Nonwaiting FNSTCW still requires its ordinary memory access; preflight
+  // must not turn a pending exception into a refusal of that access.
+  const auto StoreControl = mem(0xd9, 7);
+  EXPECT_EQ(preflightPortableX87Context(StoreControl, S), Outcome::Completed);
+  uint8_t Known = 0;
+  EXPECT_EQ(step(StoreControl, S, Known), Outcome::InvalidMemory);
+  std::array<uint8_t, 2> Memory{};
+  EXPECT_EQ(step(StoreControl, S, Known, Memory), Outcome::Completed);
+  EXPECT_EQ(Memory[0], 0x7e);
+  EXPECT_EQ(Memory[1], 3);
+  EXPECT_EQ(S, Before);
+  // A completed preflight is no persistent authorization. Revalidate state
+  // after it changes, before any numerical or memory publication.
+  putWord(S, 0, 0x37f);
+  putWord(S, 2, 0);
+  EXPECT_EQ(preflightPortableX87Context(mem(0xdb, 5), S), Outcome::Completed);
+  putWord(S, 2, 0x80);
+  X87Binary80Bytes Operand{};
+  const auto Changed = S;
+  EXPECT_EQ(step(mem(0xdb, 5), S, Known, Operand), Outcome::PendingException);
+  EXPECT_EQ(S, Changed);
+  EXPECT_EQ(Known, 0);
+}
+
 TEST(X87PortableContext, RefusalsLeaveAllStateOutputAndMemoryUntouched) {
   struct Refusal {
     uint32_t Selector;

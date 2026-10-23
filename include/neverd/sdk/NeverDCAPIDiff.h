@@ -203,7 +203,11 @@ neverd_comparison_region_page_json(neverd_comparison_t Comparison,
 /// its anchors; all_anchors:true includes unclassified partial evidence. With
 /// anchor (global index), returns paired nodes and original instructions, or
 /// coordinates:"phi_blocks" for verified PHI block pairs. Optional region_id
-/// requires membership. Mutually exclusive selectors and invalid coordinates
+/// requires membership. Settings fragments:true selects finite shared fragments
+/// with explicit depth and frontier_count. coordinates:"frontier" pages their
+/// uninspected input definitions; these bindings are not matched code and do
+/// not contribute to coverage. Legacy neighborhood recipes remain unchanged.
+/// Mutually exclusive selectors and invalid coordinates
 /// fail clearly. Correspondence is finite structural evidence, not equivalence.
 NEVERD_API const char *
 neverd_comparison_flow_regions_json(neverd_comparison_t Comparison,

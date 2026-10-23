@@ -58,11 +58,13 @@ def main():
     if not gcc:
         manifest['skipped'].append('GCC profiles: no native x86_64 Linux GCC')
 
-    def build(name, path, flags):
+    def build(name, path, flags, source=None):
+        source = source or args.fixture
         target = root / (name + ('.obj' if 'coff' in name else '.o'))
-        run('build-' + name, [path, '-c', *flags, args.fixture, '-o', str(target)])
+        run('build-' + name, [path, '-c', *flags, str(source), '-o', str(target)])
         manifest['variants'][name] = {'path': str(target), 'sha256': digest(target),
-                                      'compiler': str(path), 'flags': flags}
+                                      'compiler': str(path), 'flags': flags,
+                                      'source_sha256': digest(source)}
         return target
 
     variants = {}
@@ -79,7 +81,7 @@ def main():
                     ['--target=x86_64-unknown-linux-gnu', '-O2', '-fno-asynchronous-unwind-tables', '-DFINAL_ADD=5u'])
     save_manifest()
 
-    def compare(name, a, b, extra=()):
+    def compare(name, a, b, extra=(), require_anchor=True):
         command = [args.neverd, 'diff', '--structural', '-a', str(a), '-b', str(b),
                    '--ignore-names', '--flow-regions', '--json', *extra]
         result = run(name, command, (0, 2))
@@ -87,7 +89,8 @@ def main():
         assert document['state'] == 'complete', (name, document['stopped_phase'])
         regions = document['flow_regions']
         assert regions['state'] == 'complete' and regions['primary_scope_complete'] and regions['secondary_scope_complete'], (name, regions)
-        assert regions['anchor_count'] > 0 and regions['hypothesis_count'] == 1, (name, regions)
+        if require_anchor:
+            assert regions['anchor_count'] > 0 and regions['hypothesis_count'] == 1, (name, regions)
         assert regions['semantic_validation'] == 'not_performed'
         assert all(h['open_control_frontier'] for h in regions['hypotheses'])
         assert not document['settings']['use_names']
@@ -97,8 +100,8 @@ def main():
         manifest['comparisons'].append({'name': name, 'primary_sha256': digest(a),
             'secondary_sha256': digest(b), 'exit': result.returncode,
             'anchors': regions['anchor_count'], 'hypotheses': regions['hypothesis_count'],
-            'primary_coverage': regions['hypotheses'][0]['primary_coverage'],
-            'secondary_coverage': regions['hypotheses'][0]['secondary_coverage']})
+            'primary_coverage': [h['primary_coverage'] for h in regions['hypotheses']],
+            'secondary_coverage': [h['secondary_coverage'] for h in regions['hypotheses']]})
         save_manifest()
         return document
 
@@ -147,6 +150,54 @@ def main():
             graph = crossed['dataflow'][side]['entries'][0]['graph']
             assert any(n['opcode'] == 'add' and any(i[0] == 1 and i[3] == value
                        for i in n['inputs']) for n in graph['nodes']), (fmt, side, graph)
+    control = pathlib.Path(args.fixture).with_name('control_regions_fixture.c')
+    fragments = [*profile, '--flow-fragments']
+    branch_inputs = {}
+    for fmt, triple in (('elf', 'aarch64-unknown-linux-gnu'),
+                        ('coff', 'aarch64-pc-windows-msvc'),
+                        ('macho', 'arm64-apple-macos11')):
+        compiled = {}
+        for level, value in ((0, 3), (2, 3), (2, 5)):
+            name = f'branch-{fmt}-O{level}-{value}'
+            compiled[level, value] = build(name, args.clang,
+                [f'--target={triple}', f'-O{level}', '-fno-asynchronous-unwind-tables',
+                 f'-DFINAL_ADD={value}u'], control)
+        a, b, patch = compiled[0, 3], compiled[2, 3], compiled[2, 5]
+        branch_inputs[fmt] = a
+        report = root / f'fragments-{fmt}.nddiff'
+        document = compare(f'fragments-{fmt}', a, b, [*fragments, '--save', str(report)])
+        regions = document['flow_regions']
+        assert regions['profile'] == 'llvm-fragments-v1'
+        assert document['settings']['flow_regions']['fragments'] is True
+        assert any(n['opcode'] == 'phi' for n in document['dataflow']['primary']['entries'][0]['graph']['nodes'])
+        assert any(n['opcode'] == 'select' for n in document['dataflow']['secondary']['entries'][0]['graph']['nodes'])
+        anchor = next(i for i, a in enumerate(regions['anchors']) if a['node_count'] >= 4 and a['frontier_count'])
+        boundary = json.loads(run(f'fragments-{fmt}-frontier', [args.neverd, 'diff',
+            '--structural', '-a', str(a), '-b', str(b), '--reopen', str(report),
+            '--flow-region-anchor', str(anchor), '--flow-region-coordinates', 'frontier',
+            '--json'], (0, 2)).stdout)
+        assert boundary['view'] == 'frontier' and boundary['boundary_only']
+        assert boundary['total'] == regions['anchors'][anchor]['frontier_count']
+        assert boundary['rows']
+        assert compare(f'fragments-{fmt}-reopen', a, b, ['--reopen', str(report)]) == document
+        changed = compare(f'fragments-{fmt}-same-level-patch', b, patch, fragments)
+        assert any('constants' in p['changes'] for p in changed['matches'])
+        crossed = compare(f'fragments-{fmt}-cross-level-patch', a, patch, fragments, False)
+        for side, value in (('primary', '0x3'), ('secondary', '0x5')):
+            graph = crossed['dataflow'][side]['entries'][0]['graph']
+            assert any(n['opcode'] == 'add' and any(i[0] == 1 and i[3] == value
+                       for i in n['inputs']) for n in graph['nodes']), (fmt, side, graph)
+    run('fragments-incompatible-abi', [args.neverd, 'diff', '--structural',
+        '-a', str(branch_inputs['elf']), '-b', str(branch_inputs['coff']), *fragments, '--json'], (1,))
+    # Keep the unresolved x64 parameter projection and loop attribute cells
+    # observable. No positive correspondence threshold is imposed on these.
+    for arch, triple in (('x64', 'x86_64-unknown-linux-gnu'),
+                         ('aarch64', 'aarch64-unknown-linux-gnu')):
+        for family in (1, 2):
+            paths = [build(f'control-{arch}-family{family}-O{level}', args.clang,
+                     [f'--target={triple}', f'-O{level}', '-fno-asynchronous-unwind-tables',
+                      f'-DFAMILY={family}'], control) for level in (0, 2)]
+            compare(f'control-{arch}-family{family}', *paths, fragments, False)
     manifest['status'] = 'passed'
     save_manifest()
     print(f"{len(manifest['comparisons'])} compiler/patch fixture comparisons; artifacts: {root}")

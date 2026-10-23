@@ -1607,6 +1607,7 @@
           "neverd diff --dataflow-profile",
           "neverd diff --effect-max-records",
           "neverd diff --effect-max-work",
+          "neverd diff --flow-fragments",
           "neverd diff --flow-function",
           "neverd diff --flow-kind",
           "neverd diff --flow-region",

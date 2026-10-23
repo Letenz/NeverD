@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>Zwei Binärdateien vergleichen, Änderungen untersuchen und Funktionszuordnungen prüfen</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>x87-Unterstützung und Anforderungen prüfen</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>x87-&amp;Unterstützung…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6325,6 +6333,14 @@ Abdeckung: %7</translation>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>Die optimierte SSA reduziert Hilfsstrukturen des Compilers für den Vergleich. Nicht unterstützte Funktionen bleiben mit einer Begründung aufgeführt.</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>Gemeinsame SSA-Fragmente</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>Gemeinsame Berechnungen trotz geänderter Abhängigkeiten finden. Erzeuger externer Eingaben bleiben ungeprüft. Enthält Hypothesen zu SSA-Regionen.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7201,6 +7217,12 @@ Heuristische Erklärungen, kein validiertes Verhalten.
         <translation>Block %1 · Ursprüngliche Adressen: %2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>Zuordnung externer Eingaben; die Erzeuger wurden nicht verglichen.
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7333,6 +7355,30 @@ Abdeckung: %4% / %5% der beobachteten SSA-Knoten dieser Funktionen. Kontrolle un
     <message>
         <source>partial</source>
         <translation>teilweise</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>Fragmentbelege</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>Übereinstimmende Operationen</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>Externe Eingaben</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>Tiefe %1 · Übereinstimmende Operationen: %2 · Externe Eingaben: %3
+Erzeuger externer Eingaben werden weder verglichen noch als gemeinsamer Code gezählt.</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+SSA-Verfahren: %1</translation>
     </message>
 </context>
 <context>
@@ -7865,6 +7911,184 @@ Sekundäre SHA-256: %3
     <message>
         <source> · Deleted</source>
         <translation> · Gelöscht</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>%1 Befehlsformen. Statisches Verzeichnis; keine Host-Prüfung, Ausführung oder Beweisführung.</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>&amp;Backend:</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>&amp;Verbraucher:</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>&amp;Ziel:</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>&amp;Neu laden</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>&amp;Quellmodus:</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>Aufrufvertrag: %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>x87-Unterstützung konnte nicht geladen werden: %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>Befehle, Operanden oder Unterstützung filtern…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>x87-Befehle filtern</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>Unterstützung für einen Befehl und ein Ausführungsprofil prüfen. Numerische Ergebnisse und Architekturzustand werden getrennt validiert.</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>x87-Unterstützung wird geladen…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Nein</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>Grund: %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>Quelldateien der Regressionstests: %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>Anforderungen: %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>Wählen Sie einen Befehl, um seine Anforderungen zu prüfen. Löschen Sie den Filter, wenn keine Formen sichtbar sind.</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>Anforderungen und Grenzen des gewählten Befehls</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>Quell-&amp;ABI:</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>Quellcode-Erzeugungspfad verfügbar: %1; Standard für diese ABI: %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>Zustands&amp;pfad:</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>Die Verbindung zum Analyseprozess wurde getrennt.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>Diese Kombination ist nicht aufgeführt und wird nicht unterstützt.</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>Diese Engine liefert keinen Bericht zur x87-Unterstützung.</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>Dieser Quellmodus / diese ABI / dieser Zustandspfad ist nicht aufgeführt.</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>Warten auf den Analyseprozess.</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Ja</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double: %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>x87-Befehlsunterstützung</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>x87-Unterstützung</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>Architekturzustand</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>Implementiert</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>Befehl</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Nein</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>Numerisches Ergebnis</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>Operanden</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>Profil</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>Die Engine hat einen inkompatiblen x87-Fähigkeitsbericht zurückgegeben.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>Diese Kombination ist nicht aufgeführt und wird nicht unterstützt.</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>Nicht aufgeführt</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Ja</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>nicht validiert</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>nicht unterstützt</translation>
     </message>
 </context>
 </TS>

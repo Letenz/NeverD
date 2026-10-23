@@ -8,6 +8,7 @@ add_neverd_component_library(NeverDDiff
   DataFlow.cpp
   DataFlowJSON.cpp
   FlowEvidence.cpp
+  FlowFragments.cpp
   FlowMatch.cpp
   FlowRegions.cpp
   FlowRegionsJSON.cpp

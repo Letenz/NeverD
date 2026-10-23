@@ -192,6 +192,14 @@ instruction records; `coordinates:"phi_blocks"` pages verified PHI context pairs
 An optional `region_id` checks anchor membership. Conflicting selectors fail.
 Replies expose scope, abstention/limit counters and open dependency boundaries.
 These finite correspondences neither certify behavior nor hide native deltas.
+The optional start setting `flow_regions:{"fragments":true}` selects
+`med-fragments-v1` or `llvm-fragments-v1`. Anchors expose `depth` and
+`frontier_count`; `coordinates:"frontier"` pages their external definition
+bindings with `view:"frontier"` and `boundary_only:true`. Producers in those
+rows have not been compared. They share a consistent mapping with internal
+nodes but are excluded from matched-node counts, origin admission and coverage.
+Original bytes remain inspectable. Legacy anchors reject frontier coordinates.
+The mode defaults off; saved settings retain it even on early cancellation.
 
 `comparison_impact` accepts `side`, nonempty address-string `seeds`, `direction`
 (`callers`/`callees`), `kind` (`functions`/`entrypoints`/`sites`/`boundaries`/
@@ -562,6 +570,7 @@ Heartbeat retains its native fields and adds
 
 | Operation | Payload fields after `schema_version` |
 |---|---|
+| `x87_capabilities` | Empty object; returns the C API's static x87 mode/ABI/state/consumer/backend matrix unchanged. Available before loading a binary; does not probe the host, execute code or change the project revision. Advertised only when the linked engine exports `neverd_x87_capabilities_json`; older engines return `unsupported`. Numerical and architectural-state support, profile requirements, unsupported reasons and test-source references retain their distinct meanings. Test-source references do not establish a passing run or a proof. |
 | `web_capabilities` | None; returns actual compiled capabilities, including unavailable status |
 | `web_import_preview` | `path`, optional `options` object using the C API import schema |
 | `web_import_commit` | `preview_token` |

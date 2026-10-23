@@ -10,6 +10,8 @@
 
 #include "neverd/diff/FlowRegions.h"
 
+#include "neverd/diff/FlowFragments.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -20,11 +22,12 @@
 #include <tuple>
 
 namespace neverd::diff {
-llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile) {
+llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
+                                  bool Fragments) {
   if (GraphProfile == LLVMDataFlowProfile)
-    return LLVMFlowRegionProfile;
+    return Fragments ? LLVMFlowFragmentProfile : LLVMFlowRegionProfile;
   if (GraphProfile == DataFlowProfile)
-    return FlowRegionProfile;
+    return Fragments ? FlowFragmentProfile : FlowRegionProfile;
   throw std::invalid_argument("unsupported SSA region graph profile");
 }
 namespace {
@@ -81,11 +84,14 @@ struct IndexedGraph {
   const DataFlowGraph *Graph;
   FlowFingerprints Keys;
   uint64_t ValidationWork;
+  FlowFragmentFingerprints Fragments;
 };
 struct Seed {
   uint64_t Key;
   uint32_t Graph, Node;
+  unsigned Depth = 0;
 };
+auto seedKey(const Seed &S) { return std::pair{-int(S.Depth), S.Key}; }
 struct Index {
   std::vector<IndexedGraph> Graphs;
   std::vector<Seed> Seeds;
@@ -126,18 +132,39 @@ Index index(FlowRegionInput Input, const DataFlowSettings &EvidenceSettings,
           ValidationWork += G.Blocks[I.Predecessor].Successors.size();
     }
     const auto Options = Work.allowance(EvidenceSettings.Graph, ValidationWork);
-    auto Keys = fingerprintDataFlow(G, Options, Control);
-    Work.charge(Keys.Work);
-    if (Keys.State != ComparisonState::Complete) {
-      if (Keys.State != ComparisonState::ResourceLimited ||
+    FlowFingerprints Keys;
+    FlowFragmentFingerprints Fragments;
+    if (Settings.Fragments)
+      Fragments = fingerprintFlowFragments(G, Options, Control);
+    else
+      Keys = fingerprintDataFlow(G, Options, Control);
+    const auto State = Settings.Fragments ? Fragments.State : Keys.State;
+    Work.charge(Settings.Fragments ? Fragments.Work : Keys.Work);
+    if (State != ComparisonState::Complete) {
+      if (State != ComparisonState::ResourceLimited ||
           Options.MaxWork < EvidenceSettings.Graph.MaxWork)
-        Work.stop(Keys.State);
+        Work.stop(State);
       ++R.LimitedGraphs;
       Covered = false;
       continue;
     }
     const auto GI = uint32_t(Out.Graphs.size());
-    Out.Graphs.push_back({&G, std::move(Keys), ValidationWork});
+    Out.Graphs.push_back(
+        {&G, std::move(Keys), ValidationWork, std::move(Fragments)});
+    if (Settings.Fragments) {
+      const auto &Layers = Out.Graphs.back().Fragments.Layers;
+      for (unsigned Depth = Layers.size(); Depth; --Depth)
+        for (uint32_t N = 0; N < G.Nodes.size(); ++N) {
+          Work.charge();
+          if (!Layers[Depth - 1].Admitted[N] || !G.Nodes[N].hasNativeOrigin())
+            continue;
+          if (Count == Settings.MaxSeeds)
+            Work.stop(ComparisonState::ResourceLimited);
+          Out.Seeds.push_back({Layers[Depth - 1].Keys[N], GI, N, Depth});
+          ++Count;
+        }
+      continue;
+    }
     for (uint32_t N = 0; N < G.Nodes.size(); ++N) {
       Work.charge();
       if (!eligible(G.Nodes[N]))
@@ -151,8 +178,8 @@ Index index(FlowRegionInput Input, const DataFlowSettings &EvidenceSettings,
   std::sort(Out.Seeds.begin(), Out.Seeds.end(),
             [&](const auto &A, const auto &B) {
               Work.charge();
-              return std::tie(A.Key, A.Graph, A.Node) <
-                     std::tie(B.Key, B.Graph, B.Node);
+              return std::tuple{seedKey(A), A.Graph, A.Node} <
+                     std::tuple{seedKey(B), B.Graph, B.Node};
             });
   Complete = Covered;
   return Out;
@@ -162,31 +189,45 @@ void anchors(const Index &A, const Index &B, const DataFlowSettings &Evidence,
              const FlowRegionSettings &Settings, FlowRegionAnalysis &R,
              Budget &Work, const ComparisonControl &Control) {
   std::vector<FlowMatchInput> PreparedA, PreparedB;
-  for (const auto &[From, To] : {std::pair{&A, &PreparedA}, {&B, &PreparedB}}) {
-    To->reserve(From->Graphs.size());
-    for (const auto &G : From->Graphs) {
-      Work.charge(G.ValidationWork);
-      To->emplace_back(*G.Graph, G.Keys, Evidence.Graph);
+  std::vector<FlowFragmentInput> FragmentsA, FragmentsB;
+  if (Settings.Fragments) {
+    for (const auto &[From, To] :
+         {std::pair{&A, &FragmentsA}, {&B, &FragmentsB}}) {
+      To->reserve(From->Graphs.size());
+      for (const auto &G : From->Graphs) {
+        Work.charge(G.ValidationWork + G.Fragments.Layers.size());
+        To->emplace_back(*G.Graph, G.Fragments, Evidence.Graph);
+      }
+    }
+  } else {
+    for (const auto &[From, To] :
+         {std::pair{&A, &PreparedA}, {&B, &PreparedB}}) {
+      To->reserve(From->Graphs.size());
+      for (const auto &G : From->Graphs) {
+        Work.charge(G.ValidationWork);
+        To->emplace_back(*G.Graph, G.Keys, Evidence.Graph);
+      }
     }
   }
+  std::set<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>> Accepted;
   size_t I = 0, J = 0;
   uint64_t StoredPairs = 0;
   while (I < A.Seeds.size() && J < B.Seeds.size()) {
     Work.charge();
-    if (A.Seeds[I].Key < B.Seeds[J].Key) {
+    if (seedKey(A.Seeds[I]) < seedKey(B.Seeds[J])) {
       ++I;
       continue;
     }
-    if (B.Seeds[J].Key < A.Seeds[I].Key) {
+    if (seedKey(B.Seeds[J]) < seedKey(A.Seeds[I])) {
       ++J;
       continue;
     }
     auto IE = I + 1, JE = J + 1;
-    while (IE < A.Seeds.size() && A.Seeds[IE].Key == A.Seeds[I].Key) {
+    while (IE < A.Seeds.size() && seedKey(A.Seeds[IE]) == seedKey(A.Seeds[I])) {
       Work.charge();
       ++IE;
     }
-    while (JE < B.Seeds.size() && B.Seeds[JE].Key == B.Seeds[J].Key) {
+    while (JE < B.Seeds.size() && seedKey(B.Seeds[JE]) == seedKey(B.Seeds[J])) {
       Work.charge();
       ++JE;
     }
@@ -200,9 +241,24 @@ void anchors(const Index &A, const Index &B, const DataFlowSettings &Evidence,
       for (size_t Y = J; Y < JE; ++Y) {
         const auto &AS = A.Seeds[X], &BS = B.Seeds[Y];
         const auto &AG = A.Graphs[AS.Graph], &BG = B.Graphs[BS.Graph];
-        auto Match = matchDataFlowNeighborhood(
-            PreparedA[AS.Graph], AS.Node, PreparedB[BS.Graph], BS.Node,
-            std::min(Evidence.Graph.MaxWork, Work.remaining()), Control);
+        const auto RootPair = std::tuple{AS.Graph, AS.Node, BS.Graph, BS.Node};
+        if (Settings.Fragments) {
+          Work.charge();
+          if (Accepted.contains(RootPair))
+            continue;
+        }
+        auto Match =
+            Settings.Fragments
+                ? matchFlowFragment(
+                      FragmentsA[AS.Graph], AS.Node, FragmentsB[BS.Graph],
+                      BS.Node, AS.Depth,
+                      std::min(Evidence.Graph.MaxWork, Work.remaining()),
+                      Control)
+                : matchDataFlowNeighborhood(
+                      PreparedA[AS.Graph], AS.Node, PreparedB[BS.Graph],
+                      BS.Node,
+                      std::min(Evidence.Graph.MaxWork, Work.remaining()),
+                      Control);
         Work.charge(Match.Work);
         if (Match.State != ComparisonState::Complete)
           Work.stop(Match.State);
@@ -231,7 +287,8 @@ void anchors(const Index &A, const Index &B, const DataFlowSettings &Evidence,
           ++R.WeakCandidates;
           continue;
         }
-        const uint64_t Pairs = Match.Nodes.size() + Match.PhiBlocks.size();
+        const uint64_t Pairs =
+            Match.Nodes.size() + Match.PhiBlocks.size() + Match.Frontier.size();
         if (R.Anchors.size() == Settings.MaxAnchors ||
             Pairs > Settings.MaxNodePairs - StoredPairs)
           Work.stop(ComparisonState::ResourceLimited);
@@ -246,6 +303,13 @@ void anchors(const Index &A, const Index &B, const DataFlowSettings &Evidence,
                     std::to_string(BS.Node);
         Anchor.Nodes = std::move(Match.Nodes);
         Anchor.PhiBlocks = std::move(Match.PhiBlocks);
+        if (Settings.Fragments) {
+          Work.charge();
+          Anchor.Depth = AS.Depth;
+          Anchor.Frontier = std::move(Match.Frontier);
+          Anchor.Id = "fragment-" + std::to_string(AS.Depth) + "-" + Anchor.Id;
+          Accepted.insert(RootPair);
+        }
         Anchor.Gaps = Match.Gaps;
         Anchor.OpenDataFrontier = Match.OpenDataFrontier;
         Anchor.OpenControlFrontier = Match.OpenControlFrontier;
@@ -286,7 +350,9 @@ FlowRegionHypothesis summarize(FlowRegionInput Primary,
   std::set<uint64_t> PF, SF;
   using Node = std::pair<uint64_t, uint32_t>;
   std::map<Node, Node> Forward, Reverse;
+  std::map<Node, Node> BoundForward, BoundReverse;
   bool Copies = false;
+  bool BindingConflict = false;
   for (auto N : H.Anchors) {
     Work.charge();
     const auto &A = R.Anchors[N];
@@ -302,6 +368,16 @@ FlowRegionHypothesis summarize(FlowRegionInput Primary,
       const auto [RI, NewR] = Reverse.emplace(SN, PN);
       Copies |= (!NewF && FI->second != SN) || (!NewR && RI->second != PN);
     }
+    if (A.Depth)
+      for (const auto *Pairs : {&A.Nodes, &A.Frontier})
+        for (const auto &[X, Y] : *Pairs) {
+          Work.charge();
+          const Node PN{A.PrimaryFunction, X}, SN{A.SecondaryFunction, Y};
+          const auto [FI, NewF] = BoundForward.emplace(PN, SN);
+          const auto [RI, NewR] = BoundReverse.emplace(SN, PN);
+          BindingConflict |=
+              (!NewF && FI->second != SN) || (!NewR && RI->second != PN);
+        }
   }
   H.PrimaryFunctions.assign(PF.begin(), PF.end());
   H.SecondaryFunctions.assign(SF.begin(), SF.end());
@@ -317,7 +393,7 @@ FlowRegionHypothesis summarize(FlowRegionInput Primary,
   };
   H.PrimaryCoverage = double(H.PrimaryNodes) / Total(Primary, PF);
   H.SecondaryCoverage = double(H.SecondaryNodes) / Total(Secondary, SF);
-  H.Ambiguous = Copies || PF.size() > 1 || SF.size() > 1;
+  H.Ambiguous = Copies || BindingConflict || PF.size() > 1 || SF.size() > 1;
   RegionRelationshipFacts Facts;
   Facts.PrimaryFunctions = PF.size();
   Facts.SecondaryFunctions = SF.size();
@@ -403,6 +479,8 @@ std::string FlowRegionSettings::describe() const {
       << ",occurrences=" << MaxOccurrences << ",seeds=" << MaxSeeds
       << ",work=" << MaxWork << ",anchors=" << MaxAnchors
       << ",pairs=" << MaxNodePairs;
+  if (Fragments)
+    Out << ",fragments=1";
   return Text;
 }
 FlowRegionAnalysis findFlowRegions(FlowRegionInput P, FlowRegionInput S,
@@ -412,7 +490,7 @@ FlowRegionAnalysis findFlowRegions(FlowRegionInput P, FlowRegionInput S,
   if (auto Error = Settings.validate())
     throw std::invalid_argument(*Error);
   FlowRegionAnalysis R;
-  R.Profile = flowRegionProfile(Evidence.Profile).str();
+  R.Profile = flowRegionProfile(Evidence.Profile, Settings.Fragments).str();
   if (!Settings.Enabled)
     return R;
   if (!Evidence.Enabled)
@@ -457,7 +535,7 @@ validateFlowRegions(const FlowRegionAnalysis &Saved, FlowRegionInput P,
                     FlowRegionInput S, const DataFlowSettings &Evidence,
                     const FlowRegionSettings &Settings) {
   FlowRegionAnalysis Empty;
-  Empty.Profile = flowRegionProfile(Evidence.Profile).str();
+  Empty.Profile = flowRegionProfile(Evidence.Profile, Settings.Fragments).str();
   if (Saved.Profile != Empty.Profile)
     return "saved SSA region profile disagrees with requested evidence";
   if (!Saved.State) {

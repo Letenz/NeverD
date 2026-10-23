@@ -8,6 +8,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
@@ -169,6 +170,63 @@ HighFunc lowerSavedFloatingRecord(const MedFunc &Med) {
   MedToHighConverter Converter;
   Converter.setFuncNames(&Names);
   return Converter.convert(Med, Arch::AArch64);
+}
+
+TEST(HighCSourceCalls, UserAndIndirectCalleesKeepOpaqueUnionTags) {
+  // Neither the integer argument nor the caller's signature names Token.
+  // Its union tag must come from the resolved callee, even when that callee
+  // has the name of a routine normally declared by a system header.
+  class CalleeDebug : public NullDebugContext {
+  public:
+    FunctionSym Callee;
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      return Address == Callee.Addr ? std::optional(Callee) : std::nullopt;
+    }
+    bool hasInfo() const override { return true; }
+  };
+  for (bool Indirect : {false, true}) {
+    SCOPED_TRACE(Indirect);
+    CalleeDebug Debug;
+    Debug.Callee.Name = "read";
+    Debug.Callee.Addr = 0x2000;
+    Debug.Callee.ReturnType = NdType::makeInt(8, true);
+    Debug.Callee.Params = {
+        {"value", NdType::makePtr(NdType::makeNamedRecord("Token"))}};
+    Debug.Callee.PrototypeFromCLibrary = true;
+    if (!Indirect)
+      Debug.Callee.PrototypeLibrary = UserPrototypeLibrary.str();
+    auto Call = HighExpr::makeCall("read", Debug.Callee.Addr,
+                                   {HighExpr::makeConst(0, 8)});
+    Call->Type = Debug.Callee.ReturnType;
+    Call->IsIndirectCall = Indirect;
+    if (Indirect) {
+      Call->IndirectParamIdx = 0;
+      Call->IndirectTarget = parameter(0, NdType::makeInt(8, false));
+    }
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.RecordDefinitions = [](const std::vector<TypeRef> &Types) {
+      CRecordDefinitions Result;
+      for (const TypeRef &Type : Types)
+        if (Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+            Type->Pointee->SourceName == "Token")
+          Result.Tags["Token"] = true;
+      return Result;
+    };
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    const auto Caller =
+        returning("read_token", Call,
+                  Indirect ? std::vector{NdType::makeInt(8, false)}
+                           : std::vector<TypeRef>{});
+    ASSERT_TRUE(HighCEmitter().emit({Caller}, OS, Options, &Debug));
+    EXPECT_EQ(Source.find("#include <unistd.h>"), std::string::npos) << Source;
+    EXPECT_NE(Source.find("typedef union Token Token;"), std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("struct Token"), std::string::npos) << Source;
+    source_call_execution_test::checkSyntax(Source);
+  }
 }
 
 TEST(HighCSourceCalls, UnnamedFixedParametersShareDeclarationAndBodyNames) {

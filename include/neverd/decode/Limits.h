@@ -1,4 +1,4 @@
-//===- Limits.h - Component limits and defaults -----------*- C++ -*-===//
+//===- Limits.h - Component limits and defaults ----------------*- C++ -*-===//
 //
 // NeverD Decompiler
 //

@@ -1,4 +1,4 @@
-//===- AArch64NativeOperands.cpp - AArch64 native operands -----------===//
+//===- AArch64NativeOperands.cpp - AArch64 native operands ---------------===//
 //
 // NeverD Decompiler
 //

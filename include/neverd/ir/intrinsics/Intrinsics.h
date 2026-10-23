@@ -415,6 +415,11 @@ enum class Intrinsic : uint16_t {
   X87FsincosPair,
   X87FxtractPair,
 
+  // CFG consumes the pending prefix before publishing a native operation.
+  A64_PACMPending,
+#define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64PAuthM.def"
+
   _Count = 16000
 };
 
@@ -1264,7 +1269,7 @@ constexpr bool preservesCallSetup(Intrinsic Id) {
 
 /// The control or debug register (`%cr8`, `%dr7`) that a ReadCr*/WriteCr*
 /// intrinsic names, or that ReadDr/WriteDr names by its constant first
-/// operand \p DebugIndex; nullopt for any other intrinsic.
+/// operand \p DebugIndex (DR0..7); nullopt for any other intrinsic or index.
 std::optional<std::string> x86SystemRegisterName(Intrinsic Id,
                                                  uint64_t DebugIndex);
 

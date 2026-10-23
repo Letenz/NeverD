@@ -584,7 +584,9 @@ static int runComparison(neverd_comparison_t Handle, neverd_session_t A,
     if (Primary->Stopped || Secondary->Stopped) {
       C.Result.Settings = Settings;
       C.Result.FlowRegions.Profile =
-          flowRegionProfile(Settings.DataFlow.Profile).str();
+          flowRegionProfile(Settings.DataFlow.Profile,
+                            Settings.FlowRegions.Fragments)
+              .str();
       C.Result.PrimaryDataFlow = C.Primary.DataFlow;
       C.Result.SecondaryDataFlow = C.Secondary.DataFlow;
       C.Result.State =
@@ -2366,9 +2368,10 @@ const char *neverd_comparison_flow_regions_json(neverd_comparison_t Handle,
                 (!(H || All || HasAnchor) || Kind == "all"),
             "invalid relationship filter on SSA region query");
     const auto Coordinates = string(*O, "coordinates", "nodes");
-    require((Coordinates == "nodes" || Coordinates == "phi_blocks") &&
+    require((Coordinates == "nodes" || Coordinates == "phi_blocks" ||
+             Coordinates == "frontier") &&
                 (HasAnchor || !O->get("coordinates")),
-            "coordinates requires an anchor and nodes or phi_blocks");
+            "coordinates requires an anchor and nodes, phi_blocks or frontier");
     const auto Limit = count(*O, "limit", diffLimits::kDefaultPageSize,
                              diffLimits::kMaxPageSize);
     require(Limit, "page limit must be positive");
@@ -2382,6 +2385,8 @@ const char *neverd_comparison_flow_regions_json(neverd_comparison_t Handle,
                                             H->Anchors.end(), AnchorIndex)),
               "anchor does not belong to this SSA hypothesis");
       A = &R.Anchors[AnchorIndex];
+      require(Coordinates != "frontier" || A->Depth,
+              "frontier coordinates require a shared fragment");
     } else if (!H && !All) {
       for (uint32_t I = 0; I < R.Hypotheses.size(); ++I)
         if (!Filter ||
@@ -2389,7 +2394,9 @@ const char *neverd_comparison_flow_regions_json(neverd_comparison_t Handle,
           Selected.push_back(I);
     }
     const uint64_t Total =
-        A     ? (Coordinates == "nodes" ? A->Nodes.size() : A->PhiBlocks.size())
+        A     ? (Coordinates == "nodes"      ? A->Nodes.size()
+                 : Coordinates == "frontier" ? A->Frontier.size()
+                                             : A->PhiBlocks.size())
         : H   ? H->Anchors.size()
         : All ? R.Anchors.size()
               : Selected.size();
@@ -2446,11 +2453,13 @@ const char *neverd_comparison_flow_regions_json(neverd_comparison_t Handle,
         }
         return Item;
       };
-      const auto &Pairs = Coordinates == "nodes" ? A->Nodes : A->PhiBlocks;
+      const auto &Pairs = Coordinates == "nodes"      ? A->Nodes
+                          : Coordinates == "frontier" ? A->Frontier
+                                                      : A->PhiBlocks;
       for (uint64_t I = Offset; I < End; ++I) {
         const auto [P, S] = Pairs[I];
         Rows.push_back(
-            Coordinates == "nodes"
+            Coordinates != "phi_blocks"
                 ? llvm::json::Object{{"primary", Node(C.Primary, PG, PO, P)},
                                      {"secondary",
                                       Node(C.Secondary, SG, SO, S)}}
@@ -2463,6 +2472,8 @@ const char *neverd_comparison_flow_regions_json(neverd_comparison_t Handle,
       Out["anchor"] = AnchorIndex;
       Out["location"] = flowRegionAnchorJSON(*A);
       Out["view"] = Coordinates;
+      if (Coordinates == "frontier")
+        Out["boundary_only"] = true;
       Out["rows"] = std::move(Rows);
     } else {
       for (uint64_t I = Offset; I < End; ++I) {

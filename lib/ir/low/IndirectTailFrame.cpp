@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <bit>
 #include <deque>
+#include <iterator>
 #include <map>
 #include <optional>
 
@@ -37,6 +38,7 @@ struct FrameWord {
   unsigned AuthenticationKey = 0;
   bool ZeroModifier = false;
   std::optional<uint64_t> SecondModifier;
+  bool ImplicitPrefix = false;
   std::optional<uint64_t> Constant;
   bool operator==(const FrameWord &) const = default;
 };
@@ -53,6 +55,22 @@ class TailFrameGuard {
   const TargetRegInfo &TRI = getTargetRegInfo(Arch::AArch64);
   const std::vector<TargetRegisterRange> Preserved;
   size_t Remaining;
+  const LowFunc *Owner = nullptr;
+
+  bool functionTemporary(uint64_t Offset) const {
+    const auto &Ranges = Owner->FunctionTemporaries;
+    const auto It =
+        std::upper_bound(Ranges.begin(), Ranges.end(), Offset,
+                         [](uint64_t Byte, const LowFunctionTemporary &Range) {
+                           return Byte < Range.Offset;
+                         });
+    if (It == Ranges.begin())
+      return false;
+    const auto &Range = *std::prev(It);
+    return Offset - Range.Offset <= Range.Bytes &&
+           sizeof(uint64_t) <= Range.Bytes - (Offset - Range.Offset);
+  }
+
   /// The function's own code: the span from its lowest block to the end of
   /// its highest, and the range its frame description covers.  A switch's
   /// case code that only its unresolved table reaches lies there, though no
@@ -198,8 +216,9 @@ class TailFrameGuard {
   bool forgetTemps(FrameState &State) {
     if (!charge(State.Values.size()))
       return false;
-    std::erase_if(State.Values, [](const auto &Item) {
-      return Item.first.first == VnodeSpace::TEMP;
+    std::erase_if(State.Values, [&](const auto &Item) {
+      return Item.first.first == VnodeSpace::TEMP &&
+             !functionTemporary(Item.first.second);
     });
     return true;
   }
@@ -360,8 +379,9 @@ class TailFrameGuard {
                  Item.first < SP.Offset || Item.first + 8 > 0;
         });
         std::erase_if(State.Values, [&](const auto &Item) {
-          return Item.first.first == VnodeSpace::TEMP ||
-                 !callPreserves(Item.first.second);
+          return Item.first.first == VnodeSpace::TEMP
+                     ? !functionTemporary(Item.first.second)
+                     : !callPreserves(Item.first.second);
         });
         Result = {};
         break;
@@ -400,24 +420,29 @@ class TailFrameGuard {
                        Inputs[1].Offset == Modifier) {
               Result = {FrameWord::Link};
             }
-          } else if (const auto Auth = aarch64PAuthLROperation(Id)) {
+          } else if (const auto Auth = aarch64PAuthExtendedOperation(Id)) {
             Result.K = FrameWord::Unknown;
             const bool Zero = Inputs[2].Constant == 0;
             const bool KnownModifier = Zero || Inputs[2].K == FrameWord::Stack;
             const int64_t Modifier = Zero ? 0 : Inputs[2].Offset;
-            if (KnownModifier && Inputs[3].Constant) {
+            const bool KnownPrefix =
+                !Auth->ConditionalPrefix ||
+                Inputs[kAArch64PACMOperandCount].Constant == 1;
+            if (KnownModifier && Inputs[3].Constant && KnownPrefix) {
               if (!Auth->Authenticate && Inputs[1].K == FrameWord::Link) {
                 Result.K = FrameWord::SignedLink;
                 Result.Offset = Modifier;
                 Result.AuthenticationKey = Auth->Key;
                 Result.ZeroModifier = Zero;
                 Result.SecondModifier = Inputs[3].Constant;
+                Result.ImplicitPrefix = Auth->ConditionalPrefix;
               } else if (Auth->Authenticate &&
                          Inputs[1].K == FrameWord::SignedLink &&
                          Inputs[1].AuthenticationKey == Auth->Key &&
                          Inputs[1].ZeroModifier == Zero &&
                          Inputs[1].Offset == Modifier &&
-                         Inputs[1].SecondModifier == Inputs[3].Constant) {
+                         Inputs[1].SecondModifier == Inputs[3].Constant &&
+                         Inputs[1].ImplicitPrefix == Auth->ConditionalPrefix) {
                 Result = {FrameWord::Link};
               }
             }
@@ -474,7 +499,8 @@ class TailFrameGuard {
       if (A.K != B.K || A.Offset != B.Offset ||
           A.AuthenticationKey != B.AuthenticationKey ||
           A.ZeroModifier != B.ZeroModifier ||
-          A.SecondModifier != B.SecondModifier)
+          A.SecondModifier != B.SecondModifier ||
+          A.ImplicitPrefix != B.ImplicitPrefix)
         A = {};
       if (A.Constant != B.Constant)
         A.Constant.reset();
@@ -513,8 +539,12 @@ public:
     // edges.
     Unwind =
         Function.ExceptionMetadata ? &*Function.ExceptionMetadata : nullptr;
-    if (Function.Blocks.empty() || !Function.FunctionTemporaries.empty() ||
-        !Function.hasCompleteLiftCoverage() ||
+    Owner = &Function;
+    if (auto Error = validateLowInstructionBoundaries(Function)) {
+      llvm::consumeError(std::move(Error));
+      return {};
+    }
+    if (Function.Blocks.empty() || !Function.hasCompleteLiftCoverage() ||
         (Unwind && !Unwind->describesUnwindOnly() && !Unwind->Itanium))
       return {};
     const size_t Count = Function.Blocks.size();

@@ -10,6 +10,8 @@
 
 #include "neverd/diff/DataFlow.h"
 
+#include "FlowContract.h"
+
 #include "neverd/diff/StableHash.h"
 
 #include "llvm/ADT/BitVector.h"
@@ -48,21 +50,6 @@ public:
       poll();
   }
 };
-
-uint64_t localKey(const FlowNode &N) {
-  StableHash H;
-  H.add(N.Opcode)
-      .add(N.ResultBytes)
-      .add(N.MemoryOrdering)
-      .add(N.MemoryAddressSpace)
-      .add(N.Phi)
-      .add(N.Gaps)
-      .add(N.CallArgumentBegin)
-      .add(N.CallArgumentCount);
-  if (!N.Semantics.empty())
-    H.add(N.Semantics);
-  return H.value();
-}
 
 /// Controllers of each block. The synthetic exit has no source instruction.
 std::vector<std::vector<uint32_t>>
@@ -289,7 +276,7 @@ FlowFingerprints fingerprintDataFlow(const DataFlowGraph &G,
       }
     for (const auto &N : G.Nodes) {
       Work.charge(1 + N.Semantics.size() + N.Origins.size());
-      Local.push_back(localKey(N));
+      Local.push_back(detail::flowOperationKey(N));
     }
     Keys = Local;
     for (unsigned Round = 0; Round < Options.Rounds; ++Round) {

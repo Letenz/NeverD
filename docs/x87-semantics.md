@@ -13,7 +13,19 @@ It does not close the issue's portable execution or qualification gates.
 unloaded session, do not execute input code or probe a CPU, and work without
 optional CPU emulation. C callers free the owned result with
 `neverd_free_string`; failure returns NULL with `neverd_last_error(session)`.
-Worker/GUI clients can consume this C API; no new GUI workflow is claimed.
+The worker advertises `x87_capabilities` when its engine exports the C API.
+The empty-object operation returns the report unchanged, before or after a
+binary loads, without changing the project revision. Older engines report
+the operation as unavailable.
+
+The desktop's **Help → x87 support** opens that report through the normal
+read dispatcher. Source mode, ABI, state path, consumer, backend and destination
+remain explicit. The table separates implementation, numerical results and
+architectural state; details retain the shared profile requirements, refusal
+reason, ABI call contract and regression source references. Unlisted cells
+remain unsupported, and malformed or newer schemas show an error instead of
+retaining earlier support claims. Inspection never executes an input or probes
+the host. Regression source references are not passing-run or proof receipts.
 
 `ir/X87Instructions.def` owns semantic coverage metadata.
 `ir/X87Capabilities.h` exposes the C++ query and report; malformed selectors,
@@ -269,6 +281,39 @@ known-payload mask. A pop retains the empty register's bits. FNINIT resets the
 environment and tags but never invents payload provenance. An instruction only
 requires known payloads for the operands it reads; unrelated unknown slots do
 not become known. Waiting pending exceptions precede address evaluation.
+`preflightPortableX87Context` owns instruction/profile and environment checks
+that an adapter must run before operand access; execution repeats them before
+publication. Native and portable paths share the pending-exception predicate.
+Preflight success authenticates neither payloads nor guest memory and is not a
+reusable execution receipt. Exact binary80 adapters can use the translation
+memory owner's transactional byte-span operations rather than split stores;
+those operations alone do not enable generated-code or translation support.
+The checked `X87PortableRuntime` C++ adapter uses a separate versioned state
+with explicit environment-known and physical-payload-known fields. It requires
+an authenticated incoming environment even for FNINIT; it does not synthesize
+one from an ABI or initialize unknown retained registers. It validates the full
+store operand before evaluation, and publishes memory and x87 state only on a
+completed instruction. Self-modifying stores commit their corresponding pop
+before reporting invalidation. The caller must bind a generated/translation
+profile separately; the adapter does not qualify such a profile by itself.
+`neverd_x87_runtime` is the separately linkable C bridge for generated-code
+work. `X87PortableABI.def` owns its two exact symbols and declarations; the IR
+signature view derives types from those declarations. Status values come from
+`X87PortableStatus.def`, and calls return `uint32_t` independently of enum
+storage. `nvd_x87_v1_step` takes an explicit opaque execution context, selector
+and numeric guest IP/DP. It returns a stable status and retains only that
+instruction's diagnostics. `nvd_x87_v1_result` consumes a scalar result once,
+after a successful producing step; missing, stale or repeated reads terminate.
+A failed or nonproducing step invalidates the previous result.
+
+Trusted C++ embedding code constructs `PortableX87ExecutionV1` from separately
+owned state and checked memory. Both owners must outlive the context, remain on
+one execution thread, and match the runtime source build. Generated code may
+only receive that context, never manufacture or reinterpret its internals.
+The bridge catches C++ exceptions as `internal-error` before any instruction
+commit. Its closed export list contains only the two C helpers; it does not
+publish a stable C++ SDK or independently qualify generated/translation profiles.
+
 Invalid controls, unsupported forms/values, unmasked data-instruction controls, stack
 faults and unauthenticated memory refuse without committing state or a store.
 Unqualified MMX and external save/restore boundaries also refuse in lenient

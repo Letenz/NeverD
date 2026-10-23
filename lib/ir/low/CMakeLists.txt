@@ -16,6 +16,7 @@ add_neverd_component_library(NeverDIRLowValidation
   X87Arithmetic.cpp
   X87PortableContext.cpp
   X87Capabilities.cpp
+  X87PortableABI.cpp
 
   LINK_COMPONENTS
   Digest
@@ -92,6 +93,7 @@ add_neverd_component_library(NeverDIRLow
   CFGBuilder.cpp
   X86/RegistrationCxxState.cpp
   CFGBuilderBlocks.cpp
+  CFGBuilderAArch64PAuth.cpp
   CFGBuilderException.cpp
   CFGBuilderInsn.cpp
   CFGBuilderScalarBranch.cpp

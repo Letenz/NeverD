@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,7 +35,8 @@ namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail {
 bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
                       size_t End, const DwarfCIE &CIE, uint8_t FDEEncoding,
                       va_t BufVA, const PointerBases &Bases, unsigned PtrSize,
-                      const BinaryImage *Img, const ParseLimits &Limits,
+                      std::optional<va_t> FunctionStart, const BinaryImage *Img,
+                      const ParseLimits &Limits,
                       std::vector<CFIInstruction> &Out,
                       ExceptionParseStatus &Status,
                       std::vector<std::string> &Diagnostics);

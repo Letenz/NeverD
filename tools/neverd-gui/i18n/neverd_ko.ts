@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>두 바이너리를 비교하고 변경 사항과 함수 대응 관계 검토</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>x87 지원 여부 및 요구 사항 확인</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>x87 지원(&amp;S)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6289,6 +6297,14 @@ Coverage: %7</source>
         <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
         <translation>최적화된 SSA는 비교를 위해 컴파일러가 추가한 보조 구조를 줄입니다. 지원 범위를 벗어난 함수도 이유와 함께 목록에 표시됩니다.</translation>
     </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>공통 SSA 조각</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>종속성이 변경되어도 공통 계산을 찾습니다. 외부 입력을 생성하는 노드는 검증되지 않은 상태로 남습니다. SSA 영역 가설을 포함합니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7165,6 +7181,12 @@ Heuristic explanations, not validated behavior.
         <translation>블록 %1 · 원본 주소: %2
 %3</translation>
     </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>외부 입력 대응 관계입니다. 입력을 생성하는 노드는 비교하지 않았습니다.
+%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -7297,6 +7319,30 @@ Coverage: %4% / %5% of observed SSA nodes in these functions. Control and extern
     <message>
         <source>partial</source>
         <translation>부분</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>조각 근거</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>일치하는 연산</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>외부 입력</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>깊이 %1 · 일치하는 연산: %2 · 외부 입력: %3
+외부 입력을 생성하는 노드는 비교하지 않으며 공통 코드에도 포함하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+SSA 분석 방식: %1</translation>
     </message>
 </context>
 <context>
@@ -7829,6 +7875,184 @@ Secondary SHA-256: %3
     <message>
         <source> · Deleted</source>
         <translation> · 삭제됨</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>명령어 형식 %1개. 정적 목록이며 호스트 조사, 실행 또는 증명을 수행하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>백엔드(&amp;B):</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>사용 주체(&amp;C):</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>대상(&amp;D):</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>새로 고침(&amp;R)</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>소스 모드(&amp;S):</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>호출 계약: %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>x87 지원 정보를 불러올 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>명령어, 피연산자 또는 지원 여부로 필터링…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>x87 명령어 필터링</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>명령어와 실행 프로필의 지원 여부를 확인합니다. 수치 결과와 아키텍처 상태는 별도로 검증됩니다.</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>x87 지원 정보를 불러오는 중…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>아니요</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>이유: %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>회귀 테스트 소스: %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>요구 사항: %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>명령어를 선택하여 요구 사항을 확인하세요. 표시되는 형식이 없으면 필터를 지우세요.</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>선택한 명령어의 요구 사항 및 제한</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>소스 ABI(&amp;A):</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>소스 생성 경로 사용 가능: %1; 이 ABI의 기본값: %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>상태 처리 경로(&amp;P):</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>분석 작업자 연결이 끊어졌습니다.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>이 조합은 목록에 없으며 지원되지 않습니다.</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>이 엔진은 x87 지원 보고서를 제공하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>이 소스 모드 / ABI / 상태 처리 경로는 목록에 없습니다.</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>분석 작업자를 기다리는 중입니다.</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>예</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double: %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>x87 명령어 지원</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>x87 지원</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>아키텍처 상태</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>구현됨</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>명령어</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>아니요</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>수치 결과</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>피연산자</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>프로필</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>엔진이 호환되지 않는 x87 기능 보고서를 반환했습니다.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>이 조합은 목록에 없으며 지원되지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>목록에 없음</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>예</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>검증되지 않음</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>지원되지 않음</translation>
     </message>
 </context>
 </TS>

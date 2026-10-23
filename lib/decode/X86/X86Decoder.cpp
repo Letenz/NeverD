@@ -1,4 +1,4 @@
-//===- X86Decoder.cpp - x86 decoder support ===//
+//===- X86Decoder.cpp - x86 decoder support ------------------------------===//
 //
 // NeverD Decompiler
 //
@@ -144,7 +144,7 @@ bool Decoder::decodePrefixedX86Fence(const uint8_t *Bytes, size_t Len,
 
   const size_t InnerSize = InsnBuf->size;
   const size_t TotalSize = PrefixCount + InnerSize;
-  if (TotalSize > 15 || TotalSize > sizeof(InsnBuf->bytes))
+  if (TotalSize > 15)
     return false;
 
   std::memmove(InsnBuf->bytes + PrefixCount, InsnBuf->bytes, InnerSize);

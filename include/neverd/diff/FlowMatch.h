@@ -34,6 +34,9 @@ struct FlowNeighborhoodMatch {
   /// A partial bijection, sorted by primary node/block ID. Published only after
   /// the entire admitted neighborhood check succeeds.
   std::vector<std::pair<uint32_t, uint32_t>> Nodes, PhiBlocks;
+  /// Uninspected external node definitions bound by a fragment's input slots.
+  /// These are not matched operations and never contribute to coverage.
+  std::vector<std::pair<uint32_t, uint32_t>> Frontier;
 };
 
 /// Validated borrowed observations for repeated root checks. Graph and keys

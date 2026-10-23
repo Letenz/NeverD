@@ -217,6 +217,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   Cancel = new QPushButton(tr("Cancel"), this);
   Cancel->setObjectName("comparisonCancel");
   Reopen = new QPushButton(tr("Reopen…"), this);
+  Reopen->setObjectName("comparisonReopen");
   Reopen->setToolTip(
       tr("Select both inputs and their original settings, then reopen a saved "
          "comparison. Input hashes and analysis revisions are checked."));
@@ -300,9 +301,20 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   AnalyzeFlowRegions->setToolTip(
       tr("Index and verify finite dependency neighborhoods across functions. "
          "Includes dependency evidence."));
+  FlowFragments = new QCheckBox(tr("Shared SSA fragments"), Settings);
+  FlowFragments->setObjectName("comparisonFlowFragments");
+  FlowFragments->setToolTip(
+      tr("Find shared computations across changed dependencies. External input "
+         "producers remain unverified. Includes SSA region hypotheses."));
+  connect(FlowFragments, &QCheckBox::toggled, this, [this](bool On) {
+    if (On)
+      AnalyzeFlowRegions->setChecked(true);
+  });
   connect(AnalyzeFlowRegions, &QCheckBox::toggled, this, [this](bool On) {
     if (On)
       AnalyzeDataFlow->setChecked(true);
+    else
+      FlowFragments->setChecked(false);
   });
   connect(AnalyzeDataFlow, &QCheckBox::toggled, this, [this](bool On) {
     FlowProfile->setEnabled(On);
@@ -345,6 +357,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   ProfileLabel->setBuddy(FlowProfile);
   SettingsLayout->addWidget(ProfileLabel, 2, 0);
   SettingsLayout->addWidget(FlowProfile, 2, 1, 1, 3);
+  SettingsLayout->addWidget(FlowFragments, 2, 4, 1, 2);
   SettingsLayout->setColumnStretch(6, 1);
   Settings->setVisible(false);
   Root->addWidget(Settings);
@@ -698,7 +711,9 @@ void ComparisonDialog::run(const QString &Restore) {
       Inputs[0], Inputs[1],
       {{"use_names", Names->isChecked()},
        {"regions", AnalyzeRegions->isChecked()},
-       {"flow_regions", AnalyzeFlowRegions->isChecked()},
+       {"flow_regions",
+        QJsonObject{{"enabled", AnalyzeFlowRegions->isChecked()},
+                    {"fragments", FlowFragments->isChecked()}}},
        {"dataflow",
         QJsonObject{{"enabled", AnalyzeDataFlow->isChecked()},
                     {"profile", FlowProfile->currentData().toString()},
@@ -732,6 +747,9 @@ void ComparisonDialog::update() {
         Flow["profile"].toString(::neverd::limits::diff::kMedSSAProfile)));
     AnalyzeFlowRegions->setChecked(
         Settings["flow_regions"].toObject()["enabled"].toBool());
+    FlowFragments->setChecked(
+        AnalyzeFlowRegions->isChecked() &&
+        Settings["flow_regions"].toObject()["fragments"].toBool());
     FlowFunctions->setValue(Flow["max_functions"].toInt(
         ::neverd::limits::diff::kDefaultFlowFunctions));
     Threshold->setValue(Settings["min_similarity"].toDouble());

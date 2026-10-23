@@ -39,7 +39,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                           llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
-  if (const auto Auth = aarch64PAuthLROperation(IC)) {
+  if (const auto Auth = aarch64PAuthExtendedOperation(IC)) {
     if (!aarch64PAuthMedShapeIsValid(Op))
       llvm::report_fatal_error(kAArch64PAuthMalformedOperation);
     llvm::SmallVector<llvm::Value *, 3> Args;
@@ -50,10 +50,10 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       Args.push_back(Value);
     }
     auto *Asm = llvm::InlineAsm::get(
-        llvm::FunctionType::get(
-            Builder.getInt64Ty(),
-            {Builder.getInt64Ty(), Builder.getInt64Ty(), Builder.getInt64Ty()},
-            false),
+        llvm::FunctionType::get(Builder.getInt64Ty(),
+                                llvm::SmallVector<llvm::Type *, 4>(
+                                    Auth->operandCount(), Builder.getInt64Ty()),
+                                false),
         Auth->llvmAsm(), Auth->llvmConstraints(), /*hasSideEffects=*/true);
     return Builder.CreateCall(Asm, Args, kAArch64PAuthResultName);
   }

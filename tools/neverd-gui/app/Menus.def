@@ -241,6 +241,7 @@ NEVERD_MENU_PLACEHOLDER(Windows, OpenWindows)
 
 NEVERD_MENU(Help, None, QT_TRANSLATE_NOOP("Menus", "&Help"))
 NEVERD_MENU_ITEM(Help, HelpContents)
+NEVERD_MENU_ITEM(Help, HelpX87Capabilities)
 NEVERD_MENU_SEPARATOR(Help)
 NEVERD_MENU_ITEM(Help, HelpAbout)
 

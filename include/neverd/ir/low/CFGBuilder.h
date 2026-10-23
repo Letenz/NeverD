@@ -1252,6 +1252,9 @@ private:
   LowInstructionBoundary makeInstructionBoundary(const InsnRecord &Rec,
                                                  uint64_t FirstOp) const;
 
+  /// Fold executed PACM prefixes into their consumers, retaining mixed edges.
+  void resolveAArch64PAuthPrefixes(LowFunc &Func);
+
   /// Re-base x87 ST(i) register references so each block's TOP matches its CFG
   /// predecessor's exit TOP rather than the worklist lift order.  The lifter
   /// names ST(i) as physical slot (TOP+i)&7 while advancing TOP in lift order;

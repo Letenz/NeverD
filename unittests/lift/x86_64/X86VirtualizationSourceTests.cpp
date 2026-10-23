@@ -18,6 +18,7 @@
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -36,6 +37,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/ModRef.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
@@ -45,6 +47,7 @@
 #include <algorithm>
 #include <iterator>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -243,6 +246,122 @@ TEST(X86SystemRegisterSource, NativeMovesClobberUndefinedArithmeticFlags) {
           ASSERT_FALSE(Object.empty());
           EXPECT_NE(Native.find("~{flags}"), std::string::npos) << Native;
         }
+}
+
+TEST(X86SystemRegisterSource, MalformedCallsCannotBecomeIntrinsicWritesOfZero) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Write : {false, true})
+        for (bool Debug : {false, true})
+          for (unsigned Mutation = 0; Mutation < 23; ++Mutation) {
+            SCOPED_TRACE(static_cast<unsigned>(A));
+            SCOPED_TRACE(static_cast<unsigned>(Format));
+            SCOPED_TRACE(Write);
+            SCOPED_TRACE(Debug);
+            SCOPED_TRACE(Mutation);
+            llvm::LLVMContext Context;
+            llvm::Module Module("sysreg-contract", Context);
+            Module.setDataLayout(A == Arch::X64 ? "e-p:64:64" : "e-p:32:32");
+            llvm::IRBuilder<> B(Context);
+            auto *Native = B.getIntNTy(A == Arch::X64 ? 64 : 32);
+            auto *Value = Mutation == 4 ? B.getInt16Ty() : Native;
+            llvm::Type *Return = Write ? B.getVoidTy() : Value;
+            const unsigned Arity = Mutation == 12 ? !Write : Write;
+            std::vector<llvm::Type *> Types(Arity, Value);
+            if (Mutation == 17 && Write)
+              Types[0] = B.getPtrTy();
+            auto *Signature = llvm::FunctionType::get(Return, Types, false);
+            auto *Function = llvm::Function::Create(
+                Signature, llvm::GlobalValue::ExternalLinkage, "effect",
+                Module);
+            B.SetInsertPoint(
+                llvm::BasicBlock::Create(Context, "entry", Function));
+            std::vector<llvm::Value *> Values;
+            for (auto &Arg : Function->args())
+              Values.push_back(&Arg);
+            const std::string Reg = Debug ? "%dr7" : "%cr3";
+            std::string AsmText =
+                Write ? "mov $0, " + Reg : "mov " + Reg + ", $0";
+            std::string Constraints = Write ? "" : "=r,";
+            if (Arity)
+              Constraints += "r,";
+            if (Mutation != 2)
+              Constraints += "~{flags},";
+            Constraints += "~{memory}";
+            if (Mutation == 1)
+              Constraints.erase(Constraints.find(",~{memory}"));
+            if (Mutation == 5)
+              AsmText += "\n\tnop";
+            if (Mutation == 6)
+              AsmText.replace(AsmText.find(Reg), Reg.size(),
+                              Debug ? "%dr8" : "%cr1");
+            if (Mutation == 18)
+              AsmText.replace(0, 3, "movq");
+            auto *Asm = llvm::InlineAsm::get(
+                Signature, AsmText, Constraints, Mutation != 3, Mutation == 13,
+                Mutation == 7 ? llvm::InlineAsm::AD_Intel
+                              : llvm::InlineAsm::AD_ATT,
+                Mutation == 14);
+            llvm::SmallVector<llvm::OperandBundleDef> Bundles;
+            if (Mutation == 15)
+              Bundles.emplace_back("deopt", std::vector<llvm::Value *>{});
+            auto *Call = B.CreateCall(Signature, Asm, Values, Bundles);
+            if (Mutation == 8)
+              Call->setOnlyReadsMemory();
+            if (Mutation == 9)
+              Call->setOnlyWritesMemory();
+            if (Mutation == 10)
+              Call->setDoesNotReturn();
+            if (Mutation == 19)
+              Call->setMemoryEffects(llvm::MemoryEffects::argMemOnly());
+            if (Mutation == 20)
+              Call->setMemoryEffects(
+                  llvm::MemoryEffects::inaccessibleMemOnly());
+            if (Mutation == 21)
+              Call->setMemoryEffects(
+                  llvm::MemoryEffects::inaccessibleOrArgMemOnly());
+            if (Mutation == 22)
+              Call->setMemoryEffects(llvm::MemoryEffects::none());
+            if (Write)
+              B.CreateRetVoid();
+            else if (Mutation == 16)
+              B.CreateRet(llvm::ConstantInt::get(Return, 0));
+            else
+              B.CreateRet(Call);
+            ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+            CEmitterOptions Options;
+            Options.TheArch = Mutation == 11 ? Arch::AArch64 : A;
+            Options.Format = Format;
+            std::string Text;
+            llvm::raw_string_ostream OS(Text);
+            if (Mutation == 0 || Mutation == 16 || (Mutation == 17 && !Write)) {
+              EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options)) << Text;
+              if (Format == BinaryFormat::COFF) {
+                EXPECT_NE(Text.find("#include <intrin.h>"), std::string::npos)
+                    << Text;
+                EXPECT_NE(Text.find(Write ? "__write" : "__read"),
+                          std::string::npos)
+                    << Text;
+              } else {
+                EXPECT_NE(Text.find("__asm__ volatile"), std::string::npos)
+                    << Text;
+                EXPECT_NE(Text.find("\"cc\", \"memory\""), std::string::npos)
+                    << Text;
+                EXPECT_EQ(Text.find("#include <intrin.h>"), std::string::npos)
+                    << Text;
+              }
+            } else {
+              EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                           std::invalid_argument);
+            }
+          }
+}
+
+TEST(X86SystemRegisterSource, TextAloneCannotAuthorizeASystemRegisterAccess) {
+  for (const auto &Text : {"mov $0, %cr3", "mov %dr7, $0", "mov $0, %dr8"})
+    EXPECT_THROW(renderInlineAsm(Arch::X64, Text, false, "result", true, {}),
+                 std::invalid_argument);
 }
 
 TEST(X86VirtualizationSource,
@@ -725,6 +844,90 @@ std::vector<uint8_t> fpEncodingFunction(Arch A) {
           0x48, 0x83, 0xc4, 0x28, 0xc3};
 }
 } // namespace
+
+namespace {
+struct SystemRegisterTarget {
+  Arch TheArch;
+  BinaryFormat Format;
+  const char *Name;
+};
+
+void PrintTo(const SystemRegisterTarget &Target, std::ostream *OS) {
+  *OS << Target.Name;
+}
+
+class X86SystemRegisterAccess
+    : public testing::TestWithParam<SystemRegisterTarget> {};
+} // namespace
+
+TEST_P(X86SystemRegisterAccess,
+       EveryLegalAccessCompilesAndRetainsNativeFaults) {
+  const auto A = GetParam().TheArch;
+  const auto Format = GetParam().Format;
+  unsigned Fixtures = 0;
+  for (bool Debug : {false, true})
+    for (unsigned Index = 0; Index <= 8; ++Index) {
+      if (Debug ? Index == 8
+                : (Index != 0 && Index != 2 && Index != 3 && Index != 4 &&
+                   (Index != 8 || A != Arch::X64)))
+        continue;
+      for (bool Write : {false, true})
+        for (bool Dead : {false, true}) {
+          if (Dead && Write)
+            continue;
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Debug);
+          SCOPED_TRACE(Index);
+          SCOPED_TRACE(Write);
+          SCOPED_TRACE(Dead);
+          std::vector<uint8_t> Bytes;
+          if (Write)
+            Bytes = A == Arch::X64
+                        ? std::vector<uint8_t>{0x48, 0xb8, 0x55, 0xaa, 0x23,
+                                               0x81, 0x67, 0x45, 0xfe, 0xab}
+                        : std::vector<uint8_t>{0xb8, 0x55, 0xaa, 0x23, 0x81};
+          const auto Offset = Bytes.size();
+          if (Index == 8)
+            Bytes.push_back(0x44);
+          Bytes.insert(Bytes.end(), {0x0f, uint8_t(0x20 + Debug + 2 * Write),
+                                     uint8_t(0xc0 + 8 * (Index & 7))});
+          if (Dead)
+            Bytes.insert(Bytes.end(), {0x31, 0xc0});
+          Bytes.push_back(0xc3);
+          auto Image = image(A, Format, std::move(Bytes));
+          // Allocation may change the GPR in ModRM. The opcode still
+          // distinguishes CR/DR reads/writes, including dead reads.
+          const std::vector<uint8_t> Opcode = {
+              0x0f, uint8_t(0x20 + Debug + 2 * Write)};
+          // Every CPL3 access must match the original instruction's
+          // fault, including DR4/5. Other targets are compiled only.
+          compileRoutes(Image, false, Entry + Offset, {}, std::nullopt, false,
+                        A == Arch::X64 && Format == BinaryFormat::ELF, {},
+                        Opcode, 0, true);
+          if (::testing::Test::HasFailure() || ::testing::Test::IsSkipped())
+            return;
+          ++Fixtures;
+        }
+    }
+  EXPECT_EQ(Fixtures, A == Arch::X64 ? 39U : 36U);
+  RecordProperty("source_fixtures", Fixtures);
+}
+
+// Each architecture/format keeps every CR/DR input and source route within its
+// own ordinary CTest deadline. The six cells retain all 225 native inputs.
+INSTANTIATE_TEST_SUITE_P(
+    NativeFormats, X86SystemRegisterAccess,
+    testing::Values(
+        SystemRegisterTarget{Arch::X86, BinaryFormat::ELF, "X86ELF"},
+        SystemRegisterTarget{Arch::X86, BinaryFormat::COFF, "X86COFF"},
+        SystemRegisterTarget{Arch::X86, BinaryFormat::MachO, "X86MachO"},
+        SystemRegisterTarget{Arch::X64, BinaryFormat::ELF, "X64ELF"},
+        SystemRegisterTarget{Arch::X64, BinaryFormat::COFF, "X64COFF"},
+        SystemRegisterTarget{Arch::X64, BinaryFormat::MachO, "X64MachO"}),
+    [](const testing::TestParamInfo<SystemRegisterTarget> &Info) {
+      return Info.param.Name;
+    });
 
 TEST(X86FPEncodingSource, BothModesSurviveEveryFormatAndSourceRoute) {
   for (const auto A : {Arch::X86, Arch::X64})
