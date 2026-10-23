@@ -8,11 +8,24 @@
 
 namespace neverd {
 namespace {
+#define NEVERD_OBJC_RELATIVE_LIST_TEXT(Name, Text)                             \
+  inline constexpr char Name[] = Text;
+#include "ObjCRelativeLists.def"
+
 std::string addressText(va_t Address) {
   return "0x" + llvm::utohexstr(Address, /*LowerCase=*/true);
 }
 std::string jsonSafeText(llvm::StringRef Text) {
   return llvm::json::isUTF8(Text) ? Text.str() : llvm::json::fixUTF8(Text);
+}
+llvm::json::Value
+cacheOriginJSON(const std::optional<ObjCCacheListOrigin> &Origin) {
+  if (!Origin)
+    return nullptr;
+  return llvm::json::Object{
+      {kImageIndexJSON, static_cast<int64_t>(Origin->ImageIndex)},
+      {kImageAddressJSON, addressText(Origin->ImageAddress)},
+      {kConditionJSON, kImageLoadedJSON}};
 }
 } // namespace
 
@@ -28,6 +41,7 @@ llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
           {"type_encoding", jsonSafeText(Method.TypeEncoding)},
           {"implementation", addressText(Method.Implementation)},
           {"class_method", Method.IsClassMethod},
+          {kCacheOriginJSON, cacheOriginJSON(Method.CacheOrigin)},
           {"category_name", jsonSafeText(Method.CategoryName)},
           {"category_address", addressText(Method.CategoryAddress)}});
     }
@@ -69,6 +83,7 @@ llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
           {"type_encoding", jsonSafeText(Method->TypeEncoding)},
           {"implementation", addressText(Method->Implementation)},
           {"class_method", Method->IsClassMethod},
+          {kCacheOriginJSON, cacheOriginJSON(Method->CacheOrigin)},
           {"category_name", jsonSafeText(Method->CategoryName)},
           {"category_address", addressText(Address)}});
     Categories.push_back(llvm::json::Object{
@@ -89,6 +104,7 @@ llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
           {"selector", jsonSafeText(Method.Selector)},
           {"type_encoding", jsonSafeText(Method.TypeEncoding)},
           {"class_method", Method.IsClassMethod},
+          {kCacheOriginJSON, cacheOriginJSON(Method.CacheOrigin)},
           {"optional", Method.IsOptional},
           {"status", Method.Status}});
     Protocols.push_back(
@@ -113,6 +129,7 @@ llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
                                                                : "protocol"},
         {"class_name", jsonSafeText(Property.ClassName)},
         {"class_property", Property.IsClassProperty},
+        {kCacheOriginJSON, cacheOriginJSON(Property.CacheOrigin)},
         {"readonly", Property.ReadOnly},
         {"optional", Property.IsOptional},
         {"getter", jsonSafeText(Property.Getter)},

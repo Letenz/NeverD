@@ -99,7 +99,15 @@ tests include the original-offset layout retained by signed cached images.
 Cancellation is checked before and during chain traversal. Set
 `NEVERD_DYLD_CACHE` to a local main arm64e cache with its matching subcaches to
 validate every image layout and every slide record without altering bytes;
-without it the real-cache check explicitly skips. This tests the cache reader,
+without it the real-cache checks explicitly skip. Range queries also exercise
+partial slot overlap and corruption elsewhere on the selected page. Metadata
+fixtures cover cross-image authenticated and ordinary targets, local edits,
+conflicting provenance, modern and legacy selector bases, signed offsets,
+conditional relative lists, empty list headers, extended header-info rows,
+resource exhaustion and retained JSON origins. The real Foundation check
+requires all recovered methods to have names, no metadata diagnostics, retained
+image conditions and no local source-body proof for external IMPs.
+This tests the cache reader and metadata view,
 not yet CLI cached-image selection or native execution/reconstruction.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`

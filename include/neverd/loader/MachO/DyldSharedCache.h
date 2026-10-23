@@ -72,6 +72,14 @@ struct DyldCacheFixup {
   std::optional<MachOAuthenticatedPointer> Authentication;
 };
 
+enum class DyldCacheSelectorEncoding { RecordRelative, BaseRelative };
+
+struct DyldCacheSelectorLayout {
+  DyldCacheSelectorEncoding Encoding =
+      DyldCacheSelectorEncoding::RecordRelative;
+  va_t Base = 0;
+};
+
 class DyldSharedCache {
 public:
   /// Main file followed by its table's subcaches in table order. A failed
@@ -89,6 +97,13 @@ public:
   std::optional<llvm::ArrayRef<uint8_t>> readBytes(va_t Address,
                                                    uint64_t Size) const;
   llvm::Expected<DyldCacheImageLayout> readImageLayout(size_t ImageIndex) const;
+  /// Addressing used by cached compact Objective-C method selectors. Missing
+  /// optimization metadata is distinct from a malformed or unknown layout.
+  llvm::Expected<std::optional<DyldCacheSelectorLayout>>
+  objcSelectorLayout() const;
+  /// Objective-C header-info indices have their own ordering; they are not
+  /// indices into the cache image catalogue.
+  llvm::Expected<va_t> objcImageAddress(uint32_t Index) const;
   /// Translate an embedded Mach-O file offset through that image's segment
   /// commands and the cache mappings. It is not an offset from its header,
   /// nor necessarily an offset in the file containing that header.
@@ -98,8 +113,23 @@ public:
   /// signing recipes; no offline reader can manufacture a process's PAC.
   llvm::Expected<std::vector<DyldCacheFixup>>
   readSlideFixups(size_t MappingIndex, const LoadProgress &Progress = {}) const;
+  /// Decode the pages intersecting a VM range, retaining every fixup whose
+  /// storage overlaps it. Validation still covers each complete selected page.
+  llvm::Expected<std::vector<DyldCacheFixup>>
+  readSlideFixupsInRange(va_t Address, uint64_t Size,
+                         const LoadProgress &Progress = {}) const;
 
 private:
+  struct ObjCOptimization {
+    va_t Address = 0;
+    uint32_t Version = 0;
+    bool Legacy = false;
+    llvm::ArrayRef<uint8_t> Data;
+  };
+  llvm::Expected<std::optional<ObjCOptimization>> readObjCOptimization() const;
+  llvm::Expected<std::vector<DyldCacheFixup>>
+  readMappingSlides(size_t MappingIndex, va_t First, va_t End,
+                    const LoadProgress &Progress) const;
   std::vector<std::unique_ptr<llvm::MemoryBuffer>> Files;
   std::vector<DyldCacheMapping> Mappings;
   std::vector<DyldCacheImage> Images;

@@ -8,6 +8,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Limits.h"
+#include "neverd/loader/MachO/DyldSharedCache.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/SymbolSpelling.h"
 
@@ -23,6 +24,10 @@
 
 namespace neverd {
 namespace {
+
+#define NEVERD_OBJC_RELATIVE_LIST_TEXT(Name, Text)                             \
+  inline constexpr char Name[] = Text;
+#include "ObjCRelativeLists.def"
 
 /// The name a method implementation with no symbol takes: clang's
 /// `-[Class(Category) selector:]` (ObjCMethodSpellings.def), or
@@ -60,23 +65,8 @@ class RuntimeReader {
   }
 
   const uint8_t *bytes(va_t VA, size_t Size) {
-    const auto *Sec = Img.getSectionFor(VA);
-    const auto *Seg = Img.getSegmentFor(VA);
-    if (!Sec || !Seg || !Sec->isReadable() || !Seg->isReadable() ||
-        Size > InvalidVA - VA || Sec->Size > InvalidVA - Sec->VA ||
-        Seg->Size > InvalidVA - Seg->VA || Sec->VA < Seg->VA ||
-        !rangeInBounds(VA - Sec->VA, Size, Sec->Size) ||
-        !rangeInBounds(VA - Seg->VA, Size, Seg->Size) ||
-        !rangeInBounds(VA - Sec->VA, Size, Sec->FileSz) ||
-        !rangeInBounds(VA - Seg->VA, Size, Seg->FileSz) ||
-        Sec->FileOff < Seg->FileOff ||
-        Sec->FileOff - Seg->FileOff != Sec->VA - Seg->VA ||
-        (Sec->Type & llvm::MachO::SECTION_TYPE) == llvm::MachO::S_ZEROFILL ||
-        (Sec->Type & llvm::MachO::SECTION_TYPE) == llvm::MachO::S_GB_ZEROFILL ||
-        (Sec->Type & llvm::MachO::SECTION_TYPE) ==
-            llvm::MachO::S_THREAD_LOCAL_ZEROFILL)
-      return nullptr;
-    return Img.readVA(VA, Size);
+    const objc::RuntimeData Data(Img, objc::PointerView::MetadataTarget);
+    return Data.bytes(VA, Size);
   }
 
   std::optional<uint32_t> u32(va_t VA) {
@@ -165,6 +155,7 @@ class RuntimeReader {
       const auto IMP = Record.Implementation;
       ObjCMethod Method;
       Method.MetadataAddress = Record.Address;
+      Method.CacheOrigin = Record.CacheOrigin;
       Method.ClassAddress = Class.Address;
       Method.ClassName = Class.Name;
       Method.IsClassMethod = ClassMethod;
@@ -172,8 +163,16 @@ class RuntimeReader {
       Method.TypeEncoding = std::move(Record.TypeEncoding);
       Method.Implementation = IMP.value_or(0);
       const size_t Align = Img.Arch == Arch::AArch64 ? 4 : 1;
-      if (!IMP || !*IMP || *IMP % Align || !Img.isCodeAddress(*IMP) ||
-          !bytes(*IMP, Align)) {
+      const auto *CacheMapping = IMP && Img.MachOSharedCache
+                                     ? Img.MachOSharedCache->mappingFor(*IMP)
+                                     : nullptr;
+      if (IMP && *IMP && !(*IMP % Align) && CacheMapping &&
+          (CacheMapping->InitialProtection & llvm::MachO::VM_PROT_EXECUTE) &&
+          !Img.isCodeAddress(*IMP) && bytes(*IMP, Align)) {
+        Method.Status = kExternalImplementation;
+        Method.Diagnostics.push_back(kExternalImplementationDiagnostic);
+      } else if (!IMP || !*IMP || *IMP % Align || !Img.isCodeAddress(*IMP) ||
+                 !bytes(*IMP, Align)) {
         Method.Status = "invalid_implementation";
         Method.Diagnostics.push_back(
             "Method IMP is not resolved file-backed executable code");
@@ -468,7 +467,8 @@ void parseObjCMethods(BinaryImage &Img) {
         // Dispatch order does not erase a validated declaration's ABI. Calls
         // still require every matching declaration to agree; body selection
         // separately requires supported status and must not pick an override.
-        Method->Status = "ambiguous_dispatch";
+        if (Method->Status == "supported")
+          Method->Status = "ambiguous_dispatch";
         Method->Diagnostics.push_back(
             "Duplicate class/category selector declarations have no unique "
             "recovered dispatch order");

@@ -19,6 +19,10 @@ namespace neverd {
 struct BinaryImage;
 
 namespace macho_loader {
+/// Metadata-only bytes, including immutable shared-cache mappings outside the
+/// selected image. Local owned bytes take precedence so edits remain visible.
+const uint8_t *readMetadataBytes(const BinaryImage &Image, va_t Address,
+                                 uint64_t Size);
 /// Read a local metadata target from a resolved plain slot or a validated
 /// signing recipe. Imports, stale recipes and ambiguous storage fail closed.
 std::optional<va_t> readMetadataPointerTarget(const BinaryImage &Image,

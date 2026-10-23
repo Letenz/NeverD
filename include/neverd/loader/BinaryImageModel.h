@@ -45,6 +45,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -54,6 +55,9 @@
 namespace neverd {
 
 class ExecutableCodeOwnerIndex;
+namespace macho_loader {
+class DyldSharedCache;
+}
 
 /// One concrete pointer slot bound by Mach-O dyld metadata.  This native view
 /// is retained for patch provenance; collectImportStorageSlots() combines it
@@ -374,6 +378,9 @@ struct BinaryImage {
   bool MachOChainedFixupsAmbiguous = false;
   std::set<va_t> MachOResolvedChainedPointerSlots;
   std::map<va_t, MachOAuthenticatedPointer> MachOAuthenticatedPointers;
+  /// Immutable cache address space for analysis-only cross-image metadata.
+  /// It does not extend readVA or establish a runtime pointer value.
+  std::shared_ptr<const macho_loader::DyldSharedCache> MachOSharedCache;
   std::string MachOChainedFixupsError;
   /// Any byte of an encoded signing recipe overlaps this storage range.
   bool hasMachOAuthenticatedPointerIn(va_t Address, uint64_t Size) const {

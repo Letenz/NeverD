@@ -88,6 +88,7 @@ class ProtocolReader {
     for (auto &Record : *Records) {
       ObjCProtocolMethod Method;
       Method.MetadataAddress = Record.Address;
+      Method.CacheOrigin = Record.CacheOrigin;
       Method.Selector = std::move(Record.Selector);
       Method.TypeEncoding = std::move(Record.TypeEncoding);
       Method.IsClassMethod = (Kind & 1) != 0;

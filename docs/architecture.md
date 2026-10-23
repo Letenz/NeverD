@@ -184,6 +184,21 @@ some real signed images retain original section offsets in their headers.
 This public reader is the address-space foundation; the ordinary loader and
 CLI do not yet select or analyse cached images through it. The layouts follow
 [Apple's cache definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h).
+`BinaryImage::MachOSharedCache` retains that immutable address space for
+analysis-only metadata reads. Selected segment bytes take precedence; edits,
+overlapping ownership and stale signing recipes fail validation. Range slide
+queries validate complete intersecting pages without decoding the whole cache.
+Neither metadata access nor a signing recipe establishes runtime pointer trust.
+Compact Objective-C selectors distinguish modern optimization versions 1/2
+and legacy versions 15/16, including the record-relative version-15 layout.
+Tagged relative method/property arrays retain each declaration's Objective-C
+image index and header address. The index uses the separate header-info table,
+including its 16-byte and 24-byte rows. JSON exposes `cache_origin` with an
+`image_loaded` condition; offline discovery does not assert loaded state or
+select an override. External cache IMPs remain declarations without local body
+proof. These layouts follow Apple's
+[Objective-C runtime structures](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-runtime-new.h)
+and [header information](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-private.h).
 Exception-level
 authentication, PACM state and CPA2 address arithmetic remain unsupported;
 recognizing x1's header does not claim those instruction semantics.

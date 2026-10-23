@@ -132,6 +132,7 @@ add_neverd_component_library(NeverDLoader
   ObjC/ObjCEH.cpp
   ObjC/ObjCMethods.cpp
   ObjC/ObjCMethodLists.cpp
+  ObjC/ObjCRelativeLists.cpp
   ObjC/ObjCProtocols.cpp
   ObjC/ObjCProperties.cpp
   ObjC/ObjCReceiverDeclarations.cpp
