@@ -1341,7 +1341,11 @@ analysis allocations use the executable's process allocator. Windows MSVC ABI
 executables instead import a shared mimalloc before their other dependencies;
 the matching redirection DLL overrides the dynamic CRT (`/MD` or `/MDd`),
 including later-loaded plugins. Both runtime DLLs travel with the executable.
-Applications embedding the SDK continue to own their allocator policy. On macOS, dependency
+Applications embedding the SDK continue to own their allocator policy.
+Linux executables preserve mimalloc's `MI_ALLOW_THP` build setting and the
+runtime `MIMALLOC_ALLOW_THP` override. Disabling transparent huge pages acts
+on that executable's process; loading the SDK does not impose this policy
+on its host or change system-wide kernel settings. On macOS, dependency
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
@@ -4223,6 +4227,21 @@ the return address the call pushed. HighC prints it as
 `__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
 Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
+
+The pipeline runs both annotations through `markSourceStackAccesses`, sharing
+one batch of entry-stack offset proofs and the resulting load/store ranges.
+Only annotation flags change between the two consumers. The ranges are discarded
+before returning; no result survives a later IR mutation, and the proof's
+join, provenance, depth and work-limit rules are unchanged.
+
+The entry-stack proof keeps definitions, joins, ambiguity and transient active
+flags in one ordered index. Each visit still consumes its ordinary work and
+depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
+and failed queries are not memoized, and each query clears its active flags.
+Read-only offset queries lazily reuse the shared entry-register authenticator's
+answer for the canonical defining occurrence. Every use still checks exact
+register metadata; the fact lasts only for that immutable proof. Alignment
+rewrites continue to authenticate against the current entry COPY prefix.
 
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C

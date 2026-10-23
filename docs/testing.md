@@ -854,7 +854,12 @@ ctest --test-dir build-release/unittests/allocator --output-on-failure
 
 `NeverDMimallocConfigure` checks explicit opt-out and suppression for combined,
 configuration-specific and LLVM sanitizer settings, plus Windows CRT/toolchain
-rejections, without fetching dependencies.
+rejections, without fetching dependencies. It also checks that upstream THP
+defaults and explicit `MI_ALLOW_THP` selections (`OFF`, `ON`, `FULL` and
+`DEFAULT`) survive reconfiguration. `NeverDWorkerTHPPolicy` checks the Linux
+worker's `MIMALLOC_ALLOW_THP` runtime overrides, complete C output and the SDK
+host's unchanged process policy. Kernels without `THP_enabled` in
+`/proc/PID/status` explicitly skip this check.
 Repeat the standalone runtime check with `-DNEVERD_ENABLE_MIMALLOC=OFF` and with
 `-DCMAKE_C_FLAGS=-fsanitize=address -DCMAKE_CXX_FLAGS=-fsanitize=address` to check
 the system-allocator paths.
@@ -894,7 +899,16 @@ timings. Check function counts, instruction counts and rejection/audit records
 for equality before attributing a speed difference to the allocator. Use
 `MIMALLOC_VERBOSE=1` for a separate activation check, not during timed runs.
 Decode-only results do not measure the allocation-heavy IR stages; an allocator
-change does not guarantee an improvement for every workload.
+change does not guarantee an improvement for every workload. For Linux THP
+comparisons, also record the process's `THP_enabled` state and the kernel's THP
+and defrag settings. Separate user CPU, system CPU and minor/major page faults
+in diagnostic runs: similar user CPU can conceal expensive kernel allocation
+work. Hold purge settings constant when isolating THP; do not change global
+kernel settings or mix instrumented and uninstrumented timings. Setting
+`-DMI_ALLOW_THP=OFF` at configure time or `MIMALLOC_ALLOW_THP=0` at runtime can
+reduce memory and allocation stalls, but can also slow hot decompilation.
+Qualify both cold and warm workloads before selecting it; NeverD retains the
+upstream default and preserves explicit choices.
 
 The mimalloc worker collects free pages after a request-free interval matching
 its configured purge delay. Check full source output after idle collection,
@@ -1235,6 +1249,39 @@ native hash, lift audit and proof work. Run this case separately from builds or
 other tests when measuring. It skips without the input/address pair and sets no
 performance threshold; offscreen local samples are not desktop, held-out or
 competitive qualification. The selected native function is never executed.
+
+## Decompilation order audit
+
+Before comparing decompilation timings, check whether earlier requests change
+the reference output for the same function:
+
+```bash
+python3 tools/neverd-bench/audit_ida_source_order.py INPUT \
+  --target 0x401580 --entries-file entries.txt \
+  --ida-python /path/to/ida-python --ida-dir /path/to/ida \
+  --expected-version 9.5 --output benchmark-results/source-order
+python3 -m unittest scripts.tests.test_ida_source_order
+```
+
+The entry file contains whitespace-separated addresses in the actual visitation
+order. The tool compares a direct request with a request after all entries
+preceding the target. Each observation uses a fresh IDA process, a private binary
+copy and automatic analysis. A new output directory retains engine and input
+identities, complete pseudocode, preceding function types, native instructions
+and CFGs, and CTree address provenance. Existing output directories are refused.
+
+Exit 0 reports stable observed text, provenance and native inventory; exit 2
+reports changes requiring review; exit 1 reports incomplete or invalid evidence.
+Changed names alone can alter text, and CTree addresses are not an instruction
+coverage metric. Neither a stable result nor matching native function extents
+proves semantic equivalence. In particular, a newly inferred no-return callee can
+remove a caller continuation from pseudocode while its native function inventory
+remains unchanged. Keep that workload difference explicit before interpreting
+cross-decompiler timings. These diagnostic observations are not timing samples.
+
+The unit checks cover order preservation, invalid plans, text-only and
+provenance-only changes, changed native bodies, engine/input mismatches and
+missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
 
@@ -3917,6 +3964,11 @@ their multiplicity without expanding every path, and substitution reaches a
 unique read after an unrelated shared subgraph. Folding preserves its depth
 limit and rejects effects even after a large pure prefix.
 
+`HighControlFlowSemantics.IndependentEntriesSurviveRepeatedDeadCodeCleanup`
+checks that 32 independent entries remain executable after their first copies
+fold away during MedIR-to-HighIR conversion. An independent interpreter enters
+each original address and checks its return value on x86, x64, ARM and AArch64.
+
 `HighBoundPrivateFrameCopies.*` in `NeverDHighControlFlowTests` checks copies through nonescaping private frame slots after call ABI binding, including branches, slot reuse and agreement across guard contexts. For x64 and AArch64, the emitted C runs at `-O0` and `-O2` with undefined-behavior traps and independent arithmetic checks. Negative cases preserve the original function for frame escape, unknown call ABIs, missing or inconsistent frame aliases, reassigned entry inputs, overlapping accesses, ordered or atomic memory, malformed statements, cycles and exhausted budgets. Ordinary value conversions must not become PHI copies.
 
 `HighIntegerSignedness.*` in `NeverDHighControlFlowTests` checks the late pass that declares each register or temporary local signed or unsigned by what most of its uses read. Wrapping arithmetic, logical shifts and unsigned comparisons favor unsigned; signed comparisons, signed division, arithmetic shifts and sign extension favor signed; a conversion to an integer as wide as its operand favors the signedness it converts to; a shift count reads unsigned, so its masking arithmetic prints without a signed view; a local with any non-integer use keeps its types. The emitted C runs at `-O0` and `-O2` with undefined-behavior traps against independent reference arithmetic, including a signed comparison of a local that became unsigned.
@@ -5016,6 +5068,26 @@ include non-byte widths and every one-hot input bit. Unsupported shapes fail
 before source emission.
 
 ## Structured C control and call checks
+
+`NeverDMedPrologueSavesTests` runs the same save, restore, overlapping-store,
+return-address and process-entry cases through separate and combined source
+annotations. It also checks a function that has both a saved register and a
+return-address read. Run it with `NeverDMedStackAlignmentTests`,
+`NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
+`NeverDPipelineOutcomeTests` after changing source stack-access analysis.
+
+`MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
+checks four architectures and three formats in both query orders. Accepted and
+moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and
+depth refusal must leave later queries correct in both batched and single use.
+
+`MedStackAlignment.EntryLiveInQueriesKeepExactRegisterOccurrences` and the
+`EntryStackQueries*` cases check exact width, architecture, rename tag, physical
+register and SSA identity in both query orders. Missing, duplicate, misplaced
+and malformed entry markers must refuse; an undefined incoming SP retains its
+existing SSA rule. Mutating the marker or function entry between calls must
+invalidate authentication. Run these batched and standalone checks across
+x86, x64, ARM32 and AArch64 in COFF, ELF and Mach-O.
 
 `Win64SourceCallsKeepTheirDeclaredCarrierWidths` checks declared scalar carriers
 against whole-register scans. `NeverDWorkerCallSiteTypes` also checks explicit
