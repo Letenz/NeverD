@@ -27,6 +27,7 @@
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86SystemRegister.h"
+#include "../render/X86Virtualization.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
@@ -768,6 +769,7 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   bool NeedsX86SystemRegisterDispatch = false;
+  bool NeedsX86VirtualizationDispatch = false;
   bool HasFloatingArithmetic = false;
   bool HasWin64Call = false;
   Win64CallABI.clear();
@@ -864,6 +866,18 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
+          if (Opts.TheArch == Arch::X64) {
+            const std::vector<std::string> Arguments(CI->arg_size(), "0");
+            NeedsX86VirtualizationDispatch |=
+                renderX86VirtualizationNativeCall(Opts.TheArch, *CI, "result",
+                                                  !CI->getType()->isVoidTy(),
+                                                  Arguments)
+                    .has_value() ||
+                renderX86VirtualizationCall(Opts.TheArch, *CI, "result",
+                                            !CI->getType()->isVoidTy(),
+                                            Arguments)
+                    .has_value();
+          }
           if (classifyX86ShadowStackReadAsm(*CI)) {
             const unsigned Word = CI->getType()->getIntegerBitWidth() / 8;
             if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
@@ -1040,6 +1054,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   }
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86VirtualizationDispatch)
+    OS << X86VirtualizationCompilerDispatch;
   if (Opts.TheArch == Arch::X86) {
     // i386 Clang supports bit-precise integers but does not define the native
     // 128-bit aliases used by LLVM C's 65..128-bit scalar carriers. Retain the

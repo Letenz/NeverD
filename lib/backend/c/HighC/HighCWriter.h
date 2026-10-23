@@ -1175,6 +1175,7 @@ public:
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
   bool NeedsX86SystemRegisterDispatch = false;
+  bool NeedsX86VirtualizationDispatch = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
   bool NeedsGnuX86Intrinsics = false;
   /// A CPUID GCC or Clang compiles, which <cpuid.h> spells.

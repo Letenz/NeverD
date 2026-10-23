@@ -2085,6 +2085,17 @@ EAX/ECX inputs, Windows subleaf spelling and ordered effects, including CLI/STI.
 The CPUID C execution check replaces only the intrinsic environment, verifies
 one query with leaf 7/subleaf 1, and stores four high-bit output words into
 64-bit cells at O0/O2 across all three formats and default/NoOpt.
+The qualified native LLVM SDK adds a 426-module virtualization matrix covering
+both word sizes, three formats, default/NoOpt, FS/GS and long-mode narrow SVM
+addresses. Older SDKs explicitly skip that native-IR requirement while retaining
+the assembly route. Set `NEVERD_TEST_NEVERC=/path/to/neverc` to exercise 888 C
+compilations from both source routes at O0/O2, checking native intrinsic calls
+and the absence of inline assembly. That C test also runs with the old SDK's
+assembly IR. Stock Clang still compiles both C fallbacks; fork-only LLVM IR is
+compiled by the linked SDK rather than sent to an incompatible system Clang.
+`LLVMCValues.NativeVirtualizationKeepsStatusAndFailedReadPrior` supplies controlled
+VMX completion values to check C status conversion, exact operand evaluation
+and failed-read preservation without executing privileged instructions.
 `SessionCAPITest.IntrinsicSourcePagesKeepTheExecutedInstruction` checks CPUID in
 C, LLVMC, pseudocode and HighIR, alongside CLI/STI effect rows. Native HighIR
 paging also shares the UTF-8,

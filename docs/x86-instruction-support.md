@@ -656,8 +656,50 @@ These tests qualify compiler transport and CPL3 faults, not successful
 privileged VM entry or segment descriptor validation. Other memory instruction
 families still need explicit segment/address-width APIs; forced EVEX/APX
 selection is separate. NeverD's existing assembly paths still need migration
-to these native APIs. The final LLVM release and pin remain gated on the
-complete work described above.
+for the remaining instruction families. The final LLVM release and pin remain
+gated on the complete work described above.
+
+NeverC commit `c15e522eb` adds header-free VMX builtins for VMREAD, VMWRITE,
+VMCLEAR, VMPTRLD, VMPTRST, VMXON, VMXOFF, VMLAUNCH and VMRESUME. The
+`__builtin_ia32_*` names work on ELF, COFF and Mach-O without Microsoft headers
+or language extensions. They share the existing native IR and instruction-owned
+memory effects; the Microsoft names remain available. All 59 focused compiler
+tests and 81 binary checks pass, as do 134 completion/fault-boundary cases for
+the portable builtins on each backend and the legacy Microsoft route.
+
+NeverD now selects native LLVM calls for the 13 owned VMX operand forms and
+five SVM operations when the SDK supplies the qualified explicit-address APIs.
+The shared mapping also covers long-mode SVM address-size overrides. VMFUNC
+still uses the existing assembly contract: its bounded native API requires
+proof of EAX=0, which the generic two-register contract does not provide.
+Old SDKs retain their validated assembly lowering until the final release pin
+changes; no unknown `llvm.*` declaration is fabricated.
+
+The native boundary converts VMX status 0/1/2 into the existing CF/ZF bytes.
+Register VMREAD uses an explicit zero prior, and the lifter still selects the
+original architectural destination on failure. Memory VMREAD remains a native
+conditional write. Default memory operands retain pointer escapes; FS/GS use
+integer offsets after the lifter's address-size arithmetic, with segment-base
+addition owned by the native instruction. This preserves effective-address
+semantics without promising the original physical register allocation or prefix
+spelling. VMPTRST and VMXOFF produce cleared lifted flags only after their
+native void operation returns.
+
+HighC and LLVM-to-C share compiler selection and completion conversion. NeverC
+uses the portable builtins; compilers without the qualified interfaces use the
+exact native assembly fallback. Both the old assembly IR and new native IR
+feed this C projection. A VMX offset alone no longer causes HighC to require
+Clang address-space pointers. Raw LLVM calls outside the admitted mode, result,
+memory-effect or normalized-address contract are rejected.
+
+The source matrix compiles 426 native modules across both code modes, three
+object formats, default/NoOpt, FS/GS and long-mode narrow SVM addresses. Both C
+routes pass 888 NeverC IR compilations across the same x64 address choices,
+formats and pipeline modes at O0/O2, with native intrinsic calls and no inline
+assembly. Controlled C completion checks cover all three VMX statuses, one
+evaluation per operation, high-bit operands and VMREAD's failed-read prior.
+They do not claim successful privileged VM entry, VM exit or VMCB-state
+qualification. The production SDK tag, checksums and submodule are unchanged.
 
 ## Reproducible checks
 

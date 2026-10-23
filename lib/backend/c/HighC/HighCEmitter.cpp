@@ -21,6 +21,7 @@
 #include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86SystemRegister.h"
+#include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
 
 #include "neverd/backend/Limits.h"
@@ -681,10 +682,15 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         E.Kind == ExprKind::Load && useMsvcSegmentedRead(Opts, CurrentFunc);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
+      // The virtualization renderer passes a raw offset to an instruction.
+      // It does not form a C pointer in the segmented address space.
+      const bool VirtualizationMemory =
+          E.Kind == ExprKind::Call &&
+          x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0;
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
-      if (!MsvcSegmentedScalar)
+      if (!MsvcSegmentedScalar && !VirtualizationMemory)
         HasSegmentedMemory = true;
-      else if (Opts.Format == BinaryFormat::COFF)
+      else if (MsvcSegmentedScalar && Opts.Format == BinaryFormat::COFF)
         NeedsMsvcIntrinsics = true;
       const bool IsMemoryExpr =
           E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
@@ -1533,6 +1539,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if (Opts.Format == BinaryFormat::COFF &&
           x86SystemRegisterName(Ex.IntrinsicId, 0))
         NeedsX86SystemRegisterDispatch = true;
+      if (Opts.TheArch == Arch::X64 &&
+          x86VirtualizationContract(Ex.IntrinsicId).Mnemonic)
+        NeedsX86VirtualizationDispatch = true;
       if (Opts.Format != BinaryFormat::COFF &&
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
@@ -4406,6 +4415,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86VirtualizationDispatch)
+    OS << X86VirtualizationCompilerDispatch;
   writeX87ContextHelpers(Funcs);
   writeX86FPStateCHelpers(OS, X86FPStateHelpers);
   writeMemoryHelpers();
