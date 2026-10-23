@@ -171,10 +171,10 @@ incomplete intermediate batch.
    with separate expectations for decoding, strict lifting and each emitter.
    Include positive and negative forms for widths, register banks, masks,
    address sizes, segments and privilege-sensitive operations.
-2. Integrate the native bounded ENCLU APIs below into NeverD's shared SGX
-   state contract, including leaf proofs, exact register dependencies and
-   incoming flag preservation. Its entry/exit/resume leaves remain part of the
-   complete-state continuation work below.
+2. Integrate the native bounded ENCLU and GETSEC APIs below into NeverD's
+   shared state contracts, including leaf proofs, exact register dependencies
+   and incoming flag preservation. Their transferring leaves remain part of
+   the complete-state continuation work below.
 3. Introduce a versioned complete-machine-state boundary and explicit
    continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
@@ -193,9 +193,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`e3b29f4dffd9`](https://github.com/NeverSight/llvm-project/commit/e3b29f4dffd9)
+[`e1d9d12ab12f`](https://github.com/NeverSight/llvm-project/commit/e1d9d12ab12f)
 adds native instruction selection for the following APIs. NeverC's
-[`8506f06c7`](https://github.com/NeverSight/NeverC/commit/8506f06c7)
+[`1c26d656f`](https://github.com/NeverSight/NeverC/commit/1c26d656f)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -230,6 +230,7 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.{lldt,ltr,lmsw}.{reg,mem}`, `llvm.x86.invd` | i386 and x86-64 | Native selector/control input and processor-state effects, including LTR's descriptor busy-bit write. |
 | `llvm.x86.encls`, `llvm.x86.enclv` and their `32` variants | x86-64 and i386 respectively | Four natural-width register inputs/results plus `CF | (ZF << 1)`; leaf selection uses EAX and all memory/state validation stays native. Flag-preserving leaves have no defined scalar status. |
 | `llvm.x86.enclu.bounded`, `llvm.x86.enclu.bounded32` | x86-64 and i386 respectively | Constant natural-width rAX selects one of nine fallthrough leaves through low EAX; four register results and CF/ZF retain native completion. Entry/exit/resume, dynamic and unknown leaves are rejected. |
+| `llvm.x86.getsec.bounded`, `llvm.x86.getsec.bounded32` | x86-64 and i386 respectively | Constant low EAX selects CAPABILITIES (0), PARAMETERS (6), SMCTRL (7) or WAKEUP (8); four natural-width register inputs/results retain unchanged bits on leaf-dependent paths. Transferring, reserved and dynamic leaves are rejected. |
 | `llvm.x86.vmload`, `llvm.x86.vmsave`, `llvm.x86.invlpga` and their `32` variants | x86-64 and i386 respectively | Integer rAX VMCB physical address or linear invalidation address; INVLPGA also reads the complete ECX ASID. No compiler dereference; default address width only. |
 | `llvm.x86.{vmload,vmsave,invlpga}.addr32` and `.addr16` | x86-64 and i386 respectively | Explicit address-size override with i32 or i16 address input; the native `67` prefix, full i32 INVLPGA ASID and instruction-owned memory effects survive lowering. |
 | `llvm.x86.stgi/clgi/clac/stac/hlt`, `llvm.x86.swapgs` | i386 and x86-64; SWAPGS requires x86-64 | Ordered native GIF, AC, halt/resume and GS-base effects, preserving arithmetic flags. HLT is resumable, with neither `noreturn` nor `willreturn`. |
@@ -602,6 +603,29 @@ integer-lane extraction instead of requiring an unsupported C23
 pass. They include 8,288 native lane/bit-pattern checks, single evaluation,
 immediate diagnostics, and all three formats at O0/O2; six isolated installed-
 header compilation checks pass too.
+
+Bounded GETSEC now transports all four natural-width registers, including the
+unchanged EBX/ECX paths of PARAMETERS. The allowed leaves preserve arithmetic
+flags; the API neither consumes compiler flags nor returns a scalar status.
+Frontend and backend validation share `X86SmxIntrinsics.h`, reject code16 and
+wrong word sizes, and do not require the unrelated SGX feature. Native
+processor, CR4.SMXE, privilege, chipset and measured-environment checks remain
+inside GETSEC. This follows [SDM 093 Volume 2D](https://cdrdv2.intel.com/v1/dl/getContent/671143),
+chapter 7. NeverD still rejects GETSEC until its explicit state and leaf-proof
+contract is integrated.
+
+GETSEC qualification passes 608 full-LLVM checks and 304 checks on each NeverC
+route, plus 16 real CPL3 boundaries per C route. It covers all four leaves,
+full-width inputs, every register output, dead/repeated calls, ordered memory,
+unmapped scalar inputs and all three native formats. The independent-byte
+oracle compares both faults and query results when the host permits execution.
+The shared harness now runs full LLVM's default O2 IR pipeline too; its SGX
+and bounded ENCLU matrices still pass (1,344/784/784 and 6,048/3,528/3,528).
+All 56 focused compiler tests, 81 binary checks, 26 generator tests and 12
+plugin checks pass, with no overload-bitmap mismatch. Only GETSEC opcode 1355's
+implicit RDX definition changes in the plugin schema; all 18,495 opcode IDs
+remain stable. These are compiler-transport and CPL3-boundary checks, not
+successful measured-environment qualification.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
