@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`d6d146470804`](https://github.com/NeverSight/llvm-project/commit/d6d146470804)
+[`164ee05c6f51`](https://github.com/NeverSight/llvm-project/commit/164ee05c6f51)
 adds native instruction selection for the following APIs. NeverC's
-[`6032fd7ac`](https://github.com/NeverSight/NeverC/commit/6032fd7ac)
+[`74bd29d5a`](https://github.com/NeverSight/NeverC/commit/74bd29d5a)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -207,6 +207,10 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.invlpgb`, `llvm.x86.invlpgb32` | x86-64 and i386 respectively | Integer rAX control/address, i32 EDX identifiers and i32 ECX count/page-size inputs. No compiler memory dereference; wrong-mode APIs fail explicitly. |
 | `llvm.x86.tlbsync` | i386 and x86-64 | Actual ordered translation synchronization; no invented completion or replacement compiler fence. |
 | `llvm.x86.lkgs.reg`, `llvm.x86.lkgs.mem` | x86-64 | i16 register selector or instruction-owned m16 read; native GS descriptor/selector and IA32_KERNEL_GS_BASE effects. |
+| `llvm.x86.{verr,verw}.{reg,mem}` | i386 and x86-64 | i16 register selector or instruction-owned m16 read, returning actual i8 ZF; implicit descriptor reads stay native. |
+| `llvm.x86.{sldt,str,smsw}.reg{16,32,64}`, `llvm.x86.{sldt,str,smsw}.mem` | i386 and x86-64; reg64 requires x86-64 | Raw native register result or an exact m16 store; wider SMSW results retain their architectural upper bits. |
+| `llvm.x86.{lldt,ltr,lmsw}.{reg,mem}`, `llvm.x86.invd` | i386 and x86-64 | Native selector/control input and processor-state effects, including LTR's descriptor busy-bit write. |
+| `llvm.x86.encls`, `llvm.x86.enclv` and their `32` variants | x86-64 and i386 respectively | Four natural-width register inputs/results plus `CF | (ZF << 1)`; leaf selection uses EAX and all memory/state validation stays native. Flag-preserving leaves have no defined scalar status. |
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
 | `llvm.x86.readcr/readdr`, `llvm.x86.writecr/writedr` | x86-64 | Immediate register selector, full i64 values and ordered, potentially trapping accesses. CR0/2/3/4/8 and DR0..7 retain their native encodings and undefined arithmetic flags. |
 | `llvm.x86.readcr32/readdr32`, `llvm.x86.writecr32/writedr32` | i386 | Same contract with i32 values; CR8, invalid selectors and wrong-mode APIs fail explicitly. |
@@ -431,6 +435,27 @@ LLVM reader to upgrade legacy pointer/shift constant expressions that its text
 parser no longer accepts. The optimized descriptor construction remains
 unchanged; no fixture-specific runtime boundary is needed. This qualifies the
 tested bitcode migration and native APIs, not every cross-version IR feature.
+
+The SGX batch adds native ENCLS/ENCLV APIs, capturing all four natural-width
+registers and CF/ZF before flag arithmetic. NeverC provides matching builtins
+and installed `_encls_u32`/`_enclv_u32` wrappers through `<immintrin.h>` and
+`<x86intrin.h>`. Wrong code modes and missing `sgx` target features fail
+explicitly. For leaves that preserve arithmetic flags, callers must preserve
+their explicit incoming flag state; the returned flag byte is not a status.
+ENCLU's entry/exit/resume continuations remain outside these APIs.
+
+SGX qualification passes 1,344 full-LLVM checks and 784 each for NeverC and
+the bridge, covering every register/status output, dead/repeated operations,
+unmapped integer inputs, ordering, nonvolatile-register restoration, O0/O2,
+three object formats and both assembly dialects. Each C route also passes
+eight real Linux x64 CPL3 fault comparisons with independent byte oracles.
+Sixteen LLVM regressions, 44 NeverC intrinsic tests, 81 existing binary checks,
+23 generator tests and 12 plugin tests pass; the overload audit has zero
+mismatches. Isolated installed-header probes emit native IR on ELF, COFF and
+Mach-O targets. The plugin schema updates only ENCLS/ENCLV implicit register
+effects, retaining all opcode/register/feature identities. These checks
+qualify compiler transport and CPL3 faults, not successful privileged SGX
+operations, EPC updates or enclave/VMX transitions.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
