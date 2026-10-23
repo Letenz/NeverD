@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/BinaryImage.h"
 #include "neverd/types/HeaderLibrary.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
@@ -211,6 +212,93 @@ TEST(HeaderLibrary, UserProvidersKeepTheirOwnStatusAndParameterWidths) {
   }
 }
 
+TEST(HeaderLibrary, OptionalUCRTExportsKeepFloatingVarargAndCallbackContracts) {
+  for (auto Id : {HeaderLibrary::WindowsUserX64, HeaderLibrary::WindowsUserX86,
+                  HeaderLibrary::WindowsUserARM64}) {
+    const auto *User = headerLibrary(Id);
+    ASSERT_NE(User, nullptr);
+    if (!User->findPrototype("_o__hypot"))
+      GTEST_SKIP() << "This build has no local Microsoft UCRT provider";
+    SCOPED_TRACE(headerLibraryName(Id).str());
+    const bool X86 = Id == HeaderLibrary::WindowsUserX86;
+    const auto *Hypot = User->findPrototype("_o__hypot");
+    ASSERT_EQ(Hypot->Params.size(), 2u);
+    EXPECT_EQ(Hypot->Return->TheBuiltin, Builtin::Double);
+    for (const auto &Param : Hypot->Params)
+      EXPECT_EQ(Param.Type->TheBuiltin, Builtin::Double);
+    const auto *Open = User->findPrototype("_wopen");
+    ASSERT_NE(Open, nullptr);
+    EXPECT_EQ(Open->Params.size(), 2u);
+    EXPECT_TRUE(Open->Variadic);
+    const auto *Begin = User->findPrototype("_o__beginthreadex");
+    ASSERT_NE(Begin, nullptr);
+    ASSERT_EQ(Begin->Params.size(), 6u);
+    EXPECT_EQ(User->sizeOf(*Begin->Return), X86 ? 4u : 8u);
+    const auto *Callback = User->resolve(Begin->Params[2].Type->Name);
+    ASSERT_NE(Callback, nullptr);
+    ASSERT_NE(Callback->Target, nullptr);
+    ASSERT_EQ(Callback->Target->Kind, TypeExprKind::Pointer);
+    ASSERT_NE(Callback->Target->Element, nullptr);
+    const auto *Routine = Callback->Target->Element->Function.get();
+    ASSERT_NE(Routine, nullptr);
+    EXPECT_EQ(Routine->Params.size(), 1u);
+    if (X86)
+      EXPECT_EQ(Routine->Convention, CallingConvention::Stdcall);
+    const auto *SetTerminate = User->findPrototype("_o_set_terminate");
+    ASSERT_NE(SetTerminate, nullptr);
+    ASSERT_EQ(SetTerminate->Params.size(), 1u);
+    EXPECT_EQ(SetTerminate->Return->Name, SetTerminate->Params[0].Type->Name);
+    const auto *Handler = User->resolve(SetTerminate->Return->Name);
+    ASSERT_NE(Handler, nullptr);
+    ASSERT_NE(Handler->Target, nullptr);
+    ASSERT_EQ(Handler->Target->Kind, TypeExprKind::Pointer);
+    ASSERT_NE(Handler->Target->Element, nullptr);
+    const auto *Termination = Handler->Target->Element->Function.get();
+    ASSERT_NE(Termination, nullptr);
+    EXPECT_TRUE(Termination->Params.empty());
+    EXPECT_FALSE(Termination->Variadic);
+    if (X86) {
+      EXPECT_EQ(Termination->Convention, CallingConvention::Cdecl);
+      EXPECT_EQ(SetTerminate->Convention, CallingConvention::Cdecl);
+    }
+    const auto *PureCall = User->findPrototype("_o__purecall");
+    ASSERT_NE(PureCall, nullptr);
+    EXPECT_EQ(PureCall->Return->TheBuiltin, Builtin::Int);
+    EXPECT_EQ(User->findPrototype("_mm_set1_epi32"), nullptr);
+    EXPECT_EQ(User->findPrototype("_CIpow"), nullptr);
+  }
+}
+
+TEST(HeaderLibrary, OptionalUCRTTerminationNeedsItsDeclarationContext) {
+  for (auto Id : {HeaderLibrary::WindowsUserX64, HeaderLibrary::WindowsUserX86,
+                  HeaderLibrary::WindowsUserARM64}) {
+    const auto *User = headerLibrary(Id);
+    ASSERT_NE(User, nullptr);
+    if (!User->findPrototype("_o_terminate"))
+      GTEST_SKIP() << "This build has no local Microsoft UCRT provider";
+    for (const char *Name : {"terminate", "unexpected"}) {
+      SCOPED_TRACE(headerLibraryName(Id).str());
+      SCOPED_TRACE(Name);
+      ASSERT_NE(User->findPrototype(Name), nullptr);
+      EXPECT_TRUE(User->findPrototype(Name)->NoReturn);
+      EXPECT_FALSE(neverd::libc::isNoReturnFunction(Name));
+      neverd::BinaryImage Image;
+      neverd::Import Imported;
+      Imported.Name = Name;
+      Imported.IATAddr = 0x1000;
+      Image.Imports.push_back(Imported);
+      const neverd::libc::NoReturnTargetIndex WithoutDeclaration(Image);
+      EXPECT_FALSE(WithoutDeclaration.contains(Image, Imported.IATAddr));
+      const neverd::libc::NoReturnTargetIndex WithDeclaration(
+          Image, {}, [&](llvm::StringRef Name) {
+            const auto *Prototype = User->findPrototype(Name);
+            return Prototype && Prototype->NoReturn;
+          });
+      EXPECT_TRUE(WithDeclaration.contains(Image, Imported.IATAddr));
+    }
+  }
+}
+
 TEST(HeaderLibrary, EveryLibraryReadsLaidOutForItsDataModel) {
   // A pointer, and a SIZE_T, take what each data model gives them: a 32-bit
   // library's handles and records are a 32-bit program's.
@@ -258,10 +346,20 @@ TEST(HeaderLibrary, TheNoReturnTablesHoldEveryNoReturnRoutine) {
     const TypeLibrary *Types = headerLibrary(Library);
     ASSERT_NE(Types, nullptr);
     for (const auto &Prototype : Types->prototypes())
-      if (Prototype.getValue()->NoReturn)
+      if (Prototype.getValue()->NoReturn) {
+        // These context-specific CRT names are intentionally absent from the
+        // global name table. Its declaration feeds NoReturnTargetIndex above.
+        if (Prototype.getKey() == "terminate" ||
+            Prototype.getKey() == "unexpected") {
+          EXPECT_TRUE(microsoftSource(Library));
+          if (Prototype.getKey() == "terminate")
+            EXPECT_TRUE(Types->findPrototype("_o_terminate"));
+          continue;
+        }
         EXPECT_TRUE(neverd::libc::isNoReturnFunction(Prototype.getKey()))
             << headerLibraryName(Library).str() << " "
             << Prototype.getKey().str();
+      }
   }
 }
 

@@ -18,6 +18,8 @@
 
 #include "llvm/Support/Error.h"
 
+#include <system_error>
+
 using namespace llvm;
 
 namespace neverd {
@@ -89,7 +91,8 @@ Error checkStaticSymbolChoice(const BinaryImage &Img,
 } // namespace
 
 Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
-                                 const BinaryLoadOptions &Opts) {
+                                 const BinaryLoadOptions &Opts) try {
+  Opts.Progress.report("identify", 0, 1);
   std::unique_ptr<Loader> TheLoader;
   switch (Opts.Choice.Format) {
   case BinaryFormat::Unknown:
@@ -113,18 +116,26 @@ Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
   if (!Opts.ARMFunctionModes.empty())
     TheLoader->setARMFunctionModes(Opts.ARMFunctionModes);
   TheLoader->setReadsStaticSymbols(Opts.ReadStaticSymbols);
-  auto ImgOrErr = TheLoader->load(Path);
+  Opts.Progress.report("identify", 1, 1);
+  auto ImgOrErr = TheLoader->loadWithProgress(Path, Opts.Progress);
   if (!ImgOrErr)
     return ImgOrErr.takeError();
   if (Error E = checkStaticSymbolChoice(*ImgOrErr, Opts))
     return std::move(E);
+  Opts.Progress.report("metadata", 0, 1);
   normalizeBinaryMetadata(*ImgOrErr);
   ImgOrErr->numberSharedFunctionNames();
+  Opts.Progress.report("metadata", 1, 1);
   return std::move(*ImgOrErr);
+} catch (const LoadCancelled &) {
+  return make_error<StringError>(
+      LoadCancelled::Message,
+      std::make_error_code(std::errc::operation_canceled));
 }
 
 Expected<BinaryImage> loadBinaryBuffer(llvm::MemoryBufferRef Buffer,
-                                       const BinaryLoadOptions &Opts) {
+                                       const BinaryLoadOptions &Opts) try {
+  Opts.Progress.report("identify", 0, 1);
   if (Opts.Choice.Format != BinaryFormat::Unknown)
     return make_error<StringError>(
         "native buffer does not accept a loader choice",
@@ -141,14 +152,21 @@ Expected<BinaryImage> loadBinaryBuffer(llvm::MemoryBufferRef Buffer,
   TheLoader->restrictFunctions(Opts.OnlyFunctionEntries);
   TheLoader->setARMFunctionModes(Opts.ARMFunctionModes);
   TheLoader->setReadsStaticSymbols(Opts.ReadStaticSymbols);
-  auto Image = TheLoader->loadBuffer(Buffer);
+  Opts.Progress.report("identify", 1, 1);
+  auto Image = TheLoader->loadBufferWithProgress(Buffer, Opts.Progress);
   if (!Image)
     return Image.takeError();
   if (Error E = checkStaticSymbolChoice(*Image, Opts))
     return std::move(E);
+  Opts.Progress.report("metadata", 0, 1);
   normalizeBinaryMetadata(*Image);
   Image->numberSharedFunctionNames();
+  Opts.Progress.report("metadata", 1, 1);
   return std::move(*Image);
+} catch (const LoadCancelled &) {
+  return make_error<StringError>(
+      LoadCancelled::Message,
+      std::make_error_code(std::errc::operation_canceled));
 }
 
 } // namespace neverd

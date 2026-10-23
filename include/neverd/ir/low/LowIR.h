@@ -19,6 +19,7 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86Virtualization.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -387,6 +388,26 @@ inline X86VirtualizationShape x86VirtualizationLowShape(const LowOp &Op,
   return Shape;
 }
 
+inline X86SgxShape x86SgxLowShape(const LowOp &Op,
+                                  Arch TargetArch = Arch::Unknown) {
+  X86SgxShape S;
+  S.TargetArch = TargetArch;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+              Op.Inputs[0].Offset <= UINT16_MAX;
+  S.WritableOutput = Op.Output.isReg() || Op.Output.isTemp();
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    S.InputSizes[I] = Input.Size;
+    S.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
+  }
+  return S;
+}
+
 inline X86SystemStateShape x86SystemStateLowShape(const LowOp &Op,
                                                   Arch TargetArch) {
   X86SystemStateShape Shape;
@@ -404,6 +425,12 @@ inline X86SystemStateShape x86SystemStateLowShape(const LowOp &Op,
     Shape.InputSizes[I] = Input.Size;
     Shape.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
   }
+  if (Shape.ValidId &&
+      Op.Inputs[0].Offset ==
+          static_cast<uint16_t>(Intrinsic::X86SegmentedBlockMemory) &&
+      Op.NumInputs > 1 && Op.Inputs[1].isConst() && Op.Inputs[1].Size == 2 &&
+      Op.Inputs[1].Offset <= UINT16_MAX)
+    Shape.SegmentedBlockSelector = static_cast<uint16_t>(Op.Inputs[1].Offset);
   return Shape;
 }
 
@@ -449,6 +476,7 @@ inline X86MsrAccessIntrinsicShape x86MsrAccessLowShape(const LowOp &Op,
       .Kind = Op.NumInputs > 1 ? Op.Inputs[1].Offset : UINT64_C(0),
       .KindSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : uint16_t{0},
       .SelectorIsScalar = Op.NumInputs > 2 && IsScalar(Op.Inputs[2]),
+      .SelectorIsConst = Op.NumInputs > 2 && Op.Inputs[2].isConst(),
       .SelectorSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : uint16_t{0},
       .ValueIsScalar = Op.NumInputs > 3 && IsScalar(Op.Inputs[3]),
       .ValueSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : uint16_t{0},

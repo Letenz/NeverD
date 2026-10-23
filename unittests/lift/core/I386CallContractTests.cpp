@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../lib/pipeline/PipelineCallAbiDetail.h"
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -24,6 +25,7 @@
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Verifier.h"
@@ -90,6 +92,73 @@ BinaryImage makeImage(std::vector<uint8_t> Code,
   Function.Name = "_wrap";
   Img.Symbols.push_back(std::move(Function));
   return Img;
+}
+
+TEST(I386CallContract, LLVMCCallbackFactoryKeepsBothCallingConventions) {
+  class Prototypes : public NullDebugContext {
+  public:
+    FunctionSym Signature;
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      return Name == "SetHandler" ? std::optional(Signature) : std::nullopt;
+    }
+  } Debug;
+  for (bool OuterStdcall : {false, true})
+    for (bool InnerStdcall : {false, true}) {
+      SCOPED_TRACE(OuterStdcall);
+      SCOPED_TRACE(InnerStdcall);
+      auto Pointer = NdType::makePtr(NdType::makeVoid());
+      Pointer->Size = 4;
+      auto Callback = NdType::makePtr(NdType::makeFunc(
+          NdType::makeInt(4, true), {Pointer, NdType::makeInt(4, false)},
+          InnerStdcall ? types::CallingConvention::Stdcall
+                       : types::CallingConvention::Unspecified));
+      Callback->Size = 4;
+      Debug.Signature.Name = "SetHandler";
+      Debug.Signature.PrototypeLibrary = "synthetic-windows";
+      Debug.Signature.ReturnType = Callback;
+      Debug.Signature.Params = {{"Handler", Callback}};
+      Debug.Signature.CallConv =
+          OuterStdcall ? DebugCallConv::Stdcall : DebugCallConv::Cdecl;
+      llvm::LLVMContext Context;
+      llvm::Module Module("callback-factory", Context);
+      Module.setDataLayout("e-p:32:32");
+      llvm::IRBuilder<> Builder(Context);
+      auto *FunctionType = llvm::FunctionType::get(
+          Builder.getInt32Ty(), {Builder.getInt32Ty()}, false);
+      auto *Factory = llvm::Function::Create(FunctionType,
+                                             llvm::GlobalValue::ExternalLinkage,
+                                             "_SetHandler", Module);
+      Factory->setCallingConv(OuterStdcall ? llvm::CallingConv::X86_StdCall
+                                           : llvm::CallingConv::C);
+      auto *Wrapper = llvm::Function::Create(
+          FunctionType, llvm::GlobalValue::ExternalLinkage, "_wrap", Module);
+      Builder.SetInsertPoint(
+          llvm::BasicBlock::Create(Context, "entry", Wrapper));
+      auto *Call = Builder.CreateCall(Factory, {Wrapper->getArg(0)});
+      Call->setCallingConv(Factory->getCallingConv());
+      Builder.CreateRet(Call);
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X86;
+      Options.Format = BinaryFormat::COFF;
+      Options.EmitIncludes = false;
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Debug));
+      ASSERT_NE(Source.find("SetHandler("), std::string::npos) << Source;
+      const std::string Inner = InnerStdcall ? "__attribute__((stdcall)) " : "";
+      const std::string Outer = OuterStdcall ? "__attribute__((stdcall)) " : "";
+      source_call_execution_test::checkSyntax(
+          "#include <stdint.h>\n" + Source + "\ntypedef int32_t (" + Inner +
+              "*ExpectedCallback)(void*, uint32_t);\n"
+              "typedef ExpectedCallback (" +
+              Outer +
+              "*ExpectedFactory)(ExpectedCallback);\n"
+              "_Static_assert(__builtin_types_compatible_p("
+              "__typeof__(&SetHandler), ExpectedFactory), \"factory ABI\");\n",
+          {"--target=i686-pc-windows-msvc", "-ffreestanding", "-Werror"});
+    }
 }
 
 TEST(I386CallContract, OmittedImportStackFactsDoNotDependOnTheSelection) {
@@ -348,6 +417,51 @@ TEST(I386CallContract, AStdcallImportPopsItsArguments) {
   // Without the pop the read lands on the pushed 7.
   EXPECT_NE(Result.find("arg0"), std::string::npos) << Source;
   EXPECT_EQ(Result.find("+ 7"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+}
+
+TEST(I386CallContract, HeaderRecordStdcallKeepsItsStackCleanup) {
+  class Header : public NullDebugContext {
+  public:
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "RecordStatus")
+        return std::nullopt;
+      auto Record = NdType::makeNamedRecord("Record", 8);
+      Record->Alignment = 8;
+      Record->Passing = NdRecordPassing::ByValue;
+      Record->ScalarLeaves = {{0, 4, false}, {4, 4, false}};
+      FunctionSym Function;
+      Function.Name = Name.str();
+      Function.ReturnType = NdType::makeInt(4, true);
+      Function.Params = {{"Value", Record}};
+      Function.CallConv = DebugCallConv::Stdcall;
+      Function.PrototypeLibrary = "test-windows-header";
+      Function.PrototypeFromHeader = true;
+      return Function;
+    }
+  } Debug;
+  // The record is two stack words. The load after the call must read the
+  // wrapper's original argument, not the record word left at the old SP.
+  std::vector<uint8_t> Code = {0x6A, 7, 0x6A, 3};
+  const auto Call = callThroughSlot(Iat);
+  Code.insert(Code.end(), Call.begin(), Call.end());
+  Code.insert(Code.end(), {0x8B, 0x44, 0x24, 4, 0xC3});
+  BinaryImage Image = makeImage(Code, {"RecordStatus"});
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  const auto Result = Pipeline().run(Image, Context, Options, &Debug);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_TRUE(Result.CallEntryStackPops.count(Iat));
+  EXPECT_EQ(Result.CallEntryStackPops.at(Iat), 8);
+  CEmitterOptions COptions;
+  COptions.TheArch = Image.Arch;
+  COptions.Format = Image.Format;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, COptions));
+  EXPECT_NE(Source.find("return arg0;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
 }
 

@@ -15,6 +15,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
+#include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
 #include "LLVMCIntegerMinMax.h"
@@ -4854,6 +4855,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Sgx =
+          renderX86SgxCall(Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *Sgx;
+    return true;
+  }
   if (auto SystemState = renderX86SystemStateCall(Opts.TheArch, Call, Name,
                                                   ResultLive, ArgStrs)) {
     emitIndent(Indent);
@@ -5323,11 +5330,23 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
                                       libcVariant())
           : std::nullopt;
   if (Function && Library && Function->Name == Library.Name && !RecordCall &&
-      Function->PrototypeFromCLibrary &&
+      (Function->PrototypeFromHeader || Function->PrototypeFromCLibrary) &&
       libc::hasRecordCallParameters(*Function, libcVariant()))
     throw std::runtime_error("The header's record call ABI is unsupported");
   if (RecordCall && RecordCall->Positions > Call.arg_size())
     throw std::runtime_error("A record call argument is incomplete");
+  const char *RecordHeader =
+      RecordCall ? libc::headerFor(Library.Name) : nullptr;
+  if (RecordHeader && IncludedHeaders.count(RecordHeader)) {
+    const auto NoteRecord = [&](const TypeRef &Type) {
+      if (Type && Type->Kind == NdTypeKind::Struct && !Type->IsEnum &&
+          !Type->SourceName.empty())
+        HeaderCallRecords.insert(cNamedTypeSpelling(Type->SourceName));
+    };
+    NoteRecord(Function->ReturnType);
+    for (const auto &Parameter : Function->Params)
+      NoteRecord(Parameter.second);
+  }
   const unsigned Printed = RecordCall ? RecordCall->Parameters.size() : Limit;
   for (unsigned ArgIdx = 0; ArgIdx < Printed; ++ArgIdx) {
     if (ArgIdx > 0)
@@ -5427,6 +5446,10 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   }
   Expr += ")";
   RenderingCalls.pop_back();
+  if (RecordCall && RecordCall->ResultPointer)
+    return c_detail::recordCallResult(
+        c_detail::recordCallType(Function->ReturnType, Opts),
+        valueStr(Call.getArgOperand(*RecordCall->ResultPointer)), Expr);
   return Statement ? Expr : callResult(Call, std::move(Expr));
 }
 

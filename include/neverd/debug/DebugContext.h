@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/support/LoadProgress.h"
 
 #include <cstdint>
 #include <map>
@@ -26,20 +27,6 @@
 #include <vector>
 
 namespace neverd {
-
-/// Optional load-time progress.  Image parse and PDB publics must not look
-/// idle.
-struct LoadProgress {
-  using Fn = void (*)(void *User, const char *Phase, unsigned long long Done,
-                      unsigned long long Total, const char *Detail);
-  Fn Callback = nullptr;
-  void *User = nullptr;
-  void report(const char *Phase, unsigned long long Done,
-              unsigned long long Total, const char *Detail = "") const {
-    if (Callback)
-      Callback(User, Phase, Done, Total, Detail ? Detail : "");
-  }
-};
 
 struct SourceLoc {
   std::string File;
@@ -85,6 +72,9 @@ struct FunctionSym {
   /// that prototype as the library declares it, in C.  Empty otherwise.
   std::string PrototypeLibrary;
   std::string PrototypeDeclaration;
+  /// The prototype comes from a selected platform header library, including
+  /// Windows SDK/WDK headers that are rendered without a host header include.
+  bool PrototypeFromHeader = false;
   /// The library is a C library's headers (glibc's, bionic's, musl's,
   /// libSystem's), which a unit's C includes: a definition of the name in
   /// the image is a copy of the routine they declare, not that routine.

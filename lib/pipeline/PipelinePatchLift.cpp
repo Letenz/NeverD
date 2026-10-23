@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// MedIR-to-LLVM shortcut used by patch and lift modes.
+/// Machine ABI preparation shared by analysis and the MedIR-to-LLVM route.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -85,9 +85,11 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                                 const PipelineOptions &Opts,
                                 PipelineResult &Result,
                                 const DebugContext *Dbg) {
-  [[maybe_unused]] const char *ModeName = Opts.PatchMode ? "patch" : "lift";
+  [[maybe_unused]] const char *ModeName = Opts.MedAnalysisOnly ? "analysis"
+                                          : Opts.PatchMode     ? "patch"
+                                                               : "lift";
   LLVM_DEBUG(llvm::dbgs() << "pipeline: " << ModeName
-                          << " mode -- MedIR -> LLVM IR, skipping HighIR\n");
+                          << " mode -- shared machine ABI preparation\n");
 
   // A selected parent may fail instruction admission while its automatically
   // included cleanup bodies survive. Emitting those bodies is not a successful
@@ -216,6 +218,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   materializeKnownStructReturnCallSites(Img, Result);
 
+  bindFloatCallResults(Img, Result);
+
   settleReturnContracts(Img, Result);
 
   recoverModuleCallAbi(Img, Result, AllFuncNames);
@@ -258,6 +262,9 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     Result.Error = "MedIR verification failed before backend emission";
     return false;
   }
+
+  if (Opts.MedAnalysisOnly)
+    return true;
 
   std::vector<std::pair<va_t, std::string>> ImportMap;
   for (const auto &[Addr, Name] : Img.getImportAddressNames())

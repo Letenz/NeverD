@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CSourceText.h"
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
@@ -48871,6 +48872,7 @@ TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
   } Debug;
   for (const auto Arch : {Arch::X64, Arch::AArch64, Arch::X86})
     for (unsigned Mode = 0; Mode < 6; ++Mode) {
+      SCOPED_TRACE(static_cast<unsigned>(Arch));
       SCOPED_TRACE(Mode);
       Debug.LiveVoid = Mode == 1;
       Debug.WrongArity = Mode == 2;
@@ -48915,28 +48917,39 @@ TEST(LLVMCPointerAddresses, HeaderImportsKeepScalarTypesAndVoidEffects) {
       const std::string Convention =
           Arch == Arch::X86 ? "__attribute__((stdcall)) " : "";
       if (Mode) {
-        EXPECT_EQ(Source.find("int32_t " + Convention + "SdkCode("),
+        EXPECT_EQ(Source.find(Convention + "int32_t SdkCode("),
                   std::string::npos)
             << Source;
-        EXPECT_EQ(Source.find("void " + Convention + "SdkCode("),
-                  std::string::npos)
+        EXPECT_EQ(Source.find(Convention + "void SdkCode("), std::string::npos)
             << Source;
         if (Mode == 3)
           EXPECT_EQ(Source.find("void SdkClose("), std::string::npos) << Source;
         continue;
       }
-      EXPECT_NE(Source.find("void* " + Convention + "SdkAcquire(void* Object)"),
+      EXPECT_NE(Source.find(Convention + "void* SdkAcquire(void* Object)"),
                 std::string::npos)
           << Source;
-      EXPECT_NE(Source.find("int32_t " + Convention + "SdkCode(void* Object)"),
+      EXPECT_NE(Source.find(Convention + "int32_t SdkCode(void* Object)"),
                 std::string::npos)
           << Source;
-      EXPECT_NE(Source.find("void " + Convention + "SdkClose(void* Object)"),
+      EXPECT_NE(Source.find(Convention + "void SdkClose(void* Object)"),
                 std::string::npos)
           << Source;
       EXPECT_EQ(Source.find(" = SdkClose("), std::string::npos) << Source;
       if (Arch == Arch::X86) {
-        expectCSyntax(Source);
+        source_call_execution_test::checkSyntax(
+            Source + R"c(
+          typedef void* (__attribute__((stdcall)) *ExpectedAcquire)(void*);
+          typedef int32_t (__attribute__((stdcall)) *ExpectedCode)(void*);
+          typedef void (__attribute__((stdcall)) *ExpectedClose)(void*);
+          _Static_assert(__builtin_types_compatible_p(__typeof__(&SdkAcquire),
+                         ExpectedAcquire), "pointer result and stdcall");
+          _Static_assert(__builtin_types_compatible_p(__typeof__(&SdkCode),
+                         ExpectedCode), "signed scalar result and stdcall");
+          _Static_assert(__builtin_types_compatible_p(__typeof__(&SdkClose),
+                         ExpectedClose), "void effect and stdcall");
+        )c",
+            {"--target=i686-pc-windows-msvc", "-ffreestanding"});
         continue;
       }
       // Independently typed providers observe the original pointer, exact

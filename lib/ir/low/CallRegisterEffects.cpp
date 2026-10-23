@@ -12,6 +12,7 @@
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/X86Regs.h"
@@ -896,6 +897,91 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
   Effect.UnknownStackReads |= Unknown;
   Effect.StackArgs = StackArgs;
 }
+// A constant SELECT consumes just one arm. Track scalar facts within a block
+// using the shared LowIR evaluator, so call-graph summaries and MedIR agree
+// about conditional implicit inputs. Memory and relocated addresses are never
+// sampled, and calls/opaque effects invalidate register facts.
+std::map<size_t, unsigned> constantSelectArms(const BinaryImage &Img,
+                                              const LowBlock &Block) {
+  std::map<size_t, unsigned> Arms;
+  if (std::none_of(Block.Ops.begin(), Block.Ops.end(),
+                   [](const LowOp &O) { return O.Opcode == NdOp::SELECT; }))
+    return Arms;
+  using Fact = std::pair<uint16_t, uint64_t>;
+  std::map<uint64_t, Fact> Registers, Temps;
+  auto Value = [&](const NdVar &V) -> std::optional<uint64_t> {
+    if (!V.Size || V.Size > 8)
+      return std::nullopt;
+    const uint64_t Mask = UINT64_MAX >> ((8 - V.Size) * 8);
+    if (V.isConst()) {
+      if (isAddressProvenance(V.Provenance) ||
+          (V.Provenance == ConstantAddressProvenance::Unknown &&
+           Img.isPotentiallyRelocatableAddress(V.Offset)))
+        return std::nullopt;
+      return V.Offset & Mask;
+    }
+    if (V.isTemp()) {
+      const auto It = Temps.find(V.Offset);
+      return It != Temps.end() && It->second.first == V.Size
+                 ? std::optional<uint64_t>{It->second.second}
+                 : std::nullopt;
+    }
+    if (V.isReg()) {
+      auto It = Registers.upper_bound(V.Offset);
+      if (It != Registers.begin()) {
+        --It;
+        const auto [Width, Bits] = It->second;
+        const uint64_t Delta = V.Offset - It->first;
+        if (V.Size <= Width && Delta <= Width - V.Size)
+          return (Bits >> (Delta * 8)) & Mask;
+      }
+    }
+    return std::nullopt;
+  };
+  va_t Address = InvalidVA;
+  for (size_t I = 0; I < Block.Ops.size(); ++I) {
+    const auto &O = Block.Ops[I];
+    if (O.Addr != Address) {
+      Temps.clear();
+      Address = O.Addr;
+    }
+    std::optional<uint64_t> Result;
+    if (O.MemoryOrdering == NdMemoryOrdering::None &&
+        O.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      if (O.Opcode == NdOp::SELECT && O.NumInputs == 3 && O.Output.Size &&
+          (O.Output.isReg() || O.Output.isTemp()) &&
+          O.Inputs[1].Size == O.Output.Size &&
+          O.Inputs[2].Size == O.Output.Size) {
+        if (auto C = Value(O.Inputs[0])) {
+          Arms[I] = *C ? 1 : 2;
+          Result = Value(O.Inputs[Arms[I]]);
+        }
+      } else
+        Result = lowScalarConstantResult(O, Value);
+    }
+    if (O.Opcode == NdOp::CALL || O.Opcode == NdOp::INDIR_CALL ||
+        O.Opcode == NdOp::INTRINSIC)
+      Registers.clear();
+    if (O.Output.isReg()) {
+      const auto &V = O.Output;
+      for (auto It = Registers.begin(); It != Registers.end();) {
+        const auto Base = It->first;
+        const bool Overlap = Base >= V.Offset
+                                 ? Base - V.Offset < V.Size
+                                 : V.Offset - Base < It->second.first;
+        It = Overlap ? Registers.erase(It) : std::next(It);
+      }
+      if (Result)
+        Registers[V.Offset] = {V.Size, *Result};
+    } else if (O.Output.isTemp()) {
+      Temps.erase(O.Output.Offset);
+      if (Result)
+        Temps[O.Output.Offset] = {O.Output.Size, *Result};
+    }
+  }
+  return Arms;
+}
+
 } // namespace
 
 std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff) {
@@ -1039,6 +1125,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         overwrittenRegisterCopies(Img.Arch, Block, MergeWrites);
     const std::map<size_t, llvm::ArrayRef<uint64_t>> UnreadArguments =
         unreadSyscallArguments(Img, Block);
+    const auto SelectedArms = constantSelectArms(Img, Block);
     auto ControlOf = [&](size_t OpIndex) {
       for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
         if (OpIndex >= Boundary.FirstOp &&
@@ -1049,6 +1136,10 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     };
     for (size_t I = 0; I < Block.Ops.size(); ++I) {
       const LowOp &Op = Block.Ops[I];
+      if (const auto Arm = SelectedArms.find(I);
+          Arm != SelectedArms.end() && Op.Output.isReg() &&
+          Op.Output == Op.Inputs[Arm->second])
+        continue; // A proven identity neither reads nor overwrites the GPR.
       const auto [Control, Flags] = ControlOf(I);
       const bool TailCall = Control == LowInstructionControl::TailCall;
       const bool DirectTarget = Op.NumInputs > 0 && Op.Inputs[0].isConst();
@@ -1112,6 +1203,9 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
             llvm::any_of(Unread->second, [&](uint64_t Register) {
               return Register / 8 == Op.Inputs[In].Offset / 8;
             }))
+          continue;
+        if (const auto Arm = SelectedArms.find(I);
+            Arm != SelectedArms.end() && In != 0 && In != Arm->second)
           continue;
         // A zero idiom (`pxor xmm0, xmm0`) or an absorbing constant reads
         // nothing of the register, as LowToMed folds it.

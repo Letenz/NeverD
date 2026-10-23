@@ -14,9 +14,12 @@
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/FileSystem.h"
 
+#include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <memory>
 
 namespace {
 std::string takeString(const char *Text) {
@@ -217,6 +220,115 @@ TEST_F(SessionFunctionDiscovery,
     if (MissingEntry)
       EXPECT_EQ(neverd_func_size(Session, 2), 12);
   }
+}
+
+TEST_F(SessionFunctionDiscovery, CooperativeStopKeepsInventoryAndAllowsRetry) {
+  for (bool AArch64 : {false, true}) {
+    SCOPED_TRACE(AArch64);
+    const std::string Padding(1024 * 1024, AArch64 ? '\0' : '\x90');
+    const auto Path =
+        write("cancel.elf", makeNativeELF(AArch64, 0x400000, Padding));
+    ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+    auto &State = *static_cast<neverd::sdk::Session *>(Session);
+    const auto Count = neverd_func_count(Session);
+    const auto Revision = State.FunctionListRevision;
+    const auto Verified = State.Img.VerifiedFunctionEntries;
+    std::atomic<unsigned> Probes{0};
+    const auto Cancel = [](void *Context) -> int {
+      return static_cast<std::atomic<unsigned> *>(Context)->fetch_add(1) >= 64;
+    };
+    EXPECT_EQ(
+        neverd_session_discover_functions_cancellable(Session, Cancel, &Probes),
+        -2);
+    EXPECT_GT(Probes.load(), 64u);
+    EXPECT_FALSE(State.DiscoveredFunctions);
+    EXPECT_FALSE(State.FunctionDiscovery);
+    EXPECT_EQ(State.FunctionListRevision, Revision);
+    EXPECT_EQ(State.Img.VerifiedFunctionEntries, Verified);
+    EXPECT_EQ(neverd_func_count(Session), Count);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("cancelled"),
+              std::string::npos);
+    std::unique_ptr<void, decltype(&neverd_session_destroy)> Fresh(
+        neverd_session_create(), neverd_session_destroy);
+    ASSERT_EQ(neverd_session_load(Fresh.get(), Path.c_str()), 1);
+    const auto Complete = neverd_session_discover_functions(Fresh.get());
+    ASSERT_GE(Complete, 0);
+    ASSERT_EQ(neverd_session_discover_functions(Session), Complete);
+    const auto &Expected = *static_cast<neverd::sdk::Session *>(Fresh.get());
+    EXPECT_EQ(State.Functions, Expected.Functions);
+    EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+              Expected.Img.VerifiedFunctionEntries);
+    EXPECT_TRUE(State.DiscoveredFunctions);
+    EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
+  }
+}
+
+TEST_F(SessionFunctionDiscovery,
+       CooperativeStopJoinsPendingSnapshotBeforeRetry) {
+  const auto Path =
+      write("pending.elf",
+            makeNativeELF(false, 0x400000, std::string(1024 * 1024, '\x90')));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Count = neverd_func_count(Session);
+  auto &State = *static_cast<neverd::sdk::Session *>(Session);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  const auto Token = State.FunctionDiscovery->Cancel;
+  const auto Revision = State.FunctionListRevision;
+  EXPECT_EQ(neverd_session_discover_functions_cancellable(
+                Session, [](void *) { return 1; }, nullptr),
+            -2);
+  EXPECT_TRUE(Token->load());
+  EXPECT_FALSE(State.FunctionDiscovery);
+  EXPECT_FALSE(State.DiscoveredFunctions);
+  EXPECT_EQ(State.FunctionListRevision, Revision);
+  EXPECT_EQ(neverd_func_count(Session), Count);
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Fresh(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Fresh.get(), Path.c_str()), 1);
+  const auto Complete = neverd_session_discover_functions(Fresh.get());
+  ASSERT_GE(Complete, 0);
+  ASSERT_EQ(neverd_session_discover_functions(Session), Complete);
+  const auto &Expected = *static_cast<neverd::sdk::Session *>(Fresh.get());
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
+  EXPECT_TRUE(State.DiscoveredFunctions);
+}
+
+TEST_F(SessionFunctionDiscovery, ClosingSessionStopsItsOwnedDiscovery) {
+  const auto Path =
+      write("closing.elf",
+            makeNativeELF(false, 0x400000, std::string(1024 * 1024, '\x90')));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  auto &State = *static_cast<neverd::sdk::Session *>(Session);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  const auto Token = State.FunctionDiscovery->Cancel;
+  neverd_session_destroy(Session);
+  Session = nullptr;
+  EXPECT_TRUE(Token->load());
+}
+
+TEST_F(SessionFunctionDiscovery,
+       NonNativeSynchronousQueryDoesNotJoinAnEarlierJob) {
+  const auto Native = write("earlier.elf", makeNativeELF(false));
+  const auto Contract = write("current.evm", "6001600055");
+  ASSERT_EQ(neverd_session_load(Session, Native.c_str()), 1);
+  auto &State = *static_cast<neverd::sdk::Session *>(Session);
+  std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Pending;
+  State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+      State.FunctionListRevision, Pending.get_future()});
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  // A query for the replacement input must not wait for an unrelated job.
+  // It requests retirement, then a later poll drains the completed future.
+  EXPECT_TRUE(State.FunctionDiscovery->Cancel->load());
+  EXPECT_GE(neverd_session_discover_functions(Session), 0);
+  EXPECT_TRUE(State.FunctionDiscovery);
+  Pending.set_value({});
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), 1);
+  EXPECT_FALSE(State.FunctionDiscovery);
 }
 
 } // namespace

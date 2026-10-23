@@ -221,7 +221,8 @@ private:
         return NdType::makeVoid();
       Params.push_back(std::move(Converted));
     }
-    return NdType::makeFunc(std::move(Return), std::move(Params));
+    return NdType::makeFunc(std::move(Return), std::move(Params),
+                            Function.Convention);
   }
 
   /// A record by its name, its members named for display where they lie, as
@@ -743,6 +744,7 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
       prototypeHeader(Name, Function->second.get());
   Signature->PrototypeLibrary = Header ? types::headerLibraryName(*Header).str()
                                        : UserPrototypeLibrary.str();
+  Signature->PrototypeFromHeader = Header.has_value();
   Signature->PrototypeFromCLibrary =
       Header && types::headerLibrarySystem(*Header).has_value();
   types::RenderOptions Options;
@@ -911,6 +913,7 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   Typed.ParamEntryLocations.clear();
   Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
   Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
+  Typed.PrototypeFromHeader = Known->PrototypeFromHeader;
   Typed.PrototypeFromCLibrary = Known->PrototypeFromCLibrary;
   Typed.NoReturn = Known->NoReturn;
   if (Main && (Typed.Name.empty() || isSynthesizedFuncName(Typed.Name)))

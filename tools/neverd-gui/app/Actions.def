@@ -33,6 +33,11 @@ NEVERD_ACTION(
     QT_TRANSLATE_NOOP("Actions", "Offline package &review..."), "", "open",
     QT_TRANSLATE_NOOP("Actions",
                       "Inspect local package evidence and analyst reviews"))
+NEVERD_ACTION(FileCompare, QT_TRANSLATE_NOOP("Actions", "Compare &binaries…"),
+              "", "compare",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Compare two binaries, inspect changes and "
+                                "review function correspondence"))
 NEVERD_ACTION(FileReload,
               QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
               "refresh",

@@ -198,6 +198,166 @@ GUI refreshes retain loaded context within the per-side query budget and keep a
 prefetch margin, so replacing unchanged rows does not shrink and regrow the
 window used to route branch arrows. Revision and navigation fences still apply.
 
+## Structural comparison ownership
+
+`lib/diff` owns the immutable comparison model, normalization-independent matching,
+block/instruction deltas, correspondence overrides and versioned persistence.
+It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+The C API's `functions_json` inventory projects the same accepted mappings and
+retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
+the full group's target-side inventory, with ordinary search/sort/paging; it
+does not run another matcher or promote a candidate. Mapping edits and restore
+invalidate that inventory cache. CLI and the Qt counterpart picker consume this
+projection; the picker keeps bounded pages and invalidates its selection when
+the worker's comparison revision changes.
+`DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
+immutable dependency graph. `MedDataFlow` is its read-only adapter from the
+pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
+preserves PHI predecessor labels and instruction origins, and distinguishes
+parameters from call clobbers. This adapter depends on `IRMed`, not SDK sessions.
+Call-argument metadata binds to an exact MedIR block/operation, with duplicate
+or stale owners rejected. Its arguments remain a distinct span of node inputs,
+separate from raw call operands and preserved clobber prefixes. Missing argument
+metadata stays unknown. This v2 observation does not assert ABI formal bindings.
+The comparison adapter requests `PipelineOptions::MedAnalysisOnly`: the existing
+machine ABI preparation, including omitted-callee summaries, ends after final
+MedIR verification and before LLVM emission. `usesMachineMedIR()` keeps source
+presentation hints out of analysis as it does for lifting. Deferred source
+HighIR is a different stage and may not yet contain System V call arguments.
+Data fingerprints report open dependency frontiers. Control slices use
+postdominators of observed exit paths; missing exits, aliases, opaque calls,
+exceptional flow and unknown inputs remain gaps rather than inferred effects.
+`FlowMatch` verifies finite SSA neighborhood candidates with a sparse definition
+bijection and exact operand/PHI edge checks after fingerprint nomination. Tied
+distinct definitions abstain; a matched neighborhood retains open control/data
+frontiers and supplies no unchanged-function or semantic-equivalence conclusion.
+`FlowMatchInput` validates a borrowed immutable graph/fingerprint view once for
+repeated root checks. The collection owns that lifetime. Region candidates do not
+rescan the whole graph for each root; external raw-graph calls still validate.
+`FlowRegions` owns bounded root indexing, exact neighborhood verification and
+overlap grouping. Its node/PHI-block pairs bind to immutable observations;
+coverage unions nodes rather than counting overlapping anchors twice. Native
+and SSA region paths share `regionExplanations` for topology/call/module facts.
+`FlowRegionsJSON` owns strict streaming persistence and bounded previews; restore
+recomputes mappings before publication. Neither frontend may infer equivalence
+from these hypotheses or replace the native function delta with them.
+Saved work counters are bounded historical diagnostics; cache and host sort
+changes must not make identical observed mappings fail evidence binding.
+`CallImpact` indexes admitted native `Instruction::Callee` relations, including
+tail transfers and resolved import slots, and owns bounded breadth-first caller
+or callee witnesses. Global unresolved sites remain visible even without a path
+to the seed. Entry/export traits come from native discovery, never absence of
+callers. Depth/function frontiers, partial indexing and cancellation are separate
+from unknown call effects. This supplies possible call reachability; parameter,
+return and alias propagation and path feasibility are not inferred. The C API
+caches one exact query across page kinds; frontends only select/render records.
+`ChangeObservations` owns bounded review facts over accepted native alignments
+and their exact retained SSA graphs. Unique compatible native-origin families
+anchor local facts and unique direct synthetic arithmetic operands; synthetic
+addresses never supply original-code identities. Unchanged native instructions
+can expose rewritten operand changes, while ambiguous/unsupported associations
+retain native changes. Dependency contexts and priority are explicit heuristics,
+not security effects or fix verdicts. The C API binds one cached query to pair,
+snapshots and SSA recipes and shares cancellation/deadline with delta acquisition.
+Filtering/paging only select retained records; mapping edits and restore retire
+that derived cache. GUI/worker/CLI consume the same evidence and scope.
+`CallEffectReview` joins native CallImpact sites in reached callers to retained
+SSA calls with unique original origins. Only exact bodiless import identities
+and admitted native ABI metadata can ask the shared public
+`safety/CallEffects.h` interface for an applicability-checked contract. The
+existing Safety descriptor/catalog remains the sole owner of semantic families,
+arity/platform constraints, argument roles and fallible-release conditions.
+The diff consumer neither guesses external identity from names nor clears
+SSA effect/alias gaps. Native reachability and effect inspection have separate
+finite allowances, one request deadline and independent completion states.
+Cached pages retain original site/node identities; reopening recomputes them.
+This is call-contract review, not parameter/return/alias propagation or security
+validation. SDK, CLI, worker and Qt share the impact `effects` page.
+`ReviewJournal` owns manual case records independently of computed evidence and
+mapping override history. An append validates fields, current accepted pair,
+expected journal head, per-record/aggregate text budgets and content/analysis
+identity digests. Global and per-case/pair links are deterministic, unauthenticated
+integrity checks. They are never security proofs. History survives mapping edits;
+latest assessment and active pair binding are separate read-time properties.
+Schema 3 persists the journal; schema 2 migrates with an empty journal. Restore
+validates history and function ownership before publishing any result. The C API
+owns serialized append admission, and CLI/worker/Qt share those exact rules.
+`ScalarValidation` owns the optional `lifted-scalar-returns-v1` profile. Native
+admission is shared with the SDK before invoking the pipeline, so call and
+exception frontiers never trigger speculative interprocedural proof work.
+`ComparisonScalarValidation` uses fresh strict machine-ABI lifting with NoOpt
+and scaffold mem2reg, requires complete matching decode/lift audits, and locates
+definitions by original-entry metadata. Diff verifies exact ordered GPR input
+locations and widths, then copies the body while removing only checked native
+provenance packaging and the pointer-null policy. The SDK retains the selected
+MedIR's normalized exception record. Diff reuses `describesUnwindOnly()` and
+`WindowsEHMetadata` canonical encoding, binds the ABI and complete native code
+range, and admits that attachment only for a complete frame-only record. Its
+projection has a separate finite input allowance; language handlers and partial
+records stay unsupported. Unknown contracts remain
+refusals; the Analysis importer still refuses memory and pointer effects.
+The existing scalar prover owns arithmetic, definedness, termination and finite
+control partitions under an explicit defined-bitvector input domain. No other
+layer reimplements these semantics. Results report native/model identities,
+assumptions, budgets and proof scope; they neither certify lifting nor prove
+complete native state or security. Borrowed-session C API queries rebind both
+complete live native revisions, releasing each temporary snapshot before the
+next side. The additive `run_owned` API instead transfers exclusive session
+ownership into the comparison at initial capture, nulling the caller's slots.
+Those sources have no external mutation handle; only complete native capture
+permits the owned scalar query. CLI and worker use this path, preserving the
+loaded image, debug context and analysis settings without a second snapshot
+decode on every query. This is an ownership boundary, not a partial revision or
+path/timestamp cache. Both paths freshly lift and prove the selected pair, and
+reports identify the binding mode. Reopen constructs fresh sources; saved files
+never authorize proof reuse. Failed worker replacement retains the old comparison
+and its sources; destruction/close releases them. Other immutable snapshot
+queries retain their session-independent contract.
+`LoadProgress` in support owns borrowed loading progress and stop checkpoints.
+It carries no session state and is never retained in a `BinaryImage`.
+Controlled loader calls restore the previous control on every exit and translate
+stops to `operation_canceled`; legacy calls retain their existing contracts.
+Hashing keeps the shared hardware-accelerated SHA-256 implementation and polls
+between bounded byte batches, as does raw-byte copying. Native parsers and
+load-time discovery poll at phase/loop boundaries; PDB work shares its existing
+progress checkpoints. The SDK latches stop requests only for the synchronous
+load and returns -2 before publishing any replacement. Its final preparation
+checkpoint precedes decoder initialization and session publication; once
+publication starts, completion wins. File I/O, allocations, individual metadata
+helpers and post-publication sidecar reads remain indivisible. These checkpoints
+set no input-size ceiling or hard latency guarantee. Worker input loading
+forwards actual per-side stages and preserves the old comparison on stop.
+`lib/sdk/capi/BinaryComparison` adapts the native loader and the shared
+`InstructionFlow` traversal; it must not introduce a second sized/unsized or
+exception-chunk traversal. The adapter preserves original bytes/operands and
+binds the snapshot to input content, ABI, settings and normalization revisions.
+Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+`ComparisonDataFlow` runs bounded selected-function native pipeline jobs, then
+projects their verified SSA into immutable `FlowEvidence` collections. It owns
+the session/loader boundary; graph validation, persistence and binding remain in
+`lib/diff`. Collection scope and every unsupported/limited function are explicit.
+Reopen compares saved graphs with fresh pipeline observations. Dependency graph
+pages and slices never supply semantic-equivalence claims or replace native
+function deltas. Pipeline cancellation is currently between functions; graph
+work cooperates with the shared control contract.
+The CFG builder marks virtual external-entry tail stubs with synthetic LowOp
+sequence numbers. Low-to-Med preserves this distinction in `OriginSeq`; consumers
+must not rebind such operations to bytes at the callee's entry. Actual decoded
+tail transfers keep their original instruction provenance.
+
+`NeverDCAPIDiff` owns operation admission, snapshot lifetime, cooperative stop,
+page caches and analyst history. CLI and `ComparisonService` in the Qt-free
+worker share that C ABI. Comparison inputs use separate sessions, and their
+mapping revision is independent of the current project's revision. Existing
+worker graph layout/indexing serves comparison topology as well. The desktop
+owns bounded display caches and navigation generations, not matching decisions.
+Function-detail measurement shares one bounded SDK cache across full, paged and
+CFG views. Its stop state is separate from native body coverage; cancelled or
+timed-out deltas do not acquire unchanged rows or block annotations. The worker
+owns the advertised cooperative-operation list consumed by the GUI. Explicit
+refresh retries a stopped query; paging itself does not restart it.
+See [binary comparison](binary-diff.md) for the current profile and limitations.
+
 ## Checked alignment recovery
 
 `arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.
@@ -508,6 +668,24 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
+Independent declaration providers use `types::importPrototypes` at generation
+time, through `neverd_types_convert` and the standalone CLI. It imports missing
+prototypes with their dependency closure, shares structurally identical types,
+and renames conflicting types and affected dependents without replacing earlier
+declarations. Type identity includes pointees, qualifiers, callbacks and enum
+values as well as layout. Exact prototype selections keep only the selected
+dependency closure; absent selected names and provider parse errors prevent
+an import. This owner
+is separate from the runtime priority merge of system and program types; the
+flattened generated headers add no provider merge during decompilation.
+Callback types retain their source calling convention when local declarations
+become `NdType` values. The lightweight `CallingConvention.h` and existing
+`CallingConventions.def` own that identity; CodeView imports share one mapping.
+HighC and LLVMC use `declarationToC` to attach the convention to the correct
+function layer, including a function returning a callback. This display
+evidence does not authorize an ordinary-C source ABI projection for a callback
+with a different convention. Unsupported CodeView callback conventions remain
+unknown in debug types and opaque in local types, with an import count.
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
 a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
 provider headers declare into `lib/types/headers/WindowsKernelX64.h`
@@ -966,6 +1144,32 @@ over automatic Darwin SDK source bindings; header record layouts retain them.
 Unsupported record carriers fail explicitly. This does not add ARM32 record
 placement or general mixed floating record-call support.
 
+Selected platform headers have their own prototype provenance, separate from
+the host C-library inclusion policy. Windows SDK records therefore use the
+same placement adapter even when their definitions are embedded locally.
+Windows x86/x64 hidden record results consume the first physical argument;
+both C emitters write the returned bytes to that buffer and preserve the
+EAX/RAX pointer result. x86 `stdcall` retains its stack cleanup after record
+placement. LLVM-C does not redefine a record supplied by the included header
+of the adapted call.
+
+`floatingCallArguments` uses the same placement authority for complete fixed
+float/double signatures whose arguments and result use FP registers. LLVM
+import emission verifies those exact SSA operands and widths before declaring
+the typed callee, including immutable import identities absent from libc tables.
+Windows x64 and ARM64 publish these operands before SSA and record the scalar
+return width; later call setup recovery preserves them. Writable import slots
+retain their runtime target even when the declaration establishes its ABI.
+Omitted-callee conversion and its cache include the same signatures,
+independently of the selected functions. Forwarding recovery keeps each scalar
+argument width separate from the result width and admits incoming FP parameters
+only along an unclobbered entry path. Its existing bounded summary worklist
+propagates the resulting facts. `recoveredFloatingCallArguments` checks the
+complete fixed signature for both LLVM declarations and HighC call metadata;
+expression types alone do not establish a nonvariadic external signature.
+Mixed classes, HFA records and stack overflow need their separate adapters;
+this scalar contract supplies no such coverage.
+
 LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
 signatures. Every printed call of a symbol must agree before the writer uses
 one typed declaration and matching argument/result conversions. An unused
@@ -1176,6 +1380,17 @@ Explicit synchronous discovery can consume the same job and still returns
 only when discovery is complete. Worker polling waits for requests rather
 than busy-spinning while a snapshot is computing. Older SDKs retain the
 synchronous fallback.
+
+`FuncDetector` owns cooperative discovery stop across its metadata, native
+architecture scanners, candidate verification and overlap walks. Its controlled
+overload joins scan workers and returns no result on cancellation; verified entry
+publication occurs only after all filters and the final stop check. The SDK's
+additive cancellable discovery entry point shares that owner, distinguishes a
+stopped call from failure and preserves the prior inventory. A pending stepped
+job owns an atomic stop token; stale revisions and session destruction request
+stop before retirement or joining. DIFF forwards its cancellation/deadline probe
+to this same discovery path and retains the stopped extraction phase, without
+promoting a partial function list or treating it as a completed empty inventory.
 
 The worker polls stepped function discovery when the engine exports it;
 the client must also opt in through `open.step_discovery`. The default preserves
@@ -1545,10 +1760,16 @@ Nonzero residue branches may keep an exact opaque factor. Every factor's
 complete coefficient map must first agree with the common modular base. In
 each base residue, the known low values give conservative trailing-zero bounds
 for all cofactors. A factor becomes a constant only when those bounds hide
-all of its unobserved bits; at most one remaining factor is retained. Its
-coefficient table can use a narrower proved reading without assuming the
-factor's upper bits are zero. The emitter compares retained factors with
-combined coefficient tables for shared atoms. Known low bits also reduce an
+all of its unobserved bits. Several remaining factors can be retained when
+an independent valuation bound proves that every product of two or more
+unobserved remainders vanishes. Prefix and suffix products build their exact
+linear coefficients without division, including zero and noninvertible row
+values. The constant table corrects the repeated constant product. If any
+cross term remains observable, the whole row is refused. Each coefficient
+table can use a narrower proved reading without assuming a factor's upper
+bits are zero. Equal coefficient tables share one emitted lookup. The emitter
+compares retained factors with combined coefficient tables for shared atoms.
+Known low bits also reduce an
 atom's coefficient precision, with the discarded coefficient times its known
 value retained in the constant table. Disjoint residue branches can share
 arithmetic and bitwise structure while selecting their differing literals;
@@ -1558,6 +1779,20 @@ once a full common base is proved, an unprofitable table leaves the remaining
 allowance for polynomial recovery instead of starting another residue search.
 The residual search shares the remaining work/storage allowance and accepts
 only a smaller completed result.
+For multiple retained factors, bounded Boolean decision graphs can prove the
+entire observed word directly or reduce the exact linearized reading. The
+graphs use complemented edges, shared word operations and known zero bits;
+unsupported operations remain exact opaque words. A shared odd branch is
+isolated only when the even branch is proved zero, and its selector is restored
+before emission. Sparse Boolean polynomials are derived from complete decision
+graphs and factored before emission, avoiding exponential printed expansion.
+Optional refinement retains the last completed candidate. Completed attempts
+are request-local; storage refusals retry when a larger allowance is available.
+The deep walk keeps original opaque inputs and changed original products
+eligible. Their rewrites propagate through the canonical builder without
+repeated analysis of the emitted reading. Independent linear tails
+finish before walking a generated product reading. A concrete odd-input
+witness may reject further zero-proof attempts but never authorizes a rewrite.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.
@@ -5033,9 +5268,104 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
+INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
+returns CF and the lifter clears its other arithmetic flags. LKGS selector and
+descriptor reads remain inside the native instruction; active GS base is not
+changed. SENDUIPI's full-width index is scalar, as is INVLPGB's address/control
+descriptor. INVLPGB's input width selects native address size. HRESET's ignored
+imm8 is canonicalized to zero, while EAX remains an explicit input.
+`X86Sgx.h` separately owns bounded ENCLS/ENCLV completion: four natural-width
+GPR inputs, primary rAX and auxiliary rBX/CF-ZF outputs.
+`X86SgxLeaves.h` defines conditional register reads so unused leaf operands do
+not create source arguments or unknown-register traps; only EDBGRD publishes
+a changed rBX value. Call-graph register summaries evaluate
+constant selections with the shared LowIR scalar evaluator; MedIR folds the
+same chosen value before inferring SGX parameters, preserving its provenance. `X86SgxAsm.h` keeps
+LLVM and both C routes on the same volatile assembly and early-clobber
+constraints. The lifter projects native CF/ZF for flag-writing leaves, preserves
+all arithmetic flags for ECREATE/EADD/EEXTEND/EPA/EAUG, and never changes DF.
+Implicit DS accesses and all enclave checks remain inside the instruction;
+address/segment/REX overrides do not change the operands. Native outputs use
+no stack scratch. Return inference accepts the validated primary completion,
+while strict scalar emulation refuses the environment-dependent operation.
+ENCLU's entry, exit, resume and asynchronous continuation remain unsupported.
+Far/interrupt returns do not use the bounded system contract or ordinary ABI
+RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
+and its nonlocal continuation are represented.
+The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
+Their historical intrinsic IDs remain stable. Both enqueue operands are
+addresses; only the command-source address inherits FS/GS, while the portal
+retains long mode's implicit flat ES. LLVM resolves both address identities
+without issuing a load or store, then executes the owned assembly and captures
+ZF. HighC and LLVMC use the same operand and effect constraints. The concrete
+enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
+retry behavior; CET writes still require an execution environment it lacks.
+Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
+CET writes, after validating the same operand contract.
+The i386 forms of ENQCMD/ENQCMDS/MOVDIR64B instead use
+`X86SegmentedBlockMemory`. `X86SegmentedBlock.h` owns the serialized instruction,
+source-segment and address-size selector. The system shape requires a constant
+selector and two 32-bit offsets. Native lowering never resolves those offsets
+as process pointers: the hardware instruction owns source DS/ES/SS/CS/FS/GS and
+implicit destination ES, including descriptor rights and limits. Default SS
+selection happens in the lifter before changing the address register. The
+shared assembly plan uses SI/DI at the encoded address width. Static emulation
+refuses without descriptor state; it cannot inherit the flat x64 projection.
+MOVDIRI and long-mode MOVDIR64B also use the shared native memory contract.
+MOVDIRI retains its scalar width; MOVDIR64B carries both addresses, with FS/GS
+applying only to the source. No ordinary load, masked store or eager alignment
+check replaces the instruction's WC transaction and write-completion atomicity.
+The scalar emulator retains a single-threaded ordinary-memory projection,
+including a complete source snapshot before the block destination write. It
+does not model cache/WC protocol, feature faults or real device completion.
+X86 LLVM lowering preserves MFENCE/LFENCE/SFENCE as hardware instructions with
+compiler memory effects; generic acquire/release fences do not guarantee the
+barriers required by direct or non-temporal stores.
+LLVM-to-C collects ISA headers from the same intrinsic-rendering decision on
+all architectures, including x86 fence assembly rendered as `_mm_*` calls.
+Explicit-operand MSR operations retain their encoding family in `X86MsrAccess`.
+The shared shape owns selector constness/width, full-width data and read/write
+completion. The MSR plan in `X86SystemStateAsm.h` supplies exact native bytes,
+fixed RAX data/RCX selector constraints, side effects and memory ordering to all
+three output routes. Exact bytes preserve the Intel-defined URDMSR register
+roles despite an LLVM 23 assembler discrepancy, and retain APX requirements
+for EVEX forms even when operands are allocated low registers. Native hardware
+owns feature/CPL/bitmap/intercept checks; software emulation without that state
+continues to refuse the effect. LLVM-to-C admits only the complete owned
+assembly/signature/constraint/effect contract, including constant immediate
+selectors. No declaration-only helper or legacy serializing MSR substitution
+implements these forms.
+Operand-free WRMSRNS instead uses `X86WriteMsrNonSerializing` with three
+32-bit inputs (ECX, EAX, EDX) on x86 and x64. The system inventory also owns
+long-mode `X86ReadMsrList` and `X86WriteMsrList`: two linear table addresses
+and a 64-bit mask produce the real remaining mask. Their assembly binds RSI,
+RDI and read/write RCX without adding segment bases or preloading table entries.
+Native hardware retains privilege, alignment, MSR validation, load-ahead,
+ordering and partial-completion behavior. Restart at the faulting instruction
+uses the updated RCX in the machine exception frame. The scalar emulator has
+no MSR environment and refuses these effects, including an empty list mask.
+This bounded native contract does not emulate privileged MSR execution.
+Return-contract analysis also consumes the validated system, virtualization
+and explicit-MSR output shapes. Side effects do not make an explicit result
+undefined; a function returning RCX after MSRLIST must retain a scalar return
+in both C routes. Invalid outputs on a void operation receive no such evidence.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.
+
+`X86FPEncoding` owns legacy, REX/REX2 and VEX floating-point prefix admission
+and raw-byte/decoder-detail agreement. Instruction families retain opcode,
+width and reserved-field rules. Register selection distinguishes GPRs,
+vectors and addresses: REX2 extends GPR/address banks while ignoring R4/B4 for
+XMM operands; 32-bit VEX ignores the documented B and used-vvvv extension
+bits without relaxing unused-vvvv or LES/LDS disambiguation. The shared address
+tail validator retains wrapping and segment ownership.
+
+LLVM-to-C's i386 scalar carriers use signed/unsigned `_BitInt(128)` aliases
+when the target compiler has bit-precise integers but no native 128-bit aliases.
+This preserves 65..128-bit value operations, including packed numerical/MXCSR
+results. It does not establish every wide-integer runtime or calling convention.
 
 `IntrinsicValueEffects` defines positive, shape-validated contracts for operations
 whose effects are entirely explicit values. `LowIntrinsicEffects` additionally
@@ -5848,6 +6178,16 @@ The shared LLVM model admits canonical scalar `llvm.bswap` at i16, i32 and i64 t
 The LLVM importer turns each reached guest load/store alignment above one into a sticky definedness obligation on its actual 64-bit address. Access widths and memory effects remain unchanged; masks, comparisons and accumulation use the existing construction budgets. Omitted textual alignment uses the parsed ABI alignment; `align 1` emits no guard. This adds no entry assumption or accessible bytes. State-object accesses retain their separate eight-byte alignment contract, and atomic/volatile accesses remain unsupported.
 
 `modelLLVMScalarFunction` reuses this importer for pure `noundef` integer arguments and integer returns (`i1/i8/i16/i32/i64`). The shared model handles funnel-shift endpoints and guarded multiplication with double-width products. `checkLLVMScalarEquivalence` executes both models through `SymExec`, discovers controlling input bits, exhausts their complete combinations and keeps all other bits symbolic. Every return must agree and every executed operation must remain defined; partition, path, node and cumulative work budgets bound the query. `SymContext::constantWindow` exposes cumulative query accounting without relaxing its existing per-query ceilings. Refusal permits no rewrite. This read-only C++ query neither changes default source output nor supplies a persistent native/ABI or compiler certificate.
+
+`LLVMScalarModelOptions` keeps strict `RequireNoUndef` as the default and
+allows an explicit `DefinedBitvectors` input precondition for read-only queries.
+Both model and proof results retain that domain; no input IR annotation changes.
+All source-definedness obligations, unknown-contract refusals and termination
+checks remain. A caller-supplied stop probe is polled during charged construction
+and proof work and before successful publication. Cancellation is separate from
+resource exhaustion; bounded LLVM verification and local algebra queries can
+delay a cooperative stop. Existing state-wrapper and source-recovery defaults
+are unchanged.
 
 `projectLLVMScalarResult` clones an explicitly selected integer return field and bit window through struct/array `insertvalue` packaging. It retains all arguments, control flow, scalar operations, annotations and `assume` calls, removes only dead aggregate packaging, and validates the result through the shared scalar model. Construction and model budgets are separate; unsupported contracts or exhausted limits publish no module and leave the input unchanged. Every required status, value and preserved-state observation still needs a complete proof; selecting a field establishes no entry, frame or native ABI contract.
 

@@ -131,14 +131,19 @@ bool MedLLVMEmitter::emitX86Fence(const MedOp & /*Op*/, Intrinsic IC,
   using I = Intrinsic;
   switch (IC) {
   case I::Mfence:
-    Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
-    return true;
   case I::Lfence:
-    Builder.CreateFence(llvm::AtomicOrdering::Acquire);
+  case I::Sfence: {
+    // LLVM's acquire/release fences can disappear on x86. In particular a
+    // release fence does not drain MOVDIR/non-temporal stores. Keep the actual
+    // hardware barrier, including LFENCE's execution-ordering semantics.
+    const char *Mnemonic = IC == I::Mfence   ? "mfence"
+                           : IC == I::Lfence ? "lfence"
+                                             : "sfence";
+    auto *Signature = llvm::FunctionType::get(Builder.getVoidTy(), false);
+    Builder.CreateCall(
+        llvm::InlineAsm::get(Signature, Mnemonic, "~{memory}", true));
     return true;
-  case I::Sfence:
-    Builder.CreateFence(llvm::AtomicOrdering::Release);
-    return true;
+  }
   case I::Pause: {
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::x86_sse2_pause);
@@ -1029,19 +1034,6 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
     Builder.CreateCall(IA, {Type, Descriptor});
     return true;
   }
-  if (IC == Intrinsic::X86MsrAccess) {
-    if (!intrinsicX86MsrAccessShapeIsValid(IC, x86MsrAccessMedShape(Op)))
-      llvm::report_fatal_error(
-          "x86 MSR access intrinsic has an invalid operand/output contract");
-    llvm::report_fatal_error(
-        "x86 MSR access requires an authenticated architectural execution "
-        "environment");
-  }
-  if (IC == Intrinsic::CetWrss || IC == Intrinsic::CetWruss ||
-      IC == Intrinsic::Enqcmd || IC == Intrinsic::Enqcmds)
-    llvm::report_fatal_error(
-        "x86 system-memory effect requires an authenticated architectural "
-        "execution environment");
   if (IC == Intrinsic::AMXLoadConfig || IC == Intrinsic::AMXStoreConfig ||
       IC == Intrinsic::AMXTileLoad || IC == Intrinsic::AMXTileStore ||
       IC == Intrinsic::AMXTileZero || IC == Intrinsic::AMXClearStartRow ||

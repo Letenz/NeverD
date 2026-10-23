@@ -29,6 +29,85 @@ also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
 
+`X86SystemMemory.*` and `X86SystemMemorySource.*` cover WRSSD/Q, WRUSSD/Q and
+long-mode ENQCMD/ENQCMDS through the shared system contract. Run
+`NeverDX86SystemStateTests`, `NeverDX86SystemSideeffectTests` and
+`NeverDX86VirtualizationSourceTests`, together with the APX existing-GPR tests.
+The source suite covers ELF/COFF/Mach-O, both pipeline optimization settings,
+32/64-bit widths, source FS/GS and long-mode address-size overrides. Generated
+HighC, LLVM-to-C and LLVM IR compile at O0/O2; the repository LLVM backend also
+produces native objects. Linux x64 subprocess tests compare signal and fault
+code with original machine bytes for invalid operands, including instruction
+enablement/privilege before address faults. They do not certify successful
+shadow-stack updates or real device enqueue completion on this host. Malformed
+assembly, missing effects and forged memory attributes remain rejected. The
+Windows HighC cases also retain the unsegmented CET MSVC intrinsics and header.
+Clang compiles their actual generated C for i686/x64 Windows MSVC targets at
+O0/O2 with shadow-stack intrinsics enabled; this is compile-only coverage.
+The fixture supplies standard memory prototypes when target CRT headers are
+unavailable, retaining the compiler's actual intrinsic headers and emitted bodies.
+The existing concrete enqueue tests independently cover retry, unchanged memory,
+source/header/portal fault order and missing CPL/PASID state.
+
+`X86SegmentedBlock.*` and `X86SegmentedBlockSource.*` additionally cover i386
+MOVDIR64B/ENQCMD/ENQCMDS with explicit source segments and implicit ES. The
+matrix compiles every source segment and both address widths for ELF/COFF/Mach-O.
+Freestanding Linux i386 execution needs compatibility mode and `modify_ldt`;
+MOVDIR64B success also needs the host feature. The driver compares raw bytes
+with both C routes, LLVM and native objects, checks independent copied bytes
+and flags, and exercises nonflat ES/FS, read-only/limited ES, source limits and
+alignment faults in isolated children. Enqueue success on a real device is not
+qualified. The scalar emulator must refuse without descriptor state.
+
+The system-memory matrix also covers 24 MOVDIRI/MOVDIR64B encodings, including
+16-bit addressing within the i386 target, long-mode address-size overrides,
+both scalar widths and FS/GS. `X86DirectStore.*` checks scalar memory projection
+and malformed decoder detail. Run `NeverDX86MOVDIR64BStateTests` for source
+snapshots, overlap, fault ordering and destination write admission.
+`X86DirectStoreSource.*` executes both C routes, emitted LLVM IR, repository
+LLVM objects and original bytes on a host with the corresponding feature.
+It checks aligned/unaligned scalar stores, full-width values, preserved flags
+and overlapping block sources against an independent byte-array oracle at
+O0/O2 and both pipeline settings. A scalar stack fixture verifies that a later
+load observes the direct store rather than a forwarded earlier value.
+`X86FenceSource.*` verifies that all three
+hardware fence instructions survive LLVM optimization and object generation.
+These checks do not measure concurrent bus transactions or device completion;
+their native instruction and memory-effect contracts retain those operations.
+
+`X86MsrAccessSource.*` in `NeverDX86VirtualizationSourceTests` covers all 12
+explicit MSR families, live/dead read results, both pipeline settings and
+ELF/COFF/Mach-O source output. It checks exact object bytes from repository LLVM
+and O0/O2 compilation of both C routes and LLVM IR. Linux x64 subprocesses
+compare signal and fault code with original bytes using CPL3 and out-of-range
+USER_MSR selectors. A separate controlled signal completion then verifies
+full-width read results, write values and register selectors, including dead
+results. This isolates register transport from actual MSR accessibility.
+Recovered register arguments, immediate constness, fixed
+register constraints, wrong modes and forged assembly/effects have separate
+checks. These tests do not qualify successful CPL0 or USER_MSR-enabled accesses.
+The APX existing-GPR suite checks the same LowIR shape and emulator refusal;
+the Capstone `x86_apx_evex_msr` unit checks decode, access, groups and reserved
+fields.
+
+`X86ImplicitMsr.*` and `X86ImplicitMsrSource.*` extend the system-state/source
+targets with operand-free WRMSRNS and long-mode RDMSRLIST/WRMSRLIST. They
+check strict encoding/detail agreement, fixed input widths, linear addresses,
+RCX completion and malformed IR/assembly rejection. The common source matrix
+covers ELF/COFF/Mach-O and both word sizes where valid. Linux x64 probes
+compare real CPL3 faults with original bytes, then use a separate controlled
+signal handler to inspect fixed registers, supply a distinctive mask result,
+and resume the same instruction after clearing one mask bit. Sparse/empty
+masks and live/dead results expose eager table accesses or invented completion.
+These are register-transport and restart checks, not successful CPL0 MSR reads
+or writes; actual MSR validation, ordering and partial progress still need a
+privileged execution environment. Generated i386 WRMSRNS has compile-only
+native coverage. The scalar emulator must refuse without an MSR environment.
+`NeverDReturnContractTests` checks that validated system, VMX and explicit-MSR
+results survive return inference, while malformed outputs do not. The MSR
+source fixtures also assert non-void return types in HighIR and LLVM, so an
+incidental physical RAX value from a C `void` function cannot pass the oracle.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.
@@ -44,8 +123,28 @@ selected functions execute against an independent provider observing every
 record field and following parameter; whole modules are syntax-checked with
 their original import-slot aliases. Those aliases need the SDK's image linker
 for runtime binding. Other hosts explicitly skip the native glibc test.
+An original linked Windows x64 record fixture also exercises hidden result
+storage through both C emitters at O0/O2. Its independent Linux host provider
+checks every argument bit, one call, the returned buffer address and surrounding
+sentinels. This checks generated-C behavior, not native Windows execution.
+`I386CallContract.HeaderRecordStdcallKeepsItsStackCleanup` checks that a read
+after a record-taking stdcall still reaches the caller's original stack argument.
 `LocalTypesDebugContext.RecordParametersRetainCompleteABILayout` checks alignment,
 scalar leaves and refusal to publish a partial bitfield layout.
+
+`FloatingCallArguments` checks complete float/double register signatures and
+rejects unsupported classes, stack overflow and special conventions.
+`Win64CallContract.HeaderOnlyFloatingImportRetainsItsTypedABI` and
+`AAPCS64CallContract.WindowsHeaderFloatsSurviveSelectionAndBothEmitters` check
+header-only imports through both routes. Their generated C executes against
+an independent scalar provider on the host; LLVM entries retain their machine
+vector carriers. Read-only and writable IAT slots retain their distinct target
+semantics. The ARM64 matrix uses two forwarding layers, independent parameter
+and return widths, and repeated function selections with a shared cache.
+`MedABIPass.ForwardedFPParametersRequireAnUnclobberedEntryPath` rejects prior
+calls, joins and exceptional entry paths. The declaration and result-promotion
+tests retain incomplete-width, variadic and unbound-SSA counterexamples.
+This is not native Windows ARM64 execution coverage.
 
 Run these with the System V, i386 and AAPCS64 call-contract tests and the source
 control-flow tests after changing this shared boundary. The stack-join
@@ -441,7 +540,11 @@ odd-product residues, carry propagation and nested bitwise/width projections.
 Its degree-4–256 products include a useful consecutive offset block and an odd
 residual tail, so the higher-degree cases still require more than parity.
 Sixteen nearby controls per width must retain their nonzero behavior.
-Run all nineteen families at
+Use `--family multiple-residual --count 128` for nonzero degree-4–64 products
+with simultaneous independent high-bit disturbances and nearby cases with
+observable cross terms. Keep the previous nineteen families frozen when
+checking performance and output cost.
+Run all twenty families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -474,6 +577,20 @@ domains, check independent 8–257-bit arithmetic, and verify that a short budge
 can return only a completed equivalent candidate. Distributed quartic/octic
 source fixtures and a
 nonzero neighbor execute through both C backends and all CLI/worker routes.
+Multiple-residual tests cover independent arithmetic through 257 bits,
+exhaustive small domains, full-width Z3 checks and exact/short cumulative
+resources. Quartic/octic machine-code fixtures and an observable-cross-term
+neighbor execute through all six CLI/worker source routes and both C
+optimization levels, including ordinary/enhanced cache isolation.
+Decision-word tests cover complemented odd/even branches, sparse Boolean
+reconstruction, casts, shifted constant tables with overshifts and opaque
+division inputs. Zero words must preserve their original width. Attempt-cache
+tests cover context isolation, storage refusal and reuse under larger scratch
+allowances when storage did not limit the preceding search.
+Generated-reading regressions require the deep walk to simplify an original
+opaque division's numerator and propagate it through the emitted proof.
+Mixed quartic and degree-24 residuals must also leave work for the surrounding
+linear tail within a fixed 65,536-work request.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.
@@ -688,6 +805,19 @@ reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
 `rand_r` writes and invalid/read-only pointers. Native callers run at O0/O2
 with ordinary, packed and RELR relocations on available CPU backends. Custom
 state generators retain an explicit unsupported test.
+
+`X86SystemExtensions.*` checks bounded UINTR, LKGS, HRESET and AMD broadcast TLB
+control operands, TESTUI's six arithmetic flags, decoder-detail refusal and
+shared shapes. `X86SystemExtensionsSource.*` covers source/native return use,
+owned-assembly refusal and Linux x64 signal/code comparisons against original
+bytes. A separate signal completion oracle inspects actual instruction inputs
+and supplies both CF values through sigreturn; it does not qualify successful
+privileged execution, UITT/UPID writes or remote TLB completion. If UINTR is
+already enabled, its real result is compared instead of claiming controlled
+completion. The common system-source matrix also compiles i386 HRESET and
+INVLPGB/TLBSYNC and covers ELF/COFF/Mach-O, both optimization settings and
+FS/GS/address-size LKGS forms. The pinned MC corpus reports unsupported far
+returns separately; RETF/IRET must not lower to ordinary ABI returns.
 
 ## Allocator validation
 
@@ -929,6 +1059,179 @@ skips and are failures in the main CI outcome audit.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
+
+## Structural binary comparison
+
+The region suite includes owned x86 assembly with exact split boundaries, native
+SDK span paging, persistence/tamper rejection, worker parity and a real paged Qt
+review window. Synthetic cases separately exercise overlapping clones, internal
+call evidence for inline/outline, tails, suppression and cooperative stop. These
+fixtures do not qualify arbitrary compiler transformations or cross-ISA matching.
+
+Build `NeverDBinaryDiffTests`, `NeverDBinaryDiffFlowPipelineTests`,
+`NeverDBinaryDiffSDKTests`, `neverd`,
+`neverd-worker` and, with Qt enabled, `neverd-gui-comparison-tests`.
+The core tests check matching, ambiguity, deltas, deterministic correspondence,
+manual overrides, persistence and cancellation. SDK tests exercise authored
+native machine code through the real raw loader and shared decoder. CLI/worker
+checks compile the owned `unittests/diff/patch_fixture.c` and compare the same
+saved schema across public surfaces, including failure and stale-result refusal.
+Ambiguity inventory tests page more than the preview limit in both directions,
+checking search/sort, strict source binding, empty/final/invalid pages, edits,
+undo and restore. CLI uses 40 independently named compiled copies; the worker
+uses authored raw bodies. The real Qt picker test uses 417 raw functions to
+cross the page boundary, then checks search, selection, address zero, displaced
+pairs, undo, cancellation and revision invalidation. These are UI and inventory
+contracts, not matching-quality or throughput measurements.
+The CLI regression sends SIGINT during each input's actual hashing phase,
+requires exit 3 with empty result output, preserves an existing saved report,
+then runs an ordinary comparison again. Child SIGINT delivery is tested on
+POSIX hosts; Windows reports this specific delivery check as skipped.
+Function-detail tests cancel a real large native alignment while polling status,
+check its cached stop state and unclassified CFG, then refresh and time out a new
+calculation. The real Qt/worker test verifies that a stopped page exposes Retry
+difference and that retry restores bounded rows. These inputs are not executed.
+Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
+parameter/clobber identity, unobserved effects and bounded neighborhoods.
+Call-argument projection checks backward/forward dependencies missing from raw
+call operands, exact owner/span binding, preserved clobber inputs, absent versus
+zero-argument summaries and schema-2 round trips. The compiled CLI fixture also
+requires retained recovered argument records through the real native pipeline.
+`BinaryDiffFlowRegions` checks split/merge/inline/outline alternatives, nested
+overlap versus actual one-to-many node mappings, origin and frequency admission,
+coverage, cooperative stops and rederived saved facts. SDK/CLI/worker/Qt region
+checks inspect bounded paired nodes and original bytes and retain unclassified
+anchors after a grouping stop. These are owned local fixtures, not compiler
+family or competitive-baseline qualification.
+`BinaryDiffImpact` checks native caller/callee witnesses, tails, resolved imports,
+recursion, duplicate sites, multiple seeds, missing indirect callers, entry traits,
+depth/storage/work frontiers and cancellation. SDK integration checks original
+call bytes, input lifetime and reopen parity. CLI and worker compare shared
+records on compiled functions; Qt checks caller navigation, global unresolved
+scope, partial depth, input changes and queued cancellation. This qualifies
+possible call reachability, not interprocedural parameter/return or alias effects.
+`BinaryDiffObservations` checks literal/width/signedness separation, predicate
+and return contexts, recovered call arity, address-independent call targets,
+synthetic anchors, ambiguous origins, input ownership and bounded stops. The
+real x64 SDK fixture retains an unchanged branch's direct synthetic predicate
+alongside the changed original compare; it also checks input lifetime, cache,
+filtering, mapping edits and reopen. A large native fixture checks cancellation,
+cached stop state, refresh and a shared deadline. CLI/worker checks use the owned
+compiled patch fixture; Qt exercises native/SSA association display, context
+filters, slices, call paths, input changes and native-only fallback. These are
+local evidence contracts, not vulnerability or patch-effect qualification.
+`BinaryDiffReview` checks append-only case links, stale heads, invalid text and
+assessments, input/analysis identity binding and UTF-8/size admission before
+canonical encoding, manual versus computed evidence,
+independent mapping undo, strict JSON and schema-2 migration. SDK tests record,
+page, reopen and reject altered history without losing the live result. CLI and
+worker checks persist shared case records and reject stale append requests. Qt
+checks explicit recording, latest/history paging, save/export, mapping changes
+and preservation of draft text without rebinding it to changed inputs. These
+fixtures test record integrity and attribution, not author authentication or the
+truth of manual patch/security assessments.
+`BinaryDiffCallEffects` covers exact import identity, arity, native-origin SSA
+association, ambiguity, ABI refusal, fallible release, preserved alias/call gaps,
+bounded scope and cancellation. `NeverDBinaryDiffCallEffects` compiles an owned
+Linux x64 ELF shared image with memcpy/free/custom imports and a two-level call
+chain. It compares CLI, direct C API and available worker output, then checks
+missing SSA, pagination, limits, cache refresh and fresh reopen. The Qt fixture
+uses the same source and checks visible roles/assumptions, scope changes and
+missing-SSA display. Other hosts skip this ELF-only GUI fixture explicitly.
+No fixture is executed. These tests qualify import-site contracts and provenance,
+not cross-function argument propagation, path safety or vulnerability removal.
+`BinaryDiffScalarValidation.*` checks copied provenance, original-entry and GPR
+binding, canonical source-bound unwind-only projection, handler/LSDA and
+incomplete/unbound/noncanonical metadata refusal, poison obligations, finite budgets
+and stopped results. SDK cases lift different owned arithmetic encodings, retain
+input-width/GPR mismatches and memory as unsupported, reject stale borrowed
+sessions, cancel native rebinding, time out, retry and recompute after reopen.
+Owned-input cases check slot/handle alias refusal, transfer on admission even
+when analysis fails, invalid/reused admission without transfer, retained bytes
+after path replacement/removal, borrowed stale-side refusal against that capture,
+partial native-capture refusal, and fresh lift cancellation/deadline/retry.
+`NeverDBinaryDiffScalarValidation` compiles one owned pure-arithmetic/memory C
+family at Clang O1/O2 on Linux x64; it checks CLI/direct C API/available-worker
+parity, changed-return nonproof, ordinary DWARF frame-only admission, bounds,
+fresh reopen and source retention after failed replacement. This is a functional
+fixture, not optimizer-family or held-out qualification. The Qt case checks
+visible assumptions and input binding mode, result/report agreement, adjustable
+native/proof budgets and successful retry after exhaustion. Old results clear
+on budget/mapping/input changes, with optional light/dark minimum-window captures.
+None of these binaries
+is executed. Also build/run `NeverDLLVMScalarEquivalenceTests` when changing the
+shared importer or prover; strict noundef defaults, explicit defined-input
+preconditions and construction/proof cancellation remain independently tested.
+`NeverDBinaryDiffCompilerRegions` adds one owned unsigned-arithmetic source
+family across Clang ELF `-O0/-O1/-O2/-O3/-Os`, optional native Linux x64 GCC
+at those levels, and Clang Windows x64 COFF `-O0/-O2`. Names are disabled. The
+fixture requires retained finite neighborhoods, keeps a final-constant patch
+visible in the native delta, round-trips the patch report and refuses an ELF/COFF
+ABI mismatch. It never executes generated inputs. Each run retains source/input
+hashes, tool versions, flags, output and a status manifest under
+`unittests/bindiff-compiler-regions` in the build tree. Missing GCC is reported as
+a skipped optional profile; this small family is not held-out accuracy,
+optimization-family, LTO/PGO or competitive qualification.
+`NeverDBinaryDiffFlowPipelineTests` projects owned x64/AArch64 bytes through the
+actual strict lifter and SSA pipeline, checking native origins and that a changed
+scalar survives beyond a short fingerprint's reported open frontier. It neither
+executes those bytes nor qualifies a cross-ISA comparison profile.
+The analysis mode also checks System V call setup through an omitted callee's
+recovered summary, retains call/alias uncertainty, emits no HighIR/LLVM and
+refuses VM or conflicting output modes. It shares the machine ABI stage with
+lifting; run `PipelineOutcome` checks when changing that stage boundary.
+`FunctionDiscoveryCancellation.*` (in `NeverDImageAnalysisBoundaryTests`)
+checks x86/x64/ARM/Thumb/AArch64 scan stops with one and multiple workers,
+unchanged verified entries, decoder reuse, cancellation at the publication
+boundary and empty-complete versus cancelled results. Session discovery tests
+stop an active scan or pending snapshot, retain inventory/revision, retry and
+close an active job. SDK and real-worker comparison checks retain the discovery
+stop phase and incomplete coverage; stopped snapshots never authorize scalar
+validation. Run the image-boundary, session-discovery and comparison suites when
+changing these shared cancellation boundaries. No input instructions execute.
+`NativeLoadCancellation.*` and controlled `InputDigest.*` cases in
+`NeverDNativeBufferTests` check ELF/x64, ELF/AArch64, PE and Mach-O cancellation,
+retry byte/digest parity with LLVM, chunk/padding edges, and loader callback
+lifetime. `SessionCAPITest.Cancelled*Load*`/`CancelledPDBPublics*` check stopped
+hash/copy/parse/debug/final-preparation stages, preserved image/analysis/edits,
+first-load retry, cross-architecture replacement and real PDB publics. Worker
+comparison checks stop during both inputs' hashing and retain the old comparison
+and mapping revision, then retry. These fixtures do not execute loaded code or
+qualify every parser helper's latency; include native loader, session, worker
+and GUI checks when changing these ownership boundaries.
+Dependency integration covers graph/page/slice ownership after sessions close,
+saved SSA fact tampering, native and retained-node admission limits, and the
+CLI/worker/Qt review path. The Qt check switches input sides and disables a new
+collection to verify that old dependency rows cannot remain visible.
+`NeverDDirectTailCallMetadataTests` additionally checks that conditional-entry
+and fallthrough tail stubs retain synthetic operation provenance across x86,
+x64 and AArch64; ordinary decoded direct tails keep original provenance.
+
+```sh
+ctest --test-dir build -L 'NeverDBinaryDiff' --output-on-failure
+ctest --test-dir build -R '^(NeverDWorkerGraph|NeverDWorkerTransport|NeverDWorkerCLIInstructionFlow|SessionFunctionDiscovery\.)' --output-on-failure
+```
+
+The GUI fixture uses the actual worker and isolated settings. It exercises
+pair selection, paged evidence, undo/redo, cancellation and resizable views.
+For visual review, run `neverd-gui-comparison-tests` with
+`QT_QPA_PLATFORM=offscreen`, `NEVERD_DIFF_SCREENSHOTS` naming a disposable output
+directory and `QT_SCALE_FACTOR=1` or `1.5`; inspect the resulting light/dark
+captures. These checks do not qualify other architectures/formats, large-game
+packages or the competitive release gates of issue #1462.
+
+The opt-in `largeScalarValidationRemainsInteractive` Qt case takes
+`NEVERD_DIFF_SCALAR_PROBE_INPUT` and `NEVERD_DIFF_SCALAR_PROBE_ADDRESS` for a
+local native image containing a function supported by the scalar profile. It
+self-compares through the actual comparison window and worker, then performs
+three fresh validation requests through the validation dialog. An event-loop
+heartbeat records its largest observed gap over preparation and queries;
+millisecond timings include result presentation and a subsequent event-loop
+turn. `NEVERD_DIFF_SCALAR_PROBE_REPORT` optionally saves the JSON measurements,
+native hash, lift audit and proof work. Run this case separately from builds or
+other tests when measuring. It skips without the input/address pair and sets no
+performance threshold; offscreen local samples are not desktop, held-out or
+competitive qualification. The selected native function is never executed.
 
 ## GUI function lists and navigation
 
@@ -1217,6 +1520,17 @@ reconstructs that exact source without rerunning the engine. The GUI's
 20,000-line responsiveness check retains its 15-second loading and 500-ms event
 gap limits. Rename isolation checks wait for initial navigation to settle before
 observing signals caused by the edit.
+
+`X86Sgx.*` in `NeverDX86SystemStateTests` checks ENCLS/ENCLV input/output
+widths, ignored and forbidden prefixes, strict emulator refusal, leaf-dependent
+CF/ZF/PF/AF/SF/OF projection and preserved DF. `X86SgxSource.*` in
+`NeverDX86VirtualizationSourceTests` checks dynamic leaf selection, all GPR
+transports, retained dead effects and malformed owned assembly. Both word sizes
+compile through LLVM, HighC and LLVMC for ELF, COFF and Mach-O with default/NoOpt
+and Clang O0/O2; the checks also build the actual native objects. Linux x64
+compares fault signal/code with original bytes, then injects controlled
+completions through sigreturn to check all result transports. This is not a
+successful privileged SGX or enclave-memory concurrency qualification.
 
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and
@@ -1532,6 +1846,24 @@ lists (each nesting must flatten back exactly), the PDB import against
 and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
+
+`TypeImport.*` checks independent prototype providers with equal-size but
+different pointees, recursive dependencies, callback conventions and
+transactional refusal, including exact-name selection and absent-name errors.
+`SessionCAPITypeConversion.*` exercises the same owner
+through `neverd_types_convert`, including provider provenance and rejection of
+partial providers even with `keepGoing`. The optional Microsoft generator
+checks original and imported record layouts for x86, x64 and ARM64; these local
+SDK/WDK inputs are not required by the synthetic unit tests.
+`LocalTypesDebugContext.CallbackConventionsSurviveParameterAndReturnTypes`
+checks callback conventions through the declaration-to-debug-type adapter on
+32-bit and 64-bit models. `HighCSourceCalls.CallbackDeclaratorsPreserveArgumentsAndReturnTypes`
+checks nested callback declarations used by both emitters; `SourceABI` rejects
+specialized callbacks from ordinary-C projection. CodeView convention tests
+cover target-width normalization and unsupported-convention refusal.
+`I386CallContract.LLVMCCallbackFactoryKeepsBothCallingConventions` compiles
+the generated import declaration against an independent expected function
+type for all cdecl/stdcall combinations of a factory and its callback.
 
 To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
 `ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,
@@ -1944,6 +2276,25 @@ kernel's environment variables) covers `KeInitializeDpc`, the kernel's
 unions and LLVM-C's typed signatures.
 
 ## Scalar x86 floating-point state
+
+`NeverDX86FPEncodingTests` checks real REX2 forms across arithmetic, comparison,
+conversion and approximation, plus ignored extension bits in 32-bit VEX forms.
+Its concrete checks retain all vector lanes, GPR-bank identity, MXCSR, flags,
+address-size wrapping and FS/GS ownership. Forged detail, unsupported maps,
+truncated/mixed prefixes, unused vvvv and LDS disambiguation remain negative
+controls. Run it with the FP arithmetic/FMA, conversion, COMI, mask-compare,
+ROUND, approximation and instruction-coverage owners.
+
+`X86FPEncodingSource.*` in `NeverDX86VirtualizationSourceTests` checks ELF,
+COFF and Mach-O through both source routes, with and without optimization.
+ELF fixtures execute both C routes and emitted IR at O0/O2 plus objects built
+by the repository LLVM fork. The x64 fixture uses REX2 inputs without needing
+host APX. The 32-bit fixture additionally executes original VEX bytes, requiring
+Linux i386 execution and host AVX. External i386 compilation uses `-msse2`,
+matching Codegen's baseline. No native APX hardware oracle is claimed.
+`LLVMCValues.I386WideCarriersRetainWrappingShiftsAndSignedComparison` executes
+65/96/128-bit carriers at O0/O2 with undefined-behavior traps and independent
+APInt expectations; general wide-integer runtime/ABI support is not certified.
 
 `NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
 with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Raw binary80

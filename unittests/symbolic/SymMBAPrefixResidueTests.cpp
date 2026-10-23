@@ -976,4 +976,459 @@ TEST(SymMBAPrefixResidue, NonzeroResidueTablesHaveIndependentFullWidthProofs) {
     }
 }
 
+struct MultipleResidualFixture {
+  SymRef Input;
+  llvm::APInt Scale;
+  unsigned Degree;
+  unsigned Kind;
+
+  llvm::APInt oracle(const std::array<llvm::APInt, 3> &V) const {
+    const auto Mask = ~llvm::APInt(Scale.getBitWidth(), 3);
+    auto Product = Scale;
+    for (unsigned I = 0; I < Degree; ++I) {
+      auto High = (V[1] + I) & Mask;
+      if (Kind == 1)
+        High = ((V[1] + I) * (V[2] + 2 * I)) & Mask;
+      else if (Kind == 2)
+        High = (V[1] + I).shl(2);
+      auto Factor = V[0] + 2 * I;
+      Product *= Kind == 3 ? Factor + High : Factor ^ High;
+    }
+    return Product;
+  }
+};
+
+MultipleResidualFixture multipleResidualFixture(SymContext &Ctx, unsigned Width,
+                                                unsigned Degree, unsigned Kind,
+                                                unsigned Needed = 3) {
+  const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+  const auto Z = Ctx.mkVar("z", Width);
+  auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+  const auto Mask = Ctx.mkConst(~llvm::APInt(Width, 3));
+  auto Scale = llvm::APInt(Width, 3).shl(Width - Needed);
+  llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Scale)};
+  for (unsigned I = 0; I < Degree; ++I) {
+    auto U = Ctx.mkAdd(Y, C(I));
+    auto High = Ctx.mkAnd(U, Mask);
+    if (Kind == 1)
+      High = Ctx.mkAnd(Ctx.mkMul(U, Ctx.mkAdd(Z, C(2 * I))), Mask);
+    else if (Kind == 2)
+      High = Ctx.mkShl(U, C(2));
+    auto Base = Ctx.mkAdd(X, C(2 * I));
+    Factors.push_back(Kind == 3 ? Ctx.mkAdd(Base, High)
+                                : Ctx.mkXor(Base, High));
+  }
+  return {Ctx.mkMul(Factors), Scale, Degree, Kind};
+}
+
+TEST(SymMBAPrefixResidue, SynthesizesMultipleUnobservedFactors) {
+  std::mt19937_64 Random(0x4d554c5449524553);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Degree : {4u, 8u, 16u})
+      for (unsigned Kind = 0; Kind < 4; ++Kind) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << Degree << ':' << Kind);
+        SymContext Ctx;
+        auto F = multipleResidualFixture(Ctx, Width, Degree, Kind);
+        detail::WorkBudget Budget(65536);
+        size_t Storage = 1 << 24;
+        auto Result =
+            detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
+        ASSERT_LT(Ctx.readabilityCost(Result), Ctx.readabilityCost(F.Input));
+        EXPECT_FALSE(Budget.exhausted());
+        SymEvalPlan Original(Ctx, F.Input), Reduced(Ctx, Result);
+        bool Nonzero = false;
+        for (unsigned Trial = 0; Trial < 64; ++Trial) {
+          std::array<llvm::APInt, 3> Values{
+              word(Width, Random), word(Width, Random), word(Width, Random)};
+          if (Trial < 16)
+            Values = {llvm::APInt(Width, Trial), llvm::APInt(Width, 3 * Trial),
+                      llvm::APInt(Width, 7 * Trial)};
+          auto Want = F.oracle(Values);
+          Nonzero |= !Want.isZero();
+          EXPECT_EQ(Original.eval(Values), Want);
+          EXPECT_EQ(Reduced.eval(Values), Want);
+        }
+        EXPECT_TRUE(Nonzero);
+      }
+}
+
+TEST(SymMBAPrefixResidue, MultipleResidualsPreserveObservableCrossTerms) {
+  for (unsigned Needed : {3u, 4u, 5u})
+    for (unsigned Kind = 0; Kind < 4; ++Kind) {
+      SCOPED_TRACE(::testing::Message() << Needed << ':' << Kind);
+      SymContext Ctx;
+      auto F = multipleResidualFixture(Ctx, 8, 4, Kind, Needed);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      auto Result = detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
+      EXPECT_LE(Ctx.readabilityCost(Result), Ctx.readabilityCost(F.Input));
+      if (Needed == 3)
+        EXPECT_NE(Result, F.Input);
+      SymEvalPlan Original(Ctx, F.Input), Reduced(Ctx, Result);
+      for (unsigned X = 0; X < 32; ++X)
+        for (unsigned Y = 0; Y < 32; ++Y)
+          for (unsigned Z = 0; Z < 16; ++Z) {
+            std::array<llvm::APInt, 3> Values{
+                llvm::APInt(8, X), llvm::APInt(8, Y), llvm::APInt(8, Z)};
+            const auto Want = F.oracle(Values);
+            ASSERT_EQ(Original.eval(Values), Want);
+            ASSERT_EQ(Reduced.eval(Values), Want) << X << ':' << Y << ':' << Z;
+          }
+    }
+}
+
+TEST(SymMBAPrefixResidue, MultipleResidualsRespectCumulativeResources) {
+  for (unsigned Width : {8u, 64u, 257u}) {
+    SymContext Ctx;
+    auto F = multipleResidualFixture(Ctx, Width, 8, 1);
+    detail::WorkBudget Full(65536);
+    size_t Storage = 1 << 24;
+    auto Result = detail::foldProductResidues(Ctx, F.Input, Full, Storage);
+    ASSERT_NE(Result, F.Input);
+    const size_t Bytes = (1 << 24) - Storage;
+    ASSERT_GT(Full.used(), 0u);
+    ASSERT_GT(Bytes, 0u);
+    for (const auto [Work, Space] : {std::pair<size_t, size_t>{0, Bytes},
+                                     {Full.used(), 0},
+                                     {Full.used() - 1, Bytes},
+                                     {Full.used(), Bytes - 1},
+                                     {Full.used(), Bytes}}) {
+      detail::WorkBudget Budget(Work);
+      Storage = Space;
+      auto Partial = detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
+      EXPECT_LE(Budget.used(), Work);
+      EXPECT_LE(Storage, Space);
+      if (Work == Full.used() && Space == Bytes)
+        EXPECT_EQ(Partial, Result);
+      SymEvalPlan Reduced(Ctx, Partial);
+      for (unsigned X = 0; X < 32; ++X) {
+        const std::array<llvm::APInt, 3> Values{llvm::APInt(Width, X),
+                                                llvm::APInt(Width, X * 17),
+                                                llvm::APInt(Width, X * 51)};
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+  }
+}
+
+TEST(SymMBAPrefixResidue, MultipleResidualsHaveIndependentFullWidthProofs) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (unsigned Kind = 0; Kind < 4; ++Kind) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Kind);
+      SymContext Ctx;
+      auto F = multipleResidualFixture(Ctx, Width, 4, Kind);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      auto Result = detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
+      ASSERT_NE(Result, F.Input);
+      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
+      EXPECT_EQ(Verifier(Ctx, F.Input, Result), SynthVerification::Equivalent);
+    }
+}
+
+TEST(SymMBAPrefixResidue, ResidualAttemptsRespectContextAndStorage) {
+  for (unsigned Needed : {3u, 4u}) {
+    SymContext Ctx;
+    auto F = multipleResidualFixture(Ctx, 64, 4, 0, Needed);
+    detail::WorkBudget Budget(65536);
+    Budget.MemoOwner = &Ctx;
+    Budget.MemoCapacity = 16;
+    size_t Storage = 1 << 24;
+    auto First =
+        detail::foldResidualProductResidues(Ctx, F.Input, Budget, Storage);
+    const auto Work = Budget.used();
+    ASSERT_GT(Work, 1u);
+    Storage = 1 << 24;
+    auto Reused =
+        detail::foldResidualProductResidues(Ctx, F.Input, Budget, Storage);
+    EXPECT_EQ(Reused, First);
+    EXPECT_EQ(Budget.used() - Work, 1u);
+    const auto BeforeLarger = Budget.used();
+    Storage = (1 << 24) + 1;
+    auto Larger =
+        detail::foldResidualProductResidues(Ctx, F.Input, Budget, Storage);
+    EXPECT_EQ(Larger, First);
+    EXPECT_EQ(Budget.used() - BeforeLarger, 1u);
+
+    SymContext Other;
+    auto G = multipleResidualFixture(Other, 32, 4, 1, Needed);
+    const auto BeforeOther = Budget.used();
+    Storage = 1 << 24;
+    auto Result =
+        detail::foldResidualProductResidues(Other, G.Input, Budget, Storage);
+    EXPECT_GT(Budget.used() - BeforeOther, 1u);
+    SymEvalPlan Plan(Other, Result);
+    for (unsigned X = 0; X < 16; ++X) {
+      const std::array<llvm::APInt, 3> Values{
+          llvm::APInt(32, X), llvm::APInt(32, 3 * X), llvm::APInt(32, 7 * X)};
+      EXPECT_EQ(Plan.eval(Values), G.oracle(Values));
+    }
+  }
+  SymContext Ctx;
+  auto F = multipleResidualFixture(Ctx, 64, 8, 1);
+  detail::WorkBudget Budget(65536);
+  Budget.MemoOwner = &Ctx;
+  Budget.MemoCapacity = 16;
+  size_t Storage = 512;
+  EXPECT_EQ(detail::foldResidualProductResidues(Ctx, F.Input, Budget, Storage),
+            F.Input);
+  Storage = 1 << 24;
+  EXPECT_NE(detail::foldResidualProductResidues(Ctx, F.Input, Budget, Storage),
+            F.Input);
+}
+
+TEST(SymMBAPrefixResidue, DecisionWordsPreserveCastsShiftsAndOpaqueInputs) {
+  std::mt19937_64 Random(0x4445434953494f4e);
+  unsigned Rewritten = 0;
+  for (unsigned Width : {8u, 16u, 64u, 257u})
+    for (unsigned Kind = 0; Kind < 4; ++Kind) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Kind);
+      SymContext Ctx;
+      const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+      SymRef A, B;
+      if (Kind == 0) {
+        A = Ctx.mkXor(X, Y);
+        B = A;
+      } else if (Kind == 1) {
+        A = Ctx.mkXor(Ctx.mkLShr(X, C(2)),
+                      Ctx.mkLShr(C(0xa9), Ctx.mkAnd(Y, C(31))));
+        B = Ctx.mkAdd(A, C(2));
+      } else if (Kind == 2) {
+        A = Ctx.mkAdd(Ctx.mkZExt(Ctx.mkExtract(X, 2, 3), Width),
+                      Ctx.mkSExt(Ctx.mkExtract(Y, 1, 3), Width));
+        B = A;
+      } else {
+        A = Ctx.mkXor(Ctx.mkUDiv(X, Ctx.mkOr(Y, C(1))), X);
+        B = Ctx.mkAdd(A, C(2));
+      }
+      const auto Scale = llvm::APInt(Width, 3).shl(Width - 4);
+      llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Scale)};
+      for (unsigned I = 0; I < 4; ++I) {
+        Factors.push_back(A);
+        Factors.push_back(B);
+      }
+      const auto Input = Ctx.mkMul(Factors);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      const auto Result =
+          detail::foldResidueDecisions(Ctx, Input, Budget, Storage);
+      Rewritten += Result != Input;
+      EXPECT_LE(Ctx.readabilityCost(Result), Ctx.readabilityCost(Input));
+      SymEvalPlan Original(Ctx, Input), Reduced(Ctx, Result);
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        auto U = word(Width, Random), V = word(Width, Random);
+        if (Trial < 512) {
+          U = llvm::APInt(Width, Trial / 32);
+          V = llvm::APInt(Width, Trial % 32);
+        }
+        llvm::APInt F(Width, 0);
+        if (Kind == 0)
+          F = U ^ V;
+        else if (Kind == 1) {
+          const auto Shift = (V & llvm::APInt(Width, 31)).getZExtValue();
+          F = U.lshr(2) ^
+              (Shift >= Width ? llvm::APInt(Width, 0)
+                              : llvm::APInt(Width, 0xa9).lshr(Shift));
+        } else if (Kind == 2)
+          F = U.lshr(2).trunc(3).zext(Width) + V.lshr(1).trunc(3).sext(Width);
+        else
+          F = U.udiv(V | llvm::APInt(Width, 1)) ^ U;
+        auto Want = Scale;
+        for (unsigned I = 0; I < 4; ++I)
+          Want *= F * (Kind == 1 || Kind == 3 ? F + 2 : F);
+        const std::array<llvm::APInt, 2> Values{U, V};
+        EXPECT_EQ(Original.eval(Values), Want);
+        EXPECT_EQ(Reduced.eval(Values), Want);
+      }
+    }
+  EXPECT_GT(Rewritten, 0u);
+}
+
+TEST(SymMBAPrefixResidue, SharedParityDecisionsKeepBothInputParities) {
+  std::mt19937_64 Random(0x4f44444252414e43);
+  for (unsigned Width : {8u, 64u, 257u})
+    for (unsigned Needed : {4u, 6u})
+      for (bool Complement : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << Needed << ':' << Complement);
+        SymContext Ctx;
+        auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+        auto Z = Ctx.mkVar("z", Width);
+        auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+        const auto Scale = llvm::APInt(Width, 3).shl(Width - Needed);
+        llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Scale)};
+        for (unsigned I = 0; I < 16; ++I) {
+          auto U = Ctx.mkAnd(Ctx.mkAdd(Y, C(I)),
+                             Ctx.mkConst(~llvm::APInt(Width, 1)));
+          auto V = Ctx.mkAnd(Ctx.mkAdd(Z, C(2 * I)),
+                             Ctx.mkConst(~llvm::APInt(Width, 3)));
+          auto Base = Ctx.mkAdd(Complement ? Ctx.mkNot(X) : X, C(2 * I));
+          Factors.push_back(Ctx.mkXor(Base, Ctx.mkMul(U, V)));
+        }
+        const auto Input = Ctx.mkMul(Factors);
+        detail::WorkBudget Budget(65536);
+        size_t Storage = 1 << 24;
+        const auto Result =
+            detail::foldResidueDecisions(Ctx, Input, Budget, Storage, true);
+        if (Needed == 4)
+          ASSERT_LT(Ctx.readabilityCost(Result), Ctx.readabilityCost(Input));
+        EXPECT_FALSE(Budget.exhausted());
+        SymEvalPlan Original(Ctx, Input), Reduced(Ctx, Result);
+        bool Zero = false, Nonzero = false;
+        for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+          std::array<llvm::APInt, 3> Values{
+              word(Width, Random), word(Width, Random), word(Width, Random)};
+          if (Trial < 512)
+            Values = {llvm::APInt(Width, Trial / 64),
+                      llvm::APInt(Width, Trial / 8 % 8),
+                      llvm::APInt(Width, Trial % 8)};
+          auto Want = Scale;
+          for (unsigned I = 0; I < 16; ++I) {
+            const auto U = (Values[1] + I) & ~llvm::APInt(Width, 1);
+            const auto V = (Values[2] + 2 * I) & ~llvm::APInt(Width, 3);
+            const auto Base = (Complement ? ~Values[0] : Values[0]) + 2 * I;
+            Want *= Base ^ (U * V);
+          }
+          Zero |= Want.isZero();
+          Nonzero |= !Want.isZero();
+          EXPECT_EQ(Original.eval(Values), Want);
+          EXPECT_EQ(Reduced.eval(Values), Want);
+        }
+        EXPECT_TRUE(Zero);
+        EXPECT_TRUE(Nonzero);
+      }
+}
+
+TEST(SymMBAPrefixResidue, ZeroDecisionWordsKeepTheirOriginalWidth) {
+  for (unsigned Width : {8u, 64u, 257u}) {
+    SymContext Ctx;
+    auto X = Ctx.mkVar("x", Width);
+    llvm::SmallVector<SymRef, 8> Factors{
+        Ctx.mkConst(llvm::APInt(Width, 1).shl(Width - 3))};
+    for (unsigned I = 0; I < 4; ++I)
+      Factors.push_back(Ctx.mkAdd(X, Ctx.mkConst(Width, I)));
+    auto Input = Ctx.mkMul(Factors);
+    detail::WorkBudget Budget(65536);
+    size_t Storage = 1 << 24;
+    auto Result = detail::foldResidueDecisions(Ctx, Input, Budget, Storage);
+    ASSERT_TRUE(Ctx.isConstZero(Result));
+    EXPECT_EQ(Ctx.width(Result), Width);
+    for (unsigned Value = 0; Value < 256; ++Value)
+      EXPECT_TRUE(Ctx.eval(Input, {llvm::APInt(Width, Value)}).isZero());
+  }
+}
+
+TEST(SymMBAPrefixResidue, GeneratedReadingsStillSimplifyOriginalOpaqueInputs) {
+  std::mt19937_64 Random(0x4f50415155455744);
+  for (unsigned Width : {8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+    const auto Z = Ctx.mkVar("z", Width);
+    auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+    const auto Sum = Ctx.mkAdd(X, Y);
+    const auto Numerator =
+        Ctx.mkAdd(Ctx.mkXor(X, Y), Ctx.mkMul(C(2), Ctx.mkAnd(X, Y)));
+    const auto Opaque = Ctx.mkUDiv(Numerator, C(7));
+    const auto Scale = llvm::APInt(Width, 3).shl(Width - 3);
+    llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Scale)};
+    for (unsigned I = 0; I < 8; ++I) {
+      auto High =
+          Ctx.mkAnd(Ctx.mkAdd(Z, C(I)), Ctx.mkConst(~llvm::APInt(Width, 3)));
+      Factors.push_back(Ctx.mkXor(Ctx.mkAdd(Opaque, C(2 * I)), High));
+    }
+    const auto Input = Ctx.mkMul(Factors);
+    MBAOptions Opts;
+    Opts.MaxWork = 65536;
+    Opts.VerifySamples = 0;
+    const auto Result = simplifyMBADeep(Ctx, Input, Opts);
+    ASSERT_TRUE(Result.Changed);
+    EXPECT_LT(Result.Work, Opts.MaxWork);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    bool SawDivision = false;
+    std::vector<SymRef> Pending{Result.Expr};
+    std::vector<bool> Seen(Ctx.numNodes());
+    while (!Pending.empty()) {
+      const auto R = Pending.back();
+      Pending.pop_back();
+      if (Seen[R.index()])
+        continue;
+      Seen[R.index()] = true;
+      if (Ctx.op(R) == SymOp::UDiv) {
+        SawDivision = true;
+        EXPECT_EQ(Ctx.operand(R, 0), Sum);
+      }
+      Pending.insert(Pending.end(), Ctx.operands(R).begin(),
+                     Ctx.operands(R).end());
+    }
+    EXPECT_TRUE(SawDivision);
+    SymEvalPlan Reduced(Ctx, Result.Expr);
+    for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+      std::array<llvm::APInt, 3> Values{
+          word(Width, Random), word(Width, Random), word(Width, Random)};
+      if (Trial < 512)
+        Values = {llvm::APInt(Width, Trial / 64),
+                  llvm::APInt(Width, Trial / 8 % 8),
+                  llvm::APInt(Width, Trial % 8)};
+      const auto Base = (Values[0] + Values[1]).udiv(llvm::APInt(Width, 7));
+      auto Want = Scale;
+      for (unsigned I = 0; I < 8; ++I)
+        Want *= (Base + 2 * I) ^ ((Values[2] + I) & ~llvm::APInt(Width, 3));
+      EXPECT_EQ(Reduced.eval(Values), Want);
+    }
+  }
+}
+
+TEST(SymMBAPrefixResidue, MixedResidualProductsLeaveBudgetForTheirLinearTail) {
+  std::mt19937_64 Random(0x4d49584544544149);
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (unsigned Degree : {4u, 24u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Degree);
+      SymContext Ctx;
+      const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      const auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+      auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+      const auto Scale = llvm::APInt(Width, 3).shl(Width - 6);
+      llvm::SmallVector<SymRef, 32> Factors{Ctx.mkConst(Scale)};
+      for (unsigned I = 0; I < Degree; ++I) {
+        auto U =
+            Ctx.mkAnd(Ctx.mkAdd(Y, C(I)), Ctx.mkConst(~llvm::APInt(Width, 1)));
+        auto V = Ctx.mkAnd(Ctx.mkAdd(Z, C(2 * I)),
+                           Ctx.mkConst(~llvm::APInt(Width, 3)));
+        Factors.push_back(Ctx.mkXor(Ctx.mkAdd(X, C(2 * I)), Ctx.mkMul(U, V)));
+      }
+      const auto Input = Ctx.mkAdd({Ctx.mkMul(Factors), Ctx.mkXor(X, Y),
+                                    Ctx.mkMul(C(2), Ctx.mkAnd(X, Y)),
+                                    Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+      MBAOptions Opts;
+      Opts.MaxWork = 65536;
+      Opts.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, Input, Opts);
+      EXPECT_LT(Result.Work, Opts.MaxWork);
+      EXPECT_LT(Result.SizeAfter, Result.SizeBefore);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &V : Values)
+          V = word(Width, Random);
+        if (Trial < 512)
+          Values = {llvm::APInt(Width, Trial / 64),
+                    llvm::APInt(Width, Trial / 8 % 8),
+                    llvm::APInt(Width, Trial % 8), llvm::APInt(Width, Trial)};
+        auto Want = Scale;
+        for (unsigned I = 0; I < Degree; ++I)
+          Want *= (Values[0] + 2 * I) ^
+                  (((Values[1] + I) & ~llvm::APInt(Width, 1)) *
+                   ((Values[2] + 2 * I) & ~llvm::APInt(Width, 3)));
+        Want += Values[0] + Values[1] + Values[2] + Values[3];
+        EXPECT_EQ(Reduced.eval(Values), Want);
+      }
+    }
+}
+
 } // namespace

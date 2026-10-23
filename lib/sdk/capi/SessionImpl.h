@@ -58,6 +58,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -342,14 +343,21 @@ struct Session {
   struct FunctionDiscoveryResult {
     std::vector<std::pair<va_t, std::string>> Functions;
     std::set<va_t> VerifiedEntries, CodeReferences;
+    bool Cancelled = false;
   };
   struct FunctionDiscoveryJob {
     uint64_t Revision;
     std::future<FunctionDiscoveryResult> Result;
+    std::shared_ptr<std::atomic<bool>> Cancel =
+        std::make_shared<std::atomic<bool>>(false);
   };
   /// The job owns its image; it never borrows Session state. Stale jobs stay
   /// here until ready, so an edit neither waits nor accumulates retired jobs.
   std::optional<FunctionDiscoveryJob> FunctionDiscovery;
+  ~Session() {
+    if (FunctionDiscovery)
+      FunctionDiscovery->Cancel->store(true, std::memory_order_relaxed);
+  }
   /// Drop a finished job of an earlier function list, its result and failure
   /// alike, whatever the current image is. A running one stays: an async
   /// future joins its task on destruction.
@@ -404,7 +412,11 @@ struct Session {
   /// was read from the list knows whether the list is still the one it read.
   /// Code that changes the list calls functionListChanged().
   uint64_t FunctionListRevision = 0;
-  void functionListChanged() { ++FunctionListRevision; }
+  void functionListChanged() {
+    ++FunctionListRevision;
+    if (FunctionDiscovery)
+      FunctionDiscovery->Cancel->store(true, std::memory_order_relaxed);
+  }
   /// Address order belongs to the complete function-list revision, not to
   /// one page. Reference scans and warmup can request thousands of pages.
   struct FunctionPageIndex {

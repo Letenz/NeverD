@@ -357,6 +357,7 @@ add_neverd_unittest(NeverDLiftTests
   format/MachOI386RelocationScatteredTests.cpp
   format/MachOFunctionListingTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/FunctionDiscoveryCancellationTests.cpp
   format/ELFFunctionListingTests.cpp
   format/ELFWithoutSectionsTests.cpp
   format/ELFARM32ModeTests.cpp
@@ -580,6 +581,10 @@ add_neverd_unittest(NeverDX86SHA512Tests
 
 add_neverd_unittest(NeverDX86VectorEncodingModeTests
   x86_64/X86VectorEncodingModeTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86FPEncodingTests
+  x86_64/X86FPEncodingTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86SystemStateTests
@@ -1728,6 +1733,7 @@ add_neverd_unittest(NeverDImageAnalysisBoundaryTests
   core/MedConstantPropagationTests.cpp
   core/MedImmutableTableScanTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/FunctionDiscoveryCancellationTests.cpp
   LINK_COMPONENTS IR Loader
 )
 

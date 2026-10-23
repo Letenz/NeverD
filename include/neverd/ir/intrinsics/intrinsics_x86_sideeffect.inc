@@ -243,3 +243,8 @@ SIDEEFFECT(Intrinsic::X86FPMaskCompareMemoryState);
 #define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, ...) SIDEEFFECT(Intrinsic::Id);
 #include "neverd/ir/intrinsics/X86SystemState.def"
 #undef NEVERD_X86_SYSTEM_STATE
+
+SIDEEFFECT(Intrinsic::X86Encls);
+SIDEEFFECT(Intrinsic::X86Enclv);
+
+SIDEEFFECT(Intrinsic::X86SegmentedBlockMemory);

@@ -27,7 +27,8 @@ if(NEVERD_WINDOWS_TYPES_DIRECTORY)
   else()
     message(FATAL_ERROR "Unsupported Microsoft type library architecture")
   endif()
-  if(NOT WindowsProvider STREQUAL "Microsoft SDK/WDK" OR
+  if((NOT WindowsProvider STREQUAL "Microsoft SDK/WDK" AND
+      NOT WindowsProvider STREQUAL "Microsoft SDK/WDK with Wine compatibility declarations") OR
      NOT WindowsSchema EQUAL 1 OR NOT WindowsCount EQUAL WindowsExpectedCount)
     message(FATAL_ERROR "Invalid Microsoft type library manifest")
   endif()
@@ -107,6 +108,7 @@ add_neverd_component_library(NeverDTypes
   RustTypeParser.cpp
   RustTypeRender.cpp
   TypeFit.cpp
+  TypeImport.cpp
   TypeJSON.cpp
   TypeLayout.cpp
   TypeRender.cpp

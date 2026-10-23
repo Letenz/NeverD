@@ -93,6 +93,7 @@ add_neverd_component_library(NeverDLift
   ARM/ARMLiftSIMDSelect.cpp
   ARM/ARMLifter.cpp
   ARM/ARMRegs.cpp
+  X86/X86FPEncoding.cpp
   X86/X86LiftAtomic.cpp
   X86/X86LiftControl.cpp
   X86/X86LiftCore.cpp
@@ -136,6 +137,7 @@ add_neverd_component_library(NeverDLift
   X86/X86LiftSystem.cpp
   X86/X86LiftVirtualization.cpp
   X86/X86LiftSystemState.cpp
+  X86/X86LiftSgx.cpp
   X86/X86LiftSHA512.cpp
   X86/X86Lifter.cpp
   X86/X86Regs.cpp

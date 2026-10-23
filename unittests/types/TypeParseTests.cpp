@@ -10,6 +10,7 @@
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <cstdlib>
@@ -76,6 +77,35 @@ TEST(TypeParse, LaysAStructureOutAsMSVC) {
   const RecordDef &B = recordOf(Library, "B");
   EXPECT_EQ(shapeOf(B), "struct{a@0b:4 b@4b:4 c@32b:3 d@64b:1}");
   EXPECT_EQ(B.Size, 12u);
+}
+
+TEST(TypeParse, ReportsForwardRecordsWithoutInventingTheirLayout) {
+  TypeLibrary Library;
+  const auto Read = parseCTypes(R"(
+    struct Handle;
+    union Entry;
+    typedef struct Handle *HANDLE;
+    void Use(HANDLE Value, union Entry *Item);
+  )",
+                                Library);
+  ASSERT_TRUE(Read.Problems.empty());
+  EXPECT_EQ(Read.Types,
+            (std::vector<std::string>{"Handle", "Entry", "HANDLE"}));
+  EXPECT_FALSE(recordOf(Library, "Handle").Defined);
+  EXPECT_FALSE(recordOf(Library, "Entry").Defined);
+  EXPECT_FALSE(Library.sizeOf(*makeNamed("Handle", TypeKind::Struct)));
+  EXPECT_EQ(Library.sizeOf(*makeNamed("HANDLE", TypeKind::Typedef)), 8u);
+  RenderOptions Options;
+  Options.Prototypes = true;
+  TypeLibrary Restored;
+  const auto Again = parseCTypes(renderTypes(Library, {}, Options), Restored);
+  ASSERT_TRUE(Again.Problems.empty());
+  EXPECT_TRUE(llvm::is_contained(Again.Types, "Handle"));
+  EXPECT_TRUE(llvm::is_contained(Again.Types, "Entry"));
+  EXPECT_FALSE(recordOf(Restored, "Handle").Defined);
+  EXPECT_FALSE(Restored.sizeOf(*makeNamed("Handle", TypeKind::Struct)));
+  ASSERT_NE(Restored.findPrototype("Use"), nullptr);
+  EXPECT_EQ(Restored.findPrototype("Use")->Params.size(), 2u);
 }
 
 TEST(TypeParse, ReadsOneFunctionsDeclarationAgainstTheLibrary) {
@@ -550,12 +580,14 @@ TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
       #pragma pack(push, 1)
       struct Packed { char Prefix; HEADER_ALIAS; unsigned char Payload[3]; };
       #pragma pack(pop)
-      struct Declaration { struct _HEADER; unsigned char Tail; };
+      struct Tagged { struct _HEADER; unsigned char Tail; };
       _Static_assert(__builtin_offsetof(Packet, Tag) == sizeof(void *), "Tag");
       _Static_assert(__builtin_offsetof(Packet, Link) == 2 * sizeof(void *), "Link");
       _Static_assert(__builtin_offsetof(Packet, Payload) == 3 * sizeof(void *), "Payload");
       _Static_assert(__builtin_offsetof(Promoted, Tail) == 4, "anonymous union");
-      _Static_assert(sizeof(Declaration) == 1, "a tag declaration has no storage");
+      _Static_assert(sizeof(Tagged) == 3 * sizeof(void *), "tag reference has storage in Microsoft C");
+      _Static_assert(__builtin_offsetof(Tagged, Link) == sizeof(void *), "tag members are promoted");
+      _Static_assert(__builtin_offsetof(Tagged, Tail) == 2 * sizeof(void *), "tag storage precedes tail");
       _Static_assert(sizeof(Nested) == 3 * sizeof(void *), "named definition has storage in C");
       _Static_assert(__builtin_offsetof(Nested, Tail) == 2 * sizeof(void *), "nested storage");
     )",
@@ -569,23 +601,39 @@ TEST(TypeParse, MicrosoftAnonymousTypedefMembersRetainTheirStorage) {
     const auto RoundTrip = parsed(
         renderType(Library, *Library.find("Packet"), {}), {}, Model, ABI);
     EXPECT_EQ(recordOf(RoundTrip, "Packet").Size, 4 * Pointer);
+    const auto Tagged = parsed(renderType(Library, *Library.find("Tagged"), {}),
+                               {}, Model, ABI);
+    EXPECT_EQ(recordOf(Tagged, "Tagged").Size, 3 * Pointer);
+    EXPECT_TRUE(recordOf(Tagged, "Tagged").Members[0].isAnonymous());
   }
   TypeLibrary Incomplete(DataModel::LLP64);
   EXPECT_FALSE(parseCTypes("typedef struct Unfinished U; "
                            "struct Broken { U; int Tail; };",
                            Incomplete)
                    .ok());
+  EXPECT_FALSE(
+      parseCTypes("struct Broken { struct Unfinished; int Tail; };", Incomplete)
+          .ok());
   ParseOptions Cpp;
   Cpp.Lang = Language::Cpp;
   const auto Declaration = parsed(R"(
     typedef struct H { unsigned short Tag; void *Link; } Header;
     struct P { char Prefix; Header; unsigned char Payload[3]; };
     struct N { struct Inner { void *Value; }; unsigned int Value; };
+    struct Q { struct H; unsigned char Tail; };
     static_assert(sizeof(P) == 4, "C++ typedef declaration has no storage");
     static_assert(sizeof(N) == 4, "C++ named record declaration has no storage");
+    static_assert(sizeof(Q) == 1, "C++ tag reference has no storage");
   )",
                                   Cpp);
   EXPECT_EQ(recordOf(Declaration, "P").Size, 4u);
+  const auto StandardC = parsed(R"(
+    struct Header { unsigned long long Value; };
+    struct Decl { struct Header; char Tail; };
+    _Static_assert(sizeof(Decl) == 1, "standard C tag reference has no storage");
+  )",
+                                {}, DataModel::LP64, RecordABI::Itanium);
+  EXPECT_EQ(recordOf(StandardC, "Decl").Size, 1u);
 }
 
 TEST(TypeParse, SizesAStringLiteralWithItsTerminator) {

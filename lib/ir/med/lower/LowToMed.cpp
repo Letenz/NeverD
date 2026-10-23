@@ -438,6 +438,30 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   const auto FPParamRegs = TRI.floatingParamRegs(TargetFormat);
   const int8_t Slots =
       static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));
+  if (Convention && Convention->ImportArgumentsFromPrototype &&
+      CallEntryFloatingArguments && MOp.NumInputs == 1)
+    if (const auto F = CallEntryFloatingArguments->find(ArgumentsKey);
+        F != CallEntryFloatingArguments->end()) {
+      const auto &Signature = F->second;
+      if (Signature.ParameterBytes.size() <= FPParamRegs.size() &&
+          Signature.ParameterBytes.size() <=
+              sizeof(MOp.CalleeVectorArgWidths) * 2 &&
+          (Signature.ReturnBytes == sizeof(float) ||
+           Signature.ReturnBytes == sizeof(double))) {
+        MOp.CalleeRegisterArgs = 0;
+        MOp.CalleeStackArgs = 0;
+        MOp.CalleeVectorArgs = Signature.ParameterBytes.size();
+        for (size_t I = 0; I < Signature.ParameterBytes.size(); ++I) {
+          MOp.addInput(
+              ndVarToMedVar(NdVar::reg(FPParamRegs[I], TRI.FPABIRegWidth)));
+          MOp.CalleeVectorArgWidths |=
+              (Signature.ParameterBytes[I] / sizeof(float)) << (4 * I);
+        }
+        MOp.CalleeFloatReturnBytes = Signature.ReturnBytes;
+        MOp.Output =
+            ndVarToMedVar(NdVar::reg(TRI.FPReturnReg, TRI.FPABIRegWidth));
+      }
+    }
   // Where the setup of each call gives it its arguments (Windows on ARM64),
   // an import its prototype counts (CallEntryArgumentCounts) takes that many
   // integer arguments, the registers' first: its calls pass those and no
@@ -628,6 +652,12 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                               apxAtomicLowShape(Op, TheArch)))
             llvm::report_fatal_error(
                 "APX atomic intrinsic has an invalid operand/output contract");
+          continue;
+        }
+        if (isX86SgxIntrinsic(Id)) {
+          if (!x86SgxShapeIsValid(Id, x86SgxLowShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "x86 SGX intrinsic has an invalid completion contract");
           continue;
         }
         if (isX86SystemStateIntrinsic(Id)) {
@@ -1404,6 +1434,23 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
     mergeLoopCarriedVectorReads(Func);
     debugVerifyMedFunc(Func, "mergeLoopCarriedVectorReads");
 
+    // SGX's implicit register dependencies are conditional on EAX. Resolve
+    // constant leaf selectors before ABI discovery, so an unused hardware
+    // operand cannot become a source parameter or an unknown-register trap.
+    const bool HasSgx =
+        std::any_of(Func.Blocks.begin(), Func.Blocks.end(), [](const auto &B) {
+          return std::any_of(B.Ops.begin(), B.Ops.end(), [](const auto &Op) {
+            return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                   Op.Inputs[0].isConst() &&
+                   isX86SgxIntrinsic(
+                       static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
+          });
+        });
+    if (HasSgx) {
+      propagate(Func);
+      runDce(Func);
+      debugVerifyMedFunc(Func, "SGX conditional inputs");
+    }
     x86_registration::discardUnusedSEHCallInputs(Func);
     detectCc(Func, TheArch, Fmt);
     completeX86RegistrationEntryParameters(Func);

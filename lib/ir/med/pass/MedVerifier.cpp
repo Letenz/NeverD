@@ -94,6 +94,10 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
             Err("x86 virtualization intrinsic has an invalid operand/output "
                 "contract",
                 Blk.Id, Op.Addr);
+          if (isX86SgxIntrinsic(Id) &&
+              !x86SgxShapeIsValid(Id, x86SgxMedShape(Op)))
+            Err("x86 SGX intrinsic has an invalid completion contract", Blk.Id,
+                Op.Addr);
           const bool IsSystemState = isX86SystemStateIntrinsic(Id);
           if (IsSystemState &&
               !x86SystemStateShapeIsValid(Id, x86SystemStateMedShape(Op)))

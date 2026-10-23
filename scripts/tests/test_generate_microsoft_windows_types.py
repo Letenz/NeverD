@@ -55,6 +55,10 @@ class MicrosoftWindowsTypes(unittest.TestCase):
                 record = {"schema": 1, "provider": "Microsoft SDK/WDK",
                           "architecture": arch, "libraries": libraries,
                           "compiler": "fixture compiler", "packages": [],
+                          "profiles": {"ucrt": "fixture profile hash"},
+                          "target_packages": [{"file": f"sdk.{arch}.nupkg",
+                                               "architecture": arch,
+                                               "sha256": "fixture package hash"}],
                           "licenses": [{"file": notice.name, "sha256": windows.wdk.digest(notice)}]}
                 (target / "manifest.json").write_text(json.dumps(record))
                 targets.append(target)
@@ -64,8 +68,33 @@ class MicrosoftWindowsTypes(unittest.TestCase):
             self.assertEqual(len(combined["libraries"]), 6)
             self.assertEqual({entry["architecture"] for entry in combined["libraries"]},
                              set(windows.TARGETS))
+            self.assertEqual(len(combined["target_packages"]), 3)
+            self.assertEqual(combined["profiles"], {"ucrt": "fixture profile hash"})
             for record in combined["libraries"]:
                 self.assertEqual(windows.wdk.digest(output / (record["name"] + ".h")), record["sha256"])
+            # A mixture of provider policy, generation profile or target
+            # packages must never certify a previously published bundle.
+            path = targets[-1] / "manifest.json"
+            original = path.read_text()
+            mutations = [
+                ("provider", windows.COMPATIBLE_PROVIDER, "different"),
+                ("profiles", {}, "different"),
+                ("compiler", "other compiler", "different"),
+                ("packages", [{"file": "other"}], "different"),
+                ("target_packages", [{"file": "sdk.other.nupkg", "architecture": "wrong"}],
+                 "architecture-specific"),
+                ("target_packages", [{"file": "sdk.x64.nupkg", "architecture": "arm64"}],
+                 "architecture-specific"),
+            ]
+            for key, value, message in mutations:
+                with self.subTest(key=key, value=value):
+                    changed = json.loads(original)
+                    changed[key] = value
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaisesRegex(ValueError, message):
+                        windows.combine_targets(output, targets)
+                    self.assertFalse((output / "manifest.json").exists())
+            path.write_text(original)
             with self.assertRaisesRegex(ValueError, "required"):
                 windows.combine_targets(output, targets[:2])
             self.assertFalse((output / "manifest.json").exists())
@@ -84,11 +113,45 @@ class MicrosoftWindowsTypes(unittest.TestCase):
         self.assertEqual(windows.verify_layouts(original, original), 1)
         for changed in (original.replace("align=4", "align=8"),
                         original.replace("4 |", "8 |"),
+                        original.replace("Length", "MissingField"),
                         original.replace("sizeof=8", "sizeof=16")):
             with self.assertRaisesRegex(ValueError, "Record"):
                 windows.verify_layouts(original, changed)
         with self.assertRaisesRegex(ValueError, "no shared"):
             windows.verify_layouts(original, "")
+
+    def test_cpp_record_layout_continuations_still_check_size_and_alignment(self):
+        source = ("*** Dumping AST Record Layout\n"
+                  "         0 | struct Record\n"
+                  "         0 |   const char * Text\n"
+                  "         8 |   _Bool Owned\n"
+                  "           | [sizeof=16, align=8,\n"
+                  "           |  nvsize=16, nvalign=8]\n")
+        rendered = source.replace(",\n           |  nvsize=16, nvalign=8]", "]")
+        self.assertEqual(windows.verify_layouts(source, rendered), 1)
+        self.assertEqual(windows.verify_layouts(source.replace("sizeof=16,", "sizeof=16, dsize=16,"),
+                                               rendered), 1)
+        with self.assertRaisesRegex(ValueError, "layout changed"):
+            windows.verify_layouts(source, rendered.replace("8 |", "9 |"))
+
+    def test_provider_layouts_follow_renames_and_require_the_needed_records(self):
+        original = ("*** Dumping AST Record Layout\n"
+                    "         0 | struct URL\n"
+                    "         0 |   unsigned short * Text\n"
+                    "           | [sizeof=8, align=8]\n"
+                    "*** Dumping AST Record Layout\n"
+                    "         0 | struct Unused\n"
+                    "         0 |   int Value\n"
+                    "           | [sizeof=4, align=4]\n")
+        generated = original.replace("struct URL", "struct Wide_URL")
+        renamed = {"URL": "Wide_URL"}
+        self.assertEqual(windows.verify_layouts(original, generated, renamed, ["URL"]), 1)
+        self.assertEqual(windows.verify_layouts(original, generated, renamed, ["COUNT"]), 0)
+        with self.assertRaisesRegex(ValueError, "missing: URL -> Wide_URL"):
+            windows.verify_layouts(original, original, renamed, ["URL"])
+        with self.assertRaisesRegex(ValueError, "layout changed: URL"):
+            windows.verify_layouts(original, generated.replace("align=8", "align=4"),
+                                   renamed, ["URL"])
 
     def test_failed_update_cannot_certify_stale_headers(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -106,6 +169,15 @@ class MicrosoftWindowsTypes(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "refused"):
                     windows.checked_types("neverd", Path("test.h"), log)
             self.assertIn("unknown type", log.read_text())
+
+    def test_compatibility_requires_official_provider_before_acquisition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(windows.wdk, "download") as download:
+                with self.assertRaisesRegex(ValueError, "requires the official"):
+                    windows.generate(root, root / "cache", "neverd", "clang",
+                                     ucrt_compatibility=True)
+                download.assert_not_called()
 
 
 if __name__ == "__main__":

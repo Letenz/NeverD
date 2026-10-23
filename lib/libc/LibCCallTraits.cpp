@@ -71,8 +71,14 @@ std::string_view isoAliasTarget(std::string_view Name) {
   for (const std::string_view Prefix : kIsoAliasPrefixes)
     if (Bare.starts_with(Prefix))
       return Bare.substr(Prefix.size());
-  if (Bare.starts_with(kUCRTStdioPrefix))
-    return Bare.substr(kUCRTStdioPrefix.size());
+  for (const auto Prefix : kUCRTCommonPrefixes)
+    if (Bare.starts_with(Prefix)) {
+      std::string_view Routine = Bare.substr(Prefix.size());
+      for (const auto Suffix : kUCRTCommonSuffixes)
+        if (Routine.ends_with(Suffix))
+          Routine.remove_suffix(Suffix.size());
+      return Routine;
+    }
   return Name;
 }
 

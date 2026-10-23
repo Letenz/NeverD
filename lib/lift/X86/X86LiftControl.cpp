@@ -1544,11 +1544,10 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
   case X86_INS_RETFQ:
   case X86_INS_IRET:
   case X86_INS_IRETD:
-  case X86_INS_IRETQ: {
-    uint16_t PtrSize = (TargetArch == Arch::X64) ? 8 : 4;
-    S.emit(NdOp::RETURN, {}, {NdVar::reg(x86reg::RAX, PtrSize)});
-    break;
-  }
+  case X86_INS_IRETQ:
+    // Far/interrupt returns restore architectural frames and may change
+    // privilege, segments and flags. An ABI RETURN cannot represent them.
+    return false;
 
   // --- PUSHF / POPF ---
   case X86_INS_PUSHF:

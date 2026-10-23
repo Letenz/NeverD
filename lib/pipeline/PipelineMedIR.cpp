@@ -62,7 +62,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   if (Result.InterpreterMachineSourceABI && Result.LowFuncs.size() == 1)
     SourceHints.emplace(Result.LowFuncs.front().Entry,
                         &*Result.InterpreterMachineSourceABI);
-  if (!Opts.PatchMode && !Opts.LiftMode) {
+  if (!Opts.usesMachineMedIR()) {
     for (const auto &[Entry, Hint] : Opts.SourceTypeHints)
       SourceHints.emplace(Entry, &Hint);
     for (const auto &Method : Img.ObjCMethods)
@@ -79,7 +79,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   std::map<va_t, const LowFunc *> SourceCalleeFunctions;
   for (const auto &F : Result.LowFuncs)
     SourceCalleeFunctions.emplace(F.Entry, &F);
-  if (!Opts.PatchMode && !Opts.LiftMode)
+  if (!Opts.usesMachineMedIR())
     for (const auto &[Entry, Hint] : Opts.SourceCalleeTypeHints)
       SourceCalleeHints.insert_or_assign(Entry, Hint);
 
@@ -136,12 +136,12 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     LowToMedConverter Local;
     Local.setBinaryImage(&Img);
     Local.setRuntimeRoutineCalls(RuntimeRoutines);
-    Local.setSourceCallHintsEnabled(!Opts.PatchMode && !Opts.LiftMode);
+    Local.setSourceCallHintsEnabled(!Opts.usesMachineMedIR());
     Local.setSourceEntryTypeHints(&SourceEntryHints);
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);
     Local.setSourceCalleeFunctions(&SourceCalleeFunctions);
     Local.setSEHFrameCallees(&SourceCalleeFunctions);
-    Local.setSEHSourceProjectionEnabled(!Opts.PatchMode && !Opts.LiftMode);
+    Local.setSEHSourceProjectionEnabled(!Opts.usesMachineMedIR());
     Local.setSEHRuntimeMemory(&SEHRuntimeMemory);
     Local.setObjCBlockCaptureCallFields(&Opts.ObjCBlockCaptureFields);
     Local.setObjCBlockParameterReceivers(&Opts.ObjCBlockParameterReceivers);
@@ -153,6 +153,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
     Local.setCallEntryStackSlots(&Result.CallEntryStackSlots);
     Local.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
+    Local.setCallEntryFloatingArguments(&Result.CallEntryFloatingArguments);
     Local.setUserPrototypeCallees(&Result.CallUserPrototypes);
     Local.setCallDispatchThunks(&Result.CallDispatchThunks);
     Local.setCallVariadicFrom(&Result.CallVariadicFrom);
@@ -162,16 +163,14 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
       try {
         const auto Sites =
             Opts.SourceCallSiteHints.find(Result.LowFuncs[I].Entry);
-        Local.setSourceCallSiteHints(!Opts.PatchMode && !Opts.LiftMode &&
-                                             Sites !=
-                                                 Opts.SourceCallSiteHints.end()
-                                         ? &Sites->second
-                                         : nullptr);
+        Local.setSourceCallSiteHints(
+            !Opts.usesMachineMedIR() && Sites != Opts.SourceCallSiteHints.end()
+                ? &Sites->second
+                : nullptr);
         const auto Frame =
             Opts.SourceStackFrames.find(Result.LowFuncs[I].Entry);
         std::optional<LowFunc> Projected;
-        if (!Opts.PatchMode && !Opts.LiftMode &&
-            Frame != Opts.SourceStackFrames.end()) {
+        if (!Opts.usesMachineMedIR() && Frame != Opts.SourceStackFrames.end()) {
           std::string Error;
           Projected = projectSourceStackFrame(Result.LowFuncs[I], Img.Arch,
                                               Frame->second, Error);
@@ -186,7 +185,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
         MF.EntryKind = functionEntryKind(MF, Img.stackEntryKindAt(MF.Entry));
-        if (!Opts.PatchMode && (!Opts.LiftMode || Opts.SourceProjection)) {
+        if (!Opts.MedAnalysisOnly && !Opts.PatchMode &&
+            (!Opts.LiftMode || Opts.SourceProjection)) {
           simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(),
                                        MF.EntryKind);
           // Source views keep no prologue storage of the caller's registers.
@@ -263,7 +263,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
     const BinaryImage &Img, const PipelineOptions &Opts,
     const PipelineResult &Original, DebugContext *Dbg) {
   PipelineResult Result;
-  if (Opts.PatchMode || Opts.LiftMode ||
+  if (Opts.usesMachineMedIR() ||
       (Opts.SourceCallSiteHints.empty() && Opts.SourceStackFrames.empty())) {
     Result.Error =
         "Call-site declarations require an explicit private source variant";
@@ -281,6 +281,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallArgumentSources);
   COPY_SOURCE_FACT(CallDispatchThunks);
   COPY_SOURCE_FACT(CallEntryArgumentCounts);
+  COPY_SOURCE_FACT(CallEntryFloatingArguments);
   COPY_SOURCE_FACT(CallEntryReadGPRs);
   COPY_SOURCE_FACT(CallEntryStackArgs);
   COPY_SOURCE_FACT(CallEntryStackPops);
@@ -289,6 +290,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallVariadicFrom);
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
+  COPY_SOURCE_FACT(OmittedCalleeFloatingArguments);
   COPY_SOURCE_FACT(OmittedCalleeStackArgs);
   COPY_SOURCE_FACT(OmittedCalleeStackSlots);
   COPY_SOURCE_FACT(OmittedCallees);

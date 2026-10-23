@@ -29,6 +29,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/libc/StackProbeIndex.h"
@@ -3437,6 +3438,7 @@ struct ImportPrototypeArguments {
   /// The integer arguments each import's prototype counts, where the setup
   /// of each call gives it its arguments (Windows on ARM64).
   std::map<va_t, int> Counts;
+  std::map<va_t, FloatingCallArguments> FloatingArguments;
   /// The imports whose integer arguments a user declaration or header record
   /// layout specifies, overriding the parameter counts in the arity tables.
   std::set<va_t> PrototypeDeclared;
@@ -3738,6 +3740,20 @@ ImportPrototypeArguments importPrototypeArguments(
       Routine = UserArguments(Name);
       UserDeclared = Routine.has_value();
       PrototypeOwnsArguments = Routine.has_value();
+      // A complete fixed FP header signature gives the SSA call its physical
+      // register operands even when the caller only forwards them untouched.
+      // Do not encode ARM64 registers in the x64 GPR family summaries below.
+      if (!Routine && Convention &&
+          (Convention->ArgumentsFromCallSetup ||
+           Convention->RegisterArgumentsFromCalleeSummary))
+        if (const auto Function = Declared(Name))
+          if (auto Floating = libc::floatingCallArguments(*Function, Img.Arch,
+                                                          Img.abiFormat())) {
+            Result.FloatingArguments.emplace(Addr, std::move(*Floating));
+            Result.PrototypeDeclared.insert(Addr);
+            if (Convention->ArgumentsFromCallSetup)
+              return;
+          }
       // Header arity is a count of source parameters. A record's pieces take
       // the target ABI's registers or stack positions before those tables.
       if (!Routine)
@@ -3750,6 +3766,8 @@ ImportPrototypeArguments importPrototypeArguments(
             Record.Registers = static_cast<int>(Layout->Registers);
             Record.Order.assign(Layout->Positions, 0);
             Record.Slots = !RegisterArguments;
+            Record.CalleePops = !RegisterArguments &&
+                                Function->CallConv == DebugCallConv::Stdcall;
             Routine = std::move(Record);
             PrototypeOwnsArguments = true;
           }
@@ -3908,7 +3926,8 @@ std::shared_ptr<const ImageImportCounts> imageImportArguments(
         &Img, Dbg, Img.Imports.data(), Img.Imports.size(),
         Img.Relocations.data(), Img.Relocations.size(), Img.Exports.data(),
         Img.Exports.size(), std::move(Prototyped.Counts),
-        std::move(Prototyped.StackArgs), std::move(Prototyped.StackSlots)});
+        std::move(Prototyped.StackArgs), std::move(Prototyped.StackSlots),
+        std::move(Prototyped.FloatingArguments)});
     if (Kept)
       *Kept = Everywhere;
   }
@@ -3935,6 +3954,9 @@ void setOmittedImportArguments(
     Result.OmittedCalleeArgumentCounts =
         std::shared_ptr<const std::map<va_t, int>>(Arguments,
                                                    &Arguments->Counts);
+    Result.OmittedCalleeFloatingArguments =
+        std::shared_ptr<const std::map<va_t, FloatingCallArguments>>(
+            Arguments, &Arguments->FloatingArguments);
   }
 }
 
@@ -3984,6 +4006,9 @@ void computeCallRegisterEffects(
           Img, Result.LowFuncs, {}, /*StackArguments=*/true, Dbg,
           /*RegisterArguments=*/true, &PointerCallees);
       Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
+      Result.CallEntryFloatingArguments =
+          std::move(Prototyped.FloatingArguments);
+      Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
@@ -4282,6 +4307,7 @@ void computeCallRegisterEffects(
           Count > Effect->second->StackArgs)
         Change(Effect->second)->StackArgs = Count;
     Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
+    Result.CallEntryFloatingArguments = std::move(Prototyped.FloatingArguments);
   }
   CallRegisterSummaries Summaries =
       solveCallRegisterEffects(Effects, Volatile, Arguments, DispatchThunks,

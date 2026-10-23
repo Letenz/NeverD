@@ -14,6 +14,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
@@ -1963,6 +1964,14 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX86SgxIntrinsic(E.IntrinsicId))
+    return renderX86SgxExpression(
+        Opts.TheArch, E,
+        [this](const HighExpr &V) { return intrinsicOperandStr(V); },
+        [this](const MedVar &V) { return varName(V); },
+        [this](const MedVar &V) {
+          return !Analysis.DeadVars.count(varName(V));
+        });
   if (isX87ContextIntrinsic(E.IntrinsicId))
     return renderX87ContextCall(E);
   // In an Itanium handler the exception the runtime took is the catch's
@@ -2014,11 +2023,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
            exprStr(*E.Operands[0]) + "); __asm__ volatile(\"" + Op +
            "\" : \"+r\"(" + Temp + ") :: \"memory\"); " + Result + "; })";
   }
-  if (isX86SystemStateIntrinsic(E.IntrinsicId)) {
+  if (isX86SystemStateIntrinsic(E.IntrinsicId) ||
+      E.IntrinsicId == Intrinsic::X86MsrAccess) {
     std::vector<std::string> Arguments;
     for (const auto &Operand : E.Operands)
       Arguments.push_back(Operand ? exprStr(*Operand) : "");
-    return renderX86SystemStateExpression(Opts.TheArch, E, Arguments);
+    return renderX86SystemStateExpression(Opts.TheArch, E, Arguments,
+                                          Opts.Format == BinaryFormat::COFF,
+                                          HasCIntrinsics);
   }
   if (E.SourceCallHint)
     return renderSourceCallExpr(E);
@@ -2268,8 +2280,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                                       Opts.libcVariant())
           : std::nullopt;
   if (!Defined && Callee && Name == Callee->Name && includesHeaderOf(Name) &&
-      Callee->PrototypeFromCLibrary && !RecordCall &&
-      libc::hasRecordCallParameters(*Callee, Opts.libcVariant()))
+      (Callee->PrototypeFromHeader || Callee->PrototypeFromCLibrary) &&
+      !RecordCall && libc::hasRecordCallParameters(*Callee, Opts.libcVariant()))
     throw std::runtime_error("The header's record call ABI is unsupported");
   if (RecordCall)
     PrintedArgs = RecordCall->Parameters.size();
@@ -2671,6 +2683,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   }
   S += Note;
   S += ")";
+  if (RecordCall && RecordCall->ResultPointer) {
+    const unsigned Index = *RecordCall->ResultPointer;
+    if (Index >= E.Operands.size() || !E.Operands[Index])
+      throw std::runtime_error("A record call result pointer is incomplete");
+    S = c_detail::recordCallResult(
+        c_detail::recordCallType(Callee->ReturnType, Opts),
+        exprStr(*E.Operands[Index]), S);
+  }
   return S;
 }
 

@@ -490,17 +490,26 @@ bool NdOpEmulator::step(const LowOp &Op) {
   if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
     return false;
   if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
-      Op.Inputs[0].isConst() &&
-      (static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
-           Intrinsic::X86Invalidate ||
-       static_cast<Intrinsic>(Op.Inputs[0].Offset) == Intrinsic::X86MsrAccess ||
-       isX86SystemStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)) ||
-       isX86VirtualizationIntrinsic(
-           static_cast<Intrinsic>(Op.Inputs[0].Offset)))) {
+      Op.Inputs[0].isConst()) {
+    const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+    if (isX86SystemStateIntrinsic(Id)) {
+      switch (x86SystemStateContract(Id).Kind) {
+      case X86SystemStateKind::Enqueue:
+      case X86SystemStateKind::DirectStore:
+      case X86SystemStateKind::DirectStore64B:
+        // These bounded memory executors validate the shared operand contract,
+        // including FS/GS, before touching the ordinary BinaryImage projection.
+        return executeIntrinsic(Op);
+      default:
+        return false;
+      }
+    }
     // A scalar tracer has neither CPL/CR4/CPUID state nor a guest TLB.  Even a
     // structurally valid invalidation or MSR access must therefore stop here
     // rather than pretending the architectural state transition succeeded.
-    return false;
+    if (isX86SgxIntrinsic(Id) || Id == Intrinsic::X86Invalidate ||
+        Id == Intrinsic::X86MsrAccess || isX86VirtualizationIntrinsic(Id))
+      return false;
   }
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
     if (!opcodeSupportsMemoryAddressSpace(Op.Opcode))
@@ -565,8 +574,6 @@ bool NdOpEmulator::step(const LowOp &Op) {
       case Intrinsic::ApxRaoOr:
       case Intrinsic::ApxRaoXor:
       case Intrinsic::ApxCmpccXadd:
-      case Intrinsic::Enqcmd:
-      case Intrinsic::Enqcmds:
         return executeIntrinsic(Op);
       default:
         // Segmented strings still require architectural REP/DF/flags state
@@ -656,8 +663,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
           Id == Intrinsic::AesDecLast || Id == Intrinsic::Pclmulqdq ||
           Id == Intrinsic::ApxRaoAdd || Id == Intrinsic::ApxRaoAnd ||
           Id == Intrinsic::ApxRaoOr || Id == Intrinsic::ApxRaoXor ||
-          Id == Intrinsic::ApxCmpccXadd || Id == Intrinsic::Enqcmd ||
-          Id == Intrinsic::Enqcmds)
+          Id == Intrinsic::ApxCmpccXadd)
         return executeIntrinsic(Op);
     }
     // Opaque intrinsic (SSE/NEON vector op, etc.): it cannot alter control

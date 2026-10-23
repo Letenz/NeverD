@@ -13,10 +13,12 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86FPEncoding.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86SegmentedBlock.h"
 #include "neverd/lift/X86Lifter.h"
 
 #define DEBUG_TYPE "neverd-lift-x86"
@@ -24,6 +26,84 @@
 namespace neverd {
 
 namespace {
+
+bool liftSegmentedBlock32(X86Lifter &L, X86Lifter::LiftState &S,
+                          const cs_insn *Insn, const cs_x86 &X86,
+                          X86SegmentedBlockKind Kind) {
+  FPEncodingInfo E;
+  const unsigned PP = Kind == X86SegmentedBlockKind::DirectStore ? 1
+                      : Kind == X86SegmentedBlockKind::Enqueue   ? 3
+                                                                 : 2;
+  // The pinned handwritten ENQ decoder retains REP in prefix[0] and all
+  // three opcode bytes. Authenticate that detail before adapting it to the
+  // generated legacy layout consumed by the common byte/detail validator.
+  cs_x86 Detail = X86;
+  if (Kind != X86SegmentedBlockKind::DirectStore) {
+    const auto Prefix = Kind == X86SegmentedBlockKind::Enqueue ? 0xf2 : 0xf3;
+    if (X86.prefix[0] != Prefix || X86.opcode[0] != 0x0f ||
+        X86.opcode[1] != 0x38 || X86.opcode[2] != 0xf8 || X86.opcode[3] != 0)
+      return false;
+    Detail.prefix[0] = 0;
+    Detail.opcode[1] = 0xf8;
+    Detail.opcode[2] = 0;
+  }
+  if (!parseFPEncoding(Insn, Detail, Arch::X86, false, 2, PP, E) ||
+      E.Opcode != 0xf8 || X86.op_count != 2 ||
+      !matchesFPGPROperand(X86.operands[0], E.gprRegIndex(), E.AddressSize) ||
+      X86.operands[1].type != X86_OP_MEM || X86.operands[1].size != 64 ||
+      !validateFPEncodingTail(Insn, Detail, E, X86.operands[1]))
+    return false;
+  const auto &Memory = X86.operands[1];
+  X86BlockSegment Segment;
+  switch (Memory.mem.segment) {
+  case X86_REG_ES:
+    Segment = X86BlockSegment::ES;
+    break;
+  case X86_REG_CS:
+    Segment = X86BlockSegment::CS;
+    break;
+  case X86_REG_SS:
+    Segment = X86BlockSegment::SS;
+    break;
+  case X86_REG_DS:
+    Segment = X86BlockSegment::DS;
+    break;
+  case X86_REG_FS:
+    Segment = X86BlockSegment::FS;
+    break;
+  case X86_REG_GS:
+    Segment = X86BlockSegment::GS;
+    break;
+  case X86_REG_INVALID:
+    Segment = Memory.mem.base == X86_REG_BP || Memory.mem.base == X86_REG_EBP ||
+                      Memory.mem.base == X86_REG_ESP
+                  ? X86BlockSegment::SS
+                  : X86BlockSegment::DS;
+    break;
+  default:
+    return false;
+  }
+  const auto SourceEA = S.computeEA(Memory, true, true);
+  auto Source = S.makeTemp(4);
+  S.emit(NdOp::SUBBYTES, Source, {SourceEA, NdVar::scalar(0, 1)});
+  auto Destination = L.operandRead(S, X86.operands[0]);
+  if (Destination.Size == 2) {
+    auto Extended = S.makeTemp(4);
+    S.emit(NdOp::INT_ZEXT, Extended, {Destination});
+    Destination = Extended;
+  }
+  const auto Selector =
+      x86SegmentedBlockSelector(Kind, Segment, E.AddressSize == 2);
+  const bool HasFlag = x86SegmentedBlockHasFlag(Selector);
+  S.emitIntrinsic(Intrinsic::X86SegmentedBlockMemory,
+                  HasFlag ? NdVar::reg(x86reg::ZF, 1) : NdVar{},
+                  {NdVar::scalar(Selector, 2), Source, Destination});
+  if (HasFlag)
+    for (uint64_t Flag :
+         {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::SF, x86reg::OF})
+      S.emit(NdOp::COPY, NdVar::reg(Flag, 1), {NdVar::scalar(0, 1)});
+  return true;
+}
 
 bool beginsWithPotentialEvexPrefix(const cs_insn *Insn) {
   if (!Insn)
@@ -503,15 +583,24 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
 
   // MOVDIRI — scalar direct store.
   case X86_INS_MOVDIRI: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    if (X86.operands[0].type == X86_OP_MEM) {
-      S.storeToMem(X86.operands[0], Src);
-    } else {
-      S.emit(NdOp::COPY, Dst, {Src});
-    }
+    FPEncodingInfo Encoding;
+    if (!parseFPEncoding(Insn, X86, L.targetArch(), false, 2, 0, Encoding) ||
+        Encoding.Opcode != 0xf9 || X86.op_count != 2)
+      return false;
+    const uint16_t Width = Encoding.W ? 8 : 4;
+    if (X86.operands[0].type != X86_OP_MEM || X86.operands[0].size != Width ||
+        !matchesFPGPROperand(X86.operands[1], Encoding.gprRegIndex(), Width) ||
+        !validateFPEncodingTail(Insn, X86, Encoding, X86.operands[0]))
+      return false;
+    const NdVar Address = S.computeEA(X86.operands[0]);
+    const NdVar Source = L.operandRead(S, X86.operands[1]);
+    if (Address.Size != 8 || Source.Size != Width)
+      return false;
+    // A plain STORE loses the WC transaction and write-completion atomicity.
+    // Keep the actual memory operation, including unaligned stores, native.
+    S.emitIntrinsic(Intrinsic::X86DirectStore, {}, {Address, Source},
+                    NdMemoryOrdering::None,
+                    S.memoryAddressSpace(X86.operands[0]));
     break;
   }
 
@@ -519,12 +608,18 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   // 64-byte-atomic direct store to the address held in the register operand.
   // The register is an address source, not a destination register.
   case X86_INS_MOVDIR64B: {
-    // In 64-bit mode ES has architectural base zero.  The 32-bit form needs
-    // explicit ES-base and segment-limit state that LowIR does not model, so
-    // keep that form fail-closed instead of silently treating ES as flat.
-    if (L.targetArch() != Arch::X64 || X86.op_count != 2 ||
+    if (L.targetArch() == Arch::X86)
+      return liftSegmentedBlock32(L, S, Insn, X86,
+                                  X86SegmentedBlockKind::DirectStore);
+    FPEncodingInfo Encoding;
+    if (L.targetArch() != Arch::X64 ||
+        !parseFPEncoding(Insn, X86, L.targetArch(), false, 2, 1, Encoding) ||
+        Encoding.Opcode != 0xf8 || X86.op_count != 2 ||
         X86.operands[0].type != X86_OP_REG ||
-        X86.operands[1].type != X86_OP_MEM || X86.operands[1].size != 64)
+        X86.operands[1].type != X86_OP_MEM || X86.operands[1].size != 64 ||
+        !matchesFPGPROperand(X86.operands[0], Encoding.gprRegIndex(),
+                             Encoding.AddressSize) ||
+        !validateFPEncodingTail(Insn, X86, Encoding, X86.operands[1]))
       return false;
 
     NdVar Address = L.operandRead(S, X86.operands[0]);
@@ -536,18 +631,15 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       Address = ExtendedAddress;
     }
 
-    // Intel specifies that the ordinary source read precedes the direct
-    // store.  Keeping the load first also snapshots overlapping sources.
-    const NdVar Source = L.operandRead(S, X86.operands[1]);
-    if (Source.Size != 64)
+    const NdVar SourceAddress = S.computeEA(X86.operands[1]);
+    if (SourceAddress.Size != 8)
       return false;
-    S.emitIntrinsic(Intrinsic::RequireAligned, {},
-                    {Address, NdVar::cst(64, 8)});
-
-    const NdVar FullMask = expandCompactLaneMask(S, NdVar::cst(0xff, 1), 64, 8);
-    if (FullMask.Size != 64)
-      return false;
-    S.emitIntrinsic(Intrinsic::MaskedStoreQ, {}, {Address, FullMask, Source});
+    // The instruction owns feature checks, the complete source read, alignment
+    // and the indivisible direct store. A masked ordinary store cannot express
+    // its write-completion atomicity or memory-type protocol.
+    S.emitIntrinsic(Intrinsic::X86DirectStore64B, {}, {SourceAddress, Address},
+                    NdMemoryOrdering::None,
+                    S.memoryAddressSpace(X86.operands[1]));
     break;
   }
 
@@ -558,9 +650,11 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   // header and portal before returning the enqueue completion in ZF.
   case X86_INS_ENQCMD:
   case X86_INS_ENQCMDS: {
-    // The portal register is an offset in ES.  ES has architectural base zero
-    // in 64-bit mode; the 32-bit modes need explicit ES base/limit state that
-    // LowIR does not carry, so those modes remain fail-closed.
+    if (L.targetArch() == Arch::X86)
+      return liftSegmentedBlock32(
+          L, S, Insn, X86,
+          InsnId == X86_INS_ENQCMD ? X86SegmentedBlockKind::Enqueue
+                                   : X86SegmentedBlockKind::EnqueueSupervisor);
     if (L.targetArch() != Arch::X64 ||
         (S.AddressSize != 4 && S.AddressSize != 8) || X86.op_count != 2 ||
         X86.operands[0].type != X86_OP_REG ||
