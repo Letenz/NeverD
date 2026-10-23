@@ -1233,6 +1233,39 @@ other tests when measuring. It skips without the input/address pair and sets no
 performance threshold; offscreen local samples are not desktop, held-out or
 competitive qualification. The selected native function is never executed.
 
+## Decompilation order audit
+
+Before comparing decompilation timings, check whether earlier requests change
+the reference output for the same function:
+
+```bash
+python3 tools/neverd-bench/audit_ida_source_order.py INPUT \
+  --target 0x401580 --entries-file entries.txt \
+  --ida-python /path/to/ida-python --ida-dir /path/to/ida \
+  --expected-version 9.5 --output benchmark-results/source-order
+python3 -m unittest scripts.tests.test_ida_source_order
+```
+
+The entry file contains whitespace-separated addresses in the actual visitation
+order. The tool compares a direct request with a request after all entries
+preceding the target. Each observation uses a fresh IDA process, a private binary
+copy and automatic analysis. A new output directory retains engine and input
+identities, complete pseudocode, preceding function types, native instructions
+and CFGs, and CTree address provenance. Existing output directories are refused.
+
+Exit 0 reports stable observed text, provenance and native inventory; exit 2
+reports changes requiring review; exit 1 reports incomplete or invalid evidence.
+Changed names alone can alter text, and CTree addresses are not an instruction
+coverage metric. Neither a stable result nor matching native function extents
+proves semantic equivalence. In particular, a newly inferred no-return callee can
+remove a caller continuation from pseudocode while its native function inventory
+remains unchanged. Keep that workload difference explicit before interpreting
+cross-decompiler timings. These diagnostic observations are not timing samples.
+
+The unit checks cover order preservation, invalid plans, text-only and
+provenance-only changes, changed native bodies, engine/input mismatches and
+missing, truncated or modified source artifacts.
+
 ## GUI function lists and navigation
 
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
