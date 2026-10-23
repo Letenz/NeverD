@@ -138,6 +138,10 @@ using IRViewFunction = const char *(*)(neverd_session_t, neverd_va_t,
 using StringEncodingsFunction = const char *(*)();
 using DecodeTextFunction = const char *(*)(const unsigned char *, int,
                                            const char *);
+using X87CapabilitiesFunction = const char *(*)(neverd_session_t);
+X87CapabilitiesFunction x87CapabilitiesFunction() {
+  return engineSymbol<X87CapabilitiesFunction>("neverd_x87_capabilities_json");
+}
 // Additive C ABI capabilities for strings in more than ASCII.
 /// The engine's string encodings, or an empty array from an older engine.
 const Json &stringEncodings() {
@@ -697,6 +701,9 @@ Engine::Engine()
 }
 Engine::~Engine() { neverd_session_destroy(session_); }
 std::string Engine::version() { return ownedString(neverd_version_number()); }
+bool Engine::reportsX87Capabilities() {
+  return x87CapabilitiesFunction() != nullptr;
+}
 std::string Engine::error() const {
   return ownedString(neverd_last_error(session_));
 }
@@ -2093,6 +2100,15 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                          EncodedPayload *encoded) {
   if (encoded)
     encoded->reset();
+  if (operation == "x87_capabilities") {
+    if (!p.is_object() || !p.empty())
+      throw Error("invalid_request", "x87_capabilities accepts no parameters");
+    const auto query = x87CapabilitiesFunction();
+    if (!query)
+      throw Error("unsupported",
+                  "This engine does not report x87 capabilities");
+    return backendJson(query(session_), true);
+  }
   if (operation.starts_with("comparison_")) {
     if (!comparison_)
       comparison_ = std::make_unique<ComparisonService>(atomicWrite);

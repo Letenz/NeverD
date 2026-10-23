@@ -1060,6 +1060,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_dyld_cache_images_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_pdb_reference_json",
     "const char *",
     ["const char *", "const char *"],

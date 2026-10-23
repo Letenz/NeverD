@@ -13,7 +13,19 @@ It does not close the issue's portable execution or qualification gates.
 unloaded session, do not execute input code or probe a CPU, and work without
 optional CPU emulation. C callers free the owned result with
 `neverd_free_string`; failure returns NULL with `neverd_last_error(session)`.
-Worker/GUI clients can consume this C API; no new GUI workflow is claimed.
+The worker advertises `x87_capabilities` when its engine exports the C API.
+The empty-object operation returns the report unchanged, before or after a
+binary loads, without changing the project revision. Older engines report
+the operation as unavailable.
+
+The desktop's **Help → x87 support** opens that report through the normal
+read dispatcher. Source mode, ABI, state path, consumer, backend and destination
+remain explicit. The table separates implementation, numerical results and
+architectural state; details retain the shared profile requirements, refusal
+reason, ABI call contract and regression source references. Unlisted cells
+remain unsupported, and malformed or newer schemas show an error instead of
+retaining earlier support claims. Inspection never executes an input or probes
+the host. Regression source references are not passing-run or proof receipts.
 
 `ir/X87Instructions.def` owns semantic coverage metadata.
 `ir/X87Capabilities.h` exposes the C++ query and report; malformed selectors,
@@ -57,6 +69,29 @@ or a floating import/return ABI. Calls and independent CFG roots need their
 existing export/refresh and stack contracts; backedges retain their context.
 MMX addresses physical aliases; EMMS empties tags without initializing payloads.
 
+Typed i386 and x64 lifting includes FDECSTP and FFREEP alongside FINCSTP and
+FFREE. `X87Stack.h` owns the distinction between rotation and pop: a rotation
+changes TOP without defining a payload or changing tags; FFREEP empties both
+the named slot and the previous top. CFG joins retain physical register
+identity. LLVM, HighC and LLVM-C emit the original instruction with the shared
+x87 stack-clobber contract. These are typed projection routes, not full-state
+qualification: the typed concrete executor refuses them and symbolic execution
+keeps affected state unknown. Portable owned-context admission is unchanged.
+
+Typed FBLD/FBSTP carry raw ten-byte values and an explicit control word through
+one shared value contract. CFG admission proves an empty load destination or a
+full store source with known payload. The native LLVM/HighC/LLVM-C projection
+requires a valid CW with all exception masks and valid FBLD decimal digits;
+generated guards trap outside those conditions before converting or storing a
+result. The original native instructions provide conversion and status under
+each PC/RC, without a host floating type or an intermediate binary64 value.
+The conversion samples status in the same assembly block and passes it to the
+immediately following synthetic read through the existing FPREM status owner.
+HighC uses thread-local storage for that handoff and requires initialized TLS.
+Typed concrete execution refuses these operations and symbolic results/status
+remain unknown. Unmasked BCD and stack-fault behavior belongs to the separately
+tested owned context; typed emission does not qualify those cases.
+
 FNINIT establishes control/status and empty tags, not known retained payloads.
 Environment loads cannot authenticate unknown retained register bytes. Full
 save/restore, MMX, calls and extended-state instructions remain separate state
@@ -89,11 +124,57 @@ a static query is not an availability probe. Numerical exactness is conditional
 on authenticated operands/state and the selected host instruction behavior.
 Complete state/exception qualification remains unknown in the inventory.
 
+FBLD's native numerical scope requires all eighteen packed decimal digits to
+be 0 through 9. The hardware does not validate digits A through F; their result
+is undefined, including the packed BCD indefinite encoding. The concrete
+executor refuses these inputs before changing state or publishing a load,
+even in native-reference mode. The sign byte's low seven bits are ignored, and
+negative zero retains its sign. See the
+[Intel FBLD instruction contract](https://cdrdv2-public.intel.com/774492/325383-sdm-vol-2abcd.pdf).
+
 Transcendental and partial-remainder results can be processor-dependent.
 Concrete execution refuses them in strict mode; explicit native-reference mode
 labels its observations approximate. They cannot supply portable exact or
 checked-refinement evidence. Emitting a native instruction also does not
 qualify processor-independent numerical results.
+
+Typed FSIN/FCOS, F2XM1, FSCALE, FPATAN, FYL2X/FYL2XP1 and FPREM/FPREM1
+sample the value and status in one assembly operation. Their synthetic status
+read consumes that sample before spills can
+change C1 or TOP. Status-only consumers keep the producer alive. This is a
+defined-status/value projection, not an architectural stack snapshot.
+The scalar concrete tracer refuses unmodelled native value operations even in
+lenient mode. Missing status after a call cannot become zero through FNSTSW,
+FNCLEX or the partial-remainder evaluator.
+
+`X87Value.h` derives scalar operand counts from the shared value table and
+requires raw ten-byte operands/results (two bytes for the synthetic status
+read). Low/Med validation and LLVM/HighC publication reject missing, extra,
+narrowed or malformed operands instead of duplicating an input or widening a
+binary64 substitute. LLVM checks even masked bodies before publication.
+The legacy single-result FPTAN/FXTRACT IDs remain reserved but are refused;
+their replacement is the guarded two-result contract. Scalar x87 output has
+no Swift or non-x86 LLVM runtime contract.
+
+Typed FPTAN, FSINCOS and FXTRACT execute once and return both raw binary80
+results plus the sampled status. `X87GuardedValue.h` owns their operand/result
+contract alongside BCD; the existing CFG tag owner requires a full source with
+known payload and an empty push destination. Runtime guards require canonical
+finite operands and a valid, all-masked control word. FPTAN/FSINCOS additionally
+require `abs(input) < 2^63`: outside that range hardware leaves ST0 unchanged
+and does not push, a runtime TOP change the static projection cannot represent.
+Those typed inputs trap explicitly before the operation; owned-context
+execution retains the separate conditional-stack behavior. The generated
+projection does not split FSINCOS into independently approximated operations.
+See the [Intel instruction contracts](https://cdrdv2-public.intel.com/774492/325383-sdm-vol-2abcd.pdf).
+
+The native generated-code regression separately compares transcendental,
+scale/extract and partial-remainder results, conditional stack changes and
+status on the same physical CPU. Linux x64 signal fixtures compare selected
+pending-invalid, WAIT/non-WAIT and inaccessible-memory boundaries, including
+the saved x87 state. Those observations exclude relocated instruction/data
+addresses, signal resumption and other OS/CPU contracts; they do not promote
+the inventory's architectural-state or formal qualification.
 
 The portable concrete slice below is explicitly selected and instruction scoped.
 There is still no qualified x87 cross-architecture translation profile; mixed

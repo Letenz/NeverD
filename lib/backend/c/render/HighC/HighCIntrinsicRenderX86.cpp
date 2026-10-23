@@ -20,6 +20,7 @@
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/ir/X87Stack.h"
 #include "neverd/ir/high/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
@@ -116,7 +117,10 @@ const char *x87CHelperName(X87CHelper Helper) {
     return "neverd_x87_control_word";
   case X87CHelper::Fprem:
     return "neverd_x87_fprem";
-#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  case X87CHelper::Status:
+    return "neverd_x87_read_status";
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1,              \
+                                SamplesStatus)                                 \
   case X87CHelper::ID:                                                         \
     return Name;
 #include "neverd/ir/intrinsics/X87ValueInstructions.def"
@@ -132,7 +136,8 @@ bool isX87ControlWord(Arch TheArch, const MedVar &V) {
 /// The operands the x87 value instruction of \p Helper reads.
 static unsigned x87ValueHelperOperands(X87CHelper Helper) {
   switch (Helper) {
-#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1,              \
+                                SamplesStatus)                                 \
   case X87CHelper::ID:                                                         \
     return Operands;
 #include "neverd/ir/intrinsics/X87ValueInstructions.def"
@@ -143,7 +148,8 @@ static unsigned x87ValueHelperOperands(X87CHelper Helper) {
 
 std::optional<X87CHelper> x87ValueHelper(Intrinsic Id) {
   switch (Id) {
-#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1,              \
+                                SamplesStatus)                                 \
   case Intrinsic::ID:                                                          \
     return X87CHelper::ID;
 #include "neverd/ir/intrinsics/X87ValueInstructions.def"
@@ -166,6 +172,22 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
           "_BitInt(80)),\n"
           "               \"x87 bits travel in a long double's "
           "storage\");\n\n";
+  bool UsesStatus =
+      Used.count(X87CHelper::Fprem) || Used.count(X87CHelper::Status);
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1,              \
+                                SamplesStatus)                                 \
+  UsesStatus |= SamplesStatus && Used.count(X87CHelper::ID);
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+  // Each producer samples status in its own asm block. The synthetic read
+  // consumes that sample, never the state left by an intervening C spill.
+  if (UsesStatus)
+    OS << "static _Thread_local uint16_t neverd_x87_sampled_status;\n"
+          "static _Thread_local unsigned char neverd_x87_status_pending;\n\n"
+          "static inline uint16_t neverd_x87_read_status(void) {\n"
+          "    if (!neverd_x87_status_pending) __builtin_trap();\n"
+          "    neverd_x87_status_pending = 0;\n"
+          "    return neverd_x87_sampled_status;\n"
+          "}\n\n";
   // C's rint, nearbyint and sqrtl live in the C library; each instruction
   // computes in place as the machine did.
   for (const auto &[Helper, Mnemonic] :
@@ -181,7 +203,8 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
   // manual's x87 operand rules spell it: an instruction that pops st(1)
   // clobbers it.
   auto WriteValueHelper = [&](X87CHelper Helper, const char *Asm,
-                              unsigned Operands, bool PopsST1) {
+                              unsigned Operands, bool PopsST1,
+                              bool SamplesStatus) {
     if (!Used.count(Helper))
       return;
     OS << "static inline unsigned _BitInt(80) " << x87CHelperName(Helper)
@@ -192,16 +215,31 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
        << "    __builtin_memcpy(&value, &x, 10);\n";
     if (Operands == 2)
       OS << "    __builtin_memcpy(&other, &y, 10);\n";
-    OS << "    __asm__(\"" << Asm << "\" : \"=t\"(value) : \"0\"(value)"
-       << (Operands == 2 ? ", \"u\"(other)" : "")
-       << (PopsST1 ? " : \"st(1)\"" : "") << ");\n"
-       << "    unsigned _BitInt(80) bits = 0;\n"
+    if (SamplesStatus)
+      OS << "    uint16_t status;\n";
+    OS << "    __asm__" << (SamplesStatus ? " volatile" : "") << "(\"" << Asm;
+    if (SamplesStatus)
+      OS << "\\n\\tfnstsw %%ax";
+    OS << "\" : \"=&t\"(value)";
+    if (SamplesStatus)
+      OS << ", \"=a\"(status)";
+    OS << " : \"0\"(value)" << (Operands == 2 ? ", \"u\"(other)" : "");
+    if (PopsST1 || SamplesStatus)
+      OS << " : " << (PopsST1 ? "\"st(1)\"" : "")
+         << (PopsST1 && SamplesStatus ? ", " : "")
+         << (SamplesStatus ? "\"cc\"" : "");
+    OS << ");\n";
+    if (SamplesStatus)
+      OS << "    neverd_x87_sampled_status = status;\n"
+            "    neverd_x87_status_pending = 1;\n";
+    OS << "    unsigned _BitInt(80) bits = 0;\n"
        << "    __builtin_memcpy(&bits, &value, 10);\n"
        << "    return bits;\n"
        << "}\n\n";
   };
-#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
-  WriteValueHelper(X87CHelper::ID, Asm, Operands, PopsST1);
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1,              \
+                                SamplesStatus)                                 \
+  WriteValueHelper(X87CHelper::ID, Asm, Operands, PopsST1, SamplesStatus);
 #include "neverd/ir/intrinsics/X87ValueInstructions.def"
   // The program runs with the control word the unit holds.
   if (Used.count(X87CHelper::ControlWord))
@@ -212,13 +250,7 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
           "}\n\n";
   if (!Used.count(X87CHelper::Fprem))
     return;
-  // The status must be sampled inside the same asm block as FPREM. A separate
-  // C expression could let the compiler spill an x87 value before FNSTSW and
-  // thereby change the condition codes observed by the source program.
-  OS << "static _Thread_local uint16_t neverd_x87_fprem_status;\n"
-        "static _Thread_local unsigned char "
-        "neverd_x87_fprem_status_pending;\n\n"
-        "static inline _BitInt(80) neverd_x87_partial_remainder(\n"
+  OS << "static inline _BitInt(80) neverd_x87_partial_remainder(\n"
         "    _BitInt(80) dividend, _BitInt(80) divisor, int nearest) {\n"
         "    unsigned char lhs[10], rhs[10], result[10];\n"
         "    uint16_t status;\n"
@@ -239,8 +271,8 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
         "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
         "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
         "    }\n"
-        "    neverd_x87_fprem_status = status;\n"
-        "    neverd_x87_fprem_status_pending = 1;\n"
+        "    neverd_x87_sampled_status = status;\n"
+        "    neverd_x87_status_pending = 1;\n"
         "    _BitInt(80) bits = 0;\n"
         "    __builtin_memcpy(&bits, result, 10);\n"
         "    return bits;\n"
@@ -252,11 +284,6 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
         "static inline _BitInt(80) neverd_x87_fprem1(\n"
         "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
         "    return neverd_x87_partial_remainder(dividend, divisor, 1);\n"
-        "}\n\n"
-        "static inline uint16_t neverd_x87_read_status(void) {\n"
-        "    if (!neverd_x87_fprem_status_pending) __builtin_trap();\n"
-        "    neverd_x87_fprem_status_pending = 0;\n"
-        "    return neverd_x87_fprem_status;\n"
         "}\n\n";
 }
 
@@ -1879,17 +1906,19 @@ std::string renderX86TypedIntrinsicCall(
     }
     return Result + ")";
   }
-  if (Call.IntrinsicId == I::X87Ffree) {
+  if (const auto Stack = x87StackEffect(Call.IntrinsicId);
+      Stack && Stack->FreesOperand) {
     if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
         Call.Operands.size() != 2 || !Call.Operands[1] ||
         Call.Operands[1]->Kind != ExprKind::Const ||
         Call.Operands[1]->ConstVal >= 8)
-      llvm::report_fatal_error("invalid x87 FFREE HighC operand");
+      llvm::report_fatal_error("invalid x87 free-register HighC operand");
     const std::string Register = std::to_string(Call.Operands[1]->ConstVal);
+    const std::string Mnemonic = intrinsicAsmMnemonic(Call.IntrinsicId);
     if (GnuToolchain)
-      return "__asm__ volatile(\"ffree %%st(" + Register +
+      return "__asm__ volatile(\"" + Mnemonic + " %%st(" + Register +
              ")\" ::: " + x87StateCClobbers(X87StateEffect::Stack).str() + ")";
-    return "__asm { ffree st(" + Register + ") }";
+    return "__asm { " + Mnemonic + " st(" + Register + ") }";
   }
   // LLDT/LTR/LMSW with a register operand: an `__asm` block cannot take the
   // computed value, so the asm statement loads it into a register.  The

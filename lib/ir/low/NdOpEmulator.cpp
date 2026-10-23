@@ -18,6 +18,8 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/X87GuardedValue.h"
+#include "neverd/ir/X87Stack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86Regs.h"
@@ -630,11 +632,22 @@ bool NdOpEmulator::step(const LowOp &Op) {
         return executeIntrinsic(Op);
       if (isX87ContextIntrinsic(Id))
         return executeX87Context(Op);
+      // Guarded native values have no complete concrete stack/status model.
+      // Lenient tracing must not skip their operations or runtime guards.
+      if (isX87GuardedValueIntrinsic(Id))
+        return false;
+      // These value helpers require native x87. Skipping one would retain a
+      // stale status word for its following synthetic read, even if the
+      // tracer invalidated the numeric output.
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1,              \
+                                SamplesStatus)                                 \
+  if (Id == Intrinsic::ID)                                                     \
+    return false;
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
       if (Id == Intrinsic::X87Fprem || Id == Intrinsic::X87Fprem1 ||
           Id == Intrinsic::X87ReadStatus || Id == Intrinsic::X87Fninit ||
           Id == Intrinsic::X87Fnclex || Id == Intrinsic::X87Wait ||
-          Id == Intrinsic::X87Ffree || Id == Intrinsic::X87Fincstp ||
-          isX87ConstantControlIntrinsic(Id))
+          x87StackEffect(Id) || isX87ConstantControlIntrinsic(Id))
         return executeX87(Op);
       if (Id == Intrinsic::MaskedLoadB || Id == Intrinsic::MaskedLoadW ||
           Id == Intrinsic::MaskedLoadD || Id == Intrinsic::MaskedLoadQ ||

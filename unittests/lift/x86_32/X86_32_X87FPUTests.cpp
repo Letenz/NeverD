@@ -1,5 +1,6 @@
 #include "../../LLVMHostFixture.h"
 #include "NeverDLiftFixture.h"
+#include "X87ProjectionFixture.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -59,6 +60,7 @@ struct X87CallGraphCacheTestAccess {
 } // namespace neverd::detail
 
 class X86_32_X87FPU : public NeverDLiftTest {};
+class X87CallReplay : public X87ProjectionFixture {};
 
 static fs::path testObj() {
   return fs::path(TEST_OBJ_DIR) / "test_x87_fpu32.o";
@@ -645,7 +647,7 @@ TEST(X87ImportCall, AdapterDeclarationsRequireTheCheckedPE32ABI) {
   }
 }
 
-TEST_F(X86_32_X87FPU, NativeCRTStackCallsMatchIndependentMachineCallers) {
+TEST_F(X87CallReplay, NativeCRTStackCallsMatchIndependentMachineCallers) {
 #if !defined(__linux__) || !defined(__x86_64__)
   GTEST_SKIP() << "requires a Linux x86-64 host with native i386 execution";
 #else
@@ -657,6 +659,7 @@ TEST_F(X86_32_X87FPU, NativeCRTStackCallsMatchIndependentMachineCallers) {
         SCOPED_TRACE(Count);
         SCOPED_TRACE(Route);
         SCOPED_TRACE(NoOpt);
+        selectCase(Arch::X86, (Count * 3 + Route) * 2 + unsigned(NoOpt));
         const char *Name = Count == 1 ? "_CIsqrt" : "_CIpow";
         auto Image = x87CRTCallImage(Name, Count, Route);
         llvm::LLVMContext Context;
@@ -696,13 +699,13 @@ TEST_F(X86_32_X87FPU, NativeCRTStackCallsMatchIndependentMachineCallers) {
             << (Count == 1 ? "0xc0a00000" : "0x40000000")
             << "\n.section .note.GNU-stack,\"\",@progbits\n";
         for (const std::string Opt : {"-O0", "-O2"}) {
-          const auto Object = tmpFile("crt-stack.obj");
+          const auto Object = tmpFile("crt-stack" + Opt + ".obj");
           const auto COFF = exec(NEVERD_TEST_CLANG,
                                  {"--target=i686-pc-windows-msvc", Opt, "-c",
                                   LLVMFile.string(), "-o", Object.string()});
           ASSERT_TRUE(COFF.ok()) << COFF.err << IR;
           for (const auto &Source : {NativeFile, LLVMFile}) {
-            const auto Binary = tmpFile("crt-stack-execution");
+            const auto Binary = tmpFile(Source.stem().string() + Opt + ".exe");
             const auto Build = exec(
                 NEVERD_TEST_CLANG,
                 {"--target=i386-linux-gnu", Opt, "-ffreestanding",
@@ -717,12 +720,13 @@ TEST_F(X86_32_X87FPU, NativeCRTStackCallsMatchIndependentMachineCallers) {
 #endif
 }
 
-TEST_F(X86_32_X87FPU, NativeCRTAdaptersTransportAllBinary80Bits) {
+TEST_F(X87CallReplay, NativeCRTAdaptersTransportAllBinary80Bits) {
 #if !defined(__linux__) || !defined(__x86_64__)
   GTEST_SKIP() << "requires a Linux x86-64 host with native i386 execution";
 #else
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "requires Clang's i386 target";
+  selectCase(Arch::X86, 0);
   llvm::LLVMContext Context;
   llvm::Module Module("x87-crt-adapter", Context);
   Module.setTargetTriple(llvm::Triple("i686-pc-windows-msvc"));
@@ -770,7 +774,7 @@ TEST_F(X86_32_X87FPU, NativeCRTAdaptersTransportAllBinary80Bits) {
          "movl %eax,%ebx\nmovl $1,%eax\nint $0x80\n"
          ".section .note.GNU-stack,\"\",@progbits\n";
   for (const std::string Opt : {"-O0", "-O2"}) {
-    const auto Binary = tmpFile("crt-adapter-execution");
+    const auto Binary = tmpFile("crt-adapter" + Opt + ".exe");
     const auto Build =
         exec(NEVERD_TEST_CLANG,
              {"--target=i386-linux-gnu", Opt, "-ffreestanding", "-fuse-ld=lld",
@@ -778,7 +782,7 @@ TEST_F(X86_32_X87FPU, NativeCRTAdaptersTransportAllBinary80Bits) {
               HarnessFile.string(), "-o", Binary.string()});
     ASSERT_TRUE(Build.ok()) << Build.err << IR;
     ASSERT_TRUE(exec(Binary.string(), {}).ok()) << IR;
-    const auto Object = tmpFile("crt-adapter.obj");
+    const auto Object = tmpFile("crt-adapter" + Opt + ".obj");
     const auto COFF =
         exec(NEVERD_TEST_CLANG, {"--target=i686-pc-windows-msvc", Opt, "-c",
                                  LLVMFile.string(), "-o", Object.string()});
@@ -3725,7 +3729,7 @@ TEST(X87CallGraphCache, EvictionBoundsRetentionWithoutChangingResults) {
   EXPECT_EQ(Access::stats(Builder)[0], Before[0] + 1);
 }
 
-TEST_F(X86_32_X87FPU, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
+TEST_F(X87CallReplay, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
 #if !defined(__linux__) || !defined(__x86_64__)
   GTEST_SKIP() << "requires a Linux x86-64 host with native i386 execution";
 #else
@@ -3738,6 +3742,7 @@ TEST_F(X86_32_X87FPU, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
         SCOPED_TRACE(static_cast<int>(Architecture));
         SCOPED_TRACE(Shape);
         SCOPED_TRACE(NoOpt);
+        selectCase(Architecture, Shape * 2 + unsigned(NoOpt));
         const std::string Target = Architecture == Arch::X86
                                        ? "--target=i386-linux-gnu"
                                        : "--target=x86_64-linux-gnu";
@@ -3772,6 +3777,12 @@ TEST_F(X86_32_X87FPU, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
         Emit.EmitIncludes = false;
         ASSERT_TRUE(HighCEmitter().emit(High.HighFuncs, COS, Emit));
         std::ofstream(CFile) << C;
+        const auto LLVMCFile = tmpFile("call-loop-llvm.c");
+        std::string LLVMC = "#include <stdint.h>\n#include <stddef.h>\n";
+        llvm::raw_string_ostream LOS(LLVMC);
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, LOS, Emit, nullptr,
+                                        &Image));
+        std::ofstream(LLVMCFile) << LLVMC;
         // A separately emitted caller must declare the same return carrier
         // when its callee is linked from independently assembled machine code.
         const auto ExternalCFile = tmpFile("call-loop-external.c");
@@ -3810,10 +3821,11 @@ TEST_F(X86_32_X87FPU, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
         Harness.close();
         for (const std::string Opt : {"-O0", "-O2"})
           for (const auto &Source :
-               {NativeFile, LLVMFile, CFile, ExternalCFile}) {
+               {NativeFile, LLVMFile, CFile, LLVMCFile, ExternalCFile}) {
             SCOPED_TRACE(Opt);
             SCOPED_TRACE(Source.string());
-            const auto Binary = tmpFile("call-loop-execution");
+            const auto Binary =
+                tmpFile(Source.filename().string() + Opt + ".exe");
             std::vector<std::string> Args{Target,
                                           Opt,
                                           "-ffreestanding",
@@ -3829,9 +3841,10 @@ TEST_F(X86_32_X87FPU, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
             if (Source == ExternalCFile)
               Args.push_back(NativeCalleesFile.string());
             auto Build = exec(NEVERD_TEST_CLANG, Args);
-            ASSERT_TRUE(Build.ok()) << Build.err << IR << C << ExternalC;
+            ASSERT_TRUE(Build.ok())
+                << Build.err << IR << C << LLVMC << ExternalC;
             const auto Run = exec(Binary.string(), {});
-            ASSERT_TRUE(Run.ok()) << Run.err << IR << C << ExternalC;
+            ASSERT_TRUE(Run.ok()) << Run.err << IR << C << LLVMC << ExternalC;
           }
       }
 #endif

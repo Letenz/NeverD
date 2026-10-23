@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/X87Constant.h"
+#include "neverd/ir/X87Stack.h"
+#include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/ir/low/X87PartialRemainder.h"
@@ -69,6 +71,8 @@ bool NdOpEmulator::executeX87(const LowOp &Op) {
     return false;
 
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (x87ValueInfo(Id) && !x87ValueShapeIsValid(x87ValueLowShape(Op, Img.Arch)))
+    return false;
   if (isX87ConstantControlIntrinsic(Id)) {
     if (!x87ConstantControlShapeIsValid(
             Id, x87ConstantControlLowShape(Op, Img.Arch)))
@@ -147,14 +151,17 @@ bool NdOpEmulator::executeX87(const LowOp &Op) {
   if (Id == Intrinsic::X87Fnclex) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
       return false;
-    const uint16_t Status = static_cast<uint16_t>(
-        getRegister(x86reg::FPU_SW).value_or(0) & ~X87ExceptionStatusMask);
+    const auto OldStatus = getRegister(x86reg::FPU_SW);
+    if (!OldStatus)
+      return false;
+    const uint16_t Status =
+        static_cast<uint16_t>(*OldStatus & ~X87ExceptionStatusMask);
     Registers[x86reg::FPU_SW] = Status;
     WideRegisters.erase(x86reg::FPU_SW);
     return true;
   }
 
-  if (Id == Intrinsic::X87Ffree) {
+  if (const auto Stack = x87StackEffect(Id); Stack && Stack->FreesOperand) {
     if (Op.NumInputs != 3 || Op.Output.Size != 0 || !Op.Inputs[1].isReg() ||
         Op.Inputs[1].Size != x86reg::FPURegSize ||
         Op.Inputs[1].Offset < x86reg::ST0 ||
@@ -163,13 +170,13 @@ bool NdOpEmulator::executeX87(const LowOp &Op) {
         !Op.Inputs[2].isConst() || Op.Inputs[2].Size != 1 ||
         Op.Inputs[2].Offset >= x86reg::FPUStackDepth)
       return false;
-    // FFREE leaves C0/C1/C2/C3 undefined. The strict emulator has no
+    // Free-register operations leave C0/C1/C2/C3 undefined. The emulator has no
     // unknown-bit status representation, so continuing would let a later
     // FNSTSW observe the stale condition codes.
     return false;
   }
 
-  if (Id == Intrinsic::X87Fincstp) {
+  if (x87StackEffect(Id)) {
     // Physical ST slots are statically rebased by the lifter, but this
     // emulator does not track TOP through every FLD/FSTP. Updating SW.TOP
     // from its cached word could publish a false status, so stop instead.
@@ -177,19 +184,14 @@ bool NdOpEmulator::executeX87(const LowOp &Op) {
   }
 
   if (Id == Intrinsic::X87ReadStatus) {
-    if (Op.NumInputs != 1 || Op.Output.Size != 2 ||
-        (!Op.Output.isReg() && !Op.Output.isTemp()))
+    const auto Status = getRegister(x86reg::FPU_SW);
+    if (!Status)
       return false;
-    writeOutput(Op.Output, getRegister(x86reg::FPU_SW).value_or(0));
+    writeOutput(Op.Output, *Status);
     return true;
   }
 
   if (Id != Intrinsic::X87Fprem && Id != Intrinsic::X87Fprem1)
-    return false;
-  if (Op.NumInputs != 3 || Op.Output.Size != x86reg::FPURegSize ||
-      Op.Inputs[1].Size != x86reg::FPURegSize ||
-      Op.Inputs[2].Size != x86reg::FPURegSize ||
-      (!Op.Output.isReg() && !Op.Output.isTemp()))
     return false;
 
   auto knownX87Bytes =
@@ -207,17 +209,17 @@ bool NdOpEmulator::executeX87(const LowOp &Op) {
 
   const auto DividendBytes = knownX87Bytes(Op.Inputs[1]);
   const auto DivisorBytes = knownX87Bytes(Op.Inputs[2]);
-  if (!DividendBytes || !DivisorBytes)
+  const auto OldStatus = getRegister(x86reg::FPU_SW);
+  if (!DividendBytes || !DivisorBytes || !OldStatus)
     return false;
   const auto Result = evaluateX87PartialRemainder(*DividendBytes, *DivisorBytes,
                                                   Id == Intrinsic::X87Fprem1);
   if (!Result)
     return false;
 
-  const uint16_t OldStatus =
-      static_cast<uint16_t>(getRegister(x86reg::FPU_SW).value_or(0));
-  const uint16_t NewStatus = static_cast<uint16_t>(
-      (OldStatus & ~X87PartialRemainderConditionMask) | Result->ConditionCodes);
+  const uint16_t NewStatus =
+      static_cast<uint16_t>((*OldStatus & ~X87PartialRemainderConditionMask) |
+                            Result->ConditionCodes);
   writeOutputBytes(Op.Output, Result->Value);
   Registers[x86reg::FPU_SW] = NewStatus;
   WideRegisters.erase(x86reg::FPU_SW);

@@ -8,6 +8,11 @@ C(Intrinsic::X87ReadStatus, "neverd_x87_read_status");
 C(Intrinsic::X87ReadControl, "neverd_x87_read_control");
 C(Intrinsic::X87WriteControl, "neverd_x87_write_control");
 C(Intrinsic::X87LoadConstant, "neverd_x87_load_constant");
+C(Intrinsic::X87LoadPackedBCD, "neverd_x87_load_packed_bcd");
+C(Intrinsic::X87StorePackedBCD, "neverd_x87_store_packed_bcd");
+C(Intrinsic::X87FptanPair, "neverd_x87_fptan_pair");
+C(Intrinsic::X87FsincosPair, "neverd_x87_fsincos_pair");
+C(Intrinsic::X87FxtractPair, "neverd_x87_fxtract_pair");
 C(Intrinsic::X64Syscall, "neverd_x64_syscall");
 C(Intrinsic::X64WindowsSyscall, "neverd_x64_windows_syscall");
 

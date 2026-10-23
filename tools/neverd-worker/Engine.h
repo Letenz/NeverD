@@ -55,6 +55,9 @@ public:
   /// {state, done, total, generation} for heartbeats; null before a load.
   Json backgroundState() const;
   static std::string version();
+  /// Whether the engine exposes its static x87 support matrix, independently
+  /// of binary loading, host probing or execution.
+  static bool reportsX87Capabilities();
   /// Whether the engine keeps function edits (function_create/_delete).
   static bool keepsFunctionEdits();
   /// Whether the engine keeps what the user states of a function

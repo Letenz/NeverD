@@ -3,7 +3,7 @@
 
 Both executable paths are explicitly selected test drivers, never imported
 target programs. Preserve all inputs, outputs and mismatches with SHA-256
-bindings. Rosetta describes itself separately from an original x86-64 process.
+bindings. Native i386/x64 and Rosetta describe themselves separately.
 This protocol checks numerical bits, exception flags and C1, not whole state,
 translation, termination, or a proof of arbitrary-program equivalence.
 """
@@ -14,9 +14,12 @@ import json
 from pathlib import Path
 import platform
 import random
+import shutil
 import struct
 import subprocess
 import time
+
+from check_x87_native_regression import linked_libraries
 
 
 def sha256(path):
@@ -105,24 +108,52 @@ def main():
     record["source_sha256"] = {
         name: sha256(source_root / name) for name in (
             "unittests/lift/core/X87ArithmeticReplay.cpp",
+            "unittests/lift/core/X87OriginalReplay.c",
             "include/neverd/ir/X87Binary80.h", "include/neverd/ir/X87Control.h",
             "include/neverd/ir/low/X87Arithmetic.h", "lib/ir/low/X87Arithmetic.cpp",
+            "scripts/check_x87_arithmetic_replay.py",
+            "scripts/check_x87_native_regression.py",
         )
     }
     try:
+        selected = {"portable": args.portable_driver.resolve(strict=True),
+                    "original": args.original_driver.resolve(strict=True)}
+        record["driver_sha256_before"] = {kind: sha256(path)
+                                          for kind, path in selected.items()}
+        for name in record["source_sha256"]:
+            copy = destination / "source" / name
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_root / name, copy)
+        for kind, path in selected.items():
+            copy = destination / "drivers" / kind
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, copy)
+        runtime = {}
+        if platform.system() == "Linux":
+            for path in selected.values():
+                runtime.update(linked_libraries(path))
+            record["cpu"] = json.loads(subprocess.check_output(["lscpu", "--json"]))
+        record["runtime_sha256"] = runtime
+        record["runtime_binding"] = ("Linux ldd closure" if platform.system() == "Linux"
+                                     else "not collected on this host")
         record["drivers"]["portable"] = run_driver(
-            args.portable_driver.resolve(), input_path, portable_path)
+            selected["portable"], input_path, portable_path)
         record["drivers"]["original"] = run_driver(
-            args.original_driver.resolve(), input_path, original_path)
+            selected["original"], input_path, original_path)
         for kind, driver in record["drivers"].items():
             if driver["returncode"]:
                 raise ValueError(f"{kind} driver failed: {driver['returncode']}")
-        expected_backends = {"x86-64-original-instructions",
+        expected_backends = {"x86-64-original-instructions", "i386-original-instructions",
                              "rosetta2-x86-64-original-instructions"}
         if record["drivers"]["portable"]["metadata"]["backend"] != "neverd-portable-binary80":
             raise ValueError("portable driver is not the portable implementation")
         if record["drivers"]["original"]["metadata"]["backend"] not in expected_backends:
             raise ValueError("original driver does not identify original x87 instructions")
+        original = record["drivers"]["original"]["metadata"]
+        if original["backend"] == "i386-original-instructions" and (
+                original.get("process_arch") != "i386" or platform.system() != "Linux" or
+                platform.machine() not in {"i386", "i686", "x86_64"}):
+            raise ValueError("i386 original profile requires a native Linux x86 host")
         a, b = portable_path.read_bytes(), original_path.read_bytes()
         if len(a) != len(payload) // 2 or len(b) != len(a):
             raise ValueError("response count differs from request count")
@@ -135,7 +166,17 @@ def main():
                     "index": i, "input": payload[24*i:24*i+24].hex(),
                     "portable": actual.hex(), "original": expected.hex(),
                 })
-        record["passed"] = not record["mismatches"]
+        record["stable_inputs"] = (
+            sha256(input_path) == record["inputs_sha256"] and
+            sha256(Path(__file__)) == record["script_sha256"] and
+            all(sha256(source_root / name) == digest and
+                sha256(destination / "source" / name) == digest
+                for name, digest in record["source_sha256"].items()) and
+            all(sha256(path) == record["driver_sha256_before"][kind] and
+                sha256(destination / "drivers" / kind) == record["driver_sha256_before"][kind]
+                for kind, path in selected.items()) and
+            all(sha256(Path(path)) == digest for path, digest in runtime.items()))
+        record["passed"] = not record["mismatches"] and record["stable_inputs"]
     except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
         record["passed"] = False
         record["error"] = str(error)

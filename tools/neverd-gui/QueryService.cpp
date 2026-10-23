@@ -45,6 +45,7 @@ bool readable(const QString &operation) {
                                         "xrefs",
                                         "string_references",
                                         "string_encodings",
+                                        "x87_capabilities",
                                         "string_options",
                                         "identify",
                                         "pdb_inspect",

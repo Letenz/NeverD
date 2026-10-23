@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`e17b9c65696f`](https://github.com/NeverSight/llvm-project/commit/e17b9c65696f)
+[`041bb785b2b6`](https://github.com/NeverSight/llvm-project/commit/041bb785b2b6)
 adds native instruction selection for the following APIs. NeverC's
-[`b13ad23c8`](https://github.com/NeverSight/NeverC/commit/b13ad23c8)
+[`7079d135e`](https://github.com/NeverSight/NeverC/commit/7079d135e)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -212,6 +212,7 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.{lldt,ltr,lmsw}.{reg,mem}`, `llvm.x86.invd` | i386 and x86-64 | Native selector/control input and processor-state effects, including LTR's descriptor busy-bit write. |
 | `llvm.x86.encls`, `llvm.x86.enclv` and their `32` variants | x86-64 and i386 respectively | Four natural-width register inputs/results plus `CF | (ZF << 1)`; leaf selection uses EAX and all memory/state validation stays native. Flag-preserving leaves have no defined scalar status. |
 | `llvm.x86.vmload`, `llvm.x86.vmsave`, `llvm.x86.invlpga` and their `32` variants | x86-64 and i386 respectively | Integer rAX VMCB physical address or linear invalidation address; INVLPGA also reads the complete ECX ASID. No compiler dereference; default address width only. |
+| `llvm.x86.{vmload,vmsave,invlpga}.addr32` and `.addr16` | x86-64 and i386 respectively | Explicit address-size override with i32 or i16 address input; the native `67` prefix, full i32 INVLPGA ASID and instruction-owned memory effects survive lowering. |
 | `llvm.x86.stgi/clgi/clac/stac/hlt`, `llvm.x86.swapgs` | i386 and x86-64; SWAPGS requires x86-64 | Ordered native GIF, AC, halt/resume and GS-base effects, preserving arithmetic flags. HLT is resumable, with neither `noreturn` nor `willreturn`. |
 | `llvm.x86.vmfunc.eptp.switch` | i386 and x86-64 | VMFUNC leaf 0, EAX=0 and complete i32 ECX EPTP index; native validation and VM exit behavior, without a fabricated VMfail status. |
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
@@ -482,6 +483,24 @@ guest-runner change also passes 174 prior descriptor-state CPL0 checks.
 Installed Microsoft header probes emit native IR at O0/O2. Plugin schema
 changes are limited to CLAC/STAC flag definitions, HLT's terminator property
 and VMFUNC register inputs; opcode/register/feature identities are unchanged.
+
+SVM address-size interfaces now cover explicit addr32 in long mode and addr16
+in i386 mode. The full fork adds six APIs and NeverC adds the three long-mode
+builtins. Machine pseudos retain exact AX/EAX/ECX dependencies and VMCB memory
+effects; final MC lowering emits the real opcode with `67`, retaining both
+binary encoding and assembly round trips. Wrong code modes, including a
+code16 target, fail explicitly. NeverC appends three internal opcodes while
+retaining every earlier opcode, register and feature record unchanged.
+
+The expanded default/override matrix passes 700 full-LLVM checks and 364 each
+for NeverC and the bridge, with 52 CPL3 fault comparisons on each C route.
+QEMU TCG passes 104 full-LLVM CPL0 checks and 56 each for NeverC and the bitcode
+bridge, using a VMCB below 64 KiB for the addr16 case. Eighteen LLVM regressions,
+46 NeverC intrinsic tests, 81 binary checks, 26 generator tests and 12 plugin
+tests pass; the overload audit has zero mismatches. Installed Microsoft
+interfaces retain their intended default-width native calls. These results
+include the earlier default-width operations; physical TLB behavior and
+successful VMFUNC retain the qualification limits above.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
