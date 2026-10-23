@@ -24,6 +24,10 @@ NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCMachineAsm,
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCOperands, " %0, %1")
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCStripOperands, " %0")
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCModifier, " : \"r\"((uint64_t)({0}))")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCGenericSign,
+                        "uint64_t {0}; __asm__ volatile(\"{1} %0, %1, %2\" "
+                        ": \"=r\"({0}) : \"r\"((uint64_t)({2})), "
+                        "\"r\"((uint64_t)({3}))); ")
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCAuthenticate,
                         "(uint64_t){0}((void *)(uintptr_t)({1}), {2}, "
                         "(uintptr_t)({3}))")

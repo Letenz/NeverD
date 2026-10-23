@@ -67,6 +67,18 @@ inline std::string aarch64PAuthAuthenticateC(llvm::StringRef Pointer,
       .str();
 }
 
+inline std::string aarch64PAuthGenericSignC(llvm::StringRef Value,
+                                            llvm::StringRef Discriminator) {
+  const std::string Name =
+      aarch64PAuthTemporary(kAArch64PAuthCPointer, {Value, Discriminator});
+  return "({ " +
+         llvm::formatv(kAArch64PAuthCGenericSign, Name,
+                       intrinsicAsmMnemonic(Intrinsic::A64_Pacga), Value,
+                       Discriminator)
+             .str() +
+         Name + "; })";
+}
+
 inline std::string aarch64PAuthTargetUseC(llvm::StringRef Target) {
   return llvm::formatv(kAArch64PAuthCTargetUse,
                        kAArch64AuthenticatedTargetUseAsm, Target)

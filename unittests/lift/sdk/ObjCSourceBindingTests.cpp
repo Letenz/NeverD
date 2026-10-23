@@ -10795,6 +10795,14 @@ TEST(ObjCSourceBindings, ImmutablePointerLoadsRejectIncompleteAndStaleProofs) {
         llvm::support::endian::write32le(I.Raw.data() + 8,
                                          llvm::MachO::CPU_SUBTYPE_ARM64E);
       },
+      [](auto &I) { I.MachOCPUSubtype = 0x8200000c; },
+      [](auto &I) {
+        I.Raw.resize(32);
+        llvm::support::endian::write32le(I.Raw.data(),
+                                         llvm::MachO::MH_MAGIC_64);
+        llvm::support::endian::write32le(I.Raw.data() + 8, 0x8200000c);
+      },
+      [](auto &I) { I.MachOAuthenticatedPointers[0x2000] = {}; },
   };
   for (size_t Index = 0; Index < Mutations.size(); ++Index) {
     SCOPED_TRACE(Index);
@@ -11387,6 +11395,14 @@ TEST(ObjCSourceBindings, ConstantStringsRejectUnprovedRecordsAndContents) {
         llvm::support::endian::write32le(I.Raw.data() + 8,
                                          llvm::MachO::CPU_SUBTYPE_ARM64E);
       },
+      [](auto &I) { I.MachOCPUSubtype = 0x8200000c; },
+      [](auto &I) {
+        I.Raw.resize(32);
+        llvm::support::endian::write32le(I.Raw.data(),
+                                         llvm::MachO::MH_MAGIC_64);
+        llvm::support::endian::write32le(I.Raw.data() + 8, 0x8200000c);
+      },
+      [](auto &I) { I.MachOAuthenticatedPointers[0x2000] = {}; },
       [](auto &I) { I.DyldBindSlots.clear(); },
       [](auto &I) { I.DyldBindSlots.at(0x2000).Name = "_otherClass"; },
       [](auto &I) { I.DyldBindSlots.at(0x2000).Addend = 1; },

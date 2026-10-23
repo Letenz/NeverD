@@ -36,7 +36,7 @@ TEST_F(AArch64_PAuth, PacgaUsesGenericPointerAuthenticationIntrinsic) {
   EXPECT_EQ(F.find(" xor i64 "), std::string::npos) << F;
 }
 
-TEST_F(AArch64_PAuth, HighCUsesCompilerBuiltinAndCompiles) {
+TEST_F(AArch64_PAuth, HighCUsesMachineInstructionAndCompiles) {
   auto r = decompileToHighC(testObj());
   ASSERT_EQ(r.exitCode, 0) << r.err;
 
@@ -46,7 +46,7 @@ TEST_F(AArch64_PAuth, HighCUsesCompilerBuiltinAndCompiles) {
   ASSERT_TRUE(input.good());
   std::string source((std::istreambuf_iterator<char>(input)),
                      std::istreambuf_iterator<char>());
-  EXPECT_NE(source.find("__builtin_arm_pacga"), std::string::npos) << source;
+  EXPECT_NE(source.find("pacga %0, %1, %2"), std::string::npos) << source;
   EXPECT_EQ(source.find("__neverd"), std::string::npos) << source;
   EXPECT_EQ(source.find(" ^ "), std::string::npos) << source;
 
