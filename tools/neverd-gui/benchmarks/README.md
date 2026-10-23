@@ -179,15 +179,25 @@ Other system activity is not controlled. Native runs require a real desktop
 session. Explicit offscreen/software runs remain separate diagnostics and must
 not establish native display performance.
 
-Schema 3 GUI milestones begin at `main()` entry, after dynamic loading. They
+Schema 4 GUI milestones begin at `main()` entry, after dynamic loading. They
 separate application and docking setup, service construction, window
 creation, the first window paint, worker hello, metadata of the opened file,
-the first paint of its disassembly listing (`useful_frame_ms`) and the end of
-that event-loop pass, when the backing store has been flushed
+the first paint of its current disassembly listing (`useful_frame_ms`) and the
+end of that event-loop pass, when the backing store has been flushed
 (`useful_frame_flushed_ms`). Without an input file the report ends after the
 first paint. Neither timestamp independently measures hardware presentation.
+Rows retained during a pending refresh or jump do not qualify this milestone.
 The runner's separate process wall time includes dynamic loading, report
 writing and shutdown.
+
+After recording those milestones, schema 4 also records the opened input path,
+current and top listing addresses as lossless hexadecimal strings, navigation
+and row freshness, loaded text, and viewport dimensions. The runner rejects a
+different input, stale or empty listing, and unfinished navigation. Loaded text
+can include prefetched rows outside the viewport; it is not an inventory of
+painted instructions. Use the recorded location and content to check the work
+delivered before comparing another tool's first useful frame. Schema 3 reports
+lack this evidence and are not accepted by the current runner.
 
 The opt-in `--startup-benchmark <report.json>` GUI flag is available in production
 builds. `--startup-benchmark-timeout <milliseconds>` defaults to 30000; input and
@@ -197,7 +207,7 @@ unsupported representations cannot be reported as successful useful frames.
 The in-process deadline is observed when the GUI event loop runs; the runner's
 additional hard process deadline covers blocked GUI initialization.
 Schema 1 and 2 reports measured the earlier Qt Quick workbench; keep them as
-historical evidence rather than comparing them quantitatively with schema 3.
+historical evidence rather than comparing them quantitatively with schema 4.
 
 ### Constructor measurements
 

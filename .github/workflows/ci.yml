@@ -240,6 +240,7 @@ jobs:
             scripts.tests.test_run_native_cpu_methods \
             scripts.tests.test_first_fatal_snapshots \
             scripts.tests.test_neverd_bench_harness \
+            scripts.tests.test_radare2_cli_compare \
             scripts.tests.test_ida_source_order \
             scripts.tests.test_audit_evm_opcode_metadata \
             scripts.tests.test_eh_signature_generation \
@@ -259,6 +260,8 @@ jobs:
             -v
           "$PYTHON" -m unittest discover \
             -s pluginsdk/python/tests -v
+          "$PYTHON" -m unittest discover \
+            -s tools/neverd-gui/benchmarks/tests -p test_startup_bench.py -v
           "$PYTHON" -m unittest \
             scripts.tests.test_check_capabilities \
             scripts.tests.test_check_docs_i18n \

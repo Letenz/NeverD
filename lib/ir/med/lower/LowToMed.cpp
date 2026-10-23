@@ -1211,9 +1211,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       // balanced call. The lifter modeled the CALL as SP-neutral, so add the
       // pop here -- before SSA, so the chain is well-formed -- and later stack
       // accesses (the cdecl `add esp, k` cleanup, the result-buffer reload) use
-      // the corrected SP.
+      // the corrected SP. A decoded tail jump has no continuation here: its
+      // synthetic RETURN must stay next to the CALL, so argument recovery
+      // recognizes the incoming stack rather than an ordinary call's stack.
       if ((MOp.Opcode == NdOp::CALL || MOp.Opcode == NdOp::INDIR_CALL) &&
-          MOp.NumInputs >= 1 && MOp.Inputs[0].isConst()) {
+          MOp.NumInputs >= 1 && MOp.Inputs[0].isConst() && !TailCall) {
         auto Pop = TheArch == Arch::X86 ? registrationCallStackPop(Low, LB, LOp)
                                         : std::nullopt;
         // A call through an import's slot (`call [__imp__Sleep@4]`) names

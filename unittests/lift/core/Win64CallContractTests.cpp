@@ -13,9 +13,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "SourceCallExecution.h"
+#include "WindowsQualifiedFixture.h"
 #include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -23,6 +25,7 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Verifier.h"
@@ -721,6 +724,149 @@ TEST(Win64CallContract, AFloatArgumentReachesItsImportsSlot) {
       << Body;
   EXPECT_NE(Body.find("return sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+}
+
+TEST(Win64CallContract,
+     HeaderPointerQualifiersAgreeWithIndependentDefinitions) {
+  auto Image = makeImage(throughSlot(Text, Iat, true),
+                         {{Text, "forward_qualified"}}, {"fixture_qualified"});
+  ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_qualified", 0,
+                                            ImportStorageEvidence::LoaderBind));
+  for (bool Nested : {false, true})
+    for (bool Record : {false, true})
+      for (bool VoidResult : {false, true})
+        for (bool LLVM : {false, true}) {
+          SCOPED_TRACE(Nested);
+          SCOPED_TRACE(Record);
+          SCOPED_TRACE(VoidResult);
+          SCOPED_TRACE(LLVM);
+          windows_qualified_test::Header Debug;
+          Debug.Slot = Iat;
+          Debug.Nested = Nested;
+          Debug.Record = Record;
+          Debug.VoidResult = VoidResult;
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = LLVM;
+          Options.OnlyFunctionEntries = {Text};
+          auto Result = Pipeline().run(Image, Context, Options, &Debug);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                            &Debug, &Image));
+          } else {
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+          }
+          // Independent C definitions require the same qualifiers, including
+          // those behind a pointer and on an opaque record's returned pointer.
+          const std::string Element =
+              Record ? "struct fixture_record" : "uint16_t";
+          const std::string Value =
+              Record ? (Nested ? "(*input)->value" : "input->value")
+                     : (Nested ? "**input" : "*input");
+          const std::string Definition =
+              "\nstruct fixture_record { uint16_t value; };\n" +
+              (VoidResult ? "void " : "const " + Element + " *") +
+              "fixture_qualified(const " + Element +
+              (Nested ? " *const *input" : " *input") +
+              ", volatile uint32_t *output) {\n"
+              "  if (*output != 41) __builtin_trap();\n"
+              "  if (" +
+              Value +
+              " != 0x1234) __builtin_trap();\n"
+              "  *output = 42;" +
+              (VoidResult ? ""
+                          : std::string(" return ") +
+                                (Nested ? "*input" : "input") + ";") +
+              "\n}\nint main(void) {\n  " + Element +
+              " value = {0x1234};\n  const " + Element +
+              " *input = &value;\n  uint32_t output = 41;\n"
+              "  " +
+              (VoidResult ? "" : "uintptr_t result = ") +
+              "forward_qualified((uintptr_t)" + (Nested ? "&input" : "input") +
+              ", (uintptr_t)&output);\n"
+              "  return " +
+              (VoidResult ? "" : "result != (uintptr_t)&value || ") +
+              "output != 42;\n}\n";
+          source_call_execution_test::compileAndRun(Source + Definition);
+        }
+}
+
+TEST(Win64CallContract, AVoidSourceReturnDoesNotEraseAnObservedCallResult) {
+  windows_qualified_test::Header Debug;
+  Debug.VoidResult = true;
+  llvm::LLVMContext Context;
+  llvm::Module Module("observed-void-result", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> Builder(Context);
+  auto *Type = llvm::FunctionType::get(
+      Builder.getInt64Ty(), {Builder.getInt64Ty(), Builder.getInt64Ty()},
+      false);
+  auto *Callee = llvm::Function::Create(
+      Type, llvm::GlobalValue::ExternalLinkage, "fixture_qualified", Module);
+  auto *Wrapper = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt64Ty(), false),
+      llvm::GlobalValue::ExternalLinkage, "observe_result", Module);
+  llvm_value_provenance::markReturnsNoValue(*Wrapper);
+  auto *Observed = new llvm::GlobalVariable(Module, Builder.getInt64Ty(), false,
+                                            llvm::GlobalValue::ExternalLinkage,
+                                            Builder.getInt64(0), "observed");
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Wrapper));
+  auto *Call =
+      Builder.CreateCall(Callee, {Builder.getInt64(17), Builder.getInt64(25)});
+  Builder.CreateStore(Call, Observed)->setVolatile(true);
+  Builder.CreateRet(Call);
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Out, Options, &Debug));
+  // This machine code observes the call result despite the proposed void
+  // prototype. Keep the machine declaration and the store; only the wrapper's
+  // own return is unobserved. An independent provider makes that visible.
+  source_call_execution_test::compileAndRun(Source + R"(
+uint64_t fixture_qualified(uint64_t input, uint64_t output) { return input + output; }
+int main(void) { observe_result(); return observed != 42; }
+)");
+}
+
+TEST(Win64CallContract, HeaderVoidReturnFactsAreSourceOnly) {
+  auto Image = makeImage(throughSlot(Text, Iat, true),
+                         {{Text, "forward_qualified"}}, {"fixture_qualified"});
+  ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_qualified", 0,
+                                            ImportStorageEvidence::LoaderBind));
+  windows_qualified_test::Header Debug;
+  Debug.Slot = Iat;
+  Debug.VoidResult = true;
+  for (bool Source : {false, true}) {
+    SCOPED_TRACE(Source);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.LiftMode = true;
+    Options.SourceProjection = Source;
+    Options.OnlyFunctionEntries = {Text};
+    auto Result = Pipeline().run(Image, Context, Options, &Debug);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_EQ(Result.MedFuncs.size(), 1u);
+    EXPECT_EQ(Result.MedFuncs.front().ReturnsNoValue, Source);
+    ASSERT_TRUE(Result.LlvmModule);
+    auto *Function = Result.LlvmModule->getFunction("forward_qualified");
+    ASSERT_NE(Function, nullptr);
+    EXPECT_TRUE(Function->getReturnType()->isIntegerTy());
+  }
 }
 
 TEST(Win64CallContract, HeaderVariadicPrefixKeepsEveryProvenTailArgument) {
