@@ -30,6 +30,7 @@
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
+#include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
@@ -730,6 +731,7 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   if (Func.DoesNotReturn)
     LLVMFunc->addFnAttr(llvm::Attribute::NoReturn);
   rewrite_source::setOriginalVA(*LLVMFunc, Func.Entry);
+  writeSourceFrameBytes(*LLVMFunc, Func.FrameBytes);
   return LLVMFunc;
 }
 

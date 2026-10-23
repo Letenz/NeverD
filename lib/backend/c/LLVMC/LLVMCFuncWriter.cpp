@@ -27,6 +27,7 @@
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
+#include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/libc/LibCNames.h"
@@ -9379,6 +9380,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     }
   }
 
+  if (Opts.EmitComments)
+    for (const auto &Bytes : readSourceFrameBytes(Fn))
+      if (const auto Text = sourceFrameStringComment(Bytes)) {
+        emitIndent(1);
+        OS << "/* " << *Text << " */\n";
+      }
   BufOS.flush();
   const size_t DeclInsertPos = Buffered.size();
   emitFunctionDecls(Fn);

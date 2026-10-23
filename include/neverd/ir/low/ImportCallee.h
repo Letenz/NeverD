@@ -108,6 +108,9 @@ struct LoadedCallSlotProof {
   std::function<std::optional<SourceFrameDefinition>(int, size_t)> Reload;
   std::function<bool(const LowOp &, const NdVar &)> Preserves;
   size_t *WorkRemaining = nullptr;
+  /// An observational query may retain and cross exact alignment checks.
+  /// Ordinary callable/relocation proofs keep their existing refusal.
+  bool AllowAlignmentChecks = false;
 };
 
 inline std::optional<va_t>
@@ -141,10 +144,12 @@ loadedCallSlot(llvm::ArrayRef<LowBlock> Blocks, const LowBlock &Block,
         --*Proof->WorkRemaining;
       }
       const LowOp &Candidate = Cur->Ops[J];
-      // LowIR temporaries belong to one instruction. Calls and intrinsics
-      // cannot supply preservation facts for a pointer carried in a register.
+      // LowIR temporaries belong to one instruction. Intrinsics require a
+      // separate observational opt-in; calls require preservation evidence.
       if ((Var.isTemp() && Candidate.Addr != Instruction) ||
-          Candidate.Opcode == NdOp::INTRINSIC)
+          (Candidate.Opcode == NdOp::INTRINSIC &&
+           (!Proof || !Proof->AllowAlignmentChecks ||
+            !isSourceFrameObservationGuard(Candidate))))
         return std::nullopt;
       if (Candidate.Opcode == NdOp::CALL ||
           Candidate.Opcode == NdOp::INDIR_CALL) {
