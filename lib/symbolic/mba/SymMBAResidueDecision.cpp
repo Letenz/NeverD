@@ -584,6 +584,38 @@ class LowWordDecisions {
           Result[I] = Values.front();
         }
       }
+    } else if ((Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor) &&
+               Ctx.numOperands(R) == 2 && Ctx.isConst(Ctx.operand(R, 0))) {
+      const auto Literal = literal(Ctx.operand(R, 0));
+      if (!Literal)
+        return Empty;
+      const unsigned Needed =
+          Op == SymOp::And ? std::min(Count, Literal->getActiveBits()) : Count;
+      if (Needed) {
+        const auto &Value = word(Ctx.operand(R, 1), Needed, Depth + 1);
+        // Constant bitwise operands select or complement existing edges;
+        // they need neither a constant decision word nor an apply-cache entry.
+        for (unsigned I = 0; I < Count; ++I) {
+          const bool Bit = (*Literal)[I];
+          Result[I] = Op == SymOp::And  ? (Bit ? Value[I] : 0)
+                      : Op == SymOp::Or ? (Bit ? 1 : Value[I])
+                                        : (Value[I] ^ uint32_t(Bit));
+        }
+      }
+    } else if (Op == SymOp::Add && Ctx.numOperands(R) == 2 &&
+               Ctx.isConst(Ctx.operand(R, 0))) {
+      const auto Literal = literal(Ctx.operand(R, 0));
+      if (!Literal)
+        return Empty;
+      const auto &Value = word(Ctx.operand(R, 1), Count, Depth + 1);
+      // A constant carry is AND or OR, rather than a three-input majority.
+      // Avoid constructing a constant word and caching a generic word sum.
+      uint32_t Carry = 0;
+      for (unsigned I = 0; I < Count && !Failed; ++I) {
+        Result[I] = apply(Xor, Value[I], Carry ^ uint32_t((*Literal)[I]));
+        if (I + 1 < Count)
+          Carry = apply((*Literal)[I] ? Or : And, Value[I], Carry);
+      }
     } else if (Op == SymOp::Add || Op == SymOp::Mul || Op == SymOp::And ||
                Op == SymOp::Or || Op == SymOp::Xor) {
       if (Op == SymOp::Mul)
@@ -758,6 +790,38 @@ class LowWordDecisions {
     return Term;
   }
 
+  Bits quadraticLowSum(llvm::ArrayRef<Bits> Values, unsigned Count) {
+    // For H_i=a_i+2*b_i, let K=sum(a_i). Modulo four,
+    // e2(H)=choose(K,2)+2*((sum a_i)*(sum b_i)-sum(a_i*b_i)).
+    // choose(K,2) has bits K_1 and K_2 XOR (K_0 AND K_1).
+    // This retains the exact division by two without constructing any squares.
+    if (!charge(Values.size() * (Count + 2), Values.size() * sizeof(Bits)))
+      return {};
+    std::vector<Bits> Ones;
+    Ones.reserve(Values.size());
+    for (const auto &V : Values) {
+      Bits Row(Count + 1, 0);
+      Row[0] = V[0];
+      Ones.push_back(std::move(Row));
+    }
+    const auto K = sumWords(Ones, Count + 1);
+    if (Failed)
+      return {};
+    Bits Result{K[1]};
+    if (Count == 2) {
+      uint32_t HighParity = 0, MixedParity = 0;
+      for (const auto &V : Values) {
+        if (K[0])
+          HighParity = apply(Xor, HighParity, V[1]);
+        MixedParity = apply(Xor, MixedParity, apply(And, V[0], V[1]));
+      }
+      Result.push_back(
+          apply(Xor, apply(Xor, K[2], apply(And, K[0], K[1])),
+                apply(Xor, MixedParity, apply(And, K[0], HighParity))));
+    }
+    return Result;
+  }
+
   Bits product(llvm::ArrayRef<SymRef> Factors, unsigned Observed) {
     if (Factors.empty()) {
       Bits One(Observed, 0);
@@ -805,26 +869,33 @@ class LowWordDecisions {
         // 2*e2(H) = (sum H)^2 - sum(H^2). Compute one additional bit
         // before exact division by two; two is not invertible in this ring.
         const unsigned N = Observed - 2 * Split + 1;
-        if (!charge(Group.size(), Group.size() * sizeof(Bits)))
-          return Bits{};
-        std::vector<Bits> Squares;
-        Squares.reserve(Group.size());
-        for (const auto &H : Group) {
-          Bits V(H.begin(), H.begin() + N);
-          Squares.push_back(calculate(SymOp::Mul, V, V));
+        Bits Elementary;
+        if (N <= 3) {
+          Elementary = quadraticLowSum(Group, N - 1);
+        } else {
+          if (!charge(Group.size(), Group.size() * sizeof(Bits)))
+            return Bits{};
+          std::vector<Bits> Squares;
+          Squares.reserve(Group.size());
+          for (const auto &H : Group) {
+            Bits V(H.begin(), H.begin() + N);
+            Squares.push_back(calculate(SymOp::Mul, V, V));
+          }
+          auto SumSquares = sumWords(Squares, N);
+          auto Sum = Bits(High.begin(), High.begin() + N);
+          auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
+          for (auto &Bit : SumSquares)
+            Bit = apply(Xor, Bit, 1);
+          Bits One(N, 0);
+          One[0] = 1;
+          auto Difference = calculate(SymOp::Add, SumSquare,
+                                      calculate(SymOp::Add, SumSquares, One));
+          if (Failed || Difference.front() != 0)
+            return Bits{};
+          Elementary.assign(Difference.begin() + 1, Difference.end());
         }
-        auto SumSquares = sumWords(Squares, N);
-        auto Sum = Bits(High.begin(), High.begin() + N);
-        auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
-        for (auto &Bit : SumSquares)
-          Bit = apply(Xor, Bit, 1);
-        Bits One(N, 0);
-        One[0] = 1;
-        auto Difference = calculate(SymOp::Add, SumSquare,
-                                    calculate(SymOp::Add, SumSquares, One));
-        if (Failed || Difference.front() != 0)
+        if (Failed || Elementary.empty())
           return Bits{};
-        Bits Elementary(Difference.begin() + 1, Difference.end());
         Bits Narrow(Low.begin(), Low.begin() + N - 1);
         auto Correction =
             calculate(SymOp::Mul, power(Narrow, Count - 2), Elementary);

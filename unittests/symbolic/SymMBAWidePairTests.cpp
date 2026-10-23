@@ -183,4 +183,58 @@ TEST(SymMBAWidePairs, RefusalsKeepTheFullWordAndCumulativeBounds) {
   }
 }
 
+TEST(SymMBAWidePairs, QuadraticCarryCountsPreserveAllObservedBits) {
+  std::mt19937_64 Random(0x51554144434f554e);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Observed : {6u, 7u, 8u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Observed);
+      SymContext Ctx;
+      auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      const std::array Parts{X, Y};
+      const unsigned Split = (Observed + 2) / 3;
+      const auto Scale = llvm::APInt(Width, 3).shl(Width - Observed);
+      llvm::SmallVector<SymRef, 32> Factors{Ctx.mkConst(Scale)};
+      for (unsigned Copy = 0; Copy < 23; ++Copy)
+        for (unsigned I = 0; I < Parts.size(); ++I)
+          Factors.push_back(Ctx.mkAdd(
+              Ctx.mkConst(Width, 1),
+              Ctx.mkMul(
+                  Ctx.mkConst(Width, uint64_t(1) << Split),
+                  Ctx.mkAdd(Parts[I],
+                            Ctx.mkConst(Width, Copy * Parts.size() + I)))));
+      auto Input = Ctx.mkMul(Factors);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      auto Result = detail::foldResidueDecisions(Ctx, Input, Budget, Storage);
+      ASSERT_NE(Result, Input) << "work=" << Budget.used()
+                               << " cost=" << detail::readingCost(Ctx, Input);
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned Trial = 0; Trial < 512; ++Trial) {
+        std::array<llvm::APInt, 2> V;
+        for (auto &Value : V) {
+          Value = llvm::APInt(Width, Random());
+          for (unsigned Bit = 64; Bit < Width; Bit += 64)
+            Value |= llvm::APInt(Width, Random()).shl(Bit);
+        }
+        // Exhaust both low residues independently, then retain random
+        // complete words to catch accidental narrowing of the scaled result.
+        if (Trial < 16)
+          V = {llvm::APInt(Width, Trial & 3),
+               llvm::APInt(Width, (Trial >> 2) & 3)};
+        const auto &Values = V;
+        auto Expected = Scale;
+        for (unsigned Copy = 0; Copy < 23; ++Copy)
+          for (unsigned I = 0; I < Values.size(); ++I)
+            Expected *= llvm::APInt(Width, 1) +
+                        (Values[I] + Copy * Values.size() + I).shl(Split);
+        EXPECT_EQ(Reduced.eval(V), Expected);
+      }
+      if (Width <= 64 &&
+          solver::proofBackendAvailable(solver::ProofBackend::Z3)) {
+        solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
+        EXPECT_EQ(Verifier(Ctx, Input, Result), SynthVerification::Equivalent);
+      }
+    }
+}
+
 } // namespace
