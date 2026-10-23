@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -50,6 +51,13 @@ struct DecisionHash {
 class LowWordDecisions {
   using Bits = llvm::SmallVector<uint32_t, 8>;
   enum Operation : uint64_t { And, Or, Xor };
+  // A known parity input precedes the other words. The remaining words keep
+  // bit-interleaved order, which bounds the carries of their own products.
+  static constexpr uint64_t SecondaryWord = uint64_t(1) << 63;
+
+  static unsigned variableBit(uint64_t Variable) {
+    return unsigned((Variable & ~SecondaryWord) >> 32);
+  }
 
   SymContext &Ctx;
   WorkBudget &Budget;
@@ -59,10 +67,21 @@ class LowWordDecisions {
   size_t Work = 0;
   bool Failed = false;
   std::optional<std::pair<uint64_t, bool>> Assumption;
+  std::optional<uint32_t> PriorityInput;
   // The low edge bit denotes complement. Negation never duplicates a graph;
   // zero and one are the two edges of the single terminal node.
   std::vector<Decision> Nodes{{UINT64_MAX, 0, 0}};
   std::unordered_map<Decision, uint32_t, DecisionHash> Unique, Applied;
+  struct CarryKey {
+    uint32_t A, B, C;
+    bool operator==(const CarryKey &) const = default;
+  };
+  struct CarryHash {
+    size_t operator()(const CarryKey &K) const {
+      return size_t(llvm::hash_combine(K.A, K.B, K.C));
+    }
+  };
+  std::unordered_map<CarryKey, uint32_t, CarryHash> Carries;
   std::unordered_map<uint64_t, Bits> Words;
   std::unordered_map<uint32_t, unsigned> Zeros;
   struct WordOperation {
@@ -277,14 +296,62 @@ class LowWordDecisions {
     return Result;
   }
 
+  // A full adder's carry is the majority of its three input bits. Compute
+  // that one function directly instead of retaining three temporary graphs.
+  uint32_t majority(uint32_t A, uint32_t B, uint32_t C, unsigned Depth = 0) {
+    if (!charge())
+      return 0;
+    if (A == B || A == C)
+      return A;
+    if (B == C)
+      return B;
+    if ((A ^ B) == 1)
+      return C;
+    if ((A ^ C) == 1)
+      return B;
+    if ((B ^ C) == 1)
+      return A;
+    if (A > B)
+      std::swap(A, B);
+    if (B > C)
+      std::swap(B, C);
+    if (A > B)
+      std::swap(A, B);
+    if (A <= 1)
+      return apply(A ? Or : And, B, C);
+    const uint32_t Complement = A & 1;
+    A ^= Complement;
+    B ^= Complement;
+    C ^= Complement;
+    const CarryKey Key{A, B, C};
+    if (auto It = Carries.find(Key); It != Carries.end())
+      return It->second ^ Complement;
+    if (Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return 0;
+    }
+    const auto DA = decision(A), DB = decision(B), DC = decision(C);
+    const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
+    auto L =
+        majority(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+                 DC.Variable == V ? DC.Low : C, Depth + 1);
+    auto H =
+        majority(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
+                 DC.Variable == V ? DC.High : C, Depth + 1);
+    auto R = node(V, L, H);
+    if (!charge(1, sizeof(CarryKey) + sizeof(uint32_t) + 4 * sizeof(void *)))
+      return 0;
+    Carries.emplace(Key, R);
+    return R ^ Complement;
+  }
+
   Bits add(const Bits &A, const Bits &B) {
     Bits Result;
     uint32_t Carry = 0;
     for (size_t I = 0; I < A.size(); ++I) {
-      const auto Sum = apply(Xor, A[I], B[I]);
-      Result.push_back(apply(Xor, Sum, Carry));
+      Result.push_back(apply(Xor, apply(Xor, A[I], B[I]), Carry));
       if (I + 1 != A.size())
-        Carry = apply(Or, apply(And, A[I], B[I]), apply(And, Sum, Carry));
+        Carry = majority(A[I], B[I], Carry);
     }
     return Result;
   }
@@ -399,14 +466,23 @@ class LowWordDecisions {
     return Result;
   }
 
-  Bits word(SymRef R, unsigned Count, unsigned Depth = 0) {
-    Bits Empty(Count, 0);
-    if (!charge(1 + Count))
+  // References into unordered_map elements survive recursive insertions.
+  // Cached words are immutable until the parity assumption changes; no view
+  // escapes that phase. Cache hits pay for lookup, without copying each bit.
+  const Bits &word(SymRef R, unsigned Count, unsigned Depth = 0) {
+    static const auto EmptyWords = [] {
+      std::array<Bits, limits::kMaxAffineResidueTableBits + 1> Result;
+      for (unsigned I = 0; I < Result.size(); ++I)
+        Result[I].resize(I, 0);
+      return Result;
+    }();
+    const auto &Empty = EmptyWords[Count];
+    if (!charge())
       return Empty;
     const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
     if (auto It = Words.find(Key); It != Words.end())
       return It->second;
-    if (Depth >= limits::kMaxResidueDecisionDepth) {
+    if (!charge(Count) || Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
       return Empty;
     }
@@ -421,13 +497,13 @@ class LowWordDecisions {
     } else if (Op == SymOp::ZExt || Op == SymOp::SExt) {
       const auto Child = Ctx.operand(R, 0);
       const auto ChildBits = std::min(Count, Ctx.width(Child));
-      auto Value = word(Child, ChildBits, Depth + 1);
+      const auto &Value = word(Child, ChildBits, Depth + 1);
       std::copy(Value.begin(), Value.end(), Result.begin());
       if (Op == SymOp::SExt)
         std::fill(Result.begin() + ChildBits, Result.end(), Value.back());
     } else if (Op == SymOp::Extract && transparent(R, Count)) {
       const auto Offset = unsigned(Ctx.node(R).Aux);
-      auto Value = word(Ctx.operand(R, 0), Count + Offset, Depth + 1);
+      const auto &Value = word(Ctx.operand(R, 0), Count + Offset, Depth + 1);
       std::copy(Value.begin() + Offset, Value.end(), Result.begin());
     } else if (Op == SymOp::Not) {
       Result = word(Ctx.operand(R, 0), Count, Depth + 1);
@@ -439,7 +515,7 @@ class LowWordDecisions {
         return Empty;
       const auto Shift = Value->getLimitedValue(Count);
       if (Shift < Count) {
-        auto Value = word(Ctx.operand(R, 0), Count - Shift, Depth + 1);
+        const auto &Value = word(Ctx.operand(R, 0), Count - Shift, Depth + 1);
         std::copy(Value.begin(), Value.end(), Result.begin() + Shift);
       }
     } else if (Op == SymOp::LShr && transparent(R, Count)) {
@@ -450,7 +526,7 @@ class LowWordDecisions {
         const auto Shift = Value->getLimitedValue();
         if (Shift < Ctx.width(R)) {
           const unsigned Take = std::min<uint64_t>(Count, Ctx.width(R) - Shift);
-          auto Value = word(Ctx.operand(R, 0), Take + Shift, Depth + 1);
+          const auto &Value = word(Ctx.operand(R, 0), Take + Shift, Depth + 1);
           std::copy(Value.begin() + Shift, Value.end(), Result.begin());
         }
       } else {
@@ -461,7 +537,7 @@ class LowWordDecisions {
         const size_t Entries = size_t(1) << IndexBits;
         if (!charge(Count * Entries, Entries * sizeof(uint32_t)))
           return Empty;
-        auto Index = word(Ctx.operand(R, 1), IndexBits, Depth + 1);
+        const auto &Index = word(Ctx.operand(R, 1), IndexBits, Depth + 1);
         const auto Pattern = literal(Ctx.operand(R, 0));
         if (!Pattern)
           return Empty;
@@ -507,7 +583,7 @@ class LowWordDecisions {
         Narrow.front() = 1;
         for (size_t I = 0; I < Operands.size(); ++I) {
           const auto Z = FactorZeros[I];
-          const auto Value =
+          const auto &Value =
               word(Operands[I], Count - TotalZeros + Z, Depth + 1);
           Narrow = calculate(SymOp::Mul, Narrow,
                              Bits(Value.begin() + Z, Value.end()));
@@ -516,7 +592,7 @@ class LowWordDecisions {
         Result.front() = 0;
       } else {
         for (auto Child : Operands) {
-          auto Value = word(Child, Count, Depth + 1);
+          const auto &Value = word(Child, Count, Depth + 1);
           if (Op == SymOp::Add)
             Result = calculate(SymOp::Add, Result, Value);
           else if (Op == SymOp::Mul)
@@ -543,13 +619,114 @@ class LowWordDecisions {
       // Treat an unsupported word as an exact opaque input, without assuming
       // a relation between it and any other input word or path condition.
       for (unsigned I = 0; I < Count; ++I)
-        Result[I] = node((uint64_t(I) << 32) | R.index(), 0, 1);
+        Result[I] =
+            node(((PriorityInput && R.index() != *PriorityInput) ? SecondaryWord
+                                                                 : 0) |
+                     (uint64_t(I) << 32) | R.index(),
+                 0, 1);
     }
     if (!charge(Count, sizeof(uint64_t) + sizeof(Bits) +
                            2 * Count * sizeof(uint32_t) + 4 * sizeof(void *)))
       return Empty;
-    Words.emplace(Key, Result);
-    return Result;
+    return Words.emplace(Key, std::move(Result)).first->second;
+  }
+
+  // Count equal and complementary bits before carry propagation. A pair of
+  // complements contributes one, while repeated copies move to higher columns.
+  Bits sumWords(llvm::ArrayRef<Bits> Values, unsigned Count) {
+    using Column = std::map<uint32_t, size_t>;
+    if (!charge(Count, Count * sizeof(Column)))
+      return Bits(Count, 0);
+    std::vector<Column> Columns(Count);
+    auto Insert = [&](unsigned Bit, uint32_t Edge) {
+      if (!charge())
+        return false;
+      if (!Edge)
+        return true;
+      auto &C = Columns[Bit];
+      if (!charge(1 + std::bit_width(C.size())))
+        return false;
+      auto It = C.find(Edge);
+      if (It == C.end()) {
+        if (!charge(1, sizeof(Column::value_type) + 4 * sizeof(void *)))
+          return false;
+        It = C.emplace(Edge, 0).first;
+      }
+      ++It->second;
+      return true;
+    };
+    for (const auto &Value : Values)
+      for (unsigned I = 0; I < Count; ++I)
+        if (!Insert(I, Value[I]))
+          return Bits(Count, 0);
+    Bits Left(Count, 0), Right(Count, 0);
+    for (unsigned I = 0; I < Count && !Failed; ++I) {
+      auto &C = Columns[I];
+      if (!charge(C.size(), 2 * C.size() * sizeof(uint32_t)))
+        break;
+      Bits Remaining;
+      Remaining.reserve(C.size());
+      size_t Constants = 0;
+      for (auto It = C.begin(); It != C.end(); ++It) {
+        auto [Id, Copies] = *It;
+        if (!charge(1 + std::bit_width(Copies)))
+          break;
+        if (!Copies)
+          continue;
+        if (Id == 1) {
+          Constants += Copies;
+          continue;
+        }
+        if (!(Id & 1)) {
+          auto Other = C.find(Id ^ 1);
+          if (Other != C.end()) {
+            const auto Common = std::min(Copies, Other->second);
+            Copies -= Common;
+            Other->second -= Common;
+            Constants += Common;
+          }
+        }
+        if (Copies & 1)
+          Remaining.push_back(Id);
+        Copies >>= 1;
+        for (unsigned J = I + 1; Copies && J < Count; ++J, Copies >>= 1)
+          if ((Copies & 1) && !Insert(J, Id))
+            break;
+      }
+      if (Constants & 1)
+        Remaining.push_back(1);
+      Constants >>= 1;
+      for (unsigned J = I + 1; Constants && J < Count; ++J, Constants >>= 1)
+        if ((Constants & 1) && !Insert(J, 1))
+          break;
+      while (Remaining.size() > 2 && !Failed) {
+        const auto A = Remaining.pop_back_val();
+        const auto B = Remaining.pop_back_val();
+        const auto C = Remaining.pop_back_val();
+        const auto Sum = apply(Xor, apply(Xor, A, B), C);
+        if (Sum)
+          Remaining.push_back(Sum);
+        if (I + 1 < Count && !Insert(I + 1, majority(A, B, C)))
+          break;
+      }
+      if (!Remaining.empty())
+        Left[I] = Remaining[0];
+      if (Remaining.size() > 1)
+        Right[I] = Remaining[1];
+    }
+    return calculate(SymOp::Add, Left, Right);
+  }
+
+  Bits power(Bits Value, size_t Exponent) {
+    Bits Term(Value.size(), 0);
+    Term.front() = 1;
+    for (; Exponent && !Failed; Exponent >>= 1) {
+      if (Exponent & 1)
+        Term = calculate(SymOp::Mul, Term, Value);
+      if (Exponent > 1)
+        Value = calculate(SymOp::Mul, Value, Value);
+    }
+    return Term;
   }
 
 public:
@@ -624,43 +801,83 @@ public:
           // odd branch and restore its exact selector after multiplication.
           Parity = *Common;
           Assumption = std::make_pair(D.Variable, D.High == 1);
+          PriorityInput = uint32_t(D.Variable);
           Words.clear();
           Arithmetic.clear();
           Applied.clear();
+          Carries.clear();
         }
       }
     }
     if (OddProductOnly && !Assumption)
       return Root;
 
-    // Count exact equal low-word factors, retaining every multiplicity.
-    // Binary powering avoids replaying a long repeated modular product.
-    std::map<Bits, size_t> Powers;
+    // Write every group as (L + 2^Split H_i). Since 3*Split >= Observed,
+    // only the constant, linear and quadratic elementary sums survive.
+    // Group equality comes from complete decision words, never from samples.
+    const unsigned Split = (Observed + 2) / 3;
+    std::map<Bits, std::vector<Bits>> Groups;
     for (auto Factor : Factors) {
       if (Ctx.isConst(Factor))
         continue;
-      auto Value = word(Factor, Observed);
+      const auto &Value = word(Factor, Observed);
       if (Failed ||
-          !charge(Observed * (1 + std::bit_width(Powers.size())),
-                  sizeof(decltype(Powers)::value_type) + 4 * sizeof(void *) +
-                      2 * Observed * sizeof(uint32_t))) {
+          !charge(Observed * (1 + std::bit_width(Groups.size())),
+                  sizeof(decltype(Groups)::value_type) + 4 * sizeof(void *) +
+                      (2 * Observed * sizeof(uint32_t) + 2 * sizeof(Bits))))
         return Root;
-      }
-      ++Powers[Value];
+      Bits Low(Value.begin(), Value.begin() + Split);
+      Groups[Low].emplace_back(Value.begin() + Split, Value.end());
     }
     std::vector<Bits> Products;
-    if (!charge(Powers.size(), Powers.size() * sizeof(Bits)))
+    if (!charge(Groups.size(), Groups.size() * sizeof(Bits)))
       return Root;
-    for (const auto &[Value, Multiplicity] : Powers) {
-      auto Power = Value;
-      Bits Term(Observed, 0);
-      Term.front() = 1;
-      for (size_t Exponent = Multiplicity; Exponent && !Failed;
-           Exponent >>= 1) {
-        if (Exponent & 1)
-          Term = calculate(SymOp::Mul, Term, Power);
-        if (Exponent > 1)
-          Power = calculate(SymOp::Mul, Power, Power);
+    for (const auto &[Low, Group] : Groups) {
+      const auto Count = Group.size();
+      const auto High = sumWords(Group, Observed - Split);
+      if (Failed)
+        return Root;
+      auto Wide = Low;
+      Wide.resize(Observed, 0);
+      auto Term = power(Wide, Count);
+      if (Observed != Split) {
+        Bits Narrow(Wide.begin(), Wide.begin() + Observed - Split);
+        auto Correction = calculate(SymOp::Mul, power(Narrow, Count - 1), High);
+        Bits Upper(Observed, 0);
+        std::copy(Correction.begin(), Correction.end(), Upper.begin() + Split);
+        Term = calculate(SymOp::Add, Term, Upper);
+      }
+      if (2 * Split < Observed && Count > 1) {
+        // 2*e2(H) = (sum H)^2 - sum(H^2). Compute one additional bit
+        // before exact division by two; two is not invertible in this ring.
+        const unsigned N = Observed - 2 * Split + 1;
+        if (!charge(Group.size(), Group.size() * sizeof(Bits)))
+          return Root;
+        std::vector<Bits> Squares;
+        Squares.reserve(Group.size());
+        for (const auto &H : Group) {
+          Bits V(H.begin(), H.begin() + N);
+          Squares.push_back(calculate(SymOp::Mul, V, V));
+        }
+        auto SumSquares = sumWords(Squares, N);
+        auto Sum = Bits(High.begin(), High.begin() + N);
+        auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
+        for (auto &Bit : SumSquares)
+          Bit = apply(Xor, Bit, 1);
+        Bits One(N, 0);
+        One[0] = 1;
+        auto Difference = calculate(SymOp::Add, SumSquare,
+                                    calculate(SymOp::Add, SumSquares, One));
+        if (Failed || Difference.front() != 0)
+          return Root;
+        Bits Elementary(Difference.begin() + 1, Difference.end());
+        Bits Narrow(Low.begin(), Low.begin() + N - 1);
+        auto Correction =
+            calculate(SymOp::Mul, power(Narrow, Count - 2), Elementary);
+        Bits Upper(Observed, 0);
+        std::copy(Correction.begin(), Correction.end(),
+                  Upper.begin() + 2 * Split);
+        Term = calculate(SymOp::Add, Term, Upper);
       }
       Products.push_back(std::move(Term));
     }
@@ -720,7 +937,7 @@ public:
         Failed = true;
         return {};
       }
-      const auto Bit = unsigned(D.Variable >> 32);
+      const auto Bit = variableBit(D.Variable);
       auto Selector = Ctx.mkZExtOrTrunc(
           Ctx.mkAnd(Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)),
                     Ctx.mkConst(Ctx.width(Input), 1)),
@@ -800,7 +1017,7 @@ public:
       for (auto &[Key, Position] : Variables) {
         Position = Atoms.size();
         const auto Input = SymRef(uint32_t(Key));
-        const auto Bit = unsigned(Key >> 32);
+        const auto Bit = variableBit(Key);
         Atoms.push_back(Ctx.mkZExtOrTrunc(
             Ctx.mkAnd(Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)),
                       Ctx.mkConst(Ctx.width(Input), 1)),
@@ -917,8 +1134,8 @@ public:
       for (const auto &[Variable, Index] : PolynomialVariables) {
         const auto Input = SymRef(uint32_t(Variable));
         Inputs[Index] = Ctx.mkZExtOrTrunc(
-            Ctx.mkAnd(Ctx.mkLShr(Input,
-                                 Ctx.mkConst(Ctx.width(Input), Variable >> 32)),
+            Ctx.mkAnd(Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input),
+                                                    variableBit(Variable))),
                       Ctx.mkConst(Ctx.width(Input), 1)),
             Width);
       }

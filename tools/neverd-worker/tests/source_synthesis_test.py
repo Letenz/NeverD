@@ -272,6 +272,27 @@ def multiple_residual_elf(degree, neighbor=False):
     return elf(code), "x+y+z+" + str(scale) + "U*" + "*".join(factors)
 
 
+def carry_product_elf(degree, product=True):
+    # Keep seven low bits, including observable quadratic residual terms.
+    scale = 3 << 25
+    code = bytearray.fromhex("b8") + struct.pack("<I", scale)
+    factors = []
+    for i in range(degree):
+        code += bytes.fromhex("89f9 81c1") + struct.pack("<I", 2*i)
+        code += bytes.fromhex("4189f0 4181c0") + struct.pack("<I", i)
+        if product:
+            code += bytes.fromhex("4183e0fe 4189d1 4181c1") + struct.pack("<I", 2*i)
+            code += bytes.fromhex("4183e1fc 450fafc1")
+            high = f"(((y+{i}U)&0xfffffffeU)*((z+{2*i}U)&0xfffffffcU))"
+        else:
+            code += bytes.fromhex("4183e0fc")
+            high = f"((y+{i}U)&0xfffffffcU)"
+        code += bytes.fromhex("4431c1 0fafc1")
+        factors.append(f"((x+{2*i}U)^{high})")
+    code += bytes.fromhex("01f8 01f0 01d0 c3")
+    return elf(code), f"x+y+z+{scale}U*" + "*".join(factors)
+
+
 def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
@@ -358,6 +379,11 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             if not kind.endswith("neighbor"):
                 assert code.count("*") <= 3, text
+        elif kind.startswith("carry-product-"):
+            # Keep the proved bit selectors, including higher-bit shifts,
+            # while eliminating the original long multiplication chain.
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert code.count("*") <= 3 and "^" not in code, text
         elif kind == "distributed-residue-neighbor":
             # The original-product execution oracle checks the retained
             # nonzero residual without prescribing a particular spelling.
@@ -418,7 +444,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith(("residue-", "multiple-residual-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
+                    if kind.startswith(("residue-", "multiple-residual-", "carry-product-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -490,6 +516,8 @@ if __name__ == "__main__":
             ("multiple-residual-quartic", *multiple_residual_elf(4)),
             ("multiple-residual-octic", *multiple_residual_elf(8)),
             ("multiple-residual-neighbor", *multiple_residual_elf(4, True)),
+            ("carry-product-32", *carry_product_elf(32)),
+            ("carry-product-64", *carry_product_elf(64, False)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

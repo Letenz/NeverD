@@ -589,7 +589,12 @@ Use `--family multiple-residual --count 128` for nonzero degree-4–64 products
 with simultaneous independent high-bit disturbances and nearby cases with
 observable cross terms. Keep the previous nineteen families frozen when
 checking performance and output cost.
-Run all twenty families at
+Use `--family carry-product --count 128` for degree-8–128 nonzero products
+with five to eight observed bits, mixed masked products and long independent
+carry chains. Keep all twenty preceding families frozen. Record unresolved
+budget caps in this new frontier separately from any regression in old cases;
+a budget cap is not a completed proof or a successful simplification.
+Run all twenty-one families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -636,6 +641,14 @@ Generated-reading regressions require the deep walk to simplify an original
 opaque division's numerator and propagate it through the emitted proof.
 Mixed quartic and degree-24 residuals must also leave work for the surrounding
 linear tail within a fixed 65,536-work request.
+Grouped-carry tests require strict cost reductions for degree-32/64/128
+products, independent arithmetic through 257 bits, exhaustive low-bit triples,
+and retained nonzero branches. Quadratic cross-term tests independently check
+the extra division bit, including full-width Z3 comparisons at 8/16/32/64 bits.
+Zero, short and storage-limited attempts preserve the original semantics.
+Degree-32/64 machine-code fixtures execute the generated C through both
+backends and all six CLI/GUI-worker routes at O0/O2, with separate ordinary
+and enhanced caches.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.

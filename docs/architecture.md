@@ -1821,6 +1821,14 @@ unsupported operations remain exact opaque words. A shared odd branch is
 isolated only when the even branch is proved zero, and its selector is restored
 before emission. Sparse Boolean polynomials are derived from complete decision
 graphs and factored before emission, avoiding exponential printed expansion.
+Equal low-bit groups retain their complete linear and quadratic cross terms;
+the split makes all higher terms vanish modulo the observed word. The
+quadratic sum is computed with an extra bit before division by two. This does
+not assume that an even value has a modular inverse. Batched sums cancel exact
+complementary bits and combine multiplicities before carrying; full-adder
+carries share a direct majority decision. A proved parity input orders its
+word before the remaining interleaved inputs. Cached immutable word views
+avoid repeated bit-vector copies and are discarded when the assumption changes.
 Optional refinement retains the last completed candidate. Completed attempts
 are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
