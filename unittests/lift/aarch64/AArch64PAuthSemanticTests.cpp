@@ -413,6 +413,51 @@ TEST(AArch64CPASemantics, MalformedShapesCannotPreserveCallArguments) {
   }
 }
 
+TEST(AArch64PAuthSemantics, MalformedPointerShapesFailIRVerification) {
+  const struct {
+    uint32_t Word;
+    Intrinsic Id;
+  } Cases[] = {
+      {0xdac10020, Intrinsic::Pacia},     {0xdac11020, Intrinsic::Autia},
+      {0xdac143e0, Intrinsic::Xpaci},     {0x9ac23020, Intrinsic::A64_Pacga},
+      {0x9a022020, Intrinsic::A64_Addpt}, {0x9b620c20, Intrinsic::A64_Maddpt}};
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    auto Ops = lift(Case.Word, false);
+    ASSERT_EQ(Ops.size(), 1);
+    LowBlock Block;
+    Block.StartAddr = 0x1000;
+    Block.EndAddr = 0x1004;
+    Block.Ops = Ops;
+    LowInstructionBoundary Boundary;
+    Boundary.Address = Block.StartAddr;
+    Boundary.Size = 4;
+    Boundary.OpCount = 1;
+    Block.InstructionBoundaries.push_back(Boundary);
+    auto Valid = validateLowInstructionBoundaries(Block);
+    EXPECT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+    for (bool BadOutput : {false, true}) {
+      Block.Ops = Ops;
+      (BadOutput ? Block.Ops[0].Output : Block.Ops[0].Inputs[1]).Size = 4;
+      auto Error = validateLowInstructionBoundaries(Block);
+      EXPECT_TRUE(bool(Error));
+      llvm::consumeError(std::move(Error));
+    }
+  }
+  for (Intrinsic Id : {Intrinsic::Pacia, Intrinsic::Autia, Intrinsic::Xpaci,
+                       Intrinsic::A64_Pacga, Intrinsic::A64_AuthBranch,
+                       Intrinsic::A64_Addpt, Intrinsic::A64_Maddpt}) {
+    const auto Function = pointerFunction(Id, "pointer_shape");
+    EXPECT_TRUE(verifyMedFunc(Function, "pointer-shape"));
+    for (bool BadOutput : {false, true}) {
+      auto Bad = Function;
+      auto &Op = Bad.Blocks[0].Ops[0];
+      (BadOutput ? Op.Output : Op.Inputs[1]).Size = 4;
+      EXPECT_FALSE(verifyMedFunc(Bad, "bad-pointer-shape"));
+    }
+  }
+}
+
 TEST(AArch64CPASemantics, LLVMAndBothCRoutesKeepExactInstructions) {
   const auto CheckObject = [](llvm::MemoryBufferRef Buffer, Intrinsic Id) {
     // Independently assembled fixed-register forms, not read from the

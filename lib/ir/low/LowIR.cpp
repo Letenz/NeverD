@@ -65,6 +65,8 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
     return invalid("intrinsic has no constant intrinsic ID");
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (isAArch64PAuthIntrinsic(Id) && !lowAArch64PAuthShapeIsValid(Op))
+    return invalid(kAArch64PAuthMalformedOperation);
   if (aarch64CPAOperation(Id) && !lowAArch64CPAShapeIsValid(Op))
     return invalid(kAArch64CPAMalformedOperation);
   if (isX87ConstantControlIntrinsic(Id) &&

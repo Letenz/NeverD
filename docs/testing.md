@@ -48,7 +48,9 @@ instruction-preservation checks, not native CPA/CPA2 execution qualification.
 PAC/AUT/XPAC/PACGA, authenticated target and scalar CPA results. An effectful
 instruction must not turn a returned pointer into a void function; malformed
 operand widths cannot acquire that return-value contract. C compilation rejects
-unused-value warnings, including intentionally discarded CPA results.
+unused-value warnings, including intentionally discarded pointer results.
+LowIR instruction-boundary and MedIR verification reject malformed PAC/AUT,
+strip, generic-signature and checked-arithmetic operations before emission.
 
 The same target checks public Mach-O loading, CPU subtype capability bits,
 arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
