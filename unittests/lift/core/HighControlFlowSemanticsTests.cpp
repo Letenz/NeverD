@@ -5497,6 +5497,51 @@ TEST(HighControlFlowSemantics, SiblingSkipsKeepTheirOwnEdgeCopies) {
   }
 }
 
+TEST(HighControlFlowSemantics, SiblingSkipsKeepSharedReadersOutsideThePrefix) {
+  // `v = 9; if (x) goto S; v = x + 7; if (v + v) goto S; S: return v + v;`
+  // Both reads in the second guard and the later return share one expression
+  // graph. The return still reads the prefix value outside the erased range.
+  for (bool Late : {false, true}) {
+    SCOPED_TRACE(Late);
+    for (bool ReadOutside : {false, true}) {
+      SCOPED_TRACE(ReadOutside);
+      const auto Read = HighExpr::makeBinop(NdOp::INT_ADD, local(1), local(1));
+      auto Prefix = assign(0x1008, 1, 0);
+      Prefix.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(0),
+                                       HighExpr::makeConst(7, 8));
+      auto Second = conditional(0x100c, 0x1100);
+      Second.Cond = Read;
+      HighFunc F;
+      F.Body = {
+          assign(0x1000, 1, 9), conditional(0x1004, 0x1100), Prefix, Second,
+          result(0x1100, ReadOutside ? Read : HighExpr::makeConst(33, 8))};
+      auto Expected = [&](uint64_t X) -> uint64_t {
+        return ReadOutside ? (X ? 18 : 14) : 33;
+      };
+      for (uint64_t X : {0, 1, 2})
+        ASSERT_EQ(execute(F, X), Expected(X));
+      for (unsigned Pass = 0; Pass != 2; ++Pass) {
+        SCOPED_TRACE(Pass);
+        if (Late)
+          invertSkipGotos(F);
+        else
+          structureIfElse(F, 10);
+        for (uint64_t X : {0, 1, 2})
+          EXPECT_EQ(execute(F, X), Expected(X));
+      }
+      // The early structurer can assemble the arms before testing sibling
+      // skips. The late entry point still sees the directly foldable pair.
+      if (Late && !ReadOutside) {
+        bool HasPrefix = false;
+        walkStmts(F.Body, [&](const HighStmt &S) {
+          HasPrefix |= S.Kind == StmtKind::Assign && S.Addr == 0x1008;
+        });
+        EXPECT_FALSE(HasPrefix);
+      }
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, EnteredNopStillFallsIntoTheNextBlock) {
   // `if (x == 1) goto Y; goto X; return 7; Y: ; X: v = 1; return v + 10;`
   // The jump to Y runs into X, so X is not reached by jumps alone.
