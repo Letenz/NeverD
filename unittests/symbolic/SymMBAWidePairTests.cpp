@@ -194,6 +194,8 @@ TEST(SymMBAWidePairs, QuadraticCarryCountsPreserveAllObservedBits) {
       const unsigned Split = (Observed + 2) / 3;
       const auto Scale = llvm::APInt(Width, 3).shl(Width - Observed);
       llvm::SmallVector<SymRef, 32> Factors{Ctx.mkConst(Scale)};
+      // Odd multiplicities retain both correction bits. Distinct offsets keep
+      // this a larger source product rather than repeated identical factors.
       for (unsigned Copy = 0; Copy < 23; ++Copy)
         for (unsigned I = 0; I < Parts.size(); ++I)
           Factors.push_back(Ctx.mkAdd(

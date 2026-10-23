@@ -791,6 +791,7 @@ class LowWordDecisions {
   }
 
   Bits quadraticLowSum(llvm::ArrayRef<Bits> Values, unsigned Count) {
+    // The caller requests only one or two observed bits of e2.
     // For H_i=a_i+2*b_i, let K=sum(a_i). Modulo four,
     // e2(H)=choose(K,2)+2*((sum a_i)*(sum b_i)-sum(a_i*b_i)).
     // choose(K,2) has bits K_1 and K_2 XOR (K_0 AND K_1).
