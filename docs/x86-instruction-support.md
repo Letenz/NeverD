@@ -181,7 +181,7 @@ incomplete intermediate batch.
 The LLVM fork's
 [`e3b29f4dffd9`](https://github.com/NeverSight/llvm-project/commit/e3b29f4dffd9)
 adds native instruction selection for the following APIs. NeverC's
-[`4050d51fd`](https://github.com/NeverSight/NeverC/commit/4050d51fd)
+[`8506f06c7`](https://github.com/NeverSight/NeverC/commit/8506f06c7)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -201,6 +201,7 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.rdmsrlist`, `llvm.x86.wrmsrlist` | x86-64 | Two table pointers and a full i64 mask, with actual RCX completion; table memory and fault ordering stay inside the instruction. |
 | `llvm.x86.inbyte/inword/indword`, `llvm.x86.outbyte/outword/outdword` | i386 and x86-64 | Native port I/O through DX and AL/AX/EAX; unused reads remain observable. |
 | `llvm.x86.cli`, `llvm.x86.sti`, `llvm.x86.invlpg` | i386 and x86-64 | Ordered state effects; CLI/STI preserve arithmetic flags, and INVLPG does not preload its address. |
+| `llvm.x86.int` | i386 and x86-64 | Immediate interrupt vector; native instruction with ordered memory effects and a resumable continuation under the handler ABI. NeverC exposes the raw `__builtin_ia32_int` and retains the separate Microsoft `__int2c` non-returning assertion contract. |
 | `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
 | `llvm.x86.{lar,lsl}.{reg,mem}{16,32,64}` | i386 and x86-64; 64-bit results require x86-64 | Returns `{value, i8 ZF}`. Success retains the native result; failure returns the supplied prior value. Memory forms own their m16 selector read. |
 | `llvm.x86.lsl` | i386 and x86-64 | Compatibility with NeverC's Microsoft `__segmentlimit`; ordered query with a 32-bit result, unspecified on failure. |
@@ -305,6 +306,23 @@ widths, extra/missing operands, memory attributes, bundles and dialect changes.
 The 225 source fixtures check the native opcode in every generated object,
 including dead reads in all formats. All four source-contract tests, two
 coverage tests, six side-effect tests and 24 return-contract tests pass.
+
+The raw software-interrupt API requires a constant vector in 0..255 and
+preserves the continuation after an interrupt handler returns. NeverC's
+Microsoft `__int2c` spelling deliberately retains its existing `noreturn`
+assertion convention; it now also uses the shared `llvm.x86.int` IR instead of
+an unresolved private call in the full LLVM fork. The distinction is covered
+at O0/O2, including negative immediate-range checks.
+
+Interrupt qualification passes 72 full-LLVM and 36 cases per C route across
+both code modes and all three object formats. Controlled completions check
+input liveness, repeated operations, ordered memory, preserved nonvolatile
+registers and stack restoration. Each route also passes 524 Linux x64 native
+sigreturn comparisons and four unhandled-fault checks against independent
+INT 2C bytes. Both C routes retain two Microsoft assertion contracts through
+object emission. All 54 focused intrinsic/header tests and 81 binary
+regressions pass. This does not qualify privileged interrupt gates or an
+arbitrary handler's machine-state ABI.
 
 REP qualification adds 1,000 LLVM cases across both code modes and 544 cases
 on each NeverC builtin spelling and the NeverC-to-fork route. MOVS/STOS execute
