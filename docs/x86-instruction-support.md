@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`d6d146470804`](https://github.com/NeverSight/llvm-project/commit/d6d146470804)
+[`041bb785b2b6`](https://github.com/NeverSight/llvm-project/commit/041bb785b2b6)
 adds native instruction selection for the following APIs. NeverC's
-[`6032fd7ac`](https://github.com/NeverSight/NeverC/commit/6032fd7ac)
+[`7079d135e`](https://github.com/NeverSight/NeverC/commit/7079d135e)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -207,6 +207,14 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.invlpgb`, `llvm.x86.invlpgb32` | x86-64 and i386 respectively | Integer rAX control/address, i32 EDX identifiers and i32 ECX count/page-size inputs. No compiler memory dereference; wrong-mode APIs fail explicitly. |
 | `llvm.x86.tlbsync` | i386 and x86-64 | Actual ordered translation synchronization; no invented completion or replacement compiler fence. |
 | `llvm.x86.lkgs.reg`, `llvm.x86.lkgs.mem` | x86-64 | i16 register selector or instruction-owned m16 read; native GS descriptor/selector and IA32_KERNEL_GS_BASE effects. |
+| `llvm.x86.{verr,verw}.{reg,mem}` | i386 and x86-64 | i16 register selector or instruction-owned m16 read, returning actual i8 ZF; implicit descriptor reads stay native. |
+| `llvm.x86.{sldt,str,smsw}.reg{16,32,64}`, `llvm.x86.{sldt,str,smsw}.mem` | i386 and x86-64; reg64 requires x86-64 | Raw native register result or an exact m16 store; wider SMSW results retain their architectural upper bits. |
+| `llvm.x86.{lldt,ltr,lmsw}.{reg,mem}`, `llvm.x86.invd` | i386 and x86-64 | Native selector/control input and processor-state effects, including LTR's descriptor busy-bit write. |
+| `llvm.x86.encls`, `llvm.x86.enclv` and their `32` variants | x86-64 and i386 respectively | Four natural-width register inputs/results plus `CF | (ZF << 1)`; leaf selection uses EAX and all memory/state validation stays native. Flag-preserving leaves have no defined scalar status. |
+| `llvm.x86.vmload`, `llvm.x86.vmsave`, `llvm.x86.invlpga` and their `32` variants | x86-64 and i386 respectively | Integer rAX VMCB physical address or linear invalidation address; INVLPGA also reads the complete ECX ASID. No compiler dereference; default address width only. |
+| `llvm.x86.{vmload,vmsave,invlpga}.addr32` and `.addr16` | x86-64 and i386 respectively | Explicit address-size override with i32 or i16 address input; the native `67` prefix, full i32 INVLPGA ASID and instruction-owned memory effects survive lowering. |
+| `llvm.x86.stgi/clgi/clac/stac/hlt`, `llvm.x86.swapgs` | i386 and x86-64; SWAPGS requires x86-64 | Ordered native GIF, AC, halt/resume and GS-base effects, preserving arithmetic flags. HLT is resumable, with neither `noreturn` nor `willreturn`. |
+| `llvm.x86.vmfunc.eptp.switch` | i386 and x86-64 | VMFUNC leaf 0, EAX=0 and complete i32 ECX EPTP index; native validation and VM exit behavior, without a fabricated VMfail status. |
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
 | `llvm.x86.readcr/readdr`, `llvm.x86.writecr/writedr` | x86-64 | Immediate register selector, full i64 values and ordered, potentially trapping accesses. CR0/2/3/4/8 and DR0..7 retain their native encodings and undefined arithmetic flags. |
 | `llvm.x86.readcr32/readdr32`, `llvm.x86.writecr32/writedr32` | i386 | Same contract with i32 values; CR8, invalid selectors and wrong-mode APIs fail explicitly. |
@@ -431,6 +439,68 @@ LLVM reader to upgrade legacy pointer/shift constant expressions that its text
 parser no longer accepts. The optimized descriptor construction remains
 unchanged; no fixture-specific runtime boundary is needed. This qualifies the
 tested bitcode migration and native APIs, not every cross-version IR feature.
+
+The SGX batch adds native ENCLS/ENCLV APIs, capturing all four natural-width
+registers and CF/ZF before flag arithmetic. NeverC provides matching builtins
+and installed `_encls_u32`/`_enclv_u32` wrappers through `<immintrin.h>` and
+`<x86intrin.h>`. Wrong code modes and missing `sgx` target features fail
+explicitly. For leaves that preserve arithmetic flags, callers must preserve
+their explicit incoming flag state; the returned flag byte is not a status.
+ENCLU's entry/exit/resume continuations remain outside these APIs.
+
+SGX qualification passes 1,344 full-LLVM checks and 784 each for NeverC and
+the bridge, covering every register/status output, dead/repeated operations,
+unmapped integer inputs, ordering, nonvolatile-register restoration, O0/O2,
+three object formats and both assembly dialects. Each C route also passes
+eight real Linux x64 CPL3 fault comparisons with independent byte oracles.
+Sixteen LLVM regressions, 44 NeverC intrinsic tests, 81 existing binary checks,
+23 generator tests and 12 plugin tests pass; the overload audit has zero
+mismatches. Isolated installed-header probes emit native IR on ELF, COFF and
+Mach-O targets. The plugin schema updates only ENCLS/ENCLV implicit register
+effects, retaining all opcode/register/feature identities. These checks
+qualify compiler transport and CPL3 faults, not successful privileged SGX
+operations, EPC updates or enclave/VMX transitions.
+
+The bounded virtualization batch adds thirteen full-LLVM interfaces and ten
+matching NeverC builtins for VMLOAD/VMSAVE/INVLPGA, STGI/CLGI, SWAPGS,
+CLAC/STAC, HLT and VMFUNC EPTP switching. NeverC's Microsoft `__svm_*`
+interfaces for those five SVM operations and `__halt` share the native
+lowering. The machine descriptions now retain VMCB reads/writes and VMFUNC's
+EAX/ECX inputs, remove incorrect arithmetic EFLAGS definitions from CLAC/STAC,
+and allow code after HLT. SWAPGS and mode-sized SVM calls reject wrong modes.
+
+This batch passes 532 full-LLVM transport checks and 280 each for NeverC and
+the bridge, plus 40 real Linux x64 CPL3 fault comparisons on each C route.
+Disposable QEMU TCG guests pass 52 CPL0 checks through full LLVM (i386/x64,
+O0/O2) and 28 each through NeverC and the bitcode bridge. These exercise
+VMSAVE/VMLOAD restoration of three MSRs, AC changes, both GS-base exchanges,
+GIF masking of a pending PIC interrupt and HLT resumption after a timer
+interrupt. INVLPGA fallthrough does not qualify physical TLB invalidation;
+successful VMFUNC in VMX non-root operation remains unqualified. Seventeen
+LLVM regressions, 45 NeverC intrinsic tests, 81 binary checks, 23 generator
+tests, 12 plugin tests and the zero-mismatch overload audit pass. The shared
+guest-runner change also passes 174 prior descriptor-state CPL0 checks.
+Installed Microsoft header probes emit native IR at O0/O2. Plugin schema
+changes are limited to CLAC/STAC flag definitions, HLT's terminator property
+and VMFUNC register inputs; opcode/register/feature identities are unchanged.
+
+SVM address-size interfaces now cover explicit addr32 in long mode and addr16
+in i386 mode. The full fork adds six APIs and NeverC adds the three long-mode
+builtins. Machine pseudos retain exact AX/EAX/ECX dependencies and VMCB memory
+effects; final MC lowering emits the real opcode with `67`, retaining both
+binary encoding and assembly round trips. Wrong code modes, including a
+code16 target, fail explicitly. NeverC appends three internal opcodes while
+retaining every earlier opcode, register and feature record unchanged.
+
+The expanded default/override matrix passes 700 full-LLVM checks and 364 each
+for NeverC and the bridge, with 52 CPL3 fault comparisons on each C route.
+QEMU TCG passes 104 full-LLVM CPL0 checks and 56 each for NeverC and the bitcode
+bridge, using a VMCB below 64 KiB for the addr16 case. Eighteen LLVM regressions,
+46 NeverC intrinsic tests, 81 binary checks, 26 generator tests and 12 plugin
+tests pass; the overload audit has zero mismatches. Installed Microsoft
+interfaces retain their intended default-width native calls. These results
+include the earlier default-width operations; physical TLB behavior and
+successful VMFUNC retain the qualification limits above.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
