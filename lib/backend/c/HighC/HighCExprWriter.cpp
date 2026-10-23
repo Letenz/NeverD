@@ -37,6 +37,7 @@
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/loader/BinaryImage.h"
@@ -2219,6 +2220,12 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                               : E.Operands.size();
   std::string S = Name + "(";
   const auto Callee = debugCallee(E);
+  if (Callee && !Defined)
+    if (const auto Signature =
+            libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
+        Signature && !Signature->Scalars.empty() &&
+        (!E.FloatingCallSignature || *E.FloatingCallSignature != *Signature))
+      throw std::runtime_error("A mixed header call lost its checked ABI");
   const libc::LibCPrototype *Prototype = calleePrototype(E);
   // A routine known only by its argument counts: the call collects its
   // integer arguments first, while a libm helper such as ldexp declares its

@@ -384,7 +384,12 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
   Call->SourceCallHint = CurOp.SourceCallHint;
-  if (CurOp.CalleeFloatReturnBytes && CurMed)
+  if (auto Signature = boundFloatingCallArguments(
+          CurOp, TargetArch,
+          Image ? Image->abiFormat() : BinaryFormat::Unknown))
+    Call->FloatingCallSignature =
+        std::make_shared<FloatingCallArguments>(std::move(*Signature));
+  else if (CurOp.CalleeFloatReturnBytes && CurMed)
     if (const auto *Info = CurMed->findCall(CurBlock.Id, CI))
       if (auto Signature = recoveredFloatingCallArguments(
               CurOp, *Info, TargetArch,

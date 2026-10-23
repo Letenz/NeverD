@@ -31,7 +31,16 @@ TEST(FloatingCallArguments, CompleteScalarRegistersAndConservativeBoundaries) {
         EXPECT_EQ(Layout->ParameterBytes,
                   (std::vector<uint16_t>{Bytes, Bytes}));
         EXPECT_TRUE(floatingCallArguments(A, F, T, {}));
-        EXPECT_FALSE(floatingCallArguments(A, F, T, {T, NdType::makePtr()}));
+        const auto Mixed =
+            floatingCallArguments(A, F, T, {T, NdType::makePtr()});
+        ASSERT_TRUE(Mixed);
+        ASSERT_EQ(Mixed->Scalars.size(), 2u);
+        EXPECT_TRUE(Mixed->Scalars[0].Floating);
+        EXPECT_TRUE(Mixed->Scalars[1].Pointer);
+        EXPECT_EQ(Mixed->Scalars[0].Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Mixed->Scalars[1].Kind,
+                  SourceABICarrierKind::IntegerRegister);
         EXPECT_FALSE(floatingCallArguments(A, F, NdType::makeInt(8), {T}));
         EXPECT_FALSE(floatingCallArguments(A, F, T, {NdType::makeFloat(10)}));
         EXPECT_FALSE(

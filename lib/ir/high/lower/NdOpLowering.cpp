@@ -174,7 +174,12 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   auto CallExpr = HighExpr::makeCall(Callee, Target, std::move(Args));
   CallExpr->CallSiteAddr = CurOp.Addr;
   CallExpr->SourceCallHint = CurOp.SourceCallHint;
-  if (CurOp.CalleeFloatReturnBytes && CurMed)
+  if (auto Signature = boundFloatingCallArguments(
+          CurOp, TargetArch,
+          Image ? Image->abiFormat() : BinaryFormat::Unknown))
+    CallExpr->FloatingCallSignature =
+        std::make_shared<FloatingCallArguments>(std::move(*Signature));
+  else if (CurOp.CalleeFloatReturnBytes && CurMed)
     if (const auto *Info = CurMed->findCall(CurBlock.Id, CallIdx))
       if (auto Signature = recoveredFloatingCallArguments(
               CurOp, *Info, TargetArch,

@@ -380,7 +380,9 @@ unsigned LowToMedConverter::variadicImportFixedCount(va_t Key) const {
   return libc::varArgFixedCount(Name, libc::libcVariantOf(*Image));
 }
 
-void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
+void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
+                                                const LowOp &LOp,
+                                                bool TailCall) {
   if ((LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
       LOp.NumInputs == 0)
     return;
@@ -463,11 +465,61 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
     if (const auto F = CallEntryFloatingArguments->find(ArgumentsKey);
         F != CallEntryFloatingArguments->end()) {
       const auto &Signature = F->second;
-      if (Signature.ParameterBytes.size() <= FPParamRegs.size() &&
-          Signature.ParameterBytes.size() <=
-              sizeof(MOp.CalleeVectorArgWidths) * 2 &&
-          (Signature.ReturnBytes == sizeof(float) ||
-           Signature.ReturnBytes == sizeof(double))) {
+      if (!Signature.Scalars.empty()) {
+        MOp.ScalarCallSignature =
+            std::make_shared<FloatingCallArguments>(Signature);
+        MOp.CalleeRegisterArgs = -1;
+        MOp.CalleeStackArgs = -1;
+        MOp.CalleeVectorArgs = -1;
+        auto Temporary = [&](uint16_t Bytes) {
+          MedVar Value;
+          Value.Kind = MedVar::Temp;
+          Value.Id = allocVarId();
+          Value.Size = Bytes;
+          Value.TheArch = TargetArch;
+          return Value;
+        };
+        for (const auto &Parameter : Signature.Scalars) {
+          if (Parameter.Kind != SourceABICarrierKind::Stack) {
+            MOp.addInput(ndVarToMedVar(NdVar::reg(
+                Parameter.Register,
+                Parameter.Kind == SourceABICarrierKind::FloatingRegister
+                    ? TRI.FPABIRegWidth
+                : TargetArch == Arch::AArch64
+                    ? std::max<uint16_t>(4, Parameter.Bytes)
+                    : Parameter.Bytes)));
+            continue;
+          }
+          // Ordinary x64 CALL pushes a return PC; the lift is SP-neutral.
+          // A tail jump already sees the callee's entry stack position.
+          const int64_t Bias =
+              TargetArch == Arch::X64 && !TailCall ? TRI.PointerSize : 0;
+          MedOp Address;
+          Address.Opcode = NdOp::INT_ADD;
+          Address.Addr = LOp.Addr;
+          Address.Output = Temporary(TRI.PointerSize);
+          Address.addInput(
+              ndVarToMedVar(NdVar::reg(TRI.StackPointer, TRI.PointerSize)));
+          Address.addInput(
+              MedVar::makeConst(Parameter.StackOffset - Bias, TRI.PointerSize,
+                                ConstantAddressProvenance::Scalar));
+          MedOp Load;
+          Load.Opcode = NdOp::LOAD;
+          Load.Addr = LOp.Addr;
+          Load.Output = Temporary(Parameter.Bytes);
+          Load.addInput(Address.Output);
+          MOp.addInput(Load.Output);
+          Block.Ops.push_back(std::move(Address));
+          Block.Ops.push_back(std::move(Load));
+        }
+        MOp.CalleeFloatReturnBytes = Signature.ReturnBytes;
+        MOp.Output =
+            ndVarToMedVar(NdVar::reg(TRI.FPReturnReg, TRI.FPABIRegWidth));
+      } else if (Signature.ParameterBytes.size() <= FPParamRegs.size() &&
+                 Signature.ParameterBytes.size() <=
+                     sizeof(MOp.CalleeVectorArgWidths) * 2 &&
+                 (Signature.ReturnBytes == sizeof(float) ||
+                  Signature.ReturnBytes == sizeof(double))) {
         MOp.CalleeRegisterArgs = 0;
         MOp.CalleeStackArgs = 0;
         MOp.CalleeVectorArgs = Signature.ParameterBytes.size();
@@ -487,7 +539,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   // integer arguments, the registers' first: its calls pass those and no
   // other register.  The setup supplies the values.  Its stack arguments
   // are counted as positions, the registers' included, or 0 for none.
-  if (Convention && Convention->ArgumentsFromCallSetup &&
+  if (!MOp.ScalarCallSignature && Convention &&
+      Convention->ArgumentsFromCallSetup &&
       Convention->ImportArgumentsFromPrototype &&
       !Convention->RegparmOnlyForInternalCalls && CallEntryArgumentCounts)
     if (auto C = CallEntryArgumentCounts->find(ArgumentsKey);
@@ -1142,7 +1195,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         MOp.CalleeStackArgs = 0;
         MOp.CalleeVectorArgs = 0;
       } else if (!bindFormattedCall(MB, MOp, LOp))
-        applyCallRegisterEffect(MOp, LOp);
+        applyCallRegisterEffect(MB, MOp, LOp, TailCall);
       if (X87Arguments && LOp.NumInputs == X87Arguments + 1) {
         MOp.X87ArgumentInput = MOp.NumInputs;
         MOp.X87ImportArguments = LOp.X87ImportArguments;

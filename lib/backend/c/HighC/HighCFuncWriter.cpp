@@ -23,6 +23,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCVariadicArguments.h"
@@ -4807,6 +4808,10 @@ bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
   // registers need not follow.
   if (!FS.PlatformConvention || !FS.ParamEntryLocations.empty())
     return false;
+  if (const auto Signature =
+          libc::floatingCallArguments(FS, Opts.TheArch, Opts.Format);
+      Signature && !Signature->Scalars.empty())
+    return true;
   if (isMsvcIndirectReturn(FS.ReturnType, Opts.TheArch, Opts.Format))
     return true;
   const uint16_t Word = pointerBytes(Opts.TheArch);

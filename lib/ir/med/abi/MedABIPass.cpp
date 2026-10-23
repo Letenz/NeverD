@@ -395,8 +395,51 @@ extern const AbiCallPolicy Win64AbiCallPolicy;
 extern const AbiCallPolicy I386AbiCallPolicy;
 
 std::optional<FloatingCallArguments>
+boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
+  const auto &Registers = getTargetRegInfo(A);
+  if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+      !Op.ScalarCallSignature || Op.ScalarCallSignature->Scalars.empty() ||
+      Op.SourceCallHint || Op.CalleeVariadicFrom >= 0 ||
+      Op.NumInputs != Op.ScalarCallSignature->Scalars.size() + 1 ||
+      Op.CalleeFloatReturnBytes != Op.ScalarCallSignature->ReturnBytes ||
+      Op.Output.Kind != MedVar::Reg ||
+      Op.Output.RegOff != Registers.FPReturnReg ||
+      Op.Output.Size < Op.CalleeFloatReturnBytes)
+    return std::nullopt;
+  std::vector<TypeRef> Parameters;
+  for (size_t I = 0; I < Op.ScalarCallSignature->Scalars.size(); ++I) {
+    const auto &Parameter = Op.ScalarCallSignature->Scalars[I];
+    if (Op.Inputs[I + 1].Size < Parameter.Bytes ||
+        (Parameter.Pointer &&
+         (Parameter.Floating || Parameter.Bytes != Registers.PointerSize)))
+      return std::nullopt;
+    Parameters.push_back(Parameter.Floating ? NdType::makeFloat(Parameter.Bytes)
+                         : Parameter.Pointer
+                             ? NdType::makePtr()
+                             : NdType::makeInt(Parameter.Bytes));
+    Parameters.back()->Size = Parameter.Bytes;
+  }
+  const auto Expected = floatingCallArguments(
+      A, F, NdType::makeFloat(Op.CalleeFloatReturnBytes), Parameters);
+  return Expected && *Expected == *Op.ScalarCallSignature ? Expected
+                                                          : std::nullopt;
+}
+
+std::optional<FloatingCallArguments>
 recoveredFloatingCallArguments(const MedOp &Op, const MedCallInfo &Call, Arch A,
                                BinaryFormat F) {
+  if (Op.ScalarCallSignature) {
+    const auto Bound = boundFloatingCallArguments(Op, A, F);
+    if (!Bound || Call.VarArgFixedCount >= 0 ||
+        Call.Args.size() != Bound->Scalars.size() ||
+        Call.ArgReadBytes.size() != Call.Args.size())
+      return std::nullopt;
+    for (size_t I = 0; I < Call.Args.size(); ++I)
+      if (!(Call.Args[I] == Op.Inputs[I + 1]) ||
+          Call.ArgReadBytes[I] != Bound->Scalars[I].Bytes)
+        return std::nullopt;
+    return Bound;
+  }
   const auto &Registers = getTargetRegInfo(A);
   if (!Op.CalleeFloatReturnBytes || Op.SourceCallHint ||
       Call.VarArgFixedCount >= 0 || Call.IntegerRegisterArgCount != 0 ||
@@ -942,6 +985,14 @@ void recoverCallAbi(
         noteRead(*CallSlot);
       // These complete header operands were bound before SSA. Recovering
       // them again from local setup would lose untouched forwarding inputs.
+      if (Op.ScalarCallSignature &&
+          Op.NumInputs == Op.ScalarCallSignature->Scalars.size() + 1) {
+        CI.Args.assign(Op.Inputs.begin() + 1, Op.Inputs.begin() + Op.NumInputs);
+        for (const auto &Parameter : Op.ScalarCallSignature->Scalars)
+          CI.ArgReadBytes.push_back(Parameter.Bytes);
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
       if (Op.CalleeFloatReturnBytes && Op.CalleeRegisterArgs == 0 &&
           Op.CalleeStackArgs == 0 && Op.CalleeVectorArgs >= 0 &&
           Op.NumInputs == 1u + Op.CalleeVectorArgs) {

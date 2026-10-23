@@ -25,6 +25,7 @@ inline std::optional<FloatingCallArguments>
 floatingCallArguments(const FunctionSym &Function, Arch A, BinaryFormat F) {
   if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary) ||
       !Function.PlatformConvention || Function.IsVariadic ||
+      !Function.ParamEntryLocations.empty() ||
       Function.CallConv == DebugCallConv::Fastcall ||
       Function.CallConv == DebugCallConv::Thiscall)
     return std::nullopt;

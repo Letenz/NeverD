@@ -67,6 +67,14 @@ bool floatingHeaderCall(const FunctionSym &Function, Arch Architecture,
   const auto Signature =
       libc::floatingCallArguments(Function, Architecture, Format);
   const auto &Registers = getTargetRegInfo(Architecture);
+  if (Signature && !Signature->Scalars.empty()) {
+    const auto Recovered =
+        recoveredFloatingCallArguments(Op, Call, Architecture, Format);
+    return Recovered && *Recovered == *Signature &&
+           Op.Output.Kind == MedVar::Reg &&
+           Op.Output.RegOff == Registers.FPReturnReg &&
+           Op.Output.Size >= Signature->ReturnBytes;
+  }
   if (!Signature || Signature->ParameterBytes.size() != Call.Args.size() ||
       Op.NumInputs != Call.Args.size() + 1 || Op.Output.Kind != MedVar::Reg ||
       Op.Output.RegOff != Registers.FPReturnReg ||
@@ -1201,6 +1209,11 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
           std::vector<llvm::Type *> Types;
           for (uint16_t Bytes : Signature->ParameterBytes)
             Types.push_back(mapNdtype(NdType::makeFloat(Bytes)));
+          for (const auto &Parameter : Signature->Scalars)
+            Types.push_back(mapNdtype(
+                Parameter.Floating  ? NdType::makeFloat(Parameter.Bytes)
+                : Parameter.Pointer ? NdType::makePtr()
+                                    : NdType::makeInt(Parameter.Bytes, false)));
           const std::string Name =
               CalleeName.empty()
                   ? (kAutoFuncPrefix + llvm::utohexstr(CallAddr)).str()

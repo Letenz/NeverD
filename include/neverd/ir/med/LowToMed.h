@@ -357,7 +357,8 @@ private:
   /// its result.  Runs before buildSsa.
   void liftRuntimeRoutineCalls(MedFunc &Func);
   /// Record which GPRs a direct call's callee never writes.
-  void applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp);
+  void applyCallRegisterEffect(MedBlock &Block, MedOp &MOp, const LowOp &LOp,
+                               bool TailCall);
   /// The fixed parameters of the variadic C library routine the import a
   /// call at \p Key reaches is, where no prototype counts what it reads
   /// (`open(path, flags, ...)`: 2); 0 for any other callee.

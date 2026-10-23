@@ -15,6 +15,7 @@
 #define NEVERD_IR_MED_MEDIR_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/SourceTypeHint.h"
@@ -291,8 +292,17 @@ struct MedOp {
   /// The proven scalar FP result width. A complete header signature also
   /// binds the explicit FP inputs. Zero means no scalar result contract.
   uint16_t CalleeFloatReturnBytes = 0;
+  /// Complete mixed header operands, bound in source order before SSA.
+  std::shared_ptr<const FloatingCallArguments> ScalarCallSignature;
   /// The bytes the callee reads of input \p Input, a vector argument, or 0.
   uint16_t vectorArgumentWidth(unsigned Input) const {
+    if (ScalarCallSignature && Input > 0 &&
+        Input <= ScalarCallSignature->Scalars.size()) {
+      const auto &Parameter = ScalarCallSignature->Scalars[Input - 1];
+      return Parameter.Kind == SourceABICarrierKind::FloatingRegister
+                 ? Parameter.Bytes
+                 : 0;
+    }
     if (CalleeVectorSlots) {
       const unsigned Slot = Input - 1;
       if (Input == 0 || Slot >= 8 || !((CalleeVectorSlots >> Slot) & 1))
