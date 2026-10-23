@@ -172,8 +172,9 @@ jobs:
           names = [test['name'] for test in inventory['tests']]
           assert len(names) >= 83 and len(names) == len(set(names))
           assert {'unit_mcinst', 'unit_x86_buffer_bounds', 'unit_x86_far_immediate_encoding'} <= set(names)
-          targets = ['unit_test' if name == 'unit_cstest' else name.removeprefix('unit_') for name in names]
-          subprocess.run(['cmake', '--build', str(build), '--parallel', '3', '--target', *targets, 'cstest'], check=True)
+          # CTest also registers Python tests, whose names are not build targets.
+          # Build the configured decoder suite, then audit every discovered test.
+          subprocess.run(['cmake', '--build', str(build), '--parallel', '3'], check=True)
           subprocess.run(command + ['--no-tests=error', '--output-on-failure', '--output-junit', 'results.xml'], check=True)
           cases = list(ET.parse(build / 'results.xml').getroot().iter('testcase'))
           assert Counter(case.get('name') for case in cases) == Counter(names)

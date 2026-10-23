@@ -235,9 +235,10 @@ if(BUILD_TESTING)
     add_dependencies(neverd-gui-tests neverd-worker-test-server neverd-gui)
     add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
       ${_neverd_controller_test_log_args})
-    # Over a minute on a Linux runner, about twice that on macOS and Windows.
+    # The full controller inventory takes several minutes on hosted runners;
+    # individual waits still use the test's own bounded operation deadlines.
     set_tests_properties(NeverDGuiController PROPERTIES
-      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 600)
     add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test
       --worker $<TARGET_FILE:neverd-worker-test-server>)
     set_tests_properties(NeverDGuiWidgets PROPERTIES
