@@ -405,7 +405,11 @@ these shared import facts.
 
 `HighCStoreForwarding.IncompleteFrameRecordsKeepTheirInteriorFields` checks
 lazy display-field completion for frame records and call-type overlays among
-scalar slots. Both member names and types retain ambiguous-owner refusal.
+scalar slots with known or unknown extents. Exact slot addresses and mismatched
+access widths cannot name interior fields. Both member names and types retain
+ambiguous-owner refusal.
+`FrameMemberQueriesFollowNewSlotsAfterProjection` checks that a scalar-only
+function cannot suppress later record queries on the same writer.
 Run the store-forwarding, source-dialect and local-types debug-context owners
 after changing frame-member queries.
 
