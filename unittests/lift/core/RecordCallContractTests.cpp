@@ -16,8 +16,13 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
+#include "neverd/ir/Limits.h"
+#include "neverd/ir/SourceABI.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCRecordArguments.h"
+#include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/Loader.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/types/TypeParse.h"
@@ -30,6 +35,7 @@
 #include "llvm/Support/Program.h"
 
 #include <fstream>
+#include <stdexcept>
 #include <utility>
 
 using namespace neverd;
@@ -333,6 +339,304 @@ public:
   }
 };
 
+struct CachedImportFixture {
+  BinaryImage Image;
+  LowFunc Function;
+  std::map<va_t, FloatingCallArguments> Signatures;
+  const NdVar Stack = NdVar::reg(a64reg::SP, 8);
+  const NdVar Pointer = NdVar::reg(a64reg::X8, 8);
+  const NdVar Address = NdVar::reg(a64reg::X19, 8);
+  const NdVar Saved = NdVar::reg(a64reg::X20, 8);
+
+  LowOp operation(NdOp Opcode, NdVar Output,
+                  std::initializer_list<NdVar> Inputs) const {
+    LowOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    return Op;
+  }
+  void renumber() {
+    for (size_t I = 0; I < Function.Blocks[0].Ops.size(); ++I)
+      Function.Blocks[0].Ops[I].Addr = Function.Entry + 4 * I;
+  }
+  explicit CachedImportFixture(BinaryFormat Format) {
+    Image.Arch = Arch::AArch64;
+    Image.Format = Format;
+    Image.Bits = Bitness::Bits64;
+    Import Imported;
+    Imported.Name = "fixture_fp";
+    Imported.Module = "fixture.dll";
+    Imported.IATAddr = 0x2000;
+    Image.Imports.push_back(Imported);
+    const auto Float = NdType::makeFloat(4);
+    const auto Signature =
+        floatingCallArguments(Image.Arch, Image.abiFormat(), Float,
+                              std::vector<TypeRef>{NdType::makePtr(), Float});
+    EXPECT_TRUE(Signature);
+    if (Signature)
+      Signatures.emplace(0x2000, *Signature);
+    Function.Entry = 0x1000;
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    Block.Ops = {
+        operation(NdOp::INT_SUB, Stack, {Stack, NdVar::scalar(64, 8)}),
+        operation(NdOp::LOAD, Pointer, {NdVar::cst(0x2000, 8)}),
+        operation(NdOp::INT_ADD, Address, {Stack, NdVar::scalar(32, 8)}),
+        operation(NdOp::STORE, {}, {Address, Pointer}),
+        operation(NdOp::COPY, Saved, {Pointer}),
+        operation(NdOp::INDIR_CALL, NdVar::reg(a64reg::X0, 8), {Pointer}),
+        operation(NdOp::LOAD, Pointer, {Address}),
+        operation(NdOp::INDIR_CALL, NdVar::reg(a64reg::X0, 8), {Pointer}),
+        operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X30, 8)})};
+    Function.Blocks.push_back(std::move(Block));
+    renumber();
+  }
+  ImportedCallSlotFacts facts() const {
+    return importedCallSlotFacts(Function, Image, Signatures);
+  }
+};
+
+TEST(RecordCallContract, CachedImportsRequireUnchangedPrivateBytes) {
+  for (const auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Mutation = 0; Mutation < 14; ++Mutation) {
+      SCOPED_TRACE(int(Format));
+      SCOPED_TRACE(Mutation);
+      CachedImportFixture F(Format);
+      auto &Ops = F.Function.Blocks[0].Ops;
+      switch (Mutation) {
+      case 0:
+        break;
+      case 1:
+        Ops[3].Inputs[1].Size = 4;
+        break;
+      case 2:
+        Ops.insert(
+            Ops.begin() + 6,
+            F.operation(NdOp::STORE, {}, {F.Address, NdVar::scalar(0, 1)}));
+        break;
+      case 3:
+        Ops.insert(
+            Ops.begin() + 5,
+            F.operation(NdOp::STORE, {}, {NdVar::cst(0x3000, 8), F.Stack}));
+        break;
+      case 4:
+        Ops.insert(
+            Ops.begin() + 5,
+            F.operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8), {F.Address}));
+        break;
+      case 5:
+        Ops[5].Inputs[0] = NdVar::reg(a64reg::X9, 8);
+        break;
+      case 6:
+        Ops[6] = F.operation(NdOp::COPY, NdVar::reg(a64reg::X9, 8),
+                             {NdVar::scalar(0, 8)});
+        break;
+      case 7:
+        Ops.insert(Ops.begin() + 6,
+                   F.operation(NdOp::INT_ADD, F.Stack,
+                               {F.Stack, NdVar::scalar(64, 8)}));
+        Ops.insert(Ops.begin() + 7,
+                   F.operation(NdOp::INT_SUB, F.Stack,
+                               {F.Stack, NdVar::scalar(64, 8)}));
+        break;
+      case 8:
+        Ops[1].Output.Size = 4;
+        break;
+      case 9:
+        Ops[6].MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 10:
+        F.Signatures.at(0x2000).Scalars[0].Register += 8;
+        break;
+      case 11:
+        Ops[6] = F.operation(NdOp::COPY, F.Pointer, {F.Saved});
+        break;
+      case 12:
+        Ops[6] = F.operation(NdOp::COPY, F.Pointer, {F.Saved});
+        Ops.insert(Ops.begin() + 6,
+                   F.operation(NdOp::COPY, NdVar::reg(a64reg::X20, 4),
+                               {NdVar::scalar(0, 4)}));
+        break;
+      case 13:
+        break;
+      }
+      F.renumber();
+      if (Mutation == 13)
+        Ops[7].Addr = Ops[5].Addr;
+      const auto Facts = F.facts();
+      const auto Last = Facts.Calls.find({0, Ops.size() - 2});
+      if (Mutation == 0 || Mutation == 11) {
+        ASSERT_NE(Last, Facts.Calls.end());
+        EXPECT_EQ(Last->second, 0x2000u);
+        EXPECT_EQ(Facts.Reloads.size(), Mutation == 0 ? 1u : 0u);
+      } else {
+        EXPECT_EQ(Last, Facts.Calls.end());
+        EXPECT_TRUE(Facts.Reloads.empty());
+      }
+    }
+}
+
+TEST(RecordCallContract, CachedImportsInvalidateDenseStackArgumentsAndPadding) {
+  for (const auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      SCOPED_TRACE(int(Format));
+      SCOPED_TRACE(Mutation);
+      CachedImportFixture F(Format);
+      const auto Float = NdType::makeFloat(4);
+      auto HFA = NdType::makeStruct({Float, Float});
+      HFA->Passing = NdRecordPassing::ByValue;
+      std::vector<TypeRef> Parameters(7, Float);
+      Parameters.push_back(HFA);
+      Parameters.push_back(Float);
+      const auto Signature = floatingCallArguments(
+          Arch::AArch64, F.Image.abiFormat(), Float, Parameters);
+      if (Format == BinaryFormat::MachO) {
+        EXPECT_FALSE(Signature); // Apple stack packing remains undescribed.
+        continue;
+      }
+      ASSERT_TRUE(Signature);
+      F.Signatures[0x2000] = *Signature;
+      auto &Ops = F.Function.Blocks[0].Ops;
+      const auto Argument = NdVar::reg(a64reg::X9, 8);
+      Ops.insert(
+          Ops.begin() + 5,
+          {F.operation(NdOp::STORE, {},
+                       {F.Stack, NdVar::scalar(0, Mutation == 3 ? 4 : 8)}),
+           F.operation(NdOp::INT_ADD, Argument, {F.Stack, NdVar::scalar(8, 8)}),
+           F.operation(NdOp::STORE, {}, {Argument, NdVar::scalar(0, 4)})});
+      if (Mutation == 1 || Mutation == 2) {
+        // Keep the pointer fully initialized until the call; only the callee's
+        // right to overwrite its argument area/padding invalidates it.
+        Ops[2].Inputs[1] = NdVar::scalar(Mutation == 1 ? 8 : 12, 8);
+        Ops.insert(Ops.begin() + 8,
+                   F.operation(NdOp::STORE, {}, {F.Address, F.Pointer}));
+      }
+      if (Mutation == 4)
+        F.Signatures[0x2000].ParameterElements[7] = 1;
+      F.renumber();
+      const auto Facts = F.facts();
+      const auto Last = Facts.Calls.find({0, Ops.size() - 2});
+      if (!Mutation) {
+        ASSERT_NE(Last, Facts.Calls.end());
+        EXPECT_EQ(Last->second, 0x2000u);
+      } else {
+        EXPECT_EQ(Last, Facts.Calls.end());
+      }
+    }
+}
+
+TEST(RecordCallContract, CachedImportFrameQueriesShareTheirWorkBudget) {
+  CachedImportFixture F(BinaryFormat::COFF);
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
+  Hint.ReturnType = NdType::makeFloat(4);
+  Hint.Parameters = {{"pointer", NdType::makePtr()},
+                     {"value", NdType::makeFloat(4)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::AArch64, Error)) << Error;
+  NativeSourceCallContract Contract;
+  Contract.Signature = &Hint;
+  const NativeSourceCalls Calls{
+      {*nativeSourceCallKey(F.Function.Blocks[0].Ops[5]), Contract}};
+  size_t Remaining = 1;
+  EXPECT_FALSE(sourceFrameLoadedDefinition(F.Function, Arch::AArch64, Calls, 0,
+                                           6, BinaryFormat::COFF, &Remaining));
+  EXPECT_EQ(Remaining, 0u);
+  Remaining = limits::ir::kSourceFrameAnalysisRemaining;
+  ASSERT_TRUE(sourceFrameLoadedDefinition(F.Function, Arch::AArch64, Calls, 0,
+                                          6, BinaryFormat::COFF, &Remaining));
+  EXPECT_LT(Remaining, limits::ir::kSourceFrameAnalysisRemaining);
+}
+
+TEST(RecordCallContract, HFAResultRecordsRequireTheExactDeclaredLayout) {
+  auto Types = std::make_shared<types::TypeLibrary>(types::DataModel::LLP64);
+  Types->setRecordABI(types::RecordABI::Microsoft);
+  ASSERT_TRUE(types::parseCTypes("typedef struct HFA { double lane[3]; } HFA; "
+                                 "HFA fixture_hfa(void);",
+                                 *Types)
+                  .ok());
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Bits = Bitness::Bits64;
+  Import Import;
+  Import.Name = "fixture_hfa";
+  Import.Module = "fixture.dll";
+  Import.IATAddr = 0x2000;
+  Image.Imports.push_back(Import);
+  EmptyDebug Empty;
+  sdk::LocalTypesDebugContext Context(Empty, Types, {}, &Image);
+  DeclaredHeaderDebug Debug(Context);
+  const auto Prototype = Debug.resolvePrototype("fixture_hfa");
+  ASSERT_TRUE(Prototype);
+  const auto Signature = libc::floatingCallArguments(*Prototype, Arch::AArch64,
+                                                     BinaryFormat::COFF);
+  ASSERT_TRUE(Signature);
+  auto Call = HighExpr::makeCall("fixture_hfa", Import.IATAddr, {});
+  Call->FloatingCallSignature =
+      std::make_shared<FloatingCallArguments>(*Signature);
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "consume_result";
+  Function.ReturnType = NdType::makeFloat(8);
+  auto Field = std::make_shared<HighExpr>();
+  Field->Kind = ExprKind::Field;
+  Field->Type = Function.ReturnType;
+  Field->Operands = {Call};
+  HighStmt Invoke;
+  Invoke.Kind = StmtKind::Return;
+  Invoke.RetVal = Field;
+  Function.Body = {Invoke};
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Image;
+  Options.RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
+    return Context.definitions(Records);
+  };
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Call->Type = NdType::makeStruct(
+        {NdType::makeFloat(8), NdType::makeFloat(8), NdType::makeFloat(8)});
+    ASSERT_TRUE(Call->Type);
+    Call->Type->RegisterReturnRecord = true;
+    switch (Mutation) {
+    case 1:
+      Call->Type->RegisterReturnRecord = false;
+      break;
+    case 2:
+      Call->Type->Fields[1] = NdType::makeInt(8, false);
+      break;
+    case 3:
+      Call->Type->FieldOffsets[1] = 0;
+      break;
+    case 4:
+      Call->Type->Alignment = 16;
+      break;
+    case 5:
+      Call->Type->Size = 32;
+      break;
+    }
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    if (Mutation > 2)
+      EXPECT_THROW(HighCEmitter().emit({Function}, Out, Options, &Debug),
+                   std::invalid_argument);
+    else if (Mutation)
+      EXPECT_THROW(HighCEmitter().emit({Function}, Out, Options, &Debug),
+                   std::runtime_error);
+    else {
+      EXPECT_TRUE(HighCEmitter().emit({Function}, Out, Options, &Debug));
+      EXPECT_NE(Source.find("__neverd_result"), std::string::npos) << Source;
+    }
+  }
+}
+
 TEST(RecordCallContract, WindowsRecordResultsPreserveEveryByte) {
 #if !defined(__linux__) || !defined(__x86_64__)
   GTEST_SKIP() << "Host execution of the generated C requires Linux x86-64";
@@ -520,11 +824,24 @@ int main(void) {
 #endif
 }
 
-TEST(RecordCallContract,
-     WindowsStackedHFAsPreserveGroupsAndFollowingArguments) {
-#if !defined(__linux__) || !defined(__x86_64__)
-  GTEST_SKIP() << "Host execution of the generated C requires Linux x86-64";
+void checkWindowsStackedHFAs(bool ExecuteAArch64, bool ImportSlot) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "Execution of the generated C requires Linux";
 #else
+  SCOPED_TRACE(ImportSlot ? "import slot" : "import thunk");
+  std::string Emulator;
+  if (ExecuteAArch64) {
+#if !defined(__aarch64__)
+    const auto QEMU = llvm::sys::findProgramByName("qemu-aarch64");
+    if (!QEMU)
+      GTEST_SKIP() << "AArch64 execution requires qemu-aarch64 on this host";
+    Emulator = *QEMU;
+#endif
+  } else {
+#if !defined(__x86_64__)
+    GTEST_SKIP() << "The host sanitizer matrix requires Linux x86-64";
+#endif
+  }
   const std::string Compiler = NEVERD_TEST_CLANG;
   const auto Linker = llvm::sys::findProgramByName("lld-link");
   if (!Linker)
@@ -547,6 +864,53 @@ TEST(RecordCallContract,
                     Oracle = Root + "/oracle.c", Product = Root + "/run",
                     Include = "-I" + Root, Errors = Root + "/errors.txt";
   constexpr const char *Target = "--target=aarch64-pc-windows-msvc";
+  const std::string NativeHeaders = Root + "/freestanding",
+                    NativeInclude = "-I" + NativeHeaders,
+                    NativeObject = Root + "/generated-arm64.obj",
+                    Runtime = Root + "/runtime.c";
+  ASSERT_FALSE(llvm::sys::fs::create_directory(NativeHeaders));
+  // Clang supplies the freestanding integer/size headers. Declare the standard
+  // byte operations without depending on a Windows CRT installation; the
+  // emitted source itself is compiled unchanged for the input's native ABI.
+  write(NativeHeaders + "/string.h",
+        "#include <stddef.h>\n"
+        "void *memcpy(void *, const void *, size_t);\n"
+        "void *memmove(void *, const void *, size_t);\n"
+        "void *memset(void *, int, size_t);\n");
+  // Execute the C projection on AArch64 without a cross-installed libc.
+  // This is a Linux process; it does not qualify the Windows runtime.
+  if (ExecuteAArch64)
+    write(Runtime, R"(
+#include <stddef.h>
+#include <stdint.h>
+void *memcpy(void *d, const void *s, size_t n) {
+  unsigned char *out = d;
+  const unsigned char *in = s;
+  for (size_t i = 0; i < n; ++i) out[i] = in[i];
+  return d;
+}
+void *memmove(void *d, const void *s, size_t n) {
+  unsigned char *out = d;
+  const unsigned char *in = s;
+  if ((uintptr_t)d < (uintptr_t)s)
+    for (size_t i = 0; i < n; ++i) out[i] = in[i];
+  else
+    while (n) { --n; out[n] = in[n]; }
+  return d;
+}
+void *memset(void *d, int value, size_t n) {
+  unsigned char *out = d;
+  for (size_t i = 0; i < n; ++i) out[i] = (unsigned char)value;
+  return d;
+}
+extern int main(void);
+void _start(void) {
+  register long status __asm__("x0") = main();
+  register long number __asm__("x8") = 93;
+  __asm__ volatile("svc #0" : : "r"(status), "r"(number) : "memory");
+  __builtin_unreachable();
+}
+)");
   for (bool Double : {false, true}) {
     for (unsigned Count : {1u, 2u, 3u, 4u}) {
       SCOPED_TRACE(Count);
@@ -557,7 +921,11 @@ TEST(RecordCallContract,
           "]; } HFA;\nHFA fixture_hfa(" + Scalar + ", " + Scalar + ", " +
           Scalar + ", " + Scalar + ", " + Scalar + ", " + Scalar + ", " +
           Scalar + ", HFA, " + Scalar + ", unsigned, HFA);\n";
-      write(Header, Declaration);
+      std::string ImportDeclaration = Declaration;
+      ImportDeclaration.insert(ImportDeclaration.find("HFA fixture_hfa("),
+                               "HFA_IMPORT ");
+      write(Header, "#ifndef HFA_IMPORT\n#define HFA_IMPORT\n#endif\n" +
+                        ImportDeclaration);
       write(Provider,
             "#include \"hfa.h\"\nint _fltused;\n__declspec(dllexport) "
             "HFA fixture_hfa(" +
@@ -613,18 +981,22 @@ TEST(RecordCallContract,
                 ") __builtin_trap();\n" +
                 "++calls; HFA r; __builtin_memcpy(&r, rb, sizeof(r)); return "
                 "r; }\n" +
+                "void *__imp_fixture_hfa = (void *)&fixture_hfa;\n" +
                 "unsigned observed_calls(void) { return calls; }\n");
       for (bool Chain : {false, true}) {
         SCOPED_TRACE(Chain);
         const std::string Call = "fixture_hfa(1,2,3,4,5,6,7,x,9,0x12345678U,y)";
-        write(Input, "#include \"hfa.h\"\nint _fltused;\n"
-                     "__declspec(dllexport) void record_probe(HFA *out) {\n" +
-                         Word + " xb[] = {" + List(X) + "}, yb[] = {" +
-                         List(Y) +
-                         "}; HFA x,y; __builtin_memcpy(&x,xb,sizeof(x));\n" +
-                         "__builtin_memcpy(&y,yb,sizeof(y));\n" +
-                         (Chain ? "x = " + Call + ";\n" : "") +
-                         "*out = " + Call + "; }\n");
+        write(Input,
+              std::string(ImportSlot
+                              ? "#define HFA_IMPORT __declspec(dllimport)\n"
+                              : "") +
+                  "#include \"hfa.h\"\nint _fltused;\n"
+                  "__declspec(dllexport) void record_probe(HFA *out) {\n" +
+                  Word + " xb[] = {" + List(X) + "}, yb[] = {" + List(Y) +
+                  "}; HFA x,y; __builtin_memcpy(&x,xb,sizeof(x));\n" +
+                  "__builtin_memcpy(&y,yb,sizeof(y));\n" +
+                  (Chain ? "x = " + Call + ";\n" : "") + "*out = " + Call +
+                  "; }\n");
         for (const char *Optimization : {"-O0", "-O2"}) {
           SCOPED_TRACE(Optimization);
           ASSERT_TRUE(
@@ -678,7 +1050,13 @@ TEST(RecordCallContract,
                   EXPECT_FALSE(boundFloatingCallArguments(Broken, Image.Arch,
                                                           Image.Format));
                 }
-            ASSERT_EQ(BoundCalls, Chain ? 2u : 1u);
+            std::string Unbound;
+            if (BoundCalls != (Chain ? 2u : 1u)) {
+              llvm::raw_string_ostream Dump(Unbound);
+              Pipeline::dumpLowIR(Result.LowFuncs, Dump);
+              Pipeline::dumpMedIR(Result.MedFuncs, Dump);
+            }
+            ASSERT_EQ(BoundCalls, Chain ? 2u : 1u) << Unbound;
             CEmitterOptions COptions;
             COptions.TheArch = Image.Arch;
             COptions.Format = Image.Format;
@@ -725,12 +1103,37 @@ TEST(RecordCallContract,
                       " || " + OutputChecks + "; }\n");
             for (const char *COptimization : {"-O0", "-O2"}) {
               SCOPED_TRACE(COptimization);
-              ASSERT_TRUE(
-                  execute(Compiler,
-                          {Compiler, "-std=gnu11", COptimization,
-                           "-fno-builtin", "-fsanitize=address,undefined",
-                           Include, Generated, Oracle, "-o", Product},
-                          Errors))
+              if (ExecuteAArch64) {
+                ASSERT_TRUE(execute(
+                    Compiler,
+                    {Compiler, "--target=aarch64-linux-gnu", "-std=gnu11",
+                     COptimization, "-ffreestanding", "-fno-builtin",
+                     "-fno-strict-aliasing", "-fno-stack-protector",
+                     "-nostdlib", "-static", "-fuse-ld=lld", "-Wl,-e,_start",
+                     NativeInclude, Include, Generated, Oracle, Runtime, "-o",
+                     Product},
+                    Errors))
+                    << Source;
+                ASSERT_TRUE(
+                    Emulator.empty()
+                        ? execute(Product, {Product}, Errors)
+                        : execute(Emulator, {Emulator, Product}, Errors))
+                    << Source;
+                continue;
+              }
+              ASSERT_TRUE(execute(
+                  Compiler,
+                  {Compiler, Target, "-std=gnu11", COptimization,
+                   "-ffreestanding", "-fno-builtin", "-fno-strict-aliasing",
+                   NativeInclude, Include, "-c", Generated, "-o", NativeObject},
+                  Errors))
+                  << Source;
+              ASSERT_TRUE(execute(Compiler,
+                                  {Compiler, "-std=gnu11", COptimization,
+                                   "-fno-builtin", "-fno-strict-aliasing",
+                                   "-fsanitize=address,undefined", Include,
+                                   Generated, Oracle, "-o", Product},
+                                  Errors))
                   << Source;
               ASSERT_TRUE(execute(Product, {Product}, Errors)) << Source;
             }
@@ -740,5 +1143,22 @@ TEST(RecordCallContract,
     }
   }
 #endif
+}
+
+TEST(RecordCallContract,
+     WindowsStackedHFAsPreserveGroupsAndFollowingArguments) {
+  checkWindowsStackedHFAs(false, false);
+}
+
+TEST(RecordCallContract, WindowsStackedHFAImportSlotsPreserveCompleteCalls) {
+  checkWindowsStackedHFAs(false, true);
+}
+
+TEST(RecordCallContract, WindowsHFAProjectionsExecuteOnAArch64) {
+  checkWindowsStackedHFAs(true, false);
+}
+
+TEST(RecordCallContract, WindowsHFAImportSlotProjectionsExecuteOnAArch64) {
+  checkWindowsStackedHFAs(true, true);
 }
 } // namespace

@@ -59,6 +59,18 @@ std::optional<FloatingCallArguments>
 floatingCallArguments(Arch A, BinaryFormat F, const TypeRef &ReturnType,
                       llvm::ArrayRef<TypeRef> Parameters);
 
+struct FloatingCallTypes {
+  TypeRef Result;
+  std::vector<TypeRef> Parameters;
+};
+
+/// Recover the descriptor's logical groups and reclassify them through the
+/// target's placement authority. Reject altered carriers or partial groups.
+/// This validates a description; the caller still authenticates its origin.
+std::optional<FloatingCallTypes>
+floatingCallTypes(Arch A, BinaryFormat F,
+                  const FloatingCallArguments &Signature);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_FLOATINGCALLARGUMENTS_H

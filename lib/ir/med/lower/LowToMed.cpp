@@ -978,6 +978,26 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   }
   size_t LowBlockIndex = 0;
 
+  const auto CachedImports =
+      Image && Image->Arch == TheArch && Image->abiFormat() == Fmt &&
+              CallEntryFloatingArguments
+          ? importedCallSlotFacts(Low, *Image, *CallEntryFloatingArguments,
+                                  CallArgumentSources)
+          : ImportedCallSlotFacts{};
+  std::map<ImportedCallSlotFacts::Operation, MedVar> ImportSnapshots;
+  for (const auto &[Load, Definition] : CachedImports.Reloads) {
+    const ImportedCallSlotFacts::Operation Producer{Definition.BlockId,
+                                                    Definition.OperationIndex};
+    if (ImportSnapshots.count(Producer))
+      continue;
+    MedVar Snapshot;
+    Snapshot.Kind = MedVar::Temp;
+    Snapshot.Id = allocVarId();
+    Snapshot.Size = Definition.Output.Size;
+    Snapshot.TheArch = TheArch;
+    ImportSnapshots.emplace(Producer, Snapshot);
+  }
+
   for (const auto &LB : Low.Blocks) {
     uint8_t DispatchDefined =
         TrackDispatchArgs ? DispatchDefinedIn[LowBlockIndex] : 0;
@@ -1163,8 +1183,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       // slot, names that import as the slot would (`mov rax, [rip+slot];
       // test rax, rax; je; jmp rax` in register_tm_clones).
       RegisterCallSlot = 0;
+      if (const auto Cached = CachedImports.Calls.find({LB.Id, LowOpIndex});
+          Cached != CachedImports.Calls.end() && LOp.Opcode == NdOp::INDIR_CALL)
+        RegisterCallSlot = Cached->second;
       if (LOp.Opcode == NdOp::INDIR_CALL && LOp.NumInputs >= 1 &&
-          LOp.Inputs[0].isReg() && Image)
+          LOp.Inputs[0].isReg() && Image && !RegisterCallSlot)
         if (const std::optional<va_t> Slot =
                 loadedCallSlot(Low, LB, LowOpIndex, LOp.Inputs[0]);
             Slot && !importCalleeName(*Image, *Slot).empty() &&
@@ -1271,7 +1294,26 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         MOp.addInput(MedVar::makeConst(Proof.TargetVA, 4, Proof.Provenance,
                                        Proof.TargetOwnerVA));
       }
+      const ImportedCallSlotFacts::Operation Position{LB.Id, LowOpIndex};
+      if (const auto Reload = CachedImports.Reloads.find(Position);
+          Reload != CachedImports.Reloads.end()) {
+        // Preserve the original load's value, not a later read of a mutable
+        // import slot. Only the shared private-byte proof permits forwarding.
+        MOp.Opcode = NdOp::COPY;
+        MOp.NumInputs = 0;
+        MOp.addInput(ImportSnapshots.at(
+            {Reload->second.BlockId, Reload->second.OperationIndex}));
+      }
       MB.Ops.push_back(MOp);
+      if (const auto Snapshot = ImportSnapshots.find(Position);
+          Snapshot != ImportSnapshots.end()) {
+        MedOp Save;
+        Save.Opcode = NdOp::COPY;
+        Save.Addr = LOp.Addr;
+        Save.Output = Snapshot->second;
+        Save.addInput(MOp.Output);
+        MB.Ops.push_back(std::move(Save));
+      }
       if (MOp.ScalarCallSignature && MOp.ScalarCallSignature->ReturnElements) {
         // The selected header owns every HFA result register before SSA.
         // A following call may consume those fields without a single move.

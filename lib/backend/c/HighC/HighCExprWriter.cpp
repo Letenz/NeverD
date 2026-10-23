@@ -29,6 +29,7 @@
 #include "neverd/backend/c/render/X87GuardedValueRender.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
@@ -2736,16 +2737,34 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   S += Note;
   S += ")";
   if (RecordCall && RecordCall->FloatingResult) {
-    if (!E.Type || E.Type->Kind != NdTypeKind::Int ||
-        E.Type->Size != Callee->ReturnType->Size)
+    const bool RecordCarrier = [&] {
+      if (!E.Type || E.Type->Kind != NdTypeKind::Struct ||
+          !E.Type->RegisterReturnRecord ||
+          E.Type->Alignment != Callee->ReturnType->Alignment)
+        return false;
+      const auto Members = sourceAggregateMembers(E.Type);
+      const auto Leaves = aapcs64FloatingAggregate(Callee->ReturnType);
+      return !Members.empty() && Leaves &&
+             std::equal(Members.begin(), Members.end(), Leaves->begin(),
+                        Leaves->end(),
+                        [](const auto &Member, const auto &Leaf) {
+                          return Member.Type->Kind == NdTypeKind::Float &&
+                                 Leaf.Floating &&
+                                 Member.Type->Size == Leaf.Size &&
+                                 Member.ByteOffset == Leaf.Offset;
+                        });
+    }();
+    if (!E.Type || E.Type->Size != Callee->ReturnType->Size ||
+        (E.Type->Kind != NdTypeKind::Int && !RecordCarrier))
       throw std::runtime_error(
           "A record call has an incompatible result carrier");
-    // _BitInt(96) can occupy sixteen C bytes while a three-float record
-    // occupies twelve. Copy the exact record bytes into a zeroed carrier;
-    // bit_cast requires equal C object sizes and cannot express that case.
+    // Copy the exact declared bytes into the register record. Older integer
+    // carriers may have trailing C padding (_BitInt(96) occupies sixteen
+    // bytes for a twelve-byte HFA), so those still need a zeroed destination.
     S = "({ " + c_detail::recordCallType(Callee->ReturnType, Opts) +
         " __neverd_result = " + S + "; " + typeToC(E.Type) +
-        " __neverd_bits = 0; __builtin_memcpy(&__neverd_bits, "
+        " __neverd_bits = " + (RecordCarrier ? "{0}" : "0") +
+        "; __builtin_memcpy(&__neverd_bits, "
         "&__neverd_result, sizeof(__neverd_result)); __neverd_bits; })";
   }
   if (RecordCall && RecordCall->ResultPointer) {
