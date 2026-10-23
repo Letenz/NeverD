@@ -293,7 +293,8 @@ public:
     poll();
     auto Owner = Sources.Functions.find(G.Function);
     if (!F.getParent() || F.empty() || F.isVarArg() || F.hasPersonalityFn() ||
-        Owner == Sources.Functions.end() || Owner->second != &F)
+        Owner == Sources.Functions.end() ||
+        static_cast<Value *>(Owner->second) != &F)
       unsupported(
           "missing native function binding, body or supported signature");
     bits(F.getReturnType());
