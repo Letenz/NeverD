@@ -203,8 +203,10 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
 | `llvm.x86.{lar,lsl}.{reg,mem}{16,32,64}` | i386 and x86-64; 64-bit results require x86-64 | Returns `{value, i8 ZF}`. Success retains the native result; failure returns the supplied prior value. Memory forms own their m16 selector read. |
 | `llvm.x86.lsl` | i386 and x86-64 | Compatibility with NeverC's Microsoft `__segmentlimit`; ordered query with a 32-bit result, unspecified on failure. |
+| `llvm.x86.arpl.reg`, `llvm.x86.arpl.mem` | i386 | Register form returns the adjusted i16 destination and i8 ZF; memory form owns m16 access, conditional update and permission checks. Native flags other than ZF are preserved. |
 | `llvm.x86.hreset` | i386 and x86-64 | Full i32 EAX control input, canonical ignored imm8 zero and native privilege/feature validation. |
 | `llvm.x86.invlpgb`, `llvm.x86.invlpgb32` | x86-64 and i386 respectively | Integer rAX control/address, i32 EDX identifiers and i32 ECX count/page-size inputs. No compiler memory dereference; wrong-mode APIs fail explicitly. |
+| `llvm.x86.invlpgb.addr32` | x86-64 | Explicit `67` address-size override, complete EAX address/control and i32 EDX/ECX inputs, without compiler dereferencing. |
 | `llvm.x86.tlbsync` | i386 and x86-64 | Actual ordered translation synchronization; no invented completion or replacement compiler fence. |
 | `llvm.x86.lkgs.reg`, `llvm.x86.lkgs.mem` | x86-64 | i16 register selector or instruction-owned m16 read; native GS descriptor/selector and IA32_KERNEL_GS_BASE effects. |
 | `llvm.x86.{verr,verw}.{reg,mem}` | i386 and x86-64 | i16 register selector or instruction-owned m16 read, returning actual i8 ZF; implicit descriptor reads stay native. |
@@ -284,6 +286,23 @@ clobber, preventing compiler condition codes from surviving the access. The
 source-route regression compiles 48 read/write cases across both word sizes,
 all three object formats and both pipeline optimization settings; it and the
 six existing virtualization source tests pass.
+
+CR/DR access now has one native-width assembly plan shared by LLVM emission
+and both C projections. LLVM-to-C checks the complete call: exact operands,
+types, legal register/mode, ATT text, side effects and flags/memory clobbers.
+Missing write operands cannot become a write of zero, and malformed contracts
+cannot bypass validation through the string-only renderer. COFF selects the
+Microsoft intrinsic only for MSVC or NeverC; Clang uses native GNU assembly,
+as it declares several CR/DR names without implementing them as builtins.
+ELF and Mach-O use the same native assembly effects. DR4/5 retain their CR4.DE-dependent behavior; DR8..15 are rejected
+by strict lifting because REX.R does not extend the debug-register bank.
+Regressions cover every legal CR/DR read/write, dead reads, all three object
+formats, both C routes, O0/O2 compilation, and original-byte CPL3 fault
+comparisons. The malformed-call matrix also covers missing effects, wrong
+widths, extra/missing operands, memory attributes, bundles and dialect changes.
+The 225 source fixtures check the native opcode in every generated object,
+including dead reads in all formats. All four source-contract tests, two
+coverage tests, six side-effect tests and 24 return-contract tests pass.
 
 REP qualification adds 1,000 LLVM cases across both code modes and 544 cases
 on each NeverC builtin spelling and the NeverC-to-fork route. MOVS/STOS execute
@@ -501,6 +520,32 @@ tests pass; the overload audit has zero mismatches. Installed Microsoft
 interfaces retain their intended default-width native calls. These results
 include the earlier default-width operations; physical TLB behavior and
 successful VMFUNC retain the qualification limits above.
+
+The next bounded batch adds native i386 ARPL register/memory APIs and a
+long-mode INVLPGB addr32 API. ARPL's machine description now ties the prior
+destination to its result and declares EFLAGS plus native memory read/write
+effects. No ordinary preload or unconditional store replaces the instruction.
+`verify-arpl-completion.py` passes 960 compiler/ISA cases across three formats
+and O0/O2, plus 16,480 real Linux IA32 result/fault comparisons. Its independent
+raw-instruction oracle includes read-only and inaccessible pages. NeverC's
+x86-64/AArch64 target set cannot encode ARPL; these two APIs belong to the full
+LLVM fork's i386 backend.
+
+NeverC exposes `__builtin_ia32_invlpgb_addr32` with three unsigned i32 operands.
+The INVLPGB matrix passes 452 full-LLVM checks and 368 each for NeverC and the
+bridge, retaining the explicit address prefix, full EDX/ECX and live wide
+source values. Twenty LLVM regressions, 46 NeverC intrinsic tests, 81 binary
+checks, 26 generator tests and 12 plugin tests pass; overload metadata has zero
+mismatches. The plugin schema appends only `INVLPGB64_ADDR32` at opcode 18494;
+every earlier instruction, register and feature record remains unchanged.
+This transport evidence does not independently qualify hardware TLB broadcasts.
+
+NeverC's public `_mm_extract_ps` now reinterprets the vector before its
+integer-lane extraction instead of requiring an unsupported C23
+`__builtin_bit_cast`. Three header regressions and all 46 intrinsic regressions
+pass. They include 8,288 native lane/bit-pattern checks, single evaluation,
+immediate diagnostics, and all three formats at O0/O2; six isolated installed-
+header compilation checks pass too.
 
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete

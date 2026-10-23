@@ -26,6 +26,7 @@
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "../render/X86FPStateHelpers.h"
+#include "../render/X86SystemRegister.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
@@ -764,6 +765,7 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 }
 
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
+  bool NeedsX86SystemRegisterDispatch = false;
   bool HasFloatingArithmetic = false;
   bool HasWin64Call = false;
   Win64CallABI.clear();
@@ -895,12 +897,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 Asm->getAsmString() == "pushl $0\n\tpopfl")
               Headers.insert(Opts.Format == BinaryFormat::COFF ? "intrin.h"
                                                                : "x86intrin.h");
-            // A control or debug register move prints as MSVC's __readcr8 or
-            // __writedr (renderX86InlineAsm).
-            if (const llvm::StringRef Text = Asm->getAsmString();
-                Opts.Format == BinaryFormat::COFF && Text.starts_with("mov ") &&
-                (Text.contains("%cr") || Text.contains("%dr")))
-              Headers.insert("intrin.h");
+            if (auto SystemRegister = renderX86SystemRegisterCall(
+                    Opts.TheArch, Opts.Format, *CI, "result", true,
+                    std::vector<std::string>(CI->arg_size(), "0"))) {
+              if (SystemRegister->SetIntrinsics) {
+                Headers.insert("intrin.h");
+                HasCIntrinsics = true;
+                NeedsX86SystemRegisterDispatch = true;
+              }
+              continue;
+            }
             if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
@@ -1030,6 +1036,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     OS << "\n";
     IncludedHeaders.insert(Headers.begin(), Headers.end());
   }
+  if (NeedsX86SystemRegisterDispatch)
+    OS << X86SystemRegisterCompilerDispatch;
   if (Opts.TheArch == Arch::X86) {
     // i386 Clang supports bit-precise integers but does not define the native
     // 128-bit aliases used by LLVM C's 65..128-bit scalar carriers. Retain the

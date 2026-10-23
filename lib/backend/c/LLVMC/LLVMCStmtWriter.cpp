@@ -4938,6 +4938,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto SystemRegister = renderX86SystemRegisterCall(
+          Opts.TheArch, Opts.Format, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << SystemRegister->Code;
+    HasCIntrinsics |= SystemRegister->SetIntrinsics;
+    return true;
+  }
   if (auto Amx = renderX86AmxCall(Opts.TheArch, Call, ArgStrs)) {
     emitIndent(Indent);
     OS << *Amx;

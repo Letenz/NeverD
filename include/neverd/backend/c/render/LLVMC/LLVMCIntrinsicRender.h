@@ -66,6 +66,12 @@ std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
                                              const llvm::CallInst &Call);
 
 //--- Arch-specific (LLVMCIntrinsicRenderX86.cpp) ---
+/// Recognize the complete owned CR/DR call, rejecting malformed candidates.
+std::optional<InlineAsmRender>
+renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
+                            const llvm::CallInst &Call,
+                            const std::string &ResultName, bool ResultLive,
+                            const std::vector<std::string> &Args);
 const char *lookupX86AsmToC(const char *Mnem);
 InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,
