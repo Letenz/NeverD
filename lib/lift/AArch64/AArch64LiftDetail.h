@@ -32,6 +32,8 @@ namespace neverd {
 
 bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
                const cs_insn *Insn, const cs_aarch64 &ARM64);
+bool liftCPA(AArch64Lifter &L, AArch64Lifter::LiftState &S, const cs_insn *Insn,
+             const cs_aarch64 &ARM64);
 
 //===----------------------------------------------------------------------===//
 // Helpers shared by more than one handler translation unit

@@ -7912,5 +7912,65 @@ SHA-256 الثانوي: %3
         <source>Unmapped line</source>
         <translation>سطر بلا ربط</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>محاذاة أسطر المصدر</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>إزالة حد عمل المحاذاة</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>إزالة حد بايتات أدلة المصدر</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>تضمين التصريحات في المحاذاة</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>الانتقال إلى الصف المحاذى</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>فروق النص: + مضاف، − محذوف، ~ معدّل. حدد سطرًا لفحص تعليماته الأصلية.</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>جارٍ محاذاة المصدر… ينتظر الإلغاء اكتمال خطوة التحليل الحالية.</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>تجاوزت محاذاة المصدر حدها. اضبط الخيارات أو اعرض المصدرين بشكل مستقل.</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>توقفت محاذاة المصدر. أعد تحميل المصدر للمحاولة مجددًا.</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>الصفوف المحاذاة %1–%2 من %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · سطر المصدر %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · لا يوجد سطر في هذا الجانب</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · معدّل</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · مضاف</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · محذوف</translation>
+    </message>
 </context>
 </TS>

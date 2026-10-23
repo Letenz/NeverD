@@ -75,9 +75,10 @@ const MedBlock *authenticatedTailSetup(const MedBlock &Block, const MedOp &Call,
   if (!llvm::any_of(Pred->Ops, [](const MedOp &Op) {
         if (!aarch64PAuthMedShapeIsValid(Op))
           return false;
-        const auto Auth = aarch64PAuthOperation(
-            static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
-        return Auth && Auth->Authenticate;
+        const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+        const auto Auth = aarch64PAuthOperation(Id);
+        const auto AuthLR = aarch64PAuthLROperation(Id);
+        return (Auth && Auth->Authenticate) || (AuthLR && AuthLR->Authenticate);
       }))
     return nullptr;
   const int Other = Pred->Succs[Pred->Succs.front() == Block.Id ? 1 : 0];

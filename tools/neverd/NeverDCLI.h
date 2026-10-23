@@ -240,6 +240,7 @@ extern llvm::cl::opt<std::string> ExecutionConfiguration, ExecutionModules;
 extern llvm::cl::opt<std::string> ModulesAction, ModulesConfiguration,
     ModulesID, ModulesSymbol;
 extern llvm::cl::SubCommand CPUCapabilitiesCmd;
+extern llvm::cl::SubCommand X87CapabilitiesCmd;
 extern llvm::cl::SubCommand EmulateProcessCmd;
 extern llvm::cl::SubCommand UnpackCmd;
 extern llvm::cl::SubCommand AuditCmd;
@@ -494,11 +495,12 @@ extern llvm::cl::opt<std::string> DiffProfile, DiffOptions, DiffSave,
     DiffAmbiguousWith, DiffSourceFunction, DiffSourceSide,
     DiffSourceRepresentation;
 extern llvm::cl::opt<bool> DiffIgnoreNames, DiffRegions, DiffDataFlow,
-    DiffSliceDataOnly, DiffFlowRegions, DiffReviewLatest, DiffListDescending;
+    DiffSliceDataOnly, DiffFlowRegions, DiffReviewLatest, DiffListDescending,
+    DiffSourceDifference, DiffSourcePrelude;
 extern llvm::cl::opt<double> DiffMinSimilarity;
 extern llvm::cl::opt<unsigned long long> DiffTimeout;
 extern llvm::cl::opt<unsigned long long> DiffImpactWork, DiffChangesWork,
-    DiffEffectWork, DiffValidationWork;
+    DiffEffectWork, DiffValidationWork, DiffSourceWork, DiffSourceBytes;
 extern llvm::cl::opt<unsigned> DiffOffset, DiffLimit, DiffRegionAnchor,
     DiffSliceNode, DiffFlowRegionAnchor, DiffImpactDepth, DiffImpactFunctions,
     DiffImpactSites, DiffImpactWitness, DiffChangesRows, DiffChangesCount,
@@ -804,6 +806,7 @@ int runEmulateDriver();
 int runModules();
 int runExecution();
 int runCPUCapabilities();
+int runX87Capabilities();
 int runEmulateProcess();
 int runUnpack();
 

@@ -9,7 +9,7 @@ std::optional<std::vector<MethodRecord>>
 readMethodList(const BinaryImage &Image, va_t Address, size_t &Remaining,
                std::string &Diagnostic) {
   Diagnostic.clear();
-  const RuntimeData Data(Image);
+  const RuntimeData Data(Image, PointerView::MetadataTarget);
   const auto Flags = Data.u32(Address);
   const auto Count =
       Address <= InvalidVA - 4 ? Data.u32(Address + 4) : std::nullopt;

@@ -185,3 +185,7 @@ C(Intrinsic::A64_WspWrite, "__builtin_arm_wsp_write");
 C(Intrinsic::A64_WspZeroExtend, "__builtin_arm_wsp_zero_extend");
 C(Intrinsic::A64_SveIndex, "svindex_u8");
 C(Intrinsic::A64LinuxSyscall, "neverd_a64_linux_syscall");
+
+#define NEVERD_A64_PAUTH_LR_OPERATION(Id, Mnemonic, ...)                       \
+  C(Intrinsic::Id, "__" Mnemonic);
+#include "neverd/ir/intrinsics/AArch64PAuthLR.def"

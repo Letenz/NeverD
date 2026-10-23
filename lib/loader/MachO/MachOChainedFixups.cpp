@@ -296,6 +296,7 @@ bool parseArm64eSegment(
         Fixup F{Slot};
         if (Auth) {
           F.Authentication.emplace();
+          F.Authentication->EncodedValue = Raw;
           F.Authentication->Diversity = arm64e::kDiversity.extract(Raw);
           F.Authentication->AddressDiversity =
               arm64e::kAddressDiversity.extract(Raw);

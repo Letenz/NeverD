@@ -66,8 +66,14 @@ detectTargetFeaturesAArch64(const std::set<std::string> &Names) {
                     Has(kAArch64PAuthLLVMIntrinsicPattern);
   for (const auto &Operation : kAArch64PAuthOperations)
     NeedsPAuth |= Has(Operation.Mnemonic);
+  bool NeedsPAuthLR = false;
+  for (const auto &Operation : kAArch64PAuthLROperations)
+    NeedsPAuthLR |= Has(Operation.MachineAsm);
+  NeedsPAuth |= NeedsPAuthLR;
   if (NeedsPAuth)
     F += kAArch64PAuthTargetFeature;
+  if (NeedsPAuthLR)
+    F += kAArch64PAuthLRTargetFeature;
   if (Has("aarch64.mte") || Has("aarch64.addg") || Has("aarch64.subg") ||
       Has("aarch64.stg") || Has("aarch64.ldg") || Has("irg") || Has("gmi"))
     F += ",+mte";

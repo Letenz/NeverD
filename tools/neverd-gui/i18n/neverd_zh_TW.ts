@@ -7732,5 +7732,65 @@ Secondary SHA-256: %3
         <source>Unmapped line</source>
         <translation>未對應行</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>對齊原始碼行</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>取消對齊工作量限制</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>取消原始碼證據位元組限制</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>對齊時包含宣告</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>跳至對齊行</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>文字差異：+ 新增，− 刪除，~ 修改。選取一行可檢視其原始指令。</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>正在對齊原始碼…取消操作需等待目前分析步驟結束。</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>原始碼對齊超出限制。請調整選項，或分別檢視原始碼。</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>原始碼對齊已停止。重新載入原始碼可重試。</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>對齊行 %1–%2，共 %3 行</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · 原始碼第 %1 行</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · 此側無對應行</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · 已修改</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · 已新增</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · 已刪除</translation>
+    </message>
 </context>
 </TS>

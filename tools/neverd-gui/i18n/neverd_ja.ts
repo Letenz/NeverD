@@ -7732,5 +7732,65 @@ Secondary SHA-256: %3
         <source>Unmapped line</source>
         <translation>対応付けのない行</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>ソース行を整列</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>整列の処理量制限を解除</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>ソース証拠のバイト数制限を解除</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>宣言を含めて整列</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>整列行に移動</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>テキストの差分：+ 追加、− 削除、~ 変更。行を選択すると元の命令を確認できます。</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>ソースを整列中…キャンセルは現在の解析処理が終わるまで待機します。</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>ソースの整列が制限を超えました。オプションを調整するか、ソースを個別に表示してください。</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>ソースの整列を停止しました。ソースを再読み込みして再試行してください。</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>整列行 %1–%2 / %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · ソース行 %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · この側には行がありません</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · 変更</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · 追加</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · 削除</translation>
+    </message>
 </context>
 </TS>

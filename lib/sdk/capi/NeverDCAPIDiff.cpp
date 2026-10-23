@@ -69,6 +69,11 @@ struct Comparison {
     FunctionDelta Delta;
   };
   std::optional<Detail> CachedDetail;
+  struct SourceCache {
+    std::string Key;
+    ComparisonSourceDifference Difference;
+  };
+  std::optional<SourceCache> CachedSource;
   struct SliceCache {
     std::string Key;
     FlowSlice Slice;
@@ -181,6 +186,15 @@ uint64_t address(const llvm::json::Object &O, llvm::StringRef Key) {
           "address must be an integer string: " + Key.str());
   return A;
 }
+std::string sourceRepresentation(const llvm::json::Object &O) {
+  auto Representation =
+      string(O, "representation", ComparisonSourceOptions{}.Representation);
+  require(Representation == "c" || Representation == "llvmc" ||
+              Representation == "source" || Representation == "cpp" ||
+              Representation == "rust" || Representation == "go",
+          "unsupported source representation");
+  return Representation;
+}
 Override overrideValue(const llvm::json::Object &O) {
   keys(O, {"kind", "primary", "secondary"});
   auto Kind = overrideNamed(string(O, "kind"));
@@ -276,6 +290,42 @@ llvm::json::Object graph(const Program &P, uint32_t Index) {
       {"pseudocode",
        llvm::json::Object{{"state", "unavailable"},
                           {"reason", "not requested in the decoded profile"}}}};
+}
+using SourceListing = std::map<uint32_t, std::pair<uint64_t, llvm::StringRef>>;
+SourceListing sourceListing(const Comparison &C, const Program &P,
+                            const FunctionMatch *M, uint32_t Index,
+                            bool Secondary) {
+  std::map<uint32_t, std::pair<uint64_t, llvm::StringRef>> Listing;
+  if (M && C.CachedDetail && C.CachedDetail->Primary == M->Primary &&
+      C.CachedDetail->Secondary == M->Secondary &&
+      C.CachedDetail->Delta.ComputationComplete) {
+    const auto &Rows = C.CachedDetail->Delta.Rows;
+    for (size_t Row = 0; Row < Rows.size(); ++Row) {
+      const auto Instruction =
+          Secondary ? Rows[Row].Secondary : Rows[Row].Primary;
+      if (Instruction != NoIndex)
+        Listing.emplace(Instruction,
+                        std::pair{Row, rowKindName(Rows[Row].Kind)});
+    }
+  } else if (!M) {
+    uint64_t Row = 0;
+    for (const auto &Block : P.blocks(P.Functions[Index]))
+      for (uint32_t I = 0; I < Block.InstructionCount; ++I)
+        Listing.emplace(Block.FirstInstruction + I,
+                        std::pair{Row++, llvm::StringRef("unmatched")});
+  }
+  return Listing;
+}
+void sourceNavigation(llvm::json::Object &Row, const SourceListing &Listing) {
+  if (auto *Anchors = Row.getArray("comparison_anchors"))
+    for (auto &Anchor : *Anchors) {
+      auto &A = *Anchor.getAsObject();
+      if (const auto I = A.getInteger("instruction_index"))
+        if (const auto It = Listing.find(*I); It != Listing.end()) {
+          A["listing_row"] = It->second.first;
+          A["native_change"] = It->second.second;
+        }
+    }
 }
 const FunctionDelta &cachedDelta(Comparison &C, const FunctionMatch &M,
                                  uint64_t Timeout = 0, bool Refresh = false,
@@ -616,6 +666,7 @@ int neverd_comparison_restore_json(neverd_comparison_t Handle,
     if (const auto E = bindComparison(*Saved, C.Primary, C.Secondary, Next))
       throw std::runtime_error(*E);
     C.CachedDetail.reset();
+    C.CachedSource.reset();
     C.CachedObservations.reset();
     C.CachedSlice.reset();
     C.CachedImpact.reset();
@@ -861,14 +912,7 @@ const char *neverd_comparison_source_page_json(neverd_comparison_t Handle,
     const auto *M = Secondary ? C.Result.matchOfSecondary(Index)
                               : C.Result.matchOfPrimary(Index);
     ComparisonSourceOptions Options;
-    Options.Representation =
-        string(*O, "representation", Options.Representation);
-    require(
-        Options.Representation == "c" || Options.Representation == "llvmc" ||
-            Options.Representation == "source" ||
-            Options.Representation == "cpp" ||
-            Options.Representation == "rust" || Options.Representation == "go",
-        "unsupported source representation");
+    Options.Representation = sourceRepresentation(*O);
     Options.Offset = count(*O, "offset", 0, INT64_MAX);
     Options.Limit = count(*O, "limit", Options.Limit,
                           sdk::kNeverDCAPIDecompileNeverdIrViewJsonLimit);
@@ -912,36 +956,10 @@ const char *neverd_comparison_source_page_json(neverd_comparison_t Handle,
     auto Result = readComparisonSource(S, P, Index, Options, Control);
     // Navigation may reuse a completed native alignment, never infer a
     // source-to-source pairing from line numbers or source text similarity.
-    std::map<uint32_t, std::pair<uint64_t, llvm::StringRef>> Listing;
-    if (M && C.CachedDetail && C.CachedDetail->Primary == M->Primary &&
-        C.CachedDetail->Secondary == M->Secondary &&
-        C.CachedDetail->Delta.ComputationComplete) {
-      const auto &Rows = C.CachedDetail->Delta.Rows;
-      for (size_t Row = 0; Row < Rows.size(); ++Row) {
-        const auto Instruction =
-            Secondary ? Rows[Row].Secondary : Rows[Row].Primary;
-        if (Instruction != NoIndex)
-          Listing.emplace(Instruction,
-                          std::pair{Row, rowKindName(Rows[Row].Kind)});
-      }
-    } else if (!M) {
-      uint64_t Row = 0;
-      for (const auto &Block : P.blocks(P.Functions[Index]))
-        for (uint32_t I = 0; I < Block.InstructionCount; ++I)
-          Listing.emplace(Block.FirstInstruction + I,
-                          std::pair{Row++, llvm::StringRef("unmatched")});
-    }
+    const auto Listing = sourceListing(C, P, M, Index, Secondary);
     if (auto *Rows = Result.Document.getArray("rows"))
       for (auto &Value : *Rows)
-        for (auto &Anchor :
-             *Value.getAsObject()->getArray("comparison_anchors")) {
-          auto &A = *Anchor.getAsObject();
-          const auto I = A.getInteger("instruction_index");
-          if (const auto It = Listing.find(*I); It != Listing.end()) {
-            A["listing_row"] = It->second.first;
-            A["native_change"] = It->second.second;
-          }
-        }
+        sourceNavigation(*Value.getAsObject(), Listing);
     if (auto Stop = Control.stop()) {
       Result.State = *Stop;
       Result.Availability = "unavailable";
@@ -981,6 +999,174 @@ const char *neverd_comparison_source_page_json(neverd_comparison_t Handle,
         M ? llvm::json::Value(function(Secondary ? C.Primary : C.Secondary,
                                        Secondary ? M->Primary : M->Secondary))
           : llvm::json::Value(nullptr);
+    return dupStr(jsonToString(std::move(Out)));
+  });
+}
+
+const char *neverd_comparison_source_difference_json(neverd_comparison_t Handle,
+                                                     const char *Query) {
+  return guarded(Handle, [&](Comparison &C) -> const char * {
+    auto Lock = ready(C);
+    require(
+        C.OwnedInputsBound,
+        "source alignment requires completed native capture from run_owned");
+    auto V = json(Query);
+    const auto *O = V.getAsObject();
+    require(O, "source difference query must be an object");
+    keys(*O, {"side", "address", "representation", "offset", "limit",
+              "max_native_instructions", "max_work", "max_source_bytes",
+              "include_prelude", "timeout_ms", "refresh"});
+    const auto [Secondary, Index] = selectedFunction(C, *O);
+    const auto *M = Secondary ? C.Result.matchOfSecondary(Index)
+                              : C.Result.matchOfPrimary(Index);
+    require(M, "source alignment requires an accepted function counterpart");
+    ComparisonSourceDifferenceOptions Options;
+    Options.Source.Representation = sourceRepresentation(*O);
+    Options.Source.MaxNativeInstructions =
+        count(*O, "max_native_instructions",
+              Options.Source.MaxNativeInstructions, UINT32_MAX);
+    Options.Source.Refresh = flag(*O, "refresh", false);
+    Options.Alignment.MaxWork =
+        count(*O, "max_work", Options.Alignment.MaxWork, INT64_MAX);
+    Options.MaxSourceBytes =
+        count(*O, "max_source_bytes", Options.MaxSourceBytes, INT64_MAX);
+    Options.IncludePrelude = flag(*O, "include_prelude", false);
+    const auto Offset = count(*O, "offset", 0, INT64_MAX);
+    const auto Limit = count(*O, "limit", diffLimits::kDefaultPageSize,
+                             sdk::kNeverDCAPIDecompileNeverdIrViewJsonLimit);
+    require(Limit > 0, "source difference page limit must be positive");
+    const auto Timeout =
+        count(*O, "timeout_ms", 0, diffLimits::kMaxTimeoutMilliseconds);
+    const std::string Key =
+        std::to_string(M->Primary) + ":" + std::to_string(M->Secondary) + ":" +
+        Options.Source.Representation + ":" +
+        std::to_string(Options.Source.MaxNativeInstructions) + ":" +
+        std::to_string(Options.Alignment.MaxWork) + ":" +
+        std::to_string(Options.MaxSourceBytes) + ":" +
+        std::to_string(Options.IncludePrelude) + ":" + std::to_string(Timeout);
+    {
+      std::lock_guard Status(C.StatusMutex);
+      C.Cancel = false;
+      C.Running = true;
+      C.Outcome = "running";
+      C.Phase = "source_difference:analysis";
+      C.Done = C.Total = 0;
+      C.Error.clear();
+    }
+    auto Finished = llvm::scope_exit([&] {
+      std::lock_guard Status(C.StatusMutex);
+      C.Running = false;
+      if (C.Outcome == "running")
+        C.Outcome = "failed";
+    });
+    ComparisonControl Control;
+    Control.Cancel = &C.Cancel;
+    if (Timeout)
+      Control.Deadline =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(Timeout);
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t Done,
+                           uint64_t Total) {
+      std::lock_guard Status(C.StatusMutex);
+      C.Phase = "source_difference:" + Phase.str();
+      C.Done = Done;
+      C.Total = Total;
+    };
+    const bool Cached =
+        !Options.Source.Refresh && C.CachedSource && C.CachedSource->Key == Key;
+    if (!Cached) {
+      // Release the previous pair before collecting its replacement. The
+      // evidence allowance applies to both inputs of this one retained pair.
+      C.CachedSource.reset();
+      auto Difference =
+          compareSources(*toSession(C.PrimarySource.get()), C.Primary,
+                         M->Primary, *toSession(C.SecondarySource.get()),
+                         C.Secondary, M->Secondary, Options, Control);
+      C.CachedSource = Comparison::SourceCache{Key, std::move(Difference)};
+    }
+    auto &Difference = C.CachedSource->Difference;
+    llvm::json::Array Rows;
+    const auto End =
+        std::min<uint64_t>(Difference.Alignment.Rows.size(), Offset + Limit);
+    const SourceListing Listings[] = {
+        sourceListing(C, C.Primary, M, M->Primary, false),
+        sourceListing(C, C.Secondary, M, M->Secondary, true)};
+    const auto SourceLine = [&](unsigned Side,
+                                uint64_t Line) -> llvm::json::Value {
+      if (Line == NoSourceLine)
+        return nullptr;
+      const auto &Source = Difference.Documents[Side].Lines.at(Line);
+      auto Row = Source.Evidence;
+      Row["text"] = Source.Text;
+      sourceNavigation(Row, Listings[Side]);
+      return Row;
+    };
+    for (uint64_t I = Offset; I < End && !Control.stop(); ++I) {
+      const auto &Pair = Difference.Alignment.Rows[I];
+      Rows.push_back(
+          llvm::json::Object{{"kind", sourceLineKindName(Pair.Kind)},
+                             {"primary", SourceLine(0, Pair.Primary)},
+                             {"secondary", SourceLine(1, Pair.Secondary)}});
+    }
+    if (auto Stop = Control.stop()) {
+      Difference = {};
+      Difference.Alignment.State = *Stop;
+      Difference.Reason = "source difference paging stopped";
+      Rows.clear();
+    }
+    const auto Metadata = [&](const Program &P, uint32_t FunctionIndex,
+                              const ComparisonSourceDocument &Document) {
+      return llvm::json::Object{
+          {"function", function(P, FunctionIndex)},
+          {"input_revision", P.Identity.Revision},
+          {"input_sha256", P.Identity.SHA256},
+          {"dialect", Document.Dialect},
+          {"first_line", Document.FirstLine},
+          {"total_lines", Document.TotalLines},
+          {"native_analysis_complete",
+           !P.Functions[FunctionIndex].has(TraitIncomplete)}};
+    };
+    llvm::json::Object Out{
+        {"schema", "neverd.bindiff.source.difference"},
+        {"version", 1},
+        {"state", stateName(Difference.Alignment.State)},
+        {"availability", Difference.Availability},
+        {"reason", jsonSafeText(Difference.Reason)},
+        {"computation_complete", Difference.Alignment.ComputationComplete},
+        {"cached", Cached},
+        {"representation", Options.Source.Representation},
+        {"scope", Options.IncludePrelude ? "whole_emission" : "function_body"},
+        {"recipe", std::string(VersionString) + ":sdk-source-difference-v2"},
+        {"input_source_binding", "owned_sessions"},
+        {"source_alignment", Difference.Alignment.ComputationComplete
+                                 ? "exact_text_lines"
+                                 : "not_completed"},
+        {"provenance_complete", false},
+        {"semantic_validation", "not_performed"},
+        {"max_native_instructions", Options.Source.MaxNativeInstructions},
+        {"max_work", Options.Alignment.MaxWork},
+        {"max_source_bytes", Options.MaxSourceBytes},
+        {"work", Difference.Alignment.Work},
+        {"source_bytes", Difference.SourceBytes},
+        {"timeout_ms", Timeout},
+        {"hard_deadline", false},
+        {"cancellation_granularity",
+         "between_function_analysis_and_rendering_and_during_line_alignment"},
+        {"primary", Metadata(C.Primary, M->Primary, Difference.Documents[0])},
+        {"secondary",
+         Metadata(C.Secondary, M->Secondary, Difference.Documents[1])},
+        {"offset", Offset},
+        {"limit", Limit},
+        {"total_rows", Difference.Alignment.Rows.size()},
+        {"rows", std::move(Rows)}};
+    Out["next_offset"] = End < Difference.Alignment.Rows.size()
+                             ? llvm::json::Value(End)
+                             : llvm::json::Value(nullptr);
+    {
+      std::lock_guard Status(C.StatusMutex);
+      C.Outcome = Difference.Availability == "failed"
+                      ? "failed"
+                      : stateName(Difference.Alignment.State).str();
+    }
     return dupStr(jsonToString(std::move(Out)));
   });
 }
@@ -2409,6 +2595,7 @@ int neverd_comparison_override_json(neverd_comparison_t Handle,
             applyOverride(C.Result, C.Primary, C.Secondary, O, &Effect))
       throw std::runtime_error(*Error);
     C.CachedDetail.reset();
+    C.CachedSource.reset();
     C.CachedObservations.reset();
     C.InventoryKey.clear();
     C.Undo.push_back(std::move(Effect));
@@ -2423,6 +2610,7 @@ int neverd_comparison_undo(neverd_comparison_t Handle) {
     C.Redo.push_back(C.Undo.back().Applied);
     revertOverride(C.Result, C.Primary, C.Secondary, C.Undo.back());
     C.CachedDetail.reset();
+    C.CachedSource.reset();
     C.CachedObservations.reset();
     C.InventoryKey.clear();
     C.Undo.pop_back();
@@ -2437,6 +2625,7 @@ int neverd_comparison_redo(neverd_comparison_t Handle) {
     if (auto Error = applyOverride(C.Result, C.Primary, C.Secondary,
                                    C.Redo.back(), &Effect))
       throw std::runtime_error(*Error);
+    C.CachedSource.reset();
     C.Undo.push_back(std::move(Effect));
     C.Redo.pop_back();
     return 1;

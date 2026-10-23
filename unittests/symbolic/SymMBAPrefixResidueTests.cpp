@@ -1438,15 +1438,17 @@ struct CarryProductFixture {
   unsigned Degree;
   bool Mixed;
   bool Neighbor;
+  unsigned HighBits;
 
   llvm::APInt oracle(const std::array<llvm::APInt, 4> &V) const {
     const auto Width = Scale.getBitWidth();
     auto Result = Scale;
     for (unsigned I = 0; I < Degree; ++I) {
-      auto High = (V[1] + I) & ~llvm::APInt(Width, 3);
+      auto High = (V[1] + I) & ~llvm::APInt::getLowBitsSet(Width, HighBits);
       if (Mixed)
-        High = ((V[1] + I) & ~llvm::APInt(Width, 1)) *
-               ((V[2] + 2 * I) & ~llvm::APInt(Width, 3));
+        High =
+            ((V[1] + I) & ~llvm::APInt(Width, 1)) *
+            ((V[2] + 2 * I) & ~llvm::APInt::getLowBitsSet(Width, HighBits - 1));
       auto Base = V[0] + 2 * I;
       if (Neighbor && I + 1 == Degree)
         ++Base;
@@ -1458,7 +1460,10 @@ struct CarryProductFixture {
 
 CarryProductFixture carryProductFixture(SymContext &Ctx, unsigned Width,
                                         unsigned Degree, unsigned Needed,
-                                        bool Mixed, bool Neighbor = false) {
+                                        bool Mixed, bool Neighbor = false,
+                                        unsigned HighBits = 0) {
+  if (!HighBits)
+    HighBits = Mixed ? 3 : 2;
   auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
   auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
   auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
@@ -1466,11 +1471,13 @@ CarryProductFixture carryProductFixture(SymContext &Ctx, unsigned Width,
   llvm::SmallVector<SymRef, 32> Factors{Ctx.mkConst(Scale)};
   for (unsigned I = 0; I < Degree; ++I) {
     auto U = Ctx.mkAdd(Y, C(I));
-    auto High = Ctx.mkAnd(U, Ctx.mkConst(~llvm::APInt(Width, 3)));
+    auto High =
+        Ctx.mkAnd(U, Ctx.mkConst(~llvm::APInt::getLowBitsSet(Width, HighBits)));
     if (Mixed)
       High = Ctx.mkMul(Ctx.mkAnd(U, Ctx.mkConst(~llvm::APInt(Width, 1))),
                        Ctx.mkAnd(Ctx.mkAdd(Z, C(2 * I)),
-                                 Ctx.mkConst(~llvm::APInt(Width, 3))));
+                                 Ctx.mkConst(~llvm::APInt::getLowBitsSet(
+                                     Width, HighBits - 1))));
     auto Base = Ctx.mkAdd(X, C(2 * I + (Neighbor && I + 1 == Degree)));
     Factors.push_back(Ctx.mkXor(Base, High));
   }
@@ -1478,7 +1485,7 @@ CarryProductFixture carryProductFixture(SymContext &Ctx, unsigned Width,
   auto Input =
       Ctx.mkAdd({Product, Ctx.mkXor(X, Y), Ctx.mkMul(C(2), Ctx.mkAnd(X, Y)),
                  Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
-  return {Product, Input, Scale, Degree, Mixed, Neighbor};
+  return {Product, Input, Scale, Degree, Mixed, Neighbor, HighBits};
 }
 
 TEST(SymMBAPrefixResidue, GroupedCarriesRecoverHigherPrecisionProducts) {
@@ -1614,6 +1621,143 @@ TEST(SymMBAPrefixResidue, GroupedQuadraticResiduesHaveFullWidthProofs) {
       solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
       EXPECT_EQ(Verifier(Ctx, Input, Result), SynthVerification::Equivalent);
     }
+}
+
+TEST(SymMBAPrefixResidue, SharedBooleanCofactorsShortenCarryFrontiers) {
+  std::mt19937_64 Random(0x434f464143544f52);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (auto Case : {std::array<unsigned, 5>{8, 5, 1, 2, 40},
+                      {16, 6, 1, 2, 60},
+                      {32, 7, 0, 2, 300},
+                      {48, 6, 0, 2, 200},
+                      {96, 7, 0, 3, 400}}) {
+      if (Width > 64 && Case[0] != 8)
+        continue;
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Case[0]);
+      SymContext Ctx;
+      auto F = carryProductFixture(Ctx, Width, Case[0], Case[1], Case[2], false,
+                                   Case[3]);
+      MBAOptions Opts;
+      Opts.MaxWork = 65536;
+      Opts.VerifySamples = 0;
+      auto Result = simplifyMBADeep(Ctx, F.Input, Opts);
+      ASSERT_LE(Result.SizeAfter, Case[4]);
+      EXPECT_LT(Result.SizeAfter, Result.SizeBefore);
+      EXPECT_LE(Result.Work, Opts.MaxWork);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &V : Values)
+          V = word(Width, Random);
+        if (Trial < 512)
+          Values = {llvm::APInt(Width, Trial / 64),
+                    llvm::APInt(Width, Trial / 8 % 8),
+                    llvm::APInt(Width, Trial % 8), llvm::APInt(Width, Trial)};
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+      // Exhaust the two observed input words for the linear degree-32 case.
+      // The high input bits remain arbitrary in the independent random rows.
+      if (Width == 8 && Case[0] == 32)
+        for (unsigned X = 0; X < 128; ++X)
+          for (unsigned Y = 0; Y < 128; ++Y) {
+            std::array<llvm::APInt, 4> Values{
+                llvm::APInt(Width, X), llvm::APInt(Width, Y),
+                llvm::APInt(Width, 17), llvm::APInt(Width, 29)};
+            ASSERT_EQ(Reduced.eval(Values), F.oracle(Values));
+          }
+    }
+}
+
+TEST(SymMBAPrefixResidue, SharedBooleanCofactorsHaveFullWidthProofs) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto F = carryProductFixture(Ctx, Width, 8, 5, true, false, 2);
+    MBAOptions Opts;
+    Opts.MaxWork = 65536;
+    Opts.VerifySamples = 0;
+    // Prove the nonlinear rewrite separately from the independent additive
+    // tail. The complete composed expression is covered by the oracle test.
+    auto Result = simplifyMBADeep(Ctx, F.Product, Opts);
+    ASSERT_LE(Result.SizeAfter, 40u);
+    solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
+    EXPECT_EQ(Verifier(Ctx, F.Product, Result.Expr),
+              SynthVerification::Equivalent);
+  }
+}
+
+TEST(SymMBAPrefixResidue, CompletedDecisionsRequireFreeInputsAndResources) {
+  for (bool Opaque : {false, true}) {
+    SymContext Ctx;
+    auto X = Ctx.mkVar("x", 64), Y = Ctx.mkVar("y", 64);
+    auto One = Ctx.mkConst(64, 1);
+    auto Base = Opaque ? Ctx.mkUDiv(X, Ctx.mkOr(Y, One)) : X;
+    llvm::SmallVector<SymRef, 32> Factors(16, Ctx.mkOr(Base, One));
+    auto Scale = llvm::APInt(64, 3).shl(58);
+    Factors.push_back(Ctx.mkConst(Scale));
+    auto Input = Ctx.mkMul(Factors);
+    for (size_t Allowance : {size_t(0), size_t(1), size_t(65536)}) {
+      detail::WorkBudget Budget(Allowance);
+      size_t Storage = 1 << 24;
+      bool Complete = true;
+      auto Result = detail::foldResidueDecisions(
+          Ctx, Input, Budget, Storage, false, Allowance, nullptr, &Complete);
+      EXPECT_EQ(Complete, !Opaque && Allowance == 65536);
+      EXPECT_LE(Budget.used(), Allowance);
+      if (Allowance == 65536) {
+        ASSERT_TRUE(Ctx.isConst(Result));
+        EXPECT_EQ(Ctx.constValue(Result), Scale);
+      } else {
+        EXPECT_EQ(Result, Input);
+      }
+    }
+  }
+}
+
+TEST(SymMBAPrefixResidue, ImprovedBitReadingsKeepShorterAffineCoordinates) {
+  std::mt19937_64 Random(0x414646494e454249);
+  const std::array<uint64_t, 4> Coefficients{4211296093, 3120383843, 3718174401,
+                                             2842018661};
+  const std::array<unsigned, 4> Offsets{0, 1, 2, 2};
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+    auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+    auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+    auto Base = Ctx.mkAdd({X, Ctx.mkMul(C(3), Y), Ctx.mkMul(C(5), Z)});
+    auto Scale = llvm::APInt(Width, 1).shl(Width - 3);
+    llvm::SmallVector<SymRef, 8> Factors{Ctx.mkConst(Scale)};
+    for (unsigned I = 0; I < Coefficients.size(); ++I)
+      Factors.push_back(Ctx.mkAnd(Ctx.mkAdd(Ctx.mkMul(C(Coefficients[I]), Base),
+                                            C(Coefficients[I] * Offsets[I])),
+                                  C(3)));
+    auto Input = Ctx.mkAdd({Ctx.mkMul(Factors), Ctx.mkXor(X, Y),
+                            Ctx.mkMul(C(2), Ctx.mkAnd(X, Y)), Ctx.mkOr(Z, W),
+                            Ctx.mkAnd(Z, W)});
+    MBAOptions Opts;
+    Opts.MaxWork = 65536;
+    Opts.VerifySamples = 0;
+    auto Result = simplifyMBADeep(Ctx, Input, Opts);
+    ASSERT_LE(Result.SizeAfter, 45u);
+    EXPECT_LT(Result.Work, Opts.MaxWork);
+    SymEvalPlan Reduced(Ctx, Result.Expr);
+    for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+      std::array<llvm::APInt, 4> V;
+      for (auto &Value : V)
+        Value = word(Width, Random);
+      auto B = V[0] + 3 * V[1] + 5 * V[2];
+      auto Want = Scale;
+      for (unsigned I = 0; I < Coefficients.size(); ++I) {
+        auto A = llvm::APInt(Width, Coefficients[I]);
+        Want *= (A * B + A * Offsets[I]) & llvm::APInt(Width, 3);
+      }
+      EXPECT_EQ(Reduced.eval(V), Want + V[0] + V[1] + V[2] + V[3]);
+    }
+  }
 }
 
 } // namespace

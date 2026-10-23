@@ -87,6 +87,8 @@ A(Intrinsic::A64_Ldaxp,        "ldaxp");
 A(Intrinsic::A64_Stxp,         "stxp");
 A(Intrinsic::A64_Stlxp,        "stlxp");
 A(Intrinsic::A64_Pacga,        "pacga");
+#define NEVERD_A64_CPA(Id, Insn, Mnemonic, ...) A(Intrinsic::Id, Mnemonic);
+#include "neverd/ir/intrinsics/AArch64CPA.def"
 A(Intrinsic::A64_SveCntb,      "cntb");
 A(Intrinsic::A64_SveCnth,      "cnth");
 A(Intrinsic::A64_SveCntw,      "cntw");
@@ -108,3 +110,6 @@ A(Intrinsic::A64_ScvtfFixed,   "scvtf");
 A(Intrinsic::A64_UcvtfFixed,   "ucvtf");
 A(Intrinsic::A64_FcvtzsFixed,  "fcvtzs");
 A(Intrinsic::A64_FcvtzuFixed,  "fcvtzu");
+
+#define NEVERD_A64_PAUTH_LR_OPERATION(Id, Mnemonic, ...) A(Intrinsic::Id, Mnemonic);
+#include "neverd/ir/intrinsics/AArch64PAuthLR.def"

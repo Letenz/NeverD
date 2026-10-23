@@ -41,6 +41,8 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/intrinsics/AArch64CPA.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -618,6 +620,14 @@ private:
                                : Intrinsic::None;
       if (intrinsicReturnsSystemCallResult(Id)) {
         Paths.push_back(ReturnedValue::SystemCallResult);
+        return;
+      }
+      if (isAArch64PAuthIntrinsic(Id) || aarch64CPAOperation(Id)) {
+        Paths.push_back(Img.Arch == Arch::AArch64 &&
+                                (aarch64PAuthMedShapeIsValid(Op) ||
+                                 aarch64CPAMedShapeIsValid(Op))
+                            ? ReturnedValue::Other
+                            : ReturnedValue::Undefined);
         return;
       }
       // A real system-instruction completion remains a value even when the

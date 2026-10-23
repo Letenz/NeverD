@@ -16,15 +16,19 @@
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/decode/AArch64FastClassify.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/MachO/MachOLoader.h"
+#include "neverd/loader/MachO/MachOMetadataPointer.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/IR/Dominators.h"
@@ -100,7 +104,8 @@ void expectIntrinsic(const LowOp &Op, Intrinsic Id, unsigned Inputs) {
 void compileArm64eC(const std::string &Source,
                     const std::function<void(llvm::StringRef)> &Inspect = {},
                     bool EmitLLVM = false, llvm::StringRef ExecuteTarget = {},
-                    bool *ExecutionAvailable = nullptr) {
+                    bool *ExecutionAvailable = nullptr,
+                    llvm::StringRef Language = "c") {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -140,6 +145,9 @@ void compileArm64eC(const std::string &Source,
         "-I",
         NEVERD_ARM64E_TEST_HEADERS,
         "-std=gnu11",
+        "-Werror=unused-value",
+        "-x",
+        Language,
         Optimization,
         SourcePath,
         "-o",
@@ -177,7 +185,10 @@ MedFunc pointerFunction(Intrinsic Id, llvm::StringRef Name) {
   F.Name = Name.str();
   F.Entry = 0x1000;
   F.ReturnType = NdType::makeInt(8, false);
-  for (int Index = 0; Index < 2; ++Index) {
+  const auto Checked = aarch64CPAOperation(Id);
+  const auto TwoModifiers = aarch64PAuthLROperation(Id);
+  const unsigned Params = TwoModifiers ? 3 : Checked ? Checked->Sources : 2;
+  for (unsigned Index = 0; Index < Params; ++Index) {
     MedVar V;
     V.Kind = MedVar::Param;
     V.TheArch = Arch::AArch64;
@@ -198,9 +209,11 @@ MedFunc pointerFunction(Intrinsic Id, llvm::StringRef Name) {
   Auth.addInput(F.Params[0]);
   if (Id == Intrinsic::A64_AuthBranch)
     Auth.addInput(MedVar::makeConst(1, 4));
-  if (Id == Intrinsic::A64_AuthBranch || Id == Intrinsic::A64_Pacga ||
-      !aarch64PAuthOperation(Id)->Strip)
+  if (TwoModifiers || Checked || Id == Intrinsic::A64_AuthBranch ||
+      Id == Intrinsic::A64_Pacga || !aarch64PAuthOperation(Id)->Strip)
     Auth.addInput(F.Params[1]);
+  if (TwoModifiers || (Checked && Checked->Sources == 3))
+    Auth.addInput(F.Params[2]);
   MedOp Return;
   Return.Opcode = NdOp::RETURN;
   Return.addInput(Auth.Output);
@@ -211,6 +224,423 @@ MedFunc pointerFunction(Intrinsic Id, llvm::StringRef Name) {
   return F;
 }
 } // namespace
+
+TEST(AArch64PAuthSemantics, CompilerObjCRecipesRetainLocalMetadataTargets) {
+  const char Source[] = R"(
+    __attribute__((objc_root_class))
+    @interface ArmMetadata
+    - (int)increment:(int)value;
+    @end
+    @implementation ArmMetadata
+    - (int)increment:(int)value { return value + 1; }
+    @end
+  )";
+  compileArm64eC(
+      Source,
+      [](llvm::StringRef Path) {
+        auto Buffer = llvm::MemoryBuffer::getFile(Path);
+        ASSERT_TRUE(Buffer);
+        auto Image = MachOLoader().loadBuffer((*Buffer)->getMemBufferRef());
+        ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+        EXPECT_TRUE(Image->isArm64e());
+        EXPECT_FALSE(Image->MachOAuthenticatedPointers.empty());
+        bool ClassRO = false, MetaclassRO = false, Implementation = false;
+        for (const auto &[Slot, Recipe] : Image->MachOAuthenticatedPointers) {
+          ASSERT_TRUE(Recipe.EncodedValue);
+          EXPECT_EQ(readLE<uint64_t>(Image->readVA(Slot, 8)),
+                    *Recipe.EncodedValue);
+          EXPECT_FALSE(Image->CodePtrRelocSlots.count(Slot));
+          EXPECT_EQ(macho_loader::readMetadataPointerTarget(*Image, Slot),
+                    Recipe.Target);
+          ClassRO |= Recipe.Symbol == "__OBJC_CLASS_RO_$_ArmMetadata";
+          MetaclassRO |= Recipe.Symbol == "__OBJC_METACLASS_RO_$_ArmMetadata";
+          if (Recipe.Symbol == "-[ArmMetadata increment:]") {
+            Implementation = true;
+            EXPECT_TRUE(Image->isCodeAddress(Recipe.Target));
+          }
+        }
+        EXPECT_TRUE(ClassRO && MetaclassRO && Implementation);
+        // Source type recovery still requires a linked image. Loading an
+        // object's recipes does not prove its runtime class/dispatch layout.
+        EXPECT_TRUE(Image->ObjCClasses.empty());
+        EXPECT_TRUE(Image->ObjCMethods.empty());
+#if defined(__APPLE__) && defined(__aarch64__)
+        // Apple's linker supplies a real linked metadata graph. Strip local
+        // symbols so class/method recovery must follow the signing recipes.
+        const auto Driver = llvm::sys::findProgramByName("clang");
+        ASSERT_TRUE(Driver);
+        llvm::SmallString<128> BundlePath;
+        ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-arm64e-objc",
+                                                        "bundle", BundlePath));
+        llvm::FileRemover RemoveBundle(BundlePath);
+        const llvm::StringRef Args[] = {*Driver,
+                                        "-target",
+                                        "arm64e-apple-macos",
+                                        "-bundle",
+                                        "-Wl,-undefined,dynamic_lookup",
+                                        "-Wl,-x",
+                                        Path,
+                                        "-o",
+                                        BundlePath};
+        std::string Error;
+        ASSERT_EQ(llvm::sys::ExecuteAndWait(*Driver, Args, std::nullopt, {}, 30,
+                                            0, &Error),
+                  0)
+            << Error;
+        auto BundleBytes = llvm::MemoryBuffer::getFile(BundlePath);
+        ASSERT_TRUE(BundleBytes);
+        auto Bundle =
+            MachOLoader().loadBuffer((*BundleBytes)->getMemBufferRef());
+        ASSERT_TRUE(bool(Bundle)) << llvm::toString(Bundle.takeError());
+        EXPECT_FALSE(Bundle->IsRelocatable);
+        ASSERT_EQ(Bundle->ObjCClasses.size(), 1);
+        ASSERT_EQ(Bundle->ObjCMethods.size(), 1);
+        const auto &Method = Bundle->ObjCMethods[0];
+        EXPECT_EQ(Method.ClassName, "ArmMetadata");
+        EXPECT_EQ(Method.Selector, "increment:");
+        EXPECT_EQ(Method.Status, "supported");
+        EXPECT_TRUE(Bundle->isCodeAddress(Method.Implementation));
+        EXPECT_EQ(Bundle->getFunctionNameAt(Method.Implementation),
+                  "-[ArmMetadata increment:]");
+        EXPECT_EQ(Bundle->statedFunctionNameAt(Method.Implementation),
+                  "-[ArmMetadata increment:]");
+        const Symbol *Name = Bundle->findSymbolAt(Method.Implementation);
+        ASSERT_TRUE(Name);
+        EXPECT_EQ(Name->Name, "-[ArmMetadata increment:]");
+        EXPECT_EQ(Name->Origin, NameOrigin::Stated);
+        ASSERT_TRUE(Method.TypeHint);
+#endif
+      },
+      false, {}, nullptr, "objective-c");
+}
+
+TEST(AArch64CPASemantics, ScalarOperandsRetainChecksThroughBothDecoders) {
+  // Independently assembled with llvm-mc -mattr=+cpa. The multiply-add's
+  // final input is its pointer base, not another multiplier.
+  const struct {
+    uint32_t Word;
+    Intrinsic Id;
+  } Cases[] = {{0x9a022020, Intrinsic::A64_Addpt},
+               {0xda022020, Intrinsic::A64_Subpt},
+               {0x9b620c20, Intrinsic::A64_Maddpt},
+               {0x9b628c20, Intrinsic::A64_Msubpt}};
+  for (bool Fast : {false, true}) {
+    for (const auto &Case : Cases) {
+      SCOPED_TRACE(testing::Message() << Case.Word << " " << Fast);
+      const auto Ops = lift(Case.Word, Fast);
+      ASSERT_EQ(Ops.size(), 1);
+      const unsigned Inputs = aarch64CPAOperation(Case.Id)->Sources;
+      expectIntrinsic(Ops[0], Case.Id, Inputs);
+      expectRegister(Ops[0].Output, a64reg::X0);
+      expectRegister(Ops[0].Inputs[1], a64reg::X1);
+      expectRegister(Ops[0].Inputs[2], a64reg::X2);
+      if (Inputs == 3)
+        expectRegister(Ops[0].Inputs[3], a64reg::X3);
+      EXPECT_TRUE(lowAArch64CPAShapeIsValid(Ops[0]));
+      EXPECT_TRUE(isSideeffectIntrinsic(Case.Id));
+      for (unsigned Index = 0; Index <= Inputs; ++Index) {
+        auto Bad = Ops[0];
+        (Index ? Bad.Inputs[Index] : Bad.Output).Size = 4;
+        EXPECT_FALSE(lowAArch64CPAShapeIsValid(Bad));
+      }
+      auto Bad = Ops[0];
+      --Bad.NumInputs;
+      EXPECT_FALSE(lowAArch64CPAShapeIsValid(Bad));
+    }
+    const auto Shifted = lift(0x9a023fff, Fast); // addpt sp, sp, x2, lsl #7
+    ASSERT_EQ(Shifted.size(), 2);
+    EXPECT_EQ(Shifted[0].Opcode, NdOp::INT_LEFT);
+    expectRegister(Shifted[0].Inputs[0], a64reg::X2);
+    EXPECT_EQ(Shifted[0].Inputs[1].Offset, 7);
+    expectIntrinsic(Shifted[1], Intrinsic::A64_Addpt, 2);
+    expectRegister(Shifted[1].Output, a64reg::SP);
+    expectRegister(Shifted[1].Inputs[1], a64reg::SP);
+    EXPECT_EQ(Shifted[1].Inputs[2], Shifted[0].Output);
+
+    const auto Alias = lift(0xda012c21, Fast); // subpt x1, x1, x1, lsl #3
+    ASSERT_EQ(Alias.size(), 2);
+    expectRegister(Alias[0].Inputs[0], a64reg::X1);
+    expectRegister(Alias[1].Output, a64reg::X1);
+    expectRegister(Alias[1].Inputs[1], a64reg::X1);
+    EXPECT_EQ(Alias[1].Inputs[2], Alias[0].Output);
+
+    const auto Zero = lift(0x9b7f7fff, Fast); // maddpt xzr, xzr, xzr, xzr
+    ASSERT_EQ(Zero.size(), 1);
+    expectIntrinsic(Zero[0], Intrinsic::A64_Maddpt, 3);
+    for (unsigned I = 1; I < 4; ++I) {
+      EXPECT_TRUE(Zero[0].Inputs[I].isConst());
+      EXPECT_EQ(Zero[0].Inputs[I].Offset, 0);
+    }
+    // Vector ADDPT/SUBPT/MADPT/MLAPT cannot fall through to integer or
+    // fixed-width vector arithmetic while scalable state is unmodelled.
+    for (uint32_t Word : {0x04e20820u, 0x04e20c20u, 0x44c1d840u, 0x44c2d020u})
+      EXPECT_THROW(lift(Word, Fast), UnliftedInstruction);
+  }
+}
+
+TEST(AArch64CPASemantics, MalformedShapesCannotPreserveCallArguments) {
+  for (const auto &Operation : kAArch64CPAOperations) {
+    const auto Function = pointerFunction(Operation.Id, "checked_pointer");
+    const auto &Op = Function.Blocks[0].Ops[0];
+    EXPECT_TRUE(aarch64CPAMedShapeIsValid(Op));
+    EXPECT_FALSE(endsCallArgumentSetup(Op));
+    for (unsigned Index = 0; Index <= Operation.Sources; ++Index) {
+      auto Bad = Op;
+      (Index ? Bad.Inputs[Index] : Bad.Output).Size = 4;
+      EXPECT_FALSE(aarch64CPAMedShapeIsValid(Bad));
+      EXPECT_TRUE(endsCallArgumentSetup(Bad));
+    }
+    for (unsigned Invalid = 0; Invalid < 4; ++Invalid) {
+      auto Bad = Op;
+      if (Invalid == 0)
+        --Bad.NumInputs;
+      else if (Invalid == 1)
+        Bad.IntrinsicOutputs.push_back(Bad.Output);
+      else if (Invalid == 2)
+        Bad.Output = MedVar::makeConst(0, 8);
+      else
+        Bad.MemoryOrdering = NdMemoryOrdering::Acquire;
+      EXPECT_FALSE(aarch64CPAMedShapeIsValid(Bad));
+      EXPECT_TRUE(endsCallArgumentSetup(Bad));
+    }
+    bool HasIntrinsics = false;
+    const std::vector<std::string> Args(Operation.Sources, "value");
+    EXPECT_THROW(renderARMIntrinsicCall(Operation.Id, Args, 4, HasIntrinsics),
+                 std::invalid_argument);
+    EXPECT_THROW(renderARMIntrinsicCall(Operation.Id, {}, 8, HasIntrinsics),
+                 std::invalid_argument);
+    EXPECT_THROW(renderARMInlineAsm(Arch::AArch64, Operation.MachineAsm, "",
+                                    "result", true, {}),
+                 std::invalid_argument);
+  }
+}
+
+TEST(AArch64PAuthSemantics, MalformedPointerShapesFailIRVerification) {
+  const struct {
+    uint32_t Word;
+    Intrinsic Id;
+  } Cases[] = {
+      {0xdac10020, Intrinsic::Pacia},      {0xdac11020, Intrinsic::Autia},
+      {0xdac143e0, Intrinsic::Xpaci},      {0x9ac23020, Intrinsic::A64_Pacga},
+      {0x9a022020, Intrinsic::A64_Addpt},  {0x9b620c20, Intrinsic::A64_Maddpt},
+      {0xdac18bfe, Intrinsic::A64_Pacia2}, {0xdac1bffe, Intrinsic::A64_Autib2}};
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    auto Ops = lift(Case.Word, false);
+    ASSERT_EQ(Ops.size(), 1);
+    LowBlock Block;
+    Block.StartAddr = 0x1000;
+    Block.EndAddr = 0x1004;
+    Block.Ops = Ops;
+    LowInstructionBoundary Boundary;
+    Boundary.Address = Block.StartAddr;
+    Boundary.Size = 4;
+    Boundary.OpCount = 1;
+    Block.InstructionBoundaries.push_back(Boundary);
+    auto Valid = validateLowInstructionBoundaries(Block);
+    EXPECT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+    for (bool BadOutput : {false, true}) {
+      Block.Ops = Ops;
+      (BadOutput ? Block.Ops[0].Output : Block.Ops[0].Inputs[1]).Size = 4;
+      auto Error = validateLowInstructionBoundaries(Block);
+      EXPECT_TRUE(bool(Error));
+      llvm::consumeError(std::move(Error));
+    }
+  }
+  for (Intrinsic Id :
+       {Intrinsic::Pacia, Intrinsic::Autia, Intrinsic::Xpaci,
+        Intrinsic::A64_Pacga, Intrinsic::A64_AuthBranch, Intrinsic::A64_Addpt,
+        Intrinsic::A64_Maddpt, Intrinsic::A64_Pacia2, Intrinsic::A64_Autib2,
+        Intrinsic::A64_AuthReturnIA2}) {
+    const auto Function = pointerFunction(Id, "pointer_shape");
+    EXPECT_TRUE(verifyMedFunc(Function, "pointer-shape"));
+    for (bool BadOutput : {false, true}) {
+      auto Bad = Function;
+      auto &Op = Bad.Blocks[0].Ops[0];
+      (BadOutput ? Op.Output : Op.Inputs[1]).Size = 4;
+      EXPECT_FALSE(verifyMedFunc(Bad, "bad-pointer-shape"));
+    }
+  }
+}
+
+TEST(AArch64CPASemantics, LLVMAndBothCRoutesKeepExactInstructions) {
+  const auto CheckObject = [](llvm::MemoryBufferRef Buffer, Intrinsic Id) {
+    // Independently assembled fixed-register forms, not read from the
+    // production instruction table. This also catches a misplaced operand.
+    uint32_t Expected = 0;
+    switch (Id) {
+    case Intrinsic::A64_Addpt:
+      Expected = 0x9a112210;
+      break;
+    case Intrinsic::A64_Subpt:
+      Expected = 0xda112210;
+      break;
+    case Intrinsic::A64_Maddpt:
+      Expected = 0x9b713e10;
+      break;
+    case Intrinsic::A64_Msubpt:
+      Expected = 0x9b71be10;
+      break;
+    default:
+      FAIL() << "unexpected checked instruction";
+    }
+    auto Image = MachOLoader().loadBuffer(Buffer);
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    unsigned Count = 0;
+    for (const auto &Segment : Image->Segments)
+      if (Segment.isExecutable())
+        for (size_t Offset = 0; Offset + 4 <= Segment.Data.size(); Offset += 4)
+          Count += readLE<uint32_t>(Segment.Data.data() + Offset) == Expected;
+    EXPECT_EQ(Count, 1);
+  };
+  for (const auto &Operation : kAArch64CPAOperations)
+    for (bool Optimize : {false, true}) {
+      SCOPED_TRACE(testing::Message()
+                   << intrinsicName(Operation.Id) << " " << Optimize);
+      const auto Function = pointerFunction(Operation.Id, "checked_pointer");
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({Function}, Context, "cpa", Arch::AArch64);
+      ASSERT_TRUE(Module);
+      if (Optimize)
+        optimize(*Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      unsigned Count = 0;
+      for (const auto &Block : *Module->getFunction(Function.Name))
+        for (const auto &Insn : Block)
+          if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn))
+            if (const auto *Asm =
+                    llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())) {
+              EXPECT_EQ(Asm->getAsmString(), Operation.MachineAsm);
+              EXPECT_EQ(Asm->getConstraintString(),
+                        Operation.llvmConstraints());
+              EXPECT_TRUE(Asm->hasSideEffects());
+              EXPECT_EQ(Call->arg_size(), Operation.Sources);
+              if (Optimize)
+                for (unsigned I = 0; I < Operation.Sources; ++I)
+                  EXPECT_EQ(Call->getArgOperand(I),
+                            Call->getFunction()->getArg(I));
+              ++Count;
+            }
+      EXPECT_EQ(Count, 1);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      Options.Format = BinaryFormat::MachO;
+      for (bool LLVMRoute : {false, true}) {
+        if (!LLVMRoute && Optimize)
+          continue;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVMRoute)
+          ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+        else {
+          auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+          ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
+        }
+        EXPECT_NE(Source.find(Operation.MachineAsm), std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("unknown_intrinsic"), std::string::npos)
+            << Source;
+        compileArm64eC(Source, [&](llvm::StringRef Path) {
+          auto Buffer = llvm::MemoryBuffer::getFile(Path);
+          ASSERT_TRUE(Buffer);
+          CheckObject((*Buffer)->getMemBufferRef(), Operation.Id);
+        });
+      }
+      const auto Object =
+          Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
+      EXPECT_TRUE(Object.Success);
+      CheckObject(
+          llvm::MemoryBufferRef(llvm::StringRef(reinterpret_cast<const char *>(
+                                                    Object.ObjectData.data()),
+                                                Object.ObjectData.size()),
+                                "cpa.o"),
+          Operation.Id);
+    }
+}
+
+TEST(AArch64CPASemantics,
+     DeadResultsKeepChecksAndTemporariesDoNotCaptureInputs) {
+  for (const auto &Operation : kAArch64CPAOperations) {
+    auto Function = pointerFunction(Operation.Id, "checked_pointer");
+    Function.Blocks[0].Ops.back().Inputs[0] = MedVar::makeConst(11, 8);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Function}, Context, "dead_cpa", Arch::AArch64);
+    ASSERT_TRUE(Module);
+    optimize(*Module);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.Format = BinaryFormat::MachO;
+    for (bool LLVMRoute : {false, true}) {
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      if (LLVMRoute)
+        ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+      else {
+        auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+        ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
+      }
+      EXPECT_NE(Source.find(Operation.MachineAsm), std::string::npos) << Source;
+      compileArm64eC(Source);
+      std::vector<std::string> Args = {"__checked_pointer",
+                                       "__checked_pointer_1"};
+      if (Operation.Sources == 3)
+        Args.push_back("__checked_pointer_2");
+      bool HasIntrinsics = false;
+      const std::string Body =
+          LLVMRoute ? renderARMInlineAsm(Arch::AArch64, Operation.MachineAsm,
+                                         "", Args[0], true, Args)
+                              .Code +
+                          "return " + Args[0] + ";"
+                    : "return " +
+                          renderARMIntrinsicCall(Operation.Id, Args, 8,
+                                                 HasIntrinsics) +
+                          ";";
+      std::string Capture = "#include <stdint.h>\nuint64_t capture(";
+      for (unsigned I = 0; I < Args.size(); ++I) {
+        if (I)
+          Capture += ", ";
+        Capture += "uint64_t " + Args[I];
+      }
+      Capture += ") { " + Body + " }\n";
+      compileArm64eC(
+          Capture,
+          [&](llvm::StringRef Path) {
+            llvm::LLVMContext CContext;
+            llvm::SMDiagnostic Diagnostic;
+            auto CModule = llvm::parseIRFile(Path, Diagnostic, CContext);
+            ASSERT_TRUE(CModule) << Diagnostic.getMessage().str();
+            auto *CFn = CModule->getFunction("capture");
+            ASSERT_TRUE(CFn);
+            CFn->removeFnAttr(llvm::Attribute::OptimizeNone);
+            optimize(*CModule);
+            ASSERT_FALSE(llvm::verifyModule(*CModule));
+            unsigned Count = 0;
+            for (auto &Block : *CFn)
+              for (auto &Insn : Block) {
+                const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+                const auto *Asm = Call ? llvm::dyn_cast<llvm::InlineAsm>(
+                                             Call->getCalledOperand())
+                                       : nullptr;
+                if (!Asm || Asm->getAsmString().find(Operation.MachineAsm) ==
+                                std::string::npos)
+                  continue;
+                ++Count;
+                ASSERT_EQ(Call->arg_size(), Operation.Sources);
+                for (unsigned I = 0; I < Operation.Sources; ++I)
+                  EXPECT_EQ(Call->getArgOperand(I), CFn->getArg(I));
+                const auto *Return =
+                    llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator());
+                ASSERT_TRUE(Return);
+                EXPECT_EQ(Return->getReturnValue(), Call);
+              }
+            EXPECT_EQ(Count, 1);
+          },
+          /*EmitLLVM=*/true);
+    }
+  }
+}
 
 TEST(AArch64PAuthSemantics, RegisterAndZeroFormsRetainPointersAndModifiers) {
   const std::array<Intrinsic, 8> Ids = {
@@ -770,16 +1200,265 @@ TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
   executeCProjections(Functions, (*Oracle)->getBuffer(), "arm64e-apple-macos");
 }
 
-TEST(AArch64PAuthSemantics, UnsupportedPAuthLRNeverFallsBackToHints) {
-  // Independently assembled with LLVM MC's +pauth-lr feature. PACM is the
-  // compatible HINT that changes how later baseline PAC/AUT use modifiers.
+TEST(AArch64PAuthLRSemantics, NativeTwoModifierKeysAgreeWithBothCProjections) {
+  if (!hasNativePAuth())
+    GTEST_SKIP() << "native pointer authentication requires Apple Silicon";
+  bool ExecutionAvailable = false;
+  // The process must both execute PAuth_LR and have active IA/IB keys. A
+  // successful ordinary arm64 process cannot establish either condition.
+  compileArm64eC(R"(
+    #include <stdint.h>
+    int main(void) {
+      int changed_a = 0, changed_b = 0;
+      for (uint64_t i = 0; i != 64; ++i) {
+        uint64_t a, b, pointer = 0x12340 + i * 16;
+        __asm__ volatile("mov x17, %2\nmov x16, %3\nmov x15, %3\n"
+                         ".inst 0xdac18bfe\nmov %0, x17\n"
+                         "mov x17, %2\n.inst 0xdac18ffe\nmov %1, x17"
+                         : "=&r"(a), "=r"(b) : "r"(pointer), "r"(i)
+                         : "x15", "x16", "x17");
+        changed_a |= a != pointer;
+        changed_b |= b != pointer;
+      }
+      return !(changed_a && changed_b);
+    }
+  )",
+                 {}, /*EmitLLVM=*/false, "arm64e-apple-macos",
+                 &ExecutionAvailable);
+  if (HasFatalFailure())
+    return;
+  if (!ExecutionAvailable)
+    GTEST_SKIP() << "this host cannot execute arm64e PAuth_LR with active keys";
+  const auto Oracle = llvm::MemoryBuffer::getFile(
+      std::string(NEVERD_ARM64E_TEST_HEADERS) + "/pauth_lr_oracle.c");
+  ASSERT_TRUE(Oracle);
+  std::vector<MedFunc> Functions;
+  for (const auto &[Id, Name] :
+       {std::pair{Intrinsic::A64_Pacia2, "test_pacia2"},
+        std::pair{Intrinsic::A64_Pacib2, "test_pacib2"},
+        std::pair{Intrinsic::A64_Autia2, "test_autia2"},
+        std::pair{Intrinsic::A64_Autib2, "test_autib2"},
+        std::pair{Intrinsic::A64_AuthReturnIA2, "test_returnia2"},
+        std::pair{Intrinsic::A64_AuthReturnIB2, "test_returnib2"}}) {
+    auto F = pointerFunction(Id, Name);
+    F.Entry += Functions.size() * 0x10;
+    F.Blocks.front().StartAddr = F.Entry;
+    Functions.push_back(std::move(F));
+  }
+  executeCProjections(Functions, (*Oracle)->getBuffer(), "arm64e-apple-macos");
+}
+
+TEST(AArch64PAuthSemantics, UnmodelledPACMNeverFallsBackToHints) {
   for (bool Fast : {false, true})
-    for (uint32_t Word :
-         {0xd50324ffu, 0xdac18bfeu, 0xdac18ffeu, 0xdac1bbfeu, 0xdac1bffeu,
-          0xdac1a3feu, 0xdac1a7feu, 0xdac183feu, 0xdac187feu, 0xf380001fu,
-          0xf3a0001fu, 0x5500001fu, 0x5520001fu}) {
-      SCOPED_TRACE(testing::Message() << Word << " " << Fast);
-      EXPECT_THROW(lift(Word, Fast), UnliftedInstruction);
+    EXPECT_THROW(lift(0xd50324ff, Fast), UnliftedInstruction);
+}
+
+TEST(AArch64PAuthLRSemantics, ExplicitFormsRetainBothModifiersAndOriginalPC) {
+  const struct {
+    uint32_t Word;
+    Intrinsic Id;
+    uint64_t Pointer;
+    uint64_t FirstModifier;
+    uint64_t SecondModifier;
+    bool Constant;
+    bool Return;
+  } Cases[] = {
+      {0xdac18bfe, Intrinsic::A64_Pacia2, 136, 128, 120, false, false},
+      {0xdac18ffe, Intrinsic::A64_Pacib2, 136, 128, 120, false, false},
+      {0xdac1bbfe, Intrinsic::A64_Autia2, 136, 128, 120, false, false},
+      {0xdac1bffe, Intrinsic::A64_Autib2, 136, 128, 120, false, false},
+      {0xdac1a3fe, Intrinsic::A64_Pacia2, 240, 248, 0x1000, true, false},
+      {0xdac1a7fe, Intrinsic::A64_Pacib2, 240, 248, 0x1000, true, false},
+      {0xdac183fe, Intrinsic::A64_Pacia2, 240, 248, 0x1000, true, false},
+      {0xdac187fe, Intrinsic::A64_Pacib2, 240, 248, 0x1000, true, false},
+      {0xf380001f, Intrinsic::A64_Autia2, 240, 248, 0x1000, true, false},
+      {0xf3a0003f, Intrinsic::A64_Autib2, 240, 248, 0xffc, true, false},
+      {0xf39fffff, Intrinsic::A64_Autia2, 240, 248, uint64_t(0x1000 - 262140),
+       true, false},
+      {0xdac1901e, Intrinsic::A64_Autia2, 240, 248, 0, false, false},
+      {0xdac197de, Intrinsic::A64_Autib2, 240, 248, 240, false, false},
+      {0xdac193fe, Intrinsic::A64_Autia2, 240, 248, 0, true, false},
+      {0xdac197fe, Intrinsic::A64_Autib2, 240, 248, 0, true, false},
+      {0x5500001f, Intrinsic::A64_AuthReturnIA2, 240, 248, 0x1000, true, true},
+      {0x5520003f, Intrinsic::A64_AuthReturnIB2, 240, 248, 0xffc, true, true},
+      {0x551fffff, Intrinsic::A64_AuthReturnIA2, 240, 248,
+       uint64_t(0x1000 - 262140), true, true},
+      {0xd65f0be2, Intrinsic::A64_AuthReturnIA2, 240, 248, 16, false, true},
+      {0xd65f0ffe, Intrinsic::A64_AuthReturnIB2, 240, 248, 240, false, true},
+  };
+  for (bool Fast : {false, true})
+    for (const auto &Case : Cases) {
+      SCOPED_TRACE(testing::Message() << Case.Word << " " << Fast);
+      const auto Ops = lift(Case.Word, Fast);
+      ASSERT_EQ(Ops.size(), Case.Return ? 2u : 1u);
+      expectIntrinsic(Ops[0], Case.Id, 3);
+      expectRegister(Ops[0].Inputs[1], Case.Pointer);
+      expectRegister(Ops[0].Inputs[2], Case.FirstModifier);
+      EXPECT_EQ(Ops[0].Inputs[3].isConst(), Case.Constant);
+      EXPECT_EQ(Ops[0].Inputs[3].Offset, Case.SecondModifier);
+      EXPECT_EQ(Ops[0].Inputs[3].Size, 8);
+      EXPECT_TRUE(lowAArch64PAuthShapeIsValid(Ops[0]));
+      EXPECT_EQ(a64fast::isTerminatorWord(Case.Word), Case.Return);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Arch::AArch64));
+      uint8_t Bytes[4];
+      writeLE<uint32_t>(Bytes, Case.Word);
+      DecodedInsn Insn;
+      ASSERT_EQ(Dec.decodeOne(Bytes, 4, 0x1000, Insn), 4);
+      EXPECT_EQ(Dec.isFunctionTerminator(Insn), Case.Return);
+      if (Case.Return) {
+        EXPECT_TRUE(Ops[0].Output.isTemp());
+        EXPECT_EQ(Ops[1].Opcode, NdOp::RETURN);
+        EXPECT_EQ(Ops[1].Inputs[0], Ops[0].Output);
+      } else
+        EXPECT_EQ(Ops[0].Output, Ops[0].Inputs[1]);
+      for (unsigned Index = 0; Index < 4; ++Index) {
+        auto Bad = Ops[0];
+        (Index ? Bad.Inputs[Index] : Bad.Output).Size = 4;
+        EXPECT_FALSE(lowAArch64PAuthShapeIsValid(Bad));
+      }
+    }
+}
+
+TEST(AArch64PAuthLRSemantics, LLVMAndBothCRoutesPreserveThreeInputsAndFaults) {
+  const struct {
+    Intrinsic Id;
+    const char *MachineAsm;
+    bool Return;
+  } Cases[] = {
+      {Intrinsic::A64_Pacia2, ".inst 0xdac18bfe", false},
+      {Intrinsic::A64_Pacib2, ".inst 0xdac18ffe", false},
+      {Intrinsic::A64_Autia2, ".inst 0xdac1bbfe", false},
+      {Intrinsic::A64_Autib2, ".inst 0xdac1bffe", false},
+      {Intrinsic::A64_AuthReturnIA2, ".inst 0xdac1bbfe", true},
+      {Intrinsic::A64_AuthReturnIB2, ".inst 0xdac1bffe", true},
+  };
+  for (const auto &Case : Cases)
+    for (bool Dead : {false, true}) {
+      SCOPED_TRACE(testing::Message() << intrinsicName(Case.Id) << " " << Dead);
+      auto F = pointerFunction(Case.Id, "authenticate_three");
+      const auto &Op = F.Blocks[0].Ops[0];
+      ASSERT_TRUE(aarch64PAuthMedShapeIsValid(Op));
+      EXPECT_FALSE(endsCallArgumentSetup(Op));
+      for (unsigned Index = 0; Index < 4; ++Index) {
+        auto Bad = Op;
+        (Index ? Bad.Inputs[Index] : Bad.Output).Size = 4;
+        EXPECT_FALSE(aarch64PAuthMedShapeIsValid(Bad));
+        EXPECT_TRUE(endsCallArgumentSetup(Bad));
+      }
+      if (Dead)
+        F.Blocks[0].Ops.back().Inputs[0] = MedVar::makeConst(42, 8);
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({F}, Context, "pauth-lr", Arch::AArch64);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      optimize(*Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      const auto *Fn = Module->getFunction(F.Name);
+      ASSERT_TRUE(Fn);
+      unsigned Count = 0;
+      for (const auto &Block : *Fn)
+        for (const auto &Insn : Block) {
+          const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+          const auto *Asm =
+              Call ? llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())
+                   : nullptr;
+          if (!Asm)
+            continue;
+          ++Count;
+          EXPECT_TRUE(Asm->hasSideEffects());
+          EXPECT_EQ(Asm->getAsmString().find(Case.MachineAsm), 0u);
+          EXPECT_EQ(Asm->getAsmString().find("brk #0xc470") !=
+                        std::string::npos,
+                    Case.Return);
+          EXPECT_EQ(Asm->getConstraintString(),
+                    Case.Return ? "={x17},0,{x16},{x15},~{x14},~{cc}"
+                                : "={x17},0,{x16},{x15}");
+          ASSERT_EQ(Call->arg_size(), 3u);
+          for (unsigned Index = 0; Index < 3; ++Index)
+            EXPECT_EQ(Call->getArgOperand(Index), Fn->getArg(Index));
+          const auto *Return =
+              llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator());
+          ASSERT_TRUE(Return);
+          if (!Dead)
+            EXPECT_EQ(Return->getReturnValue(), Call);
+        }
+      EXPECT_EQ(Count, 1u);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      Options.Format = BinaryFormat::MachO;
+      for (bool LLVMRoute : {false, true}) {
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVMRoute)
+          ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+        else {
+          const auto High = MedToHighConverter().convert(F, Arch::AArch64);
+          ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
+        }
+        EXPECT_NE(Source.find(Case.MachineAsm), std::string::npos) << Source;
+        EXPECT_EQ(Source.find("unknown_intrinsic"), std::string::npos)
+            << Source;
+        compileArm64eC(Source);
+      }
+      const auto Object =
+          Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
+      EXPECT_TRUE(Object.Success);
+    }
+}
+
+TEST(AArch64PAuthLRSemantics, CTemporariesCannotCaptureAnyModifier) {
+  const std::vector<std::string> Args = {"__pointer", "__pointer_",
+                                         "__pointer__"};
+  for (const auto &Operation : kAArch64PAuthLROperations)
+    for (bool LLVMRoute : {false, true}) {
+      bool HasIntrinsics = false;
+      const std::string Body =
+          LLVMRoute ? renderARMInlineAsm(Arch::AArch64, Operation.llvmAsm(), "",
+                                         "__pointer", true, Args)
+                              .Code +
+                          "return __pointer;"
+                    : "return " +
+                          renderARMIntrinsicCall(Operation.Id, Args, 8,
+                                                 HasIntrinsics) +
+                          ";";
+      compileArm64eC(
+          "#include <stdint.h>\nuint64_t capture(uint64_t __pointer, uint64_t "
+          "__pointer_, uint64_t __pointer__) { " +
+              Body + " }\n",
+          [&](llvm::StringRef Path) {
+            llvm::LLVMContext Context;
+            llvm::SMDiagnostic Diagnostic;
+            auto Module = llvm::parseIRFile(Path, Diagnostic, Context);
+            ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+            auto *Fn = Module->getFunction("capture");
+            ASSERT_TRUE(Fn);
+            Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+            optimize(*Module);
+            ASSERT_FALSE(llvm::verifyModule(*Module));
+            unsigned Count = 0;
+            for (const auto &Block : *Fn)
+              for (const auto &Insn : Block) {
+                const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+                const auto *Asm = Call ? llvm::dyn_cast<llvm::InlineAsm>(
+                                             Call->getCalledOperand())
+                                       : nullptr;
+                if (!Asm || Asm->getAsmString().find(Operation.MachineAsm) ==
+                                std::string::npos)
+                  continue;
+                ++Count;
+                ASSERT_EQ(Call->arg_size(), 3u);
+                for (unsigned Index = 0; Index < 3; ++Index)
+                  EXPECT_EQ(Call->getArgOperand(Index), Fn->getArg(Index));
+                const auto *Return =
+                    llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator());
+                ASSERT_TRUE(Return);
+                EXPECT_EQ(Return->getReturnValue(), Call);
+              }
+            EXPECT_EQ(Count, 1u);
+          },
+          /*EmitLLVM=*/true);
     }
 }
 
@@ -800,6 +1479,16 @@ TEST(AArch64PAuthSemantics, AuthenticatedTailCallsRequireARestoredFrame) {
        {0xd503237f, 0xd10043ff, 0xd50323ff, 0x910043ff,
         0xd61f081f}},        // wrong modifier
       {false, {0xd61f0bdf}}, // braaz x30 returns
+      {true,
+       {0xdac1a3fe, 0xf380003f, 0xd61f081f}}, // matching PACIASPPC/AUTIASPPC
+      {true, {0xdac1a7fe, 0xf3a0003f, 0xd61f081f}}, // matching B key
+      {true,
+       {0xdac1a3fe, 0x10ffffe1, 0xdac1903e, 0xd61f081f}}, // ADR of signing PC
+      {false, {0xdac1a3fe, 0xd61f081f}}, // second-modifier link still signed
+      {false, {0xdac1a3fe, 0xf380001f, 0xd61f081f}}, // wrong signing PC
+      {false, {0xdac1a3fe, 0xf3a0003f, 0xd61f081f}}, // wrong key
+      {false, {0xdac1a3fe, 0xd50323bf, 0xd61f081f}}, // missing second modifier
+      {false, {0xd503233f, 0xf380003f, 0xd61f081f}}, // extra second modifier
   };
   for (const auto &Case : Cases) {
     SCOPED_TRACE(testing::Message() << Case.Words.front());

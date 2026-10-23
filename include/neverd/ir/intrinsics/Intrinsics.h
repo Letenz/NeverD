@@ -395,6 +395,13 @@ enum class Intrinsic : uint16_t {
   X86SegmentedBlockMemory,
   X86AMXState,
 
+// Append after existing families to preserve serialized intrinsic IDs.
+#define NEVERD_A64_CPA(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64CPA.def"
+
+#define NEVERD_A64_PAUTH_LR_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64PAuthLR.def"
+
   _Count = 16000
 };
 

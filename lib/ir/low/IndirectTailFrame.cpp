@@ -18,6 +18,7 @@
 #include <bit>
 #include <deque>
 #include <map>
+#include <optional>
 
 namespace neverd {
 namespace {
@@ -35,6 +36,8 @@ struct FrameWord {
   // For SignedLink, Offset is the signing modifier's entry-SP offset.
   unsigned AuthenticationKey = 0;
   bool ZeroModifier = false;
+  std::optional<uint64_t> SecondModifier;
+  std::optional<uint64_t> Constant;
   bool operator==(const FrameWord &) const = default;
 };
 
@@ -102,6 +105,8 @@ class TailFrameGuard {
 
   bool read(const FrameState &State, const NdVar &Value, FrameWord &Word) {
     Word = lookup(State, Value);
+    if (Value.isConst() && Value.Size == sizeof(uint64_t))
+      Word.Constant = Value.Offset;
     if ((!Value.isReg() && !Value.isTemp()) || Value.Size == 8)
       return true;
     if (!validRange(Value) || !charge(State.Values.size()))
@@ -138,9 +143,12 @@ class TailFrameGuard {
         State.Escaped |= Fact.MayBeStack;
       It = State.Values.erase(It);
     }
-    if (Output.Size != 8)
+    if (Output.Size != 8) {
       Word.K = FrameWord::Unknown;
-    if (Word.K != FrameWord::Unknown || Word.MayBeStack || Word.MayBeLocalCode)
+      Word.Constant.reset();
+    }
+    if (Word.K != FrameWord::Unknown || Word.MayBeStack ||
+        Word.MayBeLocalCode || Word.Constant)
       State.Values[{Output.Space, Output.Offset}] = Word;
     return true;
   }
@@ -238,6 +246,12 @@ class TailFrameGuard {
       case NdOp::INT_ADD:
       case NdOp::INT_SUB:
         if (Op.NumInputs == 2 && Op.Output.Size == 8) {
+          if (Inputs[0].Constant && Inputs[1].Constant &&
+              Op.Inputs[0].Size == sizeof(uint64_t) &&
+              Op.Inputs[1].Size == sizeof(uint64_t))
+            Result.Constant = Op.Opcode == NdOp::INT_ADD
+                                  ? *Inputs[0].Constant + *Inputs[1].Constant
+                                  : *Inputs[0].Constant - *Inputs[1].Constant;
           for (unsigned Base = 0; Base < 2; ++Base) {
             const unsigned Scalar = 1 - Base;
             const NdVar &Delta = Op.Inputs[Scalar];
@@ -295,9 +309,10 @@ class TailFrameGuard {
                 State.Escaped |= Item.second.MayBeStack;
               return Overlap;
             });
-            const bool Recorded = Memory.AccessSize == 8 &&
-                                  (Value.K != FrameWord::Unknown ||
-                                   Value.MayBeStack || Value.MayBeLocalCode);
+            const bool Recorded =
+                Memory.AccessSize == 8 &&
+                (Value.K != FrameWord::Unknown || Value.MayBeStack ||
+                 Value.MayBeLocalCode || Value.Constant);
             if (Recorded)
               State.Spills[Address.Offset] = Value;
             // A frame address no spill records, or stored outside the frame
@@ -355,10 +370,15 @@ class TailFrameGuard {
       case NdOp::ATOMIC_ADD:
       case NdOp::ATOMIC_CMPXCHG:
       case NdOp::INTRINSIC: {
+        // Checked arithmetic writes only its explicit result. Retain all
+        // operand taint without assuming checking controls or an exact value.
+        if (lowAArch64CPAShapeIsValid(Op))
+          break;
         if (lowAArch64PAuthShapeIsValid(Op)) {
           // A modifier's stack address is not the authenticated target.
           // A saved link is restored only by its matching key and modifier.
           Result = Inputs[1];
+          Result.Constant.reset();
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
           if (const auto Auth = aarch64PAuthOperation(Id)) {
             Result.K = FrameWord::Unknown;
@@ -374,10 +394,32 @@ class TailFrameGuard {
               Result.ZeroModifier = Zero;
             } else if (Auth->Authenticate && KnownModifier &&
                        Inputs[1].K == FrameWord::SignedLink &&
+                       !Inputs[1].SecondModifier &&
                        Inputs[1].AuthenticationKey == Auth->Key &&
                        Inputs[1].ZeroModifier == Zero &&
                        Inputs[1].Offset == Modifier) {
               Result = {FrameWord::Link};
+            }
+          } else if (const auto Auth = aarch64PAuthLROperation(Id)) {
+            Result.K = FrameWord::Unknown;
+            const bool Zero = Inputs[2].Constant == 0;
+            const bool KnownModifier = Zero || Inputs[2].K == FrameWord::Stack;
+            const int64_t Modifier = Zero ? 0 : Inputs[2].Offset;
+            if (KnownModifier && Inputs[3].Constant) {
+              if (!Auth->Authenticate && Inputs[1].K == FrameWord::Link) {
+                Result.K = FrameWord::SignedLink;
+                Result.Offset = Modifier;
+                Result.AuthenticationKey = Auth->Key;
+                Result.ZeroModifier = Zero;
+                Result.SecondModifier = Inputs[3].Constant;
+              } else if (Auth->Authenticate &&
+                         Inputs[1].K == FrameWord::SignedLink &&
+                         Inputs[1].AuthenticationKey == Auth->Key &&
+                         Inputs[1].ZeroModifier == Zero &&
+                         Inputs[1].Offset == Modifier &&
+                         Inputs[1].SecondModifier == Inputs[3].Constant) {
+                Result = {FrameWord::Link};
+              }
             }
           }
           break;

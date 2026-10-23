@@ -10,7 +10,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64PAuthC.h"
+#include "neverd/backend/c/render/AArch64PointerC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
@@ -54,14 +56,39 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
   // Preserve the tied input/output of machine PAC/AUT/XPAC; the generic asm
   // renderer cannot infer that constraint from operand numbers alone.
   if (AArch64) {
+    for (const auto &Auth : kAArch64PAuthLROperations) {
+      if (AsmStr != Auth.llvmAsm())
+        continue;
+      const std::string Value = aarch64PAuthLRC(Auth, Args);
+      return {
+          ResultLive && !ResultName.empty()
+              ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value)
+                    .str()
+              : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
+          false};
+    }
+    for (const auto &Operation : kAArch64CPAOperations) {
+      if (AsmStr != Operation.MachineAsm)
+        continue;
+      const auto Value = aarch64CPAC(Operation, Args);
+      return {
+          ResultLive && !ResultName.empty()
+              ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value)
+                    .str()
+              : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
+          false};
+    }
     for (const auto &Auth : kAArch64PAuthOperations) {
       if (AsmStr != Auth.llvmAsm() || Args.size() != (Auth.Strip ? 1 : 2))
         continue;
       const std::string Value =
           aarch64PAuthMachineC(Auth, Args[0], Auth.Strip ? "" : Args[1]);
-      const std::string Prefix =
-          ResultLive && !ResultName.empty() ? ResultName + " = " : "(void)";
-      return {Prefix + Value + ";\n", false};
+      return {
+          ResultLive && !ResultName.empty()
+              ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value)
+                    .str()
+              : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
+          false};
     }
   }
   if (Mnemonic == "sel" && Args.size() >= 2) {

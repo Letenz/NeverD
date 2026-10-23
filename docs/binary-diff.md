@@ -537,8 +537,11 @@ a native lift, LLVM copy/verification or serialization step can delay it, so
 ## Source inspection
 
 The **Pseudocode** tab loads the selected functions from the comparison's
-retained inputs. Each pane has independent pages, a source-line selector and
-original-instruction navigation. C and LLVM C use the same emitters as ordinary
+retained inputs. Accepted pairs default to **Align source lines**, with original
+line numbers, `+` / `−` / `~` change markers, highlighting and synchronized
+vertical scrolling. The selector pages aligned rows; the gutter and selected-line
+status retain each input's original source coordinates. Turn alignment off for
+independent pages and source-line selection. C and LLVM C use the same emitters as ordinary
 decompilation; Input language, C++, Rust and Go retain their existing dialect
 admission and unavailable reasons. Unmatched functions can be inspected too.
 Selecting a mapped line lists its original instruction anchors; **Show instruction**
@@ -573,10 +576,43 @@ view; mapping changes clear old navigation. The worker rejects stale source
 paths and obsolete comparison revisions, as for other interactive reads.
 
 Source inspection does not change saved native evidence and is not persisted as
-an equivalence result. `semantic_validation` and `source_alignment` remain
-`not_performed`, and `provenance_complete` remains false. This view provides
-anchored source inspection; source-to-source alignment and complete provenance
-remain separate work.
+an equivalence result. Independent pages retain `source_alignment:not_performed`;
+`semantic_validation:not_performed` and `provenance_complete:false` apply to both
+views. Equal source spelling does not establish equivalent behavior.
+
+```sh
+neverd diff --structural -a before.o -b after.o \
+  --source-function 0x1000 --source-difference --limit 200
+```
+
+`neverd_comparison_source_difference_json` and the optional worker operation
+`comparison_source_difference` collect both complete selected-function renderings
+before aligning exact text lines. They never align independently selected page
+windows. The `neverd.bindiff.source.difference` version 1 response has original
+line records and checked native anchors on each side of `rows`, plus a textual
+`kind`: `unchanged`, `changed`, `inserted` or `deleted`. A missing side is null.
+Changed rows pair adjacent removals and additions for display; this does not
+establish statement or instruction correspondence. Exact line LCS uses a
+bidirectional shortest-edit-path search with linear scratch space. Sparse edits
+avoid a full line-by-line Cartesian search. Ties are deterministic; repeated text
+can have other valid pairings. Recipe `sdk-source-difference-v2` records this
+search and its work accounting; the response schema remains version 1.
+
+Queries accept the source-page fields plus `max_work`, `max_source_bytes` and
+`include_prelude`. Declarations are excluded by default; enable **Include
+declarations in alignment** or `--source-include-prelude` to compare whole
+emissions. One retained pair serves subsequent pages, keyed by function pair,
+representation, scope and calculation settings. Mapping edits retire the cache.
+Stopped results retain no source text or classified rows; `refresh` or **Reload
+source** retries them. Independent source pages remain available.
+
+Default alignment allowances are 50,000,000 charged work units and 64 MiB of
+source text plus serialized row evidence across both inputs. These are additional
+admission/accounting allowances, not process RSS limits or hard deadlines. Use
+`--source-max-work 0` / `--source-max-bytes 0`, the matching JSON fields, or
+**Options** to remove them. Cancellation is checked during collection and line
+alignment and around synchronous analysis/rendering. Allowance and stop outcomes
+remain explicit; they never manufacture unchanged rows.
 
 ## Analyst cases and assessment history
 
@@ -775,8 +811,8 @@ LTO/PGO/obfuscation coverage remain outstanding.
 The GUI uses bounded function/instruction page caches and worker-owned CFG
 viewport indexes. Its graph viewport reports when a display allowance is reached.
 Comparison-owned inputs also provide paged source inspection with checked native
-anchors. Source-to-source alignment, full reference provenance and broader
-profile qualification remain work in progress.
+anchors and exact textual line alignment. Semantic source correspondence, full
+reference provenance and broader profile qualification remain work in progress.
 
 Native runs and verified finite SSA neighborhoods are parts of the required
 transformation work. Broader CFG/IR region matching, compiler/O-level/LTO/PGO/obfuscation

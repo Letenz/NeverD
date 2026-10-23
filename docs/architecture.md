@@ -95,16 +95,26 @@ rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 Generated C temporaries avoid every operand expression, preserving parameters
 and results that already use the renderer's preferred local names.
 Validated pointer-authentication operations preserve argument setup across
-both ABI recovery and C lowering. Tail-transfer proofs retain target taint
+both ABI recovery and C lowering. Return-contract recovery keeps their explicit
+results, including signatures and poisoned pointers, even when the operation
+also has side effects. It uses the lowering shape contract rather than treating
+every effectful intrinsic as void. Tail-transfer proofs retain target taint
 separately from the signing modifier and restore a saved signed link only
 after authentication with the matching key and entry-SP offset (or zero).
 Clang's explicit authentication-failure branch retains the setup of its sole
 continuing authenticated tail. Source C names an unassigned entry LR using
 `__builtin_return_address(0)`, as the LLVM projection already does.
 LDRAA/LDRAB authenticate the base before adding the offset, loading, and
-applying writeback. An unsupported exception return or FEAT_PAuth_LR form,
-including the PACM HINT that selects a second modifier, fails lifting instead
-of losing authentication.
+applying writeback. `AArch64PAuthLR.def` owns explicit FEAT_PAuth_LR encodings
+and their three-input operations. Fixed-register, original-PC, backward-PC-relative and
+register-modifier forms retain both diversifiers. Authentication of a return
+target remains observable without writing LR, including a poison check before
+an otherwise unused C return target is discarded. Fast and Capstone scanners
+both terminate at these returns. Frame proofs require a matching key and both
+modifiers before restoring a signed link. The machine operations use the
+implicit X17/X16/X15 forms so relocation cannot silently replace the original
+PC with the generated instruction's PC. Exception returns and the PACM HINT
+still fail until their architectural state is modelled.
 
 Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
 the architecture may poison a pointer without trapping immediately. The
@@ -118,6 +128,18 @@ PACGA retains two independent 64-bit inputs and its generic signing operation.
 Both C routes emit the real instruction with an explicit output constraint;
 they do not depend on a nonexistent ACLE builtin or an unresolved LLVM helper.
 
+Scalar FEAT_CPA `ADDPT`, `SUBPT`, `MADDPT` and `MSUBPT` retain checked-pointer
+operations rather than ordinary integer arithmetic. `AArch64CPA.def` owns
+their encodings, operand widths and LLVM contracts; `AArch64CPAC.def` owns
+both C projections. The machine instruction observes the execution host's
+checking controls and preserves poisoning behavior. Fixed scratch registers
+and raw instruction words support assemblers predating CPA mnemonics, with
+explicit operand and clobber constraints. Compilation does not establish CPU
+feature availability. SVE CPA forms fail explicitly until scalable state is
+modelled. These operations preserve call argument setup and frame taint,
+without proving a checked result is an ordinary arithmetic value. Their explicit
+results remain return values; discarded C expressions retain the instruction.
+
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
 their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
 Segmented format 14 retains the original load-command segment indices and
@@ -129,6 +151,15 @@ diversity and addend. Original authenticated slot bytes remain on-disk recipes;
 they are neither process-signed values nor ordinary raw-pointer/import proofs.
 Immutable readers reject every overlapping byte. Source projections keep
 storage containing recipes external rather than inventing global initializers.
+Metadata discovery has a separate `readMetadataPointerTarget` path. Validated
+local recipes can identify Objective-C classes, categories, methods, protocols,
+properties and runtime initializer/finalizer functions. The original encoded
+word must still match the loader's snapshot and signing fields; imported,
+conflicting, overlapping or stale storage cannot establish a local target.
+The Objective-C reader opts into this view explicitly. Plain runtime value
+readers and source object reconstruction do not acquire that permission.
+Recovered method names outrank synthesized function-start names while retaining
+existing stated, analysis and user function names.
 The formats follow Apple's [dyld definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)
 and LLVM's [pointer-authentication contract](https://llvm.org/docs/PointerAuth.html).
 
@@ -143,8 +174,8 @@ pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
 Shared-cache-specific layouts require a cache address model. Exception-level
-authentication, FEAT_PAuth_LR and CPA2 remain unsupported; recognizing x1's
-header does not claim those instruction semantics.
+authentication, PACM state and CPA2 address arithmetic remain unsupported;
+recognizing x1's header does not claim those instruction semantics.
 
 ## GUI project and search ownership
 
@@ -402,6 +433,20 @@ reuse a completed native listing alignment, but never create source-line pairs
 or semantic claims. Source pages are transient and revision-bound; saved native
 evidence is independent of source inspection. Cancellation discards the page,
 with checkpoints around the existing indivisible analysis and rendering steps.
+`lib/diff/SourceAlignment` owns exact textual line alignment independently of
+native matching. It uses a linear-space bidirectional shortest-edit-path search
+with prefix/suffix stripping, deterministic ties, explicit work charging and
+cooperative cancellation. Sparse edits do not require a Cartesian line search;
+frontier buffers are released before solving the two smaller edit problems.
+`ComparisonSource` collects complete renderings through ordinary source pages,
+checks their coordinates and preserves exact text and original row evidence.
+The byte allowance covers text plus serialized evidence across both inputs.
+The SDK retains one pair keyed by function selection, representation, prelude
+scope and allowances; mapping changes invalidate it. Pages do not restart a
+stopped computation. Textual replacement pairing is a display convention and
+does not create native correspondences or proof results. The GUI adds aligned
+rows, original line gutters, markers and synchronized scrolling while retaining
+independent inspection. Worker capability discovery keeps older SDKs usable.
 See [binary comparison](binary-diff.md) for the current profile and limitations.
 
 ## Checked alignment recovery
@@ -1873,14 +1918,28 @@ unsupported operations remain exact opaque words. A shared odd branch is
 isolated only when the even branch is proved zero, and its selector is restored
 before emission. Sparse Boolean polynomials are derived from complete decision
 graphs and factored before emission, avoiding exponential printed expansion.
+Bitwise reconstruction projects shifted inputs to bit zero once at its output,
+using all-ones Boolean constants internally. A highest-bit coefficient can
+absorb that final projection; lower coefficients must retain it. Tiny observed
+words also retain their shared affine-coordinate alternative when an initial
+bitwise candidate improves, so that candidate cannot hide a shorter word form.
 Equal low-bit groups retain their complete linear and quadratic cross terms;
 the split makes all higher terms vanish modulo the observed word. The
 quadratic sum is computed with an extra bit before division by two. This does
 not assume that an even value has a modular inverse. Batched sums cancel exact
 complementary bits and combine multiplicities before carrying; full-adder
 carries share a direct majority decision. A proved parity input orders its
-word before the remaining interleaved inputs. Cached immutable word views
-avoid repeated bit-vector copies and are discarded when the assumption changes.
+low prefix before the remaining interleaved bits. Dense decision and carry
+caches prepay their bucket growth. Immutable word views avoid repeated copies
+and are discarded when the assumption changes; polynomial views remain valid
+throughout reconstruction.
+Boolean polynomial reconstruction can factor shared cofactors across groups
+with disjoint remaining variables. Exact symmetric differences retain every
+unmatched term. Larger decision graphs try this construction before expanding
+their branches into printed trees, and a completed polynomial is factored only
+once. A finished word search over real free variables is reused for its
+algebraically identical cofactor reconstruction; opaque inputs and incomplete
+searches retain the alternative. Completion does not assert global minimality.
 Optional refinement retains the last completed candidate. Completed attempts
 are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
@@ -5336,6 +5395,18 @@ KVO context tokens use a separate writable-identity proof. A uniquely named writ
 The loader validates bounded, acyclic graphs of Darwin constant strings, integer objects, arrays and sorted dictionaries. Every container field and edge requires immutable mapped storage and unambiguous import or relocation evidence; unsupported encodings, cycles and incomplete graphs fail explicitly. Source bindings revalidate the graph and any incoming pointer slot. Generated helpers preserve integer bits, child order and shared object addresses, reusing existing string identities. Container slots initialize once with acquire/release publication; initialization calls only validated child helpers. Each helper carries its own child declarations so independently recovered methods can share one definition. Portable graph tests cover malformed inputs and proof budgets; native compiler fixtures compare contents, aliases, copy identity and concurrent initialization against the original methods.
 
 ## Owned x64 x87 context
+
+The [x87 semantic contracts](x87-semantics.md) and [generated capability
+inventory](x87-capabilities.md) separate encoding/lifting, numerical results,
+complete state, native references, portable execution and formal qualification.
+`X87Instructions.def` owns coverage metadata and the strict evaluator’s
+processor-dependent classification; `X87StateBoundaries.def` owns external-state
+synchronization membership. C API, CLI and Python queries use the same report.
+`X87Binary80.h` owns raw classification. `X87Arithmetic` owns exact finite
+arithmetic and pure integer conversion; `X87PortableContext` applies the
+explicit masked-state slice to the existing context. It neither creates a
+parallel stack nor changes native/translation admission. Undefined CPU fields,
+unknown incoming state and unsupported effects stay explicit in that profile.
 
 For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 
