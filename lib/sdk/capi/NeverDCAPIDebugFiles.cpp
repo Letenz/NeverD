@@ -145,7 +145,7 @@ int neverd::sdk::reloadDebugInformation(Session &S, DebugInfoRequest Request,
   BinaryLoadOptions Options;
   Options.OnlyFunctionEntries = S.OnlyFunctionEntries;
   Options.ARMFunctionModes = S.ARMFunctionModes;
-  Options.ReadStaticSymbols = S.ReadsStaticSymbols;
+  Options.ReadStaticSymbols = S.LoadedStaticSymbols;
   Options.Choice = S.LoadedChoice;
   auto Read = loadBinary(S.FilePath, Options);
   if (!Read) {
@@ -182,6 +182,7 @@ int neverd::sdk::reloadDebugInformation(Session &S, DebugInfoRequest Request,
   S.DbgPath = std::move(Found.Path);
   S.DbgFiles = std::move(Found.Files);
   S.DbgRequest = std::move(Request);
+  S.LoadedDbgRequest = S.DbgRequest;
   S.dropLocalTypes();
   S.DiscoveredFunctions.reset();
   S.ProgramMainFound.reset();

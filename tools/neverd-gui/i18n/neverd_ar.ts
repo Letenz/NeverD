@@ -1103,6 +1103,14 @@
         <source>Static register value...</source>
         <translation>القيمة الثابتة للسجل...</translation>
     </message>
+    <message>
+        <source>Compare &amp;binaries…</source>
+        <translation>مقارنة الملفات الثنائية(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>Compare two binaries, inspect changes and review function correspondence</source>
+        <translation>مقارنة ملفين ثنائيين وفحص التغييرات ومراجعة تطابق الدوال</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1534,24 +1542,8 @@
         <translation>الملف %1 ليس قاعدة بيانات NeverD.</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>الملف %1 غير موجود.</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>يستخدم %1 تنسيق قاعدة البيانات %2، ولا يستطيع هذا الإصدار من NeverD قراءته.</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>يشير %1 إلى ملف إدخال غير صالح.</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>تعذّرت كتابة %1: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>الإدخال المخزّن في %1 تالف.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1568,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>تغيرت قاعدة البيانات بينما توجد تعديلات مستعادة معلقة. احتفظ بنسخة العمل قبل إعادة الفتح.</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>لا يمكن حفظ اسم ملف الإدخال هذا في مشروع قابل للنقل.</translation>
     </message>
 </context>
 <context>
@@ -5574,6 +5570,2248 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
         <translation>لا يوجد NeverD جارٍ فتح برنامج الرابط، ولا ملف فُتح مؤخرًا هو هذا البرنامج؛ سمِّ الملف أيضًا: neverd-gui FILE LINK</translation>
+    </message>
+</context>
+<context>
+    <name>ComparisonDialog</name>
+    <message>
+        <source>Applying debug symbols</source>
+        <translation>تطبيق رموز التصحيح</translation>
+    </message>
+    <message>
+        <source>Checking ambiguous matches</source>
+        <translation>فحص التطابقات الملتبسة</translation>
+    </message>
+    <message>
+        <source>Checking file identity</source>
+        <translation>التحقق من هوية الملف</translation>
+    </message>
+    <message>
+        <source>Comparing binaries</source>
+        <translation>مقارنة الملفات الثنائية</translation>
+    </message>
+    <message>
+        <source>Comparing function context</source>
+        <translation>مقارنة سياق الدوال</translation>
+    </message>
+    <message>
+        <source>Comparing function features</source>
+        <translation>مقارنة خصائص الدوال</translation>
+    </message>
+    <message>
+        <source>Discovering functions</source>
+        <translation>اكتشاف الدوال</translation>
+    </message>
+    <message>
+        <source>Finding function entries</source>
+        <translation>البحث عن مداخل الدوال</translation>
+    </message>
+    <message>
+        <source>Finding similar functions</source>
+        <translation>البحث عن دوال متشابهة</translation>
+    </message>
+    <message>
+        <source>Identifying file format</source>
+        <translation>تحديد تنسيق الملف</translation>
+    </message>
+    <message>
+        <source>Input ready</source>
+        <translation>الإدخال جاهز</translation>
+    </message>
+    <message>
+        <source>Loading input</source>
+        <translation>تحميل الإدخال</translation>
+    </message>
+    <message>
+        <source>Matching exact features</source>
+        <translation>مطابقة الخصائص الدقيقة</translation>
+    </message>
+    <message>
+        <source>Measuring function changes</source>
+        <translation>قياس تغييرات الدوال</translation>
+    </message>
+    <message>
+        <source>Preparing image metadata</source>
+        <translation>إعداد البيانات الوصفية للصورة</translation>
+    </message>
+    <message>
+        <source>Preparing input bytes</source>
+        <translation>إعداد بايتات الإدخال</translation>
+    </message>
+    <message>
+        <source>Primary: %1</source>
+        <translation>الأساسي: %1</translation>
+    </message>
+    <message>
+        <source>Reading debug symbols</source>
+        <translation>قراءة رموز التصحيح</translation>
+    </message>
+    <message>
+        <source>Reading file</source>
+        <translation>قراءة الملف</translation>
+    </message>
+    <message>
+        <source>Reading format metadata</source>
+        <translation>قراءة البيانات الوصفية للتنسيق</translation>
+    </message>
+    <message>
+        <source>Reading instructions</source>
+        <translation>قراءة التعليمات</translation>
+    </message>
+    <message>
+        <source>Resolving calling convention</source>
+        <translation>تحديد اصطلاح الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Secondary: %1</source>
+        <translation>الثانوي: %1</translation>
+    </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>جارٍ فتح المشروع المحفوظ</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>جارٍ قراءة إعدادات المشروع المحفوظ</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>جارٍ فك ضغط المدخل المحفوظ والتحقق منه</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>جارٍ تطبيق التحليل المحفوظ</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonChangesDialog</name>
+    <message>
+        <source>  %1 bytes · %2</source>
+        <translation>  %1 بايت · %2</translation>
+    </message>
+    <message>
+        <source>%1 slice · %2 operations · %3 · gaps: %4</source>
+        <translation>شريحة %1 · %2 عمليات · %3 · الفجوات: %4</translation>
+    </message>
+    <message>
+        <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
+Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
+Boundaries: primary %12; secondary %13.</source>
+        <translation>%1 ↔ %2 · %3 · %4 متطابقة / %5 ملاحظات محتفظ بها
+صفوف الشيفرة الأصلية %6 / %7؛ التغطية %8؛ الارتباطات الملتبسة %9. SSA: الأساسي %10؛ الثانوي %11.
+الحدود: الأساسي %12؛ الثانوي %13.</translation>
+    </message>
+    <message>
+        <source>; indexing incomplete</source>
+        <translation>؛ الفهرسة غير مكتملة</translation>
+    </message>
+    <message>
+        <source>All local changes</source>
+        <translation>كل التغييرات المحلية</translation>
+    </message>
+    <message>
+        <source>Association: %1; native row: %2 (%3)</source>
+        <translation>الارتباط: %1؛ صف الشيفرة الأصلية: %2 (%3)</translation>
+    </message>
+    <message>
+        <source>Call argument dependencies</source>
+        <translation>تبعيات وسائط الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>مسارات الاستدعاء…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Change context filter</source>
+        <translation>مرشح سياق التغيير</translation>
+    </message>
+    <message>
+        <source>Change review — NeverD</source>
+        <translation>مراجعة التغييرات — NeverD</translation>
+    </message>
+    <message>
+        <source>Changes: %1</source>
+        <translation>التغييرات: %1</translation>
+    </message>
+    <message>
+        <source>Choose an accepted function pair to review its changes.</source>
+        <translation>اختر زوج دوال مقبولًا لمراجعة تغييراته.</translation>
+    </message>
+    <message>
+        <source>Comparison changed. Choose a function pair for a fresh review.</source>
+        <translation>تغيرت المقارنة. اختر زوج دوال لمراجعة جديدة.</translation>
+    </message>
+    <message>
+        <source>Context: %1</source>
+        <translation>السياق: %1</translation>
+    </message>
+    <message>
+        <source>Dependency slice</source>
+        <translation>شريحة التبعيات</translation>
+    </message>
+    <message>
+        <source>Evidence input</source>
+        <translation>إدخال الأدلة</translation>
+    </message>
+    <message>
+        <source>Inspect function</source>
+        <translation>فحص الدالة</translation>
+    </message>
+    <message>
+        <source>Memory write dependencies</source>
+        <translation>تبعيات الكتابة في الذاكرة</translation>
+    </message>
+    <message>
+        <source>Native evidence only; no unique SSA association.</source>
+        <translation>أدلة أصلية فقط؛ لا ارتباط SSA فريد.</translation>
+    </message>
+    <message>
+        <source>No original instruction on this side</source>
+        <translation>لا توجد تعليمة أصلية في هذا الجانب</translation>
+    </message>
+    <message>
+        <source>Operation gaps: %1</source>
+        <translation>فجوات العمليات: %1</translation>
+    </message>
+    <message>
+        <source>Original evidence</source>
+        <translation>الأدلة الأصلية</translation>
+    </message>
+    <message>
+        <source>Predicate dependencies</source>
+        <translation>تبعيات المسند</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>الإدخال الأساسي</translation>
+    </message>
+    <message>
+        <source>Priority orders review leads; it is not severity or confidence. Context is an observed dependency. Local operands and unique direct synthetic operands are compared; deeper expressions, security effects and fix presence remain unassessed.</source>
+        <translation>ترتب الأولوية خيوط المراجعة؛ ولا تمثل الشدة أو الثقة. السياق تبعية مرصودة. تُقارن المعاملات المحلية والمعاملات الاصطناعية المباشرة الفريدة؛ وتظل التعبيرات الأعمق والتأثيرات الأمنية ووجود الإصلاح دون تقييم.</translation>
+    </message>
+    <message>
+        <source>Refresh review</source>
+        <translation>تحديث المراجعة</translation>
+    </message>
+    <message>
+        <source>Return dependencies</source>
+        <translation>تبعيات القيمة المعادة</translation>
+    </message>
+    <message>
+        <source>Reviewing local changes…</source>
+        <translation>مراجعة التغييرات المحلية…</translation>
+    </message>
+    <message>
+        <source>SSA node %1: %2, result %3 bytes; native anchor node %4</source>
+        <translation>عقدة SSA %1: %2، النتيجة %3 بايت؛ عقدة الارتكاز الأصلية %4</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>الإدخال الثانوي</translation>
+    </message>
+    <message>
+        <source>Select a change, then trace its inputs or uses.</source>
+        <translation>حدد تغييرًا، ثم تتبع إدخالاته أو استخداماته.</translation>
+    </message>
+    <message>
+        <source>Synthetic operation: linked by a direct operand; its address is not an original instruction.</source>
+        <translation>عملية اصطناعية: مرتبطة بمعامل مباشر؛ عنوانها ليس تعليمة أصلية.</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>تتبع الإدخالات</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>تتبع الاستخدامات</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>تتبع تبعيات %1…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>مكتمل</translation>
+    </message>
+    <message>
+        <source>constant %1</source>
+        <translation>ثابت %1</translation>
+    </message>
+    <message>
+        <source>node %1</source>
+        <translation>عقدة %1</translation>
+    </message>
+    <message>
+        <source>none recorded</source>
+        <translation>لا شيء مسجل</translation>
+    </message>
+    <message>
+        <source>parameter</source>
+        <translation>المعامل</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>جزئي</translation>
+    </message>
+    <message>
+        <source>unknown input</source>
+        <translation>إدخال غير معروف</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonCounterpartDialog</name>
+    <message>
+        <source>
+Removes the candidate&apos;s existing pair %1 ↔ %2 · %3.</source>
+        <translation>
+يزيل الزوج الحالي للمرشح %1 ↔ %2 · %3.</translation>
+    </message>
+    <message>
+        <source>
+Removes the existing pair %1 ↔ %2.</source>
+        <translation>
+يزيل الزوج الحالي %1 ↔ %2.</translation>
+    </message>
+    <message>
+        <source>
+This function has incomplete analysis.</source>
+        <translation>
+تحليل هذه الدالة غير مكتمل.</translation>
+    </message>
+    <message>
+        <source>
+This records your chosen correspondence. Undo restores previous pairs.</source>
+        <translation>
+يسجل هذا التطابق الذي اخترته. تعيد عملية التراجع الأزواج السابقة.</translation>
+    </message>
+    <message>
+        <source>%1 functions · Select a row to review its current pairing.</source>
+        <translation>%1 دوال · حدد صفًا لمراجعة اقترانه الحالي.</translation>
+    </message>
+    <message>
+        <source>%1 is already paired with this function.</source>
+        <translation>%1 مقترنة بهذه الدالة بالفعل.</translation>
+    </message>
+    <message>
+        <source>%1 of %2 candidates · These are hypotheses; choose using your analysis.
+%3</source>
+        <translation>%1 من %2 مرشحين · هذه فرضيات؛ اختر بناءً على تحليلك.
+%3</translation>
+    </message>
+    <message>
+        <source>Address: high to low</source>
+        <translation>العنوان: تنازليًا</translation>
+    </message>
+    <message>
+        <source>Address: low to high</source>
+        <translation>العنوان: تصاعديًا</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>كل الدوال</translation>
+    </message>
+    <message>
+        <source>Ambiguity candidates</source>
+        <translation>مرشحون ملتبسون</translation>
+    </message>
+    <message>
+        <source>Candidate scope</source>
+        <translation>نطاق المرشحين</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2 · %3.</source>
+        <translation>اختر نظيرًا من الجانب %1 لـ %2 · %3.</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2.</source>
+        <translation>اختر نظيرًا من الجانب %1 لـ %2.</translation>
+    </message>
+    <message>
+        <source>Choose counterpart — NeverD</source>
+        <translation>اختيار النظير — NeverD</translation>
+    </message>
+    <message>
+        <source>Could not load candidates. %1</source>
+        <translation>تعذر تحميل المرشحين. %1</translation>
+    </message>
+    <message>
+        <source>Counterpart functions</source>
+        <translation>الدوال النظيرة</translation>
+    </message>
+    <message>
+        <source>Current counterpart: %1. Select a replacement; Undo restores previous pairs.</source>
+        <translation>النظير الحالي: %1. حدد بديلًا؛ يعيد التراجع الأزواج السابقة.</translation>
+    </message>
+    <message>
+        <source>Loading functions…</source>
+        <translation>تحميل الدوال…</translation>
+    </message>
+    <message>
+        <source>Name: A to Z</source>
+        <translation>الاسم: تصاعديًا</translation>
+    </message>
+    <message>
+        <source>Name: Z to A</source>
+        <translation>الاسم: تنازليًا</translation>
+    </message>
+    <message>
+        <source>No ambiguity candidates match. Clear the search or choose All functions.</source>
+        <translation>لا يوجد مرشحون ملتبسون مطابقون. امسح البحث أو اختر كل الدوال.</translation>
+    </message>
+    <message>
+        <source>No functions match. Try another name or address.</source>
+        <translation>لا توجد دوال مطابقة. جرّب اسمًا أو عنوانًا آخر.</translation>
+    </message>
+    <message>
+        <source>Pair %1 with %2 · %3.</source>
+        <translation>إقران %1 مع %2 · %3.</translation>
+    </message>
+    <message>
+        <source>Pair functions</source>
+        <translation>إقران الدوال</translation>
+    </message>
+    <message>
+        <source>Search by function name or hexadecimal address</source>
+        <translation>البحث باسم الدالة أو عنوانها الست عشري</translation>
+    </message>
+    <message>
+        <source>Search counterpart functions</source>
+        <translation>البحث عن الدوال النظيرة</translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation>جارٍ البحث…</translation>
+    </message>
+    <message>
+        <source>Select a function to pair. Browsing leaves your comparison unchanged.</source>
+        <translation>حدد دالة لإقرانها. لا يغير التصفح المقارنة.</translation>
+    </message>
+    <message>
+        <source>Size: large to small</source>
+        <translation>الحجم: من الأكبر إلى الأصغر</translation>
+    </message>
+    <message>
+        <source>Size: small to large</source>
+        <translation>الحجم: من الأصغر إلى الأكبر</translation>
+    </message>
+    <message>
+        <source>Sort functions</source>
+        <translation>ترتيب الدوال</translation>
+    </message>
+    <message>
+        <source>The comparison changed. Close this window and choose the function again.</source>
+        <translation>تغيرت المقارنة. أغلق هذه النافذة واختر الدالة مجددًا.</translation>
+    </message>
+    <message>
+        <source>The comparison worker is unavailable. Close this window and retry the comparison.</source>
+        <translation>عملية المقارنة غير متاحة. أغلق هذه النافذة وأعد محاولة المقارنة.</translation>
+    </message>
+    <message>
+        <source>This function has no retained ambiguity group. Choose All functions to select a counterpart.</source>
+        <translation>لا توجد مجموعة التباس محتفظ بها لهذه الدالة. اختر كل الدوال لتحديد نظير.</translation>
+    </message>
+    <message>
+        <source>primary</source>
+        <translation>الأساسي</translation>
+    </message>
+    <message>
+        <source>secondary</source>
+        <translation>الثانوي</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonDialog</name>
+    <message>
+        <source>
+
+Primary identity: %1
+Secondary identity: %2
+
+Structural correspondence does not establish semantic equivalence or patch presence.</source>
+        <translation>
+
+هوية الإدخال الأساسي: %1
+هوية الإدخال الثانوي: %2
+
+التطابق البنيوي لا يثبت التكافؤ الدلالي أو وجود التصحيح.</translation>
+    </message>
+    <message>
+        <source> (difference %1)</source>
+        <translation> (الفرق %1)</translation>
+    </message>
+    <message>
+        <source> Function discovery is partial.</source>
+        <translation> اكتشاف الدوال جزئي.</translation>
+    </message>
+    <message>
+        <source> image base</source>
+        <translation> عنوان أساس الصورة</translation>
+    </message>
+    <message>
+        <source> input format</source>
+        <translation> تنسيق الإدخال</translation>
+    </message>
+    <message>
+        <source> s</source>
+        <translation> ث</translation>
+    </message>
+    <message>
+        <source>%1  %2 / %3</source>
+        <translation>%1  %2 / %3</translation>
+    </message>
+    <message>
+        <source>%1 %2  ↔  %3 %4</source>
+        <translation>%1 %2  ↔  %3 %4</translation>
+    </message>
+    <message>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
+        <translation>%1 متطابقة  ·  %2 متغيرة  ·  %3 ملتبسة  ·  %4 / %5 دون تطابق  ·  %6 / %7 غير مكتملة</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>كل الدوال</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>ملتبس</translation>
+    </message>
+    <message>
+        <source>Analyst review…</source>
+        <translation>مراجعة المحلل…</translation>
+    </message>
+    <message>
+        <source>Auto format</source>
+        <translation>تنسيق تلقائي</translation>
+    </message>
+    <message>
+        <source>Binary comparison</source>
+        <translation>مقارنة الملفات الثنائية</translation>
+    </message>
+    <message>
+        <source>Bounded native instruction-run analysis for split, merge, inline and clone hypotheses. This does not validate behavior.</source>
+        <translation>تحليل محدود لتتابعات التعليمات الأصلية لفرضيات التقسيم والدمج والتضمين والاستنساخ. لا يتحقق هذا من السلوك.</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>استعراض…</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>مسارات الاستدعاء…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Cancellation requested — waiting for computation to stop…</source>
+        <translation>طُلب الإلغاء — في انتظار توقف الحساب…</translation>
+    </message>
+    <message>
+        <source>Capture bounded SSA observations in address order. Pipeline cancellation is checked between functions. See Dependencies for omitted and unsupported functions.</source>
+        <translation>اجمع ملاحظات SSA محدودة بترتيب العناوين. يُفحص إلغاء خط المعالجة بين الدوال. راجع التبعيات لمعرفة الدوال المحذوفة وغير المدعومة.</translation>
+    </message>
+    <message>
+        <source>Change review…</source>
+        <translation>مراجعة التغييرات…</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>متغير</translation>
+    </message>
+    <message>
+        <source>Compare</source>
+        <translation>مقارنة</translation>
+    </message>
+    <message>
+        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
+        <translation>قارن إدخالين أصليين من نوع x86/x64. درجات المطابقة استدلالية.</translation>
+    </message>
+    <message>
+        <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
+        <translation>اكتملت المقارنة. الدرجات استدلالية؛ افحص التغطية والأدلة.</translation>
+    </message>
+    <message>
+        <source>Comparison deadline</source>
+        <translation>الموعد النهائي للمقارنة</translation>
+    </message>
+    <message>
+        <source>Computation stopped: %1. Partial results retained.</source>
+        <translation>توقف الحساب: %1. تم الاحتفاظ بالنتائج الجزئية.</translation>
+    </message>
+    <message>
+        <source>Confirm pair</source>
+        <translation>تأكيد الزوج</translation>
+    </message>
+    <message>
+        <source>Control flow</source>
+        <translation>تدفق التحكم</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>النظير</translation>
+    </message>
+    <message>
+        <source>Deadline</source>
+        <translation>الموعد النهائي</translation>
+    </message>
+    <message>
+        <source>Dependencies…</source>
+        <translation>التبعيات…</translation>
+    </message>
+    <message>
+        <source>Dependency evidence</source>
+        <translation>أدلة التبعيات</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>التفكيك</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>الأدلة</translation>
+    </message>
+    <message>
+        <source>Filter by name or address</source>
+        <translation>تصفية حسب الاسم أو العنوان</translation>
+    </message>
+    <message>
+        <source>Filter functions</source>
+        <translation>تصفية الدوال</translation>
+    </message>
+    <message>
+        <source>Fit graphs</source>
+        <translation>ملاءمة الرسوم البيانية</translation>
+    </message>
+    <message>
+        <source>Function difference %1. No completed instruction comparison is available. Use Retry difference to recompute.
+
+</source>
+        <translation>فرق الدوال %1. لا تتوفر مقارنة تعليمات مكتملة. استخدم إعادة محاولة الفرق لإعادة الحساب.
+
+</translation>
+    </message>
+    <message>
+        <source>Function difference stopped. Use Retry difference to recompute; no completed instruction comparison is shown.</source>
+        <translation>توقف حساب فرق الدوال. استخدم إعادة محاولة الفرق لإعادة الحساب؛ لا تُعرض مقارنة تعليمات مكتملة.</translation>
+    </message>
+    <message>
+        <source>Function state</source>
+        <translation>حالة الدالة</translation>
+    </message>
+    <message>
+        <source>Functions per input</source>
+        <translation>عدد الدوال لكل إدخال</translation>
+    </message>
+    <message>
+        <source>Image base</source>
+        <translation>عنوان أساس الصورة</translation>
+    </message>
+    <message>
+        <source>Index and verify finite dependency neighborhoods across functions. Includes dependency evidence.</source>
+        <translation>فهرسة جوارات تبعيات محدودة عبر الدوال والتحقق منها. يشمل أدلة التبعيات.</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload before continuing review.</source>
+        <translation>تغيرت الإدخالات. أعد التحميل قبل متابعة المراجعة.</translation>
+    </message>
+    <message>
+        <source>Inspect overlapping region and transformation hypotheses. Enable analysis in Settings before comparing.</source>
+        <translation>افحص المناطق المتداخلة وفرضيات التحويل. فعّل التحليل في الإعدادات قبل المقارنة.</translation>
+    </message>
+    <message>
+        <source>Inventory side</source>
+        <translation>جانب القائمة</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>جارٍ تحميل %1…</translation>
+    </message>
+    <message>
+        <source>Loading comparison inputs…</source>
+        <translation>تحميل إدخالات المقارنة…</translation>
+    </message>
+    <message>
+        <source>Match: %1
+%2
+
+Similarity: %3
+Heuristic confidence: %4%
+Changes: %5
+Analyst confirmed: %6
+Coverage: %7</source>
+        <translation>التطابق: %1
+%2
+
+التشابه: %3
+الثقة الاستدلالية: %4%
+التغييرات: %5
+تأكيد المحلل: %6
+التغطية: %7</translation>
+    </message>
+    <message>
+        <source>Matched</source>
+        <translation>متطابق</translation>
+    </message>
+    <message>
+        <source>Matching evidence appears here.</source>
+        <translation>تظهر أدلة المطابقة هنا.</translation>
+    </message>
+    <message>
+        <source>Maximum dependency functions per input</source>
+        <translation>الحد الأقصى لدوال التبعيات لكل إدخال</translation>
+    </message>
+    <message>
+        <source>Minimum similarity</source>
+        <translation>الحد الأدنى للتشابه</translation>
+    </message>
+    <message>
+        <source>Native instruction regions…</source>
+        <translation>مناطق التعليمات الأصلية…</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>مقارنة NeverD (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff);;JSON (*.json)</source>
+        <translation>مقارنة NeverD (*.nddiff);;JSON (*.json)</translation>
+    </message>
+    <message>
+        <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
+        <translation>لا يوجد نظير مقبول. افحص المرشحين الملتبسين أو اختر زوجًا يدويًا.</translation>
+    </message>
+    <message>
+        <source>No deadline</source>
+        <translation>دون موعد نهائي</translation>
+    </message>
+    <message>
+        <source>Pair with…</source>
+        <translation>إقران مع…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>الأساسي</translation>
+    </message>
+    <message>
+        <source>Pseudocode</source>
+        <translation>الشيفرة الزائفة</translation>
+    </message>
+    <message>
+        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
+        <translation>الشيفرة الوهمية غير متاحة في ملف التعريف المفكوك هذا. تظل التعليمات والمعاملات والبايتات الأصلية متاحة في التفكيك.</translation>
+    </message>
+    <message>
+        <source>Raw x64</source>
+        <translation>x64 خام</translation>
+    </message>
+    <message>
+        <source>Raw x86</source>
+        <translation>x86 خام</translation>
+    </message>
+    <message>
+        <source>Ready to compare two native binaries.</source>
+        <translation>جاهز لمقارنة ملفين ثنائيين أصليين.</translation>
+    </message>
+    <message>
+        <source>Recompute a cancelled or timed-out function difference.</source>
+        <translation>إعادة حساب فرق دوال أُلغي أو انتهت مهلته.</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>إعادة</translation>
+    </message>
+    <message>
+        <source>Region hypotheses</source>
+        <translation>فرضيات المناطق</translation>
+    </message>
+    <message>
+        <source>Regions…</source>
+        <translation>المناطق…</translation>
+    </message>
+    <message>
+        <source>Reopen comparison</source>
+        <translation>إعادة فتح المقارنة</translation>
+    </message>
+    <message>
+        <source>Reopen…</source>
+        <translation>إعادة فتح…</translation>
+    </message>
+    <message>
+        <source>Retry difference</source>
+        <translation>إعادة محاولة الفرق</translation>
+    </message>
+    <message>
+        <source>SSA dependency regions…</source>
+        <translation>مناطق تبعيات SSA…</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses</source>
+        <translation>فرضيات مناطق SSA</translation>
+    </message>
+    <message>
+        <source>Save / export…</source>
+        <translation>حفظ / تصدير…</translation>
+    </message>
+    <message>
+        <source>Save comparison</source>
+        <translation>حفظ المقارنة</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>تم حفظ %1</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>الثانوي</translation>
+    </message>
+    <message>
+        <source>Select %1 input</source>
+        <translation>اختر الإدخال %1</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its counterpart.</source>
+        <translation>حدد دالة لفحص نظيرتها.</translation>
+    </message>
+    <message>
+        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
+        <translation>حدد الكتل لتتبع نظائرها. استخدم Ctrl+عجلة الفأرة للتكبير والتصغير.</translation>
+    </message>
+    <message>
+        <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
+        <translation>حدد الإدخالين وإعداداتهما الأصلية، ثم أعد فتح مقارنة محفوظة. تُفحص بصمات الإدخالات ومراجعات التحليل.</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>الإعدادات</translation>
+    </message>
+    <message>
+        <source>Starting comparison worker…</source>
+        <translation>بدء عملية المقارنة…</translation>
+    </message>
+    <message>
+        <source>Trace observed callers, callees and entry points of this function.</source>
+        <translation>تتبع الدوال المستدعية والمستدعاة ونقاط الدخول المرصودة لهذه الدالة.</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>تراجع</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>إزالة المطابقة</translation>
+    </message>
+    <message>
+        <source>Unmatched</source>
+        <translation>دون تطابق</translation>
+    </message>
+    <message>
+        <source>Use symbol names</source>
+        <translation>استخدام أسماء الرموز</translation>
+    </message>
+    <message>
+        <source>Validate returns…</source>
+        <translation>التحقق من القيم المعادة…</translation>
+    </message>
+    <message>
+        <source>decoded bodies complete</source>
+        <translation>الأجسام المفكوكة مكتملة</translation>
+    </message>
+    <message>
+        <source>identity only; no bodies available</source>
+        <translation>الهوية فقط؛ لا توجد أجسام متاحة</translation>
+    </message>
+    <message>
+        <source>incomplete</source>
+        <translation>غير مكتمل</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>لا</translation>
+    </message>
+    <message>
+        <source>not applicable</source>
+        <translation>غير منطبق</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>نعم</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>ملف ثنائي جديد أو مشروع محفوظ</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>الملف الثنائي الأصلي أو مشروع محفوظ</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>اختر ملفًا ثنائيًا أو مشروع NDDB محفوظًا. تستخدم المشاريع المحفوظة إعدادات التحميل المخزنة ونسخة عمل مستقلة.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonFlowDialog</name>
+    <message>
+        <source>%1 slice · %2 nodes · %3
+Gaps: %4</source>
+        <translation>شريحة %1 · %2 عقد · %3
+الفجوات: %4</translation>
+    </message>
+    <message>
+        <source>%1 · %2
+%3</source>
+        <translation>%1 · %2
+%3</translation>
+    </message>
+    <message>
+        <source>%1 · %2 available / %3 processed / %4 eligible functions · %5 unprocessed
+%6 unsupported, %7 resource limited, %8 failed. Collection state: %9.</source>
+        <translation>%1 · %2 متاحة / %3 معالجة / %4 دوال مؤهلة · %5 غير معالجة
+%6 غير مدعومة، %7 محدودة بالموارد، %8 فاشلة. حالة الجمع: %9.</translation>
+    </message>
+    <message>
+        <source>%1 · %2 · %3 SSA operations
+Select an operation to follow dependencies. Synthetic operations have block provenance.</source>
+        <translation>%1 · %2 · %3 عمليات SSA
+حدد عملية لتتبع التبعيات. تحتفظ العمليات الاصطناعية بمعلومات كتلة المصدر.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Dependency evidence — NeverD</source>
+        <translation>أدلة التبعيات — NeverD</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings, then compare the inputs.</source>
+        <translation>فعّل أدلة التبعيات في إعدادات المقارنة، ثم قارن الإدخالات.</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings.</source>
+        <translation>فعّل أدلة التبعيات في إعدادات المقارنة.</translation>
+    </message>
+    <message>
+        <source>Include control dependencies</source>
+        <translation>تضمين تبعيات التحكم</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>فحص الدالة الأصلية</translation>
+    </message>
+    <message>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
+        <translation>تبعيات SSA المرصودة. تظل الاستدعاءات والأسماء المستعارة وتدفق التحكم غير المحسوم فجوات صريحة. لم يُجرَ تحقق دلالي.</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>الإدخال الأساسي</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>الإدخال الثانوي</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its SSA operations.</source>
+        <translation>حدد دالة لفحص عمليات SSA فيها.</translation>
+    </message>
+    <message>
+        <source>Select an operation, then trace its inputs or uses.</source>
+        <translation>حدد عملية، ثم تتبع إدخالاتها أو استخداماتها.</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>تتبع الإدخالات</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>تتبع الاستخدامات</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>تتبع تبعيات %1…</translation>
+    </message>
+    <message>
+        <source>none observed within this model</source>
+        <translation>لم يُرصد أي منها ضمن هذا النموذج</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonGraph</name>
+    <message>
+        <source>%1 control-flow graph</source>
+        <translation>رسم تدفق التحكم لـ %1</translation>
+    </message>
+    <message>
+        <source>Control-flow graph</source>
+        <translation>رسم تدفق التحكم</translation>
+    </message>
+    <message>
+        <source>Incomplete control flow</source>
+        <translation>تدفق تحكم غير مكتمل</translation>
+    </message>
+    <message>
+        <source>Laying out control flow…</source>
+        <translation>ترتيب تدفق التحكم…</translation>
+    </message>
+    <message>
+        <source>No counterpart</source>
+        <translation>لا يوجد نظير</translation>
+    </message>
+    <message>
+        <source>Viewport limit reached — zoom in to inspect remaining blocks</source>
+        <translation>تم بلوغ حد مساحة العرض — كبّر لفحص الكتل المتبقية</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonImpactDialog</name>
+    <message>
+        <source>%1 qualified call contracts in %2 retained sites; inspection %3. Scope: calls in reached functions, including unresolved and frontier targets. Native coverage remains independent. Select a row and open Selected call for roles and assumptions.</source>
+        <translation>%1 عقود استدعاء مؤهلة في %2 مواقع محتفظ بها؛ الفحص %3. النطاق: الاستدعاءات في الدوال التي تم الوصول إليها، بما في ذلك الأهداف غير المحسومة وأهداف حدود الاستكشاف. تظل تغطية الشيفرة الأصلية مستقلة. حدد صفًا وافتح الاستدعاء المحدد لعرض الأدوار والافتراضات.</translation>
+    </message>
+    <message>
+        <source>%1 · %2 functions · %3 entries/exports · %4 call sites · %5 unresolved or coverage boundaries · %6 frontier sites
+Indexed %7 / %8 functions; %9; %10.</source>
+        <translation>%1 · %2 دوال · %3 مداخل/تصديرات · %4 مواقع استدعاء · %5 مواقع غير محسومة أو حدود تغطية · %6 مواقع حدود استكشاف
+تمت فهرسة %7 / %8 دوال؛ %9؛ %10.</translation>
+    </message>
+    <message>
+        <source>%1: argument %2</source>
+        <translation>%1: الوسيط %2</translation>
+    </message>
+    <message>
+        <source>All reached functions</source>
+        <translation>كل الدوال التي تم الوصول إليها</translation>
+    </message>
+    <message>
+        <source>All traversed call sites</source>
+        <translation>كل مواقع الاستدعاء التي تم اجتيازها</translation>
+    </message>
+    <message>
+        <source>Analysis limit reached</source>
+        <translation>تم بلوغ حد التحليل</translation>
+    </message>
+    <message>
+        <source>Assumption: the imported function resolves to the declared built-in call contract.</source>
+        <translation>الافتراض: تُحل الدالة المستوردة إلى عقد الاستدعاء المدمج المعلن.</translation>
+    </message>
+    <message>
+        <source>Bytes: %1</source>
+        <translation>البايتات: %1</translation>
+    </message>
+    <message>
+        <source>Call contracts in reached functions</source>
+        <translation>عقود الاستدعاء في الدوال التي تم الوصول إليها</translation>
+    </message>
+    <message>
+        <source>Call paths and possible impact — NeverD</source>
+        <translation>مسارات الاستدعاء والتأثير المحتمل — NeverD</translation>
+    </message>
+    <message>
+        <source>Call sites</source>
+        <translation>مواقع الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Caller: %1 (%2)</source>
+        <translation>الدالة المستدعية: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>ملغى</translation>
+    </message>
+    <message>
+        <source>Capacity</source>
+        <translation>السعة</translation>
+    </message>
+    <message>
+        <source>Choose a starting function, then trace its callers or callees.</source>
+        <translation>اختر دالة بداية، ثم تتبع الدوال المستدعية أو المستدعاة.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>مكتمل</translation>
+    </message>
+    <message>
+        <source>Destination</source>
+        <translation>الوجهة</translation>
+    </message>
+    <message>
+        <source>Format</source>
+        <translation>التنسيق</translation>
+    </message>
+    <message>
+        <source>Function entry, e.g. 0x401000</source>
+        <translation>مدخل الدالة، مثل 0x401000</translation>
+    </message>
+    <message>
+        <source>Global scanned scope, including functions with no known path to the starting function. Unknown callers may be missing.</source>
+        <translation>نطاق الفحص العام، بما فيه الدوال التي لا يُعرف لها مسار إلى دالة البداية. قد تغيب دوال مستدعية غير معروفة.</translation>
+    </message>
+    <message>
+        <source>Input buffer</source>
+        <translation>مخزن الإدخال</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>فحص الدالة الأصلية</translation>
+    </message>
+    <message>
+        <source>Known edges beyond the depth or function limit</source>
+        <translation>حواف معروفة تتجاوز حد العمق أو الدوال</translation>
+    </message>
+    <message>
+        <source>Known targets omitted by the depth or function limit. Work or index stops can leave further targets unobserved.</source>
+        <translation>أهداف معروفة حُذفت بسبب حد العمق أو الدوال. قد تترك توقفات العمل أو الفهرسة أهدافًا أخرى دون رصد.</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>الطول</translation>
+    </message>
+    <message>
+        <source>Maximum depth</source>
+        <translation>العمق الأقصى</translation>
+    </message>
+    <message>
+        <source>Native-associated SSA node: %1</source>
+        <translation>عقدة SSA المرتبطة بالشيفرة الأصلية: %1</translation>
+    </message>
+    <message>
+        <source>No parameter/return propagation, alias, capacity, path-safety or fix-presence proof. Use the original function and SSA dependency views to continue review.</source>
+        <translation>لا يوجد إثبات لانتشار المعاملات أو القيم المعادة، أو الأسماء المستعارة، أو السعة، أو أمان المسارات، أو وجود الإصلاح. استخدم الدالة الأصلية وعروض تبعيات SSA لمتابعة المراجعة.</translation>
+    </message>
+    <message>
+        <source>Object / handle</source>
+        <translation>كائن / مقبض</translation>
+    </message>
+    <message>
+        <source>Observed call paths provide possible impact context. Path feasibility, parameter and return binding, memory aliases and external callers are not modeled. Semantic validation has not been performed.</source>
+        <translation>توفر مسارات الاستدعاء المرصودة سياقًا للتأثير المحتمل. لا تُنمذج قابلية تنفيذ المسارات، وربط المعاملات والقيم المعادة، والأسماء المستعارة للذاكرة، والدوال المستدعية الخارجية. لم يُجرَ تحقق دلالي.</translation>
+    </message>
+    <message>
+        <source>Observed program entries and exports</source>
+        <translation>مداخل البرنامج وتصديراته المرصودة</translation>
+    </message>
+    <message>
+        <source>Observed relations include admitted tail transfers and resolved imports. Double-click to inspect the caller.</source>
+        <translation>تشمل العلاقات المرصودة عمليات النقل الطرفي المقبولة والاستيرادات المحسومة. انقر مرتين لفحص الدالة المستدعية.</translation>
+    </message>
+    <message>
+        <source>One shortest observed witness; alternate paths remain in all call sites. Seeds have an empty path.</source>
+        <translation>أحد أقصر الشواهد المرصودة؛ تظل المسارات البديلة ضمن جميع مواقع الاستدعاء. للبذور مسار فارغ.</translation>
+    </message>
+    <message>
+        <source>Original instruction: %1  %2 %3</source>
+        <translation>التعليمة الأصلية: %1  %2 %3</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>الإدخال الأساسي</translation>
+    </message>
+    <message>
+        <source>Recovered arguments: %1</source>
+        <translation>الوسائط المستعادة: %1</translation>
+    </message>
+    <message>
+        <source>Release can fail; successful release has not been proved.</source>
+        <translation>قد يفشل التحرير؛ لم يُثبت نجاحه.</translation>
+    </message>
+    <message>
+        <source>Retained SSA boundaries: %1</source>
+        <translation>حدود SSA المحتفظ بها: %1</translation>
+    </message>
+    <message>
+        <source>Reviewing exact import identities and recovered call arguments. Collect SSA dependencies when starting the comparison to qualify contracts. Missing or ambiguous evidence remains visible.</source>
+        <translation>مراجعة هويات الاستيراد الدقيقة ووسائط الاستدعاء المستعادة. اجمع تبعيات SSA عند بدء المقارنة لتأهيل العقود. تظل الأدلة المفقودة أو الملتبسة ظاهرة.</translation>
+    </message>
+    <message>
+        <source>Roles (zero-based): %1</source>
+        <translation>الأدوار (بترقيم يبدأ من الصفر): %1</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>الإدخال الثانوي</translation>
+    </message>
+    <message>
+        <source>Selected call</source>
+        <translation>الاستدعاء المحدد</translation>
+    </message>
+    <message>
+        <source>Shortest witness for the selected function</source>
+        <translation>أقصر شاهد للدالة المحددة</translation>
+    </message>
+    <message>
+        <source>Source</source>
+        <translation>المصدر</translation>
+    </message>
+    <message>
+        <source>Starting function entry</source>
+        <translation>مدخل دالة البداية</translation>
+    </message>
+    <message>
+        <source>Target: %1 (%2)</source>
+        <translation>الهدف: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>The contract accepts unbounded input; destination capacity has not been assessed.</source>
+        <translation>يقبل العقد إدخالًا غير محدود؛ لم تُقيّم سعة الوجهة.</translation>
+    </message>
+    <message>
+        <source>Time limit reached</source>
+        <translation>تم بلوغ الحد الزمني</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>تتبع</translation>
+    </message>
+    <message>
+        <source>Trace callees</source>
+        <translation>تتبع الدوال المستدعاة</translation>
+    </message>
+    <message>
+        <source>Trace callers</source>
+        <translation>تتبع الدوال المستدعية</translation>
+    </message>
+    <message>
+        <source>Tracing observed call paths…</source>
+        <translation>تتبع مسارات الاستدعاء المرصودة…</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>استدعاء غير مباشر غير معروف</translation>
+    </message>
+    <message>
+        <source>Unresolved sites and coverage gaps across the input</source>
+        <translation>مواقع غير محسومة وفجوات تغطية عبر الإدخال</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>مكتمل</translation>
+    </message>
+    <message>
+        <source>index scan complete</source>
+        <translation>اكتمل فحص الفهرس</translation>
+    </message>
+    <message>
+        <source>index scan partial</source>
+        <translation>فحص الفهرس جزئي</translation>
+    </message>
+    <message>
+        <source>input discovery complete</source>
+        <translation>اكتمل اكتشاف الإدخال</translation>
+    </message>
+    <message>
+        <source>input discovery partial</source>
+        <translation>اكتشاف الإدخال جزئي</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonModel</name>
+    <message>
+        <source> @b%1</source>
+        <translation> @b%1</translation>
+    </message>
+    <message>
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>%1 B</source>
+        <translation>%1 بايت</translation>
+    </message>
+    <message>
+        <source>Accepted pair</source>
+        <translation>زوج مقبول</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>العنوان</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>ملتبس</translation>
+    </message>
+    <message>
+        <source>Ambiguous SSA call association</source>
+        <translation>ارتباط ملتبس باستدعاء SSA</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>التقييم</translation>
+    </message>
+    <message>
+        <source>Association</source>
+        <translation>الارتباط</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>المؤلف</translation>
+    </message>
+    <message>
+        <source>Availability</source>
+        <translation>التوفر</translation>
+    </message>
+    <message>
+        <source>Binding / history</source>
+        <translation>الربط / السجل</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original operation %2
+%3</source>
+        <translation>الكتلة %1 · العملية الأصلية %2
+%3</translation>
+    </message>
+    <message>
+        <source>Blocks</source>
+        <translation>الكتل</translation>
+    </message>
+    <message>
+        <source>Boundaries</source>
+        <translation>الحدود</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>البايتات</translation>
+    </message>
+    <message>
+        <source>Callee</source>
+        <translation>الدالة المستدعاة</translation>
+    </message>
+    <message>
+        <source>Caller</source>
+        <translation>الدالة المستدعية</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>الحالة</translation>
+    </message>
+    <message>
+        <source>Change</source>
+        <translation>التغيير</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>متغير</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>الثقة</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>السياق</translation>
+    </message>
+    <message>
+        <source>Contract / gaps</source>
+        <translation>العقد / الفجوات</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>التحكم</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>النظير</translation>
+    </message>
+    <message>
+        <source>Coverage A / B</source>
+        <translation>التغطية A / B</translation>
+    </message>
+    <message>
+        <source>Current counterpart</source>
+        <translation>النظير الحالي</translation>
+    </message>
+    <message>
+        <source>Data + control</source>
+        <translation>البيانات + التحكم</translation>
+    </message>
+    <message>
+        <source>Depth</source>
+        <translation>العمق</translation>
+    </message>
+    <message>
+        <source>Direct callee unavailable</source>
+        <translation>الدالة المستدعاة مباشرة غير متاحة</translation>
+    </message>
+    <message>
+        <source>Earlier</source>
+        <translation>أسبق</translation>
+    </message>
+    <message>
+        <source>Entry evidence</source>
+        <translation>أدلة نقطة الدخول</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>الحدث</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>الأدلة</translation>
+    </message>
+    <message>
+        <source>Exception flow</source>
+        <translation>تدفق الاستثناءات</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>تصدير</translation>
+    </message>
+    <message>
+        <source>External function body</source>
+        <translation>جسم دالة خارجية</translation>
+    </message>
+    <message>
+        <source>Finite SSA correspondence; open effects and control require review.
+%1</source>
+        <translation>تطابق SSA محدود؛ تحتاج التأثيرات غير المحسومة والتحكم إلى مراجعة.
+%1</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>الدالة</translation>
+    </message>
+    <message>
+        <source>Function entry</source>
+        <translation>مدخل الدالة</translation>
+    </message>
+    <message>
+        <source>Gaps</source>
+        <translation>الفجوات</translation>
+    </message>
+    <message>
+        <source>Heuristic confidence; structural similarity does not prove semantic equivalence.</source>
+        <translation>ثقة استدلالية؛ التشابه البنيوي لا يثبت التكافؤ الدلالي.</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>الفرضية</translation>
+    </message>
+    <message>
+        <source>Identity only</source>
+        <translation>الهوية فقط</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>غير مكتمل</translation>
+    </message>
+    <message>
+        <source>Incomplete discovery</source>
+        <translation>اكتشاف غير مكتمل</translation>
+    </message>
+    <message>
+        <source>Incomplete native coverage</source>
+        <translation>تغطية غير مكتملة للشيفرة الأصلية</translation>
+    </message>
+    <message>
+        <source>Inputs</source>
+        <translation>الإدخالات</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>تعليمة</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>التعليمات</translation>
+    </message>
+    <message>
+        <source>Internal callee; review its body</source>
+        <translation>دالة داخلية مستدعاة؛ راجع جسمها</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>الأحدث</translation>
+    </message>
+    <message>
+        <source>Loading…</source>
+        <translation>جارٍ التحميل…</translation>
+    </message>
+    <message>
+        <source>No applicable call contract</source>
+        <translation>لا يوجد عقد استدعاء قابل للتطبيق</translation>
+    </message>
+    <message>
+        <source>No native-associated SSA call</source>
+        <translation>لا يوجد استدعاء SSA مرتبط بالشيفرة الأصلية</translation>
+    </message>
+    <message>
+        <source>No qualified import identity</source>
+        <translation>لا توجد هوية استيراد مؤهلة</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>العقدة</translation>
+    </message>
+    <message>
+        <source>Node pairs</source>
+        <translation>أزواج العقد</translation>
+    </message>
+    <message>
+        <source>Nodes</source>
+        <translation>العقد</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>لا شيء</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>ملاحظة</translation>
+    </message>
+    <message>
+        <source>Observed SSA</source>
+        <translation>SSA المرصودة</translation>
+    </message>
+    <message>
+        <source>Observed call paths; feasibility and data effects remain unverified.
+%1</source>
+        <translation>مسارات الاستدعاء المرصودة؛ لا تزال قابلية التنفيذ والتأثيرات على البيانات دون تحقق.
+%1</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>العملية</translation>
+    </message>
+    <message>
+        <source>Original address</source>
+        <translation>العنوان الأصلي</translation>
+    </message>
+    <message>
+        <source>Pair inactive</source>
+        <translation>زوج غير نشط</translation>
+    </message>
+    <message>
+        <source>Paired</source>
+        <translation>مقترن</translation>
+    </message>
+    <message>
+        <source>Pairing</source>
+        <translation>الاقتران</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>الأساسي</translation>
+    </message>
+    <message>
+        <source>Primary address</source>
+        <translation>العنوان الأساسي</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>الدالة الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary functions: %1
+Secondary functions: %2
+Heuristic explanations, not validated behavior.
+%3</source>
+        <translation>الدوال الأساسية: %1
+الدوال الثانوية: %2
+تفسيرات استدلالية؛ السلوك غير متحقق منه.
+%3</translation>
+    </message>
+    <message>
+        <source>Primary instruction</source>
+        <translation>التعليمة الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>العقدة الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary operation</source>
+        <translation>العملية الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary origin</source>
+        <translation>المصدر الأساسي</translation>
+    </message>
+    <message>
+        <source>Primary root</source>
+        <translation>الجذر الأساسي</translation>
+    </message>
+    <message>
+        <source>Primary span</source>
+        <translation>النطاق الأساسي</translation>
+    </message>
+    <message>
+        <source>Priority</source>
+        <translation>الأولوية</translation>
+    </message>
+    <message>
+        <source>Program entry</source>
+        <translation>مدخل البرنامج</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract</source>
+        <translation>عقد %1 مؤهل</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract; release may fail</source>
+        <translation>عقد %1 مؤهل؛ قد يفشل التحرير</translation>
+    </message>
+    <message>
+        <source>Reason</source>
+        <translation>السبب</translation>
+    </message>
+    <message>
+        <source>Recovered arguments unavailable</source>
+        <translation>الوسائط المستعادة غير متاحة</translation>
+    </message>
+    <message>
+        <source>Repeated seed</source>
+        <translation>بذرة متكررة</translation>
+    </message>
+    <message>
+        <source>SSA unavailable in collected scope</source>
+        <translation>SSA غير متاحة في النطاق المجموع</translation>
+    </message>
+    <message>
+        <source>Scan incomplete</source>
+        <translation>الفحص غير مكتمل</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>الثانوي</translation>
+    </message>
+    <message>
+        <source>Secondary address</source>
+        <translation>العنوان الثانوي</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>الدالة الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary instruction</source>
+        <translation>التعليمة الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>العقدة الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary operation</source>
+        <translation>العملية الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary origin</source>
+        <translation>المصدر الثانوي</translation>
+    </message>
+    <message>
+        <source>Secondary root</source>
+        <translation>الجذر الثانوي</translation>
+    </message>
+    <message>
+        <source>Secondary span</source>
+        <translation>النطاق الثانوي</translation>
+    </message>
+    <message>
+        <source>Seed evidence</source>
+        <translation>أدلة البذرة</translation>
+    </message>
+    <message>
+        <source>Shared instructions</source>
+        <translation>التعليمات المشتركة</translation>
+    </message>
+    <message>
+        <source>Shared nodes</source>
+        <translation>العقد المشتركة</translation>
+    </message>
+    <message>
+        <source>Shared normalized instruction runs are evidence for competing transformation hypotheses. They do not validate behavior, calls, memory effects or patch presence.</source>
+        <translation>تتابعات التعليمات المشتركة المطبّعة أدلة على فرضيات تحويل متنافسة. لا تتحقق من السلوك أو الاستدعاءات أو تأثيرات الذاكرة أو وجود التصحيح.</translation>
+    </message>
+    <message>
+        <source>Similarity</source>
+        <translation>التشابه</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>الحالة</translation>
+    </message>
+    <message>
+        <source>Synthetic</source>
+        <translation>اصطناعي</translation>
+    </message>
+    <message>
+        <source>Unchanged</source>
+        <translation>دون تغيير</translation>
+    </message>
+    <message>
+        <source>Unique seed</source>
+        <translation>بذرة فريدة</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>غير معروف</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>استدعاء غير مباشر غير معروف</translation>
+    </message>
+    <message>
+        <source>Unknown indirect transfer</source>
+        <translation>نقل غير مباشر غير معروف</translation>
+    </message>
+    <message>
+        <source>Unmeasured</source>
+        <translation>غير مقاس</translation>
+    </message>
+    <message>
+        <source>Unpaired</source>
+        <translation>غير مقترن</translation>
+    </message>
+    <message>
+        <source>Unresolved / boundary</source>
+        <translation>غير محسوم / حد</translation>
+    </message>
+    <message>
+        <source>Unresolved call target</source>
+        <translation>هدف استدعاء غير محسوم</translation>
+    </message>
+    <message>
+        <source>Unsupported ABI or input profile</source>
+        <translation>ABI أو ملف تعريف إدخال غير مدعوم</translation>
+    </message>
+    <message>
+        <source>Width</source>
+        <translation>العرض</translation>
+    </message>
+    <message>
+        <source>Witness instruction</source>
+        <translation>تعليمة شاهدة</translation>
+    </message>
+    <message>
+        <source>arg %1: %2</source>
+        <translation>الوسيط %1: %2</translation>
+    </message>
+    <message>
+        <source>n%1</source>
+        <translation>n%1</translation>
+    </message>
+    <message>
+        <source>param %1</source>
+        <translation>المعامل %1</translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>مجهول</translation>
+    </message>
+    <message>
+        <source>—</source>
+        <translation>—</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonRegionsDialog</name>
+    <message>
+        <source>
+Dependency scope: %1 / %2 · %3 ambiguous candidates · %4 graphs exceeded analysis allowance</source>
+        <translation>
+نطاق التبعيات: %1 / %2 · %3 مرشحين ملتبسين · %4 رسوم بيانية تجاوزت حد التحليل</translation>
+    </message>
+    <message>
+        <source>%1 hypotheses · %2 anchors · %3 frequent seed groups skipped · %4 oversized groups suppressed · %5 weak candidates skipped · %6</source>
+        <translation>%1 فرضيات · %2 نقاط ارتكاز · تم تخطي %3 مجموعات بذور متكررة · تم استبعاد %4 مجموعات مفرطة الحجم · تم تخطي %5 مرشحين ضعفاء · %6</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of decoded non-transfer instructions. Calls and control transfers need separate review.</source>
+        <translation>%1 دوال أساسية / %2 دوال ثانوية · %3 نطاقات مشتركة
+التغطية: %4% / %5% من التعليمات المفكوكة التي لا تنقل التحكم. تحتاج الاستدعاءات ونقل التحكم إلى مراجعة منفصلة.</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 verified neighborhoods
+Coverage: %4% / %5% of observed SSA nodes in these functions. Control and external effects remain open; hover for original bytes.</source>
+        <translation>%1 دوال أساسية / %2 دوال ثانوية · %3 جوارات متحقق منها
+التغطية: %4% / %5% من عقد SSA المرصودة في هذه الدوال. التحكم والتأثيرات الخارجية لا يزالان دون حسم؛ مرر المؤشر لرؤية البايتات الأصلية.</translation>
+    </message>
+    <message>
+        <source>%1 shared spans. These include unfinished or unclassified candidate groups. Select a span to inspect its original instructions.</source>
+        <translation>%1 نطاقات مشتركة. تشمل مجموعات مرشحين غير مكتملة أو غير مصنفة. حدد نطاقًا لفحص تعليماته الأصلية.</translation>
+    </message>
+    <message>
+        <source>%1 verified SSA neighborhoods, including unclassified groups. Select one for paired nodes; hover for operands and original bytes.</source>
+        <translation>%1 جوارات SSA متحقق منها، بما فيها مجموعات غير مصنفة. حدد واحدًا لعرض العقد المقترنة؛ مرر المؤشر لرؤية المعاملات والبايتات الأصلية.</translation>
+    </message>
+    <message>
+        <source>All hypotheses</source>
+        <translation>كل الفرضيات</translation>
+    </message>
+    <message>
+        <source>All shared spans (including unclassified)</source>
+        <translation>كل النطاقات المشتركة (بما فيها غير المصنفة)</translation>
+    </message>
+    <message>
+        <source>Clone</source>
+        <translation>استنساخ</translation>
+    </message>
+    <message>
+        <source>Enable SSA region hypotheses in comparison Settings, then compare again.</source>
+        <translation>فعّل فرضيات مناطق SSA في إعدادات المقارنة، ثم قارن مجددًا.</translation>
+    </message>
+    <message>
+        <source>Enable region analysis in comparison Settings, then compare again.</source>
+        <translation>فعّل تحليل المناطق في إعدادات المقارنة، ثم قارن مجددًا.</translation>
+    </message>
+    <message>
+        <source>Inline</source>
+        <translation>تضمين</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload the comparison.</source>
+        <translation>تغيرت الإدخالات. أعد تحميل المقارنة.</translation>
+    </message>
+    <message>
+        <source>Inspect primary function</source>
+        <translation>فحص الدالة الأساسية</translation>
+    </message>
+    <message>
+        <source>Inspect secondary function</source>
+        <translation>فحص الدالة الثانوية</translation>
+    </message>
+    <message>
+        <source>Merge</source>
+        <translation>دمج</translation>
+    </message>
+    <message>
+        <source>Module movement</source>
+        <translation>نقل الوحدة</translation>
+    </message>
+    <message>
+        <source>Outline</source>
+        <translation>نظرة عامة</translation>
+    </message>
+    <message>
+        <source>Possible transformation</source>
+        <translation>تحويل محتمل</translation>
+    </message>
+    <message>
+        <source>Redistribution</source>
+        <translation>إعادة توزيع</translation>
+    </message>
+    <message>
+        <source>Region hypotheses — Binary comparison</source>
+        <translation>فرضيات المناطق — مقارنة الملفات الثنائية</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses — Binary comparison</source>
+        <translation>فرضيات مناطق SSA — مقارنة الملفات الثنائية</translation>
+    </message>
+    <message>
+        <source>Select a hypothesis to inspect its shared spans.</source>
+        <translation>حدد فرضية لفحص نطاقاتها المشتركة.</translation>
+    </message>
+    <message>
+        <source>Shared native instruction runs suggest possible transformations. Review competing explanations and uncovered code; these results do not validate behavior or patch presence.</source>
+        <translation>تشير تتابعات التعليمات الأصلية المشتركة إلى تحويلات محتملة. راجع التفسيرات المتنافسة والشيفرة غير المغطاة؛ لا تتحقق هذه النتائج من السلوك أو وجود التصحيح.</translation>
+    </message>
+    <message>
+        <source>Shared region</source>
+        <translation>منطقة مشتركة</translation>
+    </message>
+    <message>
+        <source>Shared tail</source>
+        <translation>نهاية مشتركة</translation>
+    </message>
+    <message>
+        <source>Split</source>
+        <translation>تقسيم</translation>
+    </message>
+    <message>
+        <source>Verified finite SSA neighborhoods suggest possible transformations. Review gaps and open dependencies; correspondence does not validate behavior or patch presence.</source>
+        <translation>تشير جوارات SSA المحدودة المتحقق منها إلى تحويلات محتملة. راجع الفجوات والتبعيات المفتوحة؛ لا يتحقق التطابق من السلوك أو وجود التصحيح.</translation>
+    </message>
+    <message>
+        <source>Waiting for comparison to finish…</source>
+        <translation>في انتظار انتهاء المقارنة…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>مكتمل</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>جزئي</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonReviewDialog</name>
+    <message>
+        <source>%1 matching / %2 total events · newest first · manual assessments</source>
+        <translation>%1 أحداث مطابقة / %2 أحداث إجمالًا · الأحدث أولًا · تقييمات يدوية</translation>
+    </message>
+    <message>
+        <source>Analyst review — NeverD</source>
+        <translation>مراجعة المحلل — NeverD</translation>
+    </message>
+    <message>
+        <source>Analyst statements do not change computed matching or validate patch behavior. Authors are self-described. Save/export the comparison to keep this history on disk.</source>
+        <translation>لا تغير إفادات المحلل المطابقة المحسوبة ولا تتحقق من سلوك التصحيح. يعرّف المؤلفون أنفسهم بأنفسهم. احفظ المقارنة أو صدّرها للاحتفاظ بهذا السجل على القرص.</translation>
+    </message>
+    <message>
+        <source>Append assessment</source>
+        <translation>إضافة تقييم</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>التقييم</translation>
+    </message>
+    <message>
+        <source>Assessment note</source>
+        <translation>ملاحظة التقييم</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>المؤلف</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>إصلاح مرشح</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>الحالة</translation>
+    </message>
+    <message>
+        <source>Case filter</source>
+        <translation>مرشح الحالات</translation>
+    </message>
+    <message>
+        <source>Case: %1
+Author (self-described): %2
+Assessment: %3
+Pair: %4 ↔ %5
+Pair binding: %6 · %7 assessment
+Reference: %8
+
+%9
+
+Event: %10
+Supersedes: %11</source>
+        <translation>الحالة: %1
+المؤلف (بحسب إفادته): %2
+التقييم: %3
+الزوج: %4 ↔ %5
+ربط الزوج: %6 · تقييم %7
+المرجع: %8
+
+%9
+
+الحدث: %10
+يحل محل: %11</translation>
+    </message>
+    <message>
+        <source>Draft exceeds the UTF-8 text allowance.</source>
+        <translation>تتجاوز المسودة الحد المسموح لنص UTF-8.</translation>
+    </message>
+    <message>
+        <source>Draft retained for %1 ↔ %2 on its original inputs. Choose New draft to use the selected pair.</source>
+        <translation>تم الاحتفاظ بمسودة %1 ↔ %2 على إدخالاتها الأصلية. اختر مسودة جديدة لاستخدام الزوج المحدد.</translation>
+    </message>
+    <message>
+        <source>Exact case identifier (empty: all cases)</source>
+        <translation>معرّف الحالة الدقيق (فارغ: كل الحالات)</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>غير حاسم</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>قيد التحقيق</translation>
+    </message>
+    <message>
+        <source>Latest assessments only</source>
+        <translation>أحدث التقييمات فقط</translation>
+    </message>
+    <message>
+        <source>Loading analyst history…</source>
+        <translation>تحميل سجل المحلل…</translation>
+    </message>
+    <message>
+        <source>Manual assessment of %1 ↔ %2</source>
+        <translation>تقييم يدوي لـ %1 ↔ %2</translation>
+    </message>
+    <message>
+        <source>New assessment</source>
+        <translation>تقييم جديد</translation>
+    </message>
+    <message>
+        <source>New draft for selected pair</source>
+        <translation>مسودة جديدة للزوج المحدد</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>تصحيح جزئي</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>التصحيح غائب</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>التصحيح موجود</translation>
+    </message>
+    <message>
+        <source>Record the evidence and limitations behind your assessment.</source>
+        <translation>سجل الأدلة والقيود التي يستند إليها تقييمك.</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>المرجع</translation>
+    </message>
+    <message>
+        <source>Refresh history</source>
+        <translation>تحديث السجل</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>تغيير ذو صلة</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>تصحيح متراجع عنه</translation>
+    </message>
+    <message>
+        <source>Save comparison…</source>
+        <translation>حفظ المقارنة…</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair to append an assessment.</source>
+        <translation>حدد زوج دوال مقبولًا لإضافة تقييم.</translation>
+    </message>
+    <message>
+        <source>Selected record</source>
+        <translation>السجل المحدد</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>تغيير غير ذي صلة</translation>
+    </message>
+    <message>
+        <source>accepted</source>
+        <translation>مقبول</translation>
+    </message>
+    <message>
+        <source>earlier</source>
+        <translation>أسبق</translation>
+    </message>
+    <message>
+        <source>inactive</source>
+        <translation>غير نشط</translation>
+    </message>
+    <message>
+        <source>latest</source>
+        <translation>الأحدث</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSession</name>
+    <message>
+        <source>Comparison worker: %1</source>
+        <translation>عملية المقارنة: %1</translation>
+    </message>
+    <message>
+        <source>Could not replace the comparison. Your previous comparison is still available. %1</source>
+        <translation>تعذر استبدال المقارنة. لا تزال المقارنة السابقة متاحة. %1</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Ready to try again.</source>
+        <translation>توقف التحميل. جاهز للمحاولة مجددًا.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Your previous comparison is still available.</source>
+        <translation>توقف التحميل. لا تزال المقارنة السابقة متاحة.</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>تعذر على العملية تأكيد الإلغاء.</translation>
+    </message>
+    <message>
+        <source>This worker does not support binary comparison.</source>
+        <translation>هذه العملية لا تدعم مقارنة الملفات الثنائية.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonValidationDialog</name>
+    <message>
+        <source>
+Proof work: %1; completed partitions: %2; attempts: %3
+</source>
+        <translation>
+عمل الإثبات: %1؛ الأجزاء المكتملة: %2؛ المحاولات: %3
+</translation>
+    </message>
+    <message>
+        <source>Argument %1: %2 bits, register offset %3
+</source>
+        <translation>الوسيط %1: %2 بت، إزاحة السجل %3
+</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Cancelled. No equivalence conclusion.</source>
+        <translation>ملغى. لا استنتاج بشأن التكافؤ.</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>التحقق مجددًا</translation>
+    </message>
+    <message>
+        <source>Check equal integer returns and defined termination in the lifted models, for all defined input bitvectors at matching register locations. Native-state equivalence and security are outside this check.</source>
+        <translation>تحقق من تساوي القيم الصحيحة المعادة ومن الانتهاء المعرّف في النماذج المحولة إلى تمثيل وسيط، لكل متجهات بتات الإدخال المعرّفة في مواقع السجلات المتطابقة. تكافؤ الحالة الأصلية والأمان خارج نطاق هذا الفحص.</translation>
+    </message>
+    <message>
+        <source>Detail: %1
+
+</source>
+        <translation>التفاصيل: %1
+
+</translation>
+    </message>
+    <message>
+        <source>Equal returns proved in the lifted scalar models.</source>
+        <translation>تم إثبات تساوي القيم المعادة في النماذج العددية المحولة إلى تمثيل وسيط.</translation>
+    </message>
+    <message>
+        <source>Equivalence remains unproved; this does not establish a difference.</source>
+        <translation>لا يزال التكافؤ غير مثبت؛ ولا يثبت ذلك وجود اختلاف.</translation>
+    </message>
+    <message>
+        <source>Full report</source>
+        <translation>التقرير الكامل</translation>
+    </message>
+    <message>
+        <source>Input assumption: defined integer bitvectors at identical register locations.
+Lift correctness is assumed. Complete native state, memory and call effects are not proved.
+This result does not assess vulnerability or fix status.
+
+</source>
+        <translation>افتراض الإدخال: متجهات بتات صحيحة معرّفة في مواقع سجلات متطابقة.
+تُفترض صحة التحويل إلى التمثيل الوسيط. لم تُثبت الحالة الأصلية الكاملة ولا تأثيرات الذاكرة والاستدعاءات.
+لا تقيّم هذه النتيجة وجود ثغرة أو حالة الإصلاح.
+
+</translation>
+    </message>
+    <message>
+        <source>Inputs or pairing changed. Select the function pair again.</source>
+        <translation>تغيرت الإدخالات أو الاقتران. حدد زوج الدوال مجددًا.</translation>
+    </message>
+    <message>
+        <source>Inputs: retained comparison sources.
+</source>
+        <translation>الإدخالات: مصادر المقارنة المحتفظ بها.
+</translation>
+    </message>
+    <message>
+        <source>Lifting and checking this pair… Cancellation is cooperative.</source>
+        <translation>تحويل هذا الزوج إلى تمثيل وسيط وفحصه… الإلغاء تعاوني.</translation>
+    </message>
+    <message>
+        <source>Limits changed. Check again.</source>
+        <translation>تغيرت الحدود. تحقق مجددًا.</translation>
+    </message>
+    <message>
+        <source>Live input versions rechecked: %1
+</source>
+        <translation>أُعيد التحقق من إصدارات الإدخال الحالية: %1
+</translation>
+    </message>
+    <message>
+        <source>Maximum native instructions per function.</source>
+        <translation>الحد الأقصى للتعليمات الأصلية لكل دالة.</translation>
+    </message>
+    <message>
+        <source>Maximum work units for the scalar proof.</source>
+        <translation>الحد الأقصى لوحدات العمل للإثبات العددي.</translation>
+    </message>
+    <message>
+        <source>Native instructions</source>
+        <translation>التعليمات الأصلية</translation>
+    </message>
+    <message>
+        <source>Pairing changed. Select the function pair again.</source>
+        <translation>تغير الاقتران. حدد زوج الدوال مجددًا.</translation>
+    </message>
+    <message>
+        <source>Primary %1 (%2) ↔ Secondary %3 (%4)</source>
+        <translation>الأساسي %1 (%2) ↔ الثانوي %3 (%4)</translation>
+    </message>
+    <message>
+        <source>Profile: %1
+
+Primary SHA-256: %2
+Secondary SHA-256: %3
+</source>
+        <translation>الملف التعريفي: %1
+
+SHA-256 الأساسي: %2
+SHA-256 الثانوي: %3
+</translation>
+    </message>
+    <message>
+        <source>Proof work</source>
+        <translation>عمل الإثبات</translation>
+    </message>
+    <message>
+        <source>Result and assumptions</source>
+        <translation>النتيجة والافتراضات</translation>
+    </message>
+    <message>
+        <source>Return width: %1 bits
+</source>
+        <translation>عرض القيمة المعادة: %1 بت
+</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair.</source>
+        <translation>حدد زوج دوال مقبولًا.</translation>
+    </message>
+    <message>
+        <source>Selected %1 function: %2</source>
+        <translation>الدالة المحددة من الجانب %1: %2</translation>
+    </message>
+    <message>
+        <source>This pair is outside the supported scalar model.</source>
+        <translation>هذا الزوج خارج النموذج العددي المدعوم.</translation>
+    </message>
+    <message>
+        <source>Time limit (ms)</source>
+        <translation>الحد الزمني (مللي ثانية)</translation>
+    </message>
+    <message>
+        <source>Time limit reached. No equivalence conclusion.</source>
+        <translation>تم بلوغ الحد الزمني. لا استنتاج بشأن التكافؤ.</translation>
+    </message>
+    <message>
+        <source>Validate scalar returns — NeverD</source>
+        <translation>التحقق من القيم العددية المعادة — NeverD</translation>
+    </message>
+    <message>
+        <source>Validation limit reached. Adjust the limits and check again.</source>
+        <translation>تم بلوغ حد التحقق. عدّل الحدود وتحقق مجددًا.</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>لا</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>نعم</translation>
     </message>
 </context>
 </TS>

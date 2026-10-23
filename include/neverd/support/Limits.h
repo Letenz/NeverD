@@ -39,6 +39,18 @@ namespace neverd::limits::support {
 // multiple.
 inline constexpr size_t kLoadByteCheckpointBytes = 1024 * 1024;
 
+// NDDB storage and streaming. Metadata limits are aggregate admission budgets,
+// adjustable through project_database::ReadLimits; input bytes stream without
+// a total-size policy ceiling. Exhaustion is an explicit load error.
+inline constexpr size_t kProjectDatabaseChunkBytes = 8 * 1024 * 1024;
+inline constexpr int kProjectDatabaseCompressionLevel = 6;
+inline constexpr size_t kProjectStreamBytes = 64 * 1024;
+inline constexpr uint64_t kProjectMetadataBytes = 1024 * 1024;
+inline constexpr uint64_t kProjectSidecarBytes = 256 * 1024 * 1024;
+inline constexpr uint64_t kProjectStateBytes = 32 * 1024 * 1024;
+inline constexpr uint64_t kProjectMetadataRows = 65536;
+inline constexpr int kProjectSqlCheckpointOps = 1000;
+
 // lib/support/TextEvidence.cpp
 inline constexpr size_t kTextEvidenceMinTableAscentIdeographs = 3;
 inline constexpr unsigned kTextEvidenceMinWordLetters = 3;

@@ -17,6 +17,7 @@
 
 #include "neverd/decode/InstructionRelocations.h"
 #include "neverd/diff/StableHash.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
@@ -416,7 +417,12 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     }
   }
   ProgramIdentity Identity;
-  Identity.Path = S.FilePath.string();
+  Identity.Path =
+      pathToUTF8(S.PackedProject ? S.PackedProject->Source : S.FilePath);
+  if (S.PackedProject) {
+    Identity.ProjectInputName = S.PackedProject->InputName;
+    Identity.ProjectStateSHA256 = S.PackedProject->StateSHA256;
+  }
   Identity.SHA256 = inputSha256(S);
   Identity.Format = S.Img.isELF()     ? "elf"
                     : S.Img.isCOFF()  ? "coff"
@@ -430,6 +436,8 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   Identity.Normalization = "native-x86-operands-v1";
   Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v1:" +
                       (Options.Discover ? "discover" : "known-functions");
+  if (S.PackedProject)
+    Identity.Analysis += ":nddb-v1:" + S.PackedProject->StateSHA256;
   const char *LoadOptions = neverd_session_load_options_json(&S);
   if (LoadOptions) {
     Identity.Analysis += ":" + std::string(LoadOptions);

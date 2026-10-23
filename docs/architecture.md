@@ -4,6 +4,20 @@
 
 # NeverD Architecture
 
+
+`X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
+instructions name physical tile registers and retain their memory/encoding
+semantics; they do not expose TILECFG or TMM values through an ordinary function
+ABI. Native LLVM, HighC and LLVM-to-C consume `X86AmxAsm.h`, keeping the bank in
+the CPU with complete TMM and memory effects. Native faults retain hardware
+partial progress and restart state. Row instructions explicitly publish their
+64-byte ZMM result to ordinary SSA through private storage. The concrete
+executor owns the same physical bank and reuses the existing tile evaluators;
+unknown required bank contents fail. Legacy value-form AMX operations remain
+separate and guarded at native emission. See
+[x86 instruction support](x86-instruction-support.md#architectural-amx-bank-and-native-output)
+for feature distinctions, historical TF32 encoding and qualification limits.
+
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
@@ -63,6 +77,75 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Apple arm64e analysis
+
+The Mach-O loader retains the CPU subtype, including its ABI capability bits,
+and identifies arm64e and arm64e.x1 separately from ordinary arm64. The shared
+subtype table also gates source replacement and plain Objective-C object
+reconstruction; x1 cannot bypass authenticated-ABI requirements. All use
+the AArch64 decoder. `AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
+implicit LR/SP and X17/X16 HINT aliases, and authenticated branch/call/return
+semantics. Authenticated calls read the old operands before overwriting LR.
+`AArch64PAuth.def` owns the instruction inventory, implicit HINT operands,
+authenticated transfer encodings, keys and emission contracts. The fast and
+Capstone classifiers, lifter, intrinsic metadata and emitters consume those
+rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
+`AArch64PAuthC.def` owns the C syntax shared by both projections;
+`MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
+Generated C temporaries avoid every operand expression, preserving parameters
+and results that already use the renderer's preferred local names.
+Validated pointer-authentication operations preserve argument setup across
+both ABI recovery and C lowering. Tail-transfer proofs retain target taint
+separately from the signing modifier and restore a saved signed link only
+after authentication with the matching key and entry-SP offset (or zero).
+Clang's explicit authentication-failure branch retains the setup of its sole
+continuing authenticated tail. Source C names an unassigned entry LR using
+`__builtin_return_address(0)`, as the LLVM projection already does.
+LDRAA/LDRAB authenticate the base before adding the offset, loading, and
+applying writeback. An unsupported exception return or FEAT_PAuth_LR form,
+including the PACM HINT that selects a second modifier, fails lifting instead
+of losing authentication.
+
+Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
+the architecture may poison a pointer without trapping immediately. The
+separate `A64_AuthBranch` operation requires a valid control-flow target and
+uses `llvm.ptrauth.auth` / Clang's authentication builtin. Its effect survives
+dead-result elimination. These are analysis projections, not a guarantee that
+rebuilt code preserves the original authenticated call's resistance to spills.
+Code-identity recovery keeps the authenticated runtime value; it cannot treat
+its key or modifier as a code pointer or bypass authentication to name a callee.
+PACGA retains two independent 64-bit inputs and its generic signing operation.
+Both C routes emit the real instruction with an explicit output constraint;
+they do not depend on a nonexistent ACLE builtin or an unresolved LLVM helper.
+
+The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
+their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
+Segmented format 14 retains the original load-command segment indices and
+its full 12-bit next field. Targets use segment-relative offsets, with checked
+segment ownership, padding, bounds and address overflow.
+`ARM64_RELOC_AUTHENTICATED_POINTER` uses the same
+`MachOAuthenticatedPointer` model: target or symbol, key, diversity, address
+diversity and addend. Original authenticated slot bytes remain on-disk recipes;
+they are neither process-signed values nor ordinary raw-pointer/import proofs.
+Immutable readers reject every overlapping byte. Source projections keep
+storage containing recipes external rather than inventing global initializers.
+The formats follow Apple's [dyld definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)
+and LLVM's [pointer-authentication contract](https://llvm.org/docs/PointerAuth.html).
+
+This support covers static loading, lifting and C/LLVM inspection. Native
+rebuilding and source replacement of an arm64e image fail explicitly until
+ABI-aware signing and fixup emission are implemented; the emitted module
+retains that requirement. Checked emulation's existing disabled-key profile
+does not become an arm64e execution environment. Separate Apple Silicon tests
+compare both C projections with native PACGA. The full PAC/AUT/XPAC oracle
+requires an executable arm64e process and checks that each signing key changes
+pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
+ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
+These comparisons do not qualify a reconstructed arm64e ABI.
+Shared-cache-specific layouts require a cache address model. Exception-level
+authentication, FEAT_PAuth_LR and CPA2 remain unsupported; recognizing x1's
+header does not claim those instruction semantics.
+
 ## GUI project and search ownership
 
 `CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
@@ -119,9 +202,16 @@ The worker adapts those pages to the transport. The GUI owns wraparound and
 retires results and callbacks on a new search or session change.
 
 Deep-link syntax and checked address arithmetic belong to `DeepLink`; instance
-matching and recent-input lookup belong to `LinkDispatch`. `ProjectDatabase`
-owns metadata-only identity reads as well as unpacking and authenticating the
-stored input. A metadata match is only a lookup hint. CLI clients and native
+matching and recent-input lookup belong to `LinkDispatch`. The Qt-independent
+`project_database::Reader` owns NDDB metadata admission, snapshot-consistent
+reads and streaming input authentication. Qt `ProjectDatabase` adapts that
+reader and owns transaction writes and normal recovery behavior. SHA-256 sinks
+adapt LLVM/Qt hashing; the shared reader owns digest comparison, chunk/framing
+validation, schema constants, the file allowlist and compression policy. SDK
+`ProjectInput` owns isolated extraction through the session/comparison lifetime;
+CLI and worker use the SDK load boundary. `FileStamp.h` owns external file/tree
+selection stamps shared by worker and saved debug choices. A metadata match is
+only a lookup hint. CLI clients and native
 URL events share the dispatcher. Native events dispatch off the GUI thread so
 the receiving window can answer its own local socket. Instance probes have
 bounded concurrency and one deadline; socket framing tracks incomplete JSON
@@ -1309,7 +1399,11 @@ analysis allocations use the executable's process allocator. Windows MSVC ABI
 executables instead import a shared mimalloc before their other dependencies;
 the matching redirection DLL overrides the dynamic CRT (`/MD` or `/MDd`),
 including later-loaded plugins. Both runtime DLLs travel with the executable.
-Applications embedding the SDK continue to own their allocator policy. On macOS, dependency
+Applications embedding the SDK continue to own their allocator policy.
+Linux executables preserve mimalloc's `MI_ALLOW_THP` build setting and the
+runtime `MIMALLOC_ALLOW_THP` override. Disabling transparent huge pages acts
+on that executable's process; loading the SDK does not impose this policy
+on its host or change system-wide kernel settings. On macOS, dependency
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
@@ -1757,6 +1851,14 @@ unsupported operations remain exact opaque words. A shared odd branch is
 isolated only when the even branch is proved zero, and its selector is restored
 before emission. Sparse Boolean polynomials are derived from complete decision
 graphs and factored before emission, avoiding exponential printed expansion.
+Equal low-bit groups retain their complete linear and quadratic cross terms;
+the split makes all higher terms vanish modulo the observed word. The
+quadratic sum is computed with an extra bit before division by two. This does
+not assume that an even value has a modular inverse. Batched sums cancel exact
+complementary bits and combine multiplicities before carrying; full-adder
+carries share a direct majority decision. A proved parity input orders its
+word before the remaining interleaved inputs. Cached immutable word views
+avoid repeated bit-vector copies and are discarded when the assumption changes.
 Optional refinement retains the last completed candidate. Completed attempts
 are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
@@ -4191,6 +4293,21 @@ the return address the call pushed. HighC prints it as
 `__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
 Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
+
+The pipeline runs both annotations through `markSourceStackAccesses`, sharing
+one batch of entry-stack offset proofs and the resulting load/store ranges.
+Only annotation flags change between the two consumers. The ranges are discarded
+before returning; no result survives a later IR mutation, and the proof's
+join, provenance, depth and work-limit rules are unchanged.
+
+The entry-stack proof keeps definitions, joins, ambiguity and transient active
+flags in one ordered index. Each visit still consumes its ordinary work and
+depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
+and failed queries are not memoized, and each query clears its active flags.
+Read-only offset queries lazily reuse the shared entry-register authenticator's
+answer for the canonical defining occurrence. Every use still checks exact
+register metadata; the fact lasts only for that immutable proof. Alignment
+rewrites continue to authenticate against the current entry COPY prefix.
 
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C

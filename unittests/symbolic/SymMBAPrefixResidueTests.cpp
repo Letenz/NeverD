@@ -1431,4 +1431,189 @@ TEST(SymMBAPrefixResidue, MixedResidualProductsLeaveBudgetForTheirLinearTail) {
     }
 }
 
+struct CarryProductFixture {
+  SymRef Product;
+  SymRef Input;
+  llvm::APInt Scale;
+  unsigned Degree;
+  bool Mixed;
+  bool Neighbor;
+
+  llvm::APInt oracle(const std::array<llvm::APInt, 4> &V) const {
+    const auto Width = Scale.getBitWidth();
+    auto Result = Scale;
+    for (unsigned I = 0; I < Degree; ++I) {
+      auto High = (V[1] + I) & ~llvm::APInt(Width, 3);
+      if (Mixed)
+        High = ((V[1] + I) & ~llvm::APInt(Width, 1)) *
+               ((V[2] + 2 * I) & ~llvm::APInt(Width, 3));
+      auto Base = V[0] + 2 * I;
+      if (Neighbor && I + 1 == Degree)
+        ++Base;
+      Result *= Base ^ High;
+    }
+    return Result + V[0] + V[1] + V[2] + V[3];
+  }
+};
+
+CarryProductFixture carryProductFixture(SymContext &Ctx, unsigned Width,
+                                        unsigned Degree, unsigned Needed,
+                                        bool Mixed, bool Neighbor = false) {
+  auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+  auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+  auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+  auto Scale = llvm::APInt(Width, 3).shl(Width - Needed);
+  llvm::SmallVector<SymRef, 32> Factors{Ctx.mkConst(Scale)};
+  for (unsigned I = 0; I < Degree; ++I) {
+    auto U = Ctx.mkAdd(Y, C(I));
+    auto High = Ctx.mkAnd(U, Ctx.mkConst(~llvm::APInt(Width, 3)));
+    if (Mixed)
+      High = Ctx.mkMul(Ctx.mkAnd(U, Ctx.mkConst(~llvm::APInt(Width, 1))),
+                       Ctx.mkAnd(Ctx.mkAdd(Z, C(2 * I)),
+                                 Ctx.mkConst(~llvm::APInt(Width, 3))));
+    auto Base = Ctx.mkAdd(X, C(2 * I + (Neighbor && I + 1 == Degree)));
+    Factors.push_back(Ctx.mkXor(Base, High));
+  }
+  auto Product = Ctx.mkMul(Factors);
+  auto Input =
+      Ctx.mkAdd({Product, Ctx.mkXor(X, Y), Ctx.mkMul(C(2), Ctx.mkAnd(X, Y)),
+                 Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+  return {Product, Input, Scale, Degree, Mixed, Neighbor};
+}
+
+TEST(SymMBAPrefixResidue, GroupedCarriesRecoverHigherPrecisionProducts) {
+  std::mt19937_64 Random(0x4341525259505246);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (auto Case : {std::array<unsigned, 3>{32, 7, 1},
+                      {64, 6, 1},
+                      {64, 7, 0},
+                      {128, 6, 0}}) {
+      if (Width > 64 && Case[0] > 32)
+        continue;
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Case[0] << ':'
+                                        << Case[1] << ':' << Case[2]);
+      SymContext Ctx;
+      auto F = carryProductFixture(Ctx, Width, Case[0], Case[1], Case[2]);
+      MBAOptions Opts;
+      Opts.MaxWork = 65536;
+      Opts.VerifySamples = 0;
+      auto Result = simplifyMBADeep(Ctx, F.Input, Opts);
+      ASSERT_LT(Result.SizeAfter, Result.SizeBefore / 2);
+      EXPECT_LT(Result.Work, Opts.MaxWork);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      bool Zero = false, Nonzero = false;
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &V : Values)
+          V = word(Width, Random);
+        if (Trial < 512)
+          Values = {llvm::APInt(Width, Trial / 64),
+                    llvm::APInt(Width, Trial / 8 % 8),
+                    llvm::APInt(Width, Trial % 8), llvm::APInt(Width, Trial)};
+        auto Want = F.oracle(Values);
+        EXPECT_EQ(Reduced.eval(Values), Want);
+        auto Product = Want - Values[0] - Values[1] - Values[2] - Values[3];
+        Zero |= Product.isZero();
+        Nonzero |= !Product.isZero();
+      }
+      EXPECT_TRUE(Zero);
+      EXPECT_TRUE(Nonzero);
+    }
+}
+
+SymRef groupedQuadraticInput(SymContext &Ctx, unsigned Width, unsigned Needed) {
+  auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+  auto X = Ctx.mkAnd(Ctx.mkVar("x", Width), C(1));
+  auto Y = Ctx.mkAnd(Ctx.mkVar("y", Width), C(1));
+  auto Z = Ctx.mkAnd(Ctx.mkVar("z", Width), C(1));
+  auto Sum = [&](SymRef A, SymRef B) {
+    return Ctx.mkAdd(Ctx.mkXor(A, B), Ctx.mkMul(C(2), Ctx.mkAnd(A, B)));
+  };
+  // Deliberately retain a redundant zero so publishing the exact quadratic
+  // word is profitable. This test calls the residue proof without a preceding
+  // general MBA simplification, which could erase this proof's input.
+  auto Zero = Ctx.mkSub(Sum(X, Y), Ctx.mkAdd(X, Y));
+  const auto Scale = llvm::APInt(Width, 3).shl(Width - Needed);
+  llvm::SmallVector<SymRef, 8> Factors{Ctx.mkConst(Scale)};
+  for (auto H : {Sum(X, Y), Sum(Y, Z), Sum(Z, X), Sum(X, Y)})
+    Factors.push_back(Ctx.mkAdd(C(1), Ctx.mkMul(C(4), Ctx.mkAdd(H, Zero))));
+  return Ctx.mkMul(Factors);
+}
+
+TEST(SymMBAPrefixResidue, GroupedQuadraticResiduesKeepTheDivisionBit) {
+  for (unsigned Width : {8u, 64u, 257u})
+    for (unsigned Needed : {5u, 6u, 7u, 8u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Needed);
+      SymContext Ctx;
+      const auto Scale = llvm::APInt(Width, 3).shl(Width - Needed);
+      auto Input = groupedQuadraticInput(Ctx, Width, Needed);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      auto Result = detail::foldResidueDecisions(Ctx, Input, Budget, Storage);
+      if (Needed <= 6)
+        EXPECT_LT(Ctx.readabilityCost(Result), Ctx.readabilityCost(Input));
+      EXPECT_LE(Ctx.readabilityCost(Result), Ctx.readabilityCost(Input));
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned Pattern = 0; Pattern < 512; ++Pattern) {
+        std::array<llvm::APInt, 3> V{llvm::APInt(Width, Pattern / 64),
+                                     llvm::APInt(Width, Pattern / 8 % 8),
+                                     llvm::APInt(Width, Pattern % 8)};
+        auto Want = Scale;
+        auto X = V[0] & 1, Y = V[1] & 1, Z = V[2] & 1;
+        for (auto H : {X + Y, Y + Z, Z + X, X + Y})
+          Want *= 1 + 4 * H;
+        EXPECT_EQ(Reduced.eval(V), Want);
+      }
+    }
+}
+
+TEST(SymMBAPrefixResidue, GroupedCarriesRespectParityAndPartialBudgets) {
+  std::mt19937_64 Random(0x4341525259424e44);
+  for (unsigned Width : {8u, 64u, 257u})
+    for (bool Neighbor : {false, true})
+      for (auto Limits : {std::array<size_t, 2>{0, 1 << 24},
+                          {1, 1 << 24},
+                          {8192, 1 << 24},
+                          {65536, 0},
+                          {65536, 1024},
+                          {65536, 1 << 24}}) {
+        SCOPED_TRACE(::testing::Message() << Width << ':' << Neighbor << ':'
+                                          << Limits[0] << ':' << Limits[1]);
+        SymContext Ctx;
+        auto F = carryProductFixture(Ctx, Width, 32, 7, true, Neighbor);
+        MBAOptions Opts;
+        Opts.MaxWork = Limits[0];
+        Opts.MaxTableBytes = Limits[1];
+        Opts.VerifySamples = 0;
+        auto Result = simplifyMBADeep(Ctx, F.Input, Opts);
+        EXPECT_LE(Result.Work, Limits[0]);
+        EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+        SymEvalPlan Reduced(Ctx, Result.Expr);
+        for (unsigned Trial = 0; Trial < 256; ++Trial) {
+          std::array<llvm::APInt, 4> Values;
+          for (auto &V : Values)
+            V = word(Width, Random);
+          EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+        }
+      }
+}
+
+TEST(SymMBAPrefixResidue, GroupedQuadraticResiduesHaveFullWidthProofs) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (unsigned Needed : {5u, 6u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Needed);
+      SymContext Ctx;
+      auto Input = groupedQuadraticInput(Ctx, Width, Needed);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      auto Result = detail::foldResidueDecisions(Ctx, Input, Budget, Storage);
+      ASSERT_LT(Ctx.readabilityCost(Result), Ctx.readabilityCost(Input));
+      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
+      EXPECT_EQ(Verifier(Ctx, Input, Result), SynthVerification::Equivalent);
+    }
+}
+
 } // namespace

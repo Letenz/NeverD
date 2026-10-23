@@ -21,6 +21,7 @@
 #include "LoadOptions.h"
 #include "LocalTypesDebugContext.h"
 #include "NativeImmediateIndex.h"
+#include "ProjectInput.h"
 
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -109,6 +110,9 @@ struct Session {
   /// authenticated sanitizer path only.  FilePath deliberately preserves the
   /// caller's legacy spelling for every pre-existing C API consumer.
   std::filesystem::path SanitizeSourcePath;
+  /// Declared before the image/debug owners, so its private extracted files
+  /// outlive all readers. Empty for ordinary file or memory sessions.
+  std::shared_ptr<ProjectInput> PackedProject;
   /// Snapshot-backed native sessions have no host path or sidecar namespace.
   std::optional<uint64_t> MemoryInputBytes;
   std::string WebNativeProvenance;
@@ -119,6 +123,7 @@ struct Session {
   // policy and must be set before neverd_session_load(); the rest describe what
   // that load actually found.
   DebugInfoRequest DbgRequest;
+  DebugInfoRequest LoadedDbgRequest;
   LoadProgress LoadProgressCb;
   std::unique_ptr<DebugContext> Dbg;
   DebugInfoKind DbgKind = DebugInfoKind::None;
@@ -129,6 +134,7 @@ struct Session {
   /// file loaded later can read it again the same way
   /// (reloadDebugInformation).
   bool ReadFromFile = false;
+  bool LoadedStaticSymbols = true;
   /// The program's local types, read from its debug information when first
   /// asked for (NeverDCAPILocalTypes.cpp).  A new image or PDB drops them.
   std::unique_ptr<types::TypeLibrary> LocalTypes;

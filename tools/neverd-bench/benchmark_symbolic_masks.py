@@ -901,6 +901,25 @@ def multiple_residual_corpus(width, count):
     return rows
 
 
+def carry_product_corpus(width, count):
+    """Higher-degree nonzero products with five to eight observed low bits."""
+    rows = []
+    for index in range(count):
+        kind = index % 128
+        degree = (8, 16, 24, 32, 48, 64, 96, 128)[kind // 16]
+        needed = 5 + kind % 16 // 4
+        flavor = kind % 4
+        bits = 3 if flavor % 2 else 2
+        factors = []
+        for i in range(degree):
+            high = (f"((y+{i})&{-1 << bits})" if flavor < 2 else
+                    f"(((y+{i})&-2)*((z+{2*i})&{-1 << (bits-1)}))")
+            factors.append(f"((x+{2*i})^{high})")
+        rows.append(f"({3 << (width-needed)}*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -1043,7 +1062,7 @@ def main():
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
                  "row-residual", "mixed-frontier", "extreme-frontier",
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
-                 "distributed-prefix", "multiple-residual"),
+                 "distributed-prefix", "multiple-residual", "carry-product"),
         default="complement",
     )
     args = parser.parse_args()
@@ -1080,6 +1099,7 @@ def main():
                 "residue-frontier": residue_frontier_corpus,
                 "distributed-prefix": distributed_prefix_corpus,
                 "multiple-residual": multiple_residual_corpus,
+                "carry-product": carry_product_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

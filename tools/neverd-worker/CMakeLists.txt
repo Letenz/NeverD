@@ -156,6 +156,13 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/idle_memory_test.py"
                   "$<TARGET_FILE:neverd-worker>")
         set_tests_properties(NeverDWorkerIdleMemory PROPERTIES TIMEOUT 60)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+          add_test(NAME NeverDWorkerTHPPolicy
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/thp_policy_test.py"
+                    "$<TARGET_FILE:neverd-worker>" "$<TARGET_FILE:neverd_shared>")
+          set_tests_properties(NeverDWorkerTHPPolicy PROPERTIES
+            TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "NeverDAllocatorTests")
+        endif()
       endif()
       # Generated C uses Clang C extensions, including scalar bit casts.
       # Match the native unit fixtures' frontend when the SDK is built by cl.

@@ -674,6 +674,12 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                 "APX atomic intrinsic has an invalid operand/output contract");
           continue;
         }
+        if (Id == Intrinsic::X86AMXState) {
+          if (!x86AmxShapeIsValid(x86AmxLowShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "invalid AMX architectural bank operation");
+          continue;
+        }
         if (isX86SgxIntrinsic(Id)) {
           if (!x86SgxShapeIsValid(Id, x86SgxLowShape(Op, TheArch)))
             llvm::report_fatal_error(

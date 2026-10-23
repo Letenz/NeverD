@@ -14,6 +14,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86AmxState.h"
 #include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
@@ -1964,6 +1965,15 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (E.IntrinsicId == Intrinsic::X86AMXState) {
+    std::vector<std::string> Arguments;
+    for (const auto &V : E.Operands) {
+      if (!V)
+        llvm::report_fatal_error("missing AMX operand");
+      Arguments.push_back(intrinsicOperandStr(*V));
+    }
+    return renderX86AmxExpression(Opts.TheArch, E, Arguments, typeToC(E.Type));
+  }
   if (isX86SgxIntrinsic(E.IntrinsicId))
     return renderX86SgxExpression(
         Opts.TheArch, E,
@@ -5457,6 +5467,10 @@ std::string HighCWriter::unknownVarUse(const HighExpr &E,
       !isEmittedParamName(RawName) &&
       !(CurrentFunc &&
         isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch))) {
+    const auto &TRI = getTargetRegInfo(Opts.TheArch);
+    if (Opts.TheArch == Arch::AArch64 && E.Var.Kind == MedVar::Reg &&
+        TRI.isLinkRegister(E.Var.RegOff) && E.Var.Size == TRI.PointerSize)
+      return "(uintptr_t)__builtin_return_address(0)";
     if (x87HelperFor(E) == X87CHelper::ControlWord)
       return useX87Helper(X87CHelper::ControlWord) + "()";
     return "(__builtin_trap(), 0 /* unknown register */)";
@@ -7292,7 +7306,8 @@ bool HighCWriter::isImageDataAddress(va_t Addr) const {
 std::optional<uint64_t> HighCWriter::foldReadonlyScalar(va_t Addr,
                                                         uint16_t Size) const {
   if (!isImageDataAddress(Addr) || !Opts.Image ||
-      DataSymbolBindings.count(Addr))
+      DataSymbolBindings.count(Addr) ||
+      Opts.Image->hasMachOAuthenticatedPointerIn(Addr, Size))
     return std::nullopt;
   const Segment *Seg = Opts.Image->getSegmentFor(Addr);
   if (!Seg || Seg->isWritable())

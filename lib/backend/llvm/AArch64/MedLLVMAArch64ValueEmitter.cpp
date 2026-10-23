@@ -15,8 +15,10 @@
 #include "neverd/lift/AArch64Regs.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-value"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Constants.h"
@@ -35,6 +37,51 @@ llvm::Value *
 MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                           llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
+
+  if (const auto Auth = aarch64PAuthOperation(IC)) {
+    if (!aarch64PAuthMedShapeIsValid(Op))
+      llvm::report_fatal_error(kAArch64PAuthMalformedOperation);
+    llvm::SmallVector<llvm::Value *, 2> Args;
+    llvm::SmallVector<llvm::Type *, 2> Types;
+    for (unsigned I = 1; I < Op.NumInputs; ++I) {
+      llvm::Value *V = getVar(Op.Inputs[I], Builder);
+      if (V->getType()->isPointerTy())
+        V = Builder.CreatePtrToInt(V, Builder.getInt64Ty());
+      Args.push_back(V);
+      Types.push_back(Builder.getInt64Ty());
+    }
+    // The tied output is the original pointer. In particular, AUT's poisoned
+    // result on failure is observable, unlike llvm.ptrauth.auth's trap
+    // contract.
+    auto *IA = llvm::InlineAsm::get(
+        llvm::FunctionType::get(Builder.getInt64Ty(), Types, false),
+        Auth->llvmAsm(), Auth->llvmConstraints(), /*hasSideEffects=*/true);
+    return Builder.CreateCall(IA, Args, kAArch64PAuthResultName);
+  }
+  if (IC == I::A64_AuthBranch) {
+    if (!aarch64PAuthMedShapeIsValid(Op))
+      llvm::report_fatal_error(kAArch64PAuthMalformedBranch);
+    auto integer = [&](const MedVar &V) {
+      llvm::Value *Value = getVar(V, Builder);
+      return Value->getType()->isPointerTy()
+                 ? Builder.CreatePtrToInt(Value, Builder.getInt64Ty())
+                 : Value;
+    };
+    auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
+        Mod, llvm::Intrinsic::ptrauth_auth);
+    auto *Authenticated = Builder.CreateCall(
+        Fn,
+        {integer(Op.Inputs[1]), Builder.getInt32(Op.Inputs[2].ConstVal),
+         integer(Op.Inputs[3])},
+        kAArch64PAuthTargetName);
+    auto *Use = llvm::InlineAsm::get(
+        llvm::FunctionType::get(Builder.getVoidTy(), {Builder.getInt64Ty()},
+                                false),
+        kAArch64AuthenticatedTargetUseAsm, kAArch64PAuthTargetUseConstraints,
+        true);
+    Builder.CreateCall(Use, {Authenticated});
+    return Authenticated;
+  }
 
   auto getObservableValue = [&](uint8_t InputIndex) -> llvm::Value * {
     if (InputIndex >= Op.NumInputs)
@@ -277,7 +324,9 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                    llvm::MaybeAlign(Op.Output.Size), Ordering);
   }
 
-  if (IC == I::A64_Pacga && Op.Output.Size > 0 && Op.NumInputs >= 3) {
+  if (IC == I::A64_Pacga) {
+    if (!aarch64PAuthMedShapeIsValid(Op))
+      llvm::report_fatal_error(kAArch64PAuthMalformedOperation);
     auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
     auto coerceI64 = [&](llvm::Value *Value) {
       if (Value->getType()->isPointerTy())
@@ -290,12 +339,8 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     llvm::Value *Discriminator = coerceI64(getVar(Op.Inputs[2], Builder));
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::ptrauth_sign_generic);
-    llvm::Value *Result =
-        Builder.CreateCall(Fn, {Value, Discriminator}, "pacga");
-    auto *OutTy = sizeToType(Op.Output.Size);
-    return Result->getType() == OutTy
-               ? Result
-               : Builder.CreateZExtOrTrunc(Result, OutTy);
+    return Builder.CreateCall(Fn, {Value, Discriminator},
+                              kAArch64PAuthResultName);
   }
 
   // Exclusive instructions can receive an ADRP+ADD-derived MedIR value for a

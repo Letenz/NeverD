@@ -140,7 +140,6 @@ inline constexpr int kOutputWindowMaximumLogLines = 20000;
 inline constexpr int kOutputWindowMaximumHistory = 200;
 
 // tools/neverd-gui/app/ProjectDatabase.cpp
-inline constexpr qint64 kProjectDatabaseChunkBytes = 8 * 1024 * 1024;
 
 // tools/neverd-gui/app/Session.cpp
 inline constexpr int kSessionCacheMiB = 256;

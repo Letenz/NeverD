@@ -1103,6 +1103,14 @@
         <source>Static register value...</source>
         <translation>暫存器靜態值...</translation>
     </message>
+    <message>
+        <source>Compare &amp;binaries…</source>
+        <translation>比較二進位檔案(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>Compare two binaries, inspect changes and review function correspondence</source>
+        <translation>比較兩個二進位檔案，檢查更改並審查函式對應關係</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1534,24 +1542,8 @@
         <translation>%1 不是 NeverD 資料庫。</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 不存在。</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 使用資料庫格式 %2，此版本的 NeverD 無法讀取它。</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 指定了無效的輸入檔案。</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
         <translation>無法寫入 %1：%2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>%1 中儲存的輸入檔案已損毀。</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1568,6 +1560,10 @@
     <message>
         <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
         <translation>復原的編輯尚未處理時，資料庫已發生變更。重新開啟前請保留工作副本。</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>此輸入檔名無法儲存在跨平台專案中。</translation>
     </message>
 </context>
 <context>
@@ -5394,6 +5390,2248 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
         <translation>沒有執行中的 NeverD 開啟了該連結的程式，最近開啟的檔案中也沒有它；請同時指定檔案：neverd-gui FILE LINK</translation>
+    </message>
+</context>
+<context>
+    <name>ComparisonDialog</name>
+    <message>
+        <source>Applying debug symbols</source>
+        <translation>正在應用除錯符號</translation>
+    </message>
+    <message>
+        <source>Checking ambiguous matches</source>
+        <translation>正在檢查歧義匹配</translation>
+    </message>
+    <message>
+        <source>Checking file identity</source>
+        <translation>正在檢查檔案標識</translation>
+    </message>
+    <message>
+        <source>Comparing binaries</source>
+        <translation>正在比較二進位檔案</translation>
+    </message>
+    <message>
+        <source>Comparing function context</source>
+        <translation>正在比較函式上下文</translation>
+    </message>
+    <message>
+        <source>Comparing function features</source>
+        <translation>正在比較函式特徵</translation>
+    </message>
+    <message>
+        <source>Discovering functions</source>
+        <translation>正在發現函式</translation>
+    </message>
+    <message>
+        <source>Finding function entries</source>
+        <translation>正在查詢函式入口</translation>
+    </message>
+    <message>
+        <source>Finding similar functions</source>
+        <translation>正在查詢相似函式</translation>
+    </message>
+    <message>
+        <source>Identifying file format</source>
+        <translation>正在識別檔案格式</translation>
+    </message>
+    <message>
+        <source>Input ready</source>
+        <translation>輸入已就緒</translation>
+    </message>
+    <message>
+        <source>Loading input</source>
+        <translation>正在載入輸入</translation>
+    </message>
+    <message>
+        <source>Matching exact features</source>
+        <translation>正在匹配精確特徵</translation>
+    </message>
+    <message>
+        <source>Measuring function changes</source>
+        <translation>正在衡量函式更改</translation>
+    </message>
+    <message>
+        <source>Preparing image metadata</source>
+        <translation>正在準備映像後設資料</translation>
+    </message>
+    <message>
+        <source>Preparing input bytes</source>
+        <translation>正在準備輸入位元組</translation>
+    </message>
+    <message>
+        <source>Primary: %1</source>
+        <translation>主要檔案：%1</translation>
+    </message>
+    <message>
+        <source>Reading debug symbols</source>
+        <translation>正在讀取除錯符號</translation>
+    </message>
+    <message>
+        <source>Reading file</source>
+        <translation>正在讀取檔案</translation>
+    </message>
+    <message>
+        <source>Reading format metadata</source>
+        <translation>正在讀取格式後設資料</translation>
+    </message>
+    <message>
+        <source>Reading instructions</source>
+        <translation>正在讀取指令</translation>
+    </message>
+    <message>
+        <source>Resolving calling convention</source>
+        <translation>正在解析呼叫約定</translation>
+    </message>
+    <message>
+        <source>Secondary: %1</source>
+        <translation>次要檔案：%1</translation>
+    </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>正在開啟已儲存的專案</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>正在讀取專案設定</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>正在解壓縮並驗證儲存的輸入</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>正在套用儲存的分析</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonChangesDialog</name>
+    <message>
+        <source>  %1 bytes · %2</source>
+        <translation>  %1 位元組 · %2</translation>
+    </message>
+    <message>
+        <source>%1 slice · %2 operations · %3 · gaps: %4</source>
+        <translation>%1 切片 · %2 個操作 · %3 · 缺口：%4</translation>
+    </message>
+    <message>
+        <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
+Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
+Boundaries: primary %12; secondary %13.</source>
+        <translation>%1 ↔ %2 · %3 · %4 條匹配 / %5 條保留觀察記錄
+原生指令行 %6 / %7；覆蓋率 %8；歧義關聯 %9。SSA：主要檔案 %10；次要檔案 %11。
+邊界：主要檔案 %12；次要檔案 %13。</translation>
+    </message>
+    <message>
+        <source>; indexing incomplete</source>
+        <translation>；索引不完整</translation>
+    </message>
+    <message>
+        <source>All local changes</source>
+        <translation>全部區域性更改</translation>
+    </message>
+    <message>
+        <source>Association: %1; native row: %2 (%3)</source>
+        <translation>關聯：%1；原生指令行：%2（%3）</translation>
+    </message>
+    <message>
+        <source>Call argument dependencies</source>
+        <translation>呼叫引數依賴</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>呼叫路徑…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Change context filter</source>
+        <translation>更改上下文篩選</translation>
+    </message>
+    <message>
+        <source>Change review — NeverD</source>
+        <translation>更改審查 — NeverD</translation>
+    </message>
+    <message>
+        <source>Changes: %1</source>
+        <translation>更改：%1</translation>
+    </message>
+    <message>
+        <source>Choose an accepted function pair to review its changes.</source>
+        <translation>選擇已接受的函式配對以審查更改。</translation>
+    </message>
+    <message>
+        <source>Comparison changed. Choose a function pair for a fresh review.</source>
+        <translation>比較已更改。請選擇函式配對以重新審查。</translation>
+    </message>
+    <message>
+        <source>Context: %1</source>
+        <translation>上下文：%1</translation>
+    </message>
+    <message>
+        <source>Dependency slice</source>
+        <translation>依賴切片</translation>
+    </message>
+    <message>
+        <source>Evidence input</source>
+        <translation>證據輸入</translation>
+    </message>
+    <message>
+        <source>Inspect function</source>
+        <translation>檢查函式</translation>
+    </message>
+    <message>
+        <source>Memory write dependencies</source>
+        <translation>記憶體寫入依賴</translation>
+    </message>
+    <message>
+        <source>Native evidence only; no unique SSA association.</source>
+        <translation>僅有原生指令證據；沒有唯一 SSA 關聯。</translation>
+    </message>
+    <message>
+        <source>No original instruction on this side</source>
+        <translation>此側沒有原始指令</translation>
+    </message>
+    <message>
+        <source>Operation gaps: %1</source>
+        <translation>操作缺口：%1</translation>
+    </message>
+    <message>
+        <source>Original evidence</source>
+        <translation>原始證據</translation>
+    </message>
+    <message>
+        <source>Predicate dependencies</source>
+        <translation>謂詞依賴</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>主輸入</translation>
+    </message>
+    <message>
+        <source>Priority orders review leads; it is not severity or confidence. Context is an observed dependency. Local operands and unique direct synthetic operands are compared; deeper expressions, security effects and fix presence remain unassessed.</source>
+        <translation>優先順序僅對審查線索排序，不代表嚴重性或信賴度。上下文是已觀察的依賴。比較區域運算元和唯一的直接合成運算元；更深層的表示式、安全效果及修復存在性仍未評估。</translation>
+    </message>
+    <message>
+        <source>Refresh review</source>
+        <translation>重新整理審查</translation>
+    </message>
+    <message>
+        <source>Return dependencies</source>
+        <translation>回傳值依賴</translation>
+    </message>
+    <message>
+        <source>Reviewing local changes…</source>
+        <translation>正在審查區域性更改…</translation>
+    </message>
+    <message>
+        <source>SSA node %1: %2, result %3 bytes; native anchor node %4</source>
+        <translation>SSA 節點 %1：%2，結果 %3 位元組；原生指令錨點節點 %4</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>次輸入</translation>
+    </message>
+    <message>
+        <source>Select a change, then trace its inputs or uses.</source>
+        <translation>選擇更改，然後追蹤其輸入或使用位置。</translation>
+    </message>
+    <message>
+        <source>Synthetic operation: linked by a direct operand; its address is not an original instruction.</source>
+        <translation>合成操作：透過直接運算元關聯；其地址不是原始指令地址。</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>追蹤輸入</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>追蹤使用位置</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>正在追蹤 %1 依賴…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>完整</translation>
+    </message>
+    <message>
+        <source>constant %1</source>
+        <translation>常量 %1</translation>
+    </message>
+    <message>
+        <source>node %1</source>
+        <translation>節點 %1</translation>
+    </message>
+    <message>
+        <source>none recorded</source>
+        <translation>無記錄</translation>
+    </message>
+    <message>
+        <source>parameter</source>
+        <translation>引數</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>部分</translation>
+    </message>
+    <message>
+        <source>unknown input</source>
+        <translation>未知輸入</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonCounterpartDialog</name>
+    <message>
+        <source>
+Removes the candidate&apos;s existing pair %1 ↔ %2 · %3.</source>
+        <translation>
+移除候選函式現有的配對 %1 ↔ %2 · %3。</translation>
+    </message>
+    <message>
+        <source>
+Removes the existing pair %1 ↔ %2.</source>
+        <translation>
+移除現有配對 %1 ↔ %2。</translation>
+    </message>
+    <message>
+        <source>
+This function has incomplete analysis.</source>
+        <translation>
+此函式的分析尚不完整。</translation>
+    </message>
+    <message>
+        <source>
+This records your chosen correspondence. Undo restores previous pairs.</source>
+        <translation>
+這將記錄您選擇的對應關係。撤銷可恢復先前的配對。</translation>
+    </message>
+    <message>
+        <source>%1 functions · Select a row to review its current pairing.</source>
+        <translation>%1 個函式 · 選擇一行以審查其當前配對。</translation>
+    </message>
+    <message>
+        <source>%1 is already paired with this function.</source>
+        <translation>%1 已與此函式配對。</translation>
+    </message>
+    <message>
+        <source>%1 of %2 candidates · These are hypotheses; choose using your analysis.
+%3</source>
+        <translation>%1 / %2 個候選項 · 這些僅是假設，請結合您的分析選擇。
+%3</translation>
+    </message>
+    <message>
+        <source>Address: high to low</source>
+        <translation>地址：從高到低</translation>
+    </message>
+    <message>
+        <source>Address: low to high</source>
+        <translation>地址：從低到高</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>全部函式</translation>
+    </message>
+    <message>
+        <source>Ambiguity candidates</source>
+        <translation>歧義候選項</translation>
+    </message>
+    <message>
+        <source>Candidate scope</source>
+        <translation>候選範圍</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2 · %3.</source>
+        <translation>為 %2 · %3 選擇一個%1對應函式。</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2.</source>
+        <translation>為 %2 選擇一個%1對應函式。</translation>
+    </message>
+    <message>
+        <source>Choose counterpart — NeverD</source>
+        <translation>選擇對應函式 — NeverD</translation>
+    </message>
+    <message>
+        <source>Could not load candidates. %1</source>
+        <translation>無法載入候選項。%1</translation>
+    </message>
+    <message>
+        <source>Counterpart functions</source>
+        <translation>對應函式列表</translation>
+    </message>
+    <message>
+        <source>Current counterpart: %1. Select a replacement; Undo restores previous pairs.</source>
+        <translation>當前對應函式：%1。選擇替代項；撤銷可恢復先前的配對。</translation>
+    </message>
+    <message>
+        <source>Loading functions…</source>
+        <translation>正在載入函式…</translation>
+    </message>
+    <message>
+        <source>Name: A to Z</source>
+        <translation>名稱：A 到 Z</translation>
+    </message>
+    <message>
+        <source>Name: Z to A</source>
+        <translation>名稱：Z 到 A</translation>
+    </message>
+    <message>
+        <source>No ambiguity candidates match. Clear the search or choose All functions.</source>
+        <translation>沒有匹配的歧義候選項。請清空搜尋或選擇「全部函式」。</translation>
+    </message>
+    <message>
+        <source>No functions match. Try another name or address.</source>
+        <translation>沒有匹配的函式。請嘗試其他名稱或地址。</translation>
+    </message>
+    <message>
+        <source>Pair %1 with %2 · %3.</source>
+        <translation>將 %1 與 %2 · %3 配對。</translation>
+    </message>
+    <message>
+        <source>Pair functions</source>
+        <translation>配對函式</translation>
+    </message>
+    <message>
+        <source>Search by function name or hexadecimal address</source>
+        <translation>按函式名稱或十六進位制地址搜尋</translation>
+    </message>
+    <message>
+        <source>Search counterpart functions</source>
+        <translation>搜尋對應函式</translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation>正在搜尋…</translation>
+    </message>
+    <message>
+        <source>Select a function to pair. Browsing leaves your comparison unchanged.</source>
+        <translation>選擇要配對的函式。瀏覽不會更改您的比較。</translation>
+    </message>
+    <message>
+        <source>Size: large to small</source>
+        <translation>大小：從大到小</translation>
+    </message>
+    <message>
+        <source>Size: small to large</source>
+        <translation>大小：從小到大</translation>
+    </message>
+    <message>
+        <source>Sort functions</source>
+        <translation>函式排序</translation>
+    </message>
+    <message>
+        <source>The comparison changed. Close this window and choose the function again.</source>
+        <translation>比較已更改。請關閉此視窗並重新選擇函式。</translation>
+    </message>
+    <message>
+        <source>The comparison worker is unavailable. Close this window and retry the comparison.</source>
+        <translation>比較工作程序不可用。請關閉此視窗並重試比較。</translation>
+    </message>
+    <message>
+        <source>This function has no retained ambiguity group. Choose All functions to select a counterpart.</source>
+        <translation>此函式沒有保留的歧義組。請選擇「全部函式」以選擇對應函式。</translation>
+    </message>
+    <message>
+        <source>primary</source>
+        <translation>主要檔案</translation>
+    </message>
+    <message>
+        <source>secondary</source>
+        <translation>次要檔案</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonDialog</name>
+    <message>
+        <source>
+
+Primary identity: %1
+Secondary identity: %2
+
+Structural correspondence does not establish semantic equivalence or patch presence.</source>
+        <translation>
+
+主要檔案標識：%1
+次要檔案標識：%2
+
+結構對應關係不能證明語義等價或修補程式存在。</translation>
+    </message>
+    <message>
+        <source> (difference %1)</source>
+        <translation> （差異 %1）</translation>
+    </message>
+    <message>
+        <source> Function discovery is partial.</source>
+        <translation> 函式發現尚不完整。</translation>
+    </message>
+    <message>
+        <source> image base</source>
+        <translation> 映像基址</translation>
+    </message>
+    <message>
+        <source> input format</source>
+        <translation> 輸入格式</translation>
+    </message>
+    <message>
+        <source> s</source>
+        <translation> 秒</translation>
+    </message>
+    <message>
+        <source>%1  %2 / %3</source>
+        <translation>%1  %2 / %3</translation>
+    </message>
+    <message>
+        <source>%1 %2  ↔  %3 %4</source>
+        <translation>%1 %2  ↔  %3 %4</translation>
+    </message>
+    <message>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
+        <translation>%1 個已匹配 · %2 個已更改 · %3 個有歧義 · %4 / %5 個未匹配 · %6 / %7 個不完整</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>全部函式</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>有歧義</translation>
+    </message>
+    <message>
+        <source>Analyst review…</source>
+        <translation>分析員審查…</translation>
+    </message>
+    <message>
+        <source>Auto format</source>
+        <translation>自動識別格式</translation>
+    </message>
+    <message>
+        <source>Binary comparison</source>
+        <translation>二進位比較</translation>
+    </message>
+    <message>
+        <source>Bounded native instruction-run analysis for split, merge, inline and clone hypotheses. This does not validate behavior.</source>
+        <translation>針對拆分、合併、行內展開和克隆假設的有界原生指令序列分析。這不會驗證行為。</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>瀏覽…</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>呼叫路徑…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Cancellation requested — waiting for computation to stop…</source>
+        <translation>已請求取消 — 正在等待計算停止…</translation>
+    </message>
+    <message>
+        <source>Capture bounded SSA observations in address order. Pipeline cancellation is checked between functions. See Dependencies for omitted and unsupported functions.</source>
+        <translation>按地址順序收集有界 SSA 觀察記錄。流水線在函式之間檢查取消請求。遺漏和不支援的函式可在「依賴」中檢視。</translation>
+    </message>
+    <message>
+        <source>Change review…</source>
+        <translation>更改審查…</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>已更改</translation>
+    </message>
+    <message>
+        <source>Compare</source>
+        <translation>比較</translation>
+    </message>
+    <message>
+        <source>Compare two native x86/x64 inputs. Matching scores are heuristic.</source>
+        <translation>比較兩個原生 x86/x64 輸入。匹配評分是啟發式結果。</translation>
+    </message>
+    <message>
+        <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
+        <translation>比較完成。評分是啟發式結果；請檢查覆蓋情況和證據。</translation>
+    </message>
+    <message>
+        <source>Comparison deadline</source>
+        <translation>比較時限</translation>
+    </message>
+    <message>
+        <source>Computation stopped: %1. Partial results retained.</source>
+        <translation>計算已停止：%1。已保留部分結果。</translation>
+    </message>
+    <message>
+        <source>Confirm pair</source>
+        <translation>確認配對</translation>
+    </message>
+    <message>
+        <source>Control flow</source>
+        <translation>控制流程</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>對應函式</translation>
+    </message>
+    <message>
+        <source>Deadline</source>
+        <translation>時限</translation>
+    </message>
+    <message>
+        <source>Dependencies…</source>
+        <translation>依賴…</translation>
+    </message>
+    <message>
+        <source>Dependency evidence</source>
+        <translation>依賴證據</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>反組譯</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>證據</translation>
+    </message>
+    <message>
+        <source>Filter by name or address</source>
+        <translation>按名稱或地址篩選</translation>
+    </message>
+    <message>
+        <source>Filter functions</source>
+        <translation>篩選函式</translation>
+    </message>
+    <message>
+        <source>Fit graphs</source>
+        <translation>適應圖形</translation>
+    </message>
+    <message>
+        <source>Function difference %1. No completed instruction comparison is available. Use Retry difference to recompute.
+
+</source>
+        <translation>函式差異 %1。沒有已完成的指令比較。請使用「重試差異計算」重新計算。
+
+</translation>
+    </message>
+    <message>
+        <source>Function difference stopped. Use Retry difference to recompute; no completed instruction comparison is shown.</source>
+        <translation>函式差異計算已停止。請使用「重試差異計算」重新計算；當前未顯示已完成的指令比較。</translation>
+    </message>
+    <message>
+        <source>Function state</source>
+        <translation>函式狀態</translation>
+    </message>
+    <message>
+        <source>Functions per input</source>
+        <translation>每個輸入的函式數</translation>
+    </message>
+    <message>
+        <source>Image base</source>
+        <translation>映像基址</translation>
+    </message>
+    <message>
+        <source>Index and verify finite dependency neighborhoods across functions. Includes dependency evidence.</source>
+        <translation>跨函式索引並驗證有限依賴鄰域。包含依賴證據。</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload before continuing review.</source>
+        <translation>輸入已更改。請重新載入後再繼續審查。</translation>
+    </message>
+    <message>
+        <source>Inspect overlapping region and transformation hypotheses. Enable analysis in Settings before comparing.</source>
+        <translation>檢查重疊區域和變換假設。比較前請在設定中啟用分析。</translation>
+    </message>
+    <message>
+        <source>Inventory side</source>
+        <translation>函式清單側</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>正在載入 %1…</translation>
+    </message>
+    <message>
+        <source>Loading comparison inputs…</source>
+        <translation>正在載入比較輸入…</translation>
+    </message>
+    <message>
+        <source>Match: %1
+%2
+
+Similarity: %3
+Heuristic confidence: %4%
+Changes: %5
+Analyst confirmed: %6
+Coverage: %7</source>
+        <translation>匹配：%1
+%2
+
+相似度：%3
+啟發式信賴度：%4%
+更改：%5
+分析員已確認：%6
+覆蓋率：%7</translation>
+    </message>
+    <message>
+        <source>Matched</source>
+        <translation>已匹配</translation>
+    </message>
+    <message>
+        <source>Matching evidence appears here.</source>
+        <translation>匹配證據將顯示在此處。</translation>
+    </message>
+    <message>
+        <source>Maximum dependency functions per input</source>
+        <translation>每個輸入最多分析的依賴函式數</translation>
+    </message>
+    <message>
+        <source>Minimum similarity</source>
+        <translation>最低相似度</translation>
+    </message>
+    <message>
+        <source>Native instruction regions…</source>
+        <translation>原生指令區域…</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD 比較 (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff);;JSON (*.json)</source>
+        <translation>NeverD 比較 (*.nddiff);;JSON (*.json)</translation>
+    </message>
+    <message>
+        <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
+        <translation>沒有已接受的對應函式。請檢查歧義候選項或手動選擇配對。</translation>
+    </message>
+    <message>
+        <source>No deadline</source>
+        <translation>無時限</translation>
+    </message>
+    <message>
+        <source>Pair with…</source>
+        <translation>配對到…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主要檔案</translation>
+    </message>
+    <message>
+        <source>Pseudocode</source>
+        <translation>虛擬碼</translation>
+    </message>
+    <message>
+        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
+        <translation>此解碼配置不提供虛擬碼。仍可在「反組譯」中檢視原始指令、運算元和位元組。</translation>
+    </message>
+    <message>
+        <source>Raw x64</source>
+        <translation>原始 x64</translation>
+    </message>
+    <message>
+        <source>Raw x86</source>
+        <translation>原始 x86</translation>
+    </message>
+    <message>
+        <source>Ready to compare two native binaries.</source>
+        <translation>已準備好比較兩個原生二進位檔案。</translation>
+    </message>
+    <message>
+        <source>Recompute a cancelled or timed-out function difference.</source>
+        <translation>重新計算已取消或超時的函式差異。</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>重做</translation>
+    </message>
+    <message>
+        <source>Region hypotheses</source>
+        <translation>區域假設</translation>
+    </message>
+    <message>
+        <source>Regions…</source>
+        <translation>區域…</translation>
+    </message>
+    <message>
+        <source>Reopen comparison</source>
+        <translation>重新開啟比較</translation>
+    </message>
+    <message>
+        <source>Reopen…</source>
+        <translation>重新開啟…</translation>
+    </message>
+    <message>
+        <source>Retry difference</source>
+        <translation>重試差異計算</translation>
+    </message>
+    <message>
+        <source>SSA dependency regions…</source>
+        <translation>SSA 依賴區域…</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses</source>
+        <translation>SSA 區域假設</translation>
+    </message>
+    <message>
+        <source>Save / export…</source>
+        <translation>儲存 / 匯出…</translation>
+    </message>
+    <message>
+        <source>Save comparison</source>
+        <translation>儲存比較</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>已儲存 %1</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>次要檔案</translation>
+    </message>
+    <message>
+        <source>Select %1 input</source>
+        <translation>選擇%1輸入</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its counterpart.</source>
+        <translation>選擇函式以檢查其對應函式。</translation>
+    </message>
+    <message>
+        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
+        <translation>選擇基本區塊以跟蹤其對應項。Ctrl+滾輪可縮放。</translation>
+    </message>
+    <message>
+        <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
+        <translation>選擇兩個輸入及其原始設定，然後重新開啟已儲存的比較。將檢查輸入雜湊和分析修訂版本。</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Starting comparison worker…</source>
+        <translation>正在啟動比較工作程序…</translation>
+    </message>
+    <message>
+        <source>Trace observed callers, callees and entry points of this function.</source>
+        <translation>追蹤已觀察到的此函式的呼叫方、被呼叫函式和入口點。</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>撤銷</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>取消匹配</translation>
+    </message>
+    <message>
+        <source>Unmatched</source>
+        <translation>未匹配</translation>
+    </message>
+    <message>
+        <source>Use symbol names</source>
+        <translation>使用符號名稱</translation>
+    </message>
+    <message>
+        <source>Validate returns…</source>
+        <translation>驗證回傳值…</translation>
+    </message>
+    <message>
+        <source>decoded bodies complete</source>
+        <translation>已解碼函式體完整</translation>
+    </message>
+    <message>
+        <source>identity only; no bodies available</source>
+        <translation>僅標識；沒有可用函式體</translation>
+    </message>
+    <message>
+        <source>incomplete</source>
+        <translation>不完整</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>否</translation>
+    </message>
+    <message>
+        <source>not applicable</source>
+        <translation>不適用</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>是</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>新二進位檔案或已儲存的專案</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>原二進位檔案或已儲存的專案</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>選擇二進位檔案或已儲存的 NDDB 專案。專案會使用儲存的載入設定，並建立獨立的工作副本。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonFlowDialog</name>
+    <message>
+        <source>%1 slice · %2 nodes · %3
+Gaps: %4</source>
+        <translation>%1 切片 · %2 個節點 · %3
+缺口：%4</translation>
+    </message>
+    <message>
+        <source>%1 · %2
+%3</source>
+        <translation>%1 · %2
+%3</translation>
+    </message>
+    <message>
+        <source>%1 · %2 available / %3 processed / %4 eligible functions · %5 unprocessed
+%6 unsupported, %7 resource limited, %8 failed. Collection state: %9.</source>
+        <translation>%1 · %2 個可用 / %3 個已處理 / %4 個符合條件的函式 · %5 個未處理
+%6 個不支援，%7 個受資源限制，%8 個失敗。收集狀態：%9。</translation>
+    </message>
+    <message>
+        <source>%1 · %2 · %3 SSA operations
+Select an operation to follow dependencies. Synthetic operations have block provenance.</source>
+        <translation>%1 · %2 · %3 個 SSA 操作
+選擇操作以追蹤依賴。合成操作具有基本區塊來源資訊。</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Dependency evidence — NeverD</source>
+        <translation>依賴證據 — NeverD</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings, then compare the inputs.</source>
+        <translation>在比較設定中啟用依賴證據，然後比較輸入。</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings.</source>
+        <translation>在比較設定中啟用依賴證據。</translation>
+    </message>
+    <message>
+        <source>Include control dependencies</source>
+        <translation>包括控制依賴</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>檢查原始函式</translation>
+    </message>
+    <message>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
+        <translation>已觀察的 SSA 依賴。呼叫、別名和未解析控制流程仍明確列為缺口。未執行語義驗證。</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>主輸入</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>次輸入</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its SSA operations.</source>
+        <translation>選擇函式以檢查其 SSA 操作。</translation>
+    </message>
+    <message>
+        <source>Select an operation, then trace its inputs or uses.</source>
+        <translation>選擇操作，然後追蹤其輸入或使用位置。</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>追蹤輸入</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>追蹤使用位置</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>正在追蹤 %1 依賴…</translation>
+    </message>
+    <message>
+        <source>none observed within this model</source>
+        <translation>此模型內未觀察到</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonGraph</name>
+    <message>
+        <source>%1 control-flow graph</source>
+        <translation>%1 控制流程圖</translation>
+    </message>
+    <message>
+        <source>Control-flow graph</source>
+        <translation>控制流程圖</translation>
+    </message>
+    <message>
+        <source>Incomplete control flow</source>
+        <translation>控制流程不完整</translation>
+    </message>
+    <message>
+        <source>Laying out control flow…</source>
+        <translation>正在佈局控制流程…</translation>
+    </message>
+    <message>
+        <source>No counterpart</source>
+        <translation>無對應函式</translation>
+    </message>
+    <message>
+        <source>Viewport limit reached — zoom in to inspect remaining blocks</source>
+        <translation>已達到視口限制 — 請放大以檢查其餘基本區塊</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonImpactDialog</name>
+    <message>
+        <source>%1 qualified call contracts in %2 retained sites; inspection %3. Scope: calls in reached functions, including unresolved and frontier targets. Native coverage remains independent. Select a row and open Selected call for roles and assumptions.</source>
+        <translation>%2 個保留呼叫點中有 %1 個滿足條件的呼叫契約；檢查狀態：%3。範圍：已到達函式內的呼叫，包括未解析目標和邊界目標。原生指令覆蓋情況獨立統計。選擇一行並開啟「選定呼叫」，可檢視角色和假設。</translation>
+    </message>
+    <message>
+        <source>%1 · %2 functions · %3 entries/exports · %4 call sites · %5 unresolved or coverage boundaries · %6 frontier sites
+Indexed %7 / %8 functions; %9; %10.</source>
+        <translation>%1 · %2 個函式 · %3 個入口/匯出項 · %4 個呼叫點 · %5 個未解析點或覆蓋邊界 · %6 個前沿呼叫點
+已索引 %7 / %8 個函式；%9；%10。</translation>
+    </message>
+    <message>
+        <source>%1: argument %2</source>
+        <translation>%1：引數 %2</translation>
+    </message>
+    <message>
+        <source>All reached functions</source>
+        <translation>全部已到達函式</translation>
+    </message>
+    <message>
+        <source>All traversed call sites</source>
+        <translation>全部已遍歷呼叫點</translation>
+    </message>
+    <message>
+        <source>Analysis limit reached</source>
+        <translation>已達到分析限制</translation>
+    </message>
+    <message>
+        <source>Assumption: the imported function resolves to the declared built-in call contract.</source>
+        <translation>假設：匯入函式解析為所宣告的內建呼叫契約。</translation>
+    </message>
+    <message>
+        <source>Bytes: %1</source>
+        <translation>位元組：%1</translation>
+    </message>
+    <message>
+        <source>Call contracts in reached functions</source>
+        <translation>已到達函式中的呼叫契約</translation>
+    </message>
+    <message>
+        <source>Call paths and possible impact — NeverD</source>
+        <translation>呼叫路徑與可能影響 — NeverD</translation>
+    </message>
+    <message>
+        <source>Call sites</source>
+        <translation>呼叫點</translation>
+    </message>
+    <message>
+        <source>Caller: %1 (%2)</source>
+        <translation>呼叫方：%1（%2）</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Capacity</source>
+        <translation>容量</translation>
+    </message>
+    <message>
+        <source>Choose a starting function, then trace its callers or callees.</source>
+        <translation>選擇起始函式，然後追蹤其呼叫方或被呼叫函式。</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>完整</translation>
+    </message>
+    <message>
+        <source>Destination</source>
+        <translation>目標</translation>
+    </message>
+    <message>
+        <source>Format</source>
+        <translation>格式</translation>
+    </message>
+    <message>
+        <source>Function entry, e.g. 0x401000</source>
+        <translation>函式入口，例如 0x401000</translation>
+    </message>
+    <message>
+        <source>Global scanned scope, including functions with no known path to the starting function. Unknown callers may be missing.</source>
+        <translation>全域性已掃描範圍，包括沒有已知路徑通向起始函式的函式。可能遺漏未知呼叫方。</translation>
+    </message>
+    <message>
+        <source>Input buffer</source>
+        <translation>輸入緩衝區</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>檢查原始函式</translation>
+    </message>
+    <message>
+        <source>Known edges beyond the depth or function limit</source>
+        <translation>超出深度或函式數限制的已知邊</translation>
+    </message>
+    <message>
+        <source>Known targets omitted by the depth or function limit. Work or index stops can leave further targets unobserved.</source>
+        <translation>因深度或函式數限制而遺漏的已知目標。工作量或索引中止還可能導致更多目標未被觀察到。</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>長度</translation>
+    </message>
+    <message>
+        <source>Maximum depth</source>
+        <translation>最大深度</translation>
+    </message>
+    <message>
+        <source>Native-associated SSA node: %1</source>
+        <translation>與原生指令關聯的 SSA 節點：%1</translation>
+    </message>
+    <message>
+        <source>No parameter/return propagation, alias, capacity, path-safety or fix-presence proof. Use the original function and SSA dependency views to continue review.</source>
+        <translation>未證明引數/回傳值傳播、別名、容量、路徑安全性或修復存在性。請使用原始函式和 SSA 依賴檢視繼續審查。</translation>
+    </message>
+    <message>
+        <source>Object / handle</source>
+        <translation>物件 / 控制代碼</translation>
+    </message>
+    <message>
+        <source>Observed call paths provide possible impact context. Path feasibility, parameter and return binding, memory aliases and external callers are not modeled. Semantic validation has not been performed.</source>
+        <translation>已觀察的呼叫路徑提供可能的影響上下文。未建模路徑可行性、引數和回傳值繫結、記憶體別名及外部呼叫方。未執行語義驗證。</translation>
+    </message>
+    <message>
+        <source>Observed program entries and exports</source>
+        <translation>已觀察的程式入口和匯出項</translation>
+    </message>
+    <message>
+        <source>Observed relations include admitted tail transfers and resolved imports. Double-click to inspect the caller.</source>
+        <translation>已觀察的關係包括已納入的尾部轉移和已解析匯入。雙擊可檢查呼叫方。</translation>
+    </message>
+    <message>
+        <source>One shortest observed witness; alternate paths remain in all call sites. Seeds have an empty path.</source>
+        <translation>一條最短的已觀察見證路徑；其他路徑仍保留在全部呼叫點中。種子的路徑為空。</translation>
+    </message>
+    <message>
+        <source>Original instruction: %1  %2 %3</source>
+        <translation>原始指令：%1  %2 %3</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>主輸入</translation>
+    </message>
+    <message>
+        <source>Recovered arguments: %1</source>
+        <translation>恢復的引數：%1</translation>
+    </message>
+    <message>
+        <source>Release can fail; successful release has not been proved.</source>
+        <translation>釋放可能失敗；尚未證明釋放成功。</translation>
+    </message>
+    <message>
+        <source>Retained SSA boundaries: %1</source>
+        <translation>保留的 SSA 邊界：%1</translation>
+    </message>
+    <message>
+        <source>Reviewing exact import identities and recovered call arguments. Collect SSA dependencies when starting the comparison to qualify contracts. Missing or ambiguous evidence remains visible.</source>
+        <translation>正在審查精確匯入識別資訊和恢復的呼叫引數。啟動比較時收集 SSA 依賴以確認契約是否滿足條件。缺失或有歧義的證據將保持可見。</translation>
+    </message>
+    <message>
+        <source>Roles (zero-based): %1</source>
+        <translation>角色（從零開始編號）：%1</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>次輸入</translation>
+    </message>
+    <message>
+        <source>Selected call</source>
+        <translation>選定呼叫</translation>
+    </message>
+    <message>
+        <source>Shortest witness for the selected function</source>
+        <translation>選定函式的最短見證路徑</translation>
+    </message>
+    <message>
+        <source>Source</source>
+        <translation>來源</translation>
+    </message>
+    <message>
+        <source>Starting function entry</source>
+        <translation>起始函式入口</translation>
+    </message>
+    <message>
+        <source>Target: %1 (%2)</source>
+        <translation>目標：%1（%2）</translation>
+    </message>
+    <message>
+        <source>The contract accepts unbounded input; destination capacity has not been assessed.</source>
+        <translation>此契約接受無界輸入；尚未評估目標容量。</translation>
+    </message>
+    <message>
+        <source>Time limit reached</source>
+        <translation>已達到時限</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>追蹤</translation>
+    </message>
+    <message>
+        <source>Trace callees</source>
+        <translation>追蹤被呼叫函式</translation>
+    </message>
+    <message>
+        <source>Trace callers</source>
+        <translation>追蹤呼叫方</translation>
+    </message>
+    <message>
+        <source>Tracing observed call paths…</source>
+        <translation>正在追蹤已觀察的呼叫路徑…</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>未知間接呼叫</translation>
+    </message>
+    <message>
+        <source>Unresolved sites and coverage gaps across the input</source>
+        <translation>輸入範圍內的未解析呼叫點和覆蓋缺口</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>完整</translation>
+    </message>
+    <message>
+        <source>index scan complete</source>
+        <translation>索引掃描完整</translation>
+    </message>
+    <message>
+        <source>index scan partial</source>
+        <translation>索引掃描不完整</translation>
+    </message>
+    <message>
+        <source>input discovery complete</source>
+        <translation>輸入發現完整</translation>
+    </message>
+    <message>
+        <source>input discovery partial</source>
+        <translation>輸入發現不完整</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonModel</name>
+    <message>
+        <source> @b%1</source>
+        <translation> @b%1</translation>
+    </message>
+    <message>
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>%1 B</source>
+        <translation>%1 B</translation>
+    </message>
+    <message>
+        <source>Accepted pair</source>
+        <translation>已接受的配對</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>位址</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>有歧義</translation>
+    </message>
+    <message>
+        <source>Ambiguous SSA call association</source>
+        <translation>SSA 呼叫關聯有歧義</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>評估</translation>
+    </message>
+    <message>
+        <source>Association</source>
+        <translation>關聯</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>作者</translation>
+    </message>
+    <message>
+        <source>Availability</source>
+        <translation>可用性</translation>
+    </message>
+    <message>
+        <source>Binding / history</source>
+        <translation>繫結 / 歷史</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original operation %2
+%3</source>
+        <translation>基本區塊 %1 · 原始操作 %2
+%3</translation>
+    </message>
+    <message>
+        <source>Blocks</source>
+        <translation>基本區塊</translation>
+    </message>
+    <message>
+        <source>Boundaries</source>
+        <translation>邊界</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>位元組</translation>
+    </message>
+    <message>
+        <source>Callee</source>
+        <translation>被呼叫函式</translation>
+    </message>
+    <message>
+        <source>Caller</source>
+        <translation>呼叫方</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>案例</translation>
+    </message>
+    <message>
+        <source>Change</source>
+        <translation>更改</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>已更改</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>信賴度</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>上下文</translation>
+    </message>
+    <message>
+        <source>Contract / gaps</source>
+        <translation>契約 / 缺口</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>控制</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>對應函式</translation>
+    </message>
+    <message>
+        <source>Coverage A / B</source>
+        <translation>覆蓋率 A / B</translation>
+    </message>
+    <message>
+        <source>Current counterpart</source>
+        <translation>當前對應函式</translation>
+    </message>
+    <message>
+        <source>Data + control</source>
+        <translation>資料 + 控制</translation>
+    </message>
+    <message>
+        <source>Depth</source>
+        <translation>深度</translation>
+    </message>
+    <message>
+        <source>Direct callee unavailable</source>
+        <translation>直接被呼叫函式不可用</translation>
+    </message>
+    <message>
+        <source>Earlier</source>
+        <translation>較早</translation>
+    </message>
+    <message>
+        <source>Entry evidence</source>
+        <translation>入口證據</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>事件</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>證據</translation>
+    </message>
+    <message>
+        <source>Exception flow</source>
+        <translation>異常流</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>匯出</translation>
+    </message>
+    <message>
+        <source>External function body</source>
+        <translation>外部函式體</translation>
+    </message>
+    <message>
+        <source>Finite SSA correspondence; open effects and control require review.
+%1</source>
+        <translation>有限 SSA 對應關係；未驗證的效果和控制流程需要審查。
+%1</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Function entry</source>
+        <translation>函式入口</translation>
+    </message>
+    <message>
+        <source>Gaps</source>
+        <translation>缺口</translation>
+    </message>
+    <message>
+        <source>Heuristic confidence; structural similarity does not prove semantic equivalence.</source>
+        <translation>啟發式信賴度；結構相似性不能證明語義等價。</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>假設</translation>
+    </message>
+    <message>
+        <source>Identity only</source>
+        <translation>僅標識</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>不完整</translation>
+    </message>
+    <message>
+        <source>Incomplete discovery</source>
+        <translation>發現不完整</translation>
+    </message>
+    <message>
+        <source>Incomplete native coverage</source>
+        <translation>原生指令覆蓋不完整</translation>
+    </message>
+    <message>
+        <source>Inputs</source>
+        <translation>輸入</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>指令</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>指令</translation>
+    </message>
+    <message>
+        <source>Internal callee; review its body</source>
+        <translation>內部被呼叫函式；請審查其函式體</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>最新</translation>
+    </message>
+    <message>
+        <source>Loading…</source>
+        <translation>正在載入…</translation>
+    </message>
+    <message>
+        <source>No applicable call contract</source>
+        <translation>沒有適用的呼叫契約</translation>
+    </message>
+    <message>
+        <source>No native-associated SSA call</source>
+        <translation>沒有與原生指令關聯的 SSA 呼叫</translation>
+    </message>
+    <message>
+        <source>No qualified import identity</source>
+        <translation>沒有滿足條件的匯入識別資訊</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>節點</translation>
+    </message>
+    <message>
+        <source>Node pairs</source>
+        <translation>節點配對</translation>
+    </message>
+    <message>
+        <source>Nodes</source>
+        <translation>節點</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>無</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>備註</translation>
+    </message>
+    <message>
+        <source>Observed SSA</source>
+        <translation>已觀察 SSA</translation>
+    </message>
+    <message>
+        <source>Observed call paths; feasibility and data effects remain unverified.
+%1</source>
+        <translation>已觀察的呼叫路徑；可行性和資料效果仍未驗證。
+%1</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>操作</translation>
+    </message>
+    <message>
+        <source>Original address</source>
+        <translation>原始地址</translation>
+    </message>
+    <message>
+        <source>Pair inactive</source>
+        <translation>配對未啟用</translation>
+    </message>
+    <message>
+        <source>Paired</source>
+        <translation>已配對</translation>
+    </message>
+    <message>
+        <source>Pairing</source>
+        <translation>配對</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主要檔案</translation>
+    </message>
+    <message>
+        <source>Primary address</source>
+        <translation>主要檔案地址</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>主要檔案函式</translation>
+    </message>
+    <message>
+        <source>Primary functions: %1
+Secondary functions: %2
+Heuristic explanations, not validated behavior.
+%3</source>
+        <translation>主要檔案函式：%1
+次要檔案函式：%2
+啟發式解釋，未驗證行為。
+%3</translation>
+    </message>
+    <message>
+        <source>Primary instruction</source>
+        <translation>主要檔案指令</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>主要檔案節點</translation>
+    </message>
+    <message>
+        <source>Primary operation</source>
+        <translation>主要檔案操作</translation>
+    </message>
+    <message>
+        <source>Primary origin</source>
+        <translation>主要檔案來源</translation>
+    </message>
+    <message>
+        <source>Primary root</source>
+        <translation>主要檔案根節點</translation>
+    </message>
+    <message>
+        <source>Primary span</source>
+        <translation>主要檔案片段</translation>
+    </message>
+    <message>
+        <source>Priority</source>
+        <translation>優先順序</translation>
+    </message>
+    <message>
+        <source>Program entry</source>
+        <translation>程式入口</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract</source>
+        <translation>滿足條件的 %1 契約</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract; release may fail</source>
+        <translation>滿足條件的 %1 契約；釋放可能失敗</translation>
+    </message>
+    <message>
+        <source>Reason</source>
+        <translation>原因</translation>
+    </message>
+    <message>
+        <source>Recovered arguments unavailable</source>
+        <translation>恢復的引數不可用</translation>
+    </message>
+    <message>
+        <source>Repeated seed</source>
+        <translation>重複種子</translation>
+    </message>
+    <message>
+        <source>SSA unavailable in collected scope</source>
+        <translation>收集範圍內的 SSA 不可用</translation>
+    </message>
+    <message>
+        <source>Scan incomplete</source>
+        <translation>掃描不完整</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>次要檔案</translation>
+    </message>
+    <message>
+        <source>Secondary address</source>
+        <translation>次要檔案地址</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>次要檔案函式</translation>
+    </message>
+    <message>
+        <source>Secondary instruction</source>
+        <translation>次要檔案指令</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>次要檔案節點</translation>
+    </message>
+    <message>
+        <source>Secondary operation</source>
+        <translation>次要檔案操作</translation>
+    </message>
+    <message>
+        <source>Secondary origin</source>
+        <translation>次要檔案來源</translation>
+    </message>
+    <message>
+        <source>Secondary root</source>
+        <translation>次要檔案根節點</translation>
+    </message>
+    <message>
+        <source>Secondary span</source>
+        <translation>次要檔案片段</translation>
+    </message>
+    <message>
+        <source>Seed evidence</source>
+        <translation>種子證據</translation>
+    </message>
+    <message>
+        <source>Shared instructions</source>
+        <translation>共享指令</translation>
+    </message>
+    <message>
+        <source>Shared nodes</source>
+        <translation>共享節點</translation>
+    </message>
+    <message>
+        <source>Shared normalized instruction runs are evidence for competing transformation hypotheses. They do not validate behavior, calls, memory effects or patch presence.</source>
+        <translation>共享的規範化指令序列可作為不同變換假設的證據。它們不會驗證行為、呼叫、記憶體效果或修補程式存在性。</translation>
+    </message>
+    <message>
+        <source>Similarity</source>
+        <translation>相似度</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>狀態</translation>
+    </message>
+    <message>
+        <source>Synthetic</source>
+        <translation>合成</translation>
+    </message>
+    <message>
+        <source>Unchanged</source>
+        <translation>未更改</translation>
+    </message>
+    <message>
+        <source>Unique seed</source>
+        <translation>唯一種子</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>未知間接呼叫</translation>
+    </message>
+    <message>
+        <source>Unknown indirect transfer</source>
+        <translation>未知間接轉移</translation>
+    </message>
+    <message>
+        <source>Unmeasured</source>
+        <translation>未測量</translation>
+    </message>
+    <message>
+        <source>Unpaired</source>
+        <translation>未配對</translation>
+    </message>
+    <message>
+        <source>Unresolved / boundary</source>
+        <translation>未解析 / 邊界</translation>
+    </message>
+    <message>
+        <source>Unresolved call target</source>
+        <translation>未解析的呼叫目標</translation>
+    </message>
+    <message>
+        <source>Unsupported ABI or input profile</source>
+        <translation>不支援的 ABI 或輸入配置</translation>
+    </message>
+    <message>
+        <source>Width</source>
+        <translation>寬度</translation>
+    </message>
+    <message>
+        <source>Witness instruction</source>
+        <translation>見證指令</translation>
+    </message>
+    <message>
+        <source>arg %1: %2</source>
+        <translation>引數 %1：%2</translation>
+    </message>
+    <message>
+        <source>n%1</source>
+        <translation>n%1</translation>
+    </message>
+    <message>
+        <source>param %1</source>
+        <translation>引數 %1</translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>—</source>
+        <translation>—</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonRegionsDialog</name>
+    <message>
+        <source>
+Dependency scope: %1 / %2 · %3 ambiguous candidates · %4 graphs exceeded analysis allowance</source>
+        <translation>
+依賴範圍：%1 / %2 · %3 個歧義候選項 · %4 個圖超出分析額度</translation>
+    </message>
+    <message>
+        <source>%1 hypotheses · %2 anchors · %3 frequent seed groups skipped · %4 oversized groups suppressed · %5 weak candidates skipped · %6</source>
+        <translation>%1 個假設 · %2 個錨點 · 已跳過 %3 個高頻種子組 · 已排除 %4 個過大組 · 已跳過 %5 個弱候選項 · %6</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of decoded non-transfer instructions. Calls and control transfers need separate review.</source>
+        <translation>主要檔案 %1 個 / 次要檔案 %2 個函式 · %3 個共享片段
+覆蓋率：已解碼的非轉移指令的 %4% / %5%。呼叫和控制轉移需單獨審查。</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 verified neighborhoods
+Coverage: %4% / %5% of observed SSA nodes in these functions. Control and external effects remain open; hover for original bytes.</source>
+        <translation>主要檔案 %1 個 / 次要檔案 %2 個函式 · %3 個已驗證鄰域
+覆蓋率：這些函式中已觀察 SSA 節點的 %4% / %5%。控制流程和外部效果仍未驗證；將滑鼠指標停留其上可檢視原始位元組。</translation>
+    </message>
+    <message>
+        <source>%1 shared spans. These include unfinished or unclassified candidate groups. Select a span to inspect its original instructions.</source>
+        <translation>%1 個共享片段，其中包括未完成或未分類的候選組。選擇片段可檢查其原始指令。</translation>
+    </message>
+    <message>
+        <source>%1 verified SSA neighborhoods, including unclassified groups. Select one for paired nodes; hover for operands and original bytes.</source>
+        <translation>%1 個已驗證 SSA 鄰域，其中包括未分類組。選擇鄰域可檢視配對節點；將滑鼠指標停留其上可檢視運算元和原始位元組。</translation>
+    </message>
+    <message>
+        <source>All hypotheses</source>
+        <translation>全部假設</translation>
+    </message>
+    <message>
+        <source>All shared spans (including unclassified)</source>
+        <translation>全部共享片段（包括未分類項）</translation>
+    </message>
+    <message>
+        <source>Clone</source>
+        <translation>克隆</translation>
+    </message>
+    <message>
+        <source>Enable SSA region hypotheses in comparison Settings, then compare again.</source>
+        <translation>在比較設定中啟用 SSA 區域假設，然後重新比較。</translation>
+    </message>
+    <message>
+        <source>Enable region analysis in comparison Settings, then compare again.</source>
+        <translation>在比較設定中啟用區域分析，然後重新比較。</translation>
+    </message>
+    <message>
+        <source>Inline</source>
+        <translation>行內展開</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload the comparison.</source>
+        <translation>輸入已更改。請重新載入比較。</translation>
+    </message>
+    <message>
+        <source>Inspect primary function</source>
+        <translation>檢查主要檔案函式</translation>
+    </message>
+    <message>
+        <source>Inspect secondary function</source>
+        <translation>檢查次要檔案函式</translation>
+    </message>
+    <message>
+        <source>Merge</source>
+        <translation>合併</translation>
+    </message>
+    <message>
+        <source>Module movement</source>
+        <translation>模組移動</translation>
+    </message>
+    <message>
+        <source>Outline</source>
+        <translation>概要</translation>
+    </message>
+    <message>
+        <source>Possible transformation</source>
+        <translation>可能的變換</translation>
+    </message>
+    <message>
+        <source>Redistribution</source>
+        <translation>重新分佈</translation>
+    </message>
+    <message>
+        <source>Region hypotheses — Binary comparison</source>
+        <translation>區域假設 — 二進位比較</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses — Binary comparison</source>
+        <translation>SSA 區域假設 — 二進位比較</translation>
+    </message>
+    <message>
+        <source>Select a hypothesis to inspect its shared spans.</source>
+        <translation>選擇假設以檢查其共享片段。</translation>
+    </message>
+    <message>
+        <source>Shared native instruction runs suggest possible transformations. Review competing explanations and uncovered code; these results do not validate behavior or patch presence.</source>
+        <translation>共享的原生指令序列提示可能的變換。請審查其他解釋和未覆蓋程式碼；這些結果不會驗證行為或修補程式存在性。</translation>
+    </message>
+    <message>
+        <source>Shared region</source>
+        <translation>共享區域</translation>
+    </message>
+    <message>
+        <source>Shared tail</source>
+        <translation>共享尾部</translation>
+    </message>
+    <message>
+        <source>Split</source>
+        <translation>拆分</translation>
+    </message>
+    <message>
+        <source>Verified finite SSA neighborhoods suggest possible transformations. Review gaps and open dependencies; correspondence does not validate behavior or patch presence.</source>
+        <translation>已驗證的有限 SSA 鄰域提示可能的變換。請審查缺口和未解決的依賴；對應關係不會驗證行為或修補程式存在性。</translation>
+    </message>
+    <message>
+        <source>Waiting for comparison to finish…</source>
+        <translation>正在等待比較完成…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>完整</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>部分</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonReviewDialog</name>
+    <message>
+        <source>%1 matching / %2 total events · newest first · manual assessments</source>
+        <translation>%1 個匹配事件 / 共 %2 個事件 · 最新優先 · 人工評估</translation>
+    </message>
+    <message>
+        <source>Analyst review — NeverD</source>
+        <translation>分析員審查 — NeverD</translation>
+    </message>
+    <message>
+        <source>Analyst statements do not change computed matching or validate patch behavior. Authors are self-described. Save/export the comparison to keep this history on disk.</source>
+        <translation>分析員的陳述不會改變計算得到的匹配，也不會驗證修補程式行為。作者身份由本人填寫。儲存或匯出比較可將此歷史記錄儲存在磁碟上。</translation>
+    </message>
+    <message>
+        <source>Append assessment</source>
+        <translation>追加評估</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>評估</translation>
+    </message>
+    <message>
+        <source>Assessment note</source>
+        <translation>評估備註</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>作者</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>候選修復</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>案例</translation>
+    </message>
+    <message>
+        <source>Case filter</source>
+        <translation>案例篩選</translation>
+    </message>
+    <message>
+        <source>Case: %1
+Author (self-described): %2
+Assessment: %3
+Pair: %4 ↔ %5
+Pair binding: %6 · %7 assessment
+Reference: %8
+
+%9
+
+Event: %10
+Supersedes: %11</source>
+        <translation>案例：%1
+作者（自行填寫）：%2
+評估：%3
+配對：%4 ↔ %5
+配對繫結：%6 · %7 評估
+參考：%8
+
+%9
+
+事件：%10
+取代：%11</translation>
+    </message>
+    <message>
+        <source>Draft exceeds the UTF-8 text allowance.</source>
+        <translation>草稿超出 UTF-8 文字額度。</translation>
+    </message>
+    <message>
+        <source>Draft retained for %1 ↔ %2 on its original inputs. Choose New draft to use the selected pair.</source>
+        <translation>已為原始輸入上的 %1 ↔ %2 保留草稿。選擇「新建草稿」以使用選定配對。</translation>
+    </message>
+    <message>
+        <source>Exact case identifier (empty: all cases)</source>
+        <translation>精確案例標識（留空：全部案例）</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>無結論</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>調查中</translation>
+    </message>
+    <message>
+        <source>Latest assessments only</source>
+        <translation>僅最新評估</translation>
+    </message>
+    <message>
+        <source>Loading analyst history…</source>
+        <translation>正在載入分析員歷史…</translation>
+    </message>
+    <message>
+        <source>Manual assessment of %1 ↔ %2</source>
+        <translation>對 %1 ↔ %2 的人工評估</translation>
+    </message>
+    <message>
+        <source>New assessment</source>
+        <translation>新建評估</translation>
+    </message>
+    <message>
+        <source>New draft for selected pair</source>
+        <translation>為選定配對新建草稿</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>部分修補程式</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>修補程式不存在</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>修補程式存在</translation>
+    </message>
+    <message>
+        <source>Record the evidence and limitations behind your assessment.</source>
+        <translation>記錄評估所依據的證據和侷限。</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>參照</translation>
+    </message>
+    <message>
+        <source>Refresh history</source>
+        <translation>重新整理歷史</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>相關更改</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>已回退修補程式</translation>
+    </message>
+    <message>
+        <source>Save comparison…</source>
+        <translation>儲存比較…</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair to append an assessment.</source>
+        <translation>選擇已接受的函式配對以追加評估。</translation>
+    </message>
+    <message>
+        <source>Selected record</source>
+        <translation>選定記錄</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>無關更改</translation>
+    </message>
+    <message>
+        <source>accepted</source>
+        <translation>已接受</translation>
+    </message>
+    <message>
+        <source>earlier</source>
+        <translation>較早</translation>
+    </message>
+    <message>
+        <source>inactive</source>
+        <translation>未啟用</translation>
+    </message>
+    <message>
+        <source>latest</source>
+        <translation>最新</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSession</name>
+    <message>
+        <source>Comparison worker: %1</source>
+        <translation>比較工作程序：%1</translation>
+    </message>
+    <message>
+        <source>Could not replace the comparison. Your previous comparison is still available. %1</source>
+        <translation>無法替換比較。先前的比較仍然可用。%1</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Ready to try again.</source>
+        <translation>載入已停止。可再次嘗試。</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Your previous comparison is still available.</source>
+        <translation>載入已停止。先前的比較仍然可用。</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>工作程序無法確認取消請求。</translation>
+    </message>
+    <message>
+        <source>This worker does not support binary comparison.</source>
+        <translation>此工作程序不支援二進位比較。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonValidationDialog</name>
+    <message>
+        <source>
+Proof work: %1; completed partitions: %2; attempts: %3
+</source>
+        <translation>
+證明工作量：%1；已完成分割槽：%2；嘗試次數：%3
+</translation>
+    </message>
+    <message>
+        <source>Argument %1: %2 bits, register offset %3
+</source>
+        <translation>引數 %1：%2 位，暫存器偏移 %3
+</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Cancelled. No equivalence conclusion.</source>
+        <translation>已取消。未得出等價結論。</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>再次檢查</translation>
+    </message>
+    <message>
+        <source>Check equal integer returns and defined termination in the lifted models, for all defined input bitvectors at matching register locations. Native-state equivalence and security are outside this check.</source>
+        <translation>對匹配暫存器位置上的所有已定義輸入位元向量，檢查提升後模型的整數回傳值是否相等，以及終止行為是否已定義。此檢查不涵蓋原生狀態等價性和安全性。</translation>
+    </message>
+    <message>
+        <source>Detail: %1
+
+</source>
+        <translation>詳情：%1
+
+</translation>
+    </message>
+    <message>
+        <source>Equal returns proved in the lifted scalar models.</source>
+        <translation>已在提升後的標量模型中證明回傳值相等。</translation>
+    </message>
+    <message>
+        <source>Equivalence remains unproved; this does not establish a difference.</source>
+        <translation>等價性仍未得到證明；這不代表存在差異。</translation>
+    </message>
+    <message>
+        <source>Full report</source>
+        <translation>完整報告</translation>
+    </message>
+    <message>
+        <source>Input assumption: defined integer bitvectors at identical register locations.
+Lift correctness is assumed. Complete native state, memory and call effects are not proved.
+This result does not assess vulnerability or fix status.
+
+</source>
+        <translation>輸入假設：相同暫存器位置上的已定義整數位元向量。
+假定提升過程正確。未證明完整原生狀態、記憶體和呼叫效果。
+此結果不評估漏洞或修復狀態。
+
+</translation>
+    </message>
+    <message>
+        <source>Inputs or pairing changed. Select the function pair again.</source>
+        <translation>輸入或配對已更改。請重新選擇函式配對。</translation>
+    </message>
+    <message>
+        <source>Inputs: retained comparison sources.
+</source>
+        <translation>輸入：已保留的比較原始檔。
+</translation>
+    </message>
+    <message>
+        <source>Lifting and checking this pair… Cancellation is cooperative.</source>
+        <translation>正在提升並檢查此配對… 取消採用協作方式。</translation>
+    </message>
+    <message>
+        <source>Limits changed. Check again.</source>
+        <translation>限制已更改。請再次檢查。</translation>
+    </message>
+    <message>
+        <source>Live input versions rechecked: %1
+</source>
+        <translation>已重新檢查當前輸入版本：%1
+</translation>
+    </message>
+    <message>
+        <source>Maximum native instructions per function.</source>
+        <translation>每個函式的最大原生指令數。</translation>
+    </message>
+    <message>
+        <source>Maximum work units for the scalar proof.</source>
+        <translation>標量證明的最大工作單元數。</translation>
+    </message>
+    <message>
+        <source>Native instructions</source>
+        <translation>原生指令</translation>
+    </message>
+    <message>
+        <source>Pairing changed. Select the function pair again.</source>
+        <translation>配對已更改。請重新選擇函式配對。</translation>
+    </message>
+    <message>
+        <source>Primary %1 (%2) ↔ Secondary %3 (%4)</source>
+        <translation>主要檔案 %1（%2）↔ 次要檔案 %3（%4）</translation>
+    </message>
+    <message>
+        <source>Profile: %1
+
+Primary SHA-256: %2
+Secondary SHA-256: %3
+</source>
+        <translation>配置：%1
+
+主要檔案 SHA-256：%2
+次要檔案 SHA-256：%3
+</translation>
+    </message>
+    <message>
+        <source>Proof work</source>
+        <translation>證明工作量</translation>
+    </message>
+    <message>
+        <source>Result and assumptions</source>
+        <translation>結果與假設</translation>
+    </message>
+    <message>
+        <source>Return width: %1 bits
+</source>
+        <translation>回傳值寬度：%1 位
+</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair.</source>
+        <translation>選擇已接受的函式配對。</translation>
+    </message>
+    <message>
+        <source>Selected %1 function: %2</source>
+        <translation>選定的%1函式：%2</translation>
+    </message>
+    <message>
+        <source>This pair is outside the supported scalar model.</source>
+        <translation>此配對不屬於受支援的標量模型。</translation>
+    </message>
+    <message>
+        <source>Time limit (ms)</source>
+        <translation>時限（毫秒）</translation>
+    </message>
+    <message>
+        <source>Time limit reached. No equivalence conclusion.</source>
+        <translation>已達到時限。未得出等價結論。</translation>
+    </message>
+    <message>
+        <source>Validate scalar returns — NeverD</source>
+        <translation>驗證標量回傳值 — NeverD</translation>
+    </message>
+    <message>
+        <source>Validation limit reached. Adjust the limits and check again.</source>
+        <translation>已達到驗證限制。請調整限制後再次檢查。</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>否</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>是</translation>
     </message>
 </context>
 </TS>
