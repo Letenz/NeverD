@@ -1773,7 +1773,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (NeedsDarwinAffineTransformBridge)
     Headers.insert("string.h");
 
-  if (HasCIntrinsics)
+  if (HasCIntrinsics && !PortableInterface)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))
       Headers.insert(Hdr);
   if (NeedsMsvcIntrinsics)
@@ -4495,12 +4495,14 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     Opts.SourceMap->Variables.clear();
   // Check the complete supplied IR before source-only hiding or preparation
   // can discard an unreachable or malformed environment requirement.
+  const bool Portable =
+      PortableInterface && Funcs.size() == 1 && &Funcs.front() == PortableBody;
   std::set<const HighExpr *> Seen;
   std::function<void(const ExprPtr &)> CheckRequirement =
       [&](const ExprPtr &Expr) {
         if (!Expr || !Seen.insert(Expr.get()).second)
           return;
-        if (isPortableX87Intrinsic(Expr->IntrinsicId))
+        if (isPortableX87Intrinsic(Expr->IntrinsicId) && !Portable)
           throw std::invalid_argument(
               "portable x87 helpers require a prepared emission entry");
         if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
@@ -4540,7 +4542,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     HighCWriter W(OS, Opts, Dbg, true,
                   Prepared ? &PreparedImageFunctionNames : nullptr, Recorder,
                   Prepared ? &PreparedDataObjects : nullptr,
-                  Prepared ? &PreparedFunctionSymbols : nullptr);
+                  Prepared ? &PreparedFunctionSymbols : nullptr,
+                  Portable ? PortableInterface : nullptr);
     W.ExtraRecords = Extra;
     W.WantedRecords = Wanted;
     W.prepareFunctionReturns(Working);

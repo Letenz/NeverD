@@ -153,3 +153,33 @@ add_neverd_unittest(NeverDX87PortablePreparationTests
   BackendC
   IRMed
 )
+
+add_neverd_unittest(NeverDX87PortableEmissionTests
+  X87PortableEmissionTests.cpp
+
+  LINK_COMPONENTS
+  Pipeline
+  BackendLLVM
+  BackendC
+  IRMed
+)
+
+add_neverd_unittest(NeverDX87PortableGeneratedTests
+  X87PortableGeneratedTests.cpp
+
+  LINK_COMPONENTS
+  Pipeline
+  BackendLLVM
+  BackendC
+  IRMed
+  Translate
+
+  LINK_LIBS
+  neverd_x87_runtime
+)
+target_compile_definitions(NeverDX87PortableGeneratedTests PRIVATE
+  NEVERD_X87_RUNTIME_PATH="$<TARGET_FILE:neverd_x87_runtime>")
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDX87PortableGeneratedTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()

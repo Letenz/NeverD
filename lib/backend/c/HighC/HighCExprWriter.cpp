@@ -1977,6 +1977,8 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isPortableX87Intrinsic(E.IntrinsicId))
+    return renderPortableX87Call(E);
   if (x87ValueInfo(E.IntrinsicId) &&
       !x87ValueShapeIsValid(x87ValueHighShape(E, Opts.TheArch)))
     llvm::report_fatal_error("invalid HighC x87 scalar value/status contract");

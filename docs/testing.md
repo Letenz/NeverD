@@ -3586,6 +3586,26 @@ cannot publish the dedicated helpers. Run `NeverDMedMutableSourceTests` with it
 when changing the shared scalar-shape rules. These preparation checks do not
 establish generated execution or ARM64 translation coverage.
 
+`NeverDX87PortableEmissionTests` checks exact alternate function and helper
+types, effectful result consumption, original-address proof removal and output
+target refusals. `NeverDX87PortableGeneratedTests` compiles LLVM, HighC and
+LLVM-C shared artifacts at O0/O2 from default/NoOpt source pipelines. The authored
+x64 leaf, branch and loop fixtures cover every TOP and valid PC/RC setting,
+binary80 bits beyond binary64, success-only result publication, seven runtime
+refusals, both null-pointer guards and an untaken branch. Native x64 hosts also
+execute those exact original byte vectors and compare result bytes and defined
+state; relocated pointers and undefined C0/C2/C3 are excluded from that native
+comparison. Generated guest IP/DP are checked independently.
+
+`scripts/check_x87_portable_generated.py` freezes 36 compiled artifacts and
+6,096 observations on native Linux x64/AArch64. It requires complete coverage,
+cross-route/optimization agreement, no skips, stable source/build/compiler and
+runtime hashes, and retained raw state. On x64 it requires 5,760 original
+comparisons. The manual `x87-portable-generated.yml` workflow runs those hosts
+separately; this is generated-leaf evidence, not translation or a performance
+measurement. A pinned Linux AArch64 LLVM package is unavailable, so that lane
+builds the repository's exact LLVM revision from source.
+
 `NeverDWorkerX87Capabilities` compares the real worker with the C/Python report
 and, when the CLI target is present, the CLI. It checks unloaded and loaded
 sessions, unchanged bytes/project revisions, malformed requests, and refusal

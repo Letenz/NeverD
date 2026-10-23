@@ -6976,6 +6976,14 @@ only its exclusive success edge may consume a scalar result. A complete known
 The immutable prepared body uses private control labels, carries no original
 code-range proof and exposes no mutable IR or public qualification switch.
 Ordinary LLVM and HighC entry points reject its dedicated helper intrinsics.
+Their `emitPortableX87` entry points create isolated emitters, revalidate the
+prepared body and retain exact runtime declarations without source-call ABI
+inference. Only the explicit execution parameter is a host pointer; guest IP,
+DP and source arguments remain integers. LLVM-C consumes this module with
+`PreserveLLVMFunctionTypes`. The private C writer retains unused parameter
+positions and omits source-architecture intrinsic headers and original-address
+annotations. Output targets require 64-bit little-endian x64/AArch64 C layouts;
+runtime linking and profile qualification remain explicit requirements.
 
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
