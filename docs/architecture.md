@@ -1932,6 +1932,8 @@ An odd pair shares a square of its lower word and one exact highest-bit
 correction. Collecting the squares permits recursion at one fewer bit. Every
 unpaired factor and every correction remains in the result. Degree-block
 admission only orders this search; it never establishes a pair or oddness.
+Pairing indexes are constructed only for an admitted search and are confined
+to its active odd assumption, avoiding setup in ordinary low-word searches.
 All signature, pairing and reconstruction work uses the existing cumulative
 work/storage allowances and decision-node limit.
 Boolean polynomial reconstruction can factor shared cofactors across groups

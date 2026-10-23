@@ -868,30 +868,34 @@ class LowWordDecisions {
       return size_t(llvm::hash_combine_range(Key.begin(), Key.end()));
     }
   };
-  std::unordered_map<SignatureKey, uint32_t, SignatureHash> SignatureIds;
-  std::unordered_map<uint64_t, ResidueSignature> Signatures;
+  // Ordinary low-word searches do not need this state. Construct it only
+  // after pairing admission, and keep it within the active odd assumption.
+  struct PairingState {
+    std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
+    std::unordered_map<uint64_t, ResidueSignature> Words;
+  };
 
-  uint32_t internSignature(SignatureKey Key) {
+  uint32_t internSignature(PairingState &State, SignatureKey Key) {
     if (!charge(1 + Key.size()))
       return 0;
-    if (auto It = SignatureIds.find(Key); It != SignatureIds.end())
+    if (auto It = State.Ids.find(Key); It != State.Ids.end())
       return It->second;
     if (!charge(1, sizeof(SignatureKey) + sizeof(uint32_t) +
                        Key.size() * sizeof(uint64_t) + 6 * sizeof(void *)))
       return 0;
-    const auto Identity = uint32_t(SignatureIds.size() + 1);
-    SignatureIds.emplace(std::move(Key), Identity);
+    const auto Identity = uint32_t(State.Ids.size() + 1);
+    State.Ids.emplace(std::move(Key), Identity);
     return Identity;
   }
 
-  ResidueSignature residueSignature(SymRef R, unsigned Count,
-                                    unsigned Depth = 0) {
+  ResidueSignature residueSignature(PairingState &State, SymRef R,
+                                    unsigned Count, unsigned Depth = 0) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
       return {};
     }
     const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
-    if (auto It = Signatures.find(Key); It != Signatures.end())
+    if (auto It = State.Words.find(Key); It != State.Words.end())
       return It->second;
     const auto Op = Ctx.op(R);
     const uint64_t Top = uint64_t(1) << (Count - 1);
@@ -901,7 +905,7 @@ class LowWordDecisions {
       if (!Value)
         return {};
       const auto Low = Value->getLoBits(Count).getZExtValue();
-      Result = {internSignature({0, Count, Low & (Top - 1)}),
+      Result = {internSignature(State, {0, Count, Low & (Top - 1)}),
                 uint32_t(bool(Low & Top))};
     } else if (Op == SymOp::Add || Op == SymOp::Xor) {
       const auto Operands = Ctx.operands(R);
@@ -923,7 +927,7 @@ class LowWordDecisions {
           else
             Literal ^= Low;
         } else {
-          const auto Value = residueSignature(Child, Count, Depth + 1);
+          const auto Value = residueSignature(State, Child, Count, Depth + 1);
           Flip = apply(Xor, Flip, Value.Flip);
           Children.push_back(Value.Identity);
         }
@@ -944,12 +948,12 @@ class LowWordDecisions {
         Children.resize(Out);
       }
       if (Children.empty())
-        Result = {internSignature({0, Count, Literal}), Flip};
+        Result = {internSignature(State, {0, Count, Literal}), Flip};
       else if (Children.size() == 1 && !Literal)
         Result = {uint32_t(Children.front()), Flip};
       else {
         Children.insert(Children.begin(), {uint64_t(Op) + 1, Count, Literal});
-        Result = {internSignature(std::move(Children)), Flip};
+        Result = {internSignature(State, std::move(Children)), Flip};
       }
     } else if (Op == SymOp::And && Ctx.numOperands(R) == 2 &&
                Ctx.isConst(Ctx.operand(R, 0))) {
@@ -958,16 +962,16 @@ class LowWordDecisions {
         return {};
       const auto Mask = Value->getLoBits(Count).getZExtValue();
       if (!Mask)
-        Result = {internSignature({0, Count, 0}), 0};
+        Result = {internSignature(State, {0, Count, 0}), 0};
       else {
         const auto Child =
-            residueSignature(Ctx.operand(R, 1), Count, Depth + 1);
-        Result =
-            Mask == 2 * Top - 1
-                ? Child
-                : ResidueSignature{internSignature({uint64_t(Op) + 1, Count,
-                                                    Mask, Child.Identity}),
-                                   Mask & Top ? Child.Flip : 0};
+            residueSignature(State, Ctx.operand(R, 1), Count, Depth + 1);
+        Result = Mask == 2 * Top - 1
+                     ? Child
+                     : ResidueSignature{
+                           internSignature(State, {uint64_t(Op) + 1, Count,
+                                                   Mask, Child.Identity}),
+                           Mask & Top ? Child.Flip : 0};
       }
     } else if (Op == SymOp::Mul) {
       const auto Operands = Ctx.operands(R);
@@ -983,14 +987,14 @@ class LowWordDecisions {
         TotalZeros = std::min(Count, TotalZeros + Zero);
       }
       if (TotalZeros == Count)
-        Result = {internSignature({0, Count, 0}), 0};
+        Result = {internSignature(State, {0, Count, 0}), 0};
       else if (Count - TotalZeros >= 2) {
         SignatureKey Children;
         Children.reserve(Operands.size() + 2);
         Bits Flips;
         for (size_t I = 0; I < Operands.size(); ++I) {
           const auto Value = residueSignature(
-              Operands[I], Count - TotalZeros + Zeros[I], Depth + 1);
+              State, Operands[I], Count - TotalZeros + Zeros[I], Depth + 1);
           Children.push_back(Value.Identity);
           Flips.push_back(Value.Flip);
         }
@@ -1016,20 +1020,20 @@ class LowWordDecisions {
         }
         std::sort(Children.begin(), Children.end());
         Children.insert(Children.begin(), {uint64_t(Op) + 1, Count});
-        Result = {internSignature(std::move(Children)), Flip};
+        Result = {internSignature(State, std::move(Children)), Flip};
       } else {
         // A one-bit normalized product can retain cross terms. Keep its
         // exact original identity instead of using the linear formula.
-        Result = {internSignature({UINT64_MAX, Count, R.index()}), 0};
+        Result = {internSignature(State, {UINT64_MAX, Count, R.index()}), 0};
       }
     } else {
       // Equality of opaque representatives is structural, never sampled.
-      Result = {internSignature({UINT64_MAX, Count, R.index()}), 0};
+      Result = {internSignature(State, {UINT64_MAX, Count, R.index()}), 0};
     }
     if (!charge(1, sizeof(uint64_t) + sizeof(ResidueSignature) +
                        4 * sizeof(void *)))
       return {};
-    Signatures.emplace(Key, Result);
+    State.Words.emplace(Key, Result);
     return Result;
   }
 
@@ -1038,7 +1042,8 @@ class LowWordDecisions {
   // 2^(N-1)*(a XOR b). The other odd factors preserve that correction.
   // Pull all squares into one product and recurse at N-1 bits. No original
   // highest bit is needed for its square, and recursion strictly decreases N.
-  Bits pairedProduct(llvm::ArrayRef<SymRef> Factors, unsigned Count) {
+  Bits pairedProduct(PairingState &State, llvm::ArrayRef<SymRef> Factors,
+                     unsigned Count) {
     if (Count <= 2 || Factors.size() < 2)
       return product(Factors, Count);
     if (!charge(Factors.size(), 2 * Factors.size() * sizeof(SymRef)))
@@ -1047,7 +1052,7 @@ class LowWordDecisions {
     llvm::SmallVector<SymRef, 16> Pairs, Rest;
     uint32_t Correction = 0;
     for (auto Factor : Factors) {
-      const auto Signature = residueSignature(Factor, Count);
+      const auto Signature = residueSignature(State, Factor, Count);
       if (Failed || !charge(1 + std::bit_width(Unpaired.size())))
         return {};
       auto It = Unpaired.find(Signature.Identity);
@@ -1066,7 +1071,7 @@ class LowWordDecisions {
     }
     if (Pairs.empty())
       return product(Factors, Count);
-    auto Inner = pairedProduct(Pairs, Count - 1);
+    auto Inner = pairedProduct(State, Pairs, Count - 1);
     if (Failed || Inner.empty())
       return {};
     Inner.push_back(0);
@@ -1186,8 +1191,12 @@ public:
         }
       }
     }
-    Product = AllOdd ? pairedProduct(Nonconstants, Observed)
-                     : product(Factors, Observed);
+    if (AllOdd) {
+      PairingState State;
+      Product = pairedProduct(State, Nonconstants, Observed);
+    } else {
+      Product = product(Factors, Observed);
+    }
     if (Failed || Product.empty())
       return Root;
     Assumption.reset();
