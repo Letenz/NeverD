@@ -601,19 +601,19 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   // freed one's address.
   ParamCacheOf = nullptr;
   EmittedParamIndices.clear();
-  // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
-  // vector intrinsics use scalar integer carriers at the HighIR boundary.
+  // Native SVE values use ACLE types despite their integer storage in HighIR.
+  // x86 values and checked aggregate-call result bridges use scalar carriers.
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
   // C compilers provide __int128 on targets with 64-bit pointers only.
   const bool TargetHasInt128 = pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
-  auto CollectWideType = [&](const TypeRef &Type) {
+  auto CollectWideType = [&](const TypeRef &Type, bool ScalarResult = false) {
     if (const unsigned Bytes = partialIntegerBytes(Type))
       PartialIntegerBytes.emplace(typeToC(Type), Bytes);
-    Has256BitInteger |= ProjectsScalarWideIntegers && Type &&
-                        Type->Kind == NdTypeKind::Int && Type->Size == 32;
-    Has512BitInteger |= ProjectsScalarWideIntegers && Type &&
-                        Type->Kind == NdTypeKind::Int && Type->Size == 64;
+    const bool ScalarInteger = (ProjectsScalarWideIntegers || ScalarResult) &&
+                               Type && Type->Kind == NdTypeKind::Int;
+    Has256BitInteger |= ScalarInteger && Type->Size == 32;
+    Has512BitInteger |= ScalarInteger && Type->Size == 64;
     Int128AsBitInt |= !TargetHasInt128 && Type &&
                       Type->Kind == NdTypeKind::Int && Type->Size == 16;
     UsesX87Extended |= Type && Type->Kind == NdTypeKind::Float &&
@@ -629,7 +629,9 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         !(E.Kind == ExprKind::Call &&
           isX86FPStateMemoryIntrinsic(E.IntrinsicId)))
       return;
-    CollectWideType(E.Type);
+    CollectWideType(E.Type, E.Kind == ExprKind::Call &&
+                                E.FloatingCallSignature &&
+                                E.FloatingCallSignature->ReturnElements);
     CollectWideType(E.CastTo);
     if (const auto Helper = x87HelperFor(E))
       X87Helpers.insert(*Helper);
