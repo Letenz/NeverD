@@ -272,9 +272,11 @@ def multiple_residual_elf(degree, neighbor=False):
     return elf(code), "x+y+z+" + str(scale) + "U*" + "*".join(factors)
 
 
-def carry_product_elf(degree, product=True):
-    # Keep seven low bits, including observable quadratic residual terms.
-    scale = 3 << 25
+def carry_product_elf(degree, product=True, needed=7, high_bits=None):
+    # Retain the requested low bits, including observable residual cross terms.
+    high_bits = high_bits or (3 if product else 2)
+    mask = (0xffffffff << (high_bits - int(product))) & 0xffffffff
+    scale = 3 << (32 - needed)
     code = bytearray.fromhex("b8") + struct.pack("<I", scale)
     factors = []
     for i in range(degree):
@@ -282,11 +284,12 @@ def carry_product_elf(degree, product=True):
         code += bytes.fromhex("4189f0 4181c0") + struct.pack("<I", i)
         if product:
             code += bytes.fromhex("4183e0fe 4189d1 4181c1") + struct.pack("<I", 2*i)
-            code += bytes.fromhex("4183e1fc 450fafc1")
-            high = f"(((y+{i}U)&0xfffffffeU)*((z+{2*i}U)&0xfffffffcU))"
+            code += bytes.fromhex("4183e1") + bytes([mask & 0xff])
+            code += bytes.fromhex("450fafc1")
+            high = f"(((y+{i}U)&0xfffffffeU)*((z+{2*i}U)&{mask}U))"
         else:
-            code += bytes.fromhex("4183e0fc")
-            high = f"((y+{i}U)&0xfffffffcU)"
+            code += bytes.fromhex("4183e0") + bytes([mask & 0xff])
+            high = f"((y+{i}U)&{mask}U)"
         code += bytes.fromhex("4431c1 0fafc1")
         factors.append(f"((x+{2*i}U)^{high})")
     code += bytes.fromhex("01f8 01f0 01d0 c3")
@@ -383,7 +386,13 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             # Keep the proved bit selectors, including higher-bit shifts,
             # while eliminating the original long multiplication chain.
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
-            assert code.count("*") <= 3 and "^" not in code, text
+            # A highest-bit coefficient absorbs a selector's mask, leaving
+            # an exact complement that may be printed as XOR with -1.
+            without_complements = re.sub(r"\^\s*-1\b", "", code)
+            assert code.count("*") <= 3 and "^" not in without_complements, text
+        elif kind.startswith("carry-cofactor-"):
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert code.count("*") <= 3 and code.count("^") <= 2, text
         elif kind == "distributed-residue-neighbor":
             # The original-product execution oracle checks the retained
             # nonzero residual without prescribing a particular spelling.
@@ -444,7 +453,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith(("residue-", "multiple-residual-", "carry-product-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
+                    if kind.startswith(("residue-", "multiple-residual-", "carry-product-", "carry-cofactor-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -518,6 +527,7 @@ if __name__ == "__main__":
             ("multiple-residual-neighbor", *multiple_residual_elf(4, True)),
             ("carry-product-32", *carry_product_elf(32)),
             ("carry-product-64", *carry_product_elf(64, False)),
+            ("carry-cofactor-8", *carry_product_elf(8, True, 5, 2)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

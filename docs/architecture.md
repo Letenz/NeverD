@@ -1821,14 +1821,28 @@ unsupported operations remain exact opaque words. A shared odd branch is
 isolated only when the even branch is proved zero, and its selector is restored
 before emission. Sparse Boolean polynomials are derived from complete decision
 graphs and factored before emission, avoiding exponential printed expansion.
+Bitwise reconstruction projects shifted inputs to bit zero once at its output,
+using all-ones Boolean constants internally. A highest-bit coefficient can
+absorb that final projection; lower coefficients must retain it. Tiny observed
+words also retain their shared affine-coordinate alternative when an initial
+bitwise candidate improves, so that candidate cannot hide a shorter word form.
 Equal low-bit groups retain their complete linear and quadratic cross terms;
 the split makes all higher terms vanish modulo the observed word. The
 quadratic sum is computed with an extra bit before division by two. This does
 not assume that an even value has a modular inverse. Batched sums cancel exact
 complementary bits and combine multiplicities before carrying; full-adder
 carries share a direct majority decision. A proved parity input orders its
-word before the remaining interleaved inputs. Cached immutable word views
-avoid repeated bit-vector copies and are discarded when the assumption changes.
+low prefix before the remaining interleaved bits. Dense decision and carry
+caches prepay their bucket growth. Immutable word views avoid repeated copies
+and are discarded when the assumption changes; polynomial views remain valid
+throughout reconstruction.
+Boolean polynomial reconstruction can factor shared cofactors across groups
+with disjoint remaining variables. Exact symmetric differences retain every
+unmatched term. Larger decision graphs try this construction before expanding
+their branches into printed trees, and a completed polynomial is factored only
+once. A finished word search over real free variables is reused for its
+algebraically identical cofactor reconstruction; opaque inputs and incomplete
+searches retain the alternative. Completion does not assert global minimality.
 Optional refinement retains the last completed candidate. Completed attempts
 are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
