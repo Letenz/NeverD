@@ -971,6 +971,11 @@ llvm::Error validateGeneratedMachOCompactUnwindRecordEncoding(
   if (llvm::Error Error = validateEncoding(TargetArch, Record.Encoding,
                                            Record.SourceRecordIndex))
     return Error;
+  if (!isValidEncodingRange(TargetArch, Record.Encoding,
+                            {Record.FunctionVA, Record.FunctionEndVA}))
+    return parseError(ParseFailure::UnsupportedEncoding,
+                      Record.SourceRecordIndex,
+                      kARM64PAuthLRInvalidSigningRange);
   const bool HasPersonality = !Record.PersonalitySymbol.empty();
   if (HasPersonality != Record.PersonalitySlotRVA.has_value())
     return parseError(ParseFailure::EncodingFieldMismatch,
