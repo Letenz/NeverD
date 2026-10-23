@@ -27,6 +27,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -583,6 +584,38 @@ class LowWordDecisions {
           Result[I] = Values.front();
         }
       }
+    } else if ((Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor) &&
+               Ctx.numOperands(R) == 2 && Ctx.isConst(Ctx.operand(R, 0))) {
+      const auto Literal = literal(Ctx.operand(R, 0));
+      if (!Literal)
+        return Empty;
+      const unsigned Needed =
+          Op == SymOp::And ? std::min(Count, Literal->getActiveBits()) : Count;
+      if (Needed) {
+        const auto &Value = word(Ctx.operand(R, 1), Needed, Depth + 1);
+        // Constant bitwise operands select or complement existing edges;
+        // they need neither a constant decision word nor an apply-cache entry.
+        for (unsigned I = 0; I < Count; ++I) {
+          const bool Bit = (*Literal)[I];
+          Result[I] = Op == SymOp::And  ? (Bit ? Value[I] : 0)
+                      : Op == SymOp::Or ? (Bit ? 1 : Value[I])
+                                        : (Value[I] ^ uint32_t(Bit));
+        }
+      }
+    } else if (Op == SymOp::Add && Ctx.numOperands(R) == 2 &&
+               Ctx.isConst(Ctx.operand(R, 0))) {
+      const auto Literal = literal(Ctx.operand(R, 0));
+      if (!Literal)
+        return Empty;
+      const auto &Value = word(Ctx.operand(R, 1), Count, Depth + 1);
+      // A constant carry is AND or OR, rather than a three-input majority.
+      // Avoid constructing a constant word and caching a generic word sum.
+      uint32_t Carry = 0;
+      for (unsigned I = 0; I < Count && !Failed; ++I) {
+        Result[I] = apply(Xor, Value[I], Carry ^ uint32_t((*Literal)[I]));
+        if (I + 1 < Count)
+          Carry = apply((*Literal)[I] ? Or : And, Value[I], Carry);
+      }
     } else if (Op == SymOp::Add || Op == SymOp::Mul || Op == SymOp::And ||
                Op == SymOp::Or || Op == SymOp::Xor) {
       if (Op == SymOp::Mul)
@@ -757,6 +790,39 @@ class LowWordDecisions {
     return Term;
   }
 
+  Bits quadraticLowSum(llvm::ArrayRef<Bits> Values, unsigned Count) {
+    // The caller requests only one or two observed bits of e2.
+    // For H_i=a_i+2*b_i, let K=sum(a_i). Modulo four,
+    // e2(H)=choose(K,2)+2*((sum a_i)*(sum b_i)-sum(a_i*b_i)).
+    // choose(K,2) has bits K_1 and K_2 XOR (K_0 AND K_1).
+    // This retains the exact division by two without constructing any squares.
+    if (!charge(Values.size() * (Count + 2), Values.size() * sizeof(Bits)))
+      return {};
+    std::vector<Bits> Ones;
+    Ones.reserve(Values.size());
+    for (const auto &V : Values) {
+      Bits Row(Count + 1, 0);
+      Row[0] = V[0];
+      Ones.push_back(std::move(Row));
+    }
+    const auto K = sumWords(Ones, Count + 1);
+    if (Failed)
+      return {};
+    Bits Result{K[1]};
+    if (Count == 2) {
+      uint32_t HighParity = 0, MixedParity = 0;
+      for (const auto &V : Values) {
+        if (K[0])
+          HighParity = apply(Xor, HighParity, V[1]);
+        MixedParity = apply(Xor, MixedParity, apply(And, V[0], V[1]));
+      }
+      Result.push_back(
+          apply(Xor, apply(Xor, K[2], apply(And, K[0], K[1])),
+                apply(Xor, MixedParity, apply(And, K[0], HighParity))));
+    }
+    return Result;
+  }
+
   Bits product(llvm::ArrayRef<SymRef> Factors, unsigned Observed) {
     if (Factors.empty()) {
       Bits One(Observed, 0);
@@ -804,26 +870,33 @@ class LowWordDecisions {
         // 2*e2(H) = (sum H)^2 - sum(H^2). Compute one additional bit
         // before exact division by two; two is not invertible in this ring.
         const unsigned N = Observed - 2 * Split + 1;
-        if (!charge(Group.size(), Group.size() * sizeof(Bits)))
-          return Bits{};
-        std::vector<Bits> Squares;
-        Squares.reserve(Group.size());
-        for (const auto &H : Group) {
-          Bits V(H.begin(), H.begin() + N);
-          Squares.push_back(calculate(SymOp::Mul, V, V));
+        Bits Elementary;
+        if (N <= 3) {
+          Elementary = quadraticLowSum(Group, N - 1);
+        } else {
+          if (!charge(Group.size(), Group.size() * sizeof(Bits)))
+            return Bits{};
+          std::vector<Bits> Squares;
+          Squares.reserve(Group.size());
+          for (const auto &H : Group) {
+            Bits V(H.begin(), H.begin() + N);
+            Squares.push_back(calculate(SymOp::Mul, V, V));
+          }
+          auto SumSquares = sumWords(Squares, N);
+          auto Sum = Bits(High.begin(), High.begin() + N);
+          auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
+          for (auto &Bit : SumSquares)
+            Bit = apply(Xor, Bit, 1);
+          Bits One(N, 0);
+          One[0] = 1;
+          auto Difference = calculate(SymOp::Add, SumSquare,
+                                      calculate(SymOp::Add, SumSquares, One));
+          if (Failed || Difference.front() != 0)
+            return Bits{};
+          Elementary.assign(Difference.begin() + 1, Difference.end());
         }
-        auto SumSquares = sumWords(Squares, N);
-        auto Sum = Bits(High.begin(), High.begin() + N);
-        auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
-        for (auto &Bit : SumSquares)
-          Bit = apply(Xor, Bit, 1);
-        Bits One(N, 0);
-        One[0] = 1;
-        auto Difference = calculate(SymOp::Add, SumSquare,
-                                    calculate(SymOp::Add, SumSquares, One));
-        if (Failed || Difference.front() != 0)
+        if (Failed || Elementary.empty())
           return Bits{};
-        Bits Elementary(Difference.begin() + 1, Difference.end());
         Bits Narrow(Low.begin(), Low.begin() + N - 1);
         auto Correction =
             calculate(SymOp::Mul, power(Narrow, Count - 2), Elementary);
@@ -868,14 +941,24 @@ class LowWordDecisions {
       return size_t(llvm::hash_combine_range(Key.begin(), Key.end()));
     }
   };
+  struct WideSignature {
+    uint32_t Identity = 0;
+    std::array<uint32_t, 2> Delta{};
+  };
+  struct WidePairingState {
+    std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
+    std::unordered_map<uint64_t, WideSignature> Words;
+  };
   // Ordinary low-word searches do not need this state. Construct it only
   // after pairing admission, and keep it within the active odd assumption.
   struct PairingState {
     std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
     std::unordered_map<uint64_t, ResidueSignature> Words;
+    std::unique_ptr<WidePairingState> Wide;
   };
 
-  uint32_t internSignature(PairingState &State, SignatureKey Key) {
+  template <typename SignatureState>
+  uint32_t internSignature(SignatureState &State, SignatureKey Key) {
     if (!charge(1 + Key.size()))
       return 0;
     if (auto It = State.Ids.find(Key); It != State.Ids.end())
@@ -1037,6 +1120,321 @@ class LowWordDecisions {
     return Result;
   }
 
+  uint32_t highestBit(SymRef R, unsigned Count, unsigned Depth = 0) {
+    if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return 0;
+    }
+    const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
+    if (auto It = Words.find(Key); It != Words.end())
+      return It->second.back();
+    if (Ctx.numOperands(R) == 2 && Ctx.isConst(Ctx.operand(R, 0))) {
+      if (Ctx.op(R) == SymOp::And || Ctx.op(R) == SymOp::Add) {
+        const auto Literal = literal(Ctx.operand(R, 0));
+        if (!Literal)
+          return 0;
+        const auto Other = Ctx.operand(R, 1);
+        if (Ctx.op(R) == SymOp::And)
+          return (*Literal)[Count - 1] ? highestBit(Other, Count, Depth + 1)
+                                       : 0;
+        // A constant addend only needs the carry into the requested bit.
+        // Do not construct all lower sum bits when no caller observes them.
+        const auto &Value = word(Other, Count, Depth + 1);
+        uint32_t Carry = 0;
+        for (unsigned I = 0; I + 1 < Count; ++I)
+          Carry = apply((*Literal)[I] ? Or : And, Value[I], Carry);
+        return apply(Xor, Value.back(),
+                     Carry ^ uint32_t((*Literal)[Count - 1]));
+      }
+    }
+    return word(R, Count, Depth + 1).back();
+  }
+
+  Bits difference(const Bits &A, const Bits &B) {
+    if (!charge())
+      return Bits(2, 0);
+    if (A == B)
+      return {0, 0};
+    if (!B[0] && !B[1])
+      return A;
+    return {apply(Xor, A[0], B[0]),
+            apply(Xor, apply(Xor, A[1], B[1]), apply(And, A[0] ^ 1, B[0]))};
+  }
+
+  Bits sumCorrection(const Bits &A, const Bits &B) {
+    if (!charge())
+      return Bits(2, 0);
+    if (!A[0] && !A[1])
+      return B;
+    if (!B[0] && !B[1])
+      return A;
+    if (A == B)
+      return {0, A[0]};
+    return {apply(Xor, A[0], B[0]),
+            apply(Xor, apply(Xor, A[1], B[1]), apply(And, A[0], B[0]))};
+  }
+
+  Bits multiplyCorrection(const Bits &A, const Bits &B) {
+    if (!charge())
+      return Bits(2, 0);
+    if ((!A[0] && !A[1]) || (!B[0] && !B[1]))
+      return {0, 0};
+    if (A[0] == 1 && !A[1])
+      return B;
+    if (B[0] == 1 && !B[1])
+      return A;
+    if (A[0] == 1 && B[0] == 1)
+      return {1, apply(Xor, A[1], B[1])};
+    return {apply(And, A[0], B[0]),
+            apply(Xor, apply(And, A[0], B[1]), apply(And, A[1], B[0]))};
+  }
+
+  // Equal identities share a full-width representative. Delta is its exact
+  // additive correction in the two highest observed bits. Highest input bits
+  // cancel when deriving an XOR correction; only the next bit is needed.
+  WideSignature wideSignature(WidePairingState &State, SymRef R, unsigned Count,
+                              unsigned Depth = 0) {
+    if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return {};
+    }
+    const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
+    if (auto It = State.Words.find(Key); It != State.Words.end())
+      return It->second;
+    const uint64_t Unit = uint64_t(1) << (Count - 2);
+    const auto Op = Ctx.op(R);
+    WideSignature Result;
+    auto Delta = [](const WideSignature &S) {
+      return Bits(S.Delta.begin(), S.Delta.end());
+    };
+    auto Save = [&](uint32_t Identity, const Bits &D) {
+      Result = {Identity, {D[0], D[1]}};
+    };
+    if (Ctx.isConst(R)) {
+      auto Value = literal(R);
+      if (!Value)
+        return {};
+      const auto Low = Value->getLoBits(Count).getZExtValue();
+      Result = {internSignature(State, {0, Count, Low & (Unit - 1)}),
+                {uint32_t(bool(Low & Unit)), uint32_t(bool(Low & (2 * Unit)))}};
+    } else if (Op == SymOp::Add || Op == SymOp::Xor) {
+      const auto Operands = Ctx.operands(R);
+      const auto Nonconstant = Operands.size() - Ctx.isConst(Operands.front());
+      if (!charge(Operands.size() + Nonconstant * std::bit_width(Nonconstant),
+                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
+                      2 * Operands.size() * sizeof(WideSignature)))
+        return {};
+      SignatureKey Children;
+      llvm::SmallVector<WideSignature, 8> Values;
+      uint64_t Literal = 0;
+      for (auto Child : Operands) {
+        if (Ctx.isConst(Child)) {
+          auto Value = literal(Child);
+          if (!Value)
+            return {};
+          const auto Low = Value->getLoBits(Count).getZExtValue();
+          Literal = Op == SymOp::Add ? Literal + Low : Literal ^ Low;
+          Values.push_back({});
+        } else {
+          auto Value = wideSignature(State, Child, Count, Depth + 1);
+          if (Failed)
+            return {};
+          Children.push_back(Value.Identity);
+          Values.push_back(Value);
+        }
+      }
+      Bits D{uint32_t(bool(Literal & Unit)),
+             uint32_t(bool(Literal & (2 * Unit)))};
+      if (Op == SymOp::Add) {
+        for (const auto &Value : Values)
+          if (Value.Delta[0] || Value.Delta[1])
+            D = sumCorrection(D, Delta(Value));
+      } else {
+        // For XOR, the additive correction's upper bit contains only cross
+        // terms d_i * a_j (i != j). A word's own low correction cancels its
+        // own bit, so do not build that word merely to subtract it again.
+        for (const auto &Value : Values) {
+          if (Value.Delta[0])
+            D[0] = apply(Xor, D[0], Value.Delta[0]);
+          if (Value.Delta[1])
+            D[1] = apply(Xor, D[1], Value.Delta[1]);
+        }
+        for (size_t I = 0; I < Operands.size(); ++I) {
+          if (Ctx.isConst(Operands[I]))
+            continue;
+          const auto Coefficient =
+              Values[I].Delta[0] ? apply(Xor, D[0], Values[I].Delta[0]) : D[0];
+          if (Coefficient)
+            D[1] = apply(
+                Xor, D[1],
+                apply(And, Coefficient, highestBit(Operands[I], Count - 1)));
+        }
+        if (Literal & Unit)
+          D[1] = apply(Xor, D[1], D[0] ^ 1);
+      }
+      Literal &= Unit - 1;
+      std::sort(Children.begin(), Children.end());
+      if (Op == SymOp::Xor) {
+        size_t Out = 0;
+        for (size_t I = 0; I < Children.size();) {
+          size_t End = I + 1;
+          while (End < Children.size() && Children[End] == Children[I])
+            ++End;
+          if ((End - I) & 1)
+            Children[Out++] = Children[I];
+          I = End;
+        }
+        Children.resize(Out);
+      }
+      if (Children.empty())
+        Save(internSignature(State, {0, Count, Literal}), D);
+      else if (Children.size() == 1 && !Literal)
+        Save(uint32_t(Children.front()), D);
+      else {
+        Children.insert(Children.begin(), {uint64_t(Op) + 1, Count, Literal});
+        Save(internSignature(State, std::move(Children)), D);
+      }
+    } else if (Op == SymOp::And && Ctx.numOperands(R) == 2 &&
+               Ctx.isConst(Ctx.operand(R, 0))) {
+      auto Value = literal(Ctx.operand(R, 0));
+      if (!Value)
+        return {};
+      const auto Mask = Value->getLoBits(Count).getZExtValue();
+      if (!Mask)
+        Result = {internSignature(State, {0, Count, 0}), {0, 0}};
+      else {
+        const auto Child = Ctx.operand(R, 1);
+        auto S = wideSignature(State, Child, Count, Depth + 1);
+        if (Mask == 4 * Unit - 1)
+          Result = S;
+        else {
+          const bool LowMask = Mask & Unit, HighMask = Mask & (2 * Unit);
+          Bits D{LowMask ? S.Delta[0] : 0, HighMask ? S.Delta[1] : 0};
+          if (LowMask != HighMask && S.Delta[0])
+            D[1] =
+                apply(Xor, D[1],
+                      apply(And, highestBit(Child, Count - 1) ^ 1, S.Delta[0]));
+          Save(internSignature(State,
+                               {uint64_t(Op) + 1, Count, Mask, S.Identity}),
+               D);
+        }
+      }
+    } else if (Op == SymOp::Mul) {
+      const auto Operands = Ctx.operands(R);
+      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
+                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
+                      2 * (4 * Operands.size() + 1) * sizeof(Bits)))
+        return {};
+      unsigned TotalZeros = 0;
+      llvm::SmallVector<unsigned, 16> Zeros;
+      for (auto Child : Operands) {
+        const auto Z = std::min(Count, knownZeros(Child));
+        Zeros.push_back(Z);
+        TotalZeros = std::min(Count, TotalZeros + Z);
+      }
+      if (TotalZeros == Count)
+        Result = {internSignature(State, {0, Count, 0}), {0, 0}};
+      else if (Count - TotalZeros >= 4) {
+        SignatureKey Children;
+        llvm::SmallVector<Bits, 16> Deltas, Low, Prefix;
+        bool Changed = false;
+        for (size_t I = 0; I < Operands.size(); ++I) {
+          auto S = wideSignature(State, Operands[I],
+                                 Count - TotalZeros + Zeros[I], Depth + 1);
+          Children.push_back(S.Identity);
+          Deltas.push_back(Delta(S));
+          Changed |= S.Delta[0] || S.Delta[1];
+        }
+        Bits D(2, 0);
+        if (Changed) {
+          Prefix.push_back({1, 0});
+          for (size_t I = 0; I < Operands.size(); ++I) {
+            const auto &V = word(Operands[I], Zeros[I] + 2);
+            Low.push_back({V[Zeros[I]], V[Zeros[I] + 1]});
+            Prefix.push_back(multiplyCorrection(Prefix.back(), Low.back()));
+          }
+          Bits Suffix{1, 0};
+          for (size_t I = Operands.size(); I-- != 0;) {
+            D = sumCorrection(
+                D, multiplyCorrection(Deltas[I],
+                                      multiplyCorrection(Prefix[I], Suffix)));
+            Suffix = multiplyCorrection(Suffix, Low[I]);
+          }
+        }
+        std::sort(Children.begin(), Children.end());
+        Children.insert(Children.begin(), {uint64_t(Op) + 1, Count});
+        Save(internSignature(State, std::move(Children)), D);
+      } else
+        Result = {internSignature(State, {UINT64_MAX, Count, R.index()}),
+                  {0, 0}};
+    } else
+      Result = {internSignature(State, {UINT64_MAX, Count, R.index()}), {0, 0}};
+    if (!charge(1,
+                sizeof(uint64_t) + sizeof(WideSignature) + 4 * sizeof(void *)))
+      return {};
+    State.Words.emplace(Key, Result);
+    return Result;
+  }
+
+  // With U=2^(N-2), matched odd factors satisfy B=A+U*d. Thus
+  // AB=A^2+U*A*d. For N>=4, U^2 vanishes and every odd square is 1 mod 4:
+  // all paired corrections add modulo 4, multiplied only by unpaired factors.
+  // The product of representatives can be squared from N-1 observed bits.
+  Bits widePairedProduct(PairingState &State, llvm::ArrayRef<SymRef> Factors,
+                         unsigned Count) {
+    if (Count < 4)
+      return product(Factors, Count);
+    if (!State.Wide) {
+      if (!charge(1, sizeof(WidePairingState)))
+        return {};
+      State.Wide = std::make_unique<WidePairingState>();
+    }
+    if (!charge(Factors.size(), 2 * Factors.size() * sizeof(SymRef)))
+      return {};
+    std::map<uint32_t, std::pair<SymRef, WideSignature>> Unpaired;
+    llvm::SmallVector<SymRef, 16> Pairs, Rest;
+    Bits Correction(2, 0);
+    for (auto Factor : Factors) {
+      auto S = wideSignature(*State.Wide, Factor, Count);
+      if (Failed || !charge(1 + std::bit_width(Unpaired.size())))
+        return {};
+      auto It = Unpaired.find(S.Identity);
+      if (It == Unpaired.end()) {
+        if (!charge(1, sizeof(decltype(Unpaired)::value_type) +
+                           4 * sizeof(void *)))
+          return {};
+        Unpaired.emplace(S.Identity, std::make_pair(Factor, S));
+      } else {
+        auto A = It->second.first;
+        const auto &D = It->second.second.Delta;
+        auto Change = difference(Bits(S.Delta.begin(), S.Delta.end()),
+                                 Bits(D.begin(), D.end()));
+        Correction =
+            sumCorrection(Correction, multiplyCorrection(Change, word(A, 2)));
+        Pairs.push_back(A);
+        Unpaired.erase(It);
+      }
+    }
+    if (Pairs.empty())
+      return product(Factors, Count);
+    auto Inner = widePairedProduct(State, Pairs, Count - 1);
+    if (Failed || Inner.empty())
+      return {};
+    Inner.push_back(0);
+    auto Result = calculate(SymOp::Mul, Inner, Inner);
+    for (const auto &[Identity, Value] : Unpaired)
+      Rest.push_back(Value.first);
+    auto Other = product(Rest, Count);
+    if (Failed || Other.empty())
+      return {};
+    Result = calculate(SymOp::Mul, Result, Other);
+    Correction =
+        multiplyCorrection(Correction, Bits(Other.begin(), Other.begin() + 2));
+    Bits Upper(Count, 0);
+    std::copy(Correction.begin(), Correction.end(), Upper.end() - 2);
+    return calculate(SymOp::Add, Result, Upper);
+  }
+
   // The caller has proved every factor odd in the active assumption. For
   // A = L + 2^(N-1)*a and B = L + 2^(N-1)*b, AB is L^2 plus
   // 2^(N-1)*(a XOR b). The other odd factors preserve that correction.
@@ -1169,14 +1567,17 @@ public:
     if (OddProductOnly && !Assumption)
       return Root;
 
-    // Favor full power-of-two degree blocks: partial blocks can spend their
-    // allowance building a pairing index and still need the full carry graph.
-    // This only selects a search. Every pair requires an exact signature and
-    // every factor must independently be odd under the current assumption.
+    // Full power-of-two blocks favor single-bit pairing. A partial block can
+    // also use two-bit pairing when it spans a complete lower-precision block.
+    // These are search hints: every pair needs an exact signature and every
+    // factor must independently be odd under the current assumption.
     const size_t PairingBlock = size_t(1) << (Observed - 1);
+    const size_t WideBlock = size_t(1) << (Observed - std::min(Observed, 2u));
+    const bool FullBlock =
+        Nonconstant >= PairingBlock && !(Nonconstant % PairingBlock);
     bool AllOdd = Assumption &&
                   Observed >= limits::kMinResidueDecisionPairingBits &&
-                  Nonconstant >= PairingBlock && !(Nonconstant % PairingBlock);
+                  (FullBlock || Nonconstant > WideBlock);
     llvm::SmallVector<SymRef, 16> Nonconstants;
     if (AllOdd) {
       if (!charge(Factors.size(), Factors.size() * sizeof(SymRef)))
@@ -1193,7 +1594,28 @@ public:
     }
     if (AllOdd) {
       PairingState State;
-      Product = pairedProduct(State, Nonconstants, Observed);
+      bool PreferSingle = false;
+      if (FullBlock) {
+        const auto A = residueSignature(State, Nonconstants.front(), Observed);
+        const auto B = residueSignature(
+            State, Nonconstants[Nonconstants.size() / 2], Observed);
+        PreferSingle = A.Identity == B.Identity;
+      }
+      bool Wide = false;
+      if (!PreferSingle &&
+          Observed >= limits::kMinResidueDecisionWidePairingBits &&
+          Nonconstants.size() > WideBlock &&
+          charge(1, sizeof(WidePairingState))) {
+        State.Wide = std::make_unique<WidePairingState>();
+        const auto A =
+            wideSignature(*State.Wide, Nonconstants.front(), Observed);
+        const auto B =
+            wideSignature(*State.Wide, Nonconstants[WideBlock], Observed);
+        Wide = A.Identity == B.Identity;
+      }
+      Product = Wide        ? widePairedProduct(State, Nonconstants, Observed)
+                : FullBlock ? pairedProduct(State, Nonconstants, Observed)
+                            : product(Factors, Observed);
     } else {
       Product = product(Factors, Observed);
     }
@@ -1361,20 +1783,6 @@ public:
           return nullptr;
         return &Polynomials.emplace(Id, std::move(Value)).first->second;
       };
-      if (Id & 1) {
-        const auto *Value = Self(Self, Id ^ 1);
-        if (!Value ||
-            !charge(Value->size() + 1, (Value->size() + 1) * sizeof(uint64_t)))
-          return nullptr;
-        auto Result = *Value;
-        if (!Result.empty() && !Result.front())
-          Result.erase(Result.begin());
-        else
-          Result.insert(Result.begin(), 0);
-        if (Result.size() > limits::kMaxResidueDecisionPolynomialTerms)
-          return nullptr;
-        return Store(std::move(Result));
-      }
       const auto D = decision(Id);
       auto [It, Inserted] = PolynomialVariables.try_emplace(
           D.Variable, PolynomialVariables.size());
@@ -1385,11 +1793,13 @@ public:
                          4 * sizeof(void *)))
         return nullptr;
       const auto Variable = uint64_t(1) << It->second;
-      auto Low = Self(Self, D.Low), High = Self(Self, D.High);
+      auto Low = Self(Self, D.Low), High = Self(Self, D.High & ~uint32_t(1));
       if (!Low || !High)
         return nullptr;
       auto Xor = [&](const Polynomial &A,
                      const Polynomial &B) -> std::optional<Polynomial> {
+        if (&A == &B)
+          return Polynomial{};
         const auto Size = A.size() + B.size();
         if (!charge(Size, Size * sizeof(uint64_t)))
           return std::nullopt;
@@ -1401,7 +1811,17 @@ public:
         return Result;
       };
       auto Difference = Xor(*Low, *High);
-      if (!Difference || !charge(Difference->size()))
+      if (!Difference)
+        return nullptr;
+      // Canonical decisions have an even low edge, so their polynomial has
+      // no constant term. A complemented high edge contributes only x here;
+      // do not copy and cache an entire second polynomial just to toggle 1.
+      if (D.High & 1) {
+        if (!charge(Difference->size() + 1))
+          return nullptr;
+        Difference->insert(Difference->begin(), 0);
+      }
+      if (!charge(Difference->size()))
         return nullptr;
       for (auto &Term : *Difference) {
         // Ordered decisions place this variable before both children.
@@ -1414,9 +1834,18 @@ public:
       return Result ? Store(std::move(*Result)) : nullptr;
     };
     auto SynthesizePolynomial = [&](uint32_t Id, SymRef Fallback) -> SymRef {
-      auto Form = ReadPolynomial(ReadPolynomial, Id);
+      auto Form = ReadPolynomial(ReadPolynomial, Id & ~uint32_t(1));
       if (!Form)
         return Fallback;
+      Polynomial Complement;
+      if (Id & 1) {
+        if (Form->size() >= limits::kMaxResidueDecisionPolynomialTerms ||
+            !charge(Form->size() + 1, (Form->size() + 1) * sizeof(uint64_t)))
+          return Fallback;
+        Complement.push_back(0);
+        Complement.append(Form->begin(), Form->end());
+        Form = &Complement;
+      }
       size_t Edges = Form->size();
       for (auto Term : *Form)
         Edges += std::popcount(Term);
@@ -1492,7 +1921,8 @@ public:
         // cofactor: Low = R XOR (Q AND High), hence
         // P = R XOR ((x XOR Q) AND High). Symmetric difference proves the
         // remainder, including complemented and partially matching groups.
-        if (!Low.empty() && !(High.size() == 1 && !High.front())) {
+        if (Low.size() > High.size() / 2 &&
+            !(High.size() == 1 && !High.front())) {
           if (!charge(High.size() + Low.size(),
                       Low.size() * (sizeof(uint64_t) + sizeof(Polynomial) +
                                     4 * sizeof(void *) + 2 * sizeof(uint64_t))))
@@ -1509,6 +1939,16 @@ public:
           Polynomial Quotient{Bit}, Remainder;
           bool Found = false;
           for (const auto &[Outside, Inside] : Groups) {
+            // |Inside XOR High| < |Inside| requires more than half of High
+            // to occur in Inside. Smaller groups cannot reuse this cofactor;
+            // retain them directly instead of scanning High for every group.
+            if (Inside.size() <= High.size() / 2) {
+              if (!charge(Inside.size()))
+                return {};
+              for (auto Term : Inside)
+                Remainder.push_back(Term | Outside);
+              continue;
+            }
             const auto Size = Inside.size() + High.size();
             if (!charge(Size, Size * sizeof(uint64_t)))
               return {};
