@@ -31,6 +31,59 @@ uses Microsoft's CRT headers, never the host CRT.
 The selected kernel and user providers are listed in the generator. These are
 not an inventory of every Windows export, every SDK header or every OS version.
 
+Add `--ucrt` to include the target's UCRT declarations. The additional Microsoft
+VC headers, SDK import libraries and license inputs are pinned in
+`scripts/MicrosoftUCRTInputs.json`. `llvm-readobj --coff-imports` must expose
+explicit export names: decorated linker symbols do not establish the API name.
+The three `ucrt`, `ucrt.osmode` and `ucrt.osmode_permissive` import libraries,
+plus the actual `ucrtbase.dll` redistributed in the pinned SDK, select
+declarations from the official headers, including the documented
+[`_o_` OS-state counterparts](https://learn.microsoft.com/cpp/c-runtime-library/global-state).
+An alias is added only when that exact export exists and its base declaration
+is available. Compiler intrinsics without a matching export are excluded.
+The DLL inventory considers named RVAs inside executable section extents,
+recording other exports separately. For ARM64X it reads only the default
+[native ARM64 view](https://learn.microsoft.com/en-us/windows/arm/arm64x-pe),
+excluding LLVM's transformed ARM64EC view. Coverage refers to these pinned
+inputs, not every UCRT DLL version; an export does not establish its ABI.
+
+The C++ header bridge extracts only reviewed C-linkage declarations and trivial,
+standard-layout records. Clang checks both original C++ records against the C
+bridge for each target. It also compares the compiler's LLVM declarations for
+every bridged function, retaining symbol decoration, calling convention and
+parameter/return ABI attributes. EH/RTTI pointers to compiler-owned types stay
+opaque; C++ methods and unverified record layouts are not converted into C APIs.
+A small set of declarations absent from the headers
+comes from Microsoft's SDK-shipped UCRT sources or explicit Microsoft Learn
+prototypes; the manifest records the source hash, line and declaration. It
+does not copy implementation bodies into the generated header.
+
+Add `--ucrt-compatibility` together with `--ucrt` for reviewed declarations
+that Microsoft has not made available in these inputs. This separate provider
+currently reads pinned Wine sources for `_except1` and
+`__std_type_info_destroy_list`, selecting only still-unresolved exports and
+their verified `_o_` counterparts. Microsoft's declarations retain priority.
+The original source notices, license and revision are retained locally, and
+the generated header and manifest identify the supplement explicitly. The
+combined manifest rejects mismatched profiles, provider policies and target
+packages. Unresolved exports remain recorded; a name alone never supplies a
+guessed calling convention or parameter list.
+
+Use `scripts/check_windows_ucrt_calls.py --generated /path/to/microsoft-windows
+--output /path/to/results --neverd build-release/bin/neverd` to build original
+import-only fixtures from the retained generation inputs. It checks HighC and
+LLVM-C against the original declarations on x86, x64 and ARM64, including
+OS-state aliases, record arguments/results, callbacks and the compatibility
+declarations. `--architecture` and `--function` restrict a regression run.
+The JSON report retains commands and input hashes. A successful compile checks
+declarations and argument shape; it does not certify native execution, and
+declaration mismatches must be distinguished from lost machine values.
+The full probe currently records open failures for x86 floating calls, ARM64
+HFA records and several source qualifiers, tags and variadic signatures. It is
+a gap audit, not an all-green coverage certificate. Force-including the original
+headers can also expose duplicate emitted definitions; those diagnostics do not
+by themselves prove a calling-convention mismatch.
+
 The x86 kernel unit also reads the WDK's `WindowsDriver.Common.props` and
 preserves its default `StdCall` compiler setting. Preprocessing cannot encode
 that setting in declarations that omit an explicit convention. The generator

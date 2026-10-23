@@ -218,6 +218,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   materializeKnownStructReturnCallSites(Img, Result);
 
+  bindFloatCallResults(Img, Result);
+
   settleReturnContracts(Img, Result);
 
   recoverModuleCallAbi(Img, Result, AllFuncNames);

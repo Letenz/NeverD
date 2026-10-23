@@ -417,6 +417,219 @@ TEST(MedABIPass, IndirectFPSetupUsesOnlyTheTargetArgumentBank) {
     }
 }
 
+TEST(MedABIPass, ForwardedFPParametersRequireAnUnclobberedEntryPath) {
+  constexpr Arch A = Arch::AArch64;
+  constexpr va_t Callee = 0x2000;
+  const auto &TRI = getTargetRegInfo(A);
+  const auto FP = TRI.floatingParamRegs(BinaryFormat::COFF);
+  const std::map<va_t, std::string> Names{{Callee, "scalar_callee"}};
+  const std::map<va_t, int> FPArity{{Callee, 2}};
+  const std::map<va_t, std::vector<uint64_t>> FPRegs{{Callee, {FP[0], FP[1]}}};
+  const std::map<va_t, std::map<uint64_t, uint16_t>> FPWidths{
+      {Callee, {{FP[0], 4}, {FP[1], 8}}}};
+  enum class Path {
+    Entry,
+    Linear,
+    PriorCall,
+    PredecessorCall,
+    Join,
+    Exception
+  };
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (Path P : {Path::Entry, Path::Linear, Path::PriorCall,
+                   Path::PredecessorCall, Path::Join, Path::Exception}) {
+      SCOPED_TRACE(static_cast<unsigned>(P));
+      BinaryImage Image;
+      Image.Arch = A;
+      Image.Format = Format;
+      MedFunc F;
+      F.Entry = 0x1000;
+      F.CC = *callingConventionOf(A, Image.Format);
+      const bool Separate =
+          P == Path::Linear || P == Path::PredecessorCall || P == Path::Join;
+      F.Blocks.resize(Separate ? 2 : 1);
+      for (size_t I = 0; I < F.Blocks.size(); ++I)
+        F.Blocks[I].Id = I;
+      auto &Entry = F.Blocks.front();
+      auto &Block = F.Blocks.back();
+      if (Separate) {
+        Entry.Succs = {Block.Id};
+        Block.Preds = {Entry.Id};
+      }
+      if (P == Path::Join)
+        Block.Preds.push_back(Block.Id);
+      if (P == Path::Exception)
+        Block.ExceptionalPreds.push_back(
+            {1, 0x1004, ExceptionalEdgeKind::CxxCleanup});
+      if (P == Path::PriorCall || P == Path::PredecessorCall) {
+        MedOp Prior;
+        Prior.Opcode = NdOp::CALL;
+        Prior.Addr = 0x1004;
+        Prior.CallSiteId = 1;
+        Prior.addInput(MedVar::makeConst(0x3000, 8));
+        Entry.Ops.push_back(Prior);
+      }
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = 0x1010;
+      Call.CallSiteId = 2;
+      Call.addInput(MedVar::makeConst(Callee, 8));
+      Block.Ops.push_back(Call);
+      std::map<va_t, int> RegArity{{Callee, 0}}, TotalArity{{Callee, 0}};
+      recoverCallAbi(F, A, Names, &Image, &RegArity, &TotalArity, &FPArity,
+                     nullptr, &FPRegs, nullptr, nullptr, nullptr, nullptr,
+                     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                     &FPWidths);
+      const auto *Info = F.findCall(Block.Id, Block.Ops.size() - 1);
+      ASSERT_NE(Info, nullptr);
+      const bool Incoming = P == Path::Entry || P == Path::Linear;
+      EXPECT_EQ(Info->Args.size(), Incoming ? 2u : 0u);
+      if (Incoming) {
+        ASSERT_EQ(F.Params.size(), 2u);
+        EXPECT_EQ(Info->Args[0].Kind, MedVar::Param);
+        EXPECT_EQ(Info->Args[1].Kind, MedVar::Param);
+        EXPECT_EQ(F.FPParamScalarBytes.at(FP[0]), 4u);
+        EXPECT_EQ(F.FPParamScalarBytes.at(FP[1]), 8u);
+      } else {
+        EXPECT_TRUE(F.FPParamScalarBytes.empty());
+        for (const auto &Parameter : F.Params)
+          EXPECT_FALSE(TRI.isVectorReg(Parameter.RegOff));
+      }
+    }
+}
+
+TEST(MedABIPass, ForwardedFPLanesKeepEveryPathsReadIndependentOfBlockOrder) {
+  constexpr Arch A = Arch::AArch64;
+  const auto &TRI = getTargetRegInfo(A);
+  const auto FP = TRI.floatingParamRegs(BinaryFormat::COFF);
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Reverse);
+      BinaryImage Image;
+      Image.Arch = A;
+      Image.Format = Format;
+      MedFunc F;
+      F.Entry = 0x1000;
+      F.CC = *callingConventionOf(A, Image.Format);
+      F.Blocks.resize(3);
+      F.Blocks[0].Id = 0;
+      F.Blocks[0].Succs = {1, 2};
+      for (unsigned I = 1; I <= 2; ++I) {
+        auto &Block = F.Blocks[I];
+        Block.Id = I;
+        Block.Preds = {0};
+        MedOp Call;
+        Call.Opcode = NdOp::CALL;
+        Call.CallSiteId = I;
+        Call.Addr = 0x1000 + 16 * I;
+        Call.addInput(MedVar::makeConst(0x2000 + 16 * I, 8));
+        Block.Ops.push_back(Call);
+      }
+      if (Reverse)
+        std::swap(F.Blocks[1], F.Blocks[2]);
+      std::map<va_t, int> Reg{{0x2010, 0}, {0x2020, 0}}, Total = Reg;
+      const std::map<va_t, int> Arity{{0x2010, 1}, {0x2020, 1}};
+      const std::map<va_t, std::vector<uint64_t>> Registers{{0x2010, {FP[0]}},
+                                                            {0x2020, {FP[0]}}};
+      const std::map<va_t, std::map<uint64_t, uint16_t>> Widths{
+          {0x2010, {{FP[0], 4}}}, {0x2020, {{FP[0], 8}}}};
+      recoverCallAbi(F, A, {}, &Image, &Reg, &Total, &Arity, nullptr,
+                     &Registers, nullptr, nullptr, nullptr, nullptr, nullptr,
+                     nullptr, nullptr, nullptr, nullptr, nullptr, &Widths);
+      ASSERT_EQ(F.Params.size(), 1u);
+      EXPECT_EQ(F.Params[0].Size, 8u);
+      EXPECT_EQ(F.FPParamScalarBytes.at(FP[0]), 8u);
+      ASSERT_EQ(F.TypedParams.size(), 1u);
+      ASSERT_TRUE(F.TypedParams[0].Type);
+      EXPECT_EQ(F.TypedParams[0].Type->Size, 8u);
+      ASSERT_EQ(F.CallInfos.size(), 2u);
+      for (const auto &Info : F.CallInfos) {
+        ASSERT_EQ(Info.ArgReadBytes.size(), 1u);
+        EXPECT_EQ(Info.ArgReadBytes[0], Info.TargetAddr == 0x2010 ? 4u : 8u);
+      }
+    }
+}
+
+TEST(MedABIPass, ScalarFloatingDeclarationRequiresCompleteIndependentWidths) {
+  for (Arch A : {Arch::X64, Arch::AArch64}) {
+    const auto &TRI = getTargetRegInfo(A);
+    const auto FP = TRI.floatingParamRegs(BinaryFormat::COFF);
+    MedOp Op;
+    Op.Opcode = NdOp::CALL;
+    Op.Output = reg(3, 1, 16, TRI.FPReturnReg, A);
+    Op.CalleeFloatReturnBytes = 4;
+    MedCallInfo Info;
+    Info.Args = {reg(1, 0, 16, FP[0], A), reg(2, 0, 16, FP[1], A)};
+    Info.IntegerRegisterArgCount = 0;
+    Info.FloatingRegisterArgCount = 2;
+    Info.ArgReadBytes = {8, 4};
+    const auto Valid =
+        recoveredFloatingCallArguments(Op, Info, A, BinaryFormat::COFF);
+    ASSERT_TRUE(Valid);
+    EXPECT_EQ(Valid->ReturnBytes, 4u);
+    EXPECT_EQ(Valid->ParameterBytes, (std::vector<uint16_t>{8, 4}));
+    auto Incomplete = Info;
+    Incomplete.ArgReadBytes[1] = 0;
+    EXPECT_FALSE(
+        recoveredFloatingCallArguments(Op, Incomplete, A, BinaryFormat::COFF));
+    Incomplete = Info;
+    Incomplete.VarArgFixedCount = 1;
+    EXPECT_FALSE(
+        recoveredFloatingCallArguments(Op, Incomplete, A, BinaryFormat::COFF));
+    Incomplete = Info;
+    Incomplete.IntegerRegisterArgCount = 1;
+    EXPECT_FALSE(
+        recoveredFloatingCallArguments(Op, Incomplete, A, BinaryFormat::COFF));
+    Incomplete = Info;
+    Incomplete.Args[0].Size = 4;
+    EXPECT_FALSE(
+        recoveredFloatingCallArguments(Op, Incomplete, A, BinaryFormat::COFF));
+    Op.Output.RegOff = TRI.IntReturnReg;
+    EXPECT_FALSE(
+        recoveredFloatingCallArguments(Op, Info, A, BinaryFormat::COFF));
+  }
+}
+
+TEST(MedABIPass, ScalarFPResultPromotionPreservesExistingDefinitions) {
+  for (Arch A : {Arch::X64, Arch::AArch64}) {
+    const auto &TRI = getTargetRegInfo(A);
+    MedFunc Original;
+    Original.Blocks.resize(1);
+    auto &Block = Original.Blocks.front();
+    Block.Id = 0;
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.CallSiteId = 1;
+    Call.Output = reg(2, 1, 8, TRI.IntReturnReg, A);
+    Call.addInput(MedVar::makeConst(0x2000, 8));
+    Block.Ops.push_back(Call);
+    // An unrelated implicit definition also reserves its SSA identifier.
+    Original.CallClobbers.push_back({reg(10, 1, 8, TRI.IntReturnReg, A), 1});
+    auto Fresh = Original;
+    ASSERT_TRUE(promoteFloatCallResult(Fresh, Fresh.Blocks[0], 0, 4, A));
+    const auto &Promoted = Fresh.Blocks[0].Ops[0];
+    EXPECT_GT(Promoted.Output.Id, 10);
+    EXPECT_EQ(Promoted.Output.RegOff, TRI.FPReturnReg);
+    EXPECT_EQ(Promoted.CalleeFloatReturnBytes, 4u);
+    EXPECT_FALSE(promoteFloatCallResult(Fresh, Fresh.Blocks[0], 0, 4, A));
+
+    auto Existing = Original;
+    Existing.Blocks[0].Ops[0].Output = reg(3, 1, 16, TRI.FPReturnReg, A);
+    ASSERT_TRUE(promoteFloatCallResult(Existing, Existing.Blocks[0], 0, 8, A));
+    EXPECT_EQ(Existing.Blocks[0].Ops[0].Output.Id, 3);
+    EXPECT_EQ(Existing.Blocks[0].Ops[0].CalleeFloatReturnBytes, 8u);
+
+    auto Unbound = Original;
+    const auto Read = reg(5, 1, 16, TRI.FPReturnReg, A);
+    Unbound.Blocks[0].Ops.push_back(unary(NdOp::COPY, temp(6, 1, 16, A), Read));
+    EXPECT_FALSE(promoteFloatCallResult(Unbound, Unbound.Blocks[0], 0, 4, A));
+    EXPECT_EQ(Unbound.Blocks[0].Ops[0].Output, Call.Output);
+    EXPECT_EQ(Unbound.Blocks[0].Ops[1].Inputs[0], Read);
+  }
+}
+
 TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
   for (auto Architecture : {Arch::X86, Arch::X64})
     for (auto Format :

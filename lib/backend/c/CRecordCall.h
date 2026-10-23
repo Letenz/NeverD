@@ -38,6 +38,8 @@ inline std::string recordCallType(const TypeRef &Type,
   if (const auto Tag = Definitions.Tags.find(Name);
       Tag != Definitions.Tags.end())
     return std::string(Tag->second ? "union " : "struct ") + Name;
+  if (llvm::is_contained(Definitions.Types, Name))
+    return Name;
   throw std::runtime_error("A record call's header type cannot be spelled");
 }
 
@@ -67,6 +69,19 @@ recordCallArgument(const std::string &Type,
             std::to_string(Piece.Bytes) + "); ";
   }
   return Text + "__neverd_record; })";
+}
+
+/// Reproduce the hidden-result write and integer pointer result together.
+/// Capturing the pointer once also keeps a source operand with side effects
+/// from being evaluated again after the call.
+inline std::string recordCallResult(const std::string &Type,
+                                    const std::string &Address,
+                                    const std::string &Call) {
+  return "({ uintptr_t __neverd_result_address = (uintptr_t)(" + Address +
+         "); " + Type + " __neverd_result = " + Call +
+         "; __builtin_memcpy((void *)__neverd_result_address, "
+         "&__neverd_result, sizeof(__neverd_result)); "
+         "__neverd_result_address; })";
 }
 
 } // namespace neverd::c_detail

@@ -420,6 +420,51 @@ TEST(I386CallContract, AStdcallImportPopsItsArguments) {
   EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
 }
 
+TEST(I386CallContract, HeaderRecordStdcallKeepsItsStackCleanup) {
+  class Header : public NullDebugContext {
+  public:
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "RecordStatus")
+        return std::nullopt;
+      auto Record = NdType::makeNamedRecord("Record", 8);
+      Record->Alignment = 8;
+      Record->Passing = NdRecordPassing::ByValue;
+      Record->ScalarLeaves = {{0, 4, false}, {4, 4, false}};
+      FunctionSym Function;
+      Function.Name = Name.str();
+      Function.ReturnType = NdType::makeInt(4, true);
+      Function.Params = {{"Value", Record}};
+      Function.CallConv = DebugCallConv::Stdcall;
+      Function.PrototypeLibrary = "test-windows-header";
+      Function.PrototypeFromHeader = true;
+      return Function;
+    }
+  } Debug;
+  // The record is two stack words. The load after the call must read the
+  // wrapper's original argument, not the record word left at the old SP.
+  std::vector<uint8_t> Code = {0x6A, 7, 0x6A, 3};
+  const auto Call = callThroughSlot(Iat);
+  Code.insert(Code.end(), Call.begin(), Call.end());
+  Code.insert(Code.end(), {0x8B, 0x44, 0x24, 4, 0xC3});
+  BinaryImage Image = makeImage(Code, {"RecordStatus"});
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  const auto Result = Pipeline().run(Image, Context, Options, &Debug);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_TRUE(Result.CallEntryStackPops.count(Iat));
+  EXPECT_EQ(Result.CallEntryStackPops.at(Iat), 8);
+  CEmitterOptions COptions;
+  COptions.TheArch = Image.Arch;
+  COptions.Format = Image.Format;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, COptions));
+  EXPECT_NE(Source.find("return arg0;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+}
+
 TEST(I386CallContract, AStdcallImportIsDeclaredToPopItsArguments) {
   // C compiled from the output leaves the two slots Validate pops to it
   // only by a stdcall declaration: HighC's counts the slots its thunk's

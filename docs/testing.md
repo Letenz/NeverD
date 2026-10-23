@@ -55,8 +55,28 @@ selected functions execute against an independent provider observing every
 record field and following parameter; whole modules are syntax-checked with
 their original import-slot aliases. Those aliases need the SDK's image linker
 for runtime binding. Other hosts explicitly skip the native glibc test.
+An original linked Windows x64 record fixture also exercises hidden result
+storage through both C emitters at O0/O2. Its independent Linux host provider
+checks every argument bit, one call, the returned buffer address and surrounding
+sentinels. This checks generated-C behavior, not native Windows execution.
+`I386CallContract.HeaderRecordStdcallKeepsItsStackCleanup` checks that a read
+after a record-taking stdcall still reaches the caller's original stack argument.
 `LocalTypesDebugContext.RecordParametersRetainCompleteABILayout` checks alignment,
 scalar leaves and refusal to publish a partial bitfield layout.
+
+`FloatingCallArguments` checks complete float/double register signatures and
+rejects unsupported classes, stack overflow and special conventions.
+`Win64CallContract.HeaderOnlyFloatingImportRetainsItsTypedABI` and
+`AAPCS64CallContract.WindowsHeaderFloatsSurviveSelectionAndBothEmitters` check
+header-only imports through both routes. Their generated C executes against
+an independent scalar provider on the host; LLVM entries retain their machine
+vector carriers. Read-only and writable IAT slots retain their distinct target
+semantics. The ARM64 matrix uses two forwarding layers, independent parameter
+and return widths, and repeated function selections with a shared cache.
+`MedABIPass.ForwardedFPParametersRequireAnUnclobberedEntryPath` rejects prior
+calls, joins and exceptional entry paths. The declaration and result-promotion
+tests retain incomplete-width, variadic and unbound-SSA counterexamples.
+This is not native Windows ARM64 execution coverage.
 
 Run these with the System V, i386 and AAPCS64 call-contract tests and the source
 control-flow tests after changing this shared boundary. The stack-join

@@ -23,7 +23,10 @@
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/SafetyCallsiteMetadata.h"
 #include "neverd/backend/llvm/X86X87ImportCall.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/low/X87ImportCall.h"
+#include "neverd/ir/med/MedABIPass.h"
+#include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/object/SectionNames.h"
@@ -53,6 +56,27 @@ namespace neverd {
 
 namespace {
 constexpr auto ArgumentBanks = LLVMArgumentBanksAttribute;
+
+/// A fixed header signature whose floating operands already have complete
+/// register summaries. SourceParameterPlacement owns the positions; this only
+/// verifies that ABI recovery retained those exact operands and scalar lanes.
+bool floatingHeaderCall(const FunctionSym &Function, Arch Architecture,
+                        BinaryFormat Format, const MedOp &Op,
+                        const MedCallInfo &Call) {
+  const auto Signature =
+      libc::floatingCallArguments(Function, Architecture, Format);
+  const auto &Registers = getTargetRegInfo(Architecture);
+  if (!Signature || Signature->ParameterBytes.size() != Call.Args.size() ||
+      Op.NumInputs != Call.Args.size() + 1 || Op.Output.Kind != MedVar::Reg ||
+      Op.Output.RegOff != Registers.FPReturnReg ||
+      Op.Output.Size < Signature->ReturnBytes)
+    return false;
+  for (size_t I = 0; I < Signature->ParameterBytes.size(); ++I)
+    if (Op.vectorArgumentWidth(I + 1) != Signature->ParameterBytes[I] ||
+        !(Call.Args[I] == Op.Inputs[I + 1]))
+      return false;
+  return true;
+}
 
 std::optional<std::pair<unsigned, unsigned>>
 argumentBanks(const llvm::Function &Function) {
@@ -742,6 +766,19 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                                  getTargetRegInfo(TargetArch).PointerSize * 8)
           : nullptr;
   std::string IndirectImportName;
+  bool PreserveHeaderTarget = false;
+  if (Op.CalleeFloatReturnBytes && Target && Img && CI && Dbg) {
+    const std::string Name = importCalleeName(*Img, CI->TargetAddr);
+    if (!Name.empty())
+      if (const auto Header = Dbg->resolvePrototype(Name);
+          Header &&
+          floatingHeaderCall(*Header, TargetArch, TargetFormat, Op, *CI)) {
+        IndirectImportName = Name;
+        // A declaration proves the ABI of this import slot. It does not
+        // replace a writable slot's current contents with the initial symbol.
+        PreserveHeaderTarget = !KnownTarget;
+      }
+  }
   if (Op.X87ImportArguments) {
     if (!Img || !CI ||
         x87CRTImportArguments(*Img, CI->TargetAddr) != Op.X87ImportArguments) {
@@ -758,8 +795,13 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   if (KnownTarget && !llvm::isa<llvm::Function>(KnownTarget)) {
     const auto It =
         ImportedSymbolPlaceholders.find(KnownTarget->getName().str());
+    const auto Header = Dbg && CI
+                            ? Dbg->resolvePrototype(KnownTarget->getName())
+                            : std::nullopt;
     if (It != ImportedSymbolPlaceholders.end() && It->second == KnownTarget &&
         (libc::libcArityForSymbol(It->first, TargetLibC) ||
+         (Header &&
+          floatingHeaderCall(*Header, TargetArch, TargetFormat, Op, *CI)) ||
          (Op.X87ImportArguments && isX87CRTImportName(It->first)) ||
          libc::varArgFixedCount(stripLeadingUnderscores(It->first),
                                 TargetLibC)))
@@ -1085,6 +1127,56 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       if (!Callee && !CalleeName.empty())
         Callee = Mod->getFunction(CalleeName);
 
+      // A selected header can describe imports absent from the curated libc
+      // tables. Keep their scalar FP ABI instead of declaring their vector
+      // bit carriers as integer arguments and an integer result.
+      if (!Callee && Dbg && CI && Img && !CalleeName.empty() &&
+          (!IndirectImportName.empty() || Img->findImportAt(CI->TargetAddr) ||
+           Img->findImportStubAt(CI->TargetAddr)))
+        if (const auto Function = Dbg->resolvePrototype(CalleeName);
+            Function &&
+            floatingHeaderCall(*Function, TargetArch, TargetFormat, Op, *CI)) {
+          std::vector<llvm::Type *> Parameters;
+          for (const auto &[Name, Type] : Function->Params)
+            Parameters.push_back(mapNdtype(Type));
+          auto *FT = llvm::FunctionType::get(mapNdtype(Function->ReturnType),
+                                             Parameters, false);
+          Callee = llvm::Function::Create(
+              FT, llvm::GlobalValue::ExternalLinkage, CalleeName, Mod);
+          Callee->setCallingConv(TargetArch == Arch::X64 &&
+                                         TargetFormat == BinaryFormat::COFF
+                                     ? llvm::CallingConv::Win64
+                                     : llvm::CallingConv::C);
+        }
+
+      // A selected caller can omit the body that established this complete
+      // scalar FP signature. Its declaration must keep that recovered ABI;
+      // machine vector operands do not make the callee return an integer.
+      if (!Callee && CI && !CI->IsIndirect) {
+        if (const auto Signature = recoveredFloatingCallArguments(
+                Op, *CI, TargetArch, TargetFormat)) {
+          std::vector<llvm::Type *> Types;
+          for (uint16_t Bytes : Signature->ParameterBytes)
+            Types.push_back(mapNdtype(NdType::makeFloat(Bytes)));
+          const std::string Name =
+              CalleeName.empty()
+                  ? (kAutoFuncPrefix + llvm::utohexstr(CallAddr)).str()
+                  : CalleeName;
+          Callee = Mod->getFunction(Name);
+          if (!Callee) {
+            Callee = llvm::Function::Create(
+                llvm::FunctionType::get(
+                    mapNdtype(NdType::makeFloat(Signature->ReturnBytes)), Types,
+                    false),
+                llvm::GlobalValue::ExternalLinkage, Name, Mod);
+            Callee->setCallingConv(TargetArch == Arch::X64 &&
+                                           TargetFormat == BinaryFormat::COFF
+                                       ? llvm::CallingConv::Win64
+                                       : llvm::CallingConv::C);
+          }
+        }
+      }
+
       // A known non-variadic libc function with floating-point arguments (the
       // math.h family sqrt/pow/sin/...) must be declared with FP
       // `double`/`float` parameters and return so its arguments travel in the
@@ -1248,7 +1340,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
           ImportedPlaceholder->replaceAllUsesWith(Callee);
           ImportedPlaceholder->eraseFromParent();
           ImportedSymbolPlaceholders.erase(CalleeName);
-          if (!IndirectImportName.empty())
+          if (!IndirectImportName.empty() && !PreserveHeaderTarget)
             KnownTarget = Callee;
         } else {
           // Defensive only: every direct-call path above creates a callee, but
@@ -1460,8 +1552,14 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       auto *PadTy = CalleeTy->getParamType(CoercedArgs.size());
       CoercedArgs.push_back(llvm::Constant::getNullValue(PadTy));
     }
+    llvm::Value *Callable = Callee;
+    if (PreserveHeaderTarget) {
+      Callable = Target;
+      if (Callable->getType()->isIntegerTy())
+        Callable = Builder.CreateIntToPtr(Callable, PtrTy);
+    }
     auto *Call =
-        Builder.CreateCall(Callee, CoercedArgs,
+        Builder.CreateCall(CalleeTy, Callable, CoercedArgs,
                            CalleeTy->getReturnType()->isVoidTy() ? "" : "call");
     Call->setCallingConv(Callee->getCallingConv());
     Result = Call;

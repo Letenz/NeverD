@@ -1092,6 +1092,32 @@ over automatic Darwin SDK source bindings; header record layouts retain them.
 Unsupported record carriers fail explicitly. This does not add ARM32 record
 placement or general mixed floating record-call support.
 
+Selected platform headers have their own prototype provenance, separate from
+the host C-library inclusion policy. Windows SDK records therefore use the
+same placement adapter even when their definitions are embedded locally.
+Windows x86/x64 hidden record results consume the first physical argument;
+both C emitters write the returned bytes to that buffer and preserve the
+EAX/RAX pointer result. x86 `stdcall` retains its stack cleanup after record
+placement. LLVM-C does not redefine a record supplied by the included header
+of the adapted call.
+
+`floatingCallArguments` uses the same placement authority for complete fixed
+float/double signatures whose arguments and result use FP registers. LLVM
+import emission verifies those exact SSA operands and widths before declaring
+the typed callee, including immutable import identities absent from libc tables.
+Windows x64 and ARM64 publish these operands before SSA and record the scalar
+return width; later call setup recovery preserves them. Writable import slots
+retain their runtime target even when the declaration establishes its ABI.
+Omitted-callee conversion and its cache include the same signatures,
+independently of the selected functions. Forwarding recovery keeps each scalar
+argument width separate from the result width and admits incoming FP parameters
+only along an unclobbered entry path. Its existing bounded summary worklist
+propagates the resulting facts. `recoveredFloatingCallArguments` checks the
+complete fixed signature for both LLVM declarations and HighC call metadata;
+expression types alone do not establish a nonvariadic external signature.
+Mixed classes, HFA records and stack overflow need their separate adapters;
+this scalar contract supplies no such coverage.
+
 LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
 signatures. Every printed call of a symbol must agree before the writer uses
 one typed declaration and matching argument/result conversions. An unused

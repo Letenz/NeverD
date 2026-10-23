@@ -12,9 +12,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -518,6 +520,190 @@ TEST(AAPCS64CallContract, ACallToThePLTEntryOfItsOwnRoutinePassesItsArgs) {
           Call && !llvm::isa<llvm::IntrinsicInst>(Call))
         for (const llvm::Value *Argument : Call->args())
           EXPECT_FALSE(llvm::isa<llvm::Constant>(Argument)) << IR;
+}
+
+TEST(AAPCS64CallContract, WindowsHeaderFloatsSurviveSelectionAndBothEmitters) {
+  class Header : public NullDebugContext {
+  public:
+    uint16_t ReturnBytes = 8, FirstBytes = 8, SecondBytes = 8;
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "fixture_fp")
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Name = Name.str();
+      Function.ReturnType = NdType::makeFloat(ReturnBytes);
+      Function.Params = {{"x", NdType::makeFloat(FirstBytes)},
+                         {"y", NdType::makeFloat(SecondBytes)}};
+      Function.PrototypeFromHeader = true;
+      return Function;
+    }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      auto Function =
+          Address == Got ? resolvePrototype("fixture_fp") : std::nullopt;
+      if (Function)
+        Function->Addr = Address;
+      return Function;
+    }
+  } Debug;
+  constexpr va_t Caller = Text + 0x40;
+  constexpr va_t Outer = Text + 0x80;
+  auto Forward = [](va_t At, va_t Target) {
+    const uint32_t Call =
+        0x94000000u |
+        (static_cast<uint32_t>((Target - (At + 8)) / 4) & 0x3FFFFFF);
+    return std::vector<uint32_t>{PushFrame, SetFrame, Call, PopFrame, Ret};
+  };
+  BinaryImage Image = makeImage(
+      {{Text,
+        {PushFrame, SetFrame, adrp(16, Text + 8, Got), ldrX(17, 16, Got),
+         blr(17), PopFrame, Ret}},
+       {Caller, Forward(Caller, Text)},
+       {Outer, Forward(Outer, Caller)}},
+      {{Text, "forward_fp"}, {Caller, "middle_fp"}, {Outer, "outer_fp"}},
+      {"fixture_fp"});
+  Image.Format = BinaryFormat::COFF;
+  Image.Imports.front().Module = "fixture.dll";
+  for (const auto &Widths :
+       {std::vector<uint16_t>{4, 4, 4}, std::vector<uint16_t>{8, 8, 8},
+        std::vector<uint16_t>{4, 8, 4}, std::vector<uint16_t>{8, 4, 8}}) {
+    const uint16_t Bytes = Widths[0];
+    Debug.ReturnBytes = Bytes;
+    Debug.FirstBytes = Widths[1];
+    Debug.SecondBytes = Widths[2];
+    PipelineAnalysisCache Cache;
+    for (const auto &Entries :
+         {std::set<va_t>{Text}, std::set<va_t>{Caller}, std::set<va_t>{Outer},
+          std::set<va_t>{Text, Caller}, std::set<va_t>{Text, Caller, Outer},
+          std::set<va_t>{Caller, Outer}, std::set<va_t>{Outer}}) {
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << Bytes << ':' << Widths[1] << ':' << Widths[2]);
+        SCOPED_TRACE(Entries.size());
+        SCOPED_TRACE(LLVM);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = LLVM;
+        Options.OnlyFunctionEntries = Entries;
+        Options.AnalysisCache = &Cache;
+        auto Result = Pipeline().run(Image, Context, Options, &Debug);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        for (const auto &Function : Result.MedFuncs) {
+          EXPECT_EQ(Function.Params.size(), 2u) << Function.Name;
+          ASSERT_TRUE(Function.ReturnType);
+          EXPECT_EQ(Function.ReturnType->Kind, NdTypeKind::Float)
+              << Function.Name;
+          EXPECT_EQ(Function.ReturnType->Size, Bytes) << Function.Name;
+          ASSERT_EQ(Function.TypedParams.size(), 2u);
+          for (size_t I = 0; I < Function.TypedParams.size(); ++I) {
+            const auto &Parameter = Function.TypedParams[I];
+            ASSERT_TRUE(Parameter.Type);
+            EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Float);
+            EXPECT_EQ(Parameter.Type->Size, Widths[I + 1]);
+          }
+        }
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          {
+            const char *External = Entries.count(Text)     ? "fixture_fp"
+                                   : Entries.count(Caller) ? "forward_fp"
+                                                           : "middle_fp";
+            const auto *Callee = Result.LlvmModule->getFunction(External);
+            if (!Entries.count(Text)) {
+              const va_t Omitted = Entries.count(Caller) ? Text : Caller;
+              for (const auto &Declaration : *Result.LlvmModule) {
+                auto Address = rewrite_source::getOriginalVA(Declaration);
+                ASSERT_TRUE(static_cast<bool>(Address));
+                if (*Address && **Address == Omitted) {
+                  EXPECT_TRUE(Declaration.isDeclaration());
+                  Callee = &Declaration;
+                }
+              }
+            }
+            std::string IR;
+            llvm::raw_string_ostream IROut(IR);
+            Result.LlvmModule->print(IROut, nullptr);
+            ASSERT_NE(Callee, nullptr) << IR;
+            ASSERT_EQ(Callee->arg_size(), 2u) << IR;
+            auto Float = [&](uint16_t Size) {
+              return Size == 4 ? llvm::Type::getFloatTy(Context)
+                               : llvm::Type::getDoubleTy(Context);
+            };
+            EXPECT_EQ(Callee->getReturnType(), Float(Bytes)) << IR;
+            EXPECT_EQ(Callee->getFunctionType()->getParamType(0),
+                      Float(Widths[1]))
+                << IR;
+            EXPECT_EQ(Callee->getFunctionType()->getParamType(1),
+                      Float(Widths[2]))
+                << IR;
+            if (Entries.count(Text)) {
+              const auto *Forward =
+                  Result.LlvmModule->getFunction("forward_fp");
+              ASSERT_NE(Forward, nullptr);
+              bool Indirect = false;
+              for (const auto &Block : *Forward)
+                for (const auto &Instruction : Block)
+                  if (const auto *Call =
+                          llvm::dyn_cast<llvm::CallBase>(&Instruction);
+                      Call && Call->isIndirectCall()) {
+                    Indirect = true;
+                    EXPECT_EQ(Call->getFunctionType(),
+                              Callee->getFunctionType());
+                  }
+              EXPECT_TRUE(Indirect) << IR;
+            }
+          }
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                          &Debug, &Image));
+        } else {
+          ASSERT_TRUE(
+              HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+        }
+        EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        const std::string Entry = Entries.count(Outer)    ? "outer_fp"
+                                  : Entries.count(Caller) ? "middle_fp"
+                                                          : "forward_fp";
+        const std::string Provider = Entries.count(Text)     ? "fixture_fp"
+                                     : Entries.count(Caller) ? "forward_fp"
+                                                             : "middle_fp";
+        const std::string Type = Bytes == 4 ? "float" : "double";
+        const std::string First = Widths[1] == 4 ? "float" : "double";
+        const std::string Second = Widths[2] == 4 ? "float" : "double";
+        std::string Oracle = "\n" + Type + " " + Provider + "(" + First +
+                             " x, " + Second +
+                             " y) {\n"
+                             "  if (x != 1.25 || y != -2.5) __builtin_trap();\n"
+                             "  return 7.75;\n}\n";
+        if (LLVM) {
+          Oracle +=
+              "typedef uint64_t carrier __attribute__((vector_size(16)));\n"
+              "int main(void) {\n"
+              "  carrier x = {0, 0}, y = {0, 0};\n  " +
+              First + " a = 1.25;\n  " + Second + " b = -2.5;\n  " + Type +
+              " result;\n"
+              "  __builtin_memcpy(&x, &a, sizeof(a));\n"
+              "  __builtin_memcpy(&y, &b, sizeof(b));\n"
+              "  carrier out = " +
+              Entry +
+              "(x, y);\n"
+              "  __builtin_memcpy(&result, &out, sizeof(result));\n"
+              "  return result != 7.75;\n}\n";
+        } else {
+          Oracle +=
+              "int main(void) { return " + Entry + "(1.25, -2.5) != 7.75; }\n";
+        }
+        source_call_execution_test::compileAndRun(Source + Oracle);
+      }
+    }
+  }
 }
 
 } // namespace

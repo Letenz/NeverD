@@ -59,7 +59,8 @@ recordCallScalarParameter(const FunctionSym &Function,
 inline std::optional<IntegerCallArguments>
 recordCallArguments(const FunctionSym &Function, Arch Architecture,
                     BinaryFormat Format, LibCVariant Variant) {
-  if (!Function.PrototypeFromCLibrary || !Function.PlatformConvention ||
+  if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary) ||
+      !Function.PlatformConvention ||
       Function.CallConv == DebugCallConv::Fastcall ||
       Function.CallConv == DebugCallConv::Thiscall)
     return std::nullopt;

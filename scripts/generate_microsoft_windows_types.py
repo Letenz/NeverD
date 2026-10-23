@@ -4,7 +4,8 @@
 Microsoft's original headers, licenses and the generated declarations stay in
 the selected local directory. The SDK/WDK is a build-time input only. Configure
 NeverD with NEVERD_WINDOWS_TYPES_DIRECTORY pointing at the output directory.
-No ReactOS, MinGW or phnt headers are used by this generator.
+Optional UCRT compatibility declarations come from pinned Wine sources only
+where Microsoft inputs supply no prototype; each provider retains its notices.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import NamedTuple
 import xml.etree.ElementTree as ET
 
 import build_wdk_driver_fixtures as wdk
+import microsoft_ucrt_types as ucrt
 
 
 VERSION = "10.0.26100.0"
@@ -86,6 +88,8 @@ TARGETS = {
     "x86": ("X86", "i686-pc-windows-msvc", "ILP32", "_X86_"),
     "arm64": ("ARM64", "aarch64-pc-windows-msvc", "LLP64", "_ARM64_"),
 }
+OFFICIAL_PROVIDER = "Microsoft SDK/WDK"
+COMPATIBLE_PROVIDER = "Microsoft SDK/WDK with Wine compatibility declarations"
 
 
 def run(command: list[str], log: Path, output: Path | None = None) -> str:
@@ -122,7 +126,7 @@ def record_layouts(text: str) -> dict:
             current = {"fields": {}}
             records[heading[1]] = current
         elif current is not None:
-            size = re.search(r"\[sizeof=(\d+), align=(\d+)\]", line)
+            size = re.search(r"\[sizeof=(\d+),(?: dsize=\d+,)? align=(\d+)(?:,|\])", line)
             field = re.fullmatch(r"\s*(\d+(?::\d+-\d+)?) \|   (\S.*)", line)
             if size:
                 current.update(size=int(size[1]), alignment=int(size[2]))
@@ -154,11 +158,50 @@ def verify_layouts(original: str, generated: str,
     return len(selected)
 
 
+def prepare_provider(name: str, source: Path, arguments: list[str], directory: Path,
+                     neverd: str, model: str, headers=(), defines=(), prototypes=(),
+                     metadata: dict | None = None) -> dict:
+    """Validate and select a whole provider before it can enter the merge."""
+    dump = ["-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete"]
+    preprocessed = directory / (name + ".h")
+    command = arguments + ["-E", str(source)]
+    run(command, directory / (name + ".pre.log"), preprocessed)
+    parsed = checked_types(neverd, preprocessed, directory / (name + ".parse.log"), model)
+    input_hash = wdk.digest(preprocessed)
+    commands = [command]
+    if prototypes:
+        original = directory / (name + ".pre.h")
+        preprocessed.replace(original)
+        empty = directory / "empty.h"
+        empty.write_text("/* Prototype selection starts without existing declarations. */\n",
+                         encoding="utf-8")
+        selection = [neverd, "types", "--data-model", model, "--record-abi", "microsoft",
+                     "--declare", str(empty), "--declare", str(original),
+                     "--merge-prototypes", "--all", "--prototypes", "--spelling", "windows",
+                     "--no-offsets", "--json"]
+        selection += ["--import-prototype=" + routine for routine in prototypes]
+        selected = json.loads(run(selection, directory / (name + ".select.log")))
+        if (selected.get("error") or selected.get("problems") or
+                set(selected.get("prototypes", [])) != set(prototypes)):
+            raise ValueError(f"official prototype selection failed for {name}")
+        preprocessed.write_text(selected["source"], encoding="utf-8")
+        commands.append(selection)
+    layouts = run(arguments + dump + [str(source)],
+                  directory / (name + ".official-clang.log"),
+                  directory / (name + ".official-layouts.log"))
+    return {"name": name, "source": preprocessed, "headers": headers,
+            "defines": defines, "selected_prototypes": prototypes,
+            "input_sha256": input_hash, "layouts": layouts,
+            "parsed": parsed, "commands": commands, "metadata": metadata or {}}
+
+
 def merge_providers(base: str, primary: Path, output: Path,
                     arguments: list[str], common: list[str], neverd: str,
-                    model: str, primary_layouts: str) -> list[dict]:
+                    model: str, primary_layouts: str,
+                    runtime: dict | None = None,
+                    compatibility: dict | None = None) -> list[dict]:
     providers = ISOLATED_PROVIDERS.get(base, ())
-    if not providers:
+    if not providers and runtime is None:
         return []
     directory = output / (base + "-providers")
     directory.mkdir(exist_ok=True)
@@ -168,37 +211,18 @@ def merge_providers(base: str, primary: Path, output: Path,
         provider_arguments = arguments + ["-D" + value for value in defines]
         source = directory / (name + ".c")
         source.write_text(include_headers(headers), encoding="utf-8")
-        # The CLI uses this file's stem as the provider prefix.
-        preprocessed = directory / (name + ".h")
-        command = provider_arguments + ["-E", str(source)]
-        run(command, directory / (name + ".pre.log"), preprocessed)
-        parsed = checked_types(neverd, preprocessed, directory / (name + ".parse.log"), model)
-        input_hash = wdk.digest(preprocessed)
-        commands = [command]
-        if prototypes:
-            original = directory / (name + ".pre.h")
-            preprocessed.replace(original)
-            empty = directory / "empty.h"
-            empty.write_text("/* Prototype selection starts without existing declarations. */\n",
-                             encoding="utf-8")
-            selection = [neverd, "types", "--data-model", model, "--record-abi", "microsoft",
-                         "--declare", str(empty), "--declare", str(original),
-                         "--merge-prototypes", "--all", "--prototypes", "--spelling", "windows",
-                         "--no-offsets", "--json"]
-            selection += ["--import-prototype=" + routine for routine in prototypes]
-            selected = json.loads(run(selection, directory / (name + ".select.log")))
-            if (selected.get("error") or selected.get("problems") or
-                    set(selected.get("prototypes", [])) != set(prototypes)):
-                raise ValueError(f"official prototype selection failed for {name}")
-            preprocessed.write_text(selected["source"], encoding="utf-8")
-            commands.append(selection)
-        layouts = run(provider_arguments + dump + [str(source)],
-                      directory / (name + ".official-clang.log"),
-                      directory / (name + ".official-layouts.log"))
-        units.append({"name": name, "source": preprocessed, "headers": headers,
-                      "defines": defines, "selected_prototypes": prototypes,
-                      "input_sha256": input_hash, "layouts": layouts,
-                      "parsed": parsed, "commands": commands})
+        units.append(prepare_provider(name, source, provider_arguments, directory,
+                                      neverd, model, headers, defines, prototypes))
+    if runtime is not None:
+        units.append(prepare_provider("UCRT", runtime["source"], runtime["arguments"],
+                                      directory, neverd, model,
+                                      prototypes=runtime["prototypes"],
+                                      metadata=runtime["metadata"]))
+    if compatibility is not None:
+        units.append(prepare_provider("UCRTCompatibility", compatibility["source"],
+                                      compatibility["arguments"], directory, neverd, model,
+                                      prototypes=compatibility["prototypes"],
+                                      metadata=compatibility["metadata"]))
     command = [neverd, "types", "--data-model", model, "--record-abi", "microsoft",
                "--declare", str(primary), "--merge-prototypes", "--all",
                "--prototypes", "--spelling", "windows", "--no-offsets", "--json"]
@@ -239,7 +263,8 @@ def merge_providers(base: str, primary: Path, output: Path,
                             "declaration_sha256": wdk.digest(unit["source"]),
                             "parsed_prototypes": len(unit["parsed"]["prototypes"]),
                             "verified_records": count, "import": report,
-                            "commands": unit["commands"] + [command]})
+                            "commands": unit["commands"] + [command],
+                            "metadata": unit["metadata"]})
         # Replace the primary only after the complete merge and compiler
         # checks pass. The manifest remains absent until both libraries pass.
         temporary.write_text(
@@ -247,6 +272,11 @@ def merge_providers(base: str, primary: Path, output: Path,
             "// Source packages, commands and hashes: manifest.json.\n"
             "// Original Microsoft notices: licenses/.\n" + result["source"],
             encoding="utf-8")
+        if compatibility is not None:
+            temporary.write_text(temporary.read_text(encoding="utf-8").replace(
+                "// Source packages, commands and hashes: manifest.json.",
+                "// Missing UCRT declarations supplemented from Wine; notices: licenses/.\n"
+                "// Source packages, commands and hashes: manifest.json."), encoding="utf-8")
         temporary.replace(primary)
     return records
 
@@ -283,12 +313,12 @@ def combine_targets(output: Path, directories: list[Path]) -> None:
     output.mkdir(parents=True, exist_ok=True)
     manifest = output / "manifest.json"
     manifest.unlink(missing_ok=True)
-    targets, libraries, seen = [], [], set()
+    targets, libraries, target_packages, seen = [], [], [], set()
     common = None
     for directory in directories:
         target = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
         arch = target.get("architecture")
-        if (target.get("schema") != 1 or target.get("provider") != "Microsoft SDK/WDK"
+        if (target.get("schema") != 1 or target.get("provider") not in (OFFICIAL_PROVIDER, COMPATIBLE_PROVIDER)
                 or arch not in TARGETS or arch in seen):
             raise ValueError("invalid or duplicate Microsoft target manifest")
         seen.add(arch)
@@ -296,10 +326,16 @@ def combine_targets(output: Path, directories: list[Path]) -> None:
         actual = [library["name"] for library in target["libraries"]]
         if len(actual) != len(expected) or set(actual) != expected:
             raise ValueError(f"incomplete Microsoft target libraries: {arch}")
-        identity = {key: target[key] for key in ["compiler", "packages", "licenses"]}
+        identity = {key: target[key] for key in ["provider", "compiler", "packages", "licenses"]}
+        identity["profiles"] = target.get("profiles", {})
         if common is not None and identity != common:
             raise ValueError("Microsoft targets use different compilers, packages or licenses")
         common = identity
+        for package in target.get("target_packages", []):
+            if (package.get("architecture") != arch or
+                    any(package["file"] == other["file"] for other in target_packages)):
+                raise ValueError("invalid architecture-specific Microsoft package")
+            target_packages.append(package)
         for library in target["libraries"]:
             header = directory / (library["name"] + ".h")
             if wdk.digest(header) != library["sha256"]:
@@ -320,21 +356,27 @@ def combine_targets(output: Path, directories: list[Path]) -> None:
     for notice in common["licenses"]:
         shutil.copy2(targets[0][0] / "licenses" / notice["file"],
                      output / "licenses" / notice["file"])
-    record = dict(common, provider="Microsoft SDK/WDK", schema=1,
-                  architecture="all", libraries=libraries,
+    record = dict(common, schema=1,
+                  architecture="all", libraries=libraries, target_packages=target_packages,
                   targets=[target for _, target in targets])
     manifest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
 def generate(output: Path, cache: Path, neverd: str, clang: str,
-             architecture: str = "arm64") -> None:
+             architecture: str = "arm64", *,
+             include_ucrt: bool = False, readobj: str = "llvm-readobj",
+             ucrt_compatibility: bool = False) -> None:
+    if ucrt_compatibility and not include_ucrt:
+        raise ValueError("UCRT compatibility requires the official UCRT provider")
     if architecture == "all":
         output.mkdir(parents=True, exist_ok=True)
         (output / "manifest.json").unlink(missing_ok=True)
         directories = []
         for arch in TARGETS:
             directory = output / arch
-            generate(directory, cache, neverd, clang, arch)
+            generate(directory, cache, neverd, clang, arch,
+                     include_ucrt=include_ucrt, readobj=readobj,
+                     ucrt_compatibility=ucrt_compatibility)
             directories.append(directory)
         combine_targets(output, directories)
         return
@@ -375,7 +417,7 @@ def generate(output: Path, cache: Path, neverd: str, clang: str,
               "-Wno-microsoft-anon-tag", "-D" + macro + "=1",
               "-D_WIN32_WINNT=0x0A00", "-DNTDDI_VERSION=0x0A00000C",
               "-ivfsoverlay", str(overlay)]
-    built = []
+    built, runtime_packages, target_packages = [], [], []
     for base, (headers, directories, defines) in LIBRARIES.items():
         name = base + suffix
         source = output / (name + ".c")
@@ -427,8 +469,18 @@ def generate(output: Path, cache: Path, neverd: str, clang: str,
                                     output / (name + ".generated-layouts.log"))
             count = verify_layouts(original_layouts, generated_layouts)
             temporary.replace(generated)
+        runtime, compatibility = None, None
+        if include_ucrt and base == "WindowsUser":
+            sdk = next(path for path in packages if path.name.startswith("microsoft.windows.sdk.cpp."))
+            runtime = ucrt.prepare(output, cache, sdk, include, common, architecture,
+                                   VERSION, readobj, neverd, model, run, checked_types,
+                                   verify_layouts)
+            runtime_packages = runtime["packages"]
+            target_packages = runtime["target_packages"]
+            if ucrt_compatibility:
+                compatibility = ucrt.prepare_compatibility(runtime, output, cache)
         providers = merge_providers(base, generated, output, arguments, common,
-                                     neverd, model, original_layouts)
+                                     neverd, model, original_layouts, runtime, compatibility)
         final = checked_types(neverd, generated, output / (name + ".final.log"), model)
         built.append({"name": name, "sha256": wdk.digest(generated),
                       "types": len(final["types"]),
@@ -439,11 +491,14 @@ def generate(output: Path, cache: Path, neverd: str, clang: str,
         print(f"Generated {name}: {len(final['types'])} types, "
               f"{len(final['prototypes'])} prototypes", flush=True)
     record = {
-        "provider": "Microsoft SDK/WDK", "architecture": architecture,
+        "provider": COMPATIBLE_PROVIDER if ucrt_compatibility else OFFICIAL_PROVIDER,
+        "architecture": architecture,
         "schema": 1, "libraries": built,
         "compiler": subprocess.check_output([clang, "--version"], text=True),
         "packages": [{"file": name, "url": url, "sha256": digest}
-                     for name, url, digest in inventory["DOWNLOAD"]],
+                     for name, url, digest in inventory["DOWNLOAD"]] + runtime_packages,
+        "target_packages": target_packages,
+        "profiles": {"ucrt": wdk.digest(ucrt.INPUTS)} if include_ucrt else {},
         "inputs": inputs,
         "licenses": [{"file": path.name, "sha256": wdk.digest(path)}
                      for path in sorted(licenses.iterdir())],
@@ -457,11 +512,18 @@ def main() -> None:
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--neverd", required=True)
     parser.add_argument("--clang", default="clang")
+    parser.add_argument("--ucrt", action="store_true",
+                        help="include exact UCRT exports from pinned SDK/VC inputs")
+    parser.add_argument("--ucrt-compatibility", action="store_true",
+                        help="supplement missing UCRT declarations from pinned Wine sources (requires --ucrt)")
+    parser.add_argument("--llvm-readobj", default="llvm-readobj",
+                        help="COFF import reader with explicit Export name support")
     parser.add_argument("--architecture", choices=[*TARGETS, "all"], default="all")
     arguments = parser.parse_args()
     generate(arguments.output.resolve(), arguments.cache.resolve(),
              str(Path(arguments.neverd).resolve()), arguments.clang,
-             arguments.architecture)
+             arguments.architecture, include_ucrt=arguments.ucrt,
+             readobj=arguments.llvm_readobj, ucrt_compatibility=arguments.ucrt_compatibility)
 
 
 if __name__ == "__main__":

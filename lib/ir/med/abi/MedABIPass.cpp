@@ -22,7 +22,9 @@
 #include "neverd/ir/med/MedCallClobber.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
+#include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/ir/med/MedReturnArguments.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationSEHCall.h"
 #include "neverd/ir/med/X86RegistrationSEHJump.h"
@@ -345,12 +347,41 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
 extern const AbiCallPolicy Win64AbiCallPolicy;
 extern const AbiCallPolicy I386AbiCallPolicy;
 
+std::optional<FloatingCallArguments>
+recoveredFloatingCallArguments(const MedOp &Op, const MedCallInfo &Call, Arch A,
+                               BinaryFormat F) {
+  const auto &Registers = getTargetRegInfo(A);
+  if (!Op.CalleeFloatReturnBytes || Op.SourceCallHint ||
+      Call.VarArgFixedCount >= 0 || Call.IntegerRegisterArgCount != 0 ||
+      Call.FloatingRegisterArgCount != static_cast<int>(Call.Args.size()) ||
+      Call.ArgReadBytes.size() != Call.Args.size() ||
+      Op.Output.Kind != MedVar::Reg ||
+      Op.Output.RegOff != Registers.FPReturnReg ||
+      Op.Output.Size < Op.CalleeFloatReturnBytes)
+    return std::nullopt;
+  std::vector<TypeRef> Parameters;
+  for (size_t I = 0; I < Call.Args.size(); ++I) {
+    if (Call.Args[I].Size < Call.ArgReadBytes[I])
+      return std::nullopt;
+    Parameters.push_back(NdType::makeFloat(Call.ArgReadBytes[I]));
+  }
+  return floatingCallArguments(
+      A, F, NdType::makeFloat(Op.CalleeFloatReturnBytes), Parameters);
+}
+
 bool promoteFloatCallResult(MedFunc &Func, MedBlock &Blk, size_t OI,
                             uint16_t Size, Arch TheArch) {
   const auto &TRI = getTargetRegInfo(TheArch);
   MedOp &Op = Blk.Ops[OI];
   if (Size == 0 || Op.CallSiteId == 0)
     return false;
+  if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == TRI.FPReturnReg &&
+      Op.Output.Size >= Size) {
+    if (Op.CalleeFloatReturnBytes)
+      return false;
+    Op.CalleeFloatReturnBytes = Size;
+    return true;
+  }
   const bool HasIntegerResult =
       Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == TRI.IntReturnReg;
   const MedVar ExistingOutput = Op.Output;
@@ -406,10 +437,45 @@ bool promoteFloatCallResult(MedFunc &Func, MedBlock &Blk, size_t OI,
         It->Value.Size < ClobberIt->Value.Size)
       ClobberIt = It;
   }
-  if (ClobberIt == Func.CallClobbers.end())
-    return false;
-  Op.Output = ClobberIt->Value;
-  Func.CallClobbers.erase(ClobberIt);
+  if (ClobberIt == Func.CallClobbers.end()) {
+    // A wrapper may never explicitly read the FP bank before its return.
+    // SSA then has no tracked FP carrier to clobber. Introduce a fresh one
+    // only when no existing FP-return read needs its SSA uses redirected.
+    int Next = med_calling_conv_detail::nextValueId(Func);
+    auto IsFPReturn = [&](const MedVar &V) {
+      return V.Kind == MedVar::Reg && V.Size && V.RegOff == TRI.FPReturnReg;
+    };
+    for (const auto &Block : Func.Blocks) {
+      for (const auto &Phi : Block.Phis)
+        if (IsFPReturn(Phi.Output) ||
+            llvm::any_of(Phi.Args, [&](const auto &Arg) {
+              return IsFPReturn(Arg.second);
+            }))
+          return false;
+      for (const auto &User : Block.Ops)
+        if (llvm::any_of(llvm::ArrayRef(User.Inputs).take_front(User.NumInputs),
+                         IsFPReturn) ||
+            llvm::any_of(User.IntrinsicOutputs, IsFPReturn))
+          return false;
+    }
+    for (const auto &Clobber : Func.CallClobbers) {
+      if (IsFPReturn(Clobber.Value))
+        return false;
+      Next = std::max(Next, Clobber.Value.Id + 1);
+    }
+    MedVar Value;
+    Value.Kind = MedVar::Reg;
+    Value.Id = Next;
+    Value.SSAVer = 1;
+    Value.RegOff = TRI.FPReturnReg;
+    Value.Size = TRI.FPABIRegWidth ? TRI.FPABIRegWidth : Size;
+    Value.TheArch = TheArch;
+    Op.Output = Value;
+  } else {
+    Op.Output = ClobberIt->Value;
+    Func.CallClobbers.erase(ClobberIt);
+  }
+  Op.CalleeFloatReturnBytes = Size;
   // The integer return registers are caller-saved scratch after a
   // floating-point call.  A remaining reader of the integer result, or of
   // either half, now observes that clobber instead of a fabricated result.
@@ -444,24 +510,26 @@ IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
   return Layout;
 }
 
-void recoverCallAbi(MedFunc &Func, Arch TheArch,
-                    const std::map<va_t, std::string> &FuncNames,
-                    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
-                    std::map<va_t, int> *CalleeTotalArity,
-                    const std::map<va_t, int> *CalleeFPArity,
-                    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
-                    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
-                    const std::map<va_t, bool> *CalleeHasSret,
-                    std::map<va_t, bool> *CalleeIsVariadic,
-                    const std::map<va_t, bool> *CalleeConsumesVaList,
-                    const std::set<va_t> *FrameLocalLeafCallees,
-                    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
-                    const std::set<va_t> *VectorArgumentCallees,
-                    const std::map<va_t, PointerVariableCallee> *PointerCallees,
-                    const std::set<va_t> *PrototypeArgumentCallees,
-                    const RelocationSymbolIndex *RelocationSymbols,
-                    std::vector<va_t> *SummaryKeysRead) {
+void recoverCallAbi(
+    MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
+    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
+    std::map<va_t, int> *CalleeTotalArity,
+    const std::map<va_t, int> *CalleeFPArity,
+    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
+    const std::map<va_t, bool> *CalleeHasSret,
+    std::map<va_t, bool> *CalleeIsVariadic,
+    const std::map<va_t, bool> *CalleeConsumesVaList,
+    const std::set<va_t> *FrameLocalLeafCallees,
+    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
+    const std::set<va_t> *VectorArgumentCallees,
+    const std::map<va_t, PointerVariableCallee> *PointerCallees,
+    const std::set<va_t> *PrototypeArgumentCallees,
+    const RelocationSymbolIndex *RelocationSymbols,
+    std::vector<va_t> *SummaryKeysRead,
+    const std::map<va_t, std::map<uint64_t, uint16_t>> *CalleeFPScalarBytes) {
   Func.CallInfos.clear();
+  bool BoundFPResult = false;
   // Every callee summary, user prototype and name the recovery reads is at a
   // key it notes first.  It writes summaries only at the function's entry.
   auto noteRead = [SummaryKeysRead](va_t Key) {
@@ -591,17 +659,42 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
   int ForwarderFPRetBlk = -1;
   va_t ForwarderFPRetCallAddr = 0;
 
-  // A register is a live-in (incoming parameter) when nothing in the function
-  // writes it -- the value a pure forwarder passes straight into its tail call.
-  auto funcDefinesReg = [&Func](uint64_t Reg) {
-    for (const auto &B : Func.Blocks) {
-      for (const auto &O : B.Ops)
-        if (O.Output.Kind == MedVar::Reg && O.Output.Size > 0 &&
-            O.Output.RegOff == Reg)
-          return true;
-      for (const auto &Ph : B.Phis)
-        if (Ph.Output.Kind == MedVar::Reg && Ph.Output.RegOff == Reg)
-          return true;
+  // Prove an untouched incoming FP argument at this call, including a framed
+  // wrapper. A prior call, register write, join, or exceptional entry ends
+  // the proof. Nothing after this call can change its incoming argument.
+  std::map<int, const MedBlock *> FPPredecessors;
+  auto incomingFPArgument = [&](const MedBlock &Block, size_t Before,
+                                uint64_t Reg) {
+    const MedBlock *Current = &Block;
+    std::set<int> Seen;
+    auto Writes = [&](const MedVar &V) {
+      return V.Kind == MedVar::Reg && V.Size && V.RegOff <= Reg &&
+             Reg - V.RegOff < V.Size;
+    };
+    while (Current && Seen.insert(Current->Id).second) {
+      for (size_t I = Before; I-- > 0;) {
+        const auto &Previous = Current->Ops[I];
+        if (isAbiRecoveryBarrier(Previous) || Writes(Previous.Output) ||
+            llvm::any_of(Previous.IntrinsicOutputs, Writes))
+          return false;
+      }
+      if (!Current->Phis.empty() || !Current->ExceptionalPreds.empty())
+        return false;
+      if (Current == &Func.Blocks.front())
+        return Current->Preds.empty();
+      if (Current->Preds.size() != 1)
+        return false;
+      const int Pred = Current->Preds.front();
+      // Build once, only when a proof leaves its call block. A long linear
+      // wrapper must not search the whole block vector for every predecessor.
+      if (FPPredecessors.empty())
+        for (const auto &Candidate : Func.Blocks)
+          FPPredecessors.emplace(Candidate.Id, &Candidate);
+      const auto Found = FPPredecessors.find(Pred);
+      if (Found == FPPredecessors.end())
+        return false;
+      Current = Found->second;
+      Before = Current->Ops.size();
     }
     return false;
   };
@@ -800,6 +893,19 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       noteRead(CI.TargetAddr);
       if (CallSlot)
         noteRead(*CallSlot);
+      // These complete header operands were bound before SSA. Recovering
+      // them again from local setup would lose untouched forwarding inputs.
+      if (Op.CalleeFloatReturnBytes && Op.CalleeRegisterArgs == 0 &&
+          Op.CalleeStackArgs == 0 && Op.CalleeVectorArgs >= 0 &&
+          Op.NumInputs == 1u + Op.CalleeVectorArgs) {
+        CI.Args.assign(Op.Inputs.begin() + 1, Op.Inputs.begin() + Op.NumInputs);
+        CI.IntegerRegisterArgCount = 0;
+        CI.FloatingRegisterArgCount = Op.CalleeVectorArgs;
+        for (unsigned I = 1; I < Op.NumInputs; ++I)
+          CI.ArgReadBytes.push_back(Op.vectorArgumentWidth(I));
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
       if (Op.X87ImportArguments && Op.X87ArgumentInput &&
           Op.X87ArgumentInput + Op.X87ImportArguments <= Op.NumInputs) {
         // This call has no ordinary argument bank. Do not scan incidental
@@ -836,7 +942,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           !IsDirectImport && CalleeFPReturnSize)
         if (auto SizeIt = CalleeFPReturnSize->find(CI.TargetAddr);
             SizeIt != CalleeFPReturnSize->end())
-          promoteFloatCallResult(Func, Blk, OI, SizeIt->second, TheArch);
+          BoundFPResult |=
+              promoteFloatCallResult(Func, Blk, OI, SizeIt->second, TheArch);
 
       const Section *TargetSection =
           !CI.IsIndirect && Img ? Img->getSectionFor(CI.TargetAddr) : nullptr;
@@ -2305,20 +2412,32 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
               }
           if (!V)
             V = reachingFPArgCrossBlock(Reg);
-          if (!V && IsTailReturn && KnownFPCallee && !funcDefinesReg(Reg)) {
-            // Pure tail-call forwarder: this FP argument flows straight from
-            // the function's incoming FP parameter register into the call, with
-            // no write for the scans above to find.  Recover it as the live-in
-            // and surface it as an FP parameter so the emitter forwards the
-            // real incoming value rather than an uninitialised register (0.0).
+          if (!V && KnownFPCallee && incomingFPArgument(Blk, OI, Reg)) {
+            // The callee's scalar lane width is independent of its return
+            // width. Keep that evidence when promoting a forwarded input.
+            uint16_t ScalarBytes = 0;
+            if (!CI.IsIndirect && !IsRelocExtern && CalleeFPScalarBytes)
+              if (auto It = CalleeFPScalarBytes->find(CI.TargetAddr);
+                  It != CalleeFPScalarBytes->end())
+                if (auto Lane = It->second.find(Reg); Lane != It->second.end())
+                  ScalarBytes = Lane->second;
             MedVar LiveIn;
-            LiveIn.Kind = MedVar::Reg;
+            LiveIn.Kind = MedVar::Param;
             LiveIn.RegOff = Reg;
             LiveIn.SSAVer = 0;
-            LiveIn.Size = FwdFPArgSize;
+            LiveIn.Size = ScalarBytes ? ScalarBytes : FwdFPArgSize;
             LiveIn.TheArch = TheArch;
             V = LiveIn;
-            PromoteFPParams[K] = LiveIn;
+            auto &Promoted = PromoteFPParams[K];
+            if (Promoted.Size < LiveIn.Size)
+              Promoted = LiveIn;
+            if (ScalarBytes) {
+              // Different paths can consume different low scalar lanes.
+              // Retain every byte either path reads, independently of block
+              // traversal order; each call keeps its own narrower read.
+              auto &Width = Func.FPParamScalarBytes[Reg];
+              Width = std::max(Width, ScalarBytes);
+            }
           }
           if (!V)
             break; // FP arguments are consecutive from FP-argument 0
@@ -2811,6 +2930,17 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         CI.VarArgFixedCount = CalleeRegArgs;
       if (Op.X87ArgumentInput && Op.X87ArgumentInput < Op.NumInputs)
         CI.Args.push_back(Op.Inputs[Op.X87ArgumentInput]);
+      if (!CI.IsIndirect && !IsRelocExtern && CalleeFPScalarBytes)
+        if (auto It = CalleeFPScalarBytes->find(CI.TargetAddr);
+            It != CalleeFPScalarBytes->end()) {
+          CI.ArgReadBytes.assign(CI.Args.size(), 0);
+          for (size_t I = 0; I < CI.Args.size(); ++I)
+            if (const auto &Arg = CI.Args[I];
+                Arg.Kind == MedVar::Reg || Arg.Kind == MedVar::Param)
+              if (auto Lane = It->second.find(Arg.RegOff);
+                  Lane != It->second.end() && Lane->second <= Arg.Size)
+                CI.ArgReadBytes[I] = Lane->second;
+        }
       Func.CallInfos.push_back(std::move(CI));
       if (!CallLaneOps.empty())
         Pending.push_back(
@@ -2999,8 +3129,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
     std::vector<MedVar> FPParams;
     for (const auto &[K, V] : PromoteFPParams) {
       (void)K;
-      if (ExistingFP.count(V.RegOff))
+      if (ExistingFP.count(V.RegOff)) {
+        for (auto &P : Func.Params)
+          if (P.RegOff == V.RegOff)
+            P.Size = std::max(P.Size, V.Size);
         continue;
+      }
       MedVar P;
       P.Kind = MedVar::Param;
       P.Id = -1;
@@ -3051,6 +3185,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       break;
     }
   }
+  if (!Func.SourceParametersBound &&
+      (BoundFPResult || !PromoteFPParams.empty()))
+    inferMedTypes(Func, TheArch, CalleeFPReturnSize);
 }
 
 void finalizeVariadicCallees(std::vector<MedFunc> &Funcs, Arch TheArch,

@@ -72,6 +72,9 @@ struct FunctionSym {
   /// that prototype as the library declares it, in C.  Empty otherwise.
   std::string PrototypeLibrary;
   std::string PrototypeDeclaration;
+  /// The prototype comes from a selected platform header library, including
+  /// Windows SDK/WDK headers that are rendered without a host header include.
+  bool PrototypeFromHeader = false;
   /// The library is a C library's headers (glibc's, bionic's, musl's,
   /// libSystem's), which a unit's C includes: a definition of the name in
   /// the image is a copy of the routine they declare, not that routine.

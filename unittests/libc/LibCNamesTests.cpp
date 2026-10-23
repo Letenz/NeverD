@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/libc/LibCComplex.h"
 #include "neverd/libc/LibCExceptionRuntime.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
@@ -47,6 +48,34 @@ TEST(VarArgFixedCount, PrintfFamily3Fixed) {
   EXPECT_EQ(varArgFixedCount("snwprintf", LibCVariant::GNU), 3u);
   // C99 swprintf(buf, size, fmt, ...) has same shape as snprintf
   EXPECT_EQ(varArgFixedCount("swprintf", LibCVariant::GNU), 3u);
+}
+
+TEST(VarArgFixedCount, UCRTCommonConsumersKeepTheirVaListArgument) {
+  for (const auto *Routine :
+       {"__stdio_common_vfprintf", "__stdio_common_vfscanf",
+        "__stdio_common_vswscanf", "__stdio_common_vfprintf_p",
+        "__stdio_common_vsnprintf_s", "__conio_common_vcprintf",
+        "__conio_common_vcwprintf", "__conio_common_vcprintf_s",
+        "__conio_common_vcprintf_p", "__conio_common_vcscanf_s"}) {
+    for (const auto *Prefix : {"", "_o_"}) {
+      const std::string Name = std::string(Prefix) + Routine;
+      EXPECT_EQ(varArgFixedCount(Name, LibCVariant::Windows), 0u) << Name;
+      EXPECT_TRUE(isVaListConsumer(Name)) << Name;
+    }
+  }
+  EXPECT_EQ(varArgFixedCount("printf", LibCVariant::Windows), 1u);
+}
+
+TEST(LibCArity, WindowsComplexRecordsNeedTheirFullABIType) {
+  for (const auto &Entry : kComplexArity) {
+    EXPECT_FALSE(libcArity(Entry.Name, LibCVariant::Windows)) << Entry.Name;
+    ASSERT_TRUE(libcArity(Entry.Name, LibCVariant::GNU)) << Entry.Name;
+    EXPECT_EQ(libcArity(Entry.Name, LibCVariant::GNU)->FpArgs,
+              Entry.Arity.FpArgs)
+        << Entry.Name;
+  }
+  ASSERT_TRUE(libcArity("hypot", LibCVariant::Windows));
+  EXPECT_EQ(libcArity("hypot", LibCVariant::Windows)->FpArgs, 2u);
 }
 
 // Fortified _FORTIFY_SOURCE variants: __<name>_chk prepend guard arguments
@@ -948,6 +977,12 @@ TEST(IsNoReturnFunction, MicrosoftRuntimeTerminators) {
   EXPECT_TRUE(isNoReturnFunction("__std_terminate"));
   // A program's own function may take the name terminate.
   EXPECT_FALSE(isNoReturnFunction("terminate"));
+  EXPECT_FALSE(isNoReturnFunction("unexpected"));
+  for (const auto *Name : {"_o__exit", "_o__invalid_parameter_noinfo_noreturn",
+                           "_o_abort", "_o_exit", "_o_terminate"})
+    EXPECT_TRUE(isNoReturnFunction(Name)) << Name;
+  EXPECT_FALSE(isNoReturnFunction("_o_TerminateProcess"));
+  EXPECT_FALSE(isNoReturnFunction("_o_unreviewed_abort"));
 }
 
 TEST(IsNoReturnFunction, SometimesReturningExcluded) {

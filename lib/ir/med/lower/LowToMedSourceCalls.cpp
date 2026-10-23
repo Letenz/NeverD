@@ -392,6 +392,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       Op.CalleeVectorArgs = -1;
       Op.CalleeVectorSlots = 0;
       Op.CalleeVectorArgWidths = 0;
+      Op.CalleeFloatReturnBytes = 0;
       Op.CalleeStackArgs = -1;
       for (size_t I = 0; I < Parameters.size(); ++I) {
         const auto &Location = Parameters[I].Location;

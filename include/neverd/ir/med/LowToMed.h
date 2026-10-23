@@ -15,6 +15,7 @@
 #ifndef NEVERD_IR_MED_LOWTOMED_H
 #define NEVERD_IR_MED_LOWTOMED_H
 
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/FormattedCall.h"
@@ -142,6 +143,10 @@ public:
   /// calls their arguments (PipelineResult::CallEntryArgumentCounts).
   void setCallEntryArgumentCounts(const std::map<va_t, int> *M) {
     CallEntryArgumentCounts = M;
+  }
+  void setCallEntryFloatingArguments(
+      const std::map<va_t, FloatingCallArguments> *M) {
+    CallEntryFloatingArguments = M;
   }
   /// Imports whose supported user prototypes already own the argument
   /// summaries (PipelineResult::CallUserPrototypes). Automatic Darwin SDK
@@ -425,6 +430,8 @@ private:
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallEntryStackSlots = nullptr;
   const std::map<va_t, int> *CallEntryArgumentCounts = nullptr;
+  const std::map<va_t, FloatingCallArguments> *CallEntryFloatingArguments =
+      nullptr;
   const std::set<va_t> *UserPrototypeCallees = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   std::set<va_t> *CallSummaryKeysRead = nullptr;

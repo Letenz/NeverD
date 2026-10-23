@@ -292,6 +292,8 @@ TEST(LocalTypesDebugContext, NamesTheHeaderLibraryAPrototypeComesFrom) {
   std::optional<FunctionSym> Owner = Context.resolveFunction(0x1000);
   ASSERT_TRUE(Owner.has_value());
   EXPECT_EQ(Owner->PrototypeLibrary, "windows-kernel-x64");
+  EXPECT_TRUE(Owner->PrototypeFromHeader);
+  EXPECT_FALSE(Owner->PrototypeFromCLibrary);
   EXPECT_EQ(Owner->PrototypeDeclaration,
             "PEPROCESS IoThreadToProcess(PETHREAD Thread)");
   ASSERT_EQ(Owner->Params.size(), 1u);

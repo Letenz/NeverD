@@ -20,6 +20,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -173,11 +174,18 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   auto CallExpr = HighExpr::makeCall(Callee, Target, std::move(Args));
   CallExpr->CallSiteAddr = CurOp.Addr;
   CallExpr->SourceCallHint = CurOp.SourceCallHint;
+  if (CurOp.CalleeFloatReturnBytes && CurMed)
+    if (const auto *Info = CurMed->findCall(CurBlock.Id, CallIdx))
+      if (auto Signature = recoveredFloatingCallArguments(
+              CurOp, *Info, TargetArch,
+              Image ? Image->abiFormat() : BinaryFormat::Unknown))
+        CallExpr->FloatingCallSignature =
+            std::make_shared<FloatingCallArguments>(std::move(*Signature));
   CallExpr->DoesNotReturn = CurOp.DoesNotReturn;
   const bool X87Result =
       CurOp.Output.Kind == MedVar::Reg && CurOp.Output.Size == 10 &&
       getTargetRegInfo(TargetArch).isX87StackReg(CurOp.Output.RegOff);
-  if (CurOp.SourceCallHint || X87Result)
+  if (CurOp.SourceCallHint || X87Result || CurOp.CalleeFloatReturnBytes)
     CallExpr->Type = sourceCallResultType(CurOp);
   // A call remodeled to return a struct across several registers writes
   // every field into one packed temporary.

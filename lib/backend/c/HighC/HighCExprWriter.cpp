@@ -2270,8 +2270,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                                       Opts.libcVariant())
           : std::nullopt;
   if (!Defined && Callee && Name == Callee->Name && includesHeaderOf(Name) &&
-      Callee->PrototypeFromCLibrary && !RecordCall &&
-      libc::hasRecordCallParameters(*Callee, Opts.libcVariant()))
+      (Callee->PrototypeFromHeader || Callee->PrototypeFromCLibrary) &&
+      !RecordCall && libc::hasRecordCallParameters(*Callee, Opts.libcVariant()))
     throw std::runtime_error("The header's record call ABI is unsupported");
   if (RecordCall)
     PrintedArgs = RecordCall->Parameters.size();
@@ -2673,6 +2673,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   }
   S += Note;
   S += ")";
+  if (RecordCall && RecordCall->ResultPointer) {
+    const unsigned Index = *RecordCall->ResultPointer;
+    if (Index >= E.Operands.size() || !E.Operands[Index])
+      throw std::runtime_error("A record call result pointer is incomplete");
+    S = c_detail::recordCallResult(
+        c_detail::recordCallType(Callee->ReturnType, Opts),
+        exprStr(*E.Operands[Index]), S);
+  }
   return S;
 }
 

@@ -77,6 +77,10 @@ void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
 void materializeKnownStructReturnCallSites(const BinaryImage &Img,
                                            PipelineResult &Result);
 
+/// Bind declared scalar floating results to their physical return register,
+/// and propagate the resulting types through forwarding calls in both routes.
+void bindFloatCallResults(const BinaryImage &Img, PipelineResult &Result);
+
 /// Settle which functions return no value a caller could rely on
 /// (MedFunc::ReturnsNoValue), once for both C backends.
 void settleReturnContracts(const BinaryImage &Img, PipelineResult &Result,

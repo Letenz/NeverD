@@ -225,6 +225,9 @@ bool HighExpr::structuralEq(const HighExpr &Other) const {
   case ExprKind::Call:
     if (CallTarget != Other.CallTarget || CallAddr != Other.CallAddr ||
         SourceCallHint != Other.SourceCallHint ||
+        ((FloatingCallSignature || Other.FloatingCallSignature) &&
+         (!FloatingCallSignature || !Other.FloatingCallSignature ||
+          *FloatingCallSignature != *Other.FloatingCallSignature)) ||
         IsIndirectCall != Other.IsIndirectCall ||
         IndirectParamIdx != Other.IndirectParamIdx ||
         IntrinsicId != Other.IntrinsicId ||
