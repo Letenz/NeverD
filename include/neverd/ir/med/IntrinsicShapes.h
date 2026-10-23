@@ -35,16 +35,17 @@ inline bool hasValidMedIntrinsicId(const MedOp &Op) {
 }
 
 inline bool aarch64PAuthMedShapeIsValid(const MedOp &Op) {
-  if (!hasValidMedIntrinsicId(Op) || Op.NumInputs < 2 || Op.NumInputs > 4 ||
+  if (!hasValidMedIntrinsicId(Op) || Op.NumInputs < 2 ||
+      Op.NumInputs > kAArch64PACMOperandCount + 1 ||
       Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
       !Op.IntrinsicOutputs.empty() ||
       (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
-  const bool TwoModifiers =
-      aarch64PAuthLROperation(static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
-          .has_value();
+  const bool TwoModifiers = aarch64PAuthExtendedOperation(
+                                static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
+                                .has_value();
   return aarch64PAuthShapeIsValid(
       static_cast<Intrinsic>(Op.Inputs[0].ConstVal),
       {.NumInputs = Op.NumInputs,
@@ -55,7 +56,10 @@ inline bool aarch64PAuthMedShapeIsValid(const MedOp &Op) {
                ? Op.Inputs[TwoModifiers ? 2 : Op.NumInputs - 1].Size
                : 0U,
        .SecondModifierBytes =
-           TwoModifiers && Op.NumInputs == 4 ? Op.Inputs[3].Size : 0U,
+           TwoModifiers && Op.NumInputs >= 4 ? Op.Inputs[3].Size : 0U,
+       .ModeBytes = Op.NumInputs == kAArch64PACMOperandCount + 1
+                        ? Op.Inputs[kAArch64PACMOperandCount].Size
+                        : 0U,
        .KeyBytes = Op.NumInputs == 4 ? Op.Inputs[2].Size : 0U,
        .Key = Op.NumInputs == 4 && Op.Inputs[2].isConst()
                   ? std::optional<uint64_t>(Op.Inputs[2].ConstVal)

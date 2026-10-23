@@ -70,4 +70,18 @@ NEVERD_A64_PAUTH_FRAME_CASE(false, 0xa9bf7bfd, 0xb40000a1, 0xdac1a3fe,
                             0xf90007fe, 0xd280001e, 0xf94007fe, 0xf380009f,
                             0xf94003fd, 0x910043ff, 0xd61f081f)
 
+// Matching implicit PACM recipes recover the link, including original PC.
+NEVERD_A64_PAUTH_FRAME_CASE(true, 0xd50324ff, 0xd503233f, 0x10fffff0,
+                            0xd50324ff, 0xd50323bf, 0xd61f081f)
+NEVERD_A64_PAUTH_FRAME_CASE(true, 0xd50324ff, 0xd503237f, 0x10fffff0,
+                            0xd50324ff, 0xd50323ff, 0xd61f081f)
+// FEAT_PACIMP forbids proving implicit and explicit recipes interchangeable.
+NEVERD_A64_PAUTH_FRAME_CASE(false, 0xdac1a3fe, 0x10fffff0, 0xd50324ff,
+                            0xd50323bf, 0xd61f081f)
+NEVERD_A64_PAUTH_FRAME_CASE(false, 0xd50324ff, 0xd503233f, 0x10fffff0,
+                            0xdac1921e, 0xd61f081f)
+// A mixed prefix on X17 does not itself destroy the untouched entry LR.
+NEVERD_A64_PAUTH_FRAME_CASE(true, 0xb5000041, 0xd50324ff, 0xd503211f,
+                            0xd61f081f)
+
 #undef NEVERD_A64_PAUTH_FRAME_CASE

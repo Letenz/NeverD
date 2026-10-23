@@ -29,8 +29,18 @@ proofs cover matching and mismatching second modifiers, including an ADR of
 the signing PC. Diamond fixtures cover conflicting signing PCs in live
 registers and saved return cells, retain matching explicit modifiers in
 registers and allocated stack cells, and forget inconsistent or missing
-incoming constants in either predecessor order. Unmodelled PACM state must
-still fail explicitly through both decoder routes.
+incoming constants in either predecessor order. `AArch64PACMSemantics` checks
+ten implicit consumers, original signing PCs, intervening NOP/address/branch
+instructions, repeated prefixes, bypass edges and loop backedges. An independent
+mode observer replaces only the authentication result and checks the resulting
+LLVM values for both branch polarities and zero/one/two loop iterations. Both
+C routes compile at O0/O2; optimized LLVM retains adjacent PACM/consumer pairs,
+all four inputs, poisoned-return checks and dead-result effects. Native probes
+require active IA/IB keys and a second diversifier that changes signatures;
+unavailable execution is an explicit skip. Unresolved terminal prefixes and
+implicit-entry joins cannot escape into ordinary source. Frame fixtures reject
+mixed implicit/explicit signing recipes and preserve unrelated tail-call proofs
+across function-lifetime mode temporaries.
 PACGA additionally checks independent inputs and rejects malformed widths.
 Its generated C is compiled back to LLVM to check operand and return flow.
 On a PAuth-capable Apple Silicon host,

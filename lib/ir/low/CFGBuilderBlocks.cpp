@@ -772,6 +772,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   }
   linkExceptionalSuccessors(Func);
   extractJumpTables(Func);
+  resolveAArch64PAuthPrefixes(Func);
   fixupFpuStack(Func, FinalView.SuppressedRelocationRoots);
 }
 

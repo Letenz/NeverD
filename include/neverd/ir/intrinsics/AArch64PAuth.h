@@ -31,6 +31,11 @@ namespace neverd {
   inline constexpr char Name[] = Text;
 #include "neverd/ir/intrinsics/AArch64PAuthLR.def"
 
+#define NEVERD_A64_PAUTH_M_VALUE(Type, Name, Value)                            \
+  inline constexpr Type Name = Value;
+#define NEVERD_A64_PAUTH_M_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "neverd/ir/intrinsics/AArch64PAuthM.def"
+
 struct AArch64PAuthLROperation {
   Intrinsic Id;
   const char *Mnemonic;
@@ -38,11 +43,21 @@ struct AArch64PAuthLROperation {
   bool Authenticate;
   bool Return;
   const char *MachineAsm;
+  bool ConditionalPrefix = false;
 
-  std::string llvmAsm() const {
-    return std::string(MachineAsm) + (Return ? kAArch64PAuthLRReturnCheck : "");
+  unsigned operandCount() const {
+    return ConditionalPrefix ? kAArch64PACMOperandCount : 3;
   }
+  std::string machineAsm(bool C = false) const {
+    return (ConditionalPrefix
+                ? std::string(C ? kAArch64PACMPrefixC : kAArch64PACMPrefixLLVM)
+                : std::string()) +
+           MachineAsm + (Return ? kAArch64PAuthLRReturnCheck : "");
+  }
+  std::string llvmAsm() const { return machineAsm(); }
   const char *llvmConstraints() const {
+    if (ConditionalPrefix)
+      return Return ? kAArch64PACMReturnConstraints : kAArch64PACMConstraints;
     return Return ? kAArch64PAuthLRReturnConstraints
                   : kAArch64PAuthLRConstraints;
   }
@@ -60,6 +75,27 @@ aarch64PAuthLROperation(Intrinsic Id) {
     if (Operation.Id == Id)
       return Operation;
   return std::nullopt;
+}
+
+inline constexpr AArch64PAuthLROperation kAArch64PAuthMOperations[] = {
+#define NEVERD_A64_PAUTH_M_OPERATION(Id, Mnemonic, Key, Auth, Return, Asm)     \
+  {Intrinsic::Id, Mnemonic, kAArch64PAuthKey##Key, Auth, Return, Asm, true},
+#include "neverd/ir/intrinsics/AArch64PAuthM.def"
+};
+
+inline std::optional<AArch64PAuthLROperation>
+aarch64PAuthMOperation(Intrinsic Id) {
+  for (const auto &Operation : kAArch64PAuthMOperations)
+    if (Operation.Id == Id)
+      return Operation;
+  return std::nullopt;
+}
+
+inline std::optional<AArch64PAuthLROperation>
+aarch64PAuthExtendedOperation(Intrinsic Id) {
+  if (auto Operation = aarch64PAuthMOperation(Id))
+    return Operation;
+  return aarch64PAuthLROperation(Id);
 }
 
 inline bool isAArch64PAuthLRReturnWord(uint32_t Word) {
@@ -114,8 +150,9 @@ inline bool aarch64PAuthCodeKeyIsValid(uint64_t Key) {
 
 inline bool isAArch64PAuthIntrinsic(Intrinsic Id) {
   return aarch64PAuthOperation(Id).has_value() ||
-         aarch64PAuthLROperation(Id).has_value() ||
-         Id == Intrinsic::A64_Pacga || Id == Intrinsic::A64_AuthBranch;
+         aarch64PAuthExtendedOperation(Id).has_value() ||
+         Id == Intrinsic::A64_Pacga || Id == Intrinsic::A64_AuthBranch ||
+         Id == Intrinsic::A64_PACMPending;
 }
 
 /// Valid pointer authentication writes only its explicit output. It may read
@@ -126,6 +163,7 @@ struct AArch64PAuthShape {
   unsigned PointerBytes = 0;
   unsigned ModifierBytes = 0;
   unsigned SecondModifierBytes = 0;
+  unsigned ModeBytes = 0;
   unsigned KeyBytes = 0;
   std::optional<uint64_t> Key;
 };
@@ -135,10 +173,12 @@ inline bool aarch64PAuthShapeIsValid(Intrinsic Id,
   if (Shape.OutputBytes != kAArch64PAuthPointerBytes ||
       Shape.PointerBytes != kAArch64PAuthPointerBytes)
     return false;
-  if (aarch64PAuthLROperation(Id))
-    return Shape.NumInputs == 4 &&
+  if (const auto Operation = aarch64PAuthExtendedOperation(Id))
+    return Shape.NumInputs == Operation->operandCount() + 1 &&
            Shape.ModifierBytes == kAArch64PAuthPointerBytes &&
-           Shape.SecondModifierBytes == kAArch64PAuthPointerBytes;
+           Shape.SecondModifierBytes == kAArch64PAuthPointerBytes &&
+           (!Operation->ConditionalPrefix ||
+            Shape.ModeBytes == kAArch64PAuthPointerBytes);
   if (const auto Operation = aarch64PAuthOperation(Id))
     return Shape.NumInputs == (Operation->Strip ? 2 : 3) &&
            (Operation->Strip ||

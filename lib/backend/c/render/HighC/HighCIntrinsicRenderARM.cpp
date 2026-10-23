@@ -770,7 +770,9 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
                                    uint16_t ResultBytes, bool &HasCIntrinsics) {
   using I = Intrinsic;
-  if (const auto Auth = aarch64PAuthLROperation(Id)) {
+  if (Id == Intrinsic::A64_PACMPending)
+    throw std::invalid_argument(kAArch64PAuthMalformedOperation);
+  if (const auto Auth = aarch64PAuthExtendedOperation(Id)) {
     if (ResultBytes != kAArch64PAuthPointerBytes)
       throw std::invalid_argument(kAArch64PAuthMalformedOperation);
     return aarch64PAuthLRC(*Auth, Ops);

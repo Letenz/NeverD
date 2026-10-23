@@ -116,8 +116,20 @@ recipes and preserve ordinary modifier constants only when every incoming
 path agrees. This applies equally to live registers and saved return cells.
 The machine operations use the implicit X17/X16/X15 forms so relocation cannot
 silently replace the original PC with the generated instruction's PC.
-Exception returns and the PACM HINT still fail until their architectural state
-is modelled.
+`AArch64PAuthM.def` owns PACM's ten implicit consumers. CFG normalization
+resolves the immediately next executed instruction, including empty NOP bodies,
+repeated prefixes, ordinary joins and loop backedges. Mixed edges carry an
+explicit function temporary into SSA; direct branches cannot inherit a prefix
+from the preceding bytes. Generated LLVM and both C projections materialize
+operands before one indivisible PACM/consumer assembly pair, preserving original
+PC values and the execution host's enable controls. Frame proofs keep implicit
+PACM recipes separate from explicit PAuth_LR recipes because FEAT_PACIMP does
+not guarantee their equivalence. They retain declared function temporaries
+across instruction boundaries without treating declaration as initialization.
+An unresolved prefix at the end of available code, or a prefixed incoming edge
+at an independently enterable/exception root, fails explicitly; its pending
+marker cannot become ordinary source or native assembly. Exception returns and
+those implicit-entry state cases still require architectural state modelling.
 
 Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
 the architecture may poison a pointer without trapping immediately. The

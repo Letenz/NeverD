@@ -779,6 +779,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         if (Op.Opcode == NdOp::INTRINSIC && !hasValidMedIntrinsicId(Op))
           llvm::report_fatal_error(
               "intrinsic has an invalid intrinsic ID shape");
+        if (hasValidMedIntrinsicId(Op) &&
+            Op.Inputs[0].ConstVal ==
+                static_cast<uint64_t>(Intrinsic::A64_PACMPending))
+          throw std::runtime_error(kAArch64PAuthMalformedOperation);
         if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
             Op.Inputs[0].isConst() &&
             Op.Inputs[0].ConstVal == static_cast<uint64_t>(Intrinsic::X87Fxam))
