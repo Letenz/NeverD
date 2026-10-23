@@ -143,6 +143,21 @@ indivisible steps; `hard_deadline` is false. Failed or unsupported source views
 leave the native comparison intact. Older SDKs retain ordinary comparison
 operations without advertising this capability.
 
+`comparison_source_difference` is independently advertised when its optional SDK
+entry point is present. It accepts the source-page fields plus `max_work`,
+`max_source_bytes` and `include_prelude`. It requires an accepted function pair,
+collects both complete renderings, and pages a cached exact textual alignment.
+The `neverd.bindiff.source.difference` version 1 result exposes availability,
+computation state, input identities, source coordinates, original anchors and
+textual row kinds. Missing sides are null. Adjacent insertions/deletions may be
+paired as `changed` for display; they do not prove statement correspondence.
+Default additional allowances are 50,000,000 work units and 64 MiB of text plus
+serialized row evidence across both inputs; zero removes the selected allowance.
+Declarations are excluded unless `include_prelude:true`. Stop/limit results have
+no classified rows and remain cached until refresh or changed options. Mapping
+edits invalidate the cache. The operation uses the same input-stamp and expected
+revision checks and cooperative cancellation contract as source inspection.
+
 `comparison_dataflow` pages retained SSA collections (`side`, `kind` of
 `functions`, `nodes` or `blocks`, `address` for a graph, `offset`, `limit`).
 `comparison_slice` accepts `side`, `address`, `seeds` (node IDs), `direction`

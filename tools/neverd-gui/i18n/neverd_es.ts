@@ -7768,5 +7768,65 @@ SHA-256 secundario: %3
         <source>Unmapped line</source>
         <translation>Línea sin correspondencia</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>Alinear líneas de código</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>Quitar el límite de trabajo de alineación</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>Quitar el límite de bytes de evidencia del código</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>Incluir declaraciones en la alineación</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>Ir a la fila alineada</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>Diferencias de texto: + insertado, − eliminado, ~ modificado. Seleccione una línea para examinar sus instrucciones originales.</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>Alineando código… La cancelación espera a que termine el paso de análisis actual.</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>La alineación supera su límite. Ajuste las opciones o vea el código por separado.</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>Alineación detenida. Vuelva a cargar el código para reintentar.</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>Filas alineadas %1–%2 de %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · Línea de código %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · Sin línea en este lado</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · Modificado</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · Insertado</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · Eliminado</translation>
+    </message>
 </context>
 </TS>

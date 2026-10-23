@@ -111,6 +111,7 @@ add_neverd_unittest(NeverDBinaryDiffTests
   BinaryDiffObservationTests.cpp
   BinaryDiffReviewTests.cpp
   BinaryDiffScalarValidationTests.cpp
+  BinaryDiffSourceAlignmentTests.cpp
   LINK_COMPONENTS Diff
   LINK_LIBS LLVMAsmParser
 )

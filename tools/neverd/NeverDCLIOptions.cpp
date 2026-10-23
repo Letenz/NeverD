@@ -220,6 +220,8 @@ cl::SubCommand
                      "Run bounded x64 WDM driver initialization and emit JSON");
 cl::SubCommand CPUCapabilitiesCmd(execution_cli::CapabilitiesCommand,
                                   execution_cli::CapabilitiesHelp);
+cl::SubCommand X87CapabilitiesCmd("x87-capabilities",
+                                  "Report scoped x87 semantic capabilities");
 cl::SubCommand EmulateProcessCmd(process_cli::Command, process_cli::Help);
 cl::SubCommand
     ModulesCmd("modules",
@@ -1578,6 +1580,24 @@ cl::opt<unsigned> DiffSourceInstructions(
     cl::desc(
         "Source analysis instruction allowance (0 removes this allowance)"),
     cl::init(::neverd::limits::diff::kDefaultSourceNativeInstructions),
+    cl::sub(DiffCmd));
+cl::opt<bool> DiffSourceDifference(
+    "source-difference",
+    cl::desc("Align complete source renderings of the accepted function pair"),
+    cl::sub(DiffCmd));
+cl::opt<bool>
+    DiffSourcePrelude("source-include-prelude",
+                      cl::desc("Include declarations in source line alignment"),
+                      cl::sub(DiffCmd));
+cl::opt<unsigned long long> DiffSourceWork(
+    "source-max-work",
+    cl::desc("Source alignment work allowance (0 removes this allowance)"),
+    cl::init(::neverd::limits::diff::kDefaultSourceAlignmentWork),
+    cl::sub(DiffCmd));
+cl::opt<unsigned long long> DiffSourceBytes(
+    "source-max-bytes",
+    cl::desc("Source pair evidence byte allowance (0 removes this allowance)"),
+    cl::init(::neverd::limits::diff::kDefaultSourceAlignmentBytes),
     cl::sub(DiffCmd));
 cl::opt<std::string> DiffValidationFunction(
     "validate-function",

@@ -2210,6 +2210,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_x87_capabilities_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_cpu_capabilities_json",
     "const char *",
     ["neverd_session_t", "const char *", "int"],
@@ -2360,7 +2366,7 @@ for _comparison_report in ("status_json", "last_error", "summary_json", "export_
     _declare(f"neverd_comparison_{_comparison_report}", "const char *",
              ["neverd_comparison_t"], ownership=Ownership.OWNED_STRING)
 for _comparison_page in (
-    "functions", "function_page", "source_page", "graph", "observations",
+    "functions", "function_page", "source_page", "source_difference", "graph", "observations",
     "owned_scalar_validation", "reviews", "regions", "region_page",
     "flow_regions", "dataflow", "slice", "impact",
 ):

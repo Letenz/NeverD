@@ -426,6 +426,20 @@ reuse a completed native listing alignment, but never create source-line pairs
 or semantic claims. Source pages are transient and revision-bound; saved native
 evidence is independent of source inspection. Cancellation discards the page,
 with checkpoints around the existing indivisible analysis and rendering steps.
+`lib/diff/SourceAlignment` owns exact textual line alignment independently of
+native matching. It uses a linear-space bidirectional shortest-edit-path search
+with prefix/suffix stripping, deterministic ties, explicit work charging and
+cooperative cancellation. Sparse edits do not require a Cartesian line search;
+frontier buffers are released before solving the two smaller edit problems.
+`ComparisonSource` collects complete renderings through ordinary source pages,
+checks their coordinates and preserves exact text and original row evidence.
+The byte allowance covers text plus serialized evidence across both inputs.
+The SDK retains one pair keyed by function selection, representation, prelude
+scope and allowances; mapping changes invalidate it. Pages do not restart a
+stopped computation. Textual replacement pairing is a display convention and
+does not create native correspondences or proof results. The GUI adds aligned
+rows, original line gutters, markers and synchronized scrolling while retaining
+independent inspection. Worker capability discovery keeps older SDKs usable.
 See [binary comparison](binary-diff.md) for the current profile and limitations.
 
 ## Checked alignment recovery
@@ -5372,6 +5386,18 @@ KVO context tokens use a separate writable-identity proof. A uniquely named writ
 The loader validates bounded, acyclic graphs of Darwin constant strings, integer objects, arrays and sorted dictionaries. Every container field and edge requires immutable mapped storage and unambiguous import or relocation evidence; unsupported encodings, cycles and incomplete graphs fail explicitly. Source bindings revalidate the graph and any incoming pointer slot. Generated helpers preserve integer bits, child order and shared object addresses, reusing existing string identities. Container slots initialize once with acquire/release publication; initialization calls only validated child helpers. Each helper carries its own child declarations so independently recovered methods can share one definition. Portable graph tests cover malformed inputs and proof budgets; native compiler fixtures compare contents, aliases, copy identity and concurrent initialization against the original methods.
 
 ## Owned x64 x87 context
+
+The [x87 semantic contracts](x87-semantics.md) and [generated capability
+inventory](x87-capabilities.md) separate encoding/lifting, numerical results,
+complete state, native references, portable execution and formal qualification.
+`X87Instructions.def` owns coverage metadata and the strict evaluator’s
+processor-dependent classification; `X87StateBoundaries.def` owns external-state
+synchronization membership. C API, CLI and Python queries use the same report.
+`X87Binary80.h` owns raw classification. `X87Arithmetic` owns exact finite
+arithmetic and pure integer conversion; `X87PortableContext` applies the
+explicit masked-state slice to the existing context. It neither creates a
+parallel stack nor changes native/translation admission. Undefined CPU fields,
+unknown incoming state and unsupported effects stay explicit in that profile.
 
 For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 
