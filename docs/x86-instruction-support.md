@@ -403,6 +403,34 @@ register and feature identities stay unchanged. These are compiler-transport
 checks with controlled native boundaries, not hardware qualification of TLB
 broadcasts, descriptor loading or processor-history reset.
 
+The next native batch supplies 23 matching LLVM/NeverC interfaces for
+VERR/VERW, SLDT/STR, SMSW, LLDT/LTR/LMSW and INVD. Verification returns the
+actual ZF byte. Read APIs select 16/32/64-bit register results; memory forms
+retain an instruction-owned m16 access. In particular, SMSW's wider register
+results are not replaced by a zero-extended 16-bit read. LTR now declares its
+implicit descriptor read and busy-bit write; LLDT, LKGS and VERR/VERW retain
+their implicit descriptor reads in both forks. Privilege, UMIP and descriptor
+validation remain native, following Intel's
+[instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
+
+This batch passes 1,958 full-LLVM encoding/completion checks and 1,030 checks
+each for NeverC and NeverC-to-fork. Both C routes also pass 28 isolated real
+Linux x64 user-mode comparisons with independent assembly oracles. Disposable
+QEMU TCG guests pass 174 CPL0 checks through full LLVM (i386/x64, O0/O2), plus
+92 each through NeverC and the bridge. These execute actual generated
+instructions against guest GDT/LDT/TSS and CR0 state, checking both loading
+forms, LTR's busy bits, exact m16 stores and LMSW's inability to clear PE.
+TCG's INVD fallthrough does not qualify physical cache discard. Thirteen LLVM
+regressions, 42 NeverC intrinsic tests, 81 existing binary checks, 23 generator
+tests, 340 earlier bounded-system checks and 12 plugin tests pass; the
+intrinsic overload audit has zero mismatches. No opcode, register, feature or
+plugin-schema identity changes in this batch.
+
+The CPL0 fixture passes descriptor addresses through a non-inlined runtime
+boundary: NeverC can still emit legacy pointer/shift constant expressions
+that newer LLVM text IR rejects. General IR-format compatibility remains a
+separate migration concern; these results qualify the native APIs themselves.
+
 Pointer APIs still need explicit segment/address width and forced-encoding
 selection. These checkpoints therefore do not yet replace NeverD's complete
 architectural-bank ASM contract.
