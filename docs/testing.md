@@ -150,6 +150,13 @@ address zero. `NeverDUnwindFrameCLITests` compares complete CLI JSON against
 that same public API without adding dependencies to the C API suite.
 `pluginsdk/python/tests/test_unwind_query.py` checks the Python adapter's
 ownership, integer validation and complete JSON retention.
+`NeverDLinkedUnwindQuery` rebuilds the three Apple-linked fixtures and compares
+the complete C API, Python, CLI and worker results at 21 exact addresses. Its
+independent expectations distinguish signing-instruction and CFI-state
+boundaries from compact completed-prologue recipes. It retains compiler,
+linker, consumer and per-address results in the test artifact directory.
+Unavailable baseline tools skip; any later fixture or consumer failure fails.
+This check loads metadata and executes no arm64e fixture instructions.
 
 Enable `NEVERD_BUILD_GUI` for the worker and GUI consumers. Build
 `neverd-worker-test-server`, `neverd-gui-unwind-tests`,

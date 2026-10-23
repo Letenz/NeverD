@@ -19,6 +19,7 @@
 
 NEVERD_RA_CAPI_VALUE(uint64_t, kImageBase, 0x100000000)
 NEVERD_RA_CAPI_VALUE(size_t, kFileBytes, 0x2000)
+NEVERD_RA_CAPI_VALUE(uint32_t, kLoadCommandCount, 2)
 NEVERD_RA_CAPI_VALUE(uint32_t, kCodeOffset, 0x400)
 NEVERD_RA_CAPI_VALUE(uint32_t, kFrameOffset, 0x800)
 NEVERD_RA_CAPI_VALUE(uint32_t, kCompactOffset, 0x1000)

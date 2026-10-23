@@ -83,11 +83,12 @@ sourceResult(const std::optional<dwarf_eh::AArch64RAQueryResult> &Result) {
 
 inline llvm::json::Object
 unwindSigningJSON(const AArch64UnwindSigningQuery &Query) {
-  return {{unwind_json::kQueryPC, unwind_json::address(Query.QueryPC)},
-          {unwind_json::kDwarfStateAtPC,
-           unwind_json::sourceResult(Query.DwarfStateAtPC)},
-          {unwind_json::kCompactRecipe,
-           unwind_json::sourceResult(Query.CompactRecipe)}};
+  return llvm::json::Object{
+      {unwind_json::kQueryPC, unwind_json::address(Query.QueryPC)},
+      {unwind_json::kDwarfStateAtPC,
+       unwind_json::sourceResult(Query.DwarfStateAtPC)},
+      {unwind_json::kCompactRecipe,
+       unwind_json::sourceResult(Query.CompactRecipe)}};
 }
 
 } // namespace neverd::sdk

@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -52,6 +53,15 @@ protected:
       Args.push_back(kJSON);
     const std::string Output = (Directory / kOutputFile).string();
     const std::string Error = (Directory / kErrorFile).string();
+    // ExecuteAndWait may reopen an existing redirect without truncating it.
+    // A shorter response must not inherit bytes from the preceding query.
+    for (const auto &Path : {Output, Error}) {
+      std::ofstream Stream(Path, std::ios::binary | std::ios::trunc);
+      if (!Stream) {
+        ADD_FAILURE() << Path;
+        return EXIT_FAILURE;
+      }
+    }
     const std::array<std::optional<llvm::StringRef>, 3> Redirects = {
         std::nullopt, Output, Error};
     return llvm::sys::ExecuteAndWait(Args.front(), Args, std::nullopt,

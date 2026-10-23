@@ -24,6 +24,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -85,16 +86,26 @@ inline std::vector<uint8_t> makeMachO(llvm::ArrayRef<uint8_t> Program,
   auto *Header = reinterpret_cast<mach_header_64 *>(Bytes.data());
   Header->magic = MH_MAGIC_64;
   Header->cputype = Options.AArch64 ? CPU_TYPE_ARM64 : CPU_TYPE_X86_64;
-  Header->cpusubtype =
-      Options.AArch64 ? CPU_SUBTYPE_ARM64E : CPU_SUBTYPE_X86_64_ALL;
+  Header->cpusubtype = Options.AArch64
+                           ? static_cast<uint32_t>(CPU_SUBTYPE_ARM64E)
+                           : static_cast<uint32_t>(CPU_SUBTYPE_X86_64_ALL);
   Header->filetype = MH_DYLIB;
-  Header->ncmds = 1;
-  Header->sizeofcmds =
+  Header->ncmds = kLoadCommandCount;
+  const uint32_t SegmentBytes =
       sizeof(segment_command_64) +
       (1 + Options.Dwarf + Options.Compact) * sizeof(section_64);
+  const uint32_t IdentityBytes = llvm::alignTo(
+      sizeof(dylib_command) + sizeof(kImageFile), sizeof(uint64_t));
+  Header->sizeofcmds = SegmentBytes + IdentityBytes;
   auto *Segment = reinterpret_cast<segment_command_64 *>(Header + 1);
   Segment->cmd = LC_SEGMENT_64;
-  Segment->cmdsize = Header->sizeofcmds;
+  Segment->cmdsize = SegmentBytes;
+  auto *Identity = reinterpret_cast<dylib_command *>(
+      Bytes.data() + sizeof(mach_header_64) + SegmentBytes);
+  Identity->cmd = LC_ID_DYLIB;
+  Identity->cmdsize = IdentityBytes;
+  Identity->dylib.name = sizeof(dylib_command);
+  std::memcpy(Identity + 1, kImageFile, sizeof(kImageFile));
   std::memcpy(Segment->segname, dwarf::kMachOTextSegment,
               sizeof(dwarf::kMachOTextSegment));
   Segment->vmaddr = kImageBase;
