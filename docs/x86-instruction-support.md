@@ -157,9 +157,10 @@ incomplete intermediate batch.
    with separate expectations for decoding, strict lifting and each emitter.
    Include positive and negative forms for widths, register banks, masks,
    address sizes, segments and privilege-sensitive operations.
-2. Extend the bounded SGX contract to ENCLU query/memory leaves, with explicit
-   enclave execution requirements. Its entry/exit/resume leaves remain part of
-   the complete-state continuation work below.
+2. Integrate the native bounded ENCLU APIs below into NeverD's shared SGX
+   state contract, including leaf proofs, exact register dependencies and
+   incoming flag preservation. Its entry/exit/resume leaves remain part of the
+   complete-state continuation work below.
 3. Introduce a versioned complete-machine-state boundary and explicit
    continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
@@ -178,9 +179,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`041bb785b2b6`](https://github.com/NeverSight/llvm-project/commit/041bb785b2b6)
+[`e3b29f4dffd9`](https://github.com/NeverSight/llvm-project/commit/e3b29f4dffd9)
 adds native instruction selection for the following APIs. NeverC's
-[`7079d135e`](https://github.com/NeverSight/NeverC/commit/7079d135e)
+[`4050d51fd`](https://github.com/NeverSight/NeverC/commit/4050d51fd)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -213,6 +214,7 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.{sldt,str,smsw}.reg{16,32,64}`, `llvm.x86.{sldt,str,smsw}.mem` | i386 and x86-64; reg64 requires x86-64 | Raw native register result or an exact m16 store; wider SMSW results retain their architectural upper bits. |
 | `llvm.x86.{lldt,ltr,lmsw}.{reg,mem}`, `llvm.x86.invd` | i386 and x86-64 | Native selector/control input and processor-state effects, including LTR's descriptor busy-bit write. |
 | `llvm.x86.encls`, `llvm.x86.enclv` and their `32` variants | x86-64 and i386 respectively | Four natural-width register inputs/results plus `CF | (ZF << 1)`; leaf selection uses EAX and all memory/state validation stays native. Flag-preserving leaves have no defined scalar status. |
+| `llvm.x86.enclu.bounded`, `llvm.x86.enclu.bounded32` | x86-64 and i386 respectively | Constant natural-width rAX selects one of nine fallthrough leaves through low EAX; four register results and CF/ZF retain native completion. Entry/exit/resume, dynamic and unknown leaves are rejected. |
 | `llvm.x86.vmload`, `llvm.x86.vmsave`, `llvm.x86.invlpga` and their `32` variants | x86-64 and i386 respectively | Integer rAX VMCB physical address or linear invalidation address; INVLPGA also reads the complete ECX ASID. No compiler dereference; default address width only. |
 | `llvm.x86.{vmload,vmsave,invlpga}.addr32` and `.addr16` | x86-64 and i386 respectively | Explicit address-size override with i32 or i16 address input; the native `67` prefix, full i32 INVLPGA ASID and instruction-owned memory effects survive lowering. |
 | `llvm.x86.stgi/clgi/clac/stac/hlt`, `llvm.x86.swapgs` | i386 and x86-64; SWAPGS requires x86-64 | Ordered native GIF, AC, halt/resume and GS-base effects, preserving arithmetic flags. HLT is resumable, with neither `noreturn` nor `willreturn`. |
@@ -466,6 +468,28 @@ and installed `_encls_u32`/`_enclv_u32` wrappers through `<immintrin.h>` and
 explicitly. For leaves that preserve arithmetic flags, callers must preserve
 their explicit incoming flag state; the returned flag byte is not a status.
 ENCLU's entry/exit/resume continuations remain outside these APIs.
+
+The subsequent bounded ENCLU batch adds EREPORT, EGETKEY, EACCEPT, EMODPE,
+EACCEPTCOPY, EVERIFYREPORT2, EDECCSSA, EREPORT2 and EGETKEY256 (leaves 0, 1,
+5..11). The first argument is `immarg`; the backend materializes its complete
+value in rAX instead of copying an unselected target constant to a register.
+The shared leaf predicate rejects EENTER, ERESUME, EEXIT and unknown leaves.
+NeverC provides `__builtin_ia32_enclu_bounded` and the installed
+`_enclu_bounded_u32` macro, which evaluates its data-array expression once.
+Code-mode and feature checks include rejecting code16.
+
+The bounded ENCLU matrix passes 6,048 full-LLVM checks and 3,528 on each C
+route, plus 36 real CPL3 fault boundaries per C route. It covers every allowed
+leaf, upper RAX bits, independent and combined outputs, dead/repeated calls,
+ordering, unmapped implicit memory, callee-saved registers, O0/O2, ELF/COFF/
+Mach-O and assembly round trips. The original ENCLS/ENCLV matrices also pass
+again. Twenty-five LLVM regression files, 51 NeverC intrinsic/header tests,
+81 binary checks, 26 generator tests, 12 plugin tests and six isolated
+installed-header probes pass; the overload audit has zero mismatches. Only
+ENCLU's implicit register uses/defs change in the plugin schema, retaining all
+18,495 opcode identities. This does not qualify successful enclave execution,
+incoming flag preservation, AEX or nonlocal continuations. NeverD's strict
+lifter still rejects ENCLU until those selected-leaf semantics are integrated.
 
 SGX qualification passes 1,344 full-LLVM checks and 784 each for NeverC and
 the bridge, covering every register/status output, dead/repeated operations,
