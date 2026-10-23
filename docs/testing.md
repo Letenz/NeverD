@@ -26,8 +26,11 @@ register overlap and return classification. It verifies LLVM O2, both C
 projections and generated objects; dead results retain authentication failure
 checks, and temporary names cannot capture any of the three inputs. Frame
 proofs cover matching and mismatching second modifiers, including an ADR of
-the signing PC. Unmodelled PACM state must still fail explicitly through both
-decoder routes.
+the signing PC. Diamond fixtures cover conflicting signing PCs in live
+registers and saved return cells, retain matching explicit modifiers in
+registers and allocated stack cells, and forget inconsistent or missing
+incoming constants in either predecessor order. Unmodelled PACM state must
+still fail explicitly through both decoder routes.
 PACGA additionally checks independent inputs and rejects malformed widths.
 Its generated C is compiled back to LLVM to check operand and return flow.
 On a PAuth-capable Apple Silicon host,
