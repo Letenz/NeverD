@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`4d855d6b1b16`](https://github.com/NeverSight/llvm-project/commit/4d855d6b1b16)
+[`1592e44aefca`](https://github.com/NeverSight/llvm-project/commit/1592e44aefca)
 adds native instruction selection for the following APIs. NeverC's
-[`006d1abe8`](https://github.com/NeverSight/NeverC/commit/006d1abe8)
+[`a5c541999`](https://github.com/NeverSight/NeverC/commit/a5c541999)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -301,15 +301,33 @@ matrix remains green. Four new generator tests protect the multi-result IIT
 encoding without changing older long-signature offsets; the complete overload
 audit reports zero mismatches after inserting the two NeverC intrinsic IDs.
 
-The next NeverC AMX gap contains 19 public forms: `tcvtrowd2ps/d2psi`,
-`tcvtrowps2bf16h/hi/l/li`, `tcvtrowps2phh/hi/l/li`, `tilemovrow/i`,
-`tdpbf8ps`, `tdpbhf8ps`, `tdphbf8ps`, `tdphf8ps`, `tileloaddrs64`,
-`tileloaddrst164`, and the historical `tmmultf32ps`. The full LLVM fork has
-these intrinsic names and lowers all 19 to objects at O0/O2 for ELF/COFF/Mach-O
-(114 compile checks). This is a baseline, not qualification of the physical
-bank contract, exact forced encodings, address-size/segment forms or native
-execution. NeverC still needs the corresponding frontend, feature and generated
-instruction tables before these can replace NeverD's architectural-bank ASM.
+NeverC now has native `tdpbf8ps`, `tdpbhf8ps`, `tdphbf8ps`, `tdphf8ps`,
+`tileloaddrs64`, `tileloaddrst164` and historical `tmmultf32ps` builtins, including
+their features, immediate checks, intrinsic types, opcode tables and both
+assembler dialects. Full-fork, NeverC and NeverC-to-fork qualification each pass
+10,794 checks: all 336 distinct tile triples per compute operation, all load
+destinations, O0/O2, ELF/COFF/Mach-O, assembly round trips, forced EVEX assembly
+with high GPRs, and controlled completions with full pointers/strides, repeated
+operations, tile bank inputs/outputs, ordinary memory effects and saved C
+registers. These completions inject results; they do not qualify hardware AMX
+arithmetic, configuration validity, cache hints, faults or restart behavior.
+
+Both compilers reject a function that mixes physical tile interfaces with
+compiler-managed `x86_amx` values. Previously, NeverC could synthesize a tile
+configuration for a managed value while a physical FP8 operation used other,
+unconfigured tiles; LLVM's incremental model check also missed compute/row
+forms. Whole-function classification closes that gap, and invalid physical
+tile indices fail in release builds too. LLVM's 38 AMX regressions, NeverC's
+32 intrinsic tests, 81 existing binary checks and the complete intrinsic
+overload audit pass. The table generator preserves existing opcode/feature IDs.
+
+The next NeverC AMX gap contains twelve row forms: `tcvtrowd2ps/d2psi`,
+`tcvtrowps2bf16h/hi/l/li`, `tcvtrowps2phh/hi/l/li` and `tilemovrow/i`. The full
+fork's original 19-form object baseline covered 114 O0/O2 ELF/COFF/Mach-O builds;
+the twelve row forms still need corresponding NeverC interfaces and deeper
+qualification. Pointer APIs do not yet provide explicit segment/address width
+or forced-encoding selection, so these checkpoints do not yet replace NeverD's
+complete architectural-bank ASM contract.
 
 These tests qualify compiler transport, not successful privileged VM entry.
 The current pointer APIs cover the default address space. Segmented/address-size
