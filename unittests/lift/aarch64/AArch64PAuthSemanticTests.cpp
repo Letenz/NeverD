@@ -99,7 +99,8 @@ void expectIntrinsic(const LowOp &Op, Intrinsic Id, unsigned Inputs) {
 
 void compileArm64eC(const std::string &Source,
                     const std::function<void(llvm::StringRef)> &Inspect = {},
-                    bool EmitLLVM = false, bool ExecuteNative = false) {
+                    bool EmitLLVM = false, llvm::StringRef ExecuteTarget = {},
+                    bool *ExecutionAvailable = nullptr) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -128,11 +129,12 @@ void compileArm64eC(const std::string &Source,
       std::nullopt, std::nullopt, ErrorPath.str()};
   // Exclude host libc headers explicitly. Only Clang's resource headers and
   // the fixture's C declarations are needed, including on Linux and Windows.
+  const bool ExecuteNative = !ExecuteTarget.empty();
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
     llvm::SmallVector<llvm::StringRef> Args = {
         Compiler,
         "-target",
-        ExecuteNative ? "arm64-apple-macos" : "arm64e-apple-macos",
+        ExecuteNative ? ExecuteTarget : "arm64e-apple-macos",
         "-ffreestanding",
         "-nostdlibinc",
         "-I",
@@ -161,6 +163,10 @@ void compileArm64eC(const std::string &Source,
       const llvm::StringRef RunArgs[] = {ObjectPath};
       const int Result = llvm::sys::ExecuteAndWait(
           ObjectPath, RunArgs, std::nullopt, Redirects, 30, 0, &Error);
+      if (ExecutionAvailable) {
+        *ExecutionAvailable = Result == 0;
+        return;
+      }
       EXPECT_EQ(Result, 0) << Error << Source;
     }
   }
@@ -675,31 +681,10 @@ TEST(AArch64PAuthSemantics, ExceptionReturnsNeverLoseAuthentication) {
       EXPECT_THROW(lift(Word, Fast), UnliftedInstruction);
 }
 
-TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
-#if defined(__APPLE__) && defined(__aarch64__)
-  int Supported = 0;
-  size_t Size = sizeof(Supported);
-  if (sysctlbyname("hw.optional.arm.FEAT_PAuth", &Supported, &Size, nullptr,
-                   0) != 0 ||
-      !Supported)
-    GTEST_SKIP() << "native PAuth instructions are unavailable";
-  const auto Oracle = llvm::MemoryBuffer::getFile(
-      std::string(NEVERD_ARM64E_TEST_HEADERS) + "/pauth_oracle.c");
-  ASSERT_TRUE(Oracle);
-  std::vector<MedFunc> Functions;
-  const std::pair<Intrinsic, const char *> Cases[] = {
-      {Intrinsic::Pacia, "test_pacia"},    {Intrinsic::Pacib, "test_pacib"},
-      {Intrinsic::Pacda, "test_pacda"},    {Intrinsic::Pacdb, "test_pacdb"},
-      {Intrinsic::Autia, "test_autia"},    {Intrinsic::Autib, "test_autib"},
-      {Intrinsic::Autda, "test_autda"},    {Intrinsic::Autdb, "test_autdb"},
-      {Intrinsic::Xpaci, "test_xpaci"},    {Intrinsic::Xpacd, "test_xpacd"},
-      {Intrinsic::A64_Pacga, "test_pacga"}};
-  for (const auto &[Id, Name] : Cases) {
-    auto F = pointerFunction(Id, Name);
-    F.Entry += Functions.size() * 0x10;
-    F.Blocks.front().StartAddr = F.Entry;
-    Functions.push_back(std::move(F));
-  }
+namespace {
+void executeCProjections(const std::vector<MedFunc> &Functions,
+                         llvm::StringRef Oracle,
+                         llvm::StringRef ExecuteTarget) {
   CEmitterOptions Options;
   Options.TheArch = Arch::AArch64;
   Options.Format = BinaryFormat::MachO;
@@ -725,12 +710,64 @@ TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
           High.push_back(MedToHighConverter().convert(F, Arch::AArch64));
         ASSERT_TRUE(HighCEmitter().emit(High, Out, Options));
       }
-      Source += (*Oracle)->getBuffer().str();
-      compileArm64eC(Source, {}, /*EmitLLVM=*/false, /*ExecuteNative=*/true);
+      Source.append(Oracle.data(), Oracle.size());
+      compileArm64eC(Source, {}, /*EmitLLVM=*/false, ExecuteTarget);
     }
+}
+
+bool hasNativePAuth() {
+#if defined(__APPLE__) && defined(__aarch64__)
+  int Supported = 0;
+  size_t Size = sizeof(Supported);
+  return sysctlbyname("hw.optional.arm.FEAT_PAuth", &Supported, &Size, nullptr,
+                      0) == 0 &&
+         Supported;
 #else
-  GTEST_SKIP() << "native key comparison requires an Apple Silicon host";
+  return false;
 #endif
+}
+} // namespace
+
+TEST(AArch64PAuthSemantics, NativeGenericSignaturesAgreeWithBothCProjections) {
+  if (!hasNativePAuth())
+    GTEST_SKIP() << "native key comparison requires a PAuth Apple Silicon host";
+  const auto Oracle = llvm::MemoryBuffer::getFile(
+      std::string(NEVERD_ARM64E_TEST_HEADERS) + "/pacga_oracle.c");
+  ASSERT_TRUE(Oracle);
+  executeCProjections({pointerFunction(Intrinsic::A64_Pacga, "test_pacga")},
+                      (*Oracle)->getBuffer(), "arm64-apple-macos");
+}
+
+TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
+  if (!hasNativePAuth())
+    GTEST_SKIP() << "native key comparison requires a PAuth Apple Silicon host";
+  // macOS can execute ordinary arm64 with PAC/AUT disabled, even though the
+  // CPU advertises PAuth. Only an arm64e process qualifies these operations.
+  bool ExecutionAvailable = false;
+  compileArm64eC("int main(void) { return 0; }\n", {}, /*EmitLLVM=*/false,
+                 "arm64e-apple-macos", &ExecutionAvailable);
+  if (HasFatalFailure())
+    return;
+  if (!ExecutionAvailable)
+    GTEST_SKIP() << "this host cannot execute the arm64e signing-key oracle";
+  const auto Oracle = llvm::MemoryBuffer::getFile(
+      std::string(NEVERD_ARM64E_TEST_HEADERS) + "/pauth_oracle.c");
+  ASSERT_TRUE(Oracle);
+  std::vector<MedFunc> Functions;
+  const std::pair<Intrinsic, const char *> Cases[] = {
+      {Intrinsic::Pacia, "test_pacia"},    {Intrinsic::Pacib, "test_pacib"},
+      {Intrinsic::Pacda, "test_pacda"},    {Intrinsic::Pacdb, "test_pacdb"},
+      {Intrinsic::Autia, "test_autia"},    {Intrinsic::Autib, "test_autib"},
+      {Intrinsic::Autda, "test_autda"},    {Intrinsic::Autdb, "test_autdb"},
+      {Intrinsic::Xpaci, "test_xpaci"},    {Intrinsic::Xpacd, "test_xpacd"},
+      {Intrinsic::A64_Pacga, "test_pacga"}};
+  for (const auto &[Id, Name] : Cases) {
+    auto F = pointerFunction(Id, Name);
+    F.Entry += Functions.size() * 0x10;
+    F.Blocks.front().StartAddr = F.Entry;
+    Functions.push_back(std::move(F));
+  }
+  executeCProjections(Functions, (*Oracle)->getBuffer(), "arm64e-apple-macos");
 }
 
 TEST(AArch64PAuthSemantics, UnsupportedPAuthLRNeverFallsBackToHints) {

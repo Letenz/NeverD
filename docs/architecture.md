@@ -137,8 +137,11 @@ rebuilding and source replacement of an arm64e image fail explicitly until
 ABI-aware signing and fixup emission are implemented; the emitted module
 retains that requirement. Checked emulation's existing disabled-key profile
 does not become an arm64e execution environment. Separate Apple Silicon tests
-compare both C projections with real PAC/AUT/XPAC/PACGA instructions using
-process keys; that qualifies those operations, not a reconstructed arm64e ABI.
+compare both C projections with native PACGA. The full PAC/AUT/XPAC oracle
+requires an executable arm64e process and checks that each signing key changes
+pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
+ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
+These comparisons do not qualify a reconstructed arm64e ABI.
 Shared-cache-specific layouts require a cache address model. Exception-level
 authentication, FEAT_PAuth_LR and CPA2 remain unsupported; recognizing x1's
 header does not claim those instruction semantics.

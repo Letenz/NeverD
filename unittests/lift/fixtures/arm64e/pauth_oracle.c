@@ -42,11 +42,15 @@ static uint64_t sign_generic(uint64_t Value, uint64_t Modifier) {
 int main(void) {
   const uint64_t Values[] = {0, 1, 0x1234, 0x7ffffff0};
   const uint64_t Modifiers[] = {0, 1, UINT64_MAX, UINT64_C(0x123456789abcdef0)};
+  unsigned ChangedKeys = 0;
+  int GenericSignature = 0;
   for (unsigned V = 0; V < sizeof(Values) / sizeof(Values[0]); ++V)
     for (unsigned M = 0; M < sizeof(Modifiers) / sizeof(Modifiers[0]); ++M) {
       const uint64_t P = Values[V], D = Modifiers[M];
       const uint64_t IA = sign_ia(P, D), IB = sign_ib(P, D);
       const uint64_t DA = sign_da(P, D), DB = sign_db(P, D);
+      ChangedKeys |=
+          (IA != P) | ((IB != P) << 1) | ((DA != P) << 2) | ((DB != P) << 3);
       if (test_pacia(P, D) != IA || test_pacib(P, D) != IB ||
           test_pacda(P, D) != DA || test_pacdb(P, D) != DB)
         return 1;
@@ -59,6 +63,11 @@ int main(void) {
       const uint64_t G = test_pacga(P, D);
       if (G != sign_generic(P, D) || (G & UINT32_MAX) != 0)
         return 4;
+      GenericSignature |= G != 0;
     }
+  // Feature discovery alone does not establish that pointer signing is
+  // enabled. Every key must have changed at least one input in this process.
+  if (ChangedKeys != 15 || !GenericSignature)
+    return 5;
   return 0;
 }

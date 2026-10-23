@@ -24,12 +24,18 @@ both renderers. Unsupported PAuth_LR encodings, including the PACM HINT, must
 fail explicitly through both decoder routes.
 PACGA additionally checks independent inputs and rejects malformed widths.
 Its generated C is compiled back to LLVM to check operand and return flow.
-On a PAuth-capable Apple Silicon host, `NativeKeysAgreeWithBothCProjections`
-compiles and executes HighC and LLVMC output at O0/O2 against independent native
-PAC/AUT/XPAC/PACGA instructions. It uses real process keys for all four pointer
-keys, zero/nonzero modifiers and the generic signature, including optimized
-LLVM output. Other hosts explicitly skip this native check. These arm64 host
-executables do not certify arm64e ABI reconstruction or invalid-signature traps.
+On a PAuth-capable Apple Silicon host,
+`NativeGenericSignaturesAgreeWithBothCProjections` executes HighC and LLVMC
+PACGA output at O0/O2 against an independent instruction oracle, including
+optimized LLVM output. Its ordinary arm64 process must produce a nonzero
+generic signature. PAC/AUT can be disabled in that process despite hardware
+feature discovery, so it cannot qualify pointer authentication.
+`NativeKeysAgreeWithBothCProjections` instead compiles an arm64e execution
+probe and explicitly skips if the host refuses it. On an eligible host it
+compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
+modifiers; each key must change at least one pointer, excluding a NOP profile.
+Other architectures skip both native checks. These tests do not certify
+arm64e ABI reconstruction or invalid-signature traps.
 
 The same target checks public Mach-O loading, CPU subtype capability bits,
 arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
