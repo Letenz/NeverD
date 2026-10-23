@@ -56,6 +56,17 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
   // Preserve the tied input/output of machine PAC/AUT/XPAC; the generic asm
   // renderer cannot infer that constraint from operand numbers alone.
   if (AArch64) {
+    for (const auto &Auth : kAArch64PAuthLROperations) {
+      if (AsmStr != Auth.llvmAsm())
+        continue;
+      const std::string Value = aarch64PAuthLRC(Auth, Args);
+      return {
+          ResultLive && !ResultName.empty()
+              ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value)
+                    .str()
+              : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
+          false};
+    }
     for (const auto &Operation : kAArch64CPAOperations) {
       if (AsmStr != Operation.MachineAsm)
         continue;

@@ -39,6 +39,25 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                           llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
+  if (const auto Auth = aarch64PAuthLROperation(IC)) {
+    if (!aarch64PAuthMedShapeIsValid(Op))
+      llvm::report_fatal_error(kAArch64PAuthMalformedOperation);
+    llvm::SmallVector<llvm::Value *, 3> Args;
+    for (unsigned Index = 1; Index < Op.NumInputs; ++Index) {
+      llvm::Value *Value = getVar(Op.Inputs[Index], Builder);
+      if (Value->getType()->isPointerTy())
+        Value = Builder.CreatePtrToInt(Value, Builder.getInt64Ty());
+      Args.push_back(Value);
+    }
+    auto *Asm = llvm::InlineAsm::get(
+        llvm::FunctionType::get(
+            Builder.getInt64Ty(),
+            {Builder.getInt64Ty(), Builder.getInt64Ty(), Builder.getInt64Ty()},
+            false),
+        Auth->llvmAsm(), Auth->llvmConstraints(), /*hasSideEffects=*/true);
+    return Builder.CreateCall(Asm, Args, kAArch64PAuthResultName);
+  }
+
   if (const auto Operation = aarch64CPAOperation(IC)) {
     if (!aarch64CPAMedShapeIsValid(Op))
       llvm::report_fatal_error(kAArch64CPAMalformedOperation);

@@ -20,8 +20,14 @@ branches with live frames, local/stack targets, a signed link or a mismatched
 authentication key/modifier. `NEVERD_PARITY_BIN=/path/to/thin/arm64e` also
 checks the fast terminator classifier against Capstone on a real binary.
 Compiled C parameter-flow checks cover local-name collisions at O0/O2 through
-both renderers. Unsupported PAuth_LR encodings, including the PACM HINT, must
-fail explicitly through both decoder routes.
+both renderers. `AArch64PAuthLRSemantics` checks all explicit PAuth_LR forms
+with independent instruction words, both modifiers, original-PC offsets (including underflow),
+register overlap and return classification. It verifies LLVM O2, both C
+projections and generated objects; dead results retain authentication failure
+checks, and temporary names cannot capture any of the three inputs. Frame
+proofs cover matching and mismatching second modifiers, including an ADR of
+the signing PC. Unmodelled PACM state must still fail explicitly through both
+decoder routes.
 PACGA additionally checks independent inputs and rejects malformed widths.
 Its generated C is compiled back to LLVM to check operand and return flow.
 On a PAuth-capable Apple Silicon host,
@@ -34,8 +40,13 @@ feature discovery, so it cannot qualify pointer authentication.
 probe and explicitly skips if the host refuses it. On an eligible host it
 compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
 modifiers; each key must change at least one pointer, excluding a NOP profile.
-Other architectures skip both native checks. These tests do not certify
-arm64e ABI reconstruction or invalid-signature traps.
+Other architectures skip the native checks.
+`NativeTwoModifierKeysAgreeWithBothCProjections` independently probes
+PAuth_LR instruction execution and active IA/IB keys before comparing signing,
+authentication and authenticated-return targets across both C routes at O0/O2
+and optimized LLVM. It additionally requires the second modifier to change
+signatures. An ineligible host explicitly skips this oracle. These tests do
+not certify arm64e ABI reconstruction or invalid-signature traps.
 
 The same target checks scalar CPA instructions through both decoder routes,
 including shifts, SP, XZR and overlapping operands. Malformed widths and
@@ -5299,6 +5310,10 @@ HighIR when CFG threading leaves a sole successor without a branch operation.
 Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
+`SiblingSkipsKeepSharedReadersOutsideThePrefix` checks repeated variable reads
+and an expression shared by a guard and a later return. Early and late guard
+folding must retain the live prefix; the late pass still folds a prefix without
+outside readers. Both entry points also run on repeated visits.
 
 The same suite checks shared-expression liveness with independent return-value
 oracles, multiple branch definitions, dead cycles and nested observable effects.
