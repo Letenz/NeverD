@@ -16,6 +16,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -338,6 +339,68 @@ public:
     return asHeader(Inner.resolvePrototype(Name));
   }
 };
+
+TEST(RecordCallContract, LocalFloatingDeclarationsRequireCompletePlatformABI) {
+  FunctionSym Function;
+  Function.Name = "fixture";
+  Function.PrototypeLibrary = UserPrototypeLibrary.str();
+  Function.ReturnType = NdType::makeFloat(8);
+  Function.Params = {{"value", NdType::makeFloat(8)}};
+  for (const auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (const auto Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      const auto Local =
+          libc::floatingCallArguments(Function, Architecture, Format);
+      ASSERT_TRUE(Local);
+      auto Header = Function;
+      Header.PrototypeLibrary = "test-header";
+      Header.PrototypeFromHeader = true;
+      EXPECT_EQ(Local,
+                libc::floatingCallArguments(Header, Architecture, Format));
+    }
+  auto Record = NdType::makeStruct(
+      {NdType::makeFloat(8), NdType::makeFloat(8), NdType::makeFloat(8)});
+  Record->Passing = NdRecordPassing::ByValue;
+  Function.ReturnType = Record;
+  Function.Params = {{"value", Record}};
+  // A local declaration may name a different API than the C library table.
+  Function.Name = "memcpy";
+  for (const auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    const auto Check = [&](const FunctionSym &Candidate, bool Accepted) {
+      EXPECT_EQ(libc::floatingCallArguments(Candidate, Arch::AArch64, Format)
+                    .has_value(),
+                Accepted);
+      const auto Layout = libc::recordCallArguments(
+          Candidate, Arch::AArch64, Format, libc::LibCVariant::GNU);
+      EXPECT_EQ(Layout.has_value(), Accepted);
+      if (Layout) {
+        ASSERT_EQ(Layout->Parameters.size(), 1u);
+        EXPECT_EQ(Layout->Parameters[0].Pieces.size(), 3u);
+        EXPECT_TRUE(Layout->FloatingResult);
+      }
+    };
+    Check(Function, true);
+    auto Unknown = Function;
+    Unknown.PrototypeLibrary.clear();
+    Check(Unknown, false);
+    auto Variadic = Function;
+    Variadic.IsVariadic = true;
+    Check(Variadic, false);
+    auto Foreign = Function;
+    Foreign.PlatformConvention = false;
+    Check(Foreign, false);
+    auto Custom = Function;
+    Custom.ParamEntryLocations.emplace_back();
+    Check(Custom, false);
+    for (const auto Convention :
+         {DebugCallConv::Fastcall, DebugCallConv::Thiscall}) {
+      auto NonOrdinary = Function;
+      NonOrdinary.CallConv = Convention;
+      Check(NonOrdinary, false);
+    }
+  }
+}
 
 struct CachedImportFixture {
   BinaryImage Image;
@@ -824,11 +887,13 @@ int main(void) {
 #endif
 }
 
-void checkWindowsStackedHFAs(bool ExecuteAArch64, bool ImportSlot) {
+void checkWindowsStackedHFAs(bool ExecuteAArch64, bool ImportSlot,
+                             bool LocalDeclaration = false) {
 #if !defined(__linux__)
   GTEST_SKIP() << "Execution of the generated C requires Linux";
 #else
   SCOPED_TRACE(ImportSlot ? "import slot" : "import thunk");
+  SCOPED_TRACE(LocalDeclaration ? "local declaration" : "header declaration");
   std::string Emulator;
   if (ExecuteAArch64) {
 #if !defined(__aarch64__)
@@ -1015,7 +1080,10 @@ void _start(void) {
           BinaryImage Image = std::move(*Loaded);
           EmptyDebug Empty;
           sdk::LocalTypesDebugContext Context(Empty, Types, {}, &Image);
-          DeclaredHeaderDebug Debug(Context);
+          DeclaredHeaderDebug HeaderDebug(Context);
+          DebugContext &Debug = LocalDeclaration
+                                    ? static_cast<DebugContext &>(Context)
+                                    : HeaderDebug;
           for (bool LLVM : {false, true}) {
             SCOPED_TRACE(LLVM ? "LLVM-C" : "HighC");
             llvm::LLVMContext LLVMContext;
@@ -1079,6 +1147,23 @@ void _start(void) {
                   Callee->getFunctionType()->getParamType(10)));
               ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
                                               &Debug, &Image));
+              std::string Selected;
+              llvm::raw_string_ostream SelectedOut(Selected);
+              const auto *Entry =
+                  Result.LlvmModule->getFunction("record_probe");
+              ASSERT_NE(Entry, nullptr);
+              ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, SelectedOut,
+                                              COptions, &Debug, &Image, Entry));
+              const auto SelectedFile = Root + "/selected.c";
+              write(SelectedFile, Selected);
+              for (const char *COptimization : {"-O0", "-O2"})
+                ASSERT_TRUE(execute(
+                    Compiler,
+                    {Compiler, Target, "-std=gnu11", COptimization,
+                     "-ffreestanding", "-fno-builtin", "-fno-strict-aliasing",
+                     NativeInclude, "-fsyntax-only", SelectedFile},
+                    Errors))
+                    << Selected;
             } else {
               ASSERT_TRUE(
                   HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
@@ -1160,5 +1245,13 @@ TEST(RecordCallContract, WindowsHFAProjectionsExecuteOnAArch64) {
 
 TEST(RecordCallContract, WindowsHFAImportSlotProjectionsExecuteOnAArch64) {
   checkWindowsStackedHFAs(true, true);
+}
+
+TEST(RecordCallContract, LocalHFAImportSlotsPreserveCompleteCalls) {
+  checkWindowsStackedHFAs(false, true, true);
+}
+
+TEST(RecordCallContract, LocalHFAImportSlotProjectionsExecuteOnAArch64) {
+  checkWindowsStackedHFAs(true, true, true);
 }
 } // namespace

@@ -9,14 +9,23 @@ Windows provider declarations now include NDIS, filter manager, NETIO,
 storage, USB and HID APIs, with explicit x86/x64 layout and SDK HighC/LLVMC
 coverage. User libraries include more networking, security and device APIs.
 An export inventory is only a coverage audit; undocumented and ordinal-only
-exports still require authenticated declarations. ARM64 kernel headers remain
-unavailable in the MinGW DDK input.
+exports still require authenticated declarations. The retained Microsoft
+SDK/WDK input supplies x86/x64/ARM64 declarations; the older MinGW DDK input
+alone has no ARM64 kernel headers. Input availability is not full ABI coverage.
 
 The shared call-read summary excludes register copies proved overwritten before
 observation, including CPUID scratch exchanges. Calls, exits, partial writes
 and exceptional edges keep their incoming evidence. A VM entry that stores
 registers into an escaping machine-state frame can still have genuine inputs
 unknown after earlier calls; never erase those inputs or replace them with zero.
+Complete header and explicit local FP/HFA declarations share the same checked
+carrier adapter. ARM64 cached imports retain the original loaded callable
+through bounded private-frame proofs. Selected LLVMC output includes the
+checked import declaration and its by-value record definitions even when the
+callee is reached only through an image pointer mirror. The public record
+matrix checks both declaration origins, both C routes, selected-source target
+compilation, and independent host/AArch64 execution; it does not establish
+integer/void HFA result contracts or native Windows execution.
 Readonly scalar loads among instruction bytes reuse the immutable code reader's
 mapping and relocation checks. Default source cleanup also folds exact integer
 idempotence and absorption without symbolic search. Runtime-indexed memory and

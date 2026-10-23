@@ -1731,7 +1731,6 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
         const auto Source = Dbg->resolvePrototype(
             Direct ? cNameOfGlobal(Direct->getName(), true) : Name);
         if (!Source || Source->PrototypeLibrary.empty() ||
-            Source->PrototypeLibrary == UserPrototypeLibrary ||
             Source->PrototypeFromCLibrary)
           continue;
         bool Fits =
@@ -1764,6 +1763,10 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           }
           continue;
         }
+        // A checked local floating declaration uses the same import adapter.
+        // Other user declarations retain their existing source-call model.
+        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating)
+          continue;
         Fits &= ScalarParameters;
         const auto Layout =
             Fits && !Floating
@@ -2168,7 +2171,12 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     if (OnlyFunction) {
       // Selected fragments need declarations for their referenced providers,
       // including scalar calls and definitions whose bodies are not emitted.
-      if (!SelectedGlobals.count(&Fn))
+      // A checked import call may name its provider only through an image
+      // pointer mirror. That mirror's initializer is deliberately not followed
+      // by referencedGlobals, but its source declaration still belongs here.
+      if (!SelectedGlobals.count(&Fn) &&
+          !(Fn.isDeclaration() &&
+            SourceImportPrototypes.count(functionIdentifier(Fn))))
         continue;
     }
     if (Fn.isIntrinsic())
