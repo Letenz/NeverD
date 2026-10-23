@@ -2263,6 +2263,15 @@ and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
 
+Its Android import cases check that both C views use `<pthread.h>` without
+redeclaring the header's anonymous typedefs. User-declared `read` cases retain
+their argument count, header selection and linking name across saved-project
+reloads, including an opaque union parameter and a second call needing the
+system header. HighC must retain that union's tag; LLVM-C still uses machine
+carriers for this user-only prototype. `HighCSourceCalls.UserAndIndirectCalleesKeepOpaqueUnionTags`
+also compiles direct and indirect calls whose opaque union type is supplied
+only by the resolved callee, with no typed argument hiding a missing declaration.
+
 `TypeImport.*` checks independent prototype providers with equal-size but
 different pointees, recursive dependencies, callback conventions and
 transactional refusal, including exact-name selection and absent-name errors.
