@@ -785,6 +785,14 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   }
 
   case X86_INS_RDPID:
+  case X86_INS_CLUI:
+  case X86_INS_STUI:
+  case X86_INS_TESTUI:
+  case X86_INS_SENDUIPI:
+  case X86_INS_LKGS:
+  case X86_INS_HRESET:
+  case X86_INS_INVLPGB:
+  case X86_INS_TLBSYNC:
   case X86_INS_RDMSRLIST:
   case X86_INS_WRMSRLIST:
   case X86_INS_RDFSBASE:

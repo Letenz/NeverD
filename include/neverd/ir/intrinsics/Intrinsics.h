@@ -405,7 +405,13 @@ enum class X86SystemStateKind : uint8_t {
   DirectStore,
   DirectStore64B,
   WriteMsr,
-  MsrList
+  MsrList,
+  Void64,
+  TestUserInterrupt,
+  SendUserInterrupt,
+  LoadKernelGs,
+  HistoryReset,
+  InvalidateBroadcast
 };
 
 struct X86SystemStateContract {

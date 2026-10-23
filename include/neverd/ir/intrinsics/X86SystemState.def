@@ -24,6 +24,15 @@ NEVERD_X86_SYSTEM_STATE(X86DirectStore64B, "movdir64b", DirectStore64B, 0)
 NEVERD_X86_SYSTEM_STATE(X86WriteMsrNonSerializing, "wrmsrns", WriteMsr, -1)
 NEVERD_X86_SYSTEM_STATE(X86ReadMsrList, "rdmsrlist", MsrList, 0)
 NEVERD_X86_SYSTEM_STATE(X86WriteMsrList, "wrmsrlist", MsrList, 0)
+NEVERD_X86_SYSTEM_STATE(X86ClearUserInterrupt, "clui", Void64, -1)
+NEVERD_X86_SYSTEM_STATE(X86SetUserInterrupt, "stui", Void64, -1)
+NEVERD_X86_SYSTEM_STATE(X86TestUserInterrupt, "testui", TestUserInterrupt, -1)
+NEVERD_X86_SYSTEM_STATE(X86SendUserInterrupt, "senduipi", SendUserInterrupt, -1)
+NEVERD_X86_SYSTEM_STATE(X86LoadKernelGs, "lkgs", LoadKernelGs, -1)
+NEVERD_X86_SYSTEM_STATE(X86LoadKernelGsMemory, "lkgs", LoadKernelGs, 0)
+NEVERD_X86_SYSTEM_STATE(X86HistoryReset, "hreset", HistoryReset, -1)
+NEVERD_X86_SYSTEM_STATE(X86InvalidateBroadcast, "invlpgb", InvalidateBroadcast, -1)
+NEVERD_X86_SYSTEM_STATE(X86TlbSync, "tlbsync", Void, -1)
 
 // These IDs predate this inventory. Consumers opt in without allocating or
 // renumbering their serialized IDs or duplicating the older name tables.

@@ -40,6 +40,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <algorithm>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -1882,4 +1883,274 @@ int main(void) {
                          << Source;
     EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}), 0) << Source;
   }
+}
+
+namespace {
+std::vector<uint8_t> systemExtensionFunction(const SystemEncoding &E, bool Dead,
+                                             size_t &Offset) {
+  std::vector<uint8_t> Bytes;
+  auto Move = [&](uint8_t Opcode, uint64_t Value) {
+    Bytes.insert(Bytes.end(), {0x48, Opcode});
+    for (unsigned I = 0; I < 8; ++I)
+      Bytes.push_back(Value >> (8 * I));
+  };
+  Move(0xb8, UINT64_C(0x1122334455667788));
+  Move(0xb9, UINT64_C(0x88776655ffffffff));
+  Move(0xba, UINT64_C(0xfedcba98cafebabe));
+  Move(0xbe, UINT64_C(0x1122334455667788));
+  Offset = Bytes.size();
+  Bytes.insert(Bytes.end(), E.Bytes.begin(), E.Bytes.end());
+  if (Dead)
+    Bytes.insert(Bytes.end(), {0x48, 0x31, 0xc0});
+  else if (E.Id == Intrinsic::X86TestUserInterrupt)
+    // Read all six arithmetic flags, not just the reported CF output.
+    Bytes.insert(Bytes.end(), {0x9c, 0x58, 0x48, 0x25, 0xd5, 0x08, 0x00, 0x00});
+  else
+    Bytes.insert(Bytes.end(), {0x48, 0x31, 0xd0, 0x48, 0x31, 0xc8});
+  Bytes.push_back(0xc3);
+  return Bytes;
+}
+
+std::string systemExtensionDriver(const BinaryImage &Image,
+                                  const SystemEncoding &E, bool Dead) {
+  std::string Driver = faultDriver(Image);
+  for (const auto Name : {"virtualization_test", "neverd_original"}) {
+    const auto Declaration = "extern void " + std::string(Name);
+    Driver.replace(Driver.find(Declaration), Declaration.size(),
+                   "extern unsigned long long " + std::string(Name));
+  }
+  const std::string FunctionPointer = "void (*fn)(void)";
+  Driver.replace(Driver.find(FunctionPointer), FunctionPointer.size(),
+                 "unsigned long long (*fn)(void)");
+  const std::string Main = "int main(void)";
+  Driver.replace(Driver.find(Main), Main.size(),
+                 "static int compare_faults(void)");
+  Driver = "#define _GNU_SOURCE\n#include <stdint.h>\n#include <ucontext.h>\n" +
+           Driver;
+  const Intrinsic Kinds[] = {Intrinsic::X86ClearUserInterrupt,
+                             Intrinsic::X86SetUserInterrupt,
+                             Intrinsic::X86TestUserInterrupt,
+                             Intrinsic::X86SendUserInterrupt,
+                             Intrinsic::X86LoadKernelGs,
+                             Intrinsic::X86LoadKernelGsMemory,
+                             Intrinsic::X86HistoryReset,
+                             Intrinsic::X86InvalidateBroadcast,
+                             Intrinsic::X86TlbSync};
+  const auto Kind =
+      std::find(std::begin(Kinds), std::end(Kinds), E.Id) - std::begin(Kinds);
+  const bool Address32 =
+      std::find(E.Bytes.begin(), E.Bytes.end(), 0x67) != E.Bytes.end();
+  const unsigned Segment =
+      E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65 ? E.Bytes.front() : 0;
+  llvm::raw_string_ostream OS(Driver);
+  OS << "\nstatic const int kind = " << Kind << ", dead = " << Dead
+     << ", address32 = " << Address32 << ", segment = " << Segment << ";\n";
+  // Real faults are compared first. This second oracle validates transport
+  // and result use through sigreturn, without claiming successful privileged
+  // execution, UITT updates, descriptor loads or remote TLB invalidation.
+  OS << R"C(
+static volatile sig_atomic_t events, carry;
+static uint64_t reg_value(greg_t *g, unsigned r) {
+  static const unsigned registers[] = { REG_RAX, REG_RCX, REG_RDX, REG_RBX,
+    REG_RSP, REG_RBP, REG_RSI, REG_RDI, REG_R8, REG_R9, REG_R10, REG_R11,
+    REG_R12, REG_R13, REG_R14, REG_R15 };
+  return (uint64_t)g[registers[r]];
+}
+static void complete_system(int signal, siginfo_t *info, void *context) {
+  (void)signal; (void)info;
+  greg_t *g = ((ucontext_t *)context)->uc_mcontext.gregs;
+  const unsigned char *ip = (const unsigned char *)(uintptr_t)g[REG_RIP];
+  unsigned n = 0, rex = 0, seg = 0, a32 = 0, mandatory = 0;
+  while (n < 12 && ip[n] != 0x0f) {
+    unsigned b = ip[n++];
+    if (b >= 0x40 && b <= 0x4f) { rex = b; continue; }
+    rex = 0;
+    if (b == 0xf2 || b == 0xf3) mandatory = b;
+    else if (b == 0x64 || b == 0x65) seg = b;
+    else if (b == 0x67) a32 = 1;
+    else if (b != 0x66) _exit(21);
+  }
+  if (n == 12 || ip[n++] != 0x0f) _exit(22);
+  unsigned map = ip[n++], modrm = ip[n++];
+  if (kind <= 2) {
+    unsigned expected = kind == 0 ? 0xee : kind == 1 ? 0xef : 0xed;
+    if (mandatory != 0xf3 || map != 1 || modrm != expected) _exit(23);
+    if (kind == 2) g[REG_EFL] = (g[REG_EFL] & ~(greg_t)0x8d5) | carry;
+  } else if (kind <= 5) {
+    if (mandatory != (kind == 3 ? 0xf3 : 0xf2) ||
+        map != (kind == 3 ? 0xc7 : 0) || (modrm & 0x38) != 0x30) _exit(24);
+    unsigned rm = (modrm & 7) | ((rex & 1) ? 8 : 0);
+    uint64_t value;
+    if (kind == 5) {
+      if ((modrm & 0xc0) == 0xc0 || seg != segment) _exit(25);
+      if ((modrm & 7) == 4) {
+        unsigned sib = ip[n++];
+        if ((sib & 0x38) != 0x20 || (rex & 2)) _exit(26);
+        rm = (sib & 7) | ((rex & 1) ? 8 : 0);
+      }
+      value = reg_value(g, rm);
+      if ((modrm & 0xc0) == 0x40) value += (int8_t)ip[n++];
+      else if ((modrm & 0xc0) == 0x80) {
+        uint32_t disp = ip[n] | ((uint32_t)ip[n+1] << 8) |
+          ((uint32_t)ip[n+2] << 16) | ((uint32_t)ip[n+3] << 24);
+        value += (int32_t)disp; n += 4;
+      }
+      if (a32) value = (uint32_t)value;
+      if (value != (address32 ? UINT64_C(0x55667788) : UINT64_C(0x1122334455667788))) _exit(27);
+    } else {
+      if ((modrm & 0xc0) != 0xc0) _exit(28);
+      value = reg_value(g, rm);
+      if (kind == 4) value = (uint16_t)value;
+      if (value != (kind == 4 ? UINT64_C(0x7788) : UINT64_C(0x1122334455667788))) _exit(29);
+    }
+  } else if (kind == 6) {
+    if (mandatory != 0xf3 || map != 0x3a || modrm != 0xf0 || ip[n++] != 0xc0 ||
+        (uint32_t)g[REG_RAX] != UINT32_C(0x55667788)) _exit(30);
+    ++n; // imm8 is architecturally ignored, including the original 0xab.
+  } else {
+    if (mandatory || map != 1 || modrm != (kind == 7 ? 0xfe : 0xff)) _exit(31);
+    if (kind == 7) {
+      uint64_t value = a32 ? (uint32_t)g[REG_RAX] : (uint64_t)g[REG_RAX];
+      if (a32 != address32 ||
+          value != (address32 ? UINT64_C(0x55667788) : UINT64_C(0x1122334455667788)) ||
+          (uint32_t)g[REG_RDX] != UINT32_C(0xcafebabe) ||
+          (uint32_t)g[REG_RCX] != UINT32_MAX) _exit(32);
+    }
+  }
+  g[REG_RIP] += n;
+  ++events;
+}
+int main(void) {
+  if (compare_faults()) return 10;
+  struct sigaction action = {0};
+  action.sa_sigaction = complete_system;
+  action.sa_flags = SA_SIGINFO;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGILL, &action, 0) || sigaction(SIGSEGV, &action, 0)) return 11;
+  for (carry = 0; carry <= (kind == 2); ++carry) {
+    uint64_t expected = dead ? 0 : kind == 2 ? (uint64_t)carry :
+      UINT64_C(0x1122334455667788) ^ UINT64_C(0x88776655ffffffff) ^ UINT64_C(0xfedcba98cafebabe);
+    events = 0;
+    uint64_t original = neverd_original();
+    unsigned count = events;
+    // OS-enabled UINTR may execute without a fault. Compare its real result;
+    // controlled CF injection is qualified only on the faulting path.
+    if (count == 0 && kind <= 2) expected = original;
+    else if (count != 1) return 12;
+    if (original != expected) return 13;
+    events = 0;
+    if (virtualization_test() != expected || events != count) return 14;
+  }
+  return 0;
+}
+)C";
+  return Driver;
+}
+} // namespace
+
+TEST(X86SystemExtensionsSource, FaultsInputsAndFlagResultsMatchEveryRoute) {
+  for (const auto &E : systemExtensionEncodings(Arch::X64))
+    for (bool NoOpt : {false, true})
+      for (bool Dead : {false, true}) {
+        if (Dead && E.Id != Intrinsic::X86TestUserInterrupt)
+          continue;
+        SCOPED_TRACE(E.Mnemonic);
+        SCOPED_TRACE(NoOpt);
+        SCOPED_TRACE(Dead);
+        size_t Offset;
+        auto Image = image(Arch::X64, BinaryFormat::ELF,
+                           systemExtensionFunction(E, Dead, Offset));
+        compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                      false, false, systemExtensionDriver(Image, E, Dead), {},
+                      8);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+TEST(X86SystemExtensionsSource, RealCarrySurvivesEveryNativeObjectFormat) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool NoOpt : {false, true}) {
+      const SystemEncoding E{
+          {0xf3, 0x0f, 0x01, 0xed}, Intrinsic::X86TestUserInterrupt, "testui"};
+      size_t Offset;
+      auto Image =
+          image(Arch::X64, Format, systemExtensionFunction(E, false, Offset));
+      std::vector<uint8_t> Object;
+      sourceRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, nullptr, nullptr,
+                   {}, {}, nullptr, &Object, 8);
+      EXPECT_NE(std::search(Object.begin(), Object.end(), E.Bytes.begin(),
+                            E.Bytes.end()),
+                Object.end());
+    }
+}
+
+TEST(X86SystemExtensionsSource, MalformedOwnedAssemblyCannotLoseItsEffects) {
+  const Intrinsic Ids[] = {Intrinsic::X86ClearUserInterrupt,
+                           Intrinsic::X86SetUserInterrupt,
+                           Intrinsic::X86TestUserInterrupt,
+                           Intrinsic::X86SendUserInterrupt,
+                           Intrinsic::X86LoadKernelGs,
+                           Intrinsic::X86LoadKernelGsMemory,
+                           Intrinsic::X86HistoryReset,
+                           Intrinsic::X86InvalidateBroadcast,
+                           Intrinsic::X86TlbSync};
+  for (auto Id : Ids)
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Id));
+      SCOPED_TRACE(Mutation);
+      const auto P =
+          x86SystemStateAsm(Id, Arch::X64, 4, NdMemoryAddressSpace::Default);
+      ASSERT_TRUE(P);
+      llvm::LLVMContext Context;
+      llvm::Module Module("bounded-system-contract", Context);
+      Module.setDataLayout("e-p:64:64");
+      llvm::IRBuilder<> B(Context);
+      std::vector<llvm::Type *> Types;
+      for (unsigned I = 0; I < P->InputBytes.size(); ++I)
+        Types.push_back(isX86SystemStateAddressArgument(Id, I)
+                            ? static_cast<llvm::Type *>(B.getPtrTy())
+                            : B.getIntNTy(8 * P->InputBytes[I]));
+      llvm::Type *Return =
+          P->OutputBytes.empty() ? B.getVoidTy() : B.getInt8Ty();
+      if (Mutation == 4)
+        Return = B.getInt16Ty();
+      auto *Signature = llvm::FunctionType::get(Return, Types, false);
+      auto *Function = llvm::Function::Create(
+          Signature, llvm::GlobalValue::ExternalLinkage, "effect", Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+      std::vector<llvm::Value *> Values;
+      for (auto &Arg : Function->args())
+        Values.push_back(&Arg);
+      auto Constraints = P->Constraints;
+      if (Mutation == 1) {
+        auto Pos = Constraints.find("~{memory}");
+        if (Pos)
+          --Pos;
+        Constraints.erase(Pos);
+      }
+      auto *Asm = llvm::InlineAsm::get(
+          Signature, P->Text + (Mutation == 6 ? "\n\tnop" : ""), Constraints,
+          Mutation != 2);
+      auto *Call = B.CreateCall(Asm, Values);
+      if (Mutation == 3)
+        Call->setDoesNotReturn();
+      if (Mutation == 5)
+        Call->setOnlyReadsMemory();
+      if (Return->isVoidTy())
+        B.CreateRetVoid();
+      else
+        B.CreateRet(Call);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      Options.EmitIncludes = false;
+      std::string Text;
+      llvm::raw_string_ostream OS(Text);
+      if (Mutation == 0)
+        EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options)) << Text;
+      else
+        EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                     std::invalid_argument);
+    }
 }

@@ -5190,6 +5190,16 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
+INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
+returns CF and the lifter clears its other arithmetic flags. LKGS selector and
+descriptor reads remain inside the native instruction; active GS base is not
+changed. SENDUIPI's full-width index is scalar, as is INVLPGB's address/control
+descriptor. INVLPGB's input width selects native address size. HRESET's ignored
+imm8 is canonicalized to zero, while EAX remains an explicit input.
+Far/interrupt returns do not use the bounded system contract or ordinary ABI
+RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
+and its nonlocal continuation are represented.
 The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
 Their historical intrinsic IDs remain stable. Both enqueue operands are
 addresses; only the command-source address inherits FS/GS, while the portal

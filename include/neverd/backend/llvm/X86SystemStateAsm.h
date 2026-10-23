@@ -75,6 +75,28 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
     P.Text += " " + Input(0);
     break;
   case K::Void:
+  case K::Void64:
+    break;
+  case K::TestUserInterrupt:
+    P.Text += "\n\tsetc $0";
+    break;
+  case K::SendUserInterrupt:
+    P.Text += " " + Input(0);
+    break;
+  case K::LoadKernelGs:
+    P.Text += " " + (C.MemoryArgument == 0 ? Memory(0) : Input(0));
+    break;
+  case K::HistoryReset:
+    // The encoded imm8 is ignored, including nonzero values. Keep EAX live.
+    P.Text += " $$0";
+    P.InputConstraints = {"{ax}"};
+    break;
+  case K::InvalidateBroadcast:
+    P.InputConstraints = {"{ax}", "{dx}", "{cx}"};
+    // LLVM's mnemonic chooses the default address size. Preserve addr32
+    // explicitly even if the value could fit in a 64-bit operand.
+    if (TargetArch == Arch::X64 && Width == 4)
+      P.Text = "addr32 " + P.Text;
     break;
   case K::Monitor:
     if (!Segment.empty())

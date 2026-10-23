@@ -47,6 +47,11 @@ std::string gnuConstraint(const std::string &Text) {
 std::string gnuText(const std::string &Text) {
   std::string Result;
   for (size_t I = 0; I < Text.size(); ++I) {
+    if (Text.compare(I, 2, "$$") == 0) {
+      Result += '$';
+      ++I;
+      continue;
+    }
     if (Text.compare(I, 6, "${0:c}") == 0 ||
         Text.compare(I, 6, "${1:c}") == 0) {
       Result += "%c";
@@ -294,6 +299,8 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
   auto Mnemonic = llvm::StringRef(Asm->getAsmString()).split('\n').first;
   if (Mnemonic.starts_with("fs ") || Mnemonic.starts_with("gs "))
     Mnemonic = Mnemonic.drop_front(3);
+  if (Mnemonic.starts_with("addr32 "))
+    Mnemonic = Mnemonic.drop_front(7);
   Mnemonic = Mnemonic.split(' ').first;
   for (const auto Id : Inventory) {
     const auto C = x86SystemStateContract(Id);

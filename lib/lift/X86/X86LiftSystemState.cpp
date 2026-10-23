@@ -14,6 +14,8 @@
 #include "neverd/lift/X86Lifter.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include <array>
+
 namespace neverd {
 namespace {
 
@@ -77,6 +79,129 @@ bool generalRegister(const cs_x86_op &Operand, uint16_t Width) {
   return R.Size == Width && x86reg::isGeneralRegOffset(R.Offset);
 }
 
+bool systemExtensionEncoding(const cs_insn *Insn, const cs_x86 &X,
+                             bool Mode64) {
+  if (!Insn->detail || Insn->size < 3 || Insn->size > x86::kMaxInstructionLen)
+    return false;
+  uint8_t Prefix[4]{}, Rex = 0;
+  unsigned Offset = 0;
+  for (; Offset < Insn->size && Insn->bytes[Offset] != 0x0f; ++Offset) {
+    const auto B = Insn->bytes[Offset];
+    if (Mode64 && B >= 0x40 && B <= 0x4f) {
+      Rex = B;
+      continue;
+    }
+    Rex = 0;
+    if (B == 0xf2 || B == 0xf3)
+      Prefix[0] = B;
+    else if (B == 0x66)
+      Prefix[2] = B;
+    else if (B == 0x67)
+      Prefix[3] = B;
+    else if (B == 0x26 || B == 0x2e || B == 0x36 || B == 0x3e || B == 0x64 ||
+             B == 0x65)
+      Prefix[1] = B;
+    else
+      return false;
+  }
+  for (unsigned I = 0; I < 4; ++I)
+    if (Prefix[I] != X.prefix[I])
+      return false;
+  if (Offset + 3 > Insn->size || X.rex != Rex || X.opcode[0] != 0x0f ||
+      X.opcode[3] ||
+      X.addr_size != (Mode64 ? (Prefix[3] ? 4 : 8) : (Prefix[3] ? 2 : 4)))
+    return false;
+  uint8_t Map = 0x01, ModRM = 0, Mask = 0xff, Mandatory = 0xf3;
+  bool Privileged = false, Memory = false, Immediate = false;
+  uint64_t Flags = 0;
+  std::array<uint16_t, 3> Reads{}, Writes{};
+  uint8_t ReadCount = 0, WriteCount = 0;
+  switch (Insn->id) {
+  case X86_INS_CLUI:
+    ModRM = 0xee;
+    break;
+  case X86_INS_STUI:
+    ModRM = 0xef;
+    break;
+  case X86_INS_TESTUI:
+    ModRM = 0xed;
+    Flags = X86_EFLAGS_MODIFY_CF | X86_EFLAGS_RESET_ZF | X86_EFLAGS_RESET_AF |
+            X86_EFLAGS_RESET_OF | X86_EFLAGS_RESET_PF | X86_EFLAGS_RESET_SF;
+    Writes[WriteCount++] = X86_REG_EFLAGS;
+    break;
+  case X86_INS_SENDUIPI:
+    Map = 0xc7;
+    ModRM = 0xf0;
+    Mask = 0xf8;
+    break;
+  case X86_INS_LKGS:
+    Map = 0x00;
+    ModRM = 0x30;
+    Mask = 0x38;
+    Mandatory = 0xf2;
+    Memory = (X.modrm & 0xc0) != 0xc0;
+    Privileged = true;
+    Writes[WriteCount++] = X86_REG_GS;
+    break;
+  case X86_INS_HRESET:
+    Map = 0x3a;
+    ModRM = 0xc0;
+    Immediate = Privileged = true;
+    Reads[ReadCount++] = X86_REG_EAX;
+    break;
+  case X86_INS_INVLPGB:
+    if (X.addr_size != 4 && X.addr_size != 8)
+      return false;
+    Reads[ReadCount++] = X.addr_size == 8 ? X86_REG_RAX : X86_REG_EAX;
+    Reads[ReadCount++] = X86_REG_EDX;
+    Reads[ReadCount++] = X86_REG_ECX;
+    [[fallthrough]];
+  case X86_INS_TLBSYNC:
+    ModRM = Insn->id == X86_INS_INVLPGB ? 0xfe : 0xff;
+    Mandatory = 0;
+    Privileged = true;
+    if (Prefix[2])
+      return false;
+    break;
+  default:
+    return false;
+  }
+  if (!Mode64 && Insn->id != X86_INS_HRESET && Insn->id != X86_INS_INVLPGB &&
+      Insn->id != X86_INS_TLBSYNC)
+    return false;
+  const unsigned ModRMOffset = Offset + (Immediate ? 3 : 2);
+  if (ModRMOffset >= Insn->size || Prefix[0] != Mandatory ||
+      X.opcode[1] != Map || Insn->bytes[Offset + 1] != Map ||
+      X.opcode[2] != (Immediate ? 0xf0 : 0) ||
+      (Immediate && Insn->bytes[Offset + 2] != 0xf0) ||
+      X.encoding.modrm_offset != ModRMOffset ||
+      Insn->bytes[ModRMOffset] != X.modrm || (X.modrm & Mask) != ModRM ||
+      X.encoding.imm_size != (Immediate ? 1 : 0) ||
+      X.encoding.imm_offset != (Immediate ? ModRMOffset + 1 : 0) ||
+      (!Memory && (X.encoding.disp_size || X.encoding.disp_offset ||
+                   Insn->size != ModRMOffset + (Immediate ? 2 : 1))) ||
+      X.eflags != Flags)
+    return false;
+  const auto &D = *Insn->detail;
+  if (D.groups_count != unsigned(Privileged) ||
+      (Privileged && D.groups[0] != X86_GRP_PRIVILEGE) ||
+      D.regs_read_count != ReadCount || D.regs_write_count != WriteCount)
+    return false;
+  for (unsigned I = 0; I < ReadCount; ++I)
+    if (D.regs_read[I] != Reads[I])
+      return false;
+  for (unsigned I = 0; I < WriteCount; ++I)
+    if (D.regs_write[I] != Writes[I])
+      return false;
+  if (Insn->id == X86_INS_SENDUIPI || (Insn->id == X86_INS_LKGS && !Memory)) {
+    if (X.op_count != 1 || X.operands[0].type != X86_OP_REG ||
+        mapCapstoneReg(static_cast<x86_reg>(X.operands[0].reg)).Offset !=
+            x86reg::generalReg((X.modrm & 7) | ((Rex & 1) ? 8 : 0)))
+      return false;
+  }
+  return true;
+}
+
 void copyFlag(X86Lifter::LiftState &S, NdVar Result, uint16_t Offset) {
   S.emit(NdOp::SUBBYTES, NdVar::reg(x86reg::ZF, 1),
          {Result, NdVar::scalar(Offset, 4)});
@@ -89,6 +214,67 @@ bool liftSystemState(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   const bool Mode64 = L.targetArch() == Arch::X64;
   const uint16_t Word = Mode64 ? 8 : 4;
   switch (Insn->id) {
+  case X86_INS_CLUI:
+  case X86_INS_STUI:
+  case X86_INS_TESTUI:
+  case X86_INS_TLBSYNC:
+    if (!systemExtensionEncoding(Insn, X86, Mode64) || X86.op_count)
+      return false;
+    if (Insn->id == X86_INS_TESTUI) {
+      S.emitIntrinsic(Intrinsic::X86TestUserInterrupt,
+                      NdVar::reg(x86reg::CF, 1));
+      for (const auto Flag :
+           {x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF, x86reg::OF})
+        S.emit(NdOp::COPY, NdVar::reg(Flag, 1), {NdVar::scalar(0, 1)});
+    } else {
+      S.emitIntrinsic(
+          Insn->id == X86_INS_CLUI   ? Intrinsic::X86ClearUserInterrupt
+          : Insn->id == X86_INS_STUI ? Intrinsic::X86SetUserInterrupt
+                                     : Intrinsic::X86TlbSync,
+          {});
+    }
+    return true;
+  case X86_INS_SENDUIPI:
+    if (!systemExtensionEncoding(Insn, X86, Mode64) || X86.op_count != 1 ||
+        !generalRegister(X86.operands[0], 8) ||
+        X86.operands[0].access != CS_AC_READ)
+      return false;
+    S.emitIntrinsic(Intrinsic::X86SendUserInterrupt, {},
+                    {L.operandRead(S, X86.operands[0])});
+    return true;
+  case X86_INS_LKGS: {
+    if (!systemExtensionEncoding(Insn, X86, Mode64) || X86.op_count != 1)
+      return false;
+    const auto &Op = X86.operands[0];
+    const bool Memory = Op.type == X86_OP_MEM;
+    if (Op.size != 2 || Op.access != CS_AC_READ ||
+        Memory != ((X86.modrm & 0xc0) != 0xc0) ||
+        (!Memory && !generalRegister(Op, 2)))
+      return false;
+    // The native instruction owns selector and descriptor reads, GS selector
+    // updates and IA32_KERNEL_GS_BASE. The active GS base is unchanged.
+    S.emitIntrinsic(
+        Memory ? Intrinsic::X86LoadKernelGsMemory : Intrinsic::X86LoadKernelGs,
+        {}, {Memory ? S.computeEA(Op) : L.operandRead(S, Op)},
+        NdMemoryOrdering::None,
+        Memory ? S.memoryAddressSpace(Op) : NdMemoryAddressSpace::Default);
+    return true;
+  }
+  case X86_INS_HRESET:
+    if (!systemExtensionEncoding(Insn, X86, Mode64) || X86.op_count != 1 ||
+        X86.operands[0].type != X86_OP_IMM || X86.operands[0].size != 1 ||
+        X86.operands[0].imm != Insn->bytes[Insn->size - 1])
+      return false;
+    S.emitIntrinsic(Intrinsic::X86HistoryReset, {},
+                    {NdVar::reg(x86reg::RAX, 4)});
+    return true;
+  case X86_INS_INVLPGB:
+    if (!systemExtensionEncoding(Insn, X86, Mode64) || X86.op_count)
+      return false;
+    S.emitIntrinsic(Intrinsic::X86InvalidateBroadcast, {},
+                    {NdVar::reg(x86reg::RAX, X86.addr_size),
+                     NdVar::reg(x86reg::RDX, 4), NdVar::reg(x86reg::RCX, 4)});
+    return true;
   case X86_INS_WRMSRNS:
     if (!implicitMsrEncoding(Insn, X86, Mode64))
       return false;

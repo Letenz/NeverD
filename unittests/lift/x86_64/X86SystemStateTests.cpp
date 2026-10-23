@@ -244,7 +244,156 @@ TEST(X86SystemState, UnmodeledRefiningPrefixesCannotBecomeLegacyInstructions) {
     ASSERT_TRUE(D.init(A));
     for (const auto &Bytes : Encodings) {
       DecodedInsn I{};
-      EXPECT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I), 0);
+      const auto Size =
+          D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I);
+      if (A == Arch::X64 && Bytes.back() >= 0xee) {
+        ASSERT_EQ(Size, Bytes.size());
+        EXPECT_EQ(lift(A, Bytes).front().Inputs[0].Offset,
+                  static_cast<uint64_t>(Bytes.back() == 0xee
+                                            ? Intrinsic::X86ClearUserInterrupt
+                                            : Intrinsic::X86SetUserInterrupt));
+      } else
+        EXPECT_EQ(Size, 0);
+    }
+  }
+}
+
+TEST(X86SystemExtensions,
+     UserInterruptTestReturnsCarryAndClearsArithmeticFlags) {
+  const auto Ops = lift(Arch::X64, {0xf3, 0x0f, 0x01, 0xed});
+  ASSERT_EQ(Ops.size(), 6u);
+  ASSERT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
+  EXPECT_EQ(Ops.front().Output, NdVar::reg(x86reg::CF, 1));
+  for (uint64_t Carry : {0, 1}) {
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    NdOpEmulator Emu(Image);
+    for (auto F : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF,
+                   x86reg::OF, x86reg::DF})
+      Emu.setRegister(F, 1);
+    Emu.setRegister(x86reg::CF, Carry);
+    for (size_t I = 1; I < Ops.size(); ++I)
+      ASSERT_TRUE(Emu.step(Ops[I]));
+    EXPECT_EQ(Emu.getRegister(x86reg::CF), Carry);
+    EXPECT_EQ(Emu.getRegister(x86reg::DF), 1u);
+    for (auto F : {x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF, x86reg::OF})
+      EXPECT_EQ(Emu.getRegister(F), 0u);
+  }
+}
+
+TEST(X86SystemState, FarAndInterruptReturnsCannotBecomeAbiReturns) {
+  for (auto A : {Arch::X86, Arch::X64}) {
+    Decoder D;
+    ASSERT_TRUE(D.init(A));
+    std::vector<std::vector<uint8_t>> Encodings = {
+        {0xcb}, {0xca, 0x08, 0x00}, {0x66, 0xcb}, {0xcf}, {0x66, 0xcf}};
+    if (A == Arch::X64) {
+      Encodings.push_back({0x48, 0xcf});
+      Encodings.push_back({0x48, 0xcb});
+    }
+    for (const auto &Bytes : Encodings) {
+      DecodedInsn I{};
+      ASSERT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I),
+                Bytes.size());
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+    }
+  }
+}
+
+TEST(X86SystemExtensions, InputWidthsAndMalformedShapes) {
+  for (auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : test::systemExtensionEncodings(A)) {
+      SCOPED_TRACE(E.Mnemonic);
+      const auto Ops = lift(A, E.Bytes);
+      const auto It = std::find_if(Ops.begin(), Ops.end(), [](const auto &Op) {
+        return Op.Opcode == NdOp::INTRINSIC;
+      });
+      ASSERT_NE(It, Ops.end());
+      const auto Shape = x86SystemStateLowShape(*It, A);
+      ASSERT_TRUE(x86SystemStateShapeIsValid(E.Id, Shape));
+      if (E.Id == Intrinsic::X86InvalidateBroadcast) {
+        EXPECT_EQ(It->Inputs[1],
+                  NdVar::reg(x86reg::RAX,
+                             A == Arch::X64 && E.Bytes[0] != 0x67 ? 8 : 4));
+        EXPECT_EQ(It->Inputs[2], NdVar::reg(x86reg::RDX, 4));
+        EXPECT_EQ(It->Inputs[3], NdVar::reg(x86reg::RCX, 4));
+      } else if (E.Id == Intrinsic::X86HistoryReset)
+        EXPECT_EQ(It->Inputs[1], NdVar::reg(x86reg::RAX, 4));
+      else if (E.Id == Intrinsic::X86LoadKernelGs)
+        EXPECT_EQ(It->Inputs[1], NdVar::reg(x86reg::RSI, 2));
+      else if (E.Id == Intrinsic::X86SendUserInterrupt)
+        EXPECT_EQ(It->Inputs[1], NdVar::reg(x86reg::RSI, 8));
+      for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+        auto Bad = Shape;
+        switch (Mutation) {
+        case 0:
+          Bad.TargetArch = Arch::AArch64;
+          break;
+        case 1:
+          ++Bad.Arguments;
+          break;
+        case 2:
+          Bad.OutputSize = 4;
+          break;
+        case 3:
+          Bad.MemoryOrdering = NdMemoryOrdering::Acquire;
+          break;
+        case 4:
+          Bad.MemoryAddressSpace = static_cast<NdMemoryAddressSpace>(255);
+          break;
+        case 5:
+          if (Bad.Arguments)
+            Bad.InputSizes[0] = 1;
+          else
+            Bad.WritableOutput = false, Bad.OutputSize = 1;
+          break;
+        }
+        EXPECT_FALSE(x86SystemStateShapeIsValid(E.Id, Bad));
+      }
+    }
+}
+
+TEST(X86SystemExtensions, ForgedDecodingRefusesBeforeEmission) {
+  Decoder D;
+  ASSERT_TRUE(D.init(Arch::X64));
+  for (const auto &E : test::systemExtensionEncodings(Arch::X64)) {
+    DecodedInsn I{};
+    ASSERT_EQ(D.decodeOneForLift(E.Bytes.data(), E.Bytes.size(), 0x1000, I),
+              E.Bytes.size());
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      auto Raw = *I.Raw;
+      auto Detail = *Raw.detail;
+      Raw.detail = &Detail;
+      switch (Mutation) {
+      case 0:
+        Raw.bytes[Detail.x86.encoding.modrm_offset] ^= 8;
+        break;
+      case 1:
+        ++Detail.x86.op_count;
+        break;
+      case 2:
+        Detail.x86.eflags ^= X86_EFLAGS_MODIFY_CF;
+        break;
+      case 3:
+        Detail.regs_read_count = 10;
+        break;
+      case 4:
+        Detail.regs_write_count = 10;
+        break;
+      case 5:
+        Detail.x86.prefix[0] ^= 1;
+        break;
+      case 6:
+        Detail.x86.addr_size = 2;
+        break;
+      }
+      X86Lifter L(Arch::X64);
+      L.setStrict(true);
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(L.lift(&Raw, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
     }
   }
 }

@@ -751,6 +751,19 @@ reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
 with ordinary, packed and RELR relocations on available CPU backends. Custom
 state generators retain an explicit unsupported test.
 
+`X86SystemExtensions.*` checks bounded UINTR, LKGS, HRESET and AMD broadcast TLB
+control operands, TESTUI's six arithmetic flags, decoder-detail refusal and
+shared shapes. `X86SystemExtensionsSource.*` covers source/native return use,
+owned-assembly refusal and Linux x64 signal/code comparisons against original
+bytes. A separate signal completion oracle inspects actual instruction inputs
+and supplies both CF values through sigreturn; it does not qualify successful
+privileged execution, UITT/UPID writes or remote TLB completion. If UINTR is
+already enabled, its real result is compared instead of claiming controlled
+completion. The common system-source matrix also compiles i386 HRESET and
+INVLPGB/TLBSYNC and covers ELF/COFF/Mach-O, both optimization settings and
+FS/GS/address-size LKGS forms. The pinned MC corpus reports unsupported far
+returns separately; RETF/IRET must not lower to ordinary ABI returns.
+
 ## Allocator validation
 
 Use `python scripts/build.py BUILD_DIR` after CMake configuration to refresh

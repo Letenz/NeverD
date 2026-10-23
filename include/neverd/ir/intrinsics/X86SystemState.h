@@ -36,7 +36,8 @@ struct X86SystemStateLayout {
   uint16_t OutputSize = 0;
   uint8_t Arguments = 0;
   std::array<uint16_t, 3> InputSizes{};
-  // Two-output forms pack the value below a byte containing ZF.
+  // Two-output forms pack the value below a byte containing ZF. Flag-only
+  // forms return a byte containing their documented completion flag.
   uint16_t ValueSize = 0;
   bool HasFlag = false;
 };
@@ -65,6 +66,28 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width) {
     return X86SystemStateLayout{0, 1, {Width}};
   case K::Void:
     return X86SystemStateLayout{};
+  case K::Void64:
+  case K::TestUserInterrupt:
+  case K::SendUserInterrupt:
+  case K::LoadKernelGs:
+    if (TargetArch == Arch::X86)
+      return std::nullopt;
+    if (C.Kind == K::Void64)
+      return X86SystemStateLayout{};
+    if (C.Kind == K::TestUserInterrupt)
+      return X86SystemStateLayout{1, 0, {}, 0, true};
+    if (C.Kind == K::SendUserInterrupt)
+      return X86SystemStateLayout{0, 1, {8}};
+    return X86SystemStateLayout{
+        0, 1, {C.MemoryArgument == 0 ? uint16_t{8} : uint16_t{2}}};
+  case K::HistoryReset:
+    // Intel specifies that imm8 is ignored. Only EAX controls the reset.
+    return X86SystemStateLayout{0, 1, {4}};
+  case K::InvalidateBroadcast:
+    if ((Width != 4 && Width != 8) || (TargetArch == Arch::X86 && Width != 4))
+      return std::nullopt;
+    // rAX contains the address AND control bits; it is not a memory operand.
+    return X86SystemStateLayout{0, 3, {Width, 4, 4}};
   case K::Monitor:
     // Addresses use LowIR's canonical 64-bit carrier on both architectures.
     return X86SystemStateLayout{0, 1, {8}};
@@ -120,6 +143,7 @@ inline uint16_t x86SystemStateWidth(Intrinsic Id,
   case X86SystemStateKind::DirectStore:
     return Shape.InputSizes[1];
   case X86SystemStateKind::WriteBase:
+  case X86SystemStateKind::InvalidateBroadcast:
     return Shape.InputSizes[0];
   case X86SystemStateKind::AccessRights:
     return Shape.OutputSize / 2;
