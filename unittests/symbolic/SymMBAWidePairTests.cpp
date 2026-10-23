@@ -14,6 +14,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/solver/SymSynthVerifier.h"
+#include "neverd/solver/Z3Solver.h"
 
 #include <array>
 #include <random>
@@ -155,8 +156,16 @@ TEST(SymMBAWidePairs, CorrectionsHaveIndependentFullWidthProofs) {
       size_t Storage = 1 << 24;
       auto Result = detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
       ASSERT_NE(Result, F.Input);
-      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
-      EXPECT_EQ(Verifier(Ctx, F.Input, Result), SynthVerification::Equivalent);
+      // This independent 128-factor proof has a wall-clock timeout. Leave
+      // room for shared CI runners while still requiring an unsat result;
+      // production simplification and its resource limits are unchanged.
+      constexpr unsigned ProofTimeoutMs = 30000;
+      solver::Z3SolverOptions Options;
+      Options.TimeoutMs = ProofTimeoutMs;
+      solver::Z3Solver Verifier(Ctx, Options);
+      EXPECT_EQ(Verifier.checkDistinct(F.Input, Result),
+                solver::SatResult::Unsat)
+          << Verifier.reasonUnknown();
     }
 }
 

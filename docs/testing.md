@@ -765,6 +765,10 @@ work, storage and refusal checks remain shared with the full residue suite.
 Run `SymParse.*` and `SymParseLexer.*` when changing text operator dispatch:
 precedence, associativity, diagnostics and printed-expression round trips
 must stay identical while measuring the complete parse/prove/render query.
+`SymMBA.AtomColumnsMatchEveryAssignmentAcrossStorageWords` checks every input
+column and assignment through 18 inputs, including the inline/heap storage
+boundary and columns spanning whole words. Batched truth-table construction
+must preserve the same tables and existing proof budgets.
 `SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
 exhaustive small-word perturbations, nonzero coefficient/offset controls,
 zero-prefix versus zero-word refusal, exact/short resource budgets and Z3

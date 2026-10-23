@@ -49,6 +49,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cassert>
 #include <cstdint>
@@ -717,11 +718,27 @@ TruthTable projectTruthTable(const TruthTable &Table,
 } // namespace
 
 TruthTable atomTruthTable(unsigned Index, unsigned NumVars) {
-  TruthTable Out = TruthTable::zero(NumVars);
-  for (size_t K = 0, E = Out.entries(); K < E; ++K)
-    if ((K >> Index) & 1)
-      Out.set(K);
-  return Out;
+  const auto Entries = TruthTable::entryCount(NumVars);
+  if (Index >= NumVars)
+    return TruthTable(llvm::APInt::getZero(Entries));
+  // The first six input columns repeat within each 64-bit storage word.
+  // Higher columns alternate whole runs of words. Construct those exact
+  // patterns without visiting and setting every individual truth-table bit.
+  static constexpr std::array<uint64_t, 6> Patterns{
+      0xaaaaaaaaaaaaaaaaULL, 0xccccccccccccccccULL, 0xf0f0f0f0f0f0f0f0ULL,
+      0xff00ff00ff00ff00ULL, 0xffff0000ffff0000ULL, 0xffffffff00000000ULL};
+  constexpr unsigned WordBits = std::numeric_limits<uint64_t>::digits;
+  if (Index < Patterns.size()) {
+    if (Entries <= WordBits)
+      return TruthTable(llvm::APInt(Entries, Patterns[Index]));
+    return TruthTable(
+        llvm::APInt::getSplat(Entries, llvm::APInt(WordBits, Patterns[Index])));
+  }
+  auto Bits = llvm::APInt::getZero(Entries);
+  const unsigned Run = 1u << Index;
+  for (unsigned Start = Run; Start < Entries; Start += 2 * Run)
+    Bits.setBits(Start, Start + Run);
+  return TruthTable(std::move(Bits));
 }
 
 uint32_t truthTableSupport(const TruthTable &Table) {
