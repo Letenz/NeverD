@@ -155,8 +155,9 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   // A summarized callee reads no stack slot past the last one its body, or
   // a tail call it makes, reads: an outgoing-area store beyond that belongs
   // to another call or is a local.
-  if (Scan.Convention && Scan.Convention->StackArgumentSummary &&
-      Scan.CalleeRegisterArgs >= 0 && Scan.CalleeStackArgs >= 0) {
+  if (!Scan.HeaderVariadic && Scan.Convention &&
+      Scan.Convention->StackArgumentSummary && Scan.CalleeRegisterArgs >= 0 &&
+      Scan.CalleeStackArgs >= 0) {
     const int FirstStackArg = static_cast<int>(RegisterPositions);
     for (size_t K = std::max(FirstStackArg, Scan.CalleeStackArgs);
          K < Found.size(); ++K)
@@ -242,7 +243,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   // no stack slot past its count: a store beyond is a local of this
   // function or another call's.
   const int64_t StackSlots =
-      Scan.Convention && Scan.Convention->StackArgumentSummary &&
+      !Scan.HeaderVariadic && Scan.Convention &&
+              Scan.Convention->StackArgumentSummary &&
               Scan.CalleeRegisterArgs >= 0 &&
               Scan.CalleeStackArgs >= Scan.CalleeRegisterArgs
           ? Scan.CalleeStackArgs - Scan.CalleeRegisterArgs

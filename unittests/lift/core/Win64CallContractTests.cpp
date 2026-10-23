@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SourceCallExecution.h"
+#include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -720,6 +721,141 @@ TEST(Win64CallContract, AFloatArgumentReachesItsImportsSlot) {
       << Body;
   EXPECT_NE(Body.find("return sin("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+}
+
+TEST(Win64CallContract, HeaderVariadicPrefixKeepsEveryProvenTailArgument) {
+  windows_variadic_test::Header Debug;
+  Debug.Slot = Iat;
+  for (unsigned Tail : {0u, 1u, 3u}) {
+    // RCX passes through untouched; only the count and variadic values are set.
+    std::vector<uint8_t> Setup = {0xBA, static_cast<uint8_t>(Tail), 0, 0, 0};
+    if (Tail >= 1)
+      Setup.insert(Setup.end(), {0x41, 0xB8, 11, 0, 0, 0});
+    if (Tail >= 3) {
+      Setup.insert(Setup.end(), {0x41, 0xB9, 22, 0, 0, 0});
+      Setup.insert(Setup.end(), {0xC7, 0x44, 0x24, 0x20, 33, 0, 0, 0});
+    }
+    for (bool Writable : {false, true}) {
+      for (bool RegisterTarget : {false, true}) {
+        const va_t At = Text + 4 + Setup.size();
+        auto Call = throughSlot(At, Iat);
+        if (RegisterTarget) {
+          Call = {0x48, 0x8B, 0x05};
+          const auto Displacement = rel32(At + 7, Iat);
+          Call.insert(Call.end(), Displacement.begin(), Displacement.end());
+          Call.insert(Call.end(), {0xFF, 0xD0});
+        }
+        BinaryImage Image =
+            makeImage(framed({Setup, Call}), {{Text, "forward_variadic"}},
+                      {"fixture_variadic"});
+        ASSERT_TRUE(Image.recordImportStorageSlot(
+            Iat, "fixture_variadic", 0, ImportStorageEvidence::LoaderBind));
+        if (Writable)
+          Image.Segments.back().Flags =
+              SegmentFlags::Readable | SegmentFlags::Writable;
+        for (bool LLVM : {false, true}) {
+          SCOPED_TRACE(Tail);
+          SCOPED_TRACE(RegisterTarget);
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(Writable);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = LLVM;
+          Options.OnlyFunctionEntries.insert(Text);
+          auto Result = Pipeline().run(Image, Context, Options, &Debug);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            const auto *Callee =
+                Result.LlvmModule->getFunction("fixture_variadic");
+            ASSERT_NE(Callee, nullptr);
+            EXPECT_TRUE(Callee->isVarArg());
+            ASSERT_EQ(Callee->arg_size(), 2u);
+            EXPECT_TRUE(Callee->getReturnType()->isIntegerTy(32));
+            EXPECT_TRUE(
+                Callee->getFunctionType()->getParamType(0)->isIntegerTy(32));
+            EXPECT_TRUE(
+                Callee->getFunctionType()->getParamType(1)->isIntegerTy(32));
+            if (Writable && RegisterTarget) {
+              const auto *Forward =
+                  Result.LlvmModule->getFunction("forward_variadic");
+              ASSERT_NE(Forward, nullptr);
+              bool Indirect = false;
+              for (const auto &Block : *Forward)
+                for (const auto &Instruction : Block)
+                  if (const auto *Call =
+                          llvm::dyn_cast<llvm::CallBase>(&Instruction);
+                      Call && Call->isIndirectCall()) {
+                    Indirect = true;
+                    EXPECT_EQ(Call->getFunctionType(),
+                              Callee->getFunctionType());
+                    EXPECT_EQ(Call->arg_size(), 2u + Tail);
+                  }
+              EXPECT_TRUE(Indirect);
+            }
+            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                            &Debug, &Image));
+          } else {
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+          }
+          source_call_execution_test::compileAndRun(
+              Source + windows_variadic_test::oracle(Tail, "forward_variadic"));
+        }
+      }
+    }
+  }
+}
+
+TEST(Win64CallContract, HeaderVariadicFixedPrefixCanOverflowToTheStack) {
+  windows_variadic_test::Header Debug;
+  Debug.Slot = Iat;
+  Debug.Fixed = 5;
+  auto Image = makeImage(throughSlot(Text, Iat, true), {{Text, "forward_many"}},
+                         {"fixture_variadic"});
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.LiftMode = LLVM;
+    Options.SourceProjection = LLVM;
+    Options.OnlyFunctionEntries = {Text};
+    auto Result = Pipeline().run(Image, Context, Options, &Debug);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_EQ(Result.MedFuncs.size(), 1u);
+    EXPECT_EQ(Result.MedFuncs.front().Params.size(), 5u);
+    CEmitterOptions COptions;
+    COptions.TheArch = Image.Arch;
+    COptions.Format = Image.Format;
+    COptions.Image = &Image;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    if (LLVM) {
+      ASSERT_TRUE(Result.LlvmModule);
+      ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions, &Debug,
+                                      &Image));
+    } else {
+      ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+    }
+    source_call_execution_test::compileAndRun(Source + R"(
+int32_t fixture_variadic(int32_t first, int32_t count, int32_t fixed2,
+                        int32_t fixed3, int32_t fixed4, ...) {
+  if (first != -7 || count != 8 || fixed2 != 9 || fixed3 != 10 || fixed4 != 11)
+    __builtin_trap();
+  return -19;
+}
+int main(void) { return (int32_t)forward_many(-7, 8, 9, 10, 11) != -19; }
+)");
+  }
 }
 
 TEST(Win64CallContract, HeaderOnlyFloatingImportRetainsItsTypedABI) {

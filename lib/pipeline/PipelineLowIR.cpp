@@ -32,6 +32,7 @@
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/LibCRecordArguments.h"
+#include "neverd/libc/LibCVariadicArguments.h"
 #include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -3439,6 +3440,7 @@ struct ImportPrototypeArguments {
   /// of each call gives it its arguments (Windows on ARM64).
   std::map<va_t, int> Counts;
   std::map<va_t, FloatingCallArguments> FloatingArguments;
+  std::map<va_t, std::vector<uint16_t>> VariadicArguments;
   /// The imports whose integer arguments a user declaration or header record
   /// layout specifies, overriding the parameter counts in the arity tables.
   std::set<va_t> PrototypeDeclared;
@@ -3519,6 +3521,8 @@ ImportPrototypeArguments importPrototypeArguments(
   };
   auto SignatureArguments =
       [&](const FunctionSym &Function) -> std::optional<Arguments> {
+    if (Function.IsVariadic)
+      return std::nullopt;
     const bool Positional = Convention && Convention->PositionalArgumentSlots;
     // Where every argument is on the stack (i386), fastcall and thiscall
     // pass leading ones in registers, which these positions do not describe.
@@ -3740,6 +3744,21 @@ ImportPrototypeArguments importPrototypeArguments(
       Routine = UserArguments(Name);
       UserDeclared = Routine.has_value();
       PrototypeOwnsArguments = Routine.has_value();
+      // A variadic header declares a minimum prefix, never an exact arity.
+      if (!Routine)
+        if (const auto Function = Declared(Name))
+          if (auto Prefix = libc::variadicCallArguments(*Function, Img.Arch,
+                                                        Img.abiFormat())) {
+            GPRReadWidths Widths{};
+            for (size_t I = 0; I < Prefix->size() && I < Registers.size(); ++I)
+              if (const auto Family = gprFamilyOf(Img.Arch, Registers[I]))
+                Widths[*Family] = (*Prefix)[I];
+            Result.Reads.emplace(Addr, Widths);
+            if (StackArguments && Prefix->size() > Registers.size())
+              Result.StackArgs.emplace(Addr, Prefix->size());
+            Result.VariadicArguments.emplace(Addr, std::move(*Prefix));
+            return;
+          }
       // A complete fixed FP header signature gives the SSA call its physical
       // register operands even when the caller only forwards them untouched.
       // Do not encode ARM64 registers in the x64 GPR family summaries below.
@@ -3889,10 +3908,16 @@ ImportPrototypeArguments importPrototypeArguments(
 /// module's routine, keyed by the variable's address, or this image's, by
 /// its entry.
 std::map<va_t, va_t> callArgumentSourcesOf(
+    const BinaryImage &Img,
     const std::map<va_t, PointerVariableCallee> &PointerCallees) {
   std::map<va_t, va_t> Sources;
   for (const auto &[Slot, Callee] : PointerCallees)
     Sources.emplace(Slot, Callee.ImportName.empty() ? Callee.LocalEntry : Slot);
+  // A register loaded from an import slot reads the same declared arguments
+  // as a call through the slot itself. This proves its ABI, not its target.
+  for (const auto &Import : Img.Imports)
+    if (Import.IATAddr && !Import.Name.empty())
+      Sources.try_emplace(Import.IATAddr, Import.IATAddr);
   return Sources;
 }
 
@@ -3927,7 +3952,8 @@ std::shared_ptr<const ImageImportCounts> imageImportArguments(
         Img.Relocations.data(), Img.Relocations.size(), Img.Exports.data(),
         Img.Exports.size(), std::move(Prototyped.Counts),
         std::move(Prototyped.StackArgs), std::move(Prototyped.StackSlots),
-        std::move(Prototyped.FloatingArguments)});
+        std::move(Prototyped.FloatingArguments),
+        std::move(Prototyped.VariadicArguments)});
     if (Kept)
       *Kept = Everywhere;
   }
@@ -3945,6 +3971,9 @@ void setOmittedImportArguments(
       !Convention->ArgumentsFromCallSetup)
     return;
   const auto Arguments = imageImportArguments(Img, Dbg, PointerCallees, Kept);
+  Result.OmittedCalleeVariadicArguments =
+      std::shared_ptr<const std::map<va_t, std::vector<uint16_t>>>(
+          Arguments, &Arguments->VariadicArguments);
   if (Convention->RegparmOnlyForInternalCalls) {
     Result.OmittedCalleeStackArgs = std::shared_ptr<const std::map<va_t, int>>(
         Arguments, &Arguments->StackArgs);
@@ -3978,7 +4007,7 @@ void computeCallRegisterEffects(
   // routine the variable starts at (PointerCallees): another module's, whose
   // prototype is kept under the variable's address, or this image's, by its
   // entry.
-  Result.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
+  Result.CallArgumentSources = callArgumentSourcesOf(Img, PointerCallees);
   Result.CallPrototypeArguments.clear();
   Result.CallUserPrototypes.clear();
   if (Img.Arch != Arch::X64) {
@@ -3998,6 +4027,8 @@ void computeCallRegisterEffects(
       Result.CallEntryStackPops = std::move(Prototyped.StackPops);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
+      Result.CallEntryVariadicArguments =
+          std::move(Prototyped.VariadicArguments);
     } else if (Convention && Convention->ImportArgumentsFromPrototype &&
                Convention->ArgumentsFromCallSetup) {
       // Where the setup of each call gives it its arguments (Windows on
@@ -4011,6 +4042,8 @@ void computeCallRegisterEffects(
       Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
+      Result.CallEntryVariadicArguments =
+          std::move(Prototyped.VariadicArguments);
     }
     setOmittedImportArguments(Img, Dbg, PointerCallees, KeptImportCounts,
                               Result);
@@ -4308,6 +4341,7 @@ void computeCallRegisterEffects(
         Change(Effect->second)->StackArgs = Count;
     Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
     Result.CallEntryFloatingArguments = std::move(Prototyped.FloatingArguments);
+    Result.CallEntryVariadicArguments = std::move(Prototyped.VariadicArguments);
   }
   CallRegisterSummaries Summaries =
       solveCallRegisterEffects(Effects, Volatile, Arguments, DispatchThunks,
@@ -4704,7 +4738,7 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
     const std::map<va_t, PointerVariableCallee> PointerCallees =
         collectPointerVariableCallees(Img);
     PipelineResult Summaries;
-    Summaries.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
+    Summaries.CallArgumentSources = callArgumentSourcesOf(Img, PointerCallees);
     setOmittedImportArguments(Img, Dbg, PointerCallees, &Cache.ImportCounts,
                               Summaries);
     if (!Cache.CalleeSignatures)

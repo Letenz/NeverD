@@ -389,6 +389,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       // or invalid source declaration leaves the generic arguments intact.
       Op.NumInputs = 1;
       Op.CalleeRegisterArgs = -1;
+      Op.CalleeVariadicFrom = -1;
       Op.CalleeVectorArgs = -1;
       Op.CalleeVectorSlots = 0;
       Op.CalleeVectorArgWidths = 0;

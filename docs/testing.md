@@ -159,6 +159,19 @@ incidental physical RAX value from a C `void` function cannot pass the oracle.
 
 `DriverMSRExecution.*` and `DriverMSRDeclaration.*` check explicit MSR values, full-width splitting, preserved state, repeated reads, exact instruction limits, missing/invalid inputs, and lack of memory authority across available backends. `KernelMSRRead.*` retains unused-declaration dependencies. Run the native driver, driver emulation and kernel snapshot owners; unavailable WHP/HVF execution is a skip, not native qualification.
 
+Windows header variadic prefixes are covered by `NeverDWin64CallContractTests`,
+`NeverDI386CallContractTests`, `NeverDAAPCS64CallContractTests`,
+`NeverDIntegerCallArgumentsTests` and `NeverDLocalTypesDebugContextTests`.
+The synthetic import is absent from the curated runtime tables. Both C routes
+are compiled and executed with an independent `va_arg` provider checking the
+forwarded fixed argument, each integer tail value and the returned low bits.
+The matrix includes zero and multiple tail arguments, x64/ARM64 stack overflow,
+register-loaded import slots, and ARM64 selection/omitted-callee cache reuse.
+These host C tests do not qualify native Windows execution or arbitrary FP,
+record or split-width variadic tails. `check_windows_ucrt_calls.py --function
+UseCRTVarargs` separately compiles the actual `_wopen` output against the
+retained original Microsoft UCRT declarations on x86, x64 and ARM64.
+
 `NeverDIntegerCallArgumentsTests` checks integer record carriers, unused
 register positions before memory arguments, register exhaustion, i386 slots,
 indirect copies and refusal of incomplete layouts. `NeverDRecordCallContractTests`

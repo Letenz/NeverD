@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SourceCallExecution.h"
+#include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Limits.h"
@@ -520,6 +521,77 @@ TEST(AAPCS64CallContract, ACallToThePLTEntryOfItsOwnRoutinePassesItsArgs) {
           Call && !llvm::isa<llvm::IntrinsicInst>(Call))
         for (const llvm::Value *Argument : Call->args())
           EXPECT_FALSE(llvm::isa<llvm::Constant>(Argument)) << IR;
+}
+
+TEST(AAPCS64CallContract, WindowsVariadicPrefixSurvivesOmittedCalleeCache) {
+  windows_variadic_test::Header Debug;
+  Debug.Slot = Got;
+  constexpr va_t Caller = Text + 0x80;
+  for (unsigned Tail : {0u, 1u, 7u, 8u}) {
+    std::vector<uint32_t> Code = {PushFrame, SetFrame,
+                                  0xD10043FFu,                // sub sp, sp, #16
+                                  0x52800001u | (Tail << 5)}; // mov w1, #Tail
+    for (unsigned I = 0; I < Tail; ++I) {
+      const unsigned Register = I < 6 ? I + 2 : 8;
+      Code.push_back(0x52800000u | (11 * (I + 1) << 5) | Register);
+      if (I >= 6)
+        Code.push_back(0xF90003E8u | ((I - 6) << 10)); // str x8, [sp, #slot]
+    }
+    Code.push_back(adrp(16, Text + Code.size() * 4, Got));
+    Code.insert(Code.end(), {ldrX(17, 16, Got), blr(17),
+                             0x910043FFu, // add sp, sp, #16
+                             PopFrame, Ret});
+    BinaryImage Image = makeImage(
+        {{Text, Code},
+         {Caller,
+          {PushFrame, SetFrame,
+           0x94000000u |
+               (static_cast<uint32_t>((Text - (Caller + 8)) / 4) & 0x3FFFFFF),
+           PopFrame, Ret}}},
+        {{Text, "forward_variadic"}, {Caller, "middle_variadic"}},
+        {"fixture_variadic"});
+    Image.Format = BinaryFormat::COFF;
+    Image.Imports.front().Module = "fixture.dll";
+    PipelineAnalysisCache Cache;
+    for (const auto &Entries :
+         {std::set<va_t>{Text}, std::set<va_t>{Caller},
+          std::set<va_t>{Text, Caller}, std::set<va_t>{Caller}})
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(Tail);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(Entries.size());
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = LLVM;
+        Options.OnlyFunctionEntries = Entries;
+        Options.AnalysisCache = &Cache;
+        auto Result = Pipeline().run(Image, Context, Options, &Debug);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        for (const auto &Function : Result.MedFuncs)
+          EXPECT_EQ(Function.Params.size(), 1u) << Function.Name;
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                          &Debug, &Image));
+        } else {
+          ASSERT_TRUE(
+              HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+        }
+        if (Entries.count(Text))
+          source_call_execution_test::compileAndRun(
+              Source + windows_variadic_test::oracle(Tail, "forward_variadic"));
+        else
+          source_call_execution_test::checkSyntax(Source);
+      }
+  }
 }
 
 TEST(AAPCS64CallContract, WindowsHeaderFloatsSurviveSelectionAndBothEmitters) {

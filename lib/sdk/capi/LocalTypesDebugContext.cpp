@@ -361,11 +361,10 @@ TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
 std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
                                        const types::FunctionDef &Function,
                                        llvm::StringRef Name) {
-  if (Function.Variadic)
-    return std::nullopt;
   Converter Convert(Library);
   FunctionSym Declared;
   Declared.Name = Name.str();
+  Declared.IsVariadic = Function.Variadic;
   Declared.NoReturn = Function.NoReturn;
   Declared.ReturnType = Function.Return ? Convert.convert(*Function.Return, 0)
                                         : NdType::makeVoid();
@@ -413,7 +412,7 @@ std::pair<NdTypeKind, uint16_t> passing(const TypeRef &Type) {
 } // namespace
 
 bool passesAlike(const FunctionSym &A, const FunctionSym &B) {
-  if (A.Params.size() != B.Params.size() ||
+  if (A.IsVariadic != B.IsVariadic || A.Params.size() != B.Params.size() ||
       passing(A.ReturnType) != passing(B.ReturnType))
     return false;
   for (size_t I = 0; I < A.Params.size(); ++I)
@@ -758,6 +757,18 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   Signature->PrototypeDeclaration =
       (Function->second->NoReturn ? "_Noreturn " : "") +
       Speller->spell(*types::makeFunction(Function->second), Name.str());
+  Options.Spelling = types::BuiltinSpelling::Portable;
+  auto &Portable = Spellers[types::spellingOf(Options)];
+  if (!Portable)
+    Portable = std::make_unique<types::TypeSpeller>(*Types, Options);
+  auto PortableFunction = Function->second;
+  if (PortableFunction->Convention == types::CallingConvention::Cdecl) {
+    auto Unspecified = std::make_shared<types::FunctionDef>(*PortableFunction);
+    Unspecified->Convention = types::CallingConvention::Unspecified;
+    PortableFunction = std::move(Unspecified);
+  }
+  Signature->PortablePrototypeDeclaration =
+      Portable->spell(*types::makeFunction(PortableFunction), Name.str());
   return Signature;
 }
 
@@ -913,9 +924,12 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   Typed.ParamEntryLocations.clear();
   Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
   Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
+  Typed.PortablePrototypeDeclaration =
+      std::move(Known->PortablePrototypeDeclaration);
   Typed.PrototypeFromHeader = Known->PrototypeFromHeader;
   Typed.PrototypeFromCLibrary = Known->PrototypeFromCLibrary;
   Typed.NoReturn = Known->NoReturn;
+  Typed.IsVariadic = Known->IsVariadic;
   if (Main && (Typed.Name.empty() || isSynthesizedFuncName(Typed.Name)))
     Typed.Name = "main";
   return Typed;

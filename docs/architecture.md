@@ -857,6 +857,29 @@ declaration says: routines that never return or return twice where a header
 does not mark them, format strings, fortified forms, the va_list forms
 variadic routines pass on to, and what copies and stack probes do.
 
+A header's `FunctionSym::IsVariadic` distinguishes a fixed prefix from an
+exact parameter count. `LibCVariadicArguments.h` admits the Windows x86, x64
+and native ARM64 scalar integer/pointer prefix shared by the pipeline and C
+writers. It rejects fixed FP parameters, records, split integer parameters,
+non-C conventions and missing provenance. The existing fixed FP and record
+adapters explicitly reject variadic declarations. The admitted prefix reads
+its physical registers before SSA; call setup supplies the open tail. An
+import slot reached through a loaded register contributes the same argument
+reads as a direct slot call, without fixing a writable slot's target.
+Image-wide omitted-callee facts and conversion cache comparisons retain the
+same prefix. LLVM declares its exact fixed types and return, with ellipsis;
+both C routes retain every recovered tail operand. A portable rendering of
+the original header declaration preserves qualifiers where its types are
+self-contained; the original declaration and provider remain available.
+
+This is a prefix contract, not an inference of arbitrary variadic tail types.
+Windows ARM64 varargs use integer registers and stack slots rather than the
+ordinary FP register bank ([Microsoft ARM64 ABI](https://learn.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions#addendum-variadic-functions)).
+The x64 convention duplicates variadic FP arguments in integer registers
+([Microsoft x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention#varargs)).
+A tail's machine carriers alone do not certify a portable source type or a
+complete function-pointer signature.
+
 A C or C++ header rendered for a program joined to a library of a system's
 headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
 libSystem, whose platform `<TargetConditionals.h>` tells) takes

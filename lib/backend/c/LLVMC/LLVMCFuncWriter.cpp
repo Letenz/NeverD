@@ -3160,6 +3160,8 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       Library.Prototype && !Library.Prototype->Variadic)
     return Clamp(Library.Prototype->ParamCount);
   if (auto FS = debugCallee(Call)) {
+    if (FS->IsVariadic)
+      return Have;
     if (const auto Library = libraryCallee(Call);
         Library && Library.Name == FS->Name)
       if (const auto Layout = libc::recordCallArguments(

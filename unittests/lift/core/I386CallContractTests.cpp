@@ -15,6 +15,7 @@
 
 #include "../../../lib/pipeline/PipelineCallAbiDetail.h"
 #include "SourceCallExecution.h"
+#include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -948,6 +949,91 @@ TEST(I386CallContract, APICPLTEntryJumpsByTheGOTItsCallerHolds) {
                            "(int32_t)islower(arg0);"})
     EXPECT_NE(Source.find(Call), std::string::npos) << Call << "\n" << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
+}
+
+TEST(I386CallContract, HeaderVariadicStackPrefixKeepsTheOpenTail) {
+  windows_variadic_test::Header Debug;
+  Debug.Slot = Iat;
+  for (unsigned Tail : {0u, 1u, 3u}) {
+    std::vector<uint8_t> Code;
+    for (unsigned I = Tail; I > 0; --I)
+      Code.insert(Code.end(), {0x6A, static_cast<uint8_t>(11 * I)});
+    Code.insert(Code.end(), {0x6A, static_cast<uint8_t>(Tail)});
+    Code.insert(Code.end(),
+                {0xFF, 0x74, 0x24, static_cast<uint8_t>(4 * (Tail + 2))});
+    const auto Call = callThroughSlot(Iat);
+    Code.insert(Code.end(), Call.begin(), Call.end());
+    Code.insert(Code.end(),
+                {0x83, 0xC4, static_cast<uint8_t>(4 * (Tail + 2)), 0xC3});
+    auto Image = makeImage(Code, {"fixture_variadic"});
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(Tail);
+      SCOPED_TRACE(LLVM);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = LLVM;
+      Options.OnlyFunctionEntries = {Text};
+      auto Result = Pipeline().run(Image, Context, Options, &Debug);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                        &Debug, &Image));
+      } else {
+        ASSERT_TRUE(
+            HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+      }
+      source_call_execution_test::compileAndRun(
+          Source + windows_variadic_test::oracle(Tail, "wrap"));
+    }
+  }
+}
+
+TEST(I386CallContract, HeaderVariadicTailJumpRetainsItsFixedStackInputs) {
+  windows_variadic_test::Header Debug;
+  Debug.Slot = Iat;
+  auto Code = callThroughSlot(Iat);
+  Code[1] = 0x25; // jmp [Iat], forwarding the incoming fixed stack prefix
+  auto Image = makeImage(Code, {"fixture_variadic"});
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.LiftMode = LLVM;
+    Options.SourceProjection = LLVM;
+    Options.OnlyFunctionEntries = {Text};
+    auto Result = Pipeline().run(Image, Context, Options, &Debug);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_EQ(Result.MedFuncs.size(), 1u);
+    EXPECT_EQ(Result.MedFuncs.front().Params.size(), 2u);
+    CEmitterOptions COptions;
+    COptions.TheArch = Image.Arch;
+    COptions.Format = Image.Format;
+    COptions.Image = &Image;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    if (LLVM) {
+      ASSERT_TRUE(Result.LlvmModule);
+      ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions, &Debug,
+                                      &Image));
+    } else {
+      ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+    }
+    std::string Oracle = windows_variadic_test::oracle(0, "wrap");
+    const auto Call = Oracle.find("wrap(-7)");
+    ASSERT_NE(Call, std::string::npos);
+    Oracle.replace(Call, std::string("wrap(-7)").size(), "wrap(-7, 0)");
+    source_call_execution_test::compileAndRun(Source + Oracle);
+  }
 }
 
 } // namespace
