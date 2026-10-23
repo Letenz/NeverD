@@ -25,7 +25,8 @@ std::optional<va_t> readMetadataPointerTarget(const BinaryImage &Image,
       Width > InvalidVA - Slot)
     return std::nullopt;
   const auto *Owner = Image.getSegmentFor(Slot);
-  if (!Owner || !Owner->isReadable() ||
+  if (!Owner || !Owner->isReadable() || Owner->Size > InvalidVA - Owner->VA ||
+      !rangeInBounds(Slot - Owner->VA, Width, Owner->Size) ||
       !rangeInBounds(Slot - Owner->VA, Width, Owner->FileSz))
     return std::nullopt;
   const auto *Bytes = Image.readVA(Slot, Width);
@@ -71,9 +72,13 @@ std::optional<va_t> readMetadataPointerTarget(const BinaryImage &Image,
     return std::nullopt;
   const auto *Target = Image.getSegmentFor(Recipe.Target);
   if (!Target || !Target->isReadable() ||
+      Target->Size > InvalidVA - Target->VA ||
       !rangeInBounds(Recipe.Target - Target->VA, 1, Target->FileSz) ||
       !Image.readVA(Recipe.Target, 1))
     return std::nullopt;
+  for (const auto &Other : Image.Segments)
+    if (&Other != Target && Other.contains(Recipe.Target))
+      return std::nullopt;
   return Recipe.Target;
 }
 

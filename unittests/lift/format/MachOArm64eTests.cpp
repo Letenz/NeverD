@@ -560,7 +560,7 @@ TEST(MachOArm64e, MetadataTargetsRequireUnchangedUnambiguousLocalRecipes) {
               Raw);
     EXPECT_EQ(readMetadataPointerTarget(Fixture.Image, Data), Data + 0x80);
     EXPECT_EQ(Fixture.word(0), Raw);
-    for (unsigned Invalid = 0; Invalid < 14; ++Invalid) {
+    for (unsigned Invalid = 0; Invalid < 18; ++Invalid) {
       SCOPED_TRACE(testing::Message() << Format << " " << Invalid);
       auto Image = Fixture.Image;
       auto &Recipe = Image.MachOAuthenticatedPointers.at(Data);
@@ -607,6 +607,21 @@ TEST(MachOArm64e, MetadataTargetsRequireUnchangedUnambiguousLocalRecipes) {
         break;
       case 13:
         Image.Segments[0].FileSz = 4;
+        break;
+      case 14:
+      case 15: {
+        Segment Target = Image.Segments[0];
+        Target.VA = Recipe.Target;
+        Image.Segments.push_back(std::move(Target));
+        if (Invalid == 14)
+          Image.Segments[0].Size = 4;
+        break;
+      }
+      case 16:
+        Image.Segments[0].Size = InvalidVA - Data + 1;
+        break;
+      case 17:
+        Image.Segments[0].FileSz = 0x80;
         break;
       }
       EXPECT_FALSE(readMetadataPointerTarget(Image, Data));
