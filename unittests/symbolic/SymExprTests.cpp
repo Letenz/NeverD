@@ -16,7 +16,10 @@
 
 #include "neverd/symbolic/SymExpr.h"
 
+#include <array>
 #include <random>
+#include <utility>
+#include <vector>
 
 using namespace neverd::symbolic;
 
@@ -35,6 +38,50 @@ TEST(SymExpr, InterningMakesStructuralEqualityAPointerCompare) {
   EXPECT_EQ(Ctx.mkConst(W32, 7), Ctx.mkConst(W32, 7));
   // Same value, different width, different node.
   EXPECT_NE(Ctx.mkConst(W32, 7), Ctx.mkConst(8, 7));
+}
+
+TEST(SymExpr, InterningRetainsFullIdentityAcrossGrowthCopyAndMove) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 64);
+  const auto WideValue = llvm::APInt::getOneBitSet(128, 100);
+  const auto Wide = Ctx.mkConst(WideValue);
+  // These literals exercise hashes zero, UINT64_MAX and UINT64_MAX-1, plus
+  // exact collisions with the variable and the first wide literal. A hash
+  // match must never substitute for the complete operator/width/value check.
+  const std::array<uint64_t, 5> Values{
+      0x96c84cbe741a547eULL, 0xfb9ece775e7489a1ULL, 0xfb9ece775e7489a0ULL,
+      0xffffffffffffcfd1ULL, 0xffffffffffffefb0ULL};
+  std::vector<SymRef> Literals;
+  for (auto Value : Values) {
+    const auto R = Ctx.mkConst(64, Value);
+    EXPECT_NE(R, X);
+    EXPECT_NE(R, Wide);
+    for (auto Previous : Literals)
+      EXPECT_NE(R, Previous);
+    Literals.push_back(R);
+  }
+  const auto Sum = Ctx.mkAdd(X, Literals.front());
+  for (uint64_t I = 0; I < 8192; ++I)
+    Ctx.mkAdd(X, Ctx.mkConst(64, I));
+
+  auto Copy = Ctx;
+  auto Moved = std::move(Copy);
+  SymContext Assigned;
+  Assigned = Ctx;
+  for (auto *Context : {&Ctx, &Moved, &Assigned}) {
+    const auto Before = Context->numNodes();
+    EXPECT_EQ(Context->mkVar("x", 64), X);
+    EXPECT_EQ(Context->mkConst(WideValue), Wide);
+    for (size_t I = 0; I < Values.size(); ++I) {
+      EXPECT_EQ(Context->mkConst(64, Values[I]), Literals[I]);
+      EXPECT_EQ(Context->constValue(Literals[I]), llvm::APInt(64, Values[I]));
+    }
+    EXPECT_EQ(Context->mkAdd(X, Literals.front()), Sum);
+    EXPECT_EQ(Context->numNodes(), Before);
+  }
+  Moved.mkVar("after-copy", 64);
+  EXPECT_FALSE(Ctx.hasVarName("after-copy"));
+  EXPECT_FALSE(Assigned.hasVarName("after-copy"));
 }
 
 TEST(SymExpr, CommutativeOperandsAreSorted) {

@@ -698,6 +698,17 @@ work counts to the CLI report before computing per-case medians and percentiles.
 The independent evaluator handles explicit word widths, extracts, extensions
 and modular shifts. Check it with
 `python3 tools/neverd-bench/tests/test_symbolic_masks.py`.
+Expression interning regressions retain deliberately colliding variable and
+literal identities, all-bit hash values, and references across table growth,
+context copies, assignment and moves. Full symbolic and source-route coverage
+checks the shared table underneath both CLI and GUI simplification.
+Paired-product regressions cover degree-64–128 mixed carry frontiers with
+independent 8–257-bit arithmetic oracles. A separate 32-factor fixture retains
+an input-dependent highest-bit correction, exhausts its three relevant low
+input words and has independent full-width Z3 proofs at 8/16/32/64 bits. Nearby
+parity changes and exact/one-short work plus short storage check refusal and
+cumulative accounting. Real worker and CLI source tests also execute degree-64
+and degree-128 mixed pairs through all six source routes at O0/O2.
 `SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
 exhaustive small-word perturbations, nonzero coefficient/offset controls,
 zero-prefix versus zero-word refusal, exact/short resource budgets and Z3
@@ -1613,7 +1624,9 @@ tests cover menu/keyboard activation, cancellation with retained source,
 concurrent listing/function reads and reset on navigation. Worker source-cache
 tests count engine calls separately for each option set. `HighExprSimplify.*`
 checks exact masked status bits, signed extensions, shared expressions and
-effect preservation without the symbolic bridge. The x87 classification test
+effect preservation without the symbolic bridge. An 8,192-level worker-thread
+regression checks iterative operand traversal for both pure rewrites and
+ordered-memory ancestors that must remain intact. The x87 classification test
 executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
 

@@ -26,6 +26,7 @@
 
 #include <optional>
 #include <unordered_set>
+#include <vector>
 
 namespace neverd {
 
@@ -699,14 +700,8 @@ static ExprPtr signedOrderFromFlags(const ExprPtr &E) {
   return nullptr;
 }
 
-static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
-                                  const HighExprSet &OrderedMemory,
-                                  bool &Changed) {
-  if (!E || !Seen.insert(E.get()).second)
-    return;
-  for (auto &Op : E->Operands)
-    simplifyExprRecursive(Op, Seen, OrderedMemory, Changed);
-
+static void simplifyExprNode(ExprPtr &E, const HighExprSet &OrderedMemory,
+                             bool &Changed) {
   // Atomic accesses are observable even when the surrounding value appears
   // algebraically redundant.  Keep the containing expression intact so a
   // simplification cannot discard, duplicate, or move the access.
@@ -1183,6 +1178,34 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
     Replace(E->Operands[0]);
 }
 
+// Preserve operand order and the existing once-per-node visitation without
+// placing the large local-rewrite frame on the stack at every expression
+// level. A parent is rewritten only after its operand slots have finished;
+// those slots remain valid while their parent is waiting in the worklist.
+static void simplifyExprGraph(ExprPtr &Root, HighExprSet &Seen,
+                              const HighExprSet &OrderedMemory, bool &Changed) {
+  if (!Root || !Seen.insert(Root.get()).second)
+    return;
+  struct Frame {
+    ExprPtr *Slot;
+    size_t NextOperand;
+  };
+  llvm::SmallVector<Frame, 16> Work{{&Root, 0}};
+  while (!Work.empty()) {
+    auto &Current = Work.back();
+    auto &Expr = *Current.Slot;
+    if (Current.NextOperand < Expr->Operands.size()) {
+      auto &Child = Expr->Operands[Current.NextOperand++];
+      if (Child && Seen.insert(Child.get()).second)
+        Work.push_back({&Child, 0});
+      continue;
+    }
+    auto *Slot = Current.Slot;
+    Work.pop_back();
+    simplifyExprNode(*Slot, OrderedMemory, Changed);
+  }
+}
+
 bool simplifyAllExprs(std::vector<HighStmt> &Stmts) {
   std::vector<ExprPtr> Roots;
   walkStmts(Stmts, [&](const HighStmt &S) {
@@ -1196,7 +1219,7 @@ bool simplifyAllExprs(std::vector<HighStmt> &Stmts) {
   bool Changed = false;
   walkStmts(Stmts, [&](HighStmt &S) {
     forEachRhsExpr(S, [&](ExprPtr &EP) {
-      simplifyExprRecursive(EP, Seen, OrderedMemory, Changed);
+      simplifyExprGraph(EP, Seen, OrderedMemory, Changed);
     });
   });
   return Changed;
