@@ -10435,8 +10435,13 @@ KernelModelObjects owns file handle and pointer counts in the common object tabl
 budget formerly confined to the mobile CLI. Mobile source recovery includes
 compatibility headers and consumes that same core; it owns Smali parsing and
 Java source emission. The shared module depends on LLVM Support and zlib, not
-CLI/session state or CPU transports. The existing pinned zlib fallback has one
-CMake owner. This does not add a second instruction decoder.
+CLI/session state or CPU transports. `cmake/NeverDZlib.cmake` owns the pinned,
+source-built static zlib provider shared with LLVM, the NDDB reader and web
+decoders. Root and standalone desktop builds initialize it before LLVM or Qt
+dependency discovery. The imported CMake facade preserves LLVM's library-location
+queries while the actual archive follows the active toolchain and configuration;
+zlib symbols remain private to each consumer. This does not add a second
+instruction decoder.
 
 `dalvik::Program` owns immutable explicit class declarations; `dalvik::Runtime`
 owns a workload's static fields, initialization states and execution

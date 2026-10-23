@@ -1328,6 +1328,30 @@ provenance, reopen, project-state changes and WAL-only edits. The Qt comparison
 test saves real projects, removes the originals, compares through the worker,
 and checks a normal recovery-workspace sentinel. GUI units retain roundtrip and
 recovery-journal coverage.
+
+The focused compression fixture also exercises an independently authored zlib
+frame, a roundtrip across a shared-library boundary and checksum rejection:
+
+```sh
+cmake -S unittests/compression -B build-compression -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-compression --parallel 4
+ctest --test-dir build-compression --output-on-failure --no-tests=error
+```
+
+Supply `-DLLVM_DIR=/path/to/lib/cmake/llvm` to include the real prebuilt LLVM
+consumer and `ProjectDatabaseTest.*`. Stale `ZLIB_LIBRARY_RELEASE` and
+`ZLIB_INCLUDE_DIR` cache entries must not replace the bundled provider. Also
+configure with `Ninja Multi-Config` and build/test both `--config Debug` and
+`--config Release` (`ctest -C` selects the test configuration). For integrated
+LLVM, verify that source configuration retains zlib and resolves its archive
+location before building; the archive is intentionally not present at configure
+time. Inspect final core/CLI imports and exports: no dynamic zlib import or
+public zlib symbols. Qt can retain its own dynamic zlib dependency.
+
+Desktop relocation and dependency-audit checks are described in
+[`tools/neverd-gui/PACKAGING.md`](../tools/neverd-gui/PACKAGING.md).
+
 The core tests check matching, ambiguity, deltas, deterministic correspondence,
 manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker
