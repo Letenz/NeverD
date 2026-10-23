@@ -105,9 +105,16 @@ Clang's explicit authentication-failure branch retains the setup of its sole
 continuing authenticated tail. Source C names an unassigned entry LR using
 `__builtin_return_address(0)`, as the LLVM projection already does.
 LDRAA/LDRAB authenticate the base before adding the offset, loading, and
-applying writeback. An unsupported exception return or FEAT_PAuth_LR form,
-including the PACM HINT that selects a second modifier, fails lifting instead
-of losing authentication.
+applying writeback. `AArch64PAuthLR.def` owns explicit FEAT_PAuth_LR encodings
+and their three-input operations. Fixed-register, original-PC, backward-PC-relative and
+register-modifier forms retain both diversifiers. Authentication of a return
+target remains observable without writing LR, including a poison check before
+an otherwise unused C return target is discarded. Fast and Capstone scanners
+both terminate at these returns. Frame proofs require a matching key and both
+modifiers before restoring a signed link. The machine operations use the
+implicit X17/X16/X15 forms so relocation cannot silently replace the original
+PC with the generated instruction's PC. Exception returns and the PACM HINT
+still fail until their architectural state is modelled.
 
 Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
 the architecture may poison a pointer without trapping immediately. The
@@ -167,8 +174,8 @@ pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
 Shared-cache-specific layouts require a cache address model. Exception-level
-authentication, FEAT_PAuth_LR and CPA2 remain unsupported; recognizing x1's
-header does not claim those instruction semantics.
+authentication, PACM state and CPA2 address arithmetic remain unsupported;
+recognizing x1's header does not claim those instruction semantics.
 
 ## GUI project and search ownership
 

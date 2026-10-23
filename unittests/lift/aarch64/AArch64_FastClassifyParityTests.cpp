@@ -83,6 +83,7 @@ public:
          Id == AARCH64_INS_ERET || Id == AARCH64_INS_BRK ||
          Id == AARCH64_INS_HLT || Id == AARCH64_INS_UDF ||
          Id == AARCH64_INS_RETAA || Id == AARCH64_INS_RETAB ||
+         Id == AARCH64_INS_RETAASPPC || Id == AARCH64_INS_RETABSPPC ||
          Id == AARCH64_INS_BRAA || Id == AARCH64_INS_BRAB ||
          Id == AARCH64_INS_BRAAZ || Id == AARCH64_INS_BRABZ);
     if (Id == AARCH64_INS_BL && Insn->detail &&
@@ -196,6 +197,25 @@ TEST_F(A64FastClassifyParity, AuthenticatedTransferRegisterSweep) {
           EXPECT_TRUE(diffOne(Oracle, Word, 0x400000).empty())
               << diffOne(Oracle, Word, 0x400000);
         }
+}
+
+TEST_F(A64FastClassifyParity, TwoModifierReturnSweep) {
+  for (uint32_t Key = 0; Key < 2; ++Key) {
+    for (uint32_t Imm = 0; Imm <= 0xffff; ++Imm) {
+      const uint32_t Word = 0x5500001fu | (Key << 21) | (Imm << 5);
+      EXPECT_TRUE(diffOne(Oracle, Word, 0x400000).empty())
+          << diffOne(Oracle, Word, 0x400000);
+    }
+    for (uint32_t Register = 0; Register < 32; ++Register) {
+      const uint32_t Word = 0xd65f0be0u | (Key << 10) | Register;
+      EXPECT_TRUE(diffOne(Oracle, Word, 0x400000).empty())
+          << diffOne(Oracle, Word, 0x400000);
+    }
+  }
+  for (uint32_t Word : {0x55000000u, 0x5500001eu, 0x5540001fu, 0x5560001fu,
+                        0xd65f0bc0u, 0xd65f0fc0u, 0xd65f1be0u})
+    EXPECT_TRUE(diffOne(Oracle, Word, 0x400000).empty())
+        << diffOne(Oracle, Word, 0x400000);
 }
 
 // Exhaustive over the conditional-branch condition (bits[3:0]) and the o0 bit

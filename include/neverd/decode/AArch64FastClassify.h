@@ -55,10 +55,11 @@ inline va_t directCallTarget(uint32_t Word, va_t Addr) {
 
 /// Whether \p Word ends a function's straight-line decode, bit-exact to
 /// AArch64Lifter::isFunctionTerminator applied to a Capstone decode of the same
-/// word. The set includes RET/BR and their baseline authenticated variants,
+/// word. The set includes RET/BR and their authenticated variants,
 /// ERET, B, BRK, HLT and UDF, where:
 ///
 ///   * RET  — 0xD65F0000 | (Rn<<5); RETAA/RETAB have fixed LR/SP operands.
+///            PAuth_LR return forms also retain their PC/register modifier.
 ///   * BR   — 0xD61F0000 | (Rn<<5); BRAA/BRAB use two registers while
 ///            BRAAZ/BRABZ encode a zero modifier. Authenticated calls remain
 ///            non-terminating, just like BLR.
@@ -80,6 +81,10 @@ inline bool isTerminatorWord(uint32_t Word) {
   if (NdOp::Kind != NdOp::INDIR_CALL && (Word & Mask) == Match)                \
     return true;
 #include "neverd/ir/intrinsics/AArch64PAuth.def"
+#define NEVERD_A64_PAUTH_LR_RETURN(Mask, Encoding, Id, Mod2)                   \
+  if ((Word & Mask) == Encoding)                                               \
+    return true;
+#include "neverd/ir/intrinsics/AArch64PAuthLR.def"
   if (Word == 0xD69F03E0u) // ERET
     return true;
   if ((Word >> 26) == 0x05u) // B (unconditional, id 51)

@@ -27,7 +27,43 @@ bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   const NdVar ZeroModifier = NdVar::cst(0, kAArch64PAuthPointerBytes);
   const NdVar SPModifier = NdVar::reg(a64reg::SP, kAArch64PAuthPointerBytes);
   const NdVar X16Modifier = NdVar::reg(a64reg::X16, kAArch64PAuthPointerBytes);
-  switch (readLE<uint32_t>(Insn->bytes)) {
+  const uint32_t Word = readLE<uint32_t>(Insn->bytes);
+  const NdVar X15Modifier = NdVar::reg(a64reg::X15, kAArch64PAuthPointerBytes);
+  const NdVar PCModifier = NdVar::cst(S.Addr, kAArch64PAuthPointerBytes);
+  const NdVar PCRelModifier = NdVar::cst(
+      S.Addr - ((Word >> kAArch64PAuthLRImmShift) & kAArch64PAuthLRImmMask) *
+                   kAArch64PAuthLRScale,
+      kAArch64PAuthPointerBytes);
+  const auto registerModifier = [&](unsigned Number) {
+    return Number == kAArch64PAuthLRRegMask
+               ? ZeroModifier
+               : NdVar::reg(a64reg::X0 + Number * kAArch64PAuthPointerBytes,
+                            kAArch64PAuthPointerBytes);
+  };
+  const NdVar RnModifier = registerModifier((Word >> kAArch64PAuthLRImmShift) &
+                                            kAArch64PAuthLRRegMask);
+  const NdVar RmModifier = registerModifier(Word & kAArch64PAuthLRRegMask);
+#define NEVERD_A64_PAUTH_LR_INSTRUCTION(Mask, Encoding, Id, Pointer, Mod,      \
+                                        Mod2)                                  \
+  if ((Word & Mask) == Encoding) {                                             \
+    const NdVar Target =                                                       \
+        NdVar::reg(a64reg::Pointer, kAArch64PAuthPointerBytes);                \
+    S.emitIntrinsic(Intrinsic::Id, Target,                                     \
+                    {Target, Mod##Modifier, Mod2##Modifier});                  \
+    return true;                                                               \
+  }
+#define NEVERD_A64_PAUTH_LR_RETURN(Mask, Encoding, Id, Mod2)                   \
+  if ((Word & Mask) == Encoding && Insn->id != AARCH64_INS_RETAA &&            \
+      Insn->id != AARCH64_INS_RETAB) {                                         \
+    const NdVar Target = S.makeTemp(kAArch64PAuthPointerBytes);                \
+    S.emitIntrinsic(Intrinsic::Id, Target,                                     \
+                    {NdVar::reg(a64reg::X30, kAArch64PAuthPointerBytes),       \
+                     SPModifier, Mod2##Modifier});                             \
+    S.emit(NdOp::RETURN, {}, {Target});                                        \
+    return true;                                                               \
+  }
+#include "neverd/ir/intrinsics/AArch64PAuthLR.def"
+  switch (Word) {
 #define NEVERD_A64_PAUTH_HINT(Insn, Word, Id, Pointer, Mod)                    \
   case Word: {                                                                 \
     const NdVar Target =                                                       \

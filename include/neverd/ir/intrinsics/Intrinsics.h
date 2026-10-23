@@ -399,6 +399,9 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_CPA(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64CPA.def"
 
+#define NEVERD_A64_PAUTH_LR_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64PAuthLR.def"
+
   _Count = 16000
 };
 

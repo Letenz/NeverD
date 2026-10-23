@@ -292,6 +292,12 @@ TEST(ReturnContracts, CheckedAArch64PointersRemainReturnValues) {
       {Intrinsic::A64_Subpt, {Pointer, Modifier}},
       {Intrinsic::A64_Maddpt, {Pointer, Modifier, Pointer}},
       {Intrinsic::A64_Msubpt, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Pacia2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Pacib2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Autia2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Autib2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_AuthReturnIA2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_AuthReturnIB2, {Pointer, Modifier, Pointer}},
   };
   for (const auto &Case : Cases) {
     SCOPED_TRACE(static_cast<unsigned>(Case.Id));
