@@ -1926,4 +1926,35 @@ TEST(SymMBAPrefixResidue, PairedProductsKeepCumulativeResourceBounds) {
   }
 }
 
+TEST(SymMBAPrefixResidue, WidePairsRecoverNonlinearTwoBitCorrections) {
+  std::mt19937_64 Random(0x5749444550414952);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned HighBits : {2u, 3u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << HighBits);
+      SymContext Ctx;
+      auto F = carryProductFixture(Ctx, Width, 128, 8, false, false, HighBits);
+      MBAOptions Opts;
+      Opts.MaxWork = 65536;
+      Opts.VerifySamples = 0;
+      auto Result = simplifyMBADeep(Ctx, F.Input, Opts);
+      if (Width <= 64) {
+        ASSERT_LE(Result.SizeAfter, 19u);
+        EXPECT_LT(Result.Work, Opts.MaxWork);
+        EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      }
+      EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &V : Values)
+          V = word(Width, Random);
+        if (Trial < 512)
+          Values = {llvm::APInt(Width, Trial / 16),
+                    llvm::APInt(Width, Trial % 16), llvm::APInt(Width, 17),
+                    llvm::APInt(Width, 29)};
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
 } // namespace
