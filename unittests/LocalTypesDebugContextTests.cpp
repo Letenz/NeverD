@@ -236,7 +236,8 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   ASSERT_TRUE(Context.resolvePrototype("Print"));
   EXPECT_TRUE(Context.resolvePrototype("Print")->IsVariadic);
   EXPECT_EQ(Context.resolvePrototype("Print")->PortablePrototypeDeclaration,
-            "uint32_t Print(const char *Format, ...)");
+            "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == 4, "
+            "(unsigned long)0, (uint32_t)0)) Print(const char *Format, ...)");
   EXPECT_EQ(Context.resolvePrototype("Print")->Params.size(), 1u);
   EXPECT_TRUE(Context.resolveFunction(0x3000)->IsVariadic);
   EXPECT_EQ(Context.resolveFunction(0x3000)->Params.size(), 1u);
