@@ -1,3 +1,12 @@
+//===- ListingView.cpp - Interactive disassembly listing ------------------===//
+//
+//                         NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Fetch, navigate and paint the workbench's disassembly rows.
+//===----------------------------------------------------------------------===//
+
 #include "ListingView.h"
 
 #include "../Config.h"
@@ -962,7 +971,7 @@ void ListingView::paintEvent(QPaintEvent *) {
   }
   painter.setClipping(false);
   paintArrows(painter, first, last);
-  if (!contentReported_) {
+  if (!contentReported_ && rowsCurrent()) {
     contentReported_ = true;
     emit contentPainted();
   }

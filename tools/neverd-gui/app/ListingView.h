@@ -1,4 +1,14 @@
-#pragma once
+//===- ListingView.h - Interactive disassembly listing --------------------===//
+//
+//                         NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Declare the revision-aware disassembly viewport and its observations.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_TOOLS_NEVERD_GUI_APP_LISTINGVIEW_H
+#define NEVERD_TOOLS_NEVERD_GUI_APP_LISTINGVIEW_H
 
 #include "Address.h"
 #include "StyledText.h"
@@ -84,7 +94,7 @@ signals:
   /// Follow a reference (double click or Enter).
   void navigateRequested(neverd::gui::Address target);
   void contextMenuRequested(const QPoint &globalPosition);
-  /// Lines of a newly opened file were painted for the first time.
+  /// Current lines of a newly opened file were painted for the first time.
   void contentPainted();
   /// The lines of a requested jump arrived (or the jump failed).
   void jumpSettled();
@@ -176,3 +186,5 @@ private:
 };
 
 } // namespace neverd::gui
+
+#endif // NEVERD_TOOLS_NEVERD_GUI_APP_LISTINGVIEW_H

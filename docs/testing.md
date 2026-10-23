@@ -1177,6 +1177,19 @@ throughput from whole-request latency and compare all non-timing output.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
 
+The [radare2 CLI read comparison](../tools/neverd-bench/radare2-cli.md) checks
+complete mapped ranges against file bytes before accepting timing observations.
+`scripts/tests/test_radare2_cli_compare.py` covers incomplete/wrong results,
+input changes, command failure, timeout cleanup and warmup exclusion.
+The GUI startup runner requires schema 4 listing evidence; its
+`tools/neverd-gui/benchmarks/tests/test_startup_bench.py` checks high addresses,
+stale or empty content, pending navigation and mismatched inputs.
+`WorkbenchTests::listingFirstContentPaintWaitsForCurrentRows` paints retained
+rows while refreshing or navigating, then checks that the first-content signal
+waits for current rows and resets after clearing the input. Record a real
+workbench run after changing the report producer; worker replies and loaded
+prefetch rows do not independently establish painted instruction coverage.
+
 ## Configure a test build
 
 `NeverDInstructionFetchTests` checks warm code reuse, operand-byte changes,
