@@ -102,6 +102,29 @@ TEST(X87Translation, RefusesUnqualifiedHostPolicyAndProfile) {
   Options = options();
   Options.RuntimeProfile = static_cast<TranslationRuntimeProfileV1>(99);
   expectFailure(compileTranslationObjectRequestV1({State, Entry, Options}));
+
+  auto WritableCode = fixture();
+  WritableCode.Memory[2].Permissions =
+      MemoryPermission::Write | MemoryPermission::Execute;
+  Options = options(true);
+  // The session contract rejects this mapping before host-target resolution,
+  // so the negative boundary must execute even on non-AArch64 hosts.
+  auto Rejected = NativeTranslationSessionV1::create(Options, WritableCode);
+  ASSERT_FALSE(static_cast<bool>(Rejected));
+  auto Unhandled = llvm::handleErrors(
+      Rejected.takeError(), [](const NativeTranslationSessionError &Error) {
+        EXPECT_EQ(Error.code(),
+                  NativeTranslationSessionErrorCode::InvalidRequest);
+        EXPECT_NE(Error.detail().find("writable executable guest memory"),
+                  llvm::StringRef::npos);
+      });
+  EXPECT_FALSE(static_cast<bool>(Unhandled))
+      << llvm::toString(std::move(Unhandled));
+  Options.CodeInvalidation =
+      CodeInvalidationPolicy::InvalidateOnExecutableWrite;
+  auto Admitted = validateTranslationRequest(Options, WritableCode);
+  EXPECT_FALSE(static_cast<bool>(Admitted))
+      << llvm::toString(std::move(Admitted));
 }
 
 TEST(X87Translation,
@@ -327,48 +350,36 @@ TEST(X87TranslationNative, RefusalsAndMemoryFaultRetainCommittedPrefix) {
 TEST(X87TranslationNative, ExecutableStoreCommitsOnlyUnderInvalidatePolicy) {
   if (!nativeLinuxAArch64())
     GTEST_SKIP() << "native Linux AArch64 session required";
-  for (const auto Policy :
-       {CodeInvalidationPolicy::RejectExecutableWrites,
-        CodeInvalidationPolicy::InvalidateOnExecutableWrite}) {
-    auto Before = fixture();
-    Before.Memory[2].Permissions =
-        MemoryPermission::Write | MemoryPermission::Execute;
-    Before.Memory[2].Generation = 7;
-    auto Options = options(true);
-    Options.CodeInvalidation = Policy;
-    auto Session =
-        llvm::cantFail(NativeTranslationSessionV1::create(Options, Before));
-    auto Result = Session->run();
-    ASSERT_TRUE(static_cast<bool>(Result))
-        << llvm::toString(Result.takeError());
-    const bool Completed =
-        Policy == CodeInvalidationPolicy::InvalidateOnExecutableWrite;
-    EXPECT_EQ(Result->Exit.Reason, Completed
-                                       ? TranslationStopReason::SelfModification
-                                       : TranslationStopReason::MemoryFault);
-    EXPECT_EQ(Result->GuestInstructions, 5u);
-    EXPECT_EQ(Result->BlocksTranslated, 4u);
-    const auto After =
-        llvm::cantFail(createRuntimeGuestStateX86_64X87V1(Session->state()));
-    EXPECT_EQ(After.Integer.RIP, Entry + (Completed ? 15 : 13));
-    EXPECT_EQ(After.Integer.GPR[0], 0u);
-    EXPECT_EQ(After.X87.Image[4], Completed ? 0 : 0x10);
-    EXPECT_EQ(Session->state().Memory[2].Generation, Completed ? 8u : 7u);
-    if (Completed) {
-      ASSERT_TRUE(Result->Exit.SelfModification);
-      EXPECT_EQ(Result->Exit.SelfModification->Size, 10u);
-      EXPECT_EQ(Result->Exit.SelfModification->Address, 0x3001u);
-      EXPECT_EQ(Result->Exit.SelfModification->OldGeneration, 7u);
-      EXPECT_EQ(Result->Exit.SelfModification->NewGeneration, 8u);
-      EXPECT_EQ(llvm::support::endian::read64le(
-                    Session->state().Memory[2].Bytes.data() + 1),
-                0xc000000000000001u);
-    } else {
-      EXPECT_EQ(Session->state().Memory[2].Bytes, Before.Memory[2].Bytes);
-      ASSERT_TRUE(Result->Exit.MemoryFault);
-      EXPECT_EQ(Result->Exit.MemoryFault->AccessWidthBits, 80u);
-    }
-  }
+  auto Before = fixture();
+  Before.Memory[2].Permissions =
+      MemoryPermission::Write | MemoryPermission::Execute;
+  Before.Memory[2].Generation = 7;
+  auto Options = options(true);
+  Options.CodeInvalidation =
+      CodeInvalidationPolicy::InvalidateOnExecutableWrite;
+  auto SessionOrErr = NativeTranslationSessionV1::create(Options, Before);
+  ASSERT_TRUE(static_cast<bool>(SessionOrErr))
+      << llvm::toString(SessionOrErr.takeError());
+  auto Session = std::move(*SessionOrErr);
+  auto Result = Session->run();
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Exit.Reason, TranslationStopReason::SelfModification);
+  EXPECT_EQ(Result->GuestInstructions, 5u);
+  EXPECT_EQ(Result->BlocksTranslated, 4u);
+  auto After = createRuntimeGuestStateX86_64X87V1(Session->state());
+  ASSERT_TRUE(static_cast<bool>(After)) << llvm::toString(After.takeError());
+  EXPECT_EQ(After->Integer.RIP, Entry + 15);
+  EXPECT_EQ(After->Integer.GPR[0], 0u);
+  EXPECT_EQ(After->X87.Image[4], 0);
+  EXPECT_EQ(Session->state().Memory[2].Generation, 8u);
+  ASSERT_TRUE(Result->Exit.SelfModification);
+  EXPECT_EQ(Result->Exit.SelfModification->Size, 10u);
+  EXPECT_EQ(Result->Exit.SelfModification->Address, 0x3001u);
+  EXPECT_EQ(Result->Exit.SelfModification->OldGeneration, 7u);
+  EXPECT_EQ(Result->Exit.SelfModification->NewGeneration, 8u);
+  EXPECT_EQ(llvm::support::endian::read64le(
+                Session->state().Memory[2].Bytes.data() + 1),
+            0xc000000000000001u);
 }
 
 TEST(X87TranslationNative,

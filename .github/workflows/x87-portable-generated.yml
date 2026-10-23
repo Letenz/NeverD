@@ -22,7 +22,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Temporary diagnostic dispatch uses only the affected native host.
+          - arch: x86_64
+            runner: ubuntu-24.04
+            prebuilt: 'ON'
+            original_target: NeverDX87OriginalReplay
+            original_argument: '--original-driver build-x87-portable/bin/NeverDX87OriginalReplay'
+            translation_argument: ''
           - arch: aarch64
             runner: ubuntu-24.04-arm
             # The pinned package set has no Linux AArch64 archive. Build the
@@ -51,7 +56,7 @@ jobs:
           sudo install -m 0644 /tmp/llvm-signing-key.asc /usr/share/keyrings/neverd-llvm.asc
           echo 'deb [signed-by=/usr/share/keyrings/neverd-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main' | sudo tee /etc/apt/sources.list.d/neverd-llvm.list
           sudo apt-get update
-          sudo apt-get install --yes clang-23 lld-23 ninja-build gdb
+          sudo apt-get install --yes clang-23 lld-23 ninja-build
           echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
       - name: Verify strict observation and result auditing
         run: python -m unittest scripts.tests.test_check_x87_portable_generated scripts.tests.test_check_x87_translation scripts.tests.test_check_x87_cross_host scripts.tests.test_benchmark_x87_portable -v
@@ -94,43 +99,12 @@ jobs:
           --build-dir build-x87-portable
           --output-dir build-x87-portable/evidence
       - name: Freeze native AArch64 translation objects and sessions
-        id: translation
         if: ${{ matrix.arch == 'aarch64' }}
         run: >-
           python scripts/check_x87_translation.py
           --driver build-x87-portable/bin/NeverDX87TranslationTests
           --build-dir build-x87-portable
           --output-dir build-x87-portable/translation-evidence
-      # Temporary issue-1677 diagnostic: preserve the original failure and
-      # inspect its smallest native reproducer without changing qualification.
-      - name: Diagnose executable-store native failure
-        if: ${{ failure() && matrix.arch == 'aarch64' && steps.translation.outcome == 'failure' }}
-        continue-on-error: true
-        timeout-minutes: 5
-        run: |
-          mkdir -p build-x87-portable/diagnostics
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          import subprocess
-          output = Path('build-x87-portable/diagnostics')
-          command = ['gdb', '--batch', '--return-child-result']
-          for expression in ('set pagination off', 'run', 'thread apply all bt full',
-                             'info registers', 'x/24i $pc-32', 'x/24gx $sp',
-                             'info sharedlibrary', 'info proc mappings'):
-              command += ['-ex', expression]
-          command += ['--args', 'build-x87-portable/bin/NeverDX87TranslationTests']
-          results = []
-          for name, arguments in (
-              ('executable-store', ['--gtest_filter=X87TranslationNative.ExecutableStoreCommitsOnlyUnderInvalidatePolicy']),
-              ('complete-suite', [])):
-              with (output / (name + '-gdb.log')).open('wb') as log:
-                  process = subprocess.run(command + arguments, stdout=log,
-                      stderr=subprocess.STDOUT, timeout=120, check=False)
-              results.append({'name': name, 'command': command + arguments,
-                              'returncode': process.returncode})
-          (output / 'commands.json').write_text(json.dumps(results, indent=2) + '\n')
-          PY
       - name: Record seeded arithmetic for cross-host comparison
         run: >-
           python scripts/check_x87_cross_host.py record
@@ -155,7 +129,6 @@ jobs:
             build-x87-portable/translation-evidence/
             build-x87-portable/arithmetic-evidence/
             build-x87-portable/performance-evidence/
-            build-x87-portable/diagnostics/
             build-x87-portable/Testing/Temporary/
             build-x87-portable/neverd-build-receipt.json
             build-x87-portable/neverd-dependency-inputs.json
@@ -164,7 +137,6 @@ jobs:
           retention-days: 30
 
   compare:
-    if: ${{ false }} # Temporary ARM64-only crash diagnosis is not qualification.
     name: Audit native cross-host state and arithmetic agreement
     needs: generated
     runs-on: ubuntu-24.04
