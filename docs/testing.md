@@ -690,6 +690,12 @@ Zero, short and storage-limited attempts preserve the original semantics.
 Degree-32/64 machine-code fixtures execute the generated C through both
 backends and all six CLI/GUI-worker routes at O0/O2, with separate ordinary
 and enhanced caches.
+Shared-cofactor regressions require shorter degree-8/16/32/48/96 readings,
+independent APInt evaluation through 257 bits and exhaustive observed input
+pairs for the degree-32 case. The mixed degree-8 replacement also has independent
+full-width Z3 proofs and native execution through all six CLI/worker routes.
+Completion metadata must exclude opaque inputs and reset on resource refusal;
+it is not an optimality certificate.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.

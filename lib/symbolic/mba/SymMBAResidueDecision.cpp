@@ -15,6 +15,7 @@
 #include "Limits.h"
 #include "SymMBADetail.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -42,17 +43,20 @@ struct Decision {
   bool operator==(const Decision &) const = default;
 };
 
-struct DecisionHash {
-  size_t operator()(const Decision &D) const {
-    return size_t(llvm::hash_combine(D.Variable, D.Low, D.High));
+struct DecisionInfo {
+  static Decision getEmptyKey() { return {UINT64_MAX, 0, 0}; }
+  static Decision getTombstoneKey() { return {UINT64_MAX - 1, 0, 0}; }
+  static bool isEqual(const Decision &A, const Decision &B) { return A == B; }
+  static unsigned getHashValue(const Decision &D) {
+    return unsigned(llvm::hash_combine(D.Variable, D.Low, D.High));
   }
 };
 
 class LowWordDecisions {
   using Bits = llvm::SmallVector<uint32_t, 8>;
   enum Operation : uint64_t { And, Or, Xor };
-  // A known parity input precedes the other words. The remaining words keep
-  // bit-interleaved order, which bounds the carries of their own products.
+  // A short prefix of a known parity input precedes the other words. Higher
+  // bits return to interleaved order, keeping mixed-word carries bounded.
   static constexpr uint64_t SecondaryWord = uint64_t(1) << 63;
 
   static unsigned variableBit(uint64_t Variable) {
@@ -71,17 +75,20 @@ class LowWordDecisions {
   // The low edge bit denotes complement. Negation never duplicates a graph;
   // zero and one are the two edges of the single terminal node.
   std::vector<Decision> Nodes{{UINT64_MAX, 0, 0}};
-  std::unordered_map<Decision, uint32_t, DecisionHash> Unique, Applied;
+  llvm::DenseMap<Decision, uint32_t, DecisionInfo> Unique, Applied;
   struct CarryKey {
     uint32_t A, B, C;
     bool operator==(const CarryKey &) const = default;
   };
-  struct CarryHash {
-    size_t operator()(const CarryKey &K) const {
-      return size_t(llvm::hash_combine(K.A, K.B, K.C));
+  struct CarryInfo {
+    static CarryKey getEmptyKey() { return {UINT32_MAX, 0, 0}; }
+    static CarryKey getTombstoneKey() { return {UINT32_MAX - 1, 0, 0}; }
+    static bool isEqual(const CarryKey &A, const CarryKey &B) { return A == B; }
+    static unsigned getHashValue(const CarryKey &K) {
+      return unsigned(llvm::hash_combine(K.A, K.B, K.C));
     }
   };
-  std::unordered_map<CarryKey, uint32_t, CarryHash> Carries;
+  llvm::DenseMap<CarryKey, uint32_t, CarryInfo> Carries;
   std::unordered_map<uint64_t, Bits> Words;
   std::unordered_map<uint32_t, unsigned> Zeros;
   struct WordOperation {
@@ -111,6 +118,22 @@ class LowWordDecisions {
     Work += Units;
     Budget.consume(Units);
     Storage -= Bytes;
+    return true;
+  }
+
+  // These maps never erase individual keys. Prepay the complete bucket
+  // allocation at the dense map's 3/4 load boundary, including its initial
+  // table. Existing per-entry charges still cover keys and node storage.
+  template <typename Map> bool reserveEntry(Map &Cache) {
+    const auto Buckets =
+        Cache.getMemorySize() / sizeof(typename Map::value_type);
+    if ((Cache.size() + 1) * 4 < Buckets * 3)
+      return true;
+    const auto Next =
+        std::max(limits::kResidueDecisionMinMapBuckets, 2 * Buckets);
+    if (!charge(0, Next * sizeof(typename Map::value_type)))
+      return false;
+    Cache.reserve(Cache.size() + 1);
     return true;
   }
 
@@ -150,13 +173,14 @@ class LowWordDecisions {
       return It->second ^ Complement;
     if (Nodes.size() >= limits::kMaxResidueDecisionNodes ||
         !charge(1,
-                2 * sizeof(Decision) + sizeof(uint32_t) + 6 * sizeof(void *))) {
+                2 * sizeof(Decision) + sizeof(uint32_t) + 6 * sizeof(void *)) ||
+        !reserveEntry(Unique)) {
       Failed = true;
       return 0;
     }
     const auto Id = uint32_t(Nodes.size() << 1);
     Nodes.push_back(D);
-    Unique.emplace(D, Id);
+    Unique.try_emplace(D, Id);
     return Id ^ Complement;
   }
 
@@ -206,9 +230,10 @@ class LowWordDecisions {
         apply(Op, Left.Variable == Variable ? Left.High : A,
               Right.Variable == Variable ? Right.High : B, Depth + 1);
     const auto Result = node(Variable, Low, High);
-    if (!charge(1, sizeof(Decision) + sizeof(uint32_t) + 4 * sizeof(void *)))
+    if (!charge(1, sizeof(Decision) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
+        !reserveEntry(Applied))
       return 0;
-    Applied.emplace(Key, Result);
+    Applied.try_emplace(Key, Result);
     return Result ^ Complement;
   }
 
@@ -339,9 +364,10 @@ class LowWordDecisions {
         majority(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
                  DC.Variable == V ? DC.High : C, Depth + 1);
     auto R = node(V, L, H);
-    if (!charge(1, sizeof(CarryKey) + sizeof(uint32_t) + 4 * sizeof(void *)))
+    if (!charge(1, sizeof(CarryKey) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
+        !reserveEntry(Carries))
       return 0;
-    Carries.emplace(Key, R);
+    Carries.try_emplace(Key, R);
     return R ^ Complement;
   }
 
@@ -620,8 +646,10 @@ class LowWordDecisions {
       // a relation between it and any other input word or path condition.
       for (unsigned I = 0; I < Count; ++I)
         Result[I] =
-            node(((PriorityInput && R.index() != *PriorityInput) ? SecondaryWord
-                                                                 : 0) |
+            node(((PriorityInput && (R.index() != *PriorityInput ||
+                                     I >= limits::kResidueDecisionPriorityBits))
+                      ? SecondaryWord
+                      : 0) |
                      (uint64_t(I) << 32) | R.index(),
                  0, 1);
     }
@@ -737,7 +765,7 @@ public:
         StorageLimited(StorageLimited) {}
 
   SymRef simplify(SymRef Root, const llvm::APInt &Scale, unsigned Observed,
-                  bool OddProductOnly) {
+                  bool OddProductOnly, bool *Complete) {
     const auto Width = Ctx.width(Root);
     // Refuse broad domains before constructing decisions. This is only a
     // search admission rule; opaque words still retain all their possible bits.
@@ -918,11 +946,15 @@ public:
     }
     const size_t FirstEmitted = Ctx.numNodes();
     std::unordered_map<uint32_t, SymRef> Emitted;
+    // Boolean operators commute with projection to bit zero. Build a
+    // bitwise word using shifted inputs and all-ones Boolean constants, then
+    // mask once at the root instead of masking every selector separately.
     auto Emit = [&](auto &&Self, uint32_t Id, unsigned Depth) -> SymRef {
       if (!charge())
         return {};
       if (Id <= 1)
-        return Ctx.mkConst(Width, Id);
+        return Id ? Ctx.mkConst(llvm::APInt::getAllOnes(Width))
+                  : Ctx.mkZero(Width);
       if (auto It = Emitted.find(Id); It != Emitted.end())
         return It->second;
       const auto D = decision(Id);
@@ -939,15 +971,13 @@ public:
       }
       const auto Bit = variableBit(D.Variable);
       auto Selector = Ctx.mkZExtOrTrunc(
-          Ctx.mkAnd(Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)),
-                    Ctx.mkConst(Ctx.width(Input), 1)),
-          Width);
+          Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)), Width);
       auto Low = Self(Self, D.Low, Depth + 1);
       auto High = Self(Self, D.High, Depth + 1);
       if (!Low || !High || Failed)
         return {};
       SymRef Result;
-      const auto One = Ctx.mkConst(Width, 1);
+      const auto One = Ctx.mkConst(llvm::APInt::getAllOnes(Width));
       if (!D.Low)
         Result = Ctx.mkAnd(Selector, High);
       else if (!D.High)
@@ -956,7 +986,7 @@ public:
         Result = Ctx.mkOr(Ctx.mkXor(Selector, One), High);
       else if (D.High == 1)
         Result = Ctx.mkOr(Selector, Low);
-      else if (apply(Xor, D.Low, D.High) == 1)
+      else if ((D.Low ^ D.High) == 1)
         Result = Ctx.mkXor(Selector, Low);
       else
         Result = Ctx.mkXor(Low, Ctx.mkAnd(Selector, Ctx.mkXor(Low, High)));
@@ -1044,42 +1074,49 @@ public:
     using Polynomial = llvm::SmallVector<uint64_t, 8>;
     std::map<uint64_t, unsigned> PolynomialVariables;
     std::unordered_map<uint32_t, Polynomial> Polynomials;
-    auto ReadPolynomial = [&](auto &&Self,
-                              uint32_t Id) -> std::optional<Polynomial> {
+    auto ReadPolynomial = [&](auto &&Self, uint32_t Id) -> const Polynomial * {
       if (!charge())
-        return std::nullopt;
+        return nullptr;
+      static const std::array<Polynomial, 2> Terminals{
+          {Polynomial{}, Polynomial{0}}};
       if (Id <= 1)
-        return Id ? Polynomial{0} : Polynomial{};
+        return &Terminals[Id];
+      if (auto It = Polynomials.find(Id); It != Polynomials.end())
+        return &It->second;
+      auto Store = [&](Polynomial Value) -> const Polynomial * {
+        if (!charge(Value.size(), sizeof(decltype(Polynomials)::value_type) +
+                                      4 * sizeof(void *) +
+                                      Value.size() * sizeof(uint64_t)))
+          return nullptr;
+        return &Polynomials.emplace(Id, std::move(Value)).first->second;
+      };
       if (Id & 1) {
-        auto Result = Self(Self, Id ^ 1);
-        if (!Result || !charge(Result->size() + 1))
-          return std::nullopt;
-        if (!Result->empty() && !Result->front())
-          Result->erase(Result->begin());
+        const auto *Value = Self(Self, Id ^ 1);
+        if (!Value ||
+            !charge(Value->size() + 1, (Value->size() + 1) * sizeof(uint64_t)))
+          return nullptr;
+        auto Result = *Value;
+        if (!Result.empty() && !Result.front())
+          Result.erase(Result.begin());
         else
-          Result->insert(Result->begin(), 0);
-        if (Result->size() > limits::kMaxResidueDecisionPolynomialTerms)
-          return std::nullopt;
-        return Result;
-      }
-      if (auto It = Polynomials.find(Id); It != Polynomials.end()) {
-        if (!charge(It->second.size(), It->second.size() * sizeof(uint64_t)))
-          return std::nullopt;
-        return It->second;
+          Result.insert(Result.begin(), 0);
+        if (Result.size() > limits::kMaxResidueDecisionPolynomialTerms)
+          return nullptr;
+        return Store(std::move(Result));
       }
       const auto D = decision(Id);
       auto [It, Inserted] = PolynomialVariables.try_emplace(
           D.Variable, PolynomialVariables.size());
       if (It->second >= 64)
-        return std::nullopt;
+        return nullptr;
       if (Inserted &&
           !charge(1, sizeof(decltype(PolynomialVariables)::value_type) +
                          4 * sizeof(void *)))
-        return std::nullopt;
+        return nullptr;
       const auto Variable = uint64_t(1) << It->second;
       auto Low = Self(Self, D.Low), High = Self(Self, D.High);
       if (!Low || !High)
-        return std::nullopt;
+        return nullptr;
       auto Xor = [&](const Polynomial &A,
                      const Polynomial &B) -> std::optional<Polynomial> {
         const auto Size = A.size() + B.size();
@@ -1094,22 +1131,16 @@ public:
       };
       auto Difference = Xor(*Low, *High);
       if (!Difference || !charge(Difference->size()))
-        return std::nullopt;
+        return nullptr;
       for (auto &Term : *Difference) {
         // Ordered decisions place this variable before both children.
         // Their polynomials cannot contain it; adding its bit preserves order.
         if (Term & Variable)
-          return std::nullopt;
+          return nullptr;
         Term |= Variable;
       }
       auto Result = Xor(*Low, *Difference);
-      if (!Result ||
-          !charge(Result->size(), sizeof(decltype(Polynomials)::value_type) +
-                                      4 * sizeof(void *) +
-                                      Result->size() * sizeof(uint64_t)))
-        return std::nullopt;
-      Polynomials.emplace(Id, *Result);
-      return Result;
+      return Result ? Store(std::move(*Result)) : nullptr;
     };
     auto SynthesizePolynomial = [&](uint32_t Id, SymRef Fallback) -> SymRef {
       auto Form = ReadPolynomial(ReadPolynomial, Id);
@@ -1134,9 +1165,8 @@ public:
       for (const auto &[Variable, Index] : PolynomialVariables) {
         const auto Input = SymRef(uint32_t(Variable));
         Inputs[Index] = Ctx.mkZExtOrTrunc(
-            Ctx.mkAnd(Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input),
-                                                    variableBit(Variable))),
-                      Ctx.mkConst(Ctx.width(Input), 1)),
+            Ctx.mkLShr(Input,
+                       Ctx.mkConst(Ctx.width(Input), variableBit(Variable))),
             Width);
       }
       llvm::SmallVector<SymRef, 16> Terms;
@@ -1146,10 +1176,13 @@ public:
           Factors.push_back(Inputs[std::countr_zero(Term)]);
           Term &= Term - 1;
         }
-        Terms.push_back(Factors.empty() ? Ctx.mkConst(Width, 1)
-                                        : Ctx.mkAnd(Factors));
+        Terms.push_back(Factors.empty()
+                            ? Ctx.mkConst(llvm::APInt::getAllOnes(Width))
+                            : Ctx.mkAnd(Factors));
       }
-      auto Result = Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms);
+      auto Result =
+          Ctx.mkAnd(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms),
+                    Ctx.mkConst(Width, 1));
       std::map<Polynomial, SymRef> Factored;
       auto Factor = [&](auto &&Self, const Polynomial &P) -> SymRef {
         if (!charge(1 + P.size(), sizeof(decltype(Factored)::value_type) +
@@ -1159,7 +1192,7 @@ public:
         if (P.empty())
           return Ctx.mkZero(Width);
         if (P.size() == 1 && !P.front())
-          return Ctx.mkConst(Width, 1);
+          return Ctx.mkConst(llvm::APInt::getAllOnes(Width));
         if (auto It = Factored.find(P); It != Factored.end())
           return It->second;
         if (!charge(Inputs.size(), Inputs.size() * sizeof(unsigned)))
@@ -1183,6 +1216,60 @@ public:
           else
             Low.push_back(Term);
         }
+        // P = Low XOR (x AND High). Partition Low over the variables not
+        // present in High. A group sharing most of High can reuse that exact
+        // cofactor: Low = R XOR (Q AND High), hence
+        // P = R XOR ((x XOR Q) AND High). Symmetric difference proves the
+        // remainder, including complemented and partially matching groups.
+        if (!Low.empty() && !(High.size() == 1 && !High.front())) {
+          if (!charge(High.size() + Low.size(),
+                      Low.size() * (sizeof(uint64_t) + sizeof(Polynomial) +
+                                    4 * sizeof(void *) + 2 * sizeof(uint64_t))))
+            return {};
+          uint64_t Support = 0;
+          for (auto Term : High)
+            Support |= Term;
+          std::map<uint64_t, Polynomial> Groups;
+          for (auto Term : Low) {
+            if (!charge(1 + std::bit_width(Groups.size())))
+              return {};
+            Groups[Term & ~Support].push_back(Term & Support);
+          }
+          Polynomial Quotient{Bit}, Remainder;
+          bool Found = false;
+          for (const auto &[Outside, Inside] : Groups) {
+            const auto Size = Inside.size() + High.size();
+            if (!charge(Size, Size * sizeof(uint64_t)))
+              return {};
+            Polynomial Difference;
+            std::set_symmetric_difference(Inside.begin(), Inside.end(),
+                                          High.begin(), High.end(),
+                                          std::back_inserter(Difference));
+            const bool Reuse = Difference.size() < Inside.size();
+            if (Reuse) {
+              Quotient.push_back(Outside);
+              Found = true;
+            }
+            for (auto Term : Reuse ? Difference : Inside)
+              Remainder.push_back(Term | Outside);
+          }
+          if (Found) {
+            const auto Size = Quotient.size() + Remainder.size();
+            if (!charge(Size * (1 + std::bit_width(Size)),
+                        Size * sizeof(uint64_t)))
+              return {};
+            std::sort(Quotient.begin(), Quotient.end());
+            std::sort(Remainder.begin(), Remainder.end());
+            auto Q = Self(Self, Quotient), H = Self(Self, High),
+                 R = Self(Self, Remainder);
+            if (!Q || !H || !R ||
+                !charge(2, 2 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+              return {};
+            auto Value = Ctx.mkXor(R, Ctx.mkAnd(Q, H));
+            Factored.emplace(P, Value);
+            return Value;
+          }
+        }
         auto A = Self(Self, Low), B = Self(Self, High);
         if (!A || !B || !charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
           return {};
@@ -1190,23 +1277,55 @@ public:
         Factored.emplace(P, Value);
         return Value;
       };
-      if (auto Smaller = Factor(Factor, *Form);
-          Smaller && readingScore(Ctx, Smaller) < readingScore(Ctx, Result))
-        Result = Smaller;
-      return readingScore(Ctx, Result) < readingScore(Ctx, Fallback) ? Result
-                                                                     : Fallback;
+      if (auto Smaller = Factor(Factor, *Form)) {
+        Smaller = Ctx.mkAnd(Smaller, Ctx.mkConst(Width, 1));
+        if (readingScore(Ctx, Smaller) < readingScore(Ctx, Result))
+          Result = Smaller;
+      }
+      return !Fallback ||
+                     readingScore(Ctx, Result) < readingScore(Ctx, Fallback)
+                 ? Result
+                 : Fallback;
+    };
+    auto ScaledBit = [&](const llvm::APInt &C, SymRef V) -> SymRef {
+      // A highest-bit coefficient already discards every bit except bit zero.
+      // Other coefficients must retain the explicit one-bit projection.
+      if (C.countr_zero() == Width - 1 && Ctx.op(V) == SymOp::And &&
+          isOne(Ctx.operand(V, 0))) {
+        auto Args = Ctx.operands(V).drop_front();
+        if (!charge(Args.size(),
+                    sizeof(SymNode) + Args.size() * sizeof(SymRef)))
+          return {};
+        V = Ctx.mkAnd(Args);
+      }
+      return Ctx.mkMul(Ctx.mkConst(C), V);
     };
     llvm::SmallVector<SymRef, 8> Terms;
     llvm::SmallVector<std::pair<uint32_t, SymRef>, 8> Values;
+    llvm::SmallVector<bool, 8> PolynomialBuilt;
     for (const auto &[Id, Coefficient] : Coefficients) {
       if (Coefficient.isZero())
         continue;
-      auto Value = Emit(Emit, Id, 0);
+      auto Value =
+          Observed >= limits::kResidueDecisionPolynomialFirstBits &&
+                  Nodes.size() >= limits::kResidueDecisionPolynomialFirstNodes
+              ? SynthesizePolynomial(Id, {})
+              : SymRef{};
+      const bool HasPolynomial = Value.isValid();
+      if (!Value && !Failed) {
+        Value = Emit(Emit, Id, 0);
+        if (Value)
+          Value = Ctx.mkAnd(Value, Ctx.mkConst(Width, 1));
+      }
       if (!Value || Failed) {
         return Root;
       }
       Values.emplace_back(Id, Value);
-      Terms.push_back(Ctx.mkMul(Ctx.mkConst(Coefficient), Value));
+      PolynomialBuilt.push_back(HasPolynomial);
+      auto Term = ScaledBit(Coefficient, Value);
+      if (!Term)
+        return Root;
+      Terms.push_back(Term);
     }
     if (!charge(1 + 3 * (Ctx.numNodes() - Ctx.numCachedReadabilityNodes()),
                 (Terms.size() + 1) * (sizeof(SymNode) + 4 * sizeof(SymRef)))) {
@@ -1225,11 +1344,17 @@ public:
                                         sizeof(llvm::APInt) +
                                         ((size_t(Width) - 1) / 64 + 1) * 8)))
         break;
-      auto Shorter = SynthesizePolynomial(Id, Value);
+      // The first construction already factored this exact polynomial. A
+      // second pass would rebuild the same form under fewer resources.
+      auto Shorter =
+          PolynomialBuilt[I] ? Value : SynthesizePolynomial(Id, Value);
       if (!Failed && Shorter == Value)
         Shorter = Synthesize(Id, Shorter);
       if (Shorter != Value) {
-        Terms[I] = Ctx.mkMul(Ctx.mkConst(Coefficients.at(Id)), Shorter);
+        auto Term = ScaledBit(Coefficients.at(Id), Shorter);
+        if (!Term)
+          break;
+        Terms[I] = Term;
         auto Next = Ctx.mkAdd(Terms);
         if (readingScore(Ctx, Next) < readingScore(Ctx, Result))
           Result = Next;
@@ -1238,6 +1363,13 @@ public:
         break;
     }
 
+    // A reconstructed cofactor expression has the same complete word. Reuse
+    // this finished search only when every input was a real free variable;
+    // a second reading can otherwise reveal relations between opaque words.
+    if (Complete && !Failed && charge(Inputs.size()) &&
+        std::all_of(Inputs.begin(), Inputs.end(),
+                    [&](uint32_t I) { return Ctx.isVar(SymRef(I)); }))
+      *Complete = true;
     if (readingScore(Ctx, Result) >= readingScore(Ctx, Root))
       return Root;
     recordResidueReading(Ctx, FirstEmitted, Budget, Storage);
@@ -1249,7 +1381,10 @@ public:
 
 SymRef foldResidueDecisions(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                             size_t &Storage, bool OddProductOnly,
-                            size_t MaxWork, bool *StorageLimited) {
+                            size_t MaxWork, bool *StorageLimited,
+                            bool *Complete) {
+  if (Complete)
+    *Complete = false;
   if (Ctx.op(Root) != SymOp::Mul || Ctx.numOperands(Root) < 2)
     return Root;
   const size_t Words = (size_t(Ctx.width(Root)) - 1) / 64 + 1;
@@ -1268,7 +1403,7 @@ SymRef foldResidueDecisions(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   if (!Observed || Observed > limits::kMaxAffineResidueTableBits)
     return Root;
   return LowWordDecisions(Ctx, Budget, Storage, MaxWork, StorageLimited)
-      .simplify(Root, Scale, Observed, OddProductOnly);
+      .simplify(Root, Scale, Observed, OddProductOnly, Complete);
 }
 
 } // namespace neverd::symbolic::detail
