@@ -324,7 +324,9 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                    llvm::MaybeAlign(Op.Output.Size), Ordering);
   }
 
-  if (IC == I::A64_Pacga && Op.Output.Size > 0 && Op.NumInputs >= 3) {
+  if (IC == I::A64_Pacga) {
+    if (!aarch64PAuthMedShapeIsValid(Op))
+      llvm::report_fatal_error(kAArch64PAuthMalformedOperation);
     auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
     auto coerceI64 = [&](llvm::Value *Value) {
       if (Value->getType()->isPointerTy())
@@ -337,12 +339,8 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     llvm::Value *Discriminator = coerceI64(getVar(Op.Inputs[2], Builder));
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::ptrauth_sign_generic);
-    llvm::Value *Result =
-        Builder.CreateCall(Fn, {Value, Discriminator}, "pacga");
-    auto *OutTy = sizeToType(Op.Output.Size);
-    return Result->getType() == OutTy
-               ? Result
-               : Builder.CreateZExtOrTrunc(Result, OutTy);
+    return Builder.CreateCall(Fn, {Value, Discriminator},
+                              kAArch64PAuthResultName);
   }
 
   // Exclusive instructions can receive an ADRP+ADD-derived MedIR value for a

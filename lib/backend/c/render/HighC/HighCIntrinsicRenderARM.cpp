@@ -911,11 +911,9 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
            Ordering + ")";
   }
   case I::A64_Pacga:
-    if (Ops.size() < 2)
-      return {};
-    HasCIntrinsics = true;
-    return "__builtin_arm_pacga((uint64_t)(" + Ops[0] + "), (uint64_t)(" +
-           Ops[1] + "))";
+    if (ResultBytes != kAArch64PAuthPointerBytes || Ops.size() != 2)
+      throw std::invalid_argument(kAArch64PAuthMalformedOperation);
+    return aarch64PAuthGenericSignC(Ops[0], Ops[1]);
   case I::Addg:
   case I::Subg: {
     if (Ops.size() < 3)

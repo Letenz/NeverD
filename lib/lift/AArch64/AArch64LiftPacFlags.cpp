@@ -15,6 +15,8 @@
 
 #include "AArch64LiftDetail.h"
 
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/AArch64Lifter.h"
 
@@ -233,11 +235,17 @@ bool liftPacFlags(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   // PAC Extended variants (ARMv8.3+)
   // ========================================================================
   case AARCH64_INS_PACGA: {
-    if (ARM64.op_count < 3)
-      break;
+    if (ARM64.op_count != 3 || ARM64.operands[0].type != AARCH64_OP_REG ||
+        ARM64.operands[1].type != AARCH64_OP_REG ||
+        ARM64.operands[2].type != AARCH64_OP_REG)
+      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
     NdVar Dst = L.operandWrite(ARM64.operands[0]);
     NdVar A = L.operandRead(S, ARM64.operands[1]);
     NdVar B = L.operandRead(S, ARM64.operands[2]);
+    if (Dst.Size != kAArch64PAuthPointerBytes ||
+        A.Size != kAArch64PAuthPointerBytes ||
+        B.Size != kAArch64PAuthPointerBytes)
+      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
     S.emitIntrinsic(Intrinsic::A64_Pacga, Dst, {A, B});
     break;
   }

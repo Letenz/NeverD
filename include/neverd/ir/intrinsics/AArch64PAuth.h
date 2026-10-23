@@ -87,6 +87,9 @@ inline bool aarch64PAuthShapeIsValid(Intrinsic Id,
     return Shape.NumInputs == (Operation->Strip ? 2 : 3) &&
            (Operation->Strip ||
             Shape.ModifierBytes == kAArch64PAuthPointerBytes);
+  if (Id == Intrinsic::A64_Pacga)
+    return Shape.NumInputs == 3 &&
+           Shape.ModifierBytes == kAArch64PAuthPointerBytes;
   return Id == Intrinsic::A64_AuthBranch && Shape.NumInputs == 4 &&
          Shape.ModifierBytes == kAArch64PAuthPointerBytes &&
          Shape.KeyBytes == kAArch64PAuthKeyBytes && Shape.Key &&

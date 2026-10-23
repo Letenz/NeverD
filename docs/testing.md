@@ -22,10 +22,29 @@ checks the fast terminator classifier against Capstone on a real binary.
 Compiled C parameter-flow checks cover local-name collisions at O0/O2 through
 both renderers. Unsupported PAuth_LR encodings, including the PACM HINT, must
 fail explicitly through both decoder routes.
+PACGA additionally checks independent inputs and rejects malformed widths.
+Its generated C is compiled back to LLVM to check operand and return flow.
+On a PAuth-capable Apple Silicon host,
+`NativeGenericSignaturesAgreeWithBothCProjections` executes HighC and LLVMC
+PACGA output at O0/O2 against an independent instruction oracle, including
+optimized LLVM output. Its ordinary arm64 process must produce a nonzero
+generic signature. PAC/AUT can be disabled in that process despite hardware
+feature discovery, so it cannot qualify pointer authentication.
+`NativeKeysAgreeWithBothCProjections` instead compiles an arm64e execution
+probe and explicitly skips if the host refuses it. On an eligible host it
+compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
+modifiers; each key must change at least one pointer, excluding a NOP profile.
+Other architectures skip both native checks. These tests do not certify
+arm64e ABI reconstruction or invalid-signature traps.
 
 The same target checks public Mach-O loading, CPU subtype capability bits,
-arm64e chained formats 1/7/9/10/12, signing metadata, signed import addends,
+arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
 multi-start pages, tagged pointers, malformed chains and unsupported layouts.
+Segmented cases check load-command index order, all signing fields, the high
+bit of the 12-bit next field, invalid indices/offsets/padding and overflow.
+X1 without any signed storage must still retain the authenticated-ABI rebuild
+restriction. `NeverDObjCSourceCallTests` also checks that x1 subtype evidence
+and signing recipes invalidate plain-object source reconstruction.
 Signed storage must remain external in C/LLVM, immutable reads must reject it,
 and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
 also covers authenticated object relocations, keys, diversity and reserved
