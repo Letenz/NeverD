@@ -397,8 +397,9 @@ TEST(LLVMCValues, X86NativeDivideRejectsChangedContractsAndTargets) {
     auto *Assembly = llvm::InlineAsm::get(
         llvm::FunctionType::get(Pair, Types, false),
         neverd::x86DivRemAssembly({64, true}),
-        Mutation == 0 ? "={ax},={dx},{ax},{dx},r"
-                      : neverd::X86DivRemAsmConstraints,
+        Mutation == 0   ? "={ax},={dx},{ax},{dx},r"
+        : Mutation == 6 ? "={ax},={dx},{ax},{dx},~{flags}"
+                        : neverd::X86DivRemAsmConstraints,
         /*hasSideEffects=*/Mutation != 1,
         /*isAlignStack=*/Mutation == 2,
         Mutation == 3 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
