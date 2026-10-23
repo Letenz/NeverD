@@ -172,9 +172,29 @@ def main():
         assert limited_source["state"] == "resource_limited" and not limited_source["document"]
         reopened_source = json.loads(run(base + source_args + ["--reopen", str(saved), "--limit", "2"], {2, 3}).stdout)
         assert reopened_source == source_page
+        alignment_args = source_args + ["--source-difference", "--source-include-prelude"]
+        alignment = json.loads(run(base + alignment_args, {2, 3}).stdout)
+        assert alignment["schema"] == "neverd.bindiff.source.difference"
+        assert alignment["availability"] == "available" and alignment["computation_complete"], alignment
+        assert alignment["primary"]["input_sha256"] == doc["primary"]["sha256"]
+        assert alignment["semantic_validation"] == "not_performed"
+        first_alignment = json.loads(run(base + alignment_args + ["--limit", "2"], {2, 3}).stdout)
+        assert first_alignment["rows"] == alignment["rows"][:2]
+        next_alignment = json.loads(run(base + alignment_args + ["--offset", "2", "--limit", "2"], {2, 3}).stdout)
+        assert next_alignment["rows"] == alignment["rows"][2:4]
+        for option in ("--source-max-work", "--source-max-bytes"):
+            stopped_alignment = json.loads(run(base + alignment_args + [option, "1"], {3}).stdout)
+            assert stopped_alignment["state"] == "resource_limited" and not stopped_alignment["rows"]
+            unlimited_alignment = json.loads(run(base + alignment_args + [option, "0"], {2, 3}).stdout)
+            assert unlimited_alignment["rows"] == alignment["rows"], next(
+                ((a, b) for a, b in zip(unlimited_alignment["rows"], alignment["rows"]) if a != b),
+                (len(unlimited_alignment["rows"]), len(alignment["rows"])))
+            run(base + source_args + [option, "1"], {1})
+        run(base + ["--source-difference"], {1})
         run(base + ["--source-side", "secondary"], {1})
         legacy = [item for item in base if item != "--structural"]
         run(legacy + ["--source-function", checked], {1})
+        run(legacy + ["--source-difference"], {1})
         run(base + source_args + ["--source-representation", "bad"], {1})
         assert json.loads(run(base + ["--func", checked, "--json"], {2, 3}).stdout) == detail
         assert "primary function not found" in run(base + ["--func", "check", "--json"], {1}).stderr

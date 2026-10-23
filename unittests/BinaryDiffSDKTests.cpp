@@ -260,6 +260,284 @@ TEST_F(BinaryDiffSDK, SourceCancellationDiscardsTextAndKeepsNativeComparison) {
   EXPECT_EQ(take(neverd_comparison_export_json(C)), Before);
 }
 
+TEST_F(BinaryDiffSDK, SourceDifferencePagesReassembleExactOwnedRenderings) {
+  auto A = input(body(7)), B = input(body(9), 0x8000);
+  const auto OrdinaryA = parsed(neverd_ir_view_json(A, 0x1000, "c", 0, 200));
+  const auto OrdinaryB = parsed(neverd_ir_view_json(B, 0x8000, "c", 0, 200));
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[1],
+                                        R"({"discover":false})", nullptr,
+                                        nullptr),
+            1);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Native = parsed(
+      neverd_comparison_function_page_json(C, R"({"address":"0x1000"})"));
+  ASSERT_TRUE(std::filesystem::remove(Directory / "0.raw"));
+  ASSERT_TRUE(std::filesystem::remove(Directory / "1.raw"));
+  std::string Text[2];
+  uint64_t Lines[2] = {};
+  bool Changed = false, Anchored = false;
+  for (uint64_t Offset = 0;;) {
+    const auto Query =
+        render(llvm::json::Object{{"side", Offset ? "secondary" : "primary"},
+                                  {"address", Offset ? "0x8000" : "0x1000"},
+                                  {"include_prelude", true},
+                                  {"offset", Offset},
+                                  {"limit", 2}});
+    auto Page =
+        parsed(neverd_comparison_source_difference_json(C, Query.c_str()));
+    const auto *Root = Page.getAsObject();
+    ASSERT_TRUE(Root);
+    ASSERT_EQ(Root->getString("availability"), "available") << render(Page);
+    EXPECT_EQ(Root->getBoolean("cached"), Offset != 0);
+    EXPECT_EQ(Root->getString("semantic_validation"), "not_performed");
+    EXPECT_EQ(Root->getString("source_alignment"), "exact_text_lines");
+    EXPECT_EQ(Root->getBoolean("computation_complete"), true);
+    const auto *Rows = Root->getArray("rows");
+    ASSERT_TRUE(Rows);
+    ASSERT_LE(Rows->size(), 2u);
+    for (const auto &Value : *Rows) {
+      const auto &Row = *Value.getAsObject();
+      Changed |= Row.getString("kind") == "changed";
+      for (unsigned Side = 0; Side < 2; ++Side) {
+        const auto Key = Side ? "secondary" : "primary";
+        if (const auto *Line = Row.getObject(Key)) {
+          EXPECT_EQ(Line->getInteger("line"), Lines[Side]++);
+          Text[Side] += Line->getString("text").value_or("");
+          for (const auto &V : *Line->getArray("comparison_anchors")) {
+            const auto &Anchor = *V.getAsObject();
+            const auto ListingRow = Anchor.getInteger("listing_row");
+            ASSERT_TRUE(ListingRow);
+            const auto &NativeRow =
+                (*Native.getAsObject()->getArray("rows"))[*ListingRow];
+            EXPECT_EQ(
+                Anchor.getString("address"),
+                NativeRow.getAsObject()->getObject(Key)->getString("address"));
+            Anchored = true;
+          }
+        }
+      }
+      if (Row.getString("kind") == "unchanged") {
+        ASSERT_TRUE(Row.getObject("primary"));
+        ASSERT_TRUE(Row.getObject("secondary"));
+        EXPECT_EQ(Row.getObject("primary")->getString("text"),
+                  Row.getObject("secondary")->getString("text"));
+      }
+    }
+    const auto Next = Root->getInteger("next_offset");
+    if (!Next)
+      break;
+    ASSERT_GT(*Next, Offset);
+    Offset = *Next;
+  }
+  EXPECT_EQ(Text[0], OrdinaryA.getAsObject()->getString("text"));
+  EXPECT_EQ(Text[1], OrdinaryB.getAsObject()->getString("text"));
+  EXPECT_TRUE(Changed);
+  EXPECT_TRUE(Anchored);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  const auto Body = parsed(
+      neverd_comparison_source_difference_json(C, R"({"address":"0x1000"})"));
+  EXPECT_EQ(Body.getAsObject()->getString("scope"), "function_body");
+  EXPECT_GT(Body.getAsObject()->getObject("primary")->getInteger("first_line"),
+            0);
+  EXPECT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"unmatch","primary":"0x1000","secondary":"0x8000"})"),
+      1);
+  EXPECT_EQ(
+      neverd_comparison_source_difference_json(C, R"({"address":"0x1000"})"),
+      nullptr);
+  EXPECT_EQ(neverd_comparison_undo(C), 1);
+  const auto Restored = parsed(
+      neverd_comparison_source_difference_json(C, R"({"address":"0x1000"})"));
+  EXPECT_EQ(Restored.getAsObject()->getBoolean("cached"), false);
+  EXPECT_EQ(Restored.getAsObject()->getString("availability"), "available");
+}
+
+TEST_F(BinaryDiffSDK, SourceDifferenceLimitsDoNotClassifyPartialRenderings) {
+  auto A = input(body()), B = input(body(), 0x8000);
+  auto Borrowed = compare(A, B);
+  EXPECT_EQ(neverd_comparison_source_difference_json(Borrowed,
+                                                     R"({"address":"0x1000"})"),
+            nullptr);
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[1],
+                                        R"({"discover":false})", nullptr,
+                                        nullptr),
+            1);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  for (const auto *Query :
+       {R"({"address":"0x1000","max_source_bytes":1})",
+        R"({"address":"0x1000","max_work":1})",
+        R"({"address":"0x1000","max_native_instructions":1})"}) {
+    auto Page = parsed(neverd_comparison_source_difference_json(C, Query));
+    EXPECT_EQ(Page.getAsObject()->getString("state"), "resource_limited");
+    EXPECT_EQ(Page.getAsObject()->getBoolean("computation_complete"), false);
+    EXPECT_TRUE(Page.getAsObject()->getArray("rows")->empty());
+    EXPECT_EQ(
+        Page.getAsObject()->getObject("primary")->getInteger("total_lines"), 0);
+    auto Cached = parsed(neverd_comparison_source_difference_json(C, Query));
+    EXPECT_EQ(Cached.getAsObject()->getBoolean("cached"), true);
+  }
+  const auto Unlimited = parsed(neverd_comparison_source_difference_json(
+      C,
+      R"({"address":"0x1000","max_source_bytes":0,"max_work":0,"max_native_instructions":0})"));
+  ASSERT_EQ(Unlimited.getAsObject()->getString("availability"), "available")
+      << render(Unlimited);
+  const auto Bytes = *Unlimited.getAsObject()->getInteger("source_bytes");
+  const auto Work = *Unlimited.getAsObject()->getInteger("work");
+  for (const auto &[Key, Bound] :
+       {std::pair{"max_source_bytes", Bytes}, std::pair{"max_work", Work}}) {
+    for (const auto Exact : {false, true}) {
+      const auto Query = render(llvm::json::Object{
+          {"address", "0x1000"}, {Key, Bound - (Exact ? 0 : 1)}});
+      auto Page =
+          parsed(neverd_comparison_source_difference_json(C, Query.c_str()));
+      EXPECT_EQ(Page.getAsObject()->getBoolean("computation_complete"), Exact);
+    }
+  }
+  for (const auto *Query : {R"({"address":"0x1000","limit":0})",
+                            R"({"address":"0x1000","limit":2049})",
+                            R"({"address":"0x1000","max_work":-1})",
+                            R"({"address":"0x1000","max_source_bytes":"0"})",
+                            R"({"address":"0x1000","include_prelude":1})",
+                            R"({"address":"0x1000","representation":"llvm"})",
+                            R"({"address":"0x1000","surprise":true})"})
+    EXPECT_EQ(neverd_comparison_source_difference_json(C, Query), nullptr)
+        << Query;
+  auto Missing = parsed(neverd_comparison_source_difference_json(
+      C, R"({"address":"0x1000","representation":"rust"})"));
+  EXPECT_EQ(Missing.getAsObject()->getString("availability"), "unavailable");
+  EXPECT_TRUE(Missing.getAsObject()->getArray("rows")->empty());
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+}
+
+TEST_F(BinaryDiffSDK, SourceDifferenceCollectsBeyondAnEmitterPage) {
+  // Distinct observable stores survive ordinary source simplification. The
+  // changed store lies beyond the emitter's first 2048-line page.
+  const auto Stores = [](bool Changed) {
+    std::vector<uint8_t> Code;
+    for (unsigned I = 0; I < 2200; ++I) {
+      Code.insert(Code.end(),
+                  {0xc7, 0x87}); // mov dword ptr [rdi+disp32], imm32
+      for (unsigned Shift = 0; Shift < 32; Shift += 8)
+        Code.push_back(uint8_t((I * 4) >> Shift));
+      const unsigned Value = I + (Changed && I == 2150 ? 1 : 0);
+      for (unsigned Shift = 0; Shift < 32; Shift += 8)
+        Code.push_back(uint8_t(Value >> Shift));
+    }
+    Code.push_back(0xc3);
+    return Code;
+  };
+  input(Stores(false));
+  input(Stores(true));
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[1],
+                                        R"({"discover":false})", nullptr,
+                                        nullptr),
+            1);
+  std::string Aligned[2];
+  bool Changed = false;
+  for (uint64_t Offset = 0;;) {
+    const auto Query = render(llvm::json::Object{{"address", "0x1000"},
+                                                 {"include_prelude", true},
+                                                 {"offset", Offset},
+                                                 {"limit", 999}});
+    auto Page =
+        parsed(neverd_comparison_source_difference_json(C, Query.c_str()));
+    const auto *Root = Page.getAsObject();
+    ASSERT_EQ(Root->getString("availability"), "available") << render(Page);
+    ASSERT_GT(Root->getInteger("total_rows"), 2048);
+    EXPECT_EQ(Root->getBoolean("cached"), Offset != 0);
+    for (const auto &Value : *Root->getArray("rows")) {
+      const auto &Row = *Value.getAsObject();
+      Changed |= Row.getString("kind") == "changed";
+      for (unsigned Side = 0; Side < 2; ++Side)
+        if (const auto *Line = Row.getObject(Side ? "secondary" : "primary"))
+          Aligned[Side] += Line->getString("text").value_or("");
+    }
+    const auto Next = Root->getInteger("next_offset");
+    if (!Next)
+      break;
+    ASSERT_GT(*Next, Offset);
+    Offset = *Next;
+  }
+  EXPECT_TRUE(Changed);
+  for (unsigned Side = 0; Side < 2; ++Side) {
+    std::string Ordinary;
+    for (uint64_t Offset = 0;;) {
+      const auto Query =
+          render(llvm::json::Object{{"address", "0x1000"},
+                                    {"side", Side ? "secondary" : "primary"},
+                                    {"offset", Offset},
+                                    {"limit", 311}});
+      auto Page = parsed(neverd_comparison_source_page_json(C, Query.c_str()));
+      ASSERT_EQ(Page.getAsObject()->getString("availability"), "available");
+      const auto *Document = Page.getAsObject()->getObject("document");
+      Ordinary += Document->getString("text").value_or("");
+      const auto Next = Document->getInteger("next_offset");
+      if (!Next)
+        break;
+      ASSERT_GT(*Next, Offset);
+      Offset = *Next;
+    }
+    EXPECT_EQ(Aligned[Side], Ordinary);
+  }
+}
+
+TEST_F(BinaryDiffSDK, SourceDifferenceCancellationAndDeadlineRemainRetryable) {
+  std::vector<uint8_t> Code{0x89, 0xf8};
+  for (unsigned I = 0; I < 1500; ++I)
+    Code.insert(Code.end(), {0x83, 0xc0, 1});
+  Code.push_back(0xc3);
+  input(Code);
+  input(Code, 0x8000);
+  auto C = neverd_comparison_create();
+  Comparisons.push_back(C);
+  ASSERT_EQ(neverd_comparison_run_owned(C, &Sessions[0], &Sessions[1],
+                                        R"({"discover":false})", nullptr,
+                                        nullptr),
+            1);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Running = std::async(std::launch::async, [&] {
+    return take(
+        neverd_comparison_source_difference_json(C, R"({"address":"0x1000"})"));
+  });
+  bool Cancelled = false;
+  while (Running.wait_for(std::chrono::milliseconds(0)) !=
+         std::future_status::ready) {
+    auto Status = parsed(neverd_comparison_status_json(C));
+    if (Status.getAsObject()->getBoolean("running").value_or(false)) {
+      neverd_comparison_cancel(C);
+      Cancelled = true;
+      break;
+    }
+    std::this_thread::yield();
+  }
+  ASSERT_TRUE(Cancelled);
+  auto Stopped = llvm::json::parse(Running.get());
+  ASSERT_TRUE(static_cast<bool>(Stopped));
+  EXPECT_EQ(Stopped->getAsObject()->getString("state"), "cancelled");
+  EXPECT_TRUE(Stopped->getAsObject()->getArray("rows")->empty());
+  auto Cached = parsed(
+      neverd_comparison_source_difference_json(C, R"({"address":"0x1000"})"));
+  EXPECT_EQ(Cached.getAsObject()->getString("state"), "cancelled");
+  EXPECT_EQ(Cached.getAsObject()->getBoolean("cached"), true);
+  auto Timeout = parsed(neverd_comparison_source_difference_json(
+      C, R"({"address":"0x1000","refresh":true,"timeout_ms":1})"));
+  EXPECT_EQ(Timeout.getAsObject()->getString("state"), "timed_out")
+      << render(Timeout);
+  EXPECT_TRUE(Timeout.getAsObject()->getArray("rows")->empty());
+  auto Retry = parsed(neverd_comparison_source_difference_json(
+      C, R"({"address":"0x1000","refresh":true})"));
+  EXPECT_EQ(Retry.getAsObject()->getString("availability"), "available")
+      << render(Retry);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+}
+
 TEST_F(BinaryDiffSDK, AmbiguityInventoryPagesEveryRetainedCandidate) {
   constexpr unsigned Count = 40, Stride = 16;
   const auto Copies = [&](uint64_t Base, const std::string &Prefix,

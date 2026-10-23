@@ -285,12 +285,16 @@ Json hello() {
       result["capabilities"].push_back(operation);
     if (ComparisonService::sourceSupported())
       result["capabilities"].push_back("comparison_source_page");
+    if (ComparisonService::sourceDifferenceSupported())
+      result["capabilities"].push_back("comparison_source_difference");
     result["comparison_cancellation"] =
         "cooperative; partial snapshots retained";
     result["comparison_cancellable_operations"] = Json::array();
     for (const auto Operation : ComparisonService::CancellableOperations)
-      if (Operation != "comparison_source_page" ||
-          ComparisonService::sourceSupported())
+      if ((Operation != "comparison_source_page" ||
+           ComparisonService::sourceSupported()) &&
+          (Operation != "comparison_source_difference" ||
+           ComparisonService::sourceDifferenceSupported()))
         result["comparison_cancellable_operations"].push_back(
             std::string(Operation));
   }

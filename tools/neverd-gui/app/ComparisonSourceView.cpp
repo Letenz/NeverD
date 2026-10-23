@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Displays ordinary source projections without inventing source-line matches.
+/// Exact textual source differences and independent source inspection.
 //===----------------------------------------------------------------------===//
 
 #include "ComparisonSourceView.h"
@@ -17,24 +17,30 @@
 #include "neverd/diff/Limits.h"
 
 #include <QAction>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStringList>
 #include <QTextBlock>
+#include <QTextEdit>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <climits>
 #include <utility>
 
 namespace neverd::gui {
@@ -51,6 +57,93 @@ protected:
     QSpinBox::keyPressEvent(Event);
     if (Event->key() == Qt::Key_Return || Event->key() == Qt::Key_Enter)
       Event->accept();
+  }
+};
+
+class SourceCode final : public QPlainTextEdit {
+public:
+  explicit SourceCode(QWidget *Parent) : QPlainTextEdit(Parent) {
+    Gutter = new QWidget(this);
+    Gutter->installEventFilter(this);
+    connect(this, &QPlainTextEdit::updateRequest, this,
+            [this](const QRect &, int) { Gutter->update(); });
+    updateMinimumHeight();
+  }
+  void setRows(const QJsonArray &NewRows) {
+    Rows = NewRows;
+    updateGutter();
+  }
+
+protected:
+  void resizeEvent(QResizeEvent *Event) override {
+    QPlainTextEdit::resizeEvent(Event);
+    updateGutter();
+  }
+  void changeEvent(QEvent *Event) override {
+    QPlainTextEdit::changeEvent(Event);
+    if (Event->type() == QEvent::FontChange) {
+      updateMinimumHeight();
+      updateGutter();
+    }
+  }
+  bool eventFilter(QObject *Object, QEvent *Event) override {
+    if (Object != Gutter || Event->type() != QEvent::Paint)
+      return QPlainTextEdit::eventFilter(Object, Event);
+    QPainter Painter(Gutter);
+    Painter.fillRect(Gutter->rect(), palette().base());
+    Painter.setFont(font());
+    Painter.setPen(Theme::instance().color(ColorRole::CodeLineNumber));
+    auto Block = firstVisibleBlock();
+    while (Block.isValid()) {
+      const int Top = qRound(
+          blockBoundingGeometry(Block).translated(contentOffset()).top());
+      if (Top >= viewport()->height())
+        break;
+      const int Index = Block.blockNumber();
+      if (Index < Rows.size()) {
+        const auto Row = Rows[Index].toObject();
+        QString Text;
+        if (Row.value("line").isDouble())
+          Text = QString::number(Row.value("line").toInteger() + 1);
+        const auto Kind = Row.value("difference_kind").toString();
+        const QString Mark = Kind == "changed"    ? "~"
+                             : Kind == "inserted" ? "+"
+                             : Kind == "deleted"  ? "−"
+                                                  : " ";
+        if (!Row.value("gap").toBool())
+          Text += " " + Mark;
+        Painter.drawText(0, Top,
+                         Gutter->width() - fontMetrics().horizontalAdvance(' '),
+                         fontMetrics().height(), Qt::AlignRight, Text);
+      }
+      Block = Block.next();
+    }
+    return true;
+  }
+
+private:
+  QWidget *Gutter = nullptr;
+  QJsonArray Rows;
+  void updateMinimumHeight() {
+    setMinimumHeight(fontMetrics().height() *
+                         limits::gui::kComparisonSourceMinimumVisibleLines +
+                     2 * frameWidth() +
+                     horizontalScrollBar()->sizeHint().height());
+  }
+  void updateGutter() {
+    if (!Gutter)
+      return;
+    int Digits = 1;
+    for (const auto &Value : Rows)
+      Digits = std::max(
+          Digits,
+          int(QString::number(Value.toObject().value("line").toInteger() + 1)
+                  .size()));
+    const int Width = (Digits + 4) * fontMetrics().horizontalAdvance('9');
+    setViewportMargins(Width, 0, 0, 0);
+    Gutter->setGeometry(contentsRect().left(), viewport()->geometry().top(),
+                        Width, viewport()->height());
+    Gutter->update();
   }
 };
 
@@ -112,6 +205,9 @@ ComparisonSourceView::ComparisonSourceView(ComparisonSession &S,
        {std::pair{"C++", "cpp"}, {"Rust", "rust"}, {"Go", "go"}})
     Representation->addItem(Name, Key);
   ViewLabel->setBuddy(Representation);
+  AlignmentMode = new QCheckBox(tr("Align source lines"), this);
+  AlignmentMode->setObjectName("comparisonSourceAlignment");
+  AlignmentMode->setChecked(true);
   auto *Reload = new QPushButton(tr("Reload source"), this);
   Reload->setObjectName("comparisonSourceReload");
   auto *Options = new QToolButton(this);
@@ -120,16 +216,22 @@ ComparisonSourceView::ComparisonSourceView(ComparisonSession &S,
   auto *Menu = new QMenu(Options);
   Unlimited = Menu->addAction(tr("Remove instruction allowance"));
   Unlimited->setCheckable(true);
+  UnlimitedWork = Menu->addAction(tr("Remove alignment work allowance"));
+  UnlimitedWork->setCheckable(true);
+  UnlimitedBytes = Menu->addAction(tr("Remove source evidence byte allowance"));
+  UnlimitedBytes->setCheckable(true);
+  IncludePrelude = Menu->addAction(tr("Include declarations in alignment"));
+  IncludePrelude->setCheckable(true);
   Options->setMenu(Menu);
   Toolbar->addWidget(ViewLabel);
   Toolbar->addWidget(Representation);
+  Toolbar->addWidget(AlignmentMode);
   Toolbar->addStretch();
   Toolbar->addWidget(Reload);
   Toolbar->addWidget(Options);
   Root->addLayout(Toolbar);
-  Root->addWidget(
-      label(this, tr("Each pane shows its own source lines. Select a "
-                     "line to inspect its original instructions.")));
+  Hint = label(this);
+  Root->addWidget(Hint);
   auto *Split = new QSplitter(this);
   Split->setChildrenCollapsible(false);
   Root->addWidget(Split, 1);
@@ -142,7 +244,7 @@ ComparisonSourceView::ComparisonSourceView(ComparisonSession &S,
     P.Title->setObjectName(Side ? "comparisonSecondarySourceTitle"
                                 : "comparisonPrimarySourceTitle");
     Layout->addWidget(P.Title);
-    P.Text = new QPlainTextEdit(Container);
+    P.Text = new SourceCode(Container);
     P.Text->setObjectName(Side ? "comparisonSecondarySource"
                                : "comparisonPrimarySource");
     P.Text->setReadOnly(true);
@@ -215,11 +317,23 @@ ComparisonSourceView::ComparisonSourceView(ComparisonSession &S,
     connect(&Theme::instance(), &Theme::changed, this, [this, Side] {
       Panes[Side].Text->setFont(Theme::instance().codeFont());
       Panes[Side].Highlighter->rehighlight();
+      highlight(Side);
     });
+    connect(P.Text->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this, Side](int Value) {
+              if (aligned()) {
+                auto *Other = Panes[1 - Side].Text->verticalScrollBar();
+                const QSignalBlocker Block(Other);
+                Other->setValue(Value);
+              }
+            });
   }
   connect(Representation, &QComboBox::currentIndexChanged, this,
           [this] { reset(); });
   connect(Unlimited, &QAction::toggled, this, [this] { reset(); });
+  for (auto *Option : {UnlimitedWork, UnlimitedBytes, IncludePrelude})
+    connect(Option, &QAction::toggled, this, [this] { reset(); });
+  connect(AlignmentMode, &QCheckBox::toggled, this, [this] { reset(); });
   connect(Reload, &QPushButton::clicked, this, [this] { reset(true); });
   connect(&Session, &ComparisonSession::mappingChanged, this,
           [this] { setFunctions({}, {}); });
@@ -247,6 +361,16 @@ void ComparisonSourceView::setFunctions(const QJsonObject &A,
 }
 void ComparisonSourceView::reset(bool Refresh) {
   ++Generation;
+  AlignmentMode->setEnabled(Session.supports("comparison_source_difference") &&
+                            !Panes[0].Function.isEmpty() &&
+                            !Panes[1].Function.isEmpty());
+  Hint->setText(aligned()
+                    ? tr("Text differences: + inserted, − deleted, ~ changed. "
+                         "Select a line to inspect its original instructions.")
+                    : tr("Each pane shows its own source lines. Select a "
+                         "line to inspect its original instructions."));
+  for (auto *Option : {UnlimitedWork, UnlimitedBytes, IncludePrelude})
+    Option->setEnabled(aligned());
   for (int Side = 0; Side < 2; ++Side) {
     auto &P = Panes[Side];
     P.Document = {};
@@ -254,7 +378,14 @@ void ComparisonSourceView::reset(bool Refresh) {
     P.Initial = true;
     P.NeedsLoad = true;
     P.Refresh = Refresh;
+    P.RangeText.clear();
     P.Text->clear();
+    static_cast<SourceCode *>(P.Text)->setRows({});
+    P.Text->setExtraSelections({});
+    const auto Navigation =
+        aligned() ? tr("Go to aligned row") : tr("Go to source line");
+    P.Line->setToolTip(Navigation);
+    P.Line->setAccessibleName(Navigation);
     static_cast<SourceTitle *>(P.Title)->setFullText(
         (Side ? tr("Secondary: %1 %2") : tr("Primary: %1 %2"))
             .arg(P.Function.value("name").toString(),
@@ -264,9 +395,10 @@ void ComparisonSourceView::reset(bool Refresh) {
                           : tr("Source is ready to load."));
     cursor(Side);
     updateControls(Side);
-    if (isVisible())
-      load(Side);
   }
+  if (isVisible())
+    for (int Side = 0; Side < 2; ++Side)
+      load(Side);
 }
 void ComparisonSourceView::showEvent(QShowEvent *Event) {
   QWidget::showEvent(Event);
@@ -275,6 +407,10 @@ void ComparisonSourceView::showEvent(QShowEvent *Event) {
       load(Side);
 }
 void ComparisonSourceView::load(int Side, int Offset) {
+  if (aligned()) {
+    loadDifference(Offset);
+    return;
+  }
   auto &P = Panes[Side];
   if (!isVisible() || P.Pending || P.Function.isEmpty() || !Session.ready() ||
       Session.busy())
@@ -328,7 +464,9 @@ void ComparisonSourceView::load(int Side, int Offset) {
                   : tr("Source unavailable: %1")
                         .arg(Result["reason"].toString()));
           P.Document = {};
+          P.RangeText.clear();
           P.Text->clear();
+          static_cast<SourceCode *>(P.Text)->setRows({});
           updateControls(Side);
           return;
         }
@@ -346,13 +484,13 @@ void ComparisonSourceView::load(int Side, int Offset) {
         P.Highlighter->setLanguage(P.Document.value("dialect").toString("c"));
         P.Text->setPlainText(P.Document.value("text").toString());
         const auto Rows = P.Document.value("rows").toArray();
-        P.Status->setText(tr("Lines %1–%2 of %3")
-                              .arg(Rows.isEmpty() ? Offset : Offset + 1)
-                              .arg(Offset + Rows.size())
-                              .arg(P.Document.value("total_lines").toInt()));
+        static_cast<SourceCode *>(P.Text)->setRows(Rows);
+        P.RangeText = tr("Lines %1–%2 of %3")
+                          .arg(Rows.isEmpty() ? Offset : Offset + 1)
+                          .arg(Offset + Rows.size())
+                          .arg(P.Document.value("total_lines").toInt());
         if (!Result["native_analysis_complete"].toBool())
-          P.Status->setText(P.Status->text() +
-                            tr(" · Native coverage is incomplete"));
+          P.RangeText += tr(" · Native coverage is incomplete");
         {
           const QSignalBlocker Block(P.Line);
           P.Line->setMaximum(
@@ -363,11 +501,167 @@ void ComparisonSourceView::load(int Side, int Offset) {
         updateControls(Side);
       });
 }
+bool ComparisonSourceView::aligned() const {
+  return AlignmentMode->isChecked() &&
+         Session.supports("comparison_source_difference") &&
+         !Panes[0].Function.isEmpty() && !Panes[1].Function.isEmpty();
+}
+void ComparisonSourceView::loadDifference(int Offset) {
+  if (!isVisible() || Panes[0].Pending || Panes[1].Pending ||
+      !Session.ready() || Session.busy())
+    return;
+  const bool Refresh = Panes[0].Refresh || Panes[1].Refresh;
+  for (int Side = 0; Side < 2; ++Side) {
+    auto &P = Panes[Side];
+    P.Pending = true;
+    P.NeedsLoad = P.Refresh = false;
+    P.Status->setText(tr(
+        "Aligning source… Cancellation waits for the current analysis step."));
+    updateControls(Side);
+  }
+  const auto Serial = Generation;
+  const auto ExpectedRevision = Revision;
+  Session.request(
+      "comparison_source_difference",
+      {{"side", "primary"},
+       {"address", Panes[0].Function.value("address")},
+       {"representation", Representation->currentData().toString()},
+       {"offset", Offset},
+       {"limit", PageLines},
+       {"refresh", Refresh},
+       {"include_prelude", IncludePrelude->isChecked()},
+       {"max_native_instructions",
+        Unlimited->isChecked()
+            ? 0
+            : qint64(limits::diff::kDefaultSourceNativeInstructions)},
+       {"max_work", UnlimitedWork->isChecked()
+                        ? 0
+                        : qint64(limits::diff::kDefaultSourceAlignmentWork)},
+       {"max_source_bytes",
+        UnlimitedBytes->isChecked()
+            ? 0
+            : qint64(limits::diff::kDefaultSourceAlignmentBytes)}},
+      this, [this, Offset, Serial, ExpectedRevision](const auto &Reply) {
+        Panes[0].Pending = Panes[1].Pending = false;
+        if (Serial != Generation || ExpectedRevision != Session.revision()) {
+          for (int Side = 0; Side < 2; ++Side) {
+            updateControls(Side);
+            QTimer::singleShot(0, this, [this, Side] { load(Side); });
+          }
+          return;
+        }
+        const auto Result = Reply.value("payload").toObject();
+        if (Reply.value("status") != QJsonValue("ok") ||
+            Result.value("availability") != QJsonValue("available")) {
+          const auto State = Result.value("state").toString();
+          const auto Reason =
+              Reply.value("status") != QJsonValue("ok")
+                  ? Reply.value("error").toObject().value("message").toString()
+                  : Result.value("reason").toString();
+          const auto Message =
+              State == "resource_limited"
+                  ? tr("Source alignment exceeds its allowance. Adjust Options "
+                       "or view independent source.")
+              : State == "cancelled" || State == "timed_out"
+                  ? tr("Source alignment stopped. Reload source to try again.")
+                  : tr("Source unavailable: %1").arg(Reason);
+          for (int Side = 0; Side < 2; ++Side) {
+            auto &P = Panes[Side];
+            P.Document = {};
+            P.RangeText.clear();
+            P.Text->clear();
+            static_cast<SourceCode *>(P.Text)->setRows({});
+            P.Text->setExtraSelections({});
+            P.Status->setText(Message);
+            cursor(Side);
+            updateControls(Side);
+          }
+          return;
+        }
+        const auto Rows = Result.value("rows").toArray();
+        for (int Side = 0; Side < 2; ++Side) {
+          auto &P = Panes[Side];
+          const auto Key = Side ? "secondary" : "primary";
+          const auto Metadata = Result.value(Key).toObject();
+          QJsonArray SourceRows;
+          QStringList Lines;
+          for (const auto &Value : Rows) {
+            const auto Pair = Value.toObject();
+            auto Line = Pair.value(Key).toObject();
+            const bool Gap = Pair.value(Key).isNull();
+            Line["gap"] = Gap;
+            Line["difference_kind"] = Pair.value("kind");
+            auto Text = Line.value("text").toString();
+            if (Text.endsWith('\n'))
+              Text.chop(1);
+            Lines.push_back(Text);
+            SourceRows.append(Line);
+          }
+          P.Offset = Offset;
+          P.Document = {{"rows", SourceRows},
+                        {"next_offset", Result.value("next_offset")}};
+          P.RangeText = tr("Aligned rows %1–%2 of %3")
+                            .arg(Rows.isEmpty() ? Offset : Offset + 1)
+                            .arg(Offset + Rows.size())
+                            .arg(Result.value("total_rows").toInteger());
+          if (!Metadata.value("native_analysis_complete").toBool())
+            P.RangeText += tr(" · Native coverage is incomplete");
+          P.Highlighter->setLanguage(Metadata.value("dialect").toString("c"));
+          P.Text->setPlainText(Lines.join('\n'));
+          static_cast<SourceCode *>(P.Text)->setRows(SourceRows);
+          {
+            const QSignalBlocker Block(P.Line);
+            P.Line->setMaximum(int(std::clamp<qint64>(
+                Result.value("total_rows").toInteger(), 1, INT_MAX)));
+            P.Line->setValue(Offset + 1);
+          }
+          highlight(Side);
+          cursor(Side);
+          updateControls(Side);
+        }
+      });
+}
+void ComparisonSourceView::highlight(int Side) {
+  auto &P = Panes[Side];
+  QList<QTextEdit::ExtraSelection> Selections;
+  const auto Rows = P.Document.value("rows").toArray();
+  for (int I = 0; I < Rows.size(); ++I) {
+    const auto Kind = Rows[I].toObject().value("difference_kind").toString();
+    if (Kind.isEmpty() || Kind == "unchanged")
+      continue;
+    const auto Role = Kind == "inserted"  ? ColorRole::DiffAdded
+                      : Kind == "deleted" ? ColorRole::DiffRemoved
+                                          : ColorRole::DiffChanged;
+    auto Color = Theme::instance().color(Role);
+    Color.setAlpha(Theme::instance().dark() ? 40 : 25);
+    QTextEdit::ExtraSelection Selection;
+    Selection.cursor = QTextCursor(P.Text->document()->findBlockByNumber(I));
+    Selection.format.setBackground(Color);
+    Selection.format.setProperty(QTextFormat::FullWidthSelection, true);
+    Selections.push_back(Selection);
+  }
+  P.Text->setExtraSelections(Selections);
+}
 void ComparisonSourceView::cursor(int Side) {
   auto &P = Panes[Side];
   P.Anchors->clear();
   const auto Rows = P.Document.value("rows").toArray();
   const int Row = P.Text->textCursor().blockNumber();
+  if (!P.RangeText.isEmpty()) {
+    auto Text = P.RangeText;
+    if (Row >= 0 && Row < Rows.size()) {
+      const auto Line = Rows[Row].toObject();
+      if (Line.value("line").isDouble())
+        Text += tr(" · Source line %1").arg(Line.value("line").toInteger() + 1);
+      const auto Kind = Line.value("difference_kind").toString();
+      Text += Line.value("gap").toBool() ? tr(" · No line on this side")
+              : Kind == "changed"        ? tr(" · Changed")
+              : Kind == "inserted"       ? tr(" · Inserted")
+              : Kind == "deleted"        ? tr(" · Deleted")
+                                         : QString();
+    }
+    P.Status->setText(Text);
+  }
   if (Row >= 0 && Row < Rows.size())
     for (const auto &Value :
          Rows[Row].toObject()["comparison_anchors"].toArray()) {

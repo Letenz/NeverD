@@ -7768,5 +7768,65 @@ Sekundäre SHA-256: %3
         <source>Unmapped line</source>
         <translation>Nicht zugeordnete Zeile</translation>
     </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>Quelltextzeilen ausrichten</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>Arbeitslimit der Ausrichtung aufheben</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>Bytelimit für Quelltextbelege aufheben</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>Deklarationen beim Ausrichten einbeziehen</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>Zur ausgerichteten Zeile springen</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>Textunterschiede: + eingefügt, − gelöscht, ~ geändert. Eine Zeile auswählen, um ihre ursprünglichen Anweisungen zu prüfen.</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>Quelltext wird ausgerichtet… Abbrechen wartet auf den aktuellen Analyseschritt.</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>Die Quelltextausrichtung überschreitet ihr Limit. Optionen anpassen oder Quelltexte getrennt anzeigen.</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>Quelltextausrichtung angehalten. Quelltext neu laden, um es erneut zu versuchen.</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>Ausgerichtete Zeilen %1–%2 von %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · Quelltextzeile %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · Keine Zeile auf dieser Seite</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · Geändert</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · Eingefügt</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · Gelöscht</translation>
+    </message>
 </context>
 </TS>
