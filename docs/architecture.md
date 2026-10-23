@@ -188,6 +188,25 @@ requires an executable arm64e process and checks that each signing key changes
 pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
 ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
 These comparisons do not qualify a reconstructed arm64e ABI.
+
+`dwarf_eh::evaluateAArch64ReturnAddressState` owns static interpretation of
+the DWARF return-address signing column. It preserves absolute unsigned,
+SP and SP/PC states, legacy toggles, CIE initial rules, remembered states,
+key selection and the `N` non-HINT PAuth_LR augmentation. Constants,
+diagnostics and bounded-query defaults come from
+`AArch64ReturnAddressState.def`, which pins the Arm specification revision;
+the absolute-state extension is still Alpha. Runtime register/expression
+rules stay unknown, and incomplete or reserved CFI never supplies an unsigned
+default. The query validates the entire program before publishing a result.
+This describes a signing recipe, without authenticating a live return address.
+Callback relocation rejects PC-dependent recipes and the new absolute-state
+operations until its code-position mapping is modelled. Mach-O metadata-only
+layout growth preserves original code addresses and CFI bytes, reencodes only
+FDE initial-location references, and compares every statically known signing
+recipe at each CFI boundary before publication. A cumulative comparison budget
+bounds repeated queries; unknown, incomplete, expression and language-dependent
+recipes remain inadmissible.
+
 `macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
 placement validation, sorted disjoint mappings, and the cache image catalogue.
 Its bounded slide reader retains v2 ordinary pointers and v3/v5 authentication
@@ -8249,6 +8268,20 @@ proved. When the final section is absent, generated compact rows are not
 installed and the transaction may proceed only through the exact authenticated
 DWARF-FDE closure above; an existing but undersized or malformed final section
 still fails closed. A linked native throw/catch proof is still pending.
+
+ARM64 frame mode PAuth_LR retains the PACIBSPPC instruction offset relative to
+each compact recipe's start, including a present zero offset. The shared
+`CompactUnwindARM64.def` supplies payload masks and instruction units to the
+loader and native patcher. Both reject reserved bits, overflowing or unaligned
+signing PCs and signing instructions outside their complete code range.
+Preserved rows keep their original boundaries; splitting one would change its
+signing PC. Original callback preparation rejects these signed frames, including
+interior entries, until it can preserve the incoming signed LR state. This does
+not relax the arm64e native-rebuild restriction.
+Raw and semantic compact-page readers share offset, ordering and page-bound
+validation for every architecture. A malformed page contributes no recipes;
+its omission cannot extend a preceding valid row across the missing page.
+Discarded rows still consume the parser's work budget.
 
 External references are classified from the complete MC fixup contract. Calls
 may select only authenticated callable targets; generated compact-unwind

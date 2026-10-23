@@ -418,6 +418,9 @@ inline constexpr int kMachOExportLayoutWriteMachOExportLayoutNodesSizeLimit =
     1000000;
 
 // lib/backend/codegen/MachO/MachOLayoutGrowth.cpp
+#define NEVERD_MACHO_FRAME_LIMIT(Type, Name, Value)                            \
+  inline constexpr Type Name = Value;
+#include "neverd/backend/codegen/MachO/MachOFrameRelocation.def"
 inline constexpr int kMachOLayoutGrowthMoveTextSectionCapacityLimit =
     64 * 1024 * 1024;
 inline constexpr int kMachOLayoutGrowthDeclareMachOTextMetadataSizeLimit =
