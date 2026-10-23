@@ -19,15 +19,60 @@ recognize leaf/non-leaf authenticated tails. Negative frame tests retain
 branches with live frames, local/stack targets, a signed link or a mismatched
 authentication key/modifier. `NEVERD_PARITY_BIN=/path/to/thin/arm64e` also
 checks the fast terminator classifier against Capstone on a real binary.
+Compiled C parameter-flow checks cover local-name collisions at O0/O2 through
+both renderers. Unsupported PAuth_LR encodings, including the PACM HINT, must
+fail explicitly through both decoder routes.
+PACGA additionally checks independent inputs and rejects malformed widths.
+Its generated C is compiled back to LLVM to check operand and return flow.
+On a PAuth-capable Apple Silicon host,
+`NativeGenericSignaturesAgreeWithBothCProjections` executes HighC and LLVMC
+PACGA output at O0/O2 against an independent instruction oracle, including
+optimized LLVM output. Its ordinary arm64 process must produce a nonzero
+generic signature. PAC/AUT can be disabled in that process despite hardware
+feature discovery, so it cannot qualify pointer authentication.
+`NativeKeysAgreeWithBothCProjections` instead compiles an arm64e execution
+probe and explicitly skips if the host refuses it. On an eligible host it
+compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
+modifiers; each key must change at least one pointer, excluding a NOP profile.
+Other architectures skip both native checks. These tests do not certify
+arm64e ABI reconstruction or invalid-signature traps.
 
 The same target checks public Mach-O loading, CPU subtype capability bits,
-arm64e chained formats 1/7/9/10/12, signing metadata, signed import addends,
+arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
 multi-start pages, tagged pointers, malformed chains and unsupported layouts.
+Segmented cases check load-command index order, all signing fields, the high
+bit of the 12-bit next field, invalid indices/offsets/padding and overflow.
+X1 without any signed storage must still retain the authenticated-ABI rebuild
+restriction. `NeverDObjCSourceCallTests` also checks that x1 subtype evidence
+and signing recipes invalidate plain-object source reconstruction.
 Signed storage must remain external in C/LLVM, immutable reads must reject it,
 and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
 also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
+
+AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
+and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
+encoding fixtures cover every bank operation, register/immediate and extended
+row selectors, APX memory, FS/GS/SS and address-size overrides. The source
+matrix compiles LLVM and both C routes at O0/O2 for ELF/COFF/Mach-O, checks
+exact fixed-bank object bytes, and compares native faults or completion with
+original machine bytes. Malformed LowIR, MedIR, HighIR and native assembly
+cannot drop bank, memory or feature effects. Concrete tests retain arithmetic,
+row conversion and partial-progress oracles.
+`RowSelectorsIgnoreHighBitsAndZeroOutOfRangeRows` covers all six operations,
+both selector forms, ignored high bits and an independent exact-value oracle.
+It follows ISE 062 rather than the superseded row-chunk exception rules.
+
+`CompleteTransferSequenceAndRestartDriverCompile` always compiles and links
+the native AMX restart oracle on Linux x64, without executing AMX on unsupported
+hosts. `NativeTileRowsAndFaultContinuationMatchOriginalBytes` requires AMX-TILE
+and Linux tiled-data permission. It checks complete row bytes and the signal
+frame's TILECFG/TMM partial progress at a second-row page fault before resuming
+and finishing the transfer. Missing AMX is an explicit skip; compile/fault-only
+coverage does not establish successful execution of AMX arithmetic or restart.
+Do not relink the shared library while these tests run: pipeline tests also
+launch the CLI from the same build tree.
 
 `X86SystemMemory.*` and `X86SystemMemorySource.*` cover WRSSD/Q, WRUSSD/Q and
 long-mode ENQCMD/ENQCMDS through the shared system contract. Run
@@ -544,7 +589,12 @@ Use `--family multiple-residual --count 128` for nonzero degree-4–64 products
 with simultaneous independent high-bit disturbances and nearby cases with
 observable cross terms. Keep the previous nineteen families frozen when
 checking performance and output cost.
-Run all twenty families at
+Use `--family carry-product --count 128` for degree-8–128 nonzero products
+with five to eight observed bits, mixed masked products and long independent
+carry chains. Keep all twenty preceding families frozen. Record unresolved
+budget caps in this new frontier separately from any regression in old cases;
+a budget cap is not a completed proof or a successful simplification.
+Run all twenty-one families at
 8/16/32/64 bits
 with the same 65,536-unit **benchmark** allowance; the public default work
 budget is unchanged. Every result must pass the independent modular evaluator,
@@ -591,6 +641,14 @@ Generated-reading regressions require the deep walk to simplify an original
 opaque division's numerator and propagate it through the emitted proof.
 Mixed quartic and degree-24 residuals must also leave work for the surrounding
 linear tail within a fixed 65,536-work request.
+Grouped-carry tests require strict cost reductions for degree-32/64/128
+products, independent arithmetic through 257 bits, exhaustive low-bit triples,
+and retained nonzero branches. Quadratic cross-term tests independently check
+the extra division bit, including full-width Z3 comparisons at 8/16/32/64 bits.
+Zero, short and storage-limited attempts preserve the original semantics.
+Degree-32/64 machine-code fixtures execute the generated C through both
+backends and all six CLI/GUI-worker routes at O0/O2, with separate ordinary
+and enhanced caches.
 `SymBatchSubstitution.SharedWideGraphsKeepSimultaneousSubgraphOverrides` checks
 shared roots, complete subgraph overrides and simultaneous variable replacement
 against word arithmetic through 257 bits, including division by zero.

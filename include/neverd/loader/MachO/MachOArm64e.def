@@ -10,6 +10,8 @@
 /// MachO enumerator. FIELD(Name, Low, Width) describes an on-disk 64-bit word;
 /// VALUE(Type, Name, Value) and TEXT(Name, Text) expose typed layout constants
 /// and diagnostics. Undefined macros ignore their rows.
+/// SUBTYPE(Name, Value, Label) also names CPU subtype values without ABI bits.
+/// SEGMENTED_FORMAT(Name, Stride) selects the segment-relative layout.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -25,12 +27,25 @@
 #ifndef NEVERD_MACHO_ARM64E_TEXT
 #define NEVERD_MACHO_ARM64E_TEXT(Name, Text)
 #endif
+#ifndef NEVERD_MACHO_ARM64E_SUBTYPE
+#define NEVERD_MACHO_ARM64E_SUBTYPE(Name, Value, Label)
+#endif
+#ifndef NEVERD_MACHO_ARM64E_SEGMENTED_FORMAT
+#define NEVERD_MACHO_ARM64E_SEGMENTED_FORMAT(Name, Stride)
+#endif
+
+// arm64e.x1 was added in LLVM b8007a8e4020. Keep the on-disk value here
+// so recognition does not depend on the build host's LLVM header version.
+NEVERD_MACHO_ARM64E_SUBTYPE(kCPUSubtype, 2, "ARM64E")
+NEVERD_MACHO_ARM64E_SUBTYPE(kCPUSubtypeX1, 12, "ARM64E.X1")
 
 NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E, 8, false, 16)
 NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_KERNEL, 4, true, 16)
 NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_USERLAND, 8, true, 16)
 NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_FIRMWARE, 4, false, 16)
 NEVERD_MACHO_ARM64E_FORMAT(DYLD_CHAINED_PTR_ARM64E_USERLAND24, 8, true, 24)
+NEVERD_MACHO_ARM64E_VALUE(uint16_t, kSegmentedPointerFormat, 14)
+NEVERD_MACHO_ARM64E_SEGMENTED_FORMAT(kSegmentedPointerFormat, 4)
 
 NEVERD_MACHO_ARM64E_FIELD(kAuthentication, 63, 1)
 NEVERD_MACHO_ARM64E_FIELD(kBind, 62, 1)
@@ -45,6 +60,10 @@ NEVERD_MACHO_ARM64E_FIELD(kInlineAddend, 32, 19)
 NEVERD_MACHO_ARM64E_FIELD(kOrdinalStorage, 0, 32)
 NEVERD_MACHO_ARM64E_FIELD(kObjectAddend, 0, 32)
 NEVERD_MACHO_ARM64E_FIELD(kObjectReserved, 51, 12)
+NEVERD_MACHO_ARM64E_FIELD(kSegmentedTargetOffset, 0, 28)
+NEVERD_MACHO_ARM64E_FIELD(kSegmentedTargetIndex, 28, 4)
+NEVERD_MACHO_ARM64E_FIELD(kSegmentedReserved, 32, 19)
+NEVERD_MACHO_ARM64E_FIELD(kSegmentedNext, 51, 12)
 
 NEVERD_MACHO_ARM64E_VALUE(unsigned, kHigh8Shift, 56)
 NEVERD_MACHO_ARM64E_VALUE(unsigned, kSmallPageBytes, 0x1000)
@@ -67,3 +86,5 @@ NEVERD_MACHO_ARM64E_TEXT(kConflictingObjectPointer,
 #undef NEVERD_MACHO_ARM64E_FIELD
 #undef NEVERD_MACHO_ARM64E_VALUE
 #undef NEVERD_MACHO_ARM64E_TEXT
+#undef NEVERD_MACHO_ARM64E_SUBTYPE
+#undef NEVERD_MACHO_ARM64E_SEGMENTED_FORMAT

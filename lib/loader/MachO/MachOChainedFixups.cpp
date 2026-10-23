@@ -205,6 +205,7 @@ void joinImportSlot(BinaryImage &Img, llvm::StringRef Name,
 bool parseArm64eSegment(
     const dyld_chained_starts_in_segment &Seg,
     const arm64e::ChainFormat &Format, const uint8_t *Bytes, va_t Base,
+    uint32_t SegmentIndex,
     const std::optional<std::vector<ChainedImportRecord>> &Imports,
     BinaryImage &Img) {
   struct Fixup {
@@ -220,7 +221,7 @@ bool parseArm64eSegment(
   };
   const size_t StartOffset =
       offsetof(dyld_chained_starts_in_segment, page_start);
-  if (!Imports ||
+  if (!Imports || (Format.Segmented && Img.IsRelocatable) ||
       (Seg.page_size != arm64e::kSmallPageBytes &&
        Seg.page_size != arm64e::kLargePageBytes) ||
       Seg.size < StartOffset ||
@@ -230,6 +231,8 @@ bool parseArm64eSegment(
   const va_t SegmentVA = Base + Seg.segment_offset;
   const Segment *Owner = Img.getSegmentFor(SegmentVA);
   if (!Owner || Owner->VA != SegmentVA ||
+      (!Img.IsRelocatable && (SegmentIndex >= Img.Segments.size() ||
+                              &Img.Segments[SegmentIndex] != Owner)) ||
       (Seg.page_count &&
        uint64_t(Seg.page_count - 1) * Seg.page_size >= Owner->Size))
     return fail();
@@ -286,8 +289,10 @@ bool parseArm64eSegment(
           return fail();
         const uint64_t Raw = readLE<uint64_t>(Storage);
         const bool Auth = arm64e::kAuthentication.extract(Raw);
-        const bool Bind = arm64e::kBind.extract(Raw);
-        const uint32_t Next = arm64e::kNext.extract(Raw);
+        const bool Bind = !Format.Segmented && arm64e::kBind.extract(Raw);
+        const uint32_t Next =
+            (Format.Segmented ? arm64e::kSegmentedNext : arm64e::kNext)
+                .extract(Raw);
         Fixup F{Slot};
         if (Auth) {
           F.Authentication.emplace();
@@ -296,7 +301,21 @@ bool parseArm64eSegment(
               arm64e::kAddressDiversity.extract(Raw);
           F.Authentication->Key = arm64e::kKey.extract(Raw);
         }
-        if (Bind) {
+        if (Format.Segmented) {
+          // Segment indices name load commands, not a sorted address view.
+          // Linked Mach-O images retain those entries, including empty ones.
+          const uint32_t Index = arm64e::kSegmentedTargetIndex.extract(Raw);
+          const uint64_t Offset = arm64e::kSegmentedTargetOffset.extract(Raw);
+          if ((!Auth && arm64e::kSegmentedReserved.extract(Raw)) ||
+              Index >= Img.Segments.size())
+            return fail();
+          const Segment &Target = Img.Segments[Index];
+          if (Offset > Target.Size || Offset > InvalidVA - Target.VA)
+            return fail();
+          F.Target = Target.VA + Offset;
+          if (Auth)
+            F.Authentication->Target = F.Target;
+        } else if (Bind) {
           const uint32_t Ordinal =
               Raw & llvm::maskTrailingOnes<uint32_t>(Format.OrdinalBits);
           if ((arm64e::kOrdinalStorage.extract(Raw) >> Format.OrdinalBits) !=
@@ -467,7 +486,7 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
     uint64_t SegEnd = SegAbs + Seg->size;
     uint16_t PtrFormat = Seg->pointer_format;
     if (const auto Format = arm64e::chainFormat(PtrFormat)) {
-      if (!parseArm64eSegment(*Seg, *Format, BasePtr + SegAbs, TextVMAddr,
+      if (!parseArm64eSegment(*Seg, *Format, BasePtr + SegAbs, TextVMAddr, S,
                               ImportRecords, Img))
         return;
       continue;

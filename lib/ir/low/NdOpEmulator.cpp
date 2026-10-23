@@ -648,12 +648,13 @@ bool NdOpEmulator::step(const LowOp &Op) {
           Id == Intrinsic::AMXTileStore || Id == Intrinsic::AMXTileZero ||
           Id == Intrinsic::AMXClearStartRow ||
           Id == Intrinsic::AMXTileCompute || Id == Intrinsic::AMXTileRow ||
-          Id == Intrinsic::Pdep || Id == Intrinsic::Pext ||
-          Id == Intrinsic::Mpsadbw || Id == Intrinsic::Vdbpsadbw ||
-          Id == Intrinsic::X86FourFMA || Id == Intrinsic::F16CConvert ||
-          Id == Intrinsic::X86VP4DPWSSD || Id == Intrinsic::X86VP4DPWSSDS ||
-          Id == Intrinsic::X86ApproxFloat || Id == Intrinsic::X86FPClass ||
-          Id == Intrinsic::X86FPArith || Id == Intrinsic::X86FPConvert ||
+          Id == Intrinsic::X86AMXState || Id == Intrinsic::Pdep ||
+          Id == Intrinsic::Pext || Id == Intrinsic::Mpsadbw ||
+          Id == Intrinsic::Vdbpsadbw || Id == Intrinsic::X86FourFMA ||
+          Id == Intrinsic::F16CConvert || Id == Intrinsic::X86VP4DPWSSD ||
+          Id == Intrinsic::X86VP4DPWSSDS || Id == Intrinsic::X86ApproxFloat ||
+          Id == Intrinsic::X86FPClass || Id == Intrinsic::X86FPArith ||
+          Id == Intrinsic::X86FPConvert ||
           Id == Intrinsic::X86FPRoundTransform ||
           Id == Intrinsic::X86FPExtract || Id == Intrinsic::X86FPRange ||
           Id == Intrinsic::X86FPFixup || Id == Intrinsic::X86FPScale ||

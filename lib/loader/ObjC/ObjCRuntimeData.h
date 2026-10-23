@@ -26,11 +26,13 @@ public:
         Image.MachOChainedFixupsAmbiguous)
       return false;
     // Plain C object storage cannot reproduce authenticated arm64e isa fields.
+    if (Image.isArm64e() || !Image.MachOAuthenticatedPointers.empty())
+      return false;
     return Image.Arch != Arch::AArch64 || Image.Raw.size() < 32 ||
            llvm::support::endian::read32le(Image.Raw.data()) !=
                llvm::MachO::MH_MAGIC_64 ||
-           (llvm::support::endian::read32le(Image.Raw.data() + 8) &
-            0x00ffffff) != llvm::MachO::CPU_SUBTYPE_ARM64E;
+           !macho_loader::arm64e::isSubtype(
+               llvm::support::endian::read32le(Image.Raw.data() + 8));
   }
 
   const uint8_t *bytes(va_t VA, uint64_t Size) const {

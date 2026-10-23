@@ -156,7 +156,8 @@ struct Chain {
 } // namespace
 
 TEST(MachOArm64e, RecognizesSubtypeWithABICapabilities) {
-  for (uint32_t Subtype : {2u, 0x80000002u, 0x82000002u}) {
+  for (uint32_t Subtype :
+       {2u, 0x80000002u, 0x82000002u, 12u, 0x8000000cu, 0x8200000cu}) {
     mach_header_64 H{};
     H.magic = MH_MAGIC_64;
     H.cputype = CPU_TYPE_ARM64;
@@ -193,6 +194,115 @@ TEST(MachOArm64e, RecognizesSubtypeWithABICapabilities) {
     ASSERT_EQ(Candidates.size(), 1);
     EXPECT_TRUE(Candidates[0].Loadable);
     EXPECT_NE(Candidates[0].Description.find("ARM64E"), std::string::npos);
+    if ((Subtype & 0x00ffffff) == 12)
+      EXPECT_NE(Candidates[0].Description.find("ARM64E.X1"), std::string::npos);
+  }
+}
+
+TEST(MachOArm64e, SegmentedChainsRetainTargetIndicesAndSigningFields) {
+  for (bool Authenticated : {false, true})
+    for (unsigned Key = 0; Key < 4; ++Key)
+      for (bool AddressDiversity : {false, true}) {
+        Chain F(14);
+        // Keep the target out of address order, as its index refers to the
+        // original load-command order. No image-base addition is involved.
+        Segment Target;
+        Target.VA = Base;
+        Target.Size = 0x1000;
+        F.Image.Segments.push_back(Target);
+        const uint64_t Fields = (uint64_t(1) << 63) | (uint64_t(Key) << 49) |
+                                (uint64_t(AddressDiversity) << 48) |
+                                (uint64_t(0xbeef) << 32);
+        const uint64_t Raw =
+            (uint64_t(1) << 28) | 0x80 | (Authenticated ? Fields : 0);
+        F.word(0, Raw);
+        F.parse();
+        ASSERT_TRUE(F.Image.MachOChainedFixupsError.empty())
+            << F.Image.MachOChainedFixupsError;
+        if (Authenticated) {
+          ASSERT_EQ(F.Image.MachOAuthenticatedPointers.size(), 1);
+          const auto &A = F.Image.MachOAuthenticatedPointers.at(Data);
+          EXPECT_EQ(A.Target, Base + 0x80);
+          EXPECT_EQ(A.Key, Key);
+          EXPECT_EQ(A.Diversity, 0xbeef);
+          EXPECT_EQ(A.AddressDiversity, AddressDiversity);
+          EXPECT_EQ(F.word(0), Raw);
+          EXPECT_FALSE(readImmutableImagePointer(F.Image, Data));
+        } else {
+          EXPECT_TRUE(F.Image.MachOAuthenticatedPointers.empty());
+          EXPECT_EQ(F.word(0), Base + 0x80);
+          EXPECT_EQ(F.Image.MachOResolvedChainedPointerSlots.count(Data), 1);
+        }
+      }
+}
+
+TEST(MachOArm64e, SegmentedNextUsesAllTwelveBitsAtFourByteStride) {
+  Chain F(14);
+  F.Image.Segments[0].Size = F.Image.Segments[0].FileSz = 0x4000;
+  F.Image.Segments[0].Data.resize(0x4000);
+  F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = 0x4000;
+  writeLE<uint16_t>(F.Bytes.data() + Chain::SegmentOffset + 4, 0x4000);
+  F.word(0, (uint64_t(1) << 63) | (uint64_t(0x800) << 51) | 0x80);
+  F.word(0x2000, (uint64_t(1) << 63) | 0x88);
+  F.parse();
+  ASSERT_TRUE(F.Image.MachOChainedFixupsError.empty());
+  ASSERT_EQ(F.Image.MachOAuthenticatedPointers.size(), 2);
+  EXPECT_EQ(F.Image.MachOAuthenticatedPointers.at(Data).Target, Data + 0x80);
+  EXPECT_EQ(F.Image.MachOAuthenticatedPointers.at(Data + 0x2000).Target,
+            Data + 0x88);
+  EXPECT_TRUE(F.Image.DyldBindSlots.empty());
+}
+
+TEST(MachOArm64e, SegmentedMalformedTargetsNeverPublishPartialChains) {
+  for (unsigned Failure = 0; Failure < 6; ++Failure) {
+    SCOPED_TRACE(Failure);
+    Chain F(14);
+    F.word(0, (uint64_t(1) << 63) | (uint64_t(2) << 51) | 0x80);
+    F.word(8, 0x88);
+    if (Failure == 0)
+      F.word(8, (uint64_t(15) << 28) | 0x88); // missing target segment
+    else if (Failure == 1)
+      F.word(8, 0x1001); // outside target segment, including its one-past value
+    else if (Failure == 2)
+      F.word(8, (uint64_t(1) << 32) | 0x88); // unsigned padding
+    else if (Failure == 3) {
+      Segment Target;
+      Target.VA = InvalidVA - 8;
+      Target.Size = 32;
+      F.Image.Segments.push_back(Target);
+      F.word(8, (uint64_t(1) << 28) | 16); // target address overflow
+    } else if (Failure == 4)
+      F.Image.IsRelocatable = true; // no load-command segment identity
+    else
+      F.Image.Segments.insert(F.Image.Segments.begin(), Segment{});
+    F.parse();
+    EXPECT_FALSE(F.Image.MachOChainedFixupsError.empty());
+    EXPECT_TRUE(F.Image.MachOAuthenticatedPointers.empty());
+    EXPECT_TRUE(F.Image.MachOResolvedChainedPointerSlots.empty());
+  }
+}
+
+TEST(MachOArm64e, PublicLoaderAcceptsSegmentedPointersWithoutImageBaseBias) {
+  for (bool Auth : {false, true}) {
+    Chain F(14);
+    // linkedFile adds __TEXT before __DATA_CONST in the segment table.
+    const uint64_t Raw = (uint64_t(Auth) << 63) | (uint64_t(1) << 28) | 0x80;
+    F.word(0, Raw);
+    const auto File = F.linkedFile();
+    llvm::MemoryBufferRef Buffer(
+        llvm::StringRef(reinterpret_cast<const char *>(File.data()),
+                        File.size()),
+        "segmented-arm64e.dylib");
+    auto Image = MachOLoader().loadBuffer(Buffer);
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    if (Auth) {
+      ASSERT_EQ(Image->MachOAuthenticatedPointers.size(), 1);
+      EXPECT_EQ(Image->MachOAuthenticatedPointers.at(Data).Target, Data + 0x80);
+      EXPECT_EQ(readLE<uint64_t>(Image->readVA(Data, 8)), Raw);
+    } else {
+      EXPECT_EQ(readLE<uint64_t>(Image->readVA(Data, 8)), Data + 0x80);
+      EXPECT_EQ(Image->MachOResolvedChainedPointerSlots.count(Data), 1);
+    }
   }
 }
 
@@ -226,6 +336,34 @@ TEST(MachOArm64e, RetainsAllSigningFieldsWithoutInventingPACBits) {
         EXPECT_FALSE(readImmutableImagePointer(F.Image, Data));
         EXPECT_FALSE(readImmutableChainedImageValue(F.Image, Data));
       }
+}
+
+TEST(MachOArm64e, X1CannotBypassAuthenticatedABIRebuildRequirements) {
+  for (uint32_t Subtype : {12u, 0x8200000cu}) {
+    BinaryImage Image;
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.MachOCPUSubtype = Subtype;
+    MedFunc F;
+    F.Name = "x1_constant";
+    F.Entry = Base;
+    F.ReturnType = NdType::makeInt(8, false);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(MedVar::makeConst(7, 8));
+    F.Blocks.emplace_back();
+    F.Blocks[0].Id = 0;
+    F.Blocks[0].StartAddr = Base;
+    F.Blocks[0].Ops = {Return};
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit({F}, Context, "x1", Arch::AArch64, {},
+                                        &Image, BinaryFormat::MachO);
+    ASSERT_TRUE(Module);
+    EXPECT_TRUE(Module->getModuleFlag("neverd.arm64e-analysis"));
+    EXPECT_FALSE(
+        Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO).Success);
+  }
 }
 
 TEST(MachOArm64e, MixedChainsUseFormatStrideAndSignedBindAddends) {

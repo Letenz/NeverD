@@ -25,6 +25,7 @@
 #include "neverd/loader/ELF/ELFImageMetadata.h"
 #include "neverd/loader/ExceptionTable.h"
 #include "neverd/loader/Limits.h"
+#include "neverd/loader/MachO/MachOArm64e.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/sbf/SBFMetadata.h"
@@ -363,8 +364,7 @@ struct BinaryImage {
   uint32_t MachOCPUSubtype = 0;
   bool isArm64e() const {
     return isMachO() && Arch == Arch::AArch64 &&
-           (MachOCPUSubtype & ~uint32_t(llvm::MachO::CPU_SUBTYPE_MASK)) ==
-               llvm::MachO::CPU_SUBTYPE_ARM64E;
+           macho_loader::arm64e::isSubtype(MachOCPUSubtype);
   }
   /// Exact slots decoded by the supported chained-fixup reader. A raw nonzero
   /// slot in a chained image is not a pointer merely because it looks mapped.

@@ -14,6 +14,7 @@
 #include "../CRecordCall.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
+#include "../render/X86AmxState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
@@ -3912,6 +3913,21 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     OS << "}\n";
     return true;
   }
+  if (IID == llvm::Intrinsic::ptrauth_sign_generic) {
+    if (Opts.TheArch != Arch::AArch64)
+      throw std::runtime_error(kAArch64PAuthRequiresAArch64);
+    if (Call.arg_size() != 2 || !Call.getType()->isIntegerTy(64) ||
+        !Call.getArgOperand(0)->getType()->isIntegerTy(64) ||
+        !Call.getArgOperand(1)->getType()->isIntegerTy(64))
+      throw std::runtime_error(kAArch64PAuthMalformedOperation);
+    emitIndent(Indent);
+    if (!Call.use_empty())
+      OS << getName(&Call) << " = ";
+    OS << aarch64PAuthGenericSignC(valueStr(Call.getArgOperand(0)),
+                                   valueStr(Call.getArgOperand(1)))
+       << ";\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::ptrauth_auth) {
     if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 3)
       throw std::runtime_error(kAArch64PAuthRequiresAArch64);
@@ -4855,6 +4871,11 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Amx = renderX86AmxCall(Opts.TheArch, Call, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *Amx;
+    return true;
+  }
   if (auto Sgx =
           renderX86SgxCall(Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);

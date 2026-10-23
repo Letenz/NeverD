@@ -9,6 +9,7 @@
 /// compare faults with the original bytes on the same host.
 //===----------------------------------------------------------------------===//
 
+#include "X86AMXFixtures.h"
 #include "X86SHA512Reference.h"
 #include "X86SystemStateFixtures.h"
 #include "X86VirtualizationFixtures.h"
@@ -20,6 +21,7 @@
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86AmxAsm.h"
 #include "neverd/backend/llvm/X86SgxAsm.h"
 #include "neverd/backend/llvm/X86SystemStateAsm.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -2646,5 +2648,378 @@ TEST(X86SegmentedBlockSource, ImageShapedOffsetsRemainNumeric) {
     compileRoutes(Image, NoOpt, Entry + 15, "movdir64b");
     if (::testing::Test::HasFailure())
       return;
+  }
+}
+
+namespace {
+std::vector<uint8_t> amxFunction(const AmxEncoding &E, size_t &Offset) {
+  // A zero palette is a valid LDTILECFG input. Stack storage also makes
+  // STTILECFG independent of the test process's ambient address layout.
+  std::vector<uint8_t> Bytes = {0x48, 0x83, 0xec, 0x40};
+  for (unsigned I = 0; I != 8; ++I)
+    Bytes.insert(Bytes.end(), {0x48, 0xc7, 0x44, 0x24,
+                               static_cast<uint8_t>(8 * I), 0, 0, 0, 0});
+  const bool Row = E.Kind >= 22;
+  Bytes.insert(Bytes.end(), {0xb8, 0, 0, 0, 0, 0xb9, 0x40, 0, 0, 0});
+  if (!Row)
+    Bytes.insert(Bytes.end(), {0x48, 0x89, 0xe0}); // mov rax,rsp.
+  if (llvm::StringRef(E.Assembly).contains("%r16d"))
+    Bytes.insert(Bytes.end(), {0xd5, 0x10, 0xb8, 0, 0, 0, 0});
+  Offset = Bytes.size();
+  Bytes.insert(Bytes.end(), E.Bytes.begin(), E.Bytes.end());
+  if (Row && llvm::StringRef(E.Assembly).contains("%zmm17"))
+    Bytes.insert(Bytes.end(), {0x62, 0xe1, 0xfd, 0x08, 0x7e, 0xc8});
+  else if (Row && llvm::StringRef(E.Assembly).contains("%zmm31"))
+    Bytes.insert(Bytes.end(), {0x62, 0x61, 0xfd, 0x08, 0x7e, 0xf8});
+  else if (Row)
+    Bytes.insert(Bytes.end(),
+                 {0xc4, 0xe1, 0xf9, 0x7e, 0xc0}); // vmovq rax,xmm0.
+  else
+    Bytes.insert(Bytes.end(), {0xb8, 0, 0, 0, 0});
+  Bytes.insert(Bytes.end(), {0x48, 0x83, 0xc4, 0x40, 0xc3});
+  return Bytes;
+}
+
+std::string amxOutcomeDriver(const BinaryImage &Image) {
+  // Compare completion as well as native exceptions: TILERELEASE and a zero
+  // configuration can complete on AMX hardware even without tiled data use.
+  std::string Source = R"C(
+#define _GNU_SOURCE
+#include <signal.h>
+#include <stdint.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern uint64_t virtualization_test(void), neverd_original(void);
+static int output;
+static void fault(int signal, siginfo_t *info, void *context) {
+  (void)context;
+  uint64_t result[3] = {(unsigned)signal, (unsigned)info->si_code, 0};
+  _exit(write(output, result, sizeof(result)) != sizeof(result));
+}
+static int observe(uint64_t (*fn)(void), uint64_t result[3]) {
+  int pipefd[2];
+  if (pipe(pipefd)) return 1;
+  pid_t child = fork();
+  if (child < 0) return 2;
+  if (!child) {
+    close(pipefd[0]); output = pipefd[1];
+    struct sigaction sa = {0};
+    sa.sa_sigaction = fault; sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGILL, &sa, 0) || sigaction(SIGSEGV, &sa, 0) ||
+        sigaction(SIGBUS, &sa, 0)) _exit(3);
+    uint64_t completed[3] = {0, 0, fn()};
+    _exit(write(output, completed, sizeof(completed)) != sizeof(completed));
+  }
+  close(pipefd[1]);
+  long bytes = read(pipefd[0], result, 3 * sizeof(uint64_t));
+  close(pipefd[0]);
+  int status;
+  if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+      WEXITSTATUS(status) || bytes != 3 * sizeof(uint64_t)) return 4;
+  return 0;
+}
+int main(void) {
+  uint64_t expected[3], actual[3];
+  if (observe(neverd_original, expected) ||
+      observe(virtualization_test, actual)) return 1;
+  return expected[0] != actual[0] || expected[1] != actual[1] ||
+         expected[2] != actual[2];
+}
+__asm__(".text\n.globl neverd_original\nneverd_original:\n"
+)C";
+  for (const auto Byte : Image.Segments.front().Data)
+    Source += "\".byte " + std::to_string(Byte) + "\\n\"\n";
+  return Source + ");\n";
+}
+} // namespace
+
+TEST(X86AmxSource, EveryBankOperationAndEncodingCompilesAcrossNativeFormats) {
+  for (const auto &E : amxEncodings())
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(E.Assembly);
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(NoOpt);
+        size_t Offset;
+        auto Image = image(Arch::X64, Format, amxFunction(E, Offset));
+        const bool FixedBank =
+            E.Kind == 2 || E.Kind == 3 || (E.Kind >= 9 && E.Kind < 22);
+        compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                      false, false, {},
+                      FixedBank ? E.Bytes : std::vector<uint8_t>{}, 0, true);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+TEST(X86AmxSource, NativeCompletionAndFaultsMatchOriginalBytes) {
+  for (const auto &E : amxEncodings())
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(E.Assembly);
+      SCOPED_TRACE(NoOpt);
+      size_t Offset;
+      auto Image = image(Arch::X64, BinaryFormat::ELF, amxFunction(E, Offset));
+      compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                    false, false, amxOutcomeDriver(Image));
+      if (::testing::Test::HasFailure())
+        return;
+    }
+}
+
+TEST(X86AmxSource, MalformedAssemblyCannotDropBankMemoryOrFeatureEffects) {
+  for (const auto Descriptor :
+       {X86AmxStateVersion | unsigned(X86AmxOp::Release),
+        X86AmxStateVersion | unsigned(X86AmxOp::Load) | X86AmxEvexMemory,
+        X86AmxStateVersion | unsigned(X86AmxOp::MoveRow) | X86AmxImmediateRow,
+        X86AmxStateVersion | unsigned(X86AmxOp::MoveRow) | X86AmxExtendedRow}) {
+    const auto P = x86AmxAsm(Descriptor, NdMemoryAddressSpace::Default);
+    ASSERT_TRUE(P);
+    for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+      SCOPED_TRACE(Descriptor);
+      SCOPED_TRACE(Mutation);
+      llvm::LLVMContext Context;
+      llvm::Module Module("amx", Context);
+      llvm::IRBuilder<> B(Context);
+      std::vector<llvm::Type *> Types;
+      std::vector<llvm::Value *> Values;
+      for (unsigned I = 0; I < P->InputBytes.size(); ++I) {
+        llvm::Type *T = B.getIntNTy(8 * P->InputBytes[I]);
+        if (P->Row && I == 0)
+          T = B.getPtrTy();
+        Types.push_back(T);
+        Values.push_back(llvm::Constant::getNullValue(T));
+      }
+      auto *Type = llvm::FunctionType::get(B.getVoidTy(), Types, false);
+      auto *Function = llvm::Function::Create(
+          llvm::FunctionType::get(B.getVoidTy(), false),
+          llvm::GlobalValue::ExternalLinkage, "test", Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+      auto Text = P->Text;
+      auto Constraints = P->Constraints;
+      if (Mutation == 1)
+        Constraints.erase(Constraints.find(",~{memory}"));
+      if (Mutation == 2)
+        Constraints.erase(Constraints.find("~{tmm7}"), 8);
+      if (Mutation == 3)
+        Text += "\n\tnop";
+      auto *Asm = llvm::InlineAsm::get(
+          Type, Text, Constraints, Mutation != 4, Mutation == 5,
+          Mutation == 6 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
+      auto *Call = B.CreateCall(Asm, Values);
+      if (Mutation == 7)
+        Call->setOnlyReadsMemory();
+      if (Mutation == 8)
+        Call->setOnlyWritesMemory();
+      if (Mutation == 9)
+        Call->setDoesNotReturn();
+      B.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      Options.EmitIncludes = false;
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      if (!Mutation)
+        EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options)) << Source;
+      else
+        EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                     std::invalid_argument);
+    }
+  }
+}
+
+namespace {
+std::vector<uint8_t> amxTransferFunction() {
+  // SysV: config, source, byte stride, destination, completed config.
+  // No explicit tile values cross the ordinary function ABI.
+  return {0xc4, 0xe2, 0x78, 0x49, 0x07,       // ldtilecfg [rdi].
+          0xc4, 0xe2, 0x7b, 0x4b, 0x04, 0x16, // tileloadd tmm0,[rsi+rdx].
+          0xb8, 0x40, 0,    0,    0,          // stride for packed output.
+          0xc4, 0xe2, 0x7a, 0x4b, 0x04, 0x01, // tilestored [rcx+rax],tmm0.
+          0xc4, 0xc2, 0x79, 0x49, 0x00,       // sttilecfg [r8].
+          0xc4, 0xe2, 0x78, 0x49, 0xc0, 0xc3};
+}
+
+std::string amxRestartDriver(const BinaryImage &Image, bool Execute) {
+  std::string Source = R"C(
+#define _GNU_SOURCE
+#include <cpuid.h>
+#include <signal.h>
+#include <stdint.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <ucontext.h>
+#include <unistd.h>
+typedef void (*transfer)(void *, void *, uint64_t, void *, void *);
+extern void virtualization_test(void *, void *, uint64_t, void *, void *);
+extern void neverd_original(void *, void *, uint64_t, void *, void *);
+static unsigned char *source;
+static unsigned page, config_offset, tile_offset;
+static volatile sig_atomic_t faults;
+static void resume(int signal, siginfo_t *info, void *context) {
+  ucontext_t *uc = context;
+  const unsigned char *state = (const unsigned char *)uc->uc_mcontext.fpregs;
+  if (signal != SIGSEGV || info->si_addr != source + page || faults++)
+    _exit(10);
+  // Linux signal frames use standard XSAVE offsets, not compacted offsets.
+  // Check the published length before reading either extension component.
+  uint32_t magic, length;
+  uint64_t present, compacted;
+  memcpy(&magic, state + 464, 4); memcpy(&length, state + 480, 4);
+  memcpy(&present, state + 512, 8); memcpy(&compacted, state + 520, 8);
+  if (magic != 0x46505853 || length < tile_offset + 1024 ||
+      (compacted >> 63) || (present & (3ULL << 17)) != (3ULL << 17) ||
+      state[config_offset] != 1 || state[config_offset + 1] != 1)
+    _exit(11);
+  for (unsigned i = 0; i != 64; ++i)
+    if (state[tile_offset + i] != source[i]) _exit(12);
+  if (syscall(SYS_mprotect, source + page, page, PROT_READ | PROT_WRITE))
+    _exit(13);
+  // sigreturn restores TILECFG.start_row and TMM0; retry the same instruction.
+}
+static int check(transfer fn, int restart) {
+  _Alignas(64) unsigned char config[64] = {0}, completed[64] = {0};
+  unsigned char destination[128];
+  memset(destination, 0xa5, sizeof(destination));
+  config[0] = 1; config[16] = 64; config[48] = 2;
+  faults = 0;
+  if (mprotect(source + page, page, restart ? PROT_NONE : PROT_READ | PROT_WRITE))
+    return 20;
+  fn(config, source, page, destination, completed);
+  if (faults != restart || memcmp(config, completed, 64)) return 21;
+  if (memcmp(destination, source, 64) ||
+      memcmp(destination + 64, source + page, 64)) return 22;
+  return 0;
+}
+static int run(void) {
+  if (syscall(SYS_arch_prctl, 0x1023, 18)) return 30;
+  unsigned a, b, c, d;
+  __cpuid_count(13, 17, a, b, c, d); config_offset = b;
+  __cpuid_count(13, 18, a, b, c, d); tile_offset = b;
+  page = (unsigned)sysconf(_SC_PAGESIZE);
+  source = mmap(0, 2 * page, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (source == MAP_FAILED) return 31;
+  for (unsigned i = 0; i != 64; ++i) {
+    source[i] = (unsigned char)(3 * i + 7);
+    source[page + i] = (unsigned char)(5 * i + 11);
+  }
+  struct sigaction sa = {0};
+  sa.sa_sigaction = resume; sa.sa_flags = SA_SIGINFO;
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGSEGV, &sa, 0)) return 32;
+  for (int restart = 0; restart != 2; ++restart) {
+    int status = check(neverd_original, restart);
+    if (status) return status;
+    status = check(virtualization_test, restart);
+    if (status) return status;
+  }
+  return munmap(source, 2 * page) != 0;
+}
+)C";
+  Source += Execute ? "int main(void) { return run(); }\n"
+                    : "int main(void) { return 0; }\n";
+  Source +=
+      "__asm__(\".text\\n.globl neverd_original\\nneverd_original:\\n\"\n";
+  for (const auto Byte : Image.Segments.front().Data)
+    Source += "\".byte " + std::to_string(Byte) + "\\n\"\n";
+  return Source + ");\n";
+}
+} // namespace
+
+TEST(X86AmxSource, CompleteTransferSequenceAndRestartDriverCompile) {
+  for (bool NoOpt : {false, true}) {
+    auto Image = image(Arch::X64, BinaryFormat::ELF, amxTransferFunction());
+    // Also compile/link the signal-context oracle on hosts without AMX.
+    compileRoutes(Image, NoOpt, Entry + 5, "tileloadd", std::nullopt, false,
+                  false, amxRestartDriver(Image, false));
+    if (::testing::Test::HasFailure())
+      return;
+  }
+}
+
+TEST(X86AmxSource, NativeTileRowsAndFaultContinuationMatchOriginalBytes) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "AMX signal continuation requires Linux x86-64";
+#else
+  const auto Features = llvm::sys::getHostCPUFeatures();
+  const auto Tile = Features.find("amx-tile");
+  if (Tile == Features.end() || !Tile->second)
+    GTEST_SKIP()
+        << "Host does not provide AMX-TILE; native restart unqualified";
+  for (bool NoOpt : {false, true}) {
+    auto Image = image(Arch::X64, BinaryFormat::ELF, amxTransferFunction());
+    compileRoutes(Image, NoOpt, Entry + 5, "tileloadd", std::nullopt, false,
+                  false, amxRestartDriver(Image, true));
+    if (::testing::Test::HasFailure())
+      return;
+  }
+#endif
+}
+
+TEST(X86AmxSource, HighCRejectsMalformedBankOwnership) {
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Call = HighExpr::makeCall(
+        "x86_amx_state", 0,
+        {HighExpr::makeConst(0, 8),
+         HighExpr::makeConst(X86AmxStateVersion | unsigned(X86AmxOp::Release),
+                             4)});
+    Call->IntrinsicId = Intrinsic::X86AMXState;
+    Call->Type = NdType::makeVoid();
+    switch (Mutation) {
+    case 1:
+      Call->Operands[1]->ConstVal &= ~X86AmxStateVersion;
+      break;
+    case 2:
+      Call->Operands[1]->ConstVal |= X86AmxAddress32;
+      break;
+    case 3:
+      Call->Operands[0]->ConstVal = 1;
+      break;
+    case 4:
+      Call->Operands[1]->Type = NdType::makeInt(8, false);
+      break;
+    case 5:
+      Call->Operands.pop_back();
+      break;
+    case 6:
+      Call->Type = NdType::makeInt(64, false);
+      break;
+    case 7:
+      Call->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 8:
+      Call->DoesNotReturn = true;
+      break;
+    case 9:
+      Call->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      break;
+    default:
+      break;
+    }
+    HighStmt Statement;
+    Statement.Kind = StmtKind::Call;
+    Statement.CallExpr = Call;
+    HighFunc Function;
+    Function.Entry = Entry;
+    Function.Name = "test";
+    Function.ReturnType = NdType::makeVoid();
+    Function.ReturnsNoValue = true;
+    Function.Body.push_back(std::move(Statement));
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.EmitIncludes = false;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    if (!Mutation)
+      EXPECT_TRUE(HighCEmitter().emit({Function}, OS, Options)) << Source;
+    else
+      EXPECT_THROW(HighCEmitter().emit({Function}, OS, Options),
+                   std::invalid_argument);
   }
 }

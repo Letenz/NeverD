@@ -625,7 +625,9 @@ private:
       // shape contracts as lowering; an invented output on a void effect
       // must not acquire a return value here.
       if (Op.Output.Size &&
-          (x86SgxShapeIsValid(Id, x86SgxMedShape(Op, Img.Arch)) ||
+          ((Id == Intrinsic::X86AMXState &&
+            x86AmxShapeIsValid(x86AmxMedShape(Op, Img.Arch))) ||
+           x86SgxShapeIsValid(Id, x86SgxMedShape(Op, Img.Arch)) ||
            x86SystemStateShapeIsValid(Id,
                                       x86SystemStateMedShape(Op, Img.Arch)) ||
            x86VirtualizationShapeIsValid(

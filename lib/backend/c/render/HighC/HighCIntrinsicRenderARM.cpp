@@ -773,21 +773,20 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     if (ResultBytes != kAArch64PAuthPointerBytes ||
         Ops.size() != (Auth->Strip ? 1 : 2))
       throw std::invalid_argument(kAArch64PAuthMalformedOperation);
-    return "({ " +
-           aarch64PAuthMachineC(*Auth, Ops[0], Auth->Strip ? "" : Ops[1]) +
-           kAArch64PAuthCPointerResult + "})";
+    return aarch64PAuthMachineC(*Auth, Ops[0], Auth->Strip ? "" : Ops[1]);
   }
   if (Id == I::A64_AuthBranch) {
     if (ResultBytes != kAArch64PAuthPointerBytes || Ops.size() != 3 ||
         !constantOperand(Ops[1]) ||
         !aarch64PAuthCodeKeyIsValid(*constantOperand(Ops[1])))
       throw std::invalid_argument(kAArch64PAuthMalformedBranch);
+    const std::string Name =
+        aarch64PAuthTemporary(kAArch64PAuthCTarget, {Ops[0], Ops[1], Ops[2]});
     return "({ " +
-           llvm::formatv(kAArch64PAuthCTargetDeclaration,
+           llvm::formatv(kAArch64PAuthCTargetDeclaration, Name,
                          aarch64PAuthAuthenticateC(Ops[0], Ops[1], Ops[2]))
                .str() +
-           aarch64PAuthTargetUseC(kAArch64PAuthCTarget) + kAArch64PAuthCTarget +
-           "; })";
+           aarch64PAuthTargetUseC(Name) + Name + "; })";
   }
   switch (Id) {
   case I::A64_Rbit: {
@@ -912,11 +911,9 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
            Ordering + ")";
   }
   case I::A64_Pacga:
-    if (Ops.size() < 2)
-      return {};
-    HasCIntrinsics = true;
-    return "__builtin_arm_pacga((uint64_t)(" + Ops[0] + "), (uint64_t)(" +
-           Ops[1] + "))";
+    if (ResultBytes != kAArch64PAuthPointerBytes || Ops.size() != 2)
+      throw std::invalid_argument(kAArch64PAuthMalformedOperation);
+    return aarch64PAuthGenericSignC(Ops[0], Ops[1]);
   case I::Addg:
   case I::Subg: {
     if (Ops.size() < 3)

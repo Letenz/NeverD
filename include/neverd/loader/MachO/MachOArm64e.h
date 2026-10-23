@@ -39,12 +39,25 @@ struct PointerField {
   inline constexpr Type Name = Value;
 #define NEVERD_MACHO_ARM64E_TEXT(Name, Text)                                   \
   inline constexpr char Name[] = Text;
+#define NEVERD_MACHO_ARM64E_SUBTYPE(Name, Value, Label)                        \
+  inline constexpr uint32_t Name = Value;
 #include "neverd/loader/MachO/MachOArm64e.def"
+
+inline bool isSubtype(uint32_t Subtype) {
+  switch (Subtype & ~uint32_t(llvm::MachO::CPU_SUBTYPE_MASK)) {
+#define NEVERD_MACHO_ARM64E_SUBTYPE(Name, Value, Label) case Name:
+#include "neverd/loader/MachO/MachOArm64e.def"
+    return true;
+  default:
+    return false;
+  }
+}
 
 struct ChainFormat {
   unsigned Stride;
   bool Offset;
   unsigned OrdinalBits;
+  bool Segmented = false;
 };
 
 inline std::optional<ChainFormat> chainFormat(uint16_t Format) {
@@ -52,6 +65,9 @@ inline std::optional<ChainFormat> chainFormat(uint16_t Format) {
 #define NEVERD_MACHO_ARM64E_FORMAT(Name, Stride, Offset, OrdinalBits)          \
   case llvm::MachO::Name:                                                      \
     return ChainFormat{Stride, Offset, OrdinalBits};
+#define NEVERD_MACHO_ARM64E_SEGMENTED_FORMAT(Name, Stride)                     \
+  case Name:                                                                   \
+    return ChainFormat{Stride, false, 0, true};
 #include "neverd/loader/MachO/MachOArm64e.def"
   default:
     return std::nullopt;

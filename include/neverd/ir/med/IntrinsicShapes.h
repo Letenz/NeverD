@@ -18,6 +18,7 @@
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86AmxState.h"
 #include "neverd/ir/intrinsics/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86Virtualization.h"
@@ -388,6 +389,50 @@ x86VirtualizationMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
       Shape.ValidId = false;
   }
   return Shape;
+}
+
+inline X86AmxShape x86AmxMedShape(const MedOp &Op, Arch A = Arch::Unknown) {
+  X86AmxShape S;
+  S.TargetArch = A;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId =
+      Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+      Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+      Op.Inputs[0].ConstVal == static_cast<uint16_t>(Intrinsic::X86AMXState);
+  S.WritableOutput =
+      (Op.Output.Kind == MedVar::Reg || Op.Output.Kind == MedVar::Temp) &&
+      Op.Output.Id >= 0;
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &V = Op.Inputs[I + 1];
+    S.InputSizes[I] = V.Size;
+    S.ScalarInputs[I] = isMedIntrinsicScalarInput(V) ||
+                        V.Kind == MedVar::Param || V.Kind == MedVar::Stack ||
+                        V.Kind == MedVar::RetVal;
+  }
+  if (Op.NumInputs > 1)
+    S.EmptyBase = Op.Inputs[1].isConst() && Op.Inputs[1].ConstVal == 0;
+  if (Op.NumInputs > 2 && Op.Inputs[2].isConst() && Op.Inputs[2].Size == 4 &&
+      Op.Inputs[2].ConstVal <= UINT32_MAX)
+    S.Descriptor = static_cast<uint32_t>(Op.Inputs[2].ConstVal);
+  if (Op.NumInputs > 3 && Op.Inputs[3].isConst())
+    S.RowImmediate = Op.Inputs[3].ConstVal;
+  if (!Op.IntrinsicOutputs.empty())
+    S.ValidId = false;
+  auto CheckArch = [&](const MedVar &V) {
+    if (V.Kind != MedVar::Reg)
+      return;
+    if (S.TargetArch == Arch::Unknown)
+      S.TargetArch = V.TheArch;
+    else if (V.TheArch != S.TargetArch)
+      S.ValidId = false;
+  };
+  CheckArch(Op.Output);
+  for (unsigned I = 1; I < Op.NumInputs && I < Op.Inputs.size(); ++I)
+    CheckArch(Op.Inputs[I]);
+  return S;
 }
 
 inline X86SgxShape x86SgxMedShape(const MedOp &Op,

@@ -30,6 +30,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <utility>
 
 namespace neverd {
@@ -571,6 +572,106 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
   if (Op.NumInputs < 1 || !Op.Inputs[0].isConst())
     return false;
   const Intrinsic Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (Id == Intrinsic::X86AMXState) {
+    const auto Shape = x86AmxLowShape(Op, Img.Arch);
+    if (Img.Arch != Arch::X64 || !x86AmxShapeIsValid(Shape))
+      return false;
+    for (unsigned I : {1u, 3u})
+      if (I < Op.NumInputs && !Op.Inputs[I].isConst() &&
+          !Registers.contains(Op.Inputs[I].Offset))
+        return false;
+    const auto D = *Shape.Descriptor;
+    const auto K = x86AmxOperation(D);
+    const auto Config = NdVar::reg(x86reg::TileConfig, x86reg::TileConfigSize);
+    auto Tile = [&](unsigned I = 0) {
+      return NdVar::reg(x86reg::tileReg(x86AmxTile(D, I)),
+                        x86reg::TileRegStride);
+    };
+    auto Known = [&](NdVar V) {
+      auto B = getRegisterBytes(V.Offset);
+      return B && B->size() == V.Size;
+    };
+    auto ClearTiles = [&] {
+      for (unsigned I = 0; I < x86reg::TileRegCount; ++I)
+        writeOutputBytes(NdVar::reg(x86reg::tileReg(I), x86reg::TileRegStride),
+                         std::vector<uint8_t>(x86reg::TileRegStride, 0));
+    };
+    if (K == X86AmxOp::Release) {
+      writeOutputBytes(Config, std::vector<uint8_t>(x86reg::TileConfigSize, 0));
+      ClearTiles();
+      return true;
+    }
+    if (K != X86AmxOp::LoadConfig && !Known(Config))
+      return false;
+    LowOp Projected;
+    Projected.Addr = Op.Addr;
+    Projected.Opcode = NdOp::INTRINSIC;
+    Projected.MemoryAddressSpace = Op.MemoryAddressSpace;
+    auto Inputs = [&](Intrinsic I, std::initializer_list<NdVar> Values) {
+      Projected.addInput(NdVar::scalar(static_cast<uint16_t>(I), 2));
+      for (const auto &V : Values)
+        Projected.addInput(V);
+    };
+    const auto AddressSize = NdVar::scalar(D & X86AmxAddress32 ? 4 : 8, 1);
+    if (K == X86AmxOp::LoadConfig) {
+      Projected.Output = Config;
+      Inputs(Intrinsic::AMXLoadConfig, {Op.Inputs[1], AddressSize});
+      if (!executeIntrinsic(Projected))
+        return false;
+      ClearTiles();
+      return true;
+    }
+    if (K == X86AmxOp::StoreConfig) {
+      Inputs(Intrinsic::AMXStoreConfig, {Op.Inputs[1], Config, AddressSize});
+      return executeIntrinsic(Projected);
+    }
+    if (K == X86AmxOp::Zero) {
+      Projected.Output = Tile();
+      Inputs(Intrinsic::AMXTileZero, {Config});
+    } else if (x86AmxIsTileMemory(K)) {
+      NdVar OldTile = Tile();
+      if (!Known(OldTile)) {
+        if (K == X86AmxOp::Store || (*getRegisterBytes(Config.Offset))[1] != 0)
+          return false;
+        // start_row=0 zeroes the complete old tile before any row is read.
+        OldTile = NdVar::scalar(0, x86reg::TileRegStride);
+      }
+      if (K == X86AmxOp::Store) {
+        Projected.Output = Config;
+        Inputs(Intrinsic::AMXTileStore,
+               {Op.Inputs[1], Op.Inputs[3], Config, Tile(), AddressSize});
+        return executeIntrinsic(Projected);
+      }
+      Projected.Output = Tile();
+      Inputs(Intrinsic::AMXTileLoad,
+             {Op.Inputs[1], Op.Inputs[3], Config, OldTile, AddressSize});
+    } else if (x86AmxIsCompute(K)) {
+      if (!Known(Tile()) || !Known(Tile(1)) || !Known(Tile(2)))
+        return false;
+      Projected.Output = Tile();
+      Inputs(
+          Intrinsic::AMXTileCompute,
+          {NdVar::scalar(unsigned(K) - unsigned(X86AmxOp::Int8SignedSigned), 1),
+           Config, Tile(), Tile(1), Tile(2)});
+    } else {
+      Projected.Output = Op.Output;
+      Inputs(Intrinsic::AMXTileRow,
+             {NdVar::scalar(unsigned(K) - unsigned(X86AmxOp::MoveRow), 1),
+              Config, Tile(), Op.Inputs[3]});
+    }
+    if (!executeIntrinsic(Projected))
+      return false;
+    // Faulting transfers publish their partially completed tile and start_row
+    // inside the existing evaluator. Only normal completion clears progress.
+    LowOp Clear;
+    Clear.Addr = Op.Addr;
+    Clear.Opcode = NdOp::INTRINSIC;
+    Clear.Output = Config;
+    Clear.addInput(
+        NdVar::scalar(static_cast<uint16_t>(Intrinsic::AMXClearStartRow), 2));
+    Clear.addInput(Config);
+    return executeIntrinsic(Clear);
+  }
   if (Id == Intrinsic::CetRdSsp) {
     if (!x86ShadowStackReadShapeIsValid(
             x86ShadowStackReadLowShape(Op, Img.Arch)) ||
@@ -2014,20 +2115,23 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
 
       const uint32_t Selector =
           static_cast<uint32_t>(readOperand(Op.Inputs[4]));
-      const unsigned Row = Selector & 0xffff;
-      const unsigned Chunk = Selector >> 16;
-      const size_t RowOffset = static_cast<size_t>(Chunk) * 64;
-      if (Row >= Rows || RowOffset >= ColumnBytes)
-        return false;
-
+      // ISE 062 removed row chunks and selector #GP: both operand forms use
+      // only bits [3:0], and a row beyond the configured extent yields zeros.
+      const unsigned Row = Selector & 15;
       const auto Kind = static_cast<AMXTileRowKind>(RawKind);
-      const std::vector<uint8_t> Source = readOperandBytes(Op.Inputs[3]);
       std::vector<uint8_t> Result(x86reg::VectorRegStride, 0);
-      const size_t SourceRow = static_cast<size_t>(Row) * 64 + RowOffset;
+      if (Row >= Rows) {
+        writeOutputBytes(Op.Output, Result);
+        return true;
+      }
+      const auto KnownSource = getRegisterBytes(Op.Inputs[3].Offset);
+      if (!KnownSource || KnownSource->size() != x86reg::TileRegStride)
+        return false;
+      const auto &Source = *KnownSource;
+      const size_t SourceRow = static_cast<size_t>(Row) * 64;
       if (Kind == AMXTileRowKind::Move) {
         const size_t Bytes =
-            std::min<size_t>(x86reg::VectorRegStride,
-                             static_cast<size_t>(ColumnBytes) - RowOffset);
+            std::min<size_t>(x86reg::VectorRegStride, ColumnBytes);
         std::copy_n(Source.begin() + SourceRow, Bytes, Result.begin());
         writeOutputBytes(Op.Output, Result);
         return true;
@@ -2070,7 +2174,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
       };
 
       for (unsigned Element = 0; Element < 16; ++Element) {
-        const size_t Byte = RowOffset + Element * 4;
+        const size_t Byte = Element * 4;
         if (Byte >= ColumnBytes)
           continue;
         const uint32_t Value =
