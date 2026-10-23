@@ -6906,6 +6906,15 @@ scalar validity, plus only this operation's memory result. Callers still own
 PC/accounting and profile admission. This C++ adapter alone does not enable a
 generated-code, JIT, public API or cross-architecture capability cell.
 
+`X87PortableABI.def` and `X87PortableStatus.def` own the separate generated-call
+C contract. IRLowValidation derives the emitter signature view from its C
+header without linking to Translate. The `neverd_x87_runtime` shared target
+exports only those helper symbols and adapts a trusted, explicitly constructed
+`PortableX87ExecutionV1` to the existing transactional owner. Scalar-result
+consumption is a stateful, single-use operation; failure and nonproducing steps
+invalidate it. The internal C++ embedding layout must match the runtime build.
+The bridge itself establishes no generated-code or translation qualification.
+
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
 composes proof-gated semantic simplification with LLVM optimization at `O0`

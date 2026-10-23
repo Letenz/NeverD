@@ -52,20 +52,10 @@ static_assert(std::is_trivially_copyable_v<PortableX87StateV1>);
 /// outcome. Refusal is not OS exception delivery. SelfModification means the
 /// entire instruction completed and its corresponding state must be retained.
 enum class PortableX87StepStatusV1 : uint32_t {
-  Completed = 0,
-  InvalidState = 1,
-  UnknownEnvironment = 2,
-  InvalidInstruction = 3,
-  UnsupportedInstruction = 4,
-  InvalidControl = 5,
-  PendingException = 6,
-  UnmaskedControl = 7,
-  UnknownPayload = 8,
-  StackFault = 9,
-  UnsupportedValue = 10,
-  InvalidMemory = 11,
-  MemoryFault = 12,
-  SelfModification = 13,
+#define NEVERD_X87_PORTABLE_STATUS(CxxName, CName, Value, Diagnostic)          \
+  CxxName = Value,
+#include "neverd/ir/X87PortableStatus.def"
+#undef NEVERD_X87_PORTABLE_STATUS
 };
 
 struct PortableX87StepResultV1 {

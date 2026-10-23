@@ -296,6 +296,24 @@ store operand before evaluation, and publishes memory and x87 state only on a
 completed instruction. Self-modifying stores commit their corresponding pop
 before reporting invalidation. The caller must bind a generated/translation
 profile separately; the adapter does not qualify such a profile by itself.
+`neverd_x87_runtime` is the separately linkable C bridge for generated-code
+work. `X87PortableABI.def` owns its two exact symbols and declarations; the IR
+signature view derives types from those declarations. Status values come from
+`X87PortableStatus.def`, and calls return `uint32_t` independently of enum
+storage. `nvd_x87_v1_step` takes an explicit opaque execution context, selector
+and numeric guest IP/DP. It returns a stable status and retains only that
+instruction's diagnostics. `nvd_x87_v1_result` consumes a scalar result once,
+after a successful producing step; missing, stale or repeated reads terminate.
+A failed or nonproducing step invalidates the previous result.
+
+Trusted C++ embedding code constructs `PortableX87ExecutionV1` from separately
+owned state and checked memory. Both owners must outlive the context, remain on
+one execution thread, and match the runtime source build. Generated code may
+only receive that context, never manufacture or reinterpret its internals.
+The bridge catches C++ exceptions as `internal-error` before any instruction
+commit. Its closed export list contains only the two C helpers; it does not
+publish a stable C++ SDK or independently qualify generated/translation profiles.
+
 Invalid controls, unsupported forms/values, unmasked data-instruction controls, stack
 faults and unauthenticated memory refuse without committing state or a store.
 Unqualified MMX and external save/restore boundaries also refuse in lenient

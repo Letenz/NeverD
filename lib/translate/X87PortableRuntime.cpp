@@ -62,36 +62,12 @@ llvm::Error validatePortableX87StateV1(const PortableX87StateV1 &State) {
 }
 
 const char *portableX87StepStatusNameV1(PortableX87StepStatusV1 Status) {
-  using S = PortableX87StepStatusV1;
   switch (Status) {
-  case S::Completed:
-    return "completed";
-  case S::InvalidState:
-    return "invalid-state";
-  case S::UnknownEnvironment:
-    return "unknown-environment";
-  case S::InvalidInstruction:
-    return "invalid-instruction";
-  case S::UnsupportedInstruction:
-    return "unsupported-instruction";
-  case S::InvalidControl:
-    return "invalid-control";
-  case S::PendingException:
-    return "pending-exception";
-  case S::UnmaskedControl:
-    return "unmasked-control";
-  case S::UnknownPayload:
-    return "unknown-payload";
-  case S::StackFault:
-    return "stack-fault";
-  case S::UnsupportedValue:
-    return "unsupported-value";
-  case S::InvalidMemory:
-    return "invalid-memory";
-  case S::MemoryFault:
-    return "memory-fault";
-  case S::SelfModification:
-    return "self-modification";
+#define NEVERD_X87_PORTABLE_STATUS(CxxName, CName, Value, Diagnostic)          \
+  case PortableX87StepStatusV1::CxxName:                                       \
+    return Diagnostic;
+#include "neverd/ir/X87PortableStatus.def"
+#undef NEVERD_X87_PORTABLE_STATUS
   }
   return "unknown-status";
 }

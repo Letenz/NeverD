@@ -3524,6 +3524,11 @@ faults and executable stores to check old-protocol rejection, lossless details,
 generation overflow and retained reserved-field, scalar, generation, size and
 fault/access invariants. Existing scalar and runtime ABI tests remain required
 because both access shapes share the same memory owner.
+`NeverDX87PortableExecutionTests` links the separate runtime library and compiles
+its consumer as C11 with short enums where supported. It checks explicit incoming
+state, exact status/scalar returns and current-instruction diagnostics. Death
+tests check missing, reused and stale scalar results; an unavailable death-test
+backend supplies no qualification for those fatal contract violations.
 `X87PortableRuntime.*` in the translation contract target exercises the checked
 adapter with every TOP and all twelve valid PC/RC combinations using a sum
 distinguishable from binary64. It checks exact ten-byte results, sticky status,

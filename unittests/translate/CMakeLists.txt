@@ -124,3 +124,22 @@ if(TARGET neverd_shared)
     LABELS "NeverDTranslationPythonIntegration"
   )
 endif()
+
+add_neverd_unittest(NeverDX87PortableExecutionTests
+  X87PortableExecutionTests.cpp
+  X87PortableRuntimeCHeader.c
+
+  LINK_COMPONENTS
+  Translate
+
+  LINK_LIBS
+  neverd_x87_runtime
+)
+set_target_properties(NeverDX87PortableExecutionTests PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED YES
+  C_EXTENSIONS NO)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(X87PortableRuntimeCHeader.c PROPERTIES
+    COMPILE_OPTIONS "-fshort-enums")
+endif()

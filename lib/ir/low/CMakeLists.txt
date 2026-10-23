@@ -16,6 +16,7 @@ add_neverd_component_library(NeverDIRLowValidation
   X87Arithmetic.cpp
   X87PortableContext.cpp
   X87Capabilities.cpp
+  X87PortableABI.cpp
 
   LINK_COMPONENTS
   Digest
