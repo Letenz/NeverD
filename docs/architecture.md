@@ -6863,6 +6863,26 @@ cancellation, generation tracking, and the `RejectExecutableWrites`,
 `InvalidateOnExecutableWrite`, and `ValidateBeforeDispatch` code-write policies
 also produce coherent typed records rather than implicit host-side behavior.
 
+Exact byte-span loads/stores use the same access-planning owner as scalar
+accesses. The complete nonempty range is checked before copying any byte,
+including operands such as binary80 that cross region boundaries. Stores need
+write permission only; failed accesses leave output bytes, guest storage and
+generations unchanged. Executable writes preserve the existing policy, including
+refusal across multiple executable regions. `SelfModification` denotes a
+completed store followed by invalidation/exit, so an instruction adapter must
+commit its corresponding architectural state before honoring that exit. This
+is failure atomicity within the runtime's confined execution thread, not an
+inter-thread atomic guest instruction or an expansion of translation admission.
+The scalar-v1 control protocol still rejects non-scalar data extents. The
+separate exact-span-v1 validator preserves the 128-byte layout and all other
+invariants while accepting bounded nonempty data extents. Its limit derives
+from `MemoryFaultExit::AccessWidthBits`; oversized spans fail before access.
+Protocol identity must be bound by a trusted profile/invocation and included in
+artifact/cache identity before activation. It cannot be inferred from a control
+record, including a successful or eight-byte record, or selected by retrying a
+failed scalar validation. This foundational validator enables no new profile;
+existing integer dispatch, artifact admission and helpers remain scalar-v1.
+
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
 composes proof-gated semantic simplification with LLVM optimization at `O0`

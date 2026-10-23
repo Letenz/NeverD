@@ -134,6 +134,23 @@ public:
                                       uint64_t Value,
                                       uint32_t RequiredAlignment = 0);
 
+  /// Copy one exact nonempty operand range after validating every byte. Loads
+  /// leave Output unchanged on failure; stores never partially publish bytes
+  /// or generations. Write-only regions require no read permission. These
+  /// accesses share scalar alignment, address and executable-write policy.
+  /// SelfModification means that the entire store completed and the caller
+  /// must commit the corresponding architectural state before exiting.
+  /// Atomicity here is failure atomicity on the confined execution thread,
+  /// not a guest inter-thread atomic-memory instruction.
+  /// Extents are bounded by kMemoryFaultMaxAccessBytes. Wide outcomes require
+  /// the explicit ExactSpan control protocol, never the scalar-v1 validator.
+  GuestMemoryAccessResult loadBytes(uint64_t Address,
+                                    llvm::MutableArrayRef<uint8_t> Output,
+                                    uint32_t RequiredAlignment = 0);
+  GuestMemoryAccessResult storeBytes(uint64_t Address,
+                                     llvm::ArrayRef<uint8_t> Input,
+                                     uint32_t RequiredAlignment = 0);
+
   /// Copy an exact instruction byte range after every covered region has been
   /// proven contiguous and executable.  Output is caller-owned and remains
   /// byte-for-byte unchanged on failure.  A successful result binds each

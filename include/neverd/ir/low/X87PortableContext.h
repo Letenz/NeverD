@@ -36,6 +36,15 @@ enum class X87PortableOutcome {
 
 const char *x87PortableOutcomeName(X87PortableOutcome Outcome);
 
+/// Validate the instruction/profile and authenticated environment before any
+/// guest operand access. Completed permits memory authentication and execution;
+/// it does not establish payload provenance or guarantee numerical completion.
+/// Pending waiting exceptions precede memory faults. Execution repeats this
+/// check so a caller cannot use stale preflight evidence to bypass admission.
+X87PortableOutcome
+preflightPortableX87Context(uint32_t Selector,
+                            const std::array<uint8_t, 512> &State);
+
 /// State's environment must be authenticated by the caller. KnownPayload uses
 /// physical register bits and must not be inferred from tags or an ABI. Memory
 /// is an authenticated ordinary operand copy of exactly the admitted size;

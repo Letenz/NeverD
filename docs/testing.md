@@ -3494,6 +3494,17 @@ python3 scripts/generate_x87_capabilities.py --neverd build-release/bin/neverd -
 Use your configured Release build directory in place of `build-release`.
 `NeverDX87ArithmeticTests` checks direct PC/RC rounding, extended exponents,
 signed zero, masked overflow/underflow numerical results and invalid domains.
+`X87PortableContext.PreflightOrdersWaitingExceptionsBeforeOperandAccess`
+checks waiting/nonwaiting precedence and rejects stale preflight state.
+The translation contract target's `GuestMemoryRuntime.Binary80*` and
+`ExactSpanBoundsAndAlignmentRemainFailureAtomic` cases cover exact ten-byte
+accesses, inaccessible final bytes, adjacent and write-only regions, unchanged
+fault outputs, address/alignment failures, and completed executable writes under
+each invalidation policy. Exact-span protocol tests use actual wide runtime
+faults and executable stores to check old-protocol rejection, lossless details,
+generation overflow and retained reserved-field, scalar, generation, size and
+fault/access invariants. Existing scalar and runtime ABI tests remain required
+because both access shapes share the same memory owner.
 LLVM and Unicorn are independent numerical references; the native x64 test
 compares original instruction bits and defined arithmetic status and skips on
 other hosts. `NeverDX87PortableContextTests` checks all TOP values, retained raw

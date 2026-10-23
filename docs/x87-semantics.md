@@ -281,6 +281,13 @@ known-payload mask. A pop retains the empty register's bits. FNINIT resets the
 environment and tags but never invents payload provenance. An instruction only
 requires known payloads for the operands it reads; unrelated unknown slots do
 not become known. Waiting pending exceptions precede address evaluation.
+`preflightPortableX87Context` owns instruction/profile and environment checks
+that an adapter must run before operand access; execution repeats them before
+publication. Native and portable paths share the pending-exception predicate.
+Preflight success authenticates neither payloads nor guest memory and is not a
+reusable execution receipt. Exact binary80 adapters can use the translation
+memory owner's transactional byte-span operations rather than split stores;
+those operations alone do not enable generated-code or translation support.
 Invalid controls, unsupported forms/values, unmasked data-instruction controls, stack
 faults and unauthenticated memory refuse without committing state or a store.
 Unqualified MMX and external save/restore boundaries also refuse in lenient

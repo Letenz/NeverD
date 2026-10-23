@@ -75,6 +75,16 @@ bool isScalarAccessSize(uint64_t Size) {
   return Size == 1 || Size == 2 || Size == 4 || Size == 8;
 }
 
+bool isDataAccessSize(uint64_t Size, RuntimeControlProtocolV1 Protocol) {
+  switch (Protocol) {
+  case RuntimeControlProtocolV1::Scalar:
+    return isScalarAccessSize(Size);
+  case RuntimeControlProtocolV1::ExactSpan:
+    return Size != 0 && Size <= kMemoryFaultMaxAccessBytes;
+  }
+  llvm_unreachable("unknown runtime control protocol");
+}
+
 bool isKnownAccess(RuntimeMemoryAccessKindV1 Access) {
   switch (Access) {
   case RuntimeMemoryAccessKindV1::Read:
@@ -376,7 +386,10 @@ llvm::Expected<RuntimeMemoryFaultDetailsV1> unpackRuntimeMemoryFaultDetailsV1(
   return *Details;
 }
 
-llvm::Error validateRuntimeControlBlockV1(const RuntimeControlBlockV1 &Block) {
+namespace {
+
+llvm::Error validateRuntimeControlBlock(const RuntimeControlBlockV1 &Block,
+                                        RuntimeControlProtocolV1 Protocol) {
   if (Block.Magic != kRuntimeABIMagicV1)
     return invalid("invalid runtime ABI magic");
   if (Block.Version != kRuntimeABIVersionV1)
@@ -481,7 +494,7 @@ llvm::Error validateRuntimeControlBlockV1(const RuntimeControlBlockV1 &Block) {
   case RuntimeABIExitKindV1::SelfModification:
     if (!usesPolicy(Block, CodeInvalidationPolicy::InvalidateOnExecutableWrite))
       return invalid("runtime self-modification exit violates its policy");
-    if (!isScalarAccessSize(Block.Exit.Size) ||
+    if (!isDataAccessSize(Block.Exit.Size, Protocol) ||
         Block.Exit.Size - 1 >
             std::numeric_limits<uint64_t>::max() - Block.Exit.Address ||
         Block.Exit.Detail0 == std::numeric_limits<uint64_t>::max() ||
@@ -512,7 +525,7 @@ llvm::Error validateRuntimeControlBlockV1(const RuntimeControlBlockV1 &Block) {
     } else if (Details->Access == RuntimeMemoryAccessKindV1::Execute) {
       if (Block.Exit.Size == 0)
         return invalid("runtime execute memory fault has an empty access");
-    } else if (!isScalarAccessSize(Block.Exit.Size)) {
+    } else if (!isDataAccessSize(Block.Exit.Size, Protocol)) {
       return invalid("runtime memory-fault exit has an invalid access size");
     }
 
@@ -561,6 +574,18 @@ llvm::Error validateRuntimeControlBlockV1(const RuntimeControlBlockV1 &Block) {
   }
   }
   llvm_unreachable("validated runtime ABI exit kind");
+}
+
+} // namespace
+
+llvm::Error validateRuntimeControlBlockV1(const RuntimeControlBlockV1 &Block) {
+  return validateRuntimeControlBlock(Block, RuntimeControlProtocolV1::Scalar);
+}
+
+llvm::Error
+validateRuntimeControlBlockExactSpanV1(const RuntimeControlBlockV1 &Block) {
+  return validateRuntimeControlBlock(Block,
+                                     RuntimeControlProtocolV1::ExactSpan);
 }
 
 llvm::ArrayRef<RuntimeABIHelperSignatureV1> runtimeABIHelperSignaturesV1() {
