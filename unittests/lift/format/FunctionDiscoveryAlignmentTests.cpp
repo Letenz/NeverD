@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -35,6 +36,228 @@ Segment executableSegment(va_t Address, llvm::ArrayRef<uint8_t> Bytes) {
   Seg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Seg.Data.assign(Bytes.begin(), Bytes.end());
   return Seg;
+}
+
+TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
+  enum class Shape {
+    PrefixBoundary,
+    Straight,
+    Conditional,
+    Trap,
+    Indirect,
+    Cycle,
+    Truncated,
+    CFGBoundary,
+    Exhausted,
+    EscapingBranch,
+    TruncatedArm,
+    ExhaustedArm,
+    MixedIndirect,
+    UnsupportedArm
+  };
+  const std::pair<Arch, InstructionMode> Targets[] = {
+      {Arch::X86, InstructionMode::Default},
+      {Arch::X64, InstructionMode::Default},
+      {Arch::ARM, InstructionMode::ARM},
+      {Arch::ARM, InstructionMode::Thumb},
+      {Arch::AArch64, InstructionMode::Default}};
+  for (auto [Architecture, Mode] : Targets)
+    for (BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::MachO})
+      for (Shape Form :
+           {Shape::PrefixBoundary, Shape::Straight, Shape::Conditional,
+            Shape::Trap, Shape::Indirect, Shape::Cycle, Shape::Truncated,
+            Shape::CFGBoundary, Shape::Exhausted, Shape::EscapingBranch,
+            Shape::TruncatedArm, Shape::ExhaustedArm, Shape::MixedIndirect,
+            Shape::UnsupportedArm}) {
+        SCOPED_TRACE(testing::Message()
+                     << unsigned(Architecture) << ':' << unsigned(Mode) << ':'
+                     << unsigned(Format) << ':' << unsigned(Form));
+        constexpr va_t Base = 0x1000, Callee = Base + 32;
+        const bool X86 = Architecture == Arch::X86 || Architecture == Arch::X64;
+        const bool Thumb = Mode == InstructionMode::Thumb;
+        const bool A64 = Architecture == Arch::AArch64;
+        if (Form == Shape::UnsupportedArm && !A64)
+          continue;
+        // Pin both the 64/65 linear-prefix and 256/257 reachable-probe edges.
+        size_t Prefix = limits::kMaxVerifyInsns;
+        if (Form == Shape::PrefixBoundary)
+          --Prefix;
+        if (Form == Shape::CFGBoundary || Form == Shape::Exhausted)
+          Prefix = 256 - (Form == Shape::CFGBoundary ? 1 : 0);
+        const bool Conditional =
+            Form == Shape::Conditional || Form == Shape::EscapingBranch ||
+            Form == Shape::TruncatedArm || Form == Shape::ExhaustedArm ||
+            Form == Shape::MixedIndirect || Form == Shape::UnsupportedArm;
+        std::vector<uint8_t> Body;
+        const auto Word = [&](uint32_t Value) {
+          const size_t At = Body.size();
+          Body.resize(At + 4);
+          writeLE<uint32_t>(Body.data() + At, Value);
+        };
+        const auto Half = [&](uint16_t Value) {
+          const size_t At = Body.size();
+          Body.resize(At + 2);
+          writeLE<uint16_t>(Body.data() + At, Value);
+        };
+        const auto Arithmetic = [&] {
+          if (X86)
+            Body.push_back(0x90);
+          else if (Thumb)
+            Half(0x3001); // adds r0, #1
+          else
+            Word(A64 ? 0x11000400 : 0xe2800001); // add w0/r0, #1
+        };
+        const auto Return = [&] {
+          if (X86)
+            Body.push_back(0xc3);
+          else if (Thumb)
+            Half(0x4770);
+          else
+            Word(A64 ? 0xd65f03c0 : 0xe12fff1e); // ret / bx lr
+        };
+        const auto Indirect = [&] {
+          if (X86)
+            Body.insert(Body.end(), {0xff, 0xe0}); // jmp rax/eax
+          else if (Thumb)
+            Half(0x4718); // bx r3
+          else
+            Word(A64 ? 0xd61f0060 : 0xe12fff13); // br x3 / bx r3
+        };
+        for (size_t I = 0; I != Prefix; ++I)
+          Arithmetic();
+        if (Conditional) {
+          // The conditional transfer is outside the initial linear prefix on
+          // every ISA. Fallthrough returns; the other arm must still be
+          // checked.
+          if (X86) {
+            Body.insert(Body.end(), {0x0f, 0x85});
+            Word(Form == Shape::EscapingBranch ? 0x10000 : 1);
+          } else if (Thumb)
+            Half(Form == Shape::EscapingBranch ? 0xd17f : 0xd100);
+          else if (A64)
+            Word(Form == Shape::EscapingBranch ? 0x54080001 : 0x54000041);
+          else
+            Word(Form == Shape::EscapingBranch ? 0x1a003ffe : 0x1a000000);
+          Return();
+        }
+        if (Form == Shape::Truncated || Form == Shape::TruncatedArm)
+          Body.push_back(X86 ? 0x0f : 0);
+        else if (Form == Shape::Indirect || Form == Shape::MixedIndirect)
+          Indirect();
+        else if (Form == Shape::UnsupportedArm) {
+          Word(0xd50324ff); // PACM: decodable, but its machine state is
+                            // unmodelled.
+          Return();
+        } else if (Form == Shape::Trap) {
+          if (X86)
+            Body.push_back(0xcc);
+          else if (Thumb)
+            Half(0xde00);
+          else
+            Word(A64 ? 0xd4200000 : 0xe7f000f0); // brk / udf
+        } else if (Form == Shape::Cycle) {
+          if (X86)
+            Body.insert(Body.end(), {0xeb, 0xfe});
+          else if (Thumb)
+            Half(0xe7fe);
+          else
+            Word(A64 ? 0x14000000 : 0xeafffffe); // b self
+        } else {
+          if (Form == Shape::ExhaustedArm)
+            for (size_t I = 0; I != 256; ++I)
+              Arithmetic();
+          Return();
+        }
+        std::vector<uint8_t> Bytes(Callee - Base, 0);
+        if (X86) {
+          Bytes[0] = 0xe8; // call callee; ret
+          writeLE<uint32_t>(Bytes.data() + 1, Callee - (Base + 5));
+          Bytes[5] = 0xc3;
+        } else if (Thumb) {
+          writeLE<uint16_t>(Bytes.data(), 0xf000); // bl callee
+          writeLE<uint16_t>(Bytes.data() + 2, 0xf80e);
+          writeLE<uint16_t>(Bytes.data() + 4, 0x4770);
+        } else if (A64) {
+          writeLE<uint32_t>(Bytes.data(), 0x94000008); // bl callee
+          writeLE<uint32_t>(Bytes.data() + 4, 0xd65f03c0);
+        } else {
+          writeLE<uint32_t>(Bytes.data(), 0xeb000006); // bl callee
+          writeLE<uint32_t>(Bytes.data() + 4, 0xe12fff1e);
+        }
+        llvm::append_range(Bytes, Body);
+        BinaryImage Img;
+        Img.Arch = Architecture;
+        Img.Bits = Architecture == Arch::X64 || A64 ? Bitness::Bits64
+                                                    : Bitness::Bits32;
+        Img.Mode = Mode;
+        Img.Format = Format;
+        Img.Entry = Base;
+        Img.Segments.push_back(executableSegment(Base, Bytes));
+        Img.Symbols.push_back(Symbol::makeFunc(Base, X86 || Thumb ? 6 : 8));
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Img));
+        if (Form == Shape::UnsupportedArm) {
+          uint8_t Bytes[4];
+          writeLE<uint32_t>(Bytes, 0xd50324ff);
+          DecodedInsn I;
+          ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), Callee, I), 4);
+          ASSERT_FALSE(I.Raw->illegal);
+          std::vector<LowOp> Ops;
+          EXPECT_THROW(Dec.liftToLow(I, Ops), UnliftedInstruction);
+        }
+        FuncDetector Detector;
+        const auto Functions = Detector.detect(Img, Dec);
+        // Callable identity needs an observed exit, not proof that all paths
+        // return. An indirect frontier alongside that exit keeps its old role.
+        const bool Expected =
+            Form == Shape::PrefixBoundary || Form == Shape::Straight ||
+            Form == Shape::Conditional || Form == Shape::CFGBoundary ||
+            Form == Shape::MixedIndirect;
+        EXPECT_EQ(
+            llvm::any_of(Functions,
+                         [&](const auto &F) { return F.first == Callee; }),
+            Expected);
+        EXPECT_EQ(Img.VerifiedFunctionEntries.count(Callee) != 0, Expected);
+      }
+}
+
+TEST(FunctionDiscoveryAlignment, LongCalleesVerifyUnprovenTailTargets) {
+  for (bool Authenticated : {false, true})
+    for (unsigned Ending = 0; Ending != 3; ++Ending) {
+      SCOPED_TRACE(testing::Message() << Authenticated << ':' << Ending);
+      constexpr va_t Base = 0x1000, Callee = Base + 32, Tail = Base + 512;
+      std::vector<uint8_t> Bytes(Tail - Base + 2, 0xcc);
+      const auto Transfer = [&](size_t At, uint8_t Opcode, va_t Target) {
+        Bytes[At] = Opcode;
+        writeLE<uint32_t>(Bytes.data() + At + 1, Target - (Base + At + 5));
+      };
+      Transfer(0, 0xe8, Callee);
+      Transfer(5, 0xe8, Tail); // The tail's address is also a scan candidate.
+      Bytes[10] = 0xc3;
+      std::fill_n(Bytes.begin() + (Callee - Base), limits::kMaxVerifyInsns,
+                  0x90);
+      Transfer(Callee - Base + limits::kMaxVerifyInsns, 0xe9, Tail);
+      Bytes[Tail - Base] = Ending == 0 ? 0xc3 : Ending == 1 ? 0xcc : 0xeb;
+      Bytes[Tail - Base + 1] = Ending == 2 ? 0xfe : 0xcc;
+      BinaryImage Img;
+      Img.Arch = Arch::X64;
+      Img.Bits = Bitness::Bits64;
+      Img.Format = BinaryFormat::ELF;
+      Img.Entry = Base;
+      Img.Segments.push_back(executableSegment(Base, Bytes));
+      Img.Symbols.push_back(Symbol::makeFunc(Base, 11));
+      if (Authenticated)
+        Img.Symbols.push_back(Symbol::makeFunc(Tail, 2));
+      EXPECT_EQ(Img.hasAuthenticatedFunctionEntryAt(Tail), Authenticated);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Img));
+      FuncDetector Detector;
+      const auto Functions = Detector.detect(Img, Dec);
+      const bool Expected = Authenticated || Ending == 0;
+      EXPECT_EQ(llvm::any_of(Functions,
+                             [&](const auto &F) { return F.first == Callee; }),
+                Expected);
+    }
 }
 
 TEST(FunctionDiscoveryAlignment, UsesVirtualAddressForEveryArchitecture) {

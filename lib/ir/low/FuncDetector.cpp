@@ -951,9 +951,14 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
     }
     Cur += Sz;
   }
-  if (!SawTerminator && !KeepInconclusive &&
-      !hasBoundedSemanticTerminator(Img, Dec, Addr, Cancellation))
-    return false;
+  // A long body can return just beyond this linear prefix, or through a
+  // conditional arm. Let the existing reachable probe establish a callable
+  // exit before retaining that candidate. An exhausted or unsupported probe
+  // cannot stand in for the missing evidence.
+  const bool NeedsCallableExit =
+      RequireCallableExit ||
+      (!SawTerminator && !KeepInconclusive &&
+       !hasBoundedSemanticTerminator(Img, Dec, Addr, Cancellation));
 
   // A linear walk can encounter RET on one arm while a conditional branch on
   // another arm lands in embedded executable data.  That pattern is common in
@@ -963,9 +968,11 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
   // arms before promoting an untrusted scan hit to a function.
   //
   // This deliberately remains a bounded, decode-focused probe rather than a
-  // second full CFGBuilder run.  Exhausting the budget or encountering an
-  // unsupported lift is inconclusive, so the candidate is kept for the formal
-  // pipeline audit instead of hiding a real coverage gap.
+  // second full CFGBuilder run. When existing entry evidence permits an
+  // inconclusive probe, keep the candidate for the formal pipeline audit.
+  // Otherwise a missing callable exit must be established within this bound.
+  // One observed exit establishes candidate identity, not whole-path coverage;
+  // other indirect frontiers still belong to the formal pipeline audit.
   const bool PreviousDetail = Dec.detailEnabled();
   Dec.setDetail(true);
   Dec.resetX86FpuState();
@@ -992,7 +999,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
           break;
         }
         if (Explored.size() >= kCFGProbeBudget)
-          return !RequireCallableExit;
+          return !NeedsCallableExit;
 
         const auto *PathSeg = Img.getSegmentFor(Cur);
         if (!PathSeg || !Img.hasExecutableCodeOwnerAt(Cur) || Cur < PathSeg->VA)
@@ -1021,7 +1028,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         try {
           Dec.liftToLow(DI, Ops);
         } catch (const UnliftedInstruction &) {
-          return !RequireCallableExit;
+          return !NeedsCallableExit;
         }
         const bool IsNoReturnCall = isUnconditionalNoReturnCall(Img, Ops);
 
@@ -1092,9 +1099,9 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         if (IsIndirect)
           break;
         if (BranchTarget == InvalidVA)
-          return !RequireCallableExit;
+          return !NeedsCallableExit;
         if (BranchTarget != Addr && Entries.count(BranchTarget) > 0) {
-          if (RequireCallableExit &&
+          if (NeedsCallableExit &&
               !Img.hasAuthenticatedFunctionEntryAt(BranchTarget)) {
             Worklist.push({BranchTarget, BranchMode});
             if (!IsCond)
@@ -1116,7 +1123,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         Cur += static_cast<va_t>(Sz);
       }
     }
-    return !RequireCallableExit || SawCallableExit;
+    return !NeedsCallableExit || SawCallableExit;
   }();
   Dec.resetX86FpuState();
   Dec.setDetail(PreviousDetail);

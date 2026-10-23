@@ -1428,6 +1428,19 @@ close an active job. SDK and real-worker comparison checks retain the discovery
 stop phase and incomplete coverage; stopped snapshots never authorize scalar
 validation. Run the image-boundary, session-discovery and comparison suites when
 changing these shared cancellation boundaries. No input instructions execute.
+`FunctionDiscoveryAlignment.LongCalleesNeedReachableCallableExits` checks the
+64/65-instruction linear-prefix and 256/257-instruction reachable-probe boundaries
+on x86/x64/ARM/Thumb/AArch64 in ELF and Mach-O. A long unlabelled callee can gain
+candidate identity from an observed callable exit; a trap, closed cycle,
+indirect-only transfer, truncated input or exhausted probe cannot supply it.
+An exit on one branch does not hide a truncated, escaping, unlifted PACM or
+over-budget arm. `LongCalleesVerifyUnprovenTailTargets` distinguishes a scanned
+tail's observed return from trap/cycle bodies and authenticated function metadata.
+An indirect frontier alongside a known exit keeps the existing candidate policy;
+this is not complete control-flow or semantic validation. The real musl fixture
+also requires all five whole-function and mapped direct-callee identities through
+HighC and optimized/unoptimized LLVMC. Run the image-boundary, relocated-entry,
+x86-discovery, library-recognition and session suites for this shared decision.
 `NativeLoadCancellation.*` and controlled `InputDigest.*` cases in
 `NeverDNativeBufferTests` check ELF/x64, ELF/AArch64, PE and Mach-O cancellation,
 retry byte/digest parity with LLVM, chunk/padding edges, and loader callback
