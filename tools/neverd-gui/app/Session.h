@@ -4,6 +4,7 @@
 #include "AnalysisService.h"
 #include "EngineClient.h"
 #include "QueryService.h"
+#include "UnwindInfoWords.h"
 
 #include <QFileSystemWatcher>
 #include <QHash>
@@ -83,6 +84,9 @@ public:
   }
 
   bool connected() const { return connected_; }
+  bool reportsUnwindFrames() const {
+    return capabilities_.contains(QLatin1String(unwind_info::kOperation));
+  }
   bool reportsX87Capabilities() const {
     return capabilities_.contains(QStringLiteral("x87_capabilities"));
   }

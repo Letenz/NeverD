@@ -20,6 +20,7 @@
 #include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86AmxState.h"
 #include "neverd/ir/intrinsics/X86Sgx.h"
@@ -34,6 +35,23 @@ namespace neverd {
 inline bool hasValidMedIntrinsicId(const MedOp &Op) {
   return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
          Op.NumInputs <= Op.Inputs.size() && Op.Inputs.front().isConst();
+}
+
+inline bool aarch64PtrueMedShapeIsValid(const MedOp &Op) {
+  using namespace aarch64_sve;
+  if (!hasValidMedIntrinsicId(Op) || Op.NumInputs != kPtrueOperandCount + 1 ||
+      Op.Inputs[0].ConstVal != static_cast<uint64_t>(Intrinsic::A64_SvePtrue) ||
+      !Op.IntrinsicOutputs.empty() ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return isValidPtrueShape(
+      {Op.NumInputs - 1U, Op.Output.Size, Op.Inputs[1].Size, Op.Inputs[2].Size,
+       Op.Inputs[1].isConst() ? std::optional<uint64_t>(Op.Inputs[1].ConstVal)
+                              : std::nullopt,
+       Op.Inputs[2].isConst() ? std::optional<uint64_t>(Op.Inputs[2].ConstVal)
+                              : std::nullopt});
 }
 
 inline bool aarch64PAuthMedShapeIsValid(const MedOp &Op) {

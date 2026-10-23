@@ -27,6 +27,11 @@
 #include <vector>
 
 namespace {
+namespace sve_compare_fixture {
+#define NEVERD_SVE_COMPARE_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#include "BinaryDiffSVEPrefixFixtures.def"
+} // namespace sve_compare_fixture
+
 std::string take(const char *S) {
   const std::string Out = S ? S : "";
   neverd_free_string(S);
@@ -183,8 +188,7 @@ TEST_F(BinaryDiffSDK, AArch64OperandModifiersRemainObservableChanges) {
                {"lsr x0, x1, x2 / x3", 0x9ac22420, 0x9ac32420},
                {"asr x0, x1, x2 / x3", 0x9ac22820, 0x9ac32820},
                {"ror x0, x1, x2 / x3", 0x9ac22c20, 0x9ac32c20},
-               {"SVE merging / zeroing", 0x05904020, 0x05900020},
-               {"MOVPRFX merging / zeroing", 0x04912020, 0x04902020}};
+               {"SVE merging / zeroing", 0x05904020, 0x05900020}};
   for (const auto &Case : Cases) {
     SCOPED_TRACE(Case.Name);
     auto A = input(words({0xd28000e3, Case.A, 0x91000c00, 0xd65f03c0}), 0x1000,
@@ -207,6 +211,27 @@ TEST_F(BinaryDiffSDK, AArch64OperandModifiersRemainObservableChanges) {
                   ->getBoolean("analysis_complete"),
               true);
   }
+}
+
+TEST_F(BinaryDiffSDK, UnpairedMOVPRFXCannotReportCompleteSemanticComparison) {
+  using namespace sve_compare_fixture;
+  auto A = input(words({kSetup, kMerging, kIncompatibleNext, kReturn}),
+                 kPrimaryBase, kProcessor);
+  auto B = input(words({kSetup, kZeroing, kIncompatibleNext, kReturn}),
+                 kSecondaryBase, kProcessor);
+  auto Comparison = compare(A, B, kOptions);
+  auto Detail =
+      parsed(neverd_comparison_function_json(Comparison, 0, kPrimaryBase));
+  const auto *Evidence = Detail.getAsObject()->getObject(kEvidence);
+  ASSERT_TRUE(Evidence) << render(Detail);
+  EXPECT_EQ(Evidence->getBoolean(kNormalizedUnchanged), false);
+  EXPECT_EQ(Evidence->getBoolean(kAnalysisComplete), false);
+  auto Saved = parsed(neverd_comparison_export_json(Comparison));
+  const auto *Matches = Saved.getAsObject()->getArray(kMatches);
+  ASSERT_TRUE(Matches);
+  ASSERT_FALSE(Matches->empty());
+  EXPECT_EQ(Matches->front().getAsObject()->getBoolean(kAnalysisComplete),
+            false);
 }
 
 TEST_F(BinaryDiffSDK, AArch64BranchBitIndexIsNotASecondTargetOperand) {

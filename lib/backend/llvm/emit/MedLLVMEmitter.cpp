@@ -783,6 +783,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
           if (Id == Intrinsic::A64_PACMPending)
             throw std::runtime_error(kAArch64PAuthMalformedOperation);
+          if (Id == Intrinsic::A64_SvePtrue &&
+              (TheArch != Arch::AArch64 || !aarch64PtrueMedShapeIsValid(Op)))
+            throw std::runtime_error(aarch64_sve::kMalformedPtrue);
           if (x87ValueInfo(Id) &&
               !x87ValueShapeIsValid(x87ValueMedShape(Op, TheArch)))
             llvm::report_fatal_error(

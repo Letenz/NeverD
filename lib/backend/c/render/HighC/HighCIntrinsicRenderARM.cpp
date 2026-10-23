@@ -15,6 +15,7 @@
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/support/IntegerLiterals.h"
 
@@ -22,6 +23,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <iterator>
@@ -34,6 +36,10 @@
 namespace neverd {
 
 namespace {
+
+#define NEVERD_A64_SVE_PREDICATE_C_TEXT(Name, Text)                            \
+  constexpr char Name[] = Text;
+#include "neverd/backend/c/render/AArch64SVEPredicateC.def"
 
 bool isAlive(const MedVar &V, const IsAliveFn &Fn) { return !Fn || Fn(V); }
 
@@ -815,16 +821,27 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     return std::string(Builtin) + "(" + Ops[0] + ")";
   }
   case I::A64_SvePtrue: {
-    if (Ops.size() < 2)
+    if (Ops.size() != aarch64_sve::kPtrueOperandCount)
       return {};
+    const auto Pattern = constantOperand(Ops[0]);
+    const auto Element = constantOperand(Ops[1]);
+    if (!aarch64_sve::isValidPtrueShape(
+            {static_cast<unsigned>(Ops.size()), ResultBytes,
+             aarch64_sve::kPatternOperandBytes,
+             aarch64_sve::kElementOperandBytes, Pattern, Element}))
+      return {};
+    const bool All = *Pattern == aarch64_sve::kPtruePatternAll;
+    const char *Name = nullptr;
+    switch (*Element) {
+#define NEVERD_A64_SVE_PREDICATE_C(Bytes, AllName, PatternName)                \
+  case Bytes:                                                                  \
+    Name = All ? AllName : PatternName;                                        \
+    break;
+#include "neverd/backend/c/render/AArch64SVEPredicateC.def"
+    }
     HasCIntrinsics = true;
-    if (Ops[1] == "2")
-      return "svptrue_b16()";
-    if (Ops[1] == "4")
-      return "svptrue_b32()";
-    if (Ops[1] == "8")
-      return "svptrue_b64()";
-    return "svptrue_b8()";
+    return All ? llvm::formatv(kPtrueAllFormat, Name).str()
+               : llvm::formatv(kPtruePatternFormat, Name, Ops[0]).str();
   }
   case I::A64_SveDup: {
     if (Ops.size() < 2)

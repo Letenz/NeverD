@@ -13,6 +13,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "AArch64SVEPredicate.h"
+
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
@@ -205,7 +207,9 @@ bool MedLLVMEmitter::emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,
       return Builder.CreateLoad(ScalableTy, Slot, Name);
     };
 
-    llvm::Value *Pred = stateToScalable(Op.Inputs[1], PredTy, "sve.store.pred");
+    llvm::Value *Pred = stateToScalable(
+        Op.Inputs[1], aarch64_sve::svboolType(*Ctx), "sve.store.pred");
+    Pred = aarch64_sve::fromSVBool(Builder, Pred, PredTy);
     llvm::Value *Value =
         stateToScalable(Op.Inputs[2], SourceTy, "sve.store.value");
     if (SourceTy != StoreTy)

@@ -199,6 +199,13 @@ the absolute-state extension is still Alpha. Runtime register/expression
 rules stay unknown, and incomplete or reserved CFI never supplies an unsigned
 default. The query validates the entire program before publishing a result.
 This describes a signing recipe, without authenticating a live return address.
+`queryAArch64UnwindSigning` owns admission of normalized image and function
+metadata, then returns independent DWARF state at the exact requested PC and
+compact completed-prologue recipes. Partial provenance cannot become a known
+state through a locally complete record. The C API, worker, CLI, Python and
+GUI preserve absent sources, unknown states and zero signing addresses. They
+never retry at a function entry or replace a failed DWARF result with compact
+metadata. The GUI binds responses to the selected PC, project and revision.
 Callback relocation rejects PC-dependent recipes and the new absolute-state
 operations until its code-position mapping is modelled. Mach-O metadata-only
 layout growth preserves original code addresses and CFI bytes, reencodes only
@@ -206,6 +213,21 @@ FDE initial-location references, and compares every statically known signing
 recipe at each CFI boundary before publication. A cumulative comparison budget
 bounds repeated queries; unknown, incomplete, expression and language-dependent
 recipes remain inadmissible.
+
+Both public Mach-O native rewriting routes authenticate the actual input's
+arm64e subtype before compilation or publication, independently of caller
+metadata and LLVM annotations. Section rewriting binds its freshly loaded
+image to the input bytes; in-place rewriting loads its exact byte snapshot.
+These guards do not restrict the separately proven metadata-only relocation.
+
+SVE predicate values use a complete svbool representation across element
+widths. `AArch64SVEPredicate.def` owns PTRUE encodings, legal shapes and C
+projection contracts; LowIR, MedIR and both emitters reject malformed forms.
+LLVM converts typed predicates at the producer and consumer boundaries. All
+architectural PTRUE patterns are retained, including reserved empty patterns.
+MOVPRFX and flag-setting PTRUES remain unsupported until their paired-instruction
+and NZCV contracts are modelled. This does not establish V/Z aliasing, an SVE
+call ABI or the six SVE checked-pointer instruction forms.
 
 `macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
 placement validation, sorted disjoint mappings, and the cache image catalogue.

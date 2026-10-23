@@ -1,6 +1,7 @@
 #include "QueryService.h"
 
 #include "ResourceLimits.h"
+#include "app/UnwindInfoWords.h"
 
 #include <QCache>
 #include <QElapsedTimer>
@@ -69,7 +70,8 @@ bool readable(const QString &operation) {
                                         "call_paths",
                                         "call_tree",
                                         "search"};
-  return cacheable(operation) || operations.contains(operation);
+  return operation == QLatin1String(neverd::gui::unwind_info::kOperation) ||
+         cacheable(operation) || operations.contains(operation);
 }
 
 bool command(const QString &operation) {
