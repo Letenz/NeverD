@@ -1833,6 +1833,10 @@ public:
       auto Result = Xor(*Low, *Difference);
       return Result ? Store(std::move(*Result)) : nullptr;
     };
+    // Variable indices only grow during this reading, and Width is fixed.
+    // A completed factored polynomial therefore keeps the same shifted inputs
+    // across output bits, even when a later bit adds previously unseen inputs.
+    std::map<Polynomial, SymRef> Factored;
     auto SynthesizePolynomial = [&](uint32_t Id, SymRef Fallback) -> SymRef {
       auto Form = ReadPolynomial(ReadPolynomial, Id & ~uint32_t(1));
       if (!Form)
@@ -1883,11 +1887,8 @@ public:
       auto Result =
           Ctx.mkAnd(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms),
                     Ctx.mkConst(Width, 1));
-      std::map<Polynomial, SymRef> Factored;
       auto Factor = [&](auto &&Self, const Polynomial &P) -> SymRef {
-        if (!charge(1 + P.size(), sizeof(decltype(Factored)::value_type) +
-                                      4 * sizeof(void *) +
-                                      P.size() * sizeof(uint64_t)))
+        if (!charge(1 + P.size()))
           return {};
         if (P.empty())
           return Ctx.mkZero(Width);
@@ -1895,6 +1896,12 @@ public:
           return Ctx.mkConst(llvm::APInt::getAllOnes(Width));
         if (auto It = Factored.find(P); It != Factored.end())
           return It->second;
+        // Cache hits allocate no map entry or copied polynomial. Reserve a
+        // complete entry before constructing a new result; failed attempts
+        // retain this conservative reservation and are never cached.
+        if (!charge(0, sizeof(decltype(Factored)::value_type) +
+                           4 * sizeof(void *) + P.size() * sizeof(uint64_t)))
+          return {};
         if (!charge(Inputs.size(), Inputs.size() * sizeof(unsigned)))
           return {};
         llvm::SmallVector<unsigned, 16> Frequencies(Inputs.size(), 0);
