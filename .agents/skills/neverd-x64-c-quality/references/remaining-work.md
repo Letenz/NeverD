@@ -35,8 +35,11 @@ Mapped LLVM C now keeps array and record allocations out of scalar variable
 typing, including frames larger than the supported integer width. HighC and
 LLVM C annotate image blocks with the shared string scanner's text and encoding
 without changing memory accesses. `NeverDCSourcePresentationTests` covers these
-contracts, including UTF-16/UTF-32 byte orders; stack-string reconstruction and
-arbitrary runtime decoding remain separate work.
+contracts, including UTF-16/UTF-32 byte orders. Bounded, call-free stack-byte
+observations now show reconstructed terminated text in both C function bodies,
+including separate vector writes. Exact alignment guards remain in the code.
+Unknown calls, cycles, frame-derived stored values (including some security-cookie
+prologues), and arbitrary runtime decoding still need separate proofs.
 
 LLVM C also places recognized text beside ordinary and volatile image reads
 inside the function body, which remains visible when the GUI folds image
@@ -51,6 +54,7 @@ The public constant-branch and worker chunk regressions cover these boundaries.
 |---|---|
 | LLVMC Windows EH remains goto form | Keep recovered filters, nested cleanup order, and both normal and unwind edges visible. Compare the public `seh_probe` and C++ EH corpus output with HighC. |
 | LLVMC output may retain avoidable frame references or control flow | Reproduce each issue with a public synthetic LLVM fixture. Keep a negative test for any value or edge that must remain printed. |
+| Local scalar import declarations can remain untyped in LLVMC | A supplied `void observe_text(const unsigned short *)` declaration is honored by HighC but can remain an unspecified integer-return declaration in LLVM C. Reproduce through fresh worker sessions; certify the machine argument/result contract before publishing the source prototype. |
 | Source types and member calls remain partially recovered | Use authenticated PDB/TPI type and method metadata; do not infer a virtual method name from a vtable offset alone. |
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | UCRT declarations do not yet imply complete source-call coverage | Use `scripts/check_windows_ucrt_calls.py` with retained official inputs. Pointer qualifiers, variadic prefixes, pointer-only record/union tags, mixed scalar banks and x86 float/double stack arguments now have public contracts. Declared x87 scalar results retain TOP and exact source precision; real extended arithmetic still requires an 80-bit C type. Dense ARM64 HFAs retain their complete source groups in registers and ordinary COFF/ELF stack slots, and all one-to-four float/double result fields. The HFA adapter still requires an FP/HFA result; integer/void-result variants, padded or over-aligned records, Apple stack packing and nonordinary conventions remain outside it. Checked HFA results now retain their register-record shape in HighIR, avoiding artificial 192/256-bit C integers. Both C routes have Windows ARM64 target compilation, host sanitizer execution and freestanding Linux AArch64 execution matrices for import thunks/slots and single/chained calls; native Windows runtime execution remains separate. A wrapper without a source return type or observing caller still cannot infer a source aggregate result merely from residual FP registers. The strict SDK check independently compares anonymous enum values/layout and compiles the unmodified standalone output too; compiler success alone does not certify execution. |

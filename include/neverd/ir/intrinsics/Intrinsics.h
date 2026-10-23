@@ -425,6 +425,10 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/X87PortableABI.def"
 #undef NEVERD_X87_PORTABLE_HELPER
 
+  // Append-only: one descriptor query owns the value, ZF and selector access.
+  X86LoadSegmentLimit,
+  X86LoadSegmentLimitMemory,
+
   _Count = 16000
 };
 
@@ -475,7 +479,9 @@ constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
   case Intrinsic::Id:                                                          \
     return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
 #define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
+#define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_EXISTING_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
   default:

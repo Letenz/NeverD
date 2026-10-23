@@ -35,6 +35,8 @@ inline constexpr const char X86SystemStateCompilerDispatch[] =
     "__has_builtin(__builtin_ia32_wrmsrlist) && "
     "__has_builtin(__builtin_ia32_lkgs_reg) && "
     "__has_builtin(__builtin_ia32_lkgs_mem) && "
+    "__has_builtin(__builtin_ia32_lar_reg16) && "
+    "__has_builtin(__builtin_ia32_lsl_mem64) && "
     "__has_builtin(__builtin_ia32_invlpgb_addr32) && "
     "__has_builtin(__builtin_ia32_tlbsync)\n"
     "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n"

@@ -1384,6 +1384,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                          : std::vector<SourceABIParameter>{};
   HighFunc Func;
   Func.Entry = Med.Entry;
+  Func.FrameBytes = Med.FrameBytes;
   Func.FrameSize = Med.FrameSize;
   Func.FrameHeadroom = Med.FrameHeadroom;
   // The incoming stack argument homes seeded below, written in place or read

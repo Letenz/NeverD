@@ -236,6 +236,68 @@ int main(void) {
       std::invalid_argument);
 }
 
+TEST(LLVMCValues, NativeDescriptorReadKeepsExplicitPrior) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires native Linux x86-64 descriptor queries";
+#endif
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.lsl.reg64"))
+    GTEST_SKIP() << "requires the qualified native descriptor SDK";
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+declare {i64, i8} @llvm.x86.lsl.reg64(i16, i64)
+declare {i64, i8} @llvm.x86.lar.reg64(i16, i64)
+define {i64, i8} @limit_query(i16 %selector, i64 %prior) {
+  %result = call {i64, i8} @llvm.x86.lsl.reg64(i16 %selector, i64 %prior)
+  ret {i64, i8} %result
+}
+define {i64, i8} @rights_query(i16 %selector, i64 %prior) {
+  %result = call {i64, i8} @llvm.x86.lar.reg64(i16 %selector, i64 %prior)
+  ret {i64, i8} %result
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  Module->setTargetTriple(llvm::Triple("x86_64-linux-gnu"));
+  Module->setDataLayout("e-p:64:64-i64:64-i128:128");
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X64;
+  Options.PreserveLLVMFunctionTypes = true;
+  // Force the assembly projection of the native tuple, including its explicit
+  // prior. Compare against an independently initialized native destination.
+  std::string Source =
+      "#define NEVERD_X86_SYSTEM_STATE(native, ...) __VA_ARGS__\n";
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  Source += R"c(
+int main(void) {
+  unsigned short cs;
+  __asm__ volatile("mov %%cs, %0" : "=r"(cs));
+  const unsigned short selectors[] = {0, 3, cs};
+  for (unsigned i = 0; i < 3; ++i) {
+    unsigned long long prior = 0xabcdef0123456789ULL + i;
+    unsigned long long expected = prior;
+    unsigned char zf;
+    __asm__ volatile("lsl %w2, %0; setz %1"
+                     : "+&r"(expected), "=q"(zf) : "r"(selectors[i]) : "cc", "memory");
+    __auto_type limit = limit_query(selectors[i], prior);
+    if (limit.field_0 != expected || limit.field_1 != zf) return 1;
+    expected = prior;
+    __asm__ volatile("lar %w2, %0; setz %1"
+                     : "+&r"(expected), "=q"(zf) : "r"(selectors[i]) : "cc", "memory");
+    __auto_type rights = rights_query(selectors[i], prior);
+    // LAR leaves bits 19:16 undefined on success; failure preserves all bits.
+    unsigned long long mask = zf ? ~0xf0000ULL : ~0ULL;
+    if (((rights.field_0 ^ expected) & mask) || rights.field_1 != zf) return 2;
+  }
+  return 0;
+}
+)c";
+  for (const char *Opt : {"-O0", "-O2"})
+    compileAndRun(Source, Opt);
+}
+
 TEST(LLVMCValues, TargetIndexWidthKeepsNegativeFrameOffsets) {
 #if !defined(__linux__) || !defined(__x86_64__)
   GTEST_SKIP() << "requires native Linux i386/x64 execution";

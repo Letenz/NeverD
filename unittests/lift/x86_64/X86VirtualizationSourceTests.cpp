@@ -1497,6 +1497,20 @@ std::vector<uint8_t> nativeSystemFunction(Arch A, const SystemEncoding &E,
 
 std::string nativeSystemName(const SystemEncoding &E, Arch A) {
   switch (E.Id) {
+  case Intrinsic::X86LoadAccessRights:
+  case Intrinsic::X86LoadAccessRightsMemory:
+  case Intrinsic::X86LoadSegmentLimit:
+  case Intrinsic::X86LoadSegmentLimitMemory: {
+    if (E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65)
+      return {};
+    const bool Memory = E.Id == Intrinsic::X86LoadAccessRightsMemory ||
+                        E.Id == Intrinsic::X86LoadSegmentLimitMemory;
+    const unsigned Width = E.Bytes.front() == 0x66   ? 16
+                           : E.Bytes.front() == 0x48 ? 64
+                                                     : 32;
+    return "llvm.x86." + std::string(E.Mnemonic) + (Memory ? ".mem" : ".reg") +
+           std::to_string(Width);
+  }
   case Intrinsic::X86ClearTaskSwitched:
     return "llvm.x86.clts";
   case Intrinsic::X86WriteMsrNonSerializing:
@@ -1550,7 +1564,7 @@ TEST(X86SystemStateSource, QualifiedSdkUsesNativeSystemCalls) {
           EXPECT_EQ(IR.find(" asm "), std::string::npos) << IR;
           ++Cases;
         }
-  EXPECT_EQ(Cases, 84u);
+  EXPECT_EQ(Cases, 204u);
   RecordProperty("native_system_modules", Cases);
 }
 
@@ -1588,7 +1602,7 @@ TEST(X86SystemStateSource, NeverCCompilesBothRoutesToNativeSystemCalls) {
             return;
         }
       }
-  EXPECT_EQ(Cases, 240u);
+  EXPECT_EQ(Cases, 528u);
   RecordProperty("native_system_c_compilations", Cases);
 }
 
@@ -1596,10 +1610,14 @@ TEST(X86SystemStateSource, NativeCallsCannotLoseModeResultsOrEffects) {
   if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
     GTEST_SKIP() << "requires the qualified native system SDK";
   for (const char *Name :
-       {"llvm.x86.clts", "llvm.x86.wrmsrns", "llvm.x86.rdmsrlist",
-        "llvm.x86.wrmsrlist", "llvm.x86.lkgs.reg", "llvm.x86.lkgs.mem",
-        "llvm.x86.invlpgb", "llvm.x86.invlpgb32", "llvm.x86.invlpgb.addr32",
-        "llvm.x86.tlbsync"}) {
+       {"llvm.x86.clts",      "llvm.x86.wrmsrns",   "llvm.x86.rdmsrlist",
+        "llvm.x86.wrmsrlist", "llvm.x86.lkgs.reg",  "llvm.x86.lkgs.mem",
+        "llvm.x86.invlpgb",   "llvm.x86.invlpgb32", "llvm.x86.invlpgb.addr32",
+        "llvm.x86.tlbsync",   "llvm.x86.lar.reg16", "llvm.x86.lar.reg32",
+        "llvm.x86.lar.reg64", "llvm.x86.lar.mem16", "llvm.x86.lar.mem32",
+        "llvm.x86.lar.mem64", "llvm.x86.lsl.reg16", "llvm.x86.lsl.reg32",
+        "llvm.x86.lsl.reg64", "llvm.x86.lsl.mem16", "llvm.x86.lsl.mem32",
+        "llvm.x86.lsl.mem64"}) {
     SCOPED_TRACE(Name);
     llvm::LLVMContext Context;
     llvm::Module Module("native-system-contract", Context);
@@ -2414,6 +2432,97 @@ TEST(X86SystemStateSource, FailedLarPreservesUpperDestinationInExecutableCode) {
     if (::testing::Test::HasFailure())
       return;
   }
+}
+
+TEST(X86SystemStateSource, FailedLslPreservesUpperDestinationInExecutableCode) {
+  for (const bool NoOpt : {false, true}) {
+    // The null selector fails without a fault. LSL r32 must preserve all
+    // 64 destination bits on failure, just as the original instruction does.
+    auto Image = image(Arch::X64, BinaryFormat::ELF,
+                       {0x48, 0xb8, 0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd,
+                        0xab, 0x31, 0xc9, 0x0f, 0x03, 0xc1, 0xc3});
+    compileRoutes(Image, NoOpt, Entry + 12, {}, UINT64_C(0xabcdef0123456789),
+                  true);
+    if (::testing::Test::HasFailure())
+      return;
+  }
+}
+
+namespace {
+void checkDescriptorQueryCompletion(llvm::StringRef NativeCCompiler = {}) {
+  for (const uint8_t Opcode : {0x02, 0x03})
+    for (const uint8_t Width : {2, 4, 8})
+      for (const bool Memory : {false, true})
+        for (const bool Success : {false, true})
+          for (const bool NoOpt : {false, true}) {
+            SCOPED_TRACE(Opcode);
+            SCOPED_TRACE(Width);
+            SCOPED_TRACE(Memory);
+            SCOPED_TRACE(Success);
+            SCOPED_TRACE(NoOpt);
+            std::vector<uint8_t> Bytes = {
+                0x48, 0x83, 0xec, 0x10, // Own a selector slot.
+                0x48, 0xb8, 0x89, 0x67, 0x45, 0x23, 0x01,
+                0xef, 0xcd, 0xab, 0x31, 0xc9}; // Full-width prior and a null
+                                               // selector.
+            if (Success)
+              Bytes.insert(Bytes.end(), {0x8c, 0xc9}); // mov cx, cs
+            if (Memory)
+              Bytes.insert(Bytes.end(), {0x66, 0x89, 0x0c, 0x24});
+            // Establish all arithmetic flags immediately before the query.
+            Bytes.insert(Bytes.end(), {0x39, 0xc9}); // cmp ecx, ecx
+            const auto Offset = Bytes.size();
+            if (Width == 2)
+              Bytes.push_back(0x66);
+            else if (Width == 8)
+              Bytes.push_back(0x48);
+            Bytes.insert(Bytes.end(), {0x0f, Opcode});
+            if (Memory)
+              Bytes.insert(Bytes.end(), {0x04, 0x24});
+            else
+              Bytes.push_back(0xc1);
+            // Mix the result with the actual arithmetic flags, keeping high
+            // destination bits visible on failed and narrow writes.
+            Bytes.insert(Bytes.end(), {0x9c, 0x5a, 0x81, 0xe2, 0xd5, 0x08, 0,
+                                       0,    0x48, 0xc1, 0xe2, 0x20, 0x48, 0x31,
+                                       0xd0, 0x48, 0x83, 0xc4, 0x10, 0xc3});
+            auto Image = image(Arch::X64, BinaryFormat::ELF, std::move(Bytes));
+            // Successful wide LAR leaves result bits 19:16 undefined. Keep
+            // every failed/narrow destination bit in the comparison.
+            std::string Driver = Opcode == 0x02 && Width != 2 && Success
+                                     ? "#define RESULT_MASK (~0xf0000ULL)\n"
+                                     : "#define RESULT_MASK (~0ULL)\n";
+            Driver += R"c(
+extern unsigned long long virtualization_test(void);
+extern unsigned long long neverd_original(void);
+int main(void) {
+  return ((virtualization_test() ^ neverd_original()) & RESULT_MASK) != 0;
+}
+__asm__(".text\n.globl neverd_original\nneverd_original:\n"
+)c";
+            llvm::raw_string_ostream OS(Driver);
+            for (const auto Byte : Image.Segments.front().Data)
+              OS << "\".byte " << unsigned(Byte) << "\\n\"\n";
+            OS << ");\n";
+            compileRoutes(Image, NoOpt, Entry + Offset,
+                          Opcode == 0x02 ? "lar" : "lsl", std::nullopt, false,
+                          false, Driver, {}, 8, false, NativeCCompiler);
+            if (::testing::Test::HasFailure())
+              return;
+          }
+}
+} // namespace
+
+TEST(X86SystemStateSource, DescriptorResultsAndFlagsMatchOriginalInstructions) {
+  checkDescriptorQueryCompletion();
+}
+
+TEST(X86SystemStateSource,
+     NeverCDescriptorResultsAndFlagsMatchOriginalInstructions) {
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  checkDescriptorQueryCompletion(Compiler);
 }
 
 TEST(X86MaskedStoreSource, AllFourStoreFamiliesCompileThroughEveryRoute) {

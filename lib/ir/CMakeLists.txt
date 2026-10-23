@@ -19,6 +19,7 @@ add_neverd_component_library(NeverDIR
   SourceParameterPlacementWin64.cpp
   low/InternalNoReturn.cpp
   low/SourceFrameAnalysis.cpp
+  low/SourceFrameBytes.cpp
   low/ImportCallee.cpp
   TargetRegInfo.cpp
   TargetRegInfoAArch64.cpp

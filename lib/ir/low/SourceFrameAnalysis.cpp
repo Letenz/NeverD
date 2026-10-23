@@ -11,6 +11,7 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace neverd {
 std::optional<NativeSourceCallKey> nativeSourceCallKey(const LowOp &Operation) {
@@ -33,6 +34,31 @@ bool hasNativeScalarIntrinsicEvidence(const LowOp &Operation,
       Operation.MemoryOrdering != NdMemoryOrdering::None ||
       Operation.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
+  return true;
+}
+
+bool isSourceFrameObservationGuard(const LowOp &Operation) {
+  if (Operation.Opcode != NdOp::INTRINSIC ||
+      Operation.MemoryOrdering != NdMemoryOrdering::None ||
+      Operation.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      (Operation.NumInputs != 3 && Operation.NumInputs != 4) ||
+      !Operation.Inputs[0].isConst() || Operation.Inputs[0].Size != 2 ||
+      Operation.Inputs[0].Offset != uint64_t(Intrinsic::RequireAligned) ||
+      !intrinsicMemoryAddressSpaceShapeIsValid(
+          Intrinsic::RequireAligned, Operation.NumInputs, Operation.Output.Size,
+          Operation.Inputs[1].Size, Operation.Inputs[2].Size,
+          Operation.NumInputs == 4 ? Operation.Inputs[3].Size : 0) ||
+      !Operation.Inputs[2].isConst() || !Operation.Inputs[2].Offset ||
+      (Operation.Inputs[2].Offset & (Operation.Inputs[2].Offset - 1)))
+    return false;
+  for (unsigned I : {1U, 3U}) {
+    if (I >= Operation.NumInputs)
+      continue;
+    const auto &Value = Operation.Inputs[I];
+    if ((!Value.isReg() && !Value.isTemp() && !Value.isConst()) ||
+        (!Value.isConst() && Value.Offset > UINT64_MAX - Value.Size))
+      return false;
+  }
   return true;
 }
 
@@ -313,6 +339,9 @@ public:
   };
   std::optional<ArgumentQuery> StorageQuery;
   std::optional<SourceFrameArgumentStorage> ArgumentStorage;
+  std::vector<NdVar> ObservationPointers;
+  size_t ObservationBytes = 0;
+  std::vector<SourceFrameArgumentStorage> StorageObservations;
 
   bool transfer(const LowBlock &Block, State &Current, bool CheckExits,
                 std::set<uint64_t> *UsedEntryRegisters = nullptr,
@@ -373,6 +402,23 @@ public:
         if (Read(Value, I) != ByteFact{ByteFact::Frame, First.Value, I, true})
           return std::nullopt;
       return First.Value;
+    };
+    const auto StoredByte =
+        [&](int64_t Address) -> std::optional<SourceFrameStoredByte> {
+      const auto Fact = lookup(Current.Stack, Address);
+      if (Fact.MayBeFrame)
+        return std::nullopt;
+      SourceFrameStoredByte Byte;
+      Byte.Initialized = Current.InitializedStack.count(Address);
+      if (Byte.Initialized && Fact.TheKind == ByteFact::Constant)
+        Byte.Constant = uint8_t(Fact.Value);
+      else if (Byte.Initialized && Fact.TheKind == ByteFact::Definition) {
+        if (Fact.Value < 0 || size_t(Fact.Value) >= Definitions.size())
+          return std::nullopt;
+        Byte.Definition = Definitions[size_t(Fact.Value)];
+        Byte.DefinitionByte = Fact.Index;
+      }
+      return Byte;
     };
     auto OutputOffset = [&](const NdVar &Value) -> std::optional<int64_t> {
       if (!OutputQuery || Value.Size != 8)
@@ -444,7 +490,9 @@ public:
       }
       if (Op.NumInputs > 6 || Op.Output.Size > 64 ||
           (Op.Opcode == NdOp::INTRINSIC &&
-           !hasNativeScalarIntrinsicEvidence(Op, Architecture)) ||
+           !hasNativeScalarIntrinsicEvidence(Op, Architecture) &&
+           !(Architecture == Arch::X64 && !ObservationPointers.empty() &&
+             isSourceFrameObservationGuard(Op))) ||
           Op.MemoryOrdering != NdMemoryOrdering::None ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return false;
@@ -462,6 +510,35 @@ public:
       if (Remaining < Cost || Op.Output.Offset > UINT64_MAX - Op.Output.Size)
         return false;
       Remaining -= Cost;
+      if (QueryIndex && Index == *QueryIndex && !ObservationPointers.empty()) {
+        if (Current.hasRetainedScratch() || !Current.Values.empty())
+          return false;
+        const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
+        if (!SP || *SP > 0 ||
+            *SP < -::neverd::limits::ir::kSourceFrameAnalysisMaxFrame)
+          return false;
+        std::set<int64_t> Observed;
+        for (const auto &Pointer : ObservationPointers) {
+          const auto Base = FrameOffset(Pointer);
+          if (!Base || *Base < *SP || *Base >= 0 ||
+              !Observed.insert(*Base).second)
+            continue;
+          const size_t Bytes = std::min(ObservationBytes, size_t(-*Base));
+          if (Remaining < Bytes)
+            return false;
+          Remaining -= Bytes;
+          SourceFrameArgumentStorage Storage{*Base, {}};
+          for (size_t I = 0; I < Bytes; ++I) {
+            const auto Byte = StoredByte(*Base + int64_t(I));
+            if (!Byte || !Byte->Initialized)
+              break;
+            Storage.Bytes.push_back(*Byte);
+          }
+          if (!Storage.Bytes.empty())
+            StorageObservations.push_back(std::move(Storage));
+        }
+        return true;
+      }
       // Scalar frame arithmetic may build private addresses, but its result
       // must never influence a source-visible control or value effect.
       if ((RequirePrivateFrame || OutputQuery) && MayBeFrame &&
@@ -567,21 +644,10 @@ public:
           SourceFrameArgumentStorage Storage{*Base, {}};
           Storage.Bytes.reserve(Query.Bytes);
           for (size_t I = 0; I < Query.Bytes; ++I) {
-            const auto Fact = lookup(Current.Stack, *Base + int64_t(I));
-            if (Fact.MayBeFrame)
+            const auto Byte = StoredByte(*Base + int64_t(I));
+            if (!Byte)
               return false;
-            SourceFrameStoredByte Byte;
-            Byte.Initialized =
-                Current.InitializedStack.count(*Base + int64_t(I));
-            if (Byte.Initialized && Fact.TheKind == ByteFact::Constant)
-              Byte.Constant = uint8_t(Fact.Value);
-            else if (Byte.Initialized && Fact.TheKind == ByteFact::Definition) {
-              if (Fact.Value < 0 || size_t(Fact.Value) >= Definitions.size())
-                return false;
-              Byte.Definition = Definitions[size_t(Fact.Value)];
-              Byte.DefinitionByte = Fact.Index;
-            }
-            Storage.Bytes.push_back(std::move(Byte));
+            Storage.Bytes.push_back(*Byte);
           }
           ArgumentStorage = std::move(Storage);
           // The consumer must separately certify this call's lifetime and
@@ -1292,6 +1358,17 @@ public:
             for (unsigned I = 0; I < Memory.Address->Size; ++I)
               if (Read(*Memory.Address, I).MayBeFrame)
                 return false;
+            if (!ObservationPointers.empty()) {
+              // Display evidence does not assume an incoming external
+              // pointer is disjoint from this invocation's machine stack.
+              const size_t Cost =
+                  Current.Stack.size() + Current.InitializedStack.size();
+              if (Remaining < Cost)
+                return false;
+              Remaining -= Cost;
+              Current.Stack.clear();
+              Current.InitializedStack.clear();
+            }
           }
         } else {
           if (Address && !NoValueOverlap(*Address, Memory.AccessSize))
@@ -1360,7 +1437,8 @@ public:
             return false;
           const auto First = Value.front();
           if (First.TheKind != ByteFact::Definition || First.Value < 0 ||
-              static_cast<size_t>(First.Value) >= Definitions.size())
+              static_cast<size_t>(First.Value) >= Definitions.size() ||
+              Definitions[First.Value].Output.Size != Memory.AccessSize)
             return false;
           for (unsigned I = 0; I < 8; ++I)
             if (Value[I] != ByteFact{ByteFact::Definition, First.Value, I})
@@ -1368,7 +1446,7 @@ public:
           LoadedDefinition = {Definitions[First.Value], *Address};
         }
       }
-      if (TrackDefinitions && Value.size() == 8 &&
+      if (TrackDefinitions && !Value.empty() &&
           std::all_of(Value.begin(), Value.end(), [](const auto &Byte) {
             return Byte.TheKind == ByteFact::Unknown && !Byte.MayBeFrame;
           })) {
@@ -1385,7 +1463,7 @@ public:
           Found = DefinitionIds.emplace(Key, Definitions.size()).first;
           Definitions.push_back({Block.Id, Index, Op.Addr, Op.Seq, Op.Output});
         }
-        for (unsigned I = 0; I < 8; ++I)
+        for (unsigned I = 0; I < Value.size(); ++I)
           Value[I] = {ByteFact::Definition, static_cast<int64_t>(Found->second),
                       I};
       }
@@ -1872,7 +1950,8 @@ static bool sourceFrameQuery(PreservationProof &Proof, const LowFunc &Function,
   if (!SingleObservation[Graph.Entry])
     return false;
 
-  if (Proof.StorageQuery && !SingleObservation[Query])
+  if ((Proof.StorageQuery || !Proof.ObservationPointers.empty()) &&
+      !SingleObservation[Query])
     return false;
 
   // If the query can reach itself, its suffix participates in the next
@@ -1935,20 +2014,26 @@ static bool sourceFrameQuery(PreservationProof &Proof, const LowFunc &Function,
   if (!Incoming[Query] ||
       !Proof.transfer(Block, *Incoming[Query], false, nullptr,
                       OperationIndex) ||
-      Proof.DidTerminate || (!Proof.LoadedDefinition && !Proof.ArgumentStorage))
+      Proof.DidTerminate ||
+      (!Proof.LoadedDefinition && !Proof.ArgumentStorage &&
+       Proof.StorageObservations.empty()))
     return false;
-  if (Proof.StorageQuery) {
-    if (!Proof.ArgumentStorage)
-      return false;
-    for (const auto &Byte : Proof.ArgumentStorage->Bytes)
-      if (Byte.Definition) {
-        const auto Producer = Graph.Blocks.find(Byte.Definition->BlockId);
-        if (Producer == Graph.Blocks.end() ||
-            !SingleObservation[Producer->second])
-          return false;
-      }
-    return true;
-  }
+  const auto SingleDefinitions =
+      [&](const SourceFrameArgumentStorage &Storage) {
+        for (const auto &Byte : Storage.Bytes)
+          if (Byte.Definition) {
+            const auto Producer = Graph.Blocks.find(Byte.Definition->BlockId);
+            if (Producer == Graph.Blocks.end() ||
+                !SingleObservation[Producer->second])
+              return false;
+          }
+        return true;
+      };
+  if (Proof.StorageQuery)
+    return Proof.ArgumentStorage && SingleDefinitions(*Proof.ArgumentStorage);
+  if (!Proof.ObservationPointers.empty())
+    return std::all_of(Proof.StorageObservations.begin(),
+                       Proof.StorageObservations.end(), SingleDefinitions);
   const auto Producer =
       Graph.Blocks.find(Proof.LoadedDefinition->Definition.BlockId);
   return Producer != Graph.Blocks.end() && SingleObservation[Producer->second];
@@ -2036,6 +2121,47 @@ std::optional<SourceFrameArgumentStorage> sourceFrameCallArgumentStorage(
                                        Occurrence->first, Occurrence->second))
     return std::nullopt;
   return Proof.ArgumentStorage;
+}
+
+std::vector<SourceFrameArgumentStorage> sourceFrameStorageBefore(
+    const LowFunc &Function, Arch Architecture, BinaryFormat Format,
+    int BlockId, size_t OperationIndex, const std::vector<NdVar> &Pointers,
+    size_t MaxBytes, size_t *WorkRemaining) {
+  if ((Architecture != Arch::X64 && Architecture != Arch::AArch64) ||
+      (Format != BinaryFormat::COFF && Format != BinaryFormat::ELF &&
+       Format != BinaryFormat::MachO) ||
+      Pointers.empty() ||
+      Pointers.size() > limits::ir::kSourceFrameStorageObservationPointers ||
+      !MaxBytes ||
+      MaxBytes >
+          limits::ir::
+              kSourceFrameAnalysisSourceFrameCallArgumentStorageBytesLimit ||
+      std::any_of(Pointers.begin(), Pointers.end(), [](const NdVar &Pointer) {
+        return (!Pointer.isReg() && !Pointer.isTemp()) || Pointer.Size != 8 ||
+               Pointer.Offset > UINT64_MAX - Pointer.Size;
+      }))
+    return {};
+  const NativeSourceCalls NoCalls;
+  PreservationProof Proof(Architecture, NoCalls, false, {}, false, false,
+                          nullptr, Format);
+  if (WorkRemaining)
+    Proof.Remaining = std::min(Proof.Remaining, *WorkRemaining);
+  const size_t Initial = Proof.Remaining;
+  Proof.TrackDefinitions = true;
+  Proof.TrackInitializedFrame = true;
+  Proof.ObservationPointers = Pointers;
+  Proof.ObservationBytes = MaxBytes;
+  const auto Graph =
+      frameGraph(Function, Architecture, NoCalls, Proof.Remaining);
+  bool Valid = false;
+  if (Graph && Graph->Blocks.count(BlockId))
+    Valid = sourceFrameQuery(Proof, Function, *Graph, Graph->Blocks.at(BlockId),
+                             OperationIndex);
+  if (WorkRemaining)
+    *WorkRemaining -=
+        Proof.Remaining <= Initial ? Initial - Proof.Remaining : Initial;
+  return Valid ? std::move(Proof.StorageObservations)
+               : std::vector<SourceFrameArgumentStorage>{};
 }
 
 bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,

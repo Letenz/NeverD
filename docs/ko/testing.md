@@ -2138,3 +2138,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 진입 객체 회귀는 기호 복사, 저장 슬롯과 슬롯 복사, 런타임 루프, 잃어버린 바인딩과 합류, 객체 별칭, 전체 넓은/원자/세그먼트 쓰기, 상대 경계, 잘못된 선언, 영수증 변조, 준비·연산 예산의 정확한 한계와 부족한 한계, 노드 예산 소진을 검사한다. 독립적인 바이트/레지스터 오라클이 유지된 효과를 확인한다. 담당 테스트와 raw 소비자 거부 테스트를 함께 실행한다. 이 검사는 전체 함수, 컴파일된 C 또는 일반 ABI 인증서를 제공하지 않는다.
 
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NeverDObjCSourceCallTests`의 `SourceFrameAnalysis.*`와 `NeverDCSourcePresentationTests`를 실행하여 바이트 출처, 경로 일치, 덮어쓰거나 이탈한 저장소, 불변 이미지 범위, 예산, 인코딩 및 메타데이터 경계를 확인합니다. `NeverDWorkerStackText`는 공개 x64/ARM64 PE 사례를 컴파일하고 알 수 없는 덮어쓰기를 포함하여 두 C 경로를 검증합니다. Clang과 lld-link가 필요하며 Windows 네이티브 실행은 별도로 검증해야 합니다.
