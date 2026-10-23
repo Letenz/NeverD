@@ -3,6 +3,11 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Check entry-stack proofs, alignment rewrites and query isolation.
+///
+//===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
 
@@ -606,15 +611,21 @@ TEST(MedStackAlignment, EntryStackQueriesReauthenticateAfterMutation) {
       SCOPED_TRACE(static_cast<int>(Format));
       MedFunc Func = frameWithEntrySP(Architecture);
       const MedVar Entry = reg(0, Architecture);
-      EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format), 0);
+      auto Expect = [&](std::optional<int64_t> Expected) {
+        EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format),
+                  Expected);
+        EXPECT_EQ(entryStackOffsets(Func, {Entry, Entry}, Architecture, Format),
+                  (std::vector<std::optional<int64_t>>{Expected, Expected}));
+      };
+      Expect(0);
       Func.Blocks[0].Ops[0].Inputs[0].RenameTag = 1;
-      EXPECT_FALSE(entryStackOffset(Func, Entry, Architecture, Format));
+      Expect(std::nullopt);
       Func.Blocks[0].Ops[0].Inputs[0] = Entry;
-      EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format), 0);
+      Expect(0);
       Func.Entry = 0x2000;
-      EXPECT_FALSE(entryStackOffset(Func, Entry, Architecture, Format));
+      Expect(std::nullopt);
       Func.Entry = Func.Blocks[0].StartAddr;
-      EXPECT_EQ(entryStackOffset(Func, Entry, Architecture, Format), 0);
+      Expect(0);
     }
   }
 }
@@ -709,6 +720,93 @@ TEST(MedStackAlignment, BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals) {
   }
 }
 
+TEST(MedStackAlignment, LoopAssumptionsDoNotBecomeIndependentProofs) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      const MedVar A = temp(2, Architecture);
+      const MedVar B = temp(3, Architecture);
+      MedBlock Loop;
+      Loop.Id = 1;
+      Loop.StartAddr = 0x1010;
+      PhiNode Anchored;
+      Anchored.Output = A;
+      Anchored.Args = {{0, reg(0, Architecture)}, {1, B}};
+      Loop.Phis.push_back(std::move(Anchored));
+      Loop.Ops.push_back(op(NdOp::COPY, B, A));
+      Func.Blocks.push_back(std::move(Loop));
+      // Proving A assumes its entry offset while checking B's backedge.
+      // B succeeds in that context, but a fresh query of B cannot establish
+      // an offset: A's backedge then reaches the still-active B. Reusing
+      // B's conditional success would change the proof's refusal boundary.
+      EXPECT_EQ(entryStackOffset(Func, A, Architecture, Format), 0);
+      EXPECT_EQ(entryStackOffset(Func, B, Architecture, Format), std::nullopt);
+      std::vector<MedVar> Values{A, B, A, B};
+      std::vector<std::optional<int64_t>> Expected{0, std::nullopt, 0,
+                                                   std::nullopt};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                  Expected);
+      }
+    }
+  }
+}
+
+TEST(MedStackAlignment, ReusedJoinKeepsTheDepthOfItsNestedInputs) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      MedBlock Block;
+      Block.Id = 1;
+      Block.StartAddr = 0x1010;
+      PhiNode Join;
+      Join.Output = temp(100, Architecture);
+      Join.Args = {{0, reg(0, Architecture)}, {1, reg(0, Architecture)}};
+      Block.Phis.push_back(Join);
+      MedVar Previous = Join.Output;
+      MedVar WithinLimit;
+      for (unsigned I = 0; I < limits::ir::kMedStackAlignmentResolveDepthLimit;
+           ++I) {
+        const MedVar Next = temp(200 + I, Architecture);
+        Block.Ops.push_back(op(NdOp::COPY, Next, Previous));
+        Previous = Next;
+        if (I + 2 == limits::ir::kMedStackAlignmentResolveDepthLimit)
+          WithinLimit = Next;
+      }
+      Func.Blocks.push_back(std::move(Block));
+      // The shallow query can be reused at the last valid depth, but its
+      // incoming SP still needs one more level than a deeper use permits.
+      std::vector<MedVar> Values{Join.Output, WithinLimit, Previous,
+                                 Join.Output, Previous};
+      std::vector<std::optional<int64_t>> Expected{0, 0, std::nullopt, 0,
+                                                   std::nullopt};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                  Expected);
+        for (size_t I = 0; I < Values.size(); ++I)
+          EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                    Expected[I]);
+      }
+    }
+  }
+}
+
 TEST(MedStackAlignment, SharedJoinsKeepThePerQueryWorkLimit) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
@@ -733,10 +831,18 @@ TEST(MedStackAlignment, SharedJoinsKeepThePerQueryWorkLimit) {
         if (I == 14)
           WithinBudget = Previous;
       }
-      std::vector<MedVar> Values = {
-          WithinBudget, Previous, reg(0, Architecture), WithinBudget, Previous};
-      std::vector<std::optional<int64_t>> Expected = {0, std::nullopt, 0, 0,
-                                                      std::nullopt};
+      // This join reaches a previously proved input with some budget left,
+      // but one step too little for the input's entire original traversal.
+      PhiNode Asymmetric;
+      Asymmetric.Output = temp(200, Architecture);
+      Asymmetric.Args = {{0, reg(0, Architecture)}, {1, WithinBudget}};
+      Func.Blocks.back().Phis.push_back(Asymmetric);
+      std::vector<MedVar> Values = {WithinBudget,      Previous,
+                                    Asymmetric.Output, reg(0, Architecture),
+                                    WithinBudget,      Asymmetric.Output,
+                                    Previous};
+      std::vector<std::optional<int64_t>> Expected = {
+          0, std::nullopt, std::nullopt, 0, 0, std::nullopt, std::nullopt};
       for (bool Reversed : {false, true}) {
         SCOPED_TRACE(Reversed);
         if (Reversed) {
