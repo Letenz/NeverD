@@ -1887,14 +1887,17 @@ public:
       auto Result =
           Ctx.mkAnd(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms),
                     Ctx.mkConst(Width, 1));
-      auto Factor = [&](auto &&Self, const Polynomial &P) -> SymRef {
+      auto Factor =
+          [&](auto &&Self, const Polynomial &P, llvm::ArrayRef<SymRef> Basis,
+              std::map<Polynomial, SymRef> &Cache, bool TryCoordinate,
+              llvm::ArrayRef<unsigned> KnownFrequencies = {}) -> SymRef {
         if (!charge(1 + P.size()))
           return {};
         if (P.empty())
           return Ctx.mkZero(Width);
         if (P.size() == 1 && !P.front())
           return Ctx.mkConst(llvm::APInt::getAllOnes(Width));
-        if (auto It = Factored.find(P); It != Factored.end())
+        if (auto It = Cache.find(P); It != Cache.end())
           return It->second;
         // Cache hits allocate no map entry or copied polynomial. Reserve a
         // complete entry before constructing a new result; failed attempts
@@ -1902,18 +1905,146 @@ public:
         if (!charge(0, sizeof(decltype(Factored)::value_type) +
                            4 * sizeof(void *) + P.size() * sizeof(uint64_t)))
           return {};
-        if (!charge(Inputs.size(), Inputs.size() * sizeof(unsigned)))
-          return {};
-        llvm::SmallVector<unsigned, 16> Frequencies(Inputs.size(), 0);
-        for (auto Term : P)
-          while (Term) {
-            if (!charge())
-              return {};
-            ++Frequencies[std::countr_zero(Term)];
-            Term &= Term - 1;
-          }
+        llvm::SmallVector<unsigned, 16> CountedFrequencies;
+        llvm::ArrayRef<unsigned> Frequencies = KnownFrequencies;
+        if (Frequencies.empty()) {
+          if (!charge(Basis.size(), Basis.size() * sizeof(unsigned)))
+            return {};
+          CountedFrequencies.resize(Basis.size(), 0);
+          for (auto Term : P)
+            while (Term) {
+              if (!charge())
+                return {};
+              ++CountedFrequencies[std::countr_zero(Term)];
+              Term &= Term - 1;
+            }
+          Frequencies = CountedFrequencies;
+        }
         const auto Best =
             std::max_element(Frequencies.begin(), Frequencies.end());
+        if (TryCoordinate && *Best != P.size()) {
+          if (!charge(Basis.size()))
+            return {};
+          // A variable present in every term is already a common factor.
+          // Test only the two most frequent remaining variables, using the
+          // frequencies that the ordinary factorization already computed.
+          unsigned First = Basis.size(), Second = Basis.size();
+          for (unsigned I = 0; I < Frequencies.size(); ++I) {
+            if (!Frequencies[I] || Frequencies[I] == P.size())
+              continue;
+            if (First == Basis.size() || Frequencies[I] > Frequencies[First]) {
+              Second = First;
+              First = I;
+            } else if (Second == Basis.size() ||
+                       Frequencies[I] > Frequencies[Second]) {
+              Second = I;
+            }
+          }
+          if (Second != Basis.size()) {
+            const uint64_t IBit = uint64_t(1) << Second;
+            const uint64_t JBit = uint64_t(1) << First;
+            const uint64_t PairMask = IBit | JBit;
+            // Each inline vector object owns its inline storage. A grown
+            // SmallVector has capacity below twice its requested size; fund
+            // that possible heap capacity before constructing each vector.
+            if (!charge(P.size(), 4 * sizeof(Polynomial) +
+                                      2 * P.size() * sizeof(uint64_t)))
+              return {};
+            Polynomial Groups[4];
+            for (auto Term : P) {
+              const unsigned Group =
+                  unsigned(bool(Term & IBit)) + 2 * unsigned(bool(Term & JBit));
+              Groups[Group].push_back(Term & ~PairMask);
+            }
+            // P=A XOR i*B XOR j*C XOR i*j*D. With t=i XOR j this is
+            // A XOR t*B XOR j*(B XOR C XOR D) XOR t*j*D. Fixed-variable
+            // projections preserve order, so both differences are linear.
+            const auto DifferenceSize = Groups[1].size() + Groups[3].size();
+            if (!charge(DifferenceSize,
+                        sizeof(Polynomial) +
+                            2 * DifferenceSize * sizeof(uint64_t)))
+              return {};
+            Polynomial Difference;
+            Difference.reserve(DifferenceSize);
+            std::set_symmetric_difference(Groups[1].begin(), Groups[1].end(),
+                                          Groups[3].begin(), Groups[3].end(),
+                                          std::back_inserter(Difference));
+            const auto CombinedSize = Difference.size() + Groups[2].size();
+            if (!charge(CombinedSize, sizeof(Polynomial) +
+                                          2 * CombinedSize * sizeof(uint64_t)))
+              return {};
+            Polynomial Combined;
+            Combined.reserve(CombinedSize);
+            std::set_symmetric_difference(Difference.begin(), Difference.end(),
+                                          Groups[2].begin(), Groups[2].end(),
+                                          std::back_inserter(Combined));
+            // Demand a reduction in both one-variable cofactors, rather
+            // than accepting a small advantage from their frequency order.
+            if (Combined.size() < Groups[1].size() &&
+                Combined.size() < Groups[2].size()) {
+              const auto NewSize =
+                  P.size() - Groups[2].size() + Combined.size();
+              if (!charge(P.size() + Combined.size() + Basis.size() + 1,
+                          sizeof(Polynomial) + 2 * NewSize * sizeof(uint64_t) +
+                              sizeof(llvm::SmallVector<SymRef, 16>) +
+                              2 * Basis.size() * sizeof(SymRef) +
+                              sizeof(std::map<Polynomial, SymRef>) +
+                              sizeof(SymNode) + 4 * sizeof(SymRef)))
+                return {};
+              Polynomial Transformed;
+              Transformed.reserve(NewSize);
+              size_t Original = 0, Replacement = 0;
+              while (Original != P.size() || Replacement != Combined.size()) {
+                while (Original != P.size() && (P[Original] & PairMask) == JBit)
+                  ++Original;
+                if (Replacement != Combined.size() &&
+                    (Original == P.size() ||
+                     (Combined[Replacement] | JBit) < P[Original]))
+                  Transformed.push_back(Combined[Replacement++] | JBit);
+                else if (Original != P.size())
+                  Transformed.push_back(P[Original++]);
+              }
+              if (!charge(Frequencies.size(),
+                          sizeof(llvm::SmallVector<unsigned, 16>) +
+                              2 * Frequencies.size() * sizeof(unsigned)))
+                return {};
+              llvm::SmallVector<unsigned, 16> CoordinateFrequencies(
+                  Frequencies);
+              // The new polynomial changes only j*C into j*Combined.
+              // Update the existing counts instead of rescanning every
+              // unchanged term in the transformed root.
+              for (auto Term : Groups[2]) {
+                Term |= JBit;
+                while (Term) {
+                  if (!charge())
+                    return {};
+                  --CoordinateFrequencies[std::countr_zero(Term)];
+                  Term &= Term - 1;
+                }
+              }
+              for (auto Term : Combined) {
+                Term |= JBit;
+                while (Term) {
+                  if (!charge())
+                    return {};
+                  ++CoordinateFrequencies[std::countr_zero(Term)];
+                  Term &= Term - 1;
+                }
+              }
+              llvm::SmallVector<SymRef, 16> CoordinateInputs(Basis);
+              CoordinateInputs[Second] = Ctx.mkXor(Basis[Second], Basis[First]);
+              // Polynomial keys only identify expressions within one basis.
+              // Keep the changed basis separate; its final result again has
+              // exactly P's original full-width bitwise semantics.
+              std::map<Polynomial, SymRef> CoordinateCache;
+              auto Value = Self(Self, Transformed, CoordinateInputs,
+                                CoordinateCache, false, CoordinateFrequencies);
+              if (Value)
+                Cache.emplace(P, Value);
+              return Value;
+            }
+          }
+        }
         const unsigned Variable = Best - Frequencies.begin();
         const auto Bit = uint64_t(1) << Variable;
         Polynomial Low, High;
@@ -1922,6 +2053,32 @@ public:
             High.push_back(Term ^ Bit);
           else
             Low.push_back(Term);
+        }
+        // Equal cofactors give Low AND NOT x. Cofactors differing only in
+        // their constant term give Low OR x. Compare the canonical tails
+        // directly before constructing quotient groups and their remainders.
+        llvm::ArrayRef<uint64_t> LowTail(Low), HighTail(High);
+        const bool LowConstant = !Low.empty() && !Low.front();
+        const bool HighConstant = !High.empty() && !High.front();
+        if (LowConstant)
+          LowTail = LowTail.drop_front();
+        if (HighConstant)
+          HighTail = HighTail.drop_front();
+        if (LowTail.size() == HighTail.size()) {
+          if (!charge(1 + LowTail.size()))
+            return {};
+          if (LowTail == HighTail) {
+            auto A = Self(Self, Low, Basis, Cache, false);
+            const unsigned Nodes = LowConstant == HighConstant ? 2 : 1;
+            if (!A ||
+                !charge(Nodes, Nodes * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+              return {};
+            auto Value = LowConstant == HighConstant
+                             ? Ctx.mkAnd(A, Ctx.mkNot(Basis[Variable]))
+                             : Ctx.mkOr(A, Basis[Variable]);
+            Cache.emplace(P, Value);
+            return Value;
+          }
         }
         // P = Low XOR (x AND High). Partition Low over the variables not
         // present in High. A group sharing most of High can reuse that exact
@@ -1978,24 +2135,40 @@ public:
               return {};
             std::sort(Quotient.begin(), Quotient.end());
             std::sort(Remainder.begin(), Remainder.end());
-            auto Q = Self(Self, Quotient), H = Self(Self, High),
-                 R = Self(Self, Remainder);
+            auto Q = Self(Self, Quotient, Basis, Cache, false),
+                 H = Self(Self, High, Basis, Cache, false),
+                 R = Self(Self, Remainder, Basis, Cache, false);
             if (!Q || !H || !R ||
                 !charge(2, 2 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
               return {};
             auto Value = Ctx.mkXor(R, Ctx.mkAnd(Q, H));
-            Factored.emplace(P, Value);
+            Cache.emplace(P, Value);
             return Value;
           }
         }
-        auto A = Self(Self, Low), B = Self(Self, High);
+        auto A = Self(Self, Low, Basis, Cache, false);
+        SymRef B;
+        if (TryCoordinate && Low.empty()) {
+          // All terms contain this common factor. Its removal changes only
+          // that variable's frequency. Carry the single coordinate attempt
+          // past common factors without recounting the untouched variables.
+          if (!charge(Frequencies.size(),
+                      sizeof(llvm::SmallVector<unsigned, 16>) +
+                          2 * Frequencies.size() * sizeof(unsigned)))
+            return {};
+          llvm::SmallVector<unsigned, 16> HighFrequencies(Frequencies);
+          HighFrequencies[Variable] = 0;
+          B = Self(Self, High, Basis, Cache, true, HighFrequencies);
+        } else {
+          B = Self(Self, High, Basis, Cache, false);
+        }
         if (!A || !B || !charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
           return {};
-        auto Value = Ctx.mkXor(A, Ctx.mkAnd(Inputs[Variable], B));
-        Factored.emplace(P, Value);
+        auto Value = Ctx.mkXor(A, Ctx.mkAnd(Basis[Variable], B));
+        Cache.emplace(P, Value);
         return Value;
       };
-      if (auto Smaller = Factor(Factor, *Form)) {
+      if (auto Smaller = Factor(Factor, *Form, Inputs, Factored, true)) {
         Smaller = Ctx.mkAnd(Smaller, Ctx.mkConst(Width, 1));
         if (readingScore(Ctx, Smaller) < readingScore(Ctx, Result))
           Result = Smaller;
