@@ -6847,9 +6847,11 @@ TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
   const Call Calls[] = {
       {"_SetFlags", "fcntl(arg0, 4, arg1)", "fcntl(arg0, 4, arg1)"},
       {"_Request", "ioctl(arg0, arg1, arg2)", "ioctl(arg0, arg1, "},
-      {"_OpenAt", "openat(arg0, (void *)(uintptr_t)arg1, 0x201, arg2)",
+      // Named pointer parameters retain the header's character type even
+      // though the variadic tail follows Apple's stack convention.
+      {"_OpenAt", "openat(arg0, (char*)(uintptr_t)arg1, 0x201, arg2)",
        "0x201, arg2)"},
-      {"_Shared", "shm_open((void *)(uintptr_t)arg0, 0x202, 0x180)",
+      {"_Shared", "shm_open((char*)(uintptr_t)arg0, 0x202, 0x180)",
        "0x202, 0x180)"},
       // off_t is libSystem's typedef, which the unit does not name: the
       // address passes through void *, which converts to it.

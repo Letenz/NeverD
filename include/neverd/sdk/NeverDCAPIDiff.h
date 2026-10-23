@@ -99,6 +99,22 @@ neverd_comparison_function_json(neverd_comparison_t Comparison, int Secondary,
 NEVERD_API const char *
 neverd_comparison_function_page_json(neverd_comparison_t Comparison,
                                      const char *Query);
+/// One side's ordinary source page from comparison-owned inputs. Requires a
+/// completed native capture through run_owned; original paths are never
+/// reopened. Query: side, address, representation (c/llvmc/source/cpp/rust/go),
+/// offset, limit, max_native_instructions (0 removes this additional
+/// allowance), timeout_ms and refresh. Reuses the SDK source emitter and its
+/// page budgets. Every page carries input revision/hash and explicit
+/// availability/coverage. Synthetic rows remain unmapped; comparison_anchors
+/// are original instructions present in this snapshot. Optional
+/// listing_row/native_change refer to a retained completed instruction
+/// alignment, never a source-line alignment. Cancel/deadline checks run between
+/// selected-function analysis and rendering, not inside synchronous pipeline
+/// work. Stopped requests publish no source text. Source projection does not
+/// establish semantic equivalence or patch presence.
+NEVERD_API const char *
+neverd_comparison_source_page_json(neverd_comparison_t Comparison,
+                                   const char *Query);
 /// Bounded CFG topology for a viewer: side, address, node_limit, edge_limit.
 /// Returns explicit failure when the caller's graph allowance is exceeded.
 /// Also accepts timeout_ms and refresh for shared delta computation. A stopped

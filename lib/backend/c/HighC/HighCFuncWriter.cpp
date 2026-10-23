@@ -4796,7 +4796,10 @@ std::string HighCWriter::debugParamName(const HighFunc &Func,
 }
 
 bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
-  if (FS.IsVariadic)
+  // Windows variadic prefixes use their own ABI admission. Other platforms
+  // retain the positional scalar signature below, including libSystem's
+  // named pointer parameters before an Apple ARM64 stack-passed tail.
+  if (FS.IsVariadic && Opts.Format == BinaryFormat::COFF)
     return libc::variadicCallArguments(FS, Opts.TheArch, Opts.Format)
         .has_value();
   // A call's arguments come in the order of the registers they travel in,

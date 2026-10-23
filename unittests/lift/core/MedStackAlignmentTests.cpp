@@ -11,6 +11,7 @@
 #include "neverd/ir/med/MedStackAlignment.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -704,6 +705,86 @@ TEST(MedStackAlignment, BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals) {
                     Expected[I]);
         }
       }
+    }
+  }
+}
+
+TEST(MedStackAlignment, SharedJoinsKeepThePerQueryWorkLimit) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      MedVar Previous = reg(0, Architecture);
+      MedVar WithinBudget;
+      // Fifteen shared joins take 65,535 visits. One more join exceeds the
+      // per-query limit even though every incoming value has the same offset.
+      for (unsigned I = 0; I != 16; ++I) {
+        MedBlock Block;
+        Block.Id = I + 1;
+        Block.StartAddr = 0x1010 + 0x10 * I;
+        PhiNode Join;
+        Join.Output = temp(100 + I, Architecture);
+        Join.Args = {{0, Previous}, {int(I + 1), Previous}};
+        Previous = Join.Output;
+        Block.Phis.push_back(std::move(Join));
+        Func.Blocks.push_back(std::move(Block));
+        if (I == 14)
+          WithinBudget = Previous;
+      }
+      std::vector<MedVar> Values = {
+          WithinBudget, Previous, reg(0, Architecture), WithinBudget, Previous};
+      std::vector<std::optional<int64_t>> Expected = {0, std::nullopt, 0, 0,
+                                                      std::nullopt};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                  Expected);
+        for (size_t I = 0; I < Values.size(); ++I)
+          EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                    Expected[I]);
+      }
+    }
+  }
+}
+
+TEST(MedStackAlignment, StackQueriesKeepDistinctValueKindsAndVersions) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      const unsigned Width = getTargetRegInfo(Architecture).PointerSize;
+      std::vector<MedVar> Values;
+      std::vector<std::optional<int64_t>> Expected;
+      for (unsigned I = 0; I != 128; ++I) {
+        MedVar Register = reg(I + 1, Architecture);
+        MedVar Temporary = temp(Register.Id, Architecture);
+        Temporary.SSAVer = Register.SSAVer;
+        for (MedVar Value : {Register, Temporary}) {
+          const int64_t Offset =
+              Value.Kind == MedVar::Reg ? -int64_t(I + 1) : int64_t(I + 1);
+          Func.Blocks[0].Ops.push_back(
+              op(NdOp::INT_ADD, Value, reg(0, Architecture),
+                 MedVar::makeConst(static_cast<uint64_t>(Offset) &
+                                       (Width == 4 ? UINT32_MAX : UINT64_MAX),
+                                   Width)));
+          Values.push_back(Value);
+          Expected.push_back(Offset);
+        }
+      }
+      EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                Expected);
+      std::reverse(Values.begin(), Values.end());
+      std::reverse(Expected.begin(), Expected.end());
+      EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                Expected);
     }
   }
 }

@@ -17,6 +17,7 @@
 #include "ComparisonModel.h"
 #include "ComparisonRegionsDialog.h"
 #include "ComparisonReviewDialog.h"
+#include "ComparisonSourceView.h"
 #include "ComparisonValidationDialog.h"
 #include "ProjectDatabase.h"
 #include "Theme.h"
@@ -40,6 +41,7 @@
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
 #include <QTimer>
 #include <QToolButton>
 #include <algorithm>
@@ -131,6 +133,132 @@ private slots:
     QCOMPARE(Read(Sentinel), QByteArray("local recovery remains intact"));
     QVERIFY(!QFileInfo::exists(A));
     QVERIFY(!QFileInfo::exists(B));
+    auto *Source = View.findChild<ComparisonSourceView *>("comparisonSource");
+    QVERIFY(Source);
+    auto *Tabs = View.findChild<QTabWidget *>();
+    QVERIFY(Tabs);
+    Tabs->setCurrentWidget(Source);
+    QCOMPARE(Tabs->currentWidget(), Source);
+    QVERIFY(Source->isVisible());
+    auto *PrimarySource =
+        View.findChild<QPlainTextEdit *>("comparisonPrimarySource");
+    auto *SecondarySource =
+        View.findChild<QPlainTextEdit *>("comparisonSecondarySource");
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        PrimarySource->toPlainText().contains("return"),
+        qPrintable(
+            View.findChild<QLabel *>("comparisonPrimarySourceStatus")->text()),
+        Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(SecondarySource->toPlainText().contains("return"),
+                             Timeout);
+    QVERIFY(PrimarySource->toPlainText().contains("return"));
+    QVERIFY(PrimarySource->toPlainText() != SecondarySource->toPlainText());
+    QVERIFY(View.findChild<QLabel *>("comparisonPrimarySourceTitle")
+                ->text()
+                .contains("saved_check"));
+    auto *Jump =
+        View.findChild<QPushButton *>("comparisonPrimarySourceInstruction");
+    for (auto Block = PrimarySource->document()->begin();
+         Block.isValid() && !Jump->isEnabled(); Block = Block.next())
+      PrimarySource->setTextCursor(QTextCursor(Block));
+    QVERIFY(Jump->isEnabled());
+    QTest::mouseClick(Jump, Qt::LeftButton);
+    QCOMPARE(Tabs->currentWidget(), Instructions);
+    QVERIFY(Instructions->currentIndex().isValid());
+    QCOMPARE(Instructions->currentIndex().column(), 0);
+    Tabs->setCurrentWidget(Source);
+    const auto SecondaryPage = SecondarySource->toPlainText();
+    auto *PrimaryLine =
+        View.findChild<QSpinBox *>("comparisonPrimarySourceLine");
+    QVERIFY(PrimaryLine->value() > 1);
+    PrimaryLine->setFocus();
+    PrimaryLine->setValue(1);
+    bool UnexpectedDialog = false;
+    QTimer::singleShot(100, &View, [&] {
+      if (auto *Modal =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget());
+          Modal && Modal != &View) {
+        UnexpectedDialog = true;
+        qWarning() << "Source line Enter opened"
+                   << Modal->metaObject()->className() << Modal->windowTitle();
+        Modal->reject();
+      }
+    });
+    QTest::keyClick(PrimaryLine, Qt::Key_Return);
+    QTest::qWait(120);
+    QVERIFY(!UnexpectedDialog);
+    QTRY_VERIFY_WITH_TIMEOUT(PrimarySource->toPlainText().startsWith("#define"),
+                             Timeout);
+    QCOMPARE(SecondarySource->toPlainText(), SecondaryPage);
+    auto *Representations =
+        View.findChild<QComboBox *>("comparisonSourceRepresentation");
+    Representations->setCurrentIndex(Representations->findData("llvmc"));
+    QTRY_VERIFY_WITH_TIMEOUT(PrimarySource->toPlainText().contains("return"),
+                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(SecondarySource->toPlainText().contains("return"),
+                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    Representations->setCurrentIndex(Representations->findData("rust"));
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    QVERIFY(PrimarySource->toPlainText().isEmpty());
+    QVERIFY(SecondarySource->toPlainText().isEmpty());
+    QVERIFY(View.findChild<QLabel *>("comparisonPrimarySourceStatus")
+                ->text()
+                .contains("Source unavailable"));
+    QVERIFY(!Jump->isEnabled());
+    Tabs->setCurrentWidget(Instructions);
+    Tabs->setCurrentWidget(Source);
+    QVERIFY(!Session.cancellable());
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonSourceReload"),
+                      Qt::LeftButton);
+    QVERIFY(Session.cancellable());
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    // Multiple queued view changes must publish only the last selection.
+    Representations->setCurrentIndex(Representations->findData("c"));
+    Representations->setCurrentIndex(Representations->findData("llvmc"));
+    QTRY_VERIFY_WITH_TIMEOUT(PrimarySource->toPlainText().contains("return"),
+                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(SecondarySource->toPlainText().contains("return"),
+                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    const auto SourceCaptures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!SourceCaptures.isEmpty()) {
+      QVERIFY(QDir().mkpath(SourceCaptures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(40);
+        const auto Name =
+            Mode == Theme::Mode::Dark ? "dark-source" : "light-source";
+        QVERIFY(View.grab().save(
+            QDir(SourceCaptures).filePath(QString(Name) + ".png")));
+      }
+    }
+    if (!SourceCaptures.isEmpty()) {
+      const QString LongName = "saved_check_" +
+                               QString("template_argument_").repeated(32) +
+                               "suffix";
+      Source->setFunctions({{"name", LongName}, {"address", "0x1000"}},
+                           {{"name", LongName}, {"address", "0x1000"}});
+      QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+      View.resize(View.minimumSize());
+      auto *Title = View.findChild<QLabel *>("comparisonPrimarySourceTitle");
+      QTRY_VERIFY_WITH_TIMEOUT(Title->text().contains(QChar(0x2026)), Timeout);
+      QVERIFY(Title->toolTip().contains(LongName));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(40);
+        QVERIFY(View.grab().save(
+            QDir(SourceCaptures)
+                .filePath(Mode == Theme::Mode::Dark
+                              ? "dark-source-minimum-long.png"
+                              : "light-source-minimum-long.png")));
+      }
+      View.resize(1280, 800);
+      Source->setFunctions({{"name", "saved_check"}, {"address", "0x1000"}},
+                           {{"name", "saved_check"}, {"address", "0x1000"}});
+      QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    }
+    Tabs->setCurrentWidget(Instructions);
     const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
     if (!Captures.isEmpty()) {
       QVERIFY(QDir().mkpath(Captures));

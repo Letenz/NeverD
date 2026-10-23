@@ -6158,10 +6158,6 @@ Abdeckung: %7</translation>
         <translation>Pseudocode</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>Pseudocode ist in diesem Dekodierprofil nicht verfügbar. Originalanweisungen, Operanden und Bytes bleiben in der Disassemblierung verfügbar.</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>Rohes x64</translation>
     </message>
@@ -7668,6 +7664,109 @@ Sekundäre SHA-256: %3
     <message>
         <source>yes</source>
         <translation>ja</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>Ansicht:</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>Eingabesprache</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>Quelltext neu laden</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Optionen</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>Instruktionslimit aufheben</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>Jeder Bereich zeigt seine eigenen Quelltextzeilen. Wählen Sie eine Zeile, um ihre ursprünglichen Instruktionen zu prüfen.</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>Sekundärer Quelltext</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>Primärer Quelltext</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>Vorherige Quelltextseite</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>Nächste Quelltextseite</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>Zur Quelltextzeile springen</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>Anker der ursprünglichen Instruktionen</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>Instruktion anzeigen</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>Sekundär: %1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>Primär: %1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>Auf dieser Seite ist keine Funktion ausgewählt.</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>Der Quelltext kann geladen werden.</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>Dieser Worker unterstützt keine Quelltextprüfung.</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>Quelltext wird vorbereitet… Der Abbruch wartet auf das Ende des aktuellen Analyseschritts.</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>Der Quelltext überschreitet das Instruktionslimit. Passen Sie die Optionen an, um diese Funktion zu prüfen.</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>Quelltextprüfung angehalten. Laden Sie den Quelltext erneut, um es noch einmal zu versuchen.</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>Quelltext nicht verfügbar: %1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>Zeilen %1–%2 von %3</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · Native Abdeckung unvollständig</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>Nicht zugeordnete Zeile</translation>
     </message>
 </context>
 </TS>

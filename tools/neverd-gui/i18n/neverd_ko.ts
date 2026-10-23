@@ -6122,10 +6122,6 @@ Coverage: %7</source>
         <translation>의사 코드</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>이 디코딩 프로필에서는 의사 코드를 사용할 수 없습니다. 원본 명령어, 피연산자 및 바이트는 디스어셈블리에서 계속 사용할 수 있습니다.</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>원시 x64</translation>
     </message>
@@ -7632,6 +7628,109 @@ Secondary SHA-256: %3
     <message>
         <source>yes</source>
         <translation>예</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>보기:</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>입력 언어</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>소스 다시 불러오기</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>옵션</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>명령어 수 제한 해제</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>각 창에는 해당 입력의 소스 행이 표시됩니다. 행을 선택하면 원본 명령어를 확인할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>비교 대상 소스</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>기준 소스</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>이전 소스 페이지</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>다음 소스 페이지</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>소스 행으로 이동</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>원본 명령어 앵커</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>명령어 표시</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>비교 대상: %1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>기준: %1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>이쪽에서 선택한 함수가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>소스를 불러올 준비가 되었습니다.</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>이 작업 프로세스는 소스 보기를 지원하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>소스 준비 중… 취소하려면 현재 분석 단계가 끝날 때까지 기다려야 합니다.</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>소스가 명령어 수 제한을 초과했습니다. 이 함수를 확인하려면 옵션을 조정하세요.</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>소스 보기가 중지되었습니다. 다시 시도하려면 소스를 다시 불러오세요.</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>소스를 사용할 수 없음: %1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>%1–%2행 / 전체 %3행</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · 네이티브 명령어 분석 범위가 불완전함</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>매핑되지 않은 행</translation>
     </message>
 </context>
 </TS>

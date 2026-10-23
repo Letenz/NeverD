@@ -31,6 +31,10 @@ ComparisonSession::ComparisonSession(const QString &Worker, QObject *Parent)
 }
 void ComparisonSession::receive(const QJsonObject &Message) {
   if (Message["type"] == QJsonValue("hello")) {
+    Operations.clear();
+    for (const auto &Operation : Message["capabilities"].toArray())
+      if (Operation.isString())
+        Operations.append(Operation.toString());
     CancellableOperations.clear();
     for (const auto &Operation :
          Message["comparison_cancellable_operations"].toArray())

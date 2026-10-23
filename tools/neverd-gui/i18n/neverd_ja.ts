@@ -6122,10 +6122,6 @@ Coverage: %7</source>
         <translation>疑似コード</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>このデコード済みプロファイルでは疑似コードは利用できません。元の命令、オペランド、バイトは逆アセンブリで引き続き利用できます。</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>生バイナリ x64</translation>
     </message>
@@ -7632,6 +7628,109 @@ Secondary SHA-256: %3
     <message>
         <source>yes</source>
         <translation>はい</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>表示：</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>入力の言語</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>ソースを再読み込み</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>オプション</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>命令数の制限を解除</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>各ペインにはそれぞれのソース行が表示されます。行を選択すると、元の命令を確認できます。</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>比較先のソース</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>比較元のソース</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>ソースの前のページ</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>ソースの次のページ</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>ソース行に移動</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>元の命令のアンカー</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>命令を表示</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>比較先：%1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>比較元：%1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>この側では関数が選択されていません。</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>ソースを読み込めます。</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>このワーカーはソースの表示に対応していません。</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>ソースを準備中…キャンセルは現在の解析ステップの終了を待ちます。</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>ソースが命令数の制限を超えています。この関数を確認するにはオプションを調整してください。</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>ソースの表示を停止しました。再試行するにはソースを再読み込みしてください。</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>ソースを表示できません：%1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>%1–%2 行目／全 %3 行</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · ネイティブ命令の解析範囲が不完全です</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>対応付けのない行</translation>
     </message>
 </context>
 </TS>

@@ -206,6 +206,11 @@ int runStructuralDiff() {
     const bool ImpactView = !DiffImpactFunction.empty();
     const bool ChangesView = !DiffChangesFunction.empty();
     const bool ValidationView = !DiffValidationFunction.empty();
+    const bool SourceView = !DiffSourceFunction.empty();
+    if (!SourceView && (DiffSourceSide.getNumOccurrences() ||
+                        DiffSourceRepresentation.getNumOccurrences() ||
+                        DiffSourceInstructions.getNumOccurrences()))
+      throw std::runtime_error("source options require --source-function");
     if (!ValidationView && (DiffValidationSide.getNumOccurrences() ||
                             DiffValidationWork.getNumOccurrences() ||
                             DiffValidationInstructions.getNumOccurrences()))
@@ -239,10 +244,12 @@ int runStructuralDiff() {
     if (unsigned(NativeRegionsView) + unsigned(FlowRegionsView) +
             unsigned(DataFlowView) + unsigned(OtherList) +
             unsigned(!DiffFunc.empty()) + unsigned(ImpactView) +
-            unsigned(ChangesView) + unsigned(ValidationView) >
+            unsigned(ChangesView) + unsigned(ValidationView) +
+            unsigned(SourceView) >
         1)
-      throw std::runtime_error("select one inventory, region, function, "
-                               "dataflow, impact, change or validation view");
+      throw std::runtime_error(
+          "select one inventory, region, function, "
+          "dataflow, impact, change, source or validation view");
     if (!ChangesView && (DiffChangesSide.getNumOccurrences() ||
                          DiffChangesContext.getNumOccurrences() ||
                          DiffChangesRows.getNumOccurrences() ||
@@ -375,7 +382,7 @@ int runStructuralDiff() {
     const uint64_t PairCount = Counts.getInteger("matches").value_or(0);
     std::string Saved;
     if (!DiffSave.empty() ||
-        (DiffJson && DiffList.empty() && DiffFunc.empty())) {
+        (DiffJson && DiffList.empty() && DiffFunc.empty() && !SourceView)) {
       Saved = take(neverd_comparison_export_json(C));
       if (Saved.empty())
         throw std::runtime_error(take(neverd_comparison_last_error(C)));
@@ -415,6 +422,19 @@ int runStructuralDiff() {
       }
       Output = take(
           neverd_comparison_reviews_json(C, render(std::move(Query)).c_str()));
+    } else if (SourceView) {
+      const auto Query = render(llvm::json::Object{
+          {"side", DiffSourceSide.getValue()},
+          {"address", DiffSourceFunction.getValue()},
+          {"representation", DiffSourceRepresentation.getValue()},
+          {"offset", unsigned(DiffOffset)},
+          {"limit", unsigned(DiffLimit)},
+          {"max_native_instructions", unsigned(DiffSourceInstructions)},
+          {"timeout_ms", uint64_t(DiffTimeout)}});
+      Output = take(neverd_comparison_source_page_json(C, Query.c_str()));
+      if (!Output.empty())
+        Partial |= parse(Output).getAsObject()->getString("availability") !=
+                   "available";
     } else if (ValidationView) {
       llvm::json::Object Query{
           {"side", DiffValidationSide.getValue()},
@@ -553,7 +573,7 @@ int runStructuralDiff() {
     if (DiffJson || !DiffList.empty() || !DiffFunc.empty() ||
         !DiffRegion.empty() || DiffRegionAnchor.getNumOccurrences() ||
         !DiffFlowFunction.empty() || FlowRegionsView || ImpactView ||
-        ChangesView || ValidationView) {
+        ChangesView || ValidationView || SourceView) {
       llvm::outs() << Output << '\n';
     } else {
       llvm::outs() << "A: " << DiffFileA.getValue()

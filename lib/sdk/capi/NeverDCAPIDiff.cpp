@@ -12,6 +12,7 @@
 
 #include "BinaryComparison.h"
 #include "ComparisonScalarValidation.h"
+#include "ComparisonSource.h"
 #include "JSONText.h"
 #include "SessionImpl.h"
 
@@ -23,6 +24,7 @@
 #include "neverd/diff/FlowRegionsJSON.h"
 #include "neverd/diff/FunctionDelta.h"
 #include "neverd/diff/RegionsJSON.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -586,6 +588,7 @@ const char *neverd_comparison_summary_json(neverd_comparison_t Handle) {
     O["can_undo"] = !C.Undo.empty();
     O["can_redo"] = !C.Redo.empty();
     O["owned_validation_inputs"] = C.OwnedInputsBound;
+    O["owned_source_inputs"] = C.OwnedInputsBound;
     return dupStr(jsonToString(std::move(*Summary)));
   });
 }
@@ -841,6 +844,147 @@ const char *neverd_comparison_function_json(neverd_comparison_t Handle,
   });
 }
 
+const char *neverd_comparison_source_page_json(neverd_comparison_t Handle,
+                                               const char *Query) {
+  return guarded(Handle, [&](Comparison &C) -> const char * {
+    auto Lock = ready(C);
+    require(
+        C.OwnedInputsBound,
+        "source inspection requires completed native capture from run_owned");
+    auto V = json(Query);
+    const auto *O = V.getAsObject();
+    require(O, "source query must be an object");
+    keys(*O, {"side", "address", "representation", "offset", "limit",
+              "max_native_instructions", "timeout_ms", "refresh"});
+    const auto [Secondary, Index] = selectedFunction(C, *O);
+    const auto &P = Secondary ? C.Secondary : C.Primary;
+    const auto *M = Secondary ? C.Result.matchOfSecondary(Index)
+                              : C.Result.matchOfPrimary(Index);
+    ComparisonSourceOptions Options;
+    Options.Representation =
+        string(*O, "representation", Options.Representation);
+    require(
+        Options.Representation == "c" || Options.Representation == "llvmc" ||
+            Options.Representation == "source" ||
+            Options.Representation == "cpp" ||
+            Options.Representation == "rust" || Options.Representation == "go",
+        "unsupported source representation");
+    Options.Offset = count(*O, "offset", 0, INT64_MAX);
+    Options.Limit = count(*O, "limit", Options.Limit,
+                          sdk::kNeverDCAPIDecompileNeverdIrViewJsonLimit);
+    require(Options.Limit > 0, "source page limit must be positive");
+    Options.MaxNativeInstructions =
+        count(*O, "max_native_instructions", Options.MaxNativeInstructions,
+              UINT32_MAX);
+    Options.Refresh = flag(*O, "refresh", false);
+    const auto Timeout =
+        count(*O, "timeout_ms", 0, diffLimits::kMaxTimeoutMilliseconds);
+    {
+      std::lock_guard Status(C.StatusMutex);
+      C.Cancel = false;
+      C.Running = true;
+      C.Outcome = "running";
+      C.Phase = "source:analysis";
+      C.Done = 0;
+      C.Total = 2;
+      C.Error.clear();
+    }
+    auto Finished = llvm::scope_exit([&] {
+      std::lock_guard Status(C.StatusMutex);
+      C.Running = false;
+      if (C.Outcome == "running")
+        C.Outcome = "failed";
+    });
+    ComparisonControl Control;
+    Control.Cancel = &C.Cancel;
+    if (Timeout)
+      Control.Deadline =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(Timeout);
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t Done,
+                           uint64_t Total) {
+      std::lock_guard Status(C.StatusMutex);
+      C.Phase = "source:" + Phase.str();
+      C.Done = Done;
+      C.Total = Total;
+    };
+    auto &S =
+        *toSession(Secondary ? C.SecondarySource.get() : C.PrimarySource.get());
+    auto Result = readComparisonSource(S, P, Index, Options, Control);
+    // Navigation may reuse a completed native alignment, never infer a
+    // source-to-source pairing from line numbers or source text similarity.
+    std::map<uint32_t, std::pair<uint64_t, llvm::StringRef>> Listing;
+    if (M && C.CachedDetail && C.CachedDetail->Primary == M->Primary &&
+        C.CachedDetail->Secondary == M->Secondary &&
+        C.CachedDetail->Delta.ComputationComplete) {
+      const auto &Rows = C.CachedDetail->Delta.Rows;
+      for (size_t Row = 0; Row < Rows.size(); ++Row) {
+        const auto Instruction =
+            Secondary ? Rows[Row].Secondary : Rows[Row].Primary;
+        if (Instruction != NoIndex)
+          Listing.emplace(Instruction,
+                          std::pair{Row, rowKindName(Rows[Row].Kind)});
+      }
+    } else if (!M) {
+      uint64_t Row = 0;
+      for (const auto &Block : P.blocks(P.Functions[Index]))
+        for (uint32_t I = 0; I < Block.InstructionCount; ++I)
+          Listing.emplace(Block.FirstInstruction + I,
+                          std::pair{Row++, llvm::StringRef("unmatched")});
+    }
+    if (auto *Rows = Result.Document.getArray("rows"))
+      for (auto &Value : *Rows)
+        for (auto &Anchor :
+             *Value.getAsObject()->getArray("comparison_anchors")) {
+          auto &A = *Anchor.getAsObject();
+          const auto I = A.getInteger("instruction_index");
+          if (const auto It = Listing.find(*I); It != Listing.end()) {
+            A["listing_row"] = It->second.first;
+            A["native_change"] = It->second.second;
+          }
+        }
+    if (auto Stop = Control.stop()) {
+      Result.State = *Stop;
+      Result.Availability = "unavailable";
+      Result.Reason = "source inspection stopped";
+      Result.Document.clear();
+    }
+    {
+      std::lock_guard Status(C.StatusMutex);
+      C.Outcome = Result.Availability == "failed"
+                      ? "failed"
+                      : stateName(Result.State).str();
+    }
+    llvm::json::Object Out{
+        {"schema", "neverd.bindiff.source.page"},
+        {"version", 1},
+        {"state", stateName(Result.State)},
+        {"availability", Result.Availability},
+        {"reason", jsonSafeText(Result.Reason)},
+        {"side", Secondary ? "secondary" : "primary"},
+        {"function", function(P, Index)},
+        {"input_revision", P.Identity.Revision},
+        {"input_sha256", P.Identity.SHA256},
+        {"representation", Options.Representation},
+        {"recipe", std::string(VersionString) + ":sdk-source-page-v1"},
+        {"input_source_binding", "owned_sessions"},
+        {"native_analysis_complete", !P.Functions[Index].has(TraitIncomplete)},
+        {"provenance_complete", false},
+        {"semantic_validation", "not_performed"},
+        {"source_alignment", "not_performed"},
+        {"listing_navigation_available", !Listing.empty()},
+        {"max_native_instructions", Options.MaxNativeInstructions},
+        {"timeout_ms", Timeout},
+        {"hard_deadline", false},
+        {"cancellation_granularity", "between_function_analysis_and_rendering"},
+        {"document", std::move(Result.Document)}};
+    Out["counterpart"] =
+        M ? llvm::json::Value(function(Secondary ? C.Primary : C.Secondary,
+                                       Secondary ? M->Primary : M->Secondary))
+          : llvm::json::Value(nullptr);
+    return dupStr(jsonToString(std::move(Out)));
+  });
+}
+
 const char *neverd_comparison_function_page_json(neverd_comparison_t Handle,
                                                  const char *Query) {
   return guarded(Handle, [&](Comparison &C) -> const char * {
@@ -884,9 +1028,11 @@ const char *neverd_comparison_function_page_json(neverd_comparison_t Handle,
     if (M)
       Out["evidence"] = match(*M);
     Out["pseudocode"] = llvm::json::Object{
-        {"state", "unavailable"},
+        {"state", C.OwnedInputsBound ? "not_requested" : "unavailable"},
         {"reason",
-         "the decoded comparison profile has no lifted source anchors"}};
+         C.OwnedInputsBound
+             ? "request source pages from the retained comparison inputs"
+             : "source inspection requires comparison-owned inputs"}};
     llvm::json::Array Rows, Pairs;
     std::set<uint32_t> Blocks;
     if (D) {

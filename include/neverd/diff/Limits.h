@@ -20,6 +20,11 @@
 
 namespace neverd::limits::diff {
 
+// Optional source inspection reuses SDK source-page byte/line ceilings.
+// The caller may set the additional native instruction allowance to zero.
+inline constexpr uint64_t kDefaultSourceNativeInstructions = 4096;
+inline constexpr size_t kMaxSourceReasonBytes = 4096;
+
 // On-demand lifted scalar validation; proof defaults belong to Analysis.
 inline constexpr uint64_t kDefaultValidationNativeInstructions = 2048;
 inline constexpr uint64_t kMaxValidationNativeInstructions = 16384;

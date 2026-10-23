@@ -6122,10 +6122,6 @@ Coverage: %7</source>
         <translation>伪代码</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>此解码配置不提供伪代码。仍可在“反汇编”中查看原始指令、操作数和字节。</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>原始 x64</translation>
     </message>
@@ -7632,6 +7628,109 @@ Secondary SHA-256: %3
     <message>
         <source>yes</source>
         <translation>是</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>视图：</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>输入语言</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>重新加载源码</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>选项</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>取消指令数量限制</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>各窗格分别显示各自的源码行。选择一行可查看其原始指令。</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>次要输入源码</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>主要输入源码</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>上一页源码</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>下一页源码</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>跳转到源码行</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>原始指令锚点</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>显示指令</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>次要输入：%1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>主要输入：%1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>此侧未选择函数。</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>源码已准备好加载。</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>此工作进程不支持源码查看。</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>正在准备源码…取消操作需等待当前分析步骤结束。</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>源码超出指令数量限制。请调整选项以查看此函数。</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>源码查看已停止。请重新加载源码以重试。</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>源码不可用：%1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>第 %1–%2 行，共 %3 行</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · 原生指令覆盖不完整</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>未映射行</translation>
     </message>
 </context>
 </TS>

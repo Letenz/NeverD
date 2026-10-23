@@ -1213,6 +1213,17 @@ Function-detail tests cancel a real large native alignment while polling status,
 check its cached stop state and unclassified CFG, then refresh and time out a new
 calculation. The real Qt/worker test verifies that a stopped page exposes Retry
 difference and that retry restores bounded rows. These inputs are not executed.
+Source-page SDK checks compare text with the ordinary emitter, page and reassemble
+it, verify anchors against original native listing bytes, remove source paths,
+check dialect/admission refusals, cancel/time out and retry analysis, and require unchanged
+saved native evidence. CLI and worker checks compare the same compiled source
+page and reject stale revisions. The saved-project Qt case loads both source
+panes, switches to LLVM C and follows a mapped line back to Disassembly. It
+also checks independent paging, Enter in the line selector, unavailable dialects,
+explicit reload and rapid representation changes. Optional captures cover both
+themes at normal/minimum sizes with long names and fractional scaling.
+These checks establish source inspection contracts, not source-line matching or
+semantic equivalence.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw
@@ -5185,6 +5196,10 @@ return-address read. Run it with `NeverDMedStackAlignmentTests`,
 checks four architectures and three formats in both query orders. Accepted and
 moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and
 depth refusal must leave later queries correct in both batched and single use.
+`SharedJoinsKeepThePerQueryWorkLimit` checks shared-input joins on both sides
+of the work limit and recovery after refusal.
+`StackQueriesKeepDistinctValueKindsAndVersions` keeps register and temporary
+occurrences separate across many SSA versions.
 
 `MedStackAlignment.EntryLiveInQueriesKeepExactRegisterOccurrences` and the
 `EntryStackQueries*` cases check exact width, architecture, rename tag, physical

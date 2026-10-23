@@ -29,6 +29,7 @@ class QTableView;
 
 namespace neverd::gui {
 class ComparisonGraph;
+class ComparisonSourceView;
 class ComparisonModel;
 class ComparisonRegionsDialog;
 class ComparisonFlowDialog;
@@ -56,7 +57,8 @@ private:
   QDoubleSpinBox *Threshold;
   QSpinBox *Timeout, *FlowFunctions;
   QTableView *FunctionTable, *InstructionTable;
-  QLabel *Summary, *Status, *Evidence, *Source, *FunctionTitle;
+  QLabel *Summary, *Status, *Evidence, *FunctionTitle;
+  ComparisonSourceView *Source;
   QPushButton *Start, *Cancel, *Save, *Reopen, *Undo, *Redo, *Confirm, *Unmatch,
       *Remap, *Counterpart, *Regions, *DataFlow, *Impact, *RetryDetail,
       *Changes, *Reviews, *Validate;

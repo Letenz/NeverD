@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`5fe573fa2301`](https://github.com/NeverSight/llvm-project/commit/5fe573fa2301)
+[`e89e2dd02890`](https://github.com/NeverSight/llvm-project/commit/e89e2dd02890)
 adds native instruction selection for the following APIs. NeverC's
-[`7b65c691c`](https://github.com/NeverSight/NeverC/commit/7b65c691c)
+[`fc8f95797`](https://github.com/NeverSight/NeverC/commit/fc8f95797)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -191,6 +191,8 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.vmclear`, `llvm.x86.vmptrld`, `llvm.x86.vmxon` | i386 and x86-64 | Status plus an instruction-owned m64 physical-address operand. |
 | `llvm.x86.vmptrst`, `llvm.x86.vmxoff` | i386 and x86-64 | Void APIs with real memory/state effects and EFLAGS definitions. VMPTRST writes m64 in either mode. |
 | `llvm.x86.vmlaunch`, `llvm.x86.vmresume` | i386 and x86-64 | Return status on falling-through VMfail only; VMCS-controlled transfers remain separate. |
+| `llvm.x86.invept`, `llvm.x86.invvpid` | x86-64 | Full i64 type selector, instruction-owned m128 descriptor and the same VMX completion status. |
+| `llvm.x86.invept32`, `llvm.x86.invvpid32` | i386 | Full i32 type selector and the same m128 descriptor/status contract. Wrong-mode APIs fail explicitly. |
 | `llvm.x86.rdmsr`, `llvm.x86.wrmsr` | i386 and x86-64 | i32 MSR index and full i64 value, transported through ECX and EDX:EAX. Unused reads retain their side effects. |
 
 The fork generates the instruction effects from TableGen. NeverC's pruned table
@@ -200,11 +202,24 @@ destination on VMfail; the fixed lowering uses the actual memory instruction.
 
 Qualification includes LLVM machine verification, O0/O2 and IR-optimized output,
 ELF/COFF/Mach-O generation, and the existing VMX encoding tests. Controlled
-completion tests cover 204 LLVM cases across both word sizes, 102 NeverC cases,
-and 102 cases compiling NeverC's actual IR through the full LLVM fork. They
+completion tests cover 268 LLVM cases across both word sizes, 134 NeverC cases,
+and 134 cases compiling NeverC's actual IR through the full LLVM fork. They
 check real instruction operands, full values, status results, dead-result
 retention, unchanged failed-read destinations, and absence of premature memory
-accesses. NeverC's 24 ordinary privileged-intrinsic tests also pass.
+accesses, including unchanged and unmapped invalidation descriptors. NeverC's
+25 ordinary intrinsic tests and 81 binary checks also pass.
+The new builtin spellings are `__builtin_ia32_invept` and
+`__builtin_ia32_invvpid`, taking a full-width selector and descriptor pointer.
+
+Adding intrinsic IDs also uncovered two defects in NeverC's metadata sorter:
+the overload bitmap did not move with the other signature tables, and only
+chained DAGISel matchers were remapped. The latter had already left PCLMUL and
+CRC32 patterns stale in the old compiler. The repaired generator covers both
+chained and chainless patterns, keeps its baseline tables at the same revision,
+and rejects ID changes that alter matcher byte lengths. Seven generator tests,
+a zero-mismatch audit of all overload flags, and 12 SSE/SSSE3/SSE4/AES/PCLMUL/CRC
+compilation probes qualify the metadata repair.
+
 MSR qualification adds 48 LLVM cases across both word sizes, 24 NeverC cases,
 and 24 NeverC-to-fork cases. The i386 WRMSR tests exposed and now cover the
 required custom legalization of its i64 input into EDX:EAX. The related counter

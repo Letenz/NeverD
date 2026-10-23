@@ -1561,6 +1561,24 @@ cl::opt<bool> DiffReviewLatest(
     "review-latest",
     cl::desc("Show latest analyst assessment per case/function pair"),
     cl::sub(DiffCmd));
+cl::opt<std::string> DiffSourceFunction(
+    "source-function",
+    cl::desc("Inspect a comparison function's paged source by entry address"),
+    cl::sub(DiffCmd));
+cl::opt<std::string>
+    DiffSourceSide("source-side",
+                   cl::desc("Source input: primary or secondary"),
+                   cl::init("primary"), cl::sub(DiffCmd));
+cl::opt<std::string> DiffSourceRepresentation(
+    "source-representation",
+    cl::desc("Source representation: c, llvmc, source, cpp, rust or go"),
+    cl::init("c"), cl::sub(DiffCmd));
+cl::opt<unsigned> DiffSourceInstructions(
+    "source-max-instructions",
+    cl::desc(
+        "Source analysis instruction allowance (0 removes this allowance)"),
+    cl::init(::neverd::limits::diff::kDefaultSourceNativeInstructions),
+    cl::sub(DiffCmd));
 cl::opt<std::string> DiffValidationFunction(
     "validate-function",
     cl::desc("Check bounded lifted scalar returns of an accepted pair"),

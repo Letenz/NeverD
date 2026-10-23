@@ -491,7 +491,8 @@ extern llvm::cl::opt<std::string> DiffProfile, DiffOptions, DiffSave,
     DiffChangesSide, DiffChangesContext, DiffReviewRecord, DiffReviewCase,
     DiffReviewFunction, DiffReviewSide, DiffValidationFunction,
     DiffValidationSide, DiffListSide, DiffListSearch, DiffListSort,
-    DiffAmbiguousWith;
+    DiffAmbiguousWith, DiffSourceFunction, DiffSourceSide,
+    DiffSourceRepresentation;
 extern llvm::cl::opt<bool> DiffIgnoreNames, DiffRegions, DiffDataFlow,
     DiffSliceDataOnly, DiffFlowRegions, DiffReviewLatest, DiffListDescending;
 extern llvm::cl::opt<double> DiffMinSimilarity;
@@ -501,7 +502,7 @@ extern llvm::cl::opt<unsigned long long> DiffImpactWork, DiffChangesWork,
 extern llvm::cl::opt<unsigned> DiffOffset, DiffLimit, DiffRegionAnchor,
     DiffSliceNode, DiffFlowRegionAnchor, DiffImpactDepth, DiffImpactFunctions,
     DiffImpactSites, DiffImpactWitness, DiffChangesRows, DiffChangesCount,
-    DiffEffectRecords, DiffValidationInstructions;
+    DiffEffectRecords, DiffValidationInstructions, DiffSourceInstructions;
 int runStructuralDiff();
 
 // Annotate.

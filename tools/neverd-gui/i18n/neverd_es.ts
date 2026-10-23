@@ -6158,10 +6158,6 @@ Cobertura: %7</translation>
         <translation>Pseudocódigo</translation>
     </message>
     <message>
-        <source>Pseudocode is unavailable in this decoded profile. Original instructions, operands and bytes remain available in Disassembly.</source>
-        <translation>El pseudocódigo no está disponible en este perfil decodificado. Las instrucciones, los operandos y los bytes originales siguen disponibles en Desensamblado.</translation>
-    </message>
-    <message>
         <source>Raw x64</source>
         <translation>x64 sin formato</translation>
     </message>
@@ -7668,6 +7664,109 @@ SHA-256 secundario: %3
     <message>
         <source>yes</source>
         <translation>sí</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>Vista:</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>Lenguaje de la entrada</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>Recargar código fuente</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Opciones</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>Quitar el límite de instrucciones</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>Cada panel muestra sus propias líneas de código fuente. Seleccione una línea para examinar sus instrucciones originales.</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>Código fuente secundario</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>Código fuente principal</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>Página de código anterior</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>Página de código siguiente</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>Ir a la línea de código</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>Anclajes de instrucciones originales</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>Mostrar instrucción</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>Secundario: %1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>Principal: %1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>No hay ninguna función seleccionada en este lado.</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>El código fuente está listo para cargarse.</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>Este proceso de trabajo no admite la inspección de código fuente.</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>Preparando código fuente… La cancelación espera a que termine el paso de análisis actual.</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>El código supera el límite de instrucciones. Ajuste las opciones para examinar esta función.</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>Se detuvo la inspección del código fuente. Recargue el código para volver a intentarlo.</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>Código fuente no disponible: %1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>Líneas %1–%2 de %3</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · Cobertura nativa incompleta</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>Línea sin correspondencia</translation>
     </message>
 </context>
 </TS>

@@ -19,6 +19,7 @@
 #include "ComparisonModel.h"
 #include "ComparisonRegionsDialog.h"
 #include "ComparisonReviewDialog.h"
+#include "ComparisonSourceView.h"
 #include "ComparisonValidationDialog.h"
 #include "Icons.h"
 #include "Theme.h"
@@ -535,13 +536,20 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   EvidenceLayout->addWidget(Evidence);
   EvidenceLayout->addStretch();
   Tabs->addTab(EvidencePane, tr("Evidence"));
-  Source = label(
-      Tabs,
-      tr("Pseudocode is unavailable in this decoded profile. Original "
-         "instructions, operands and bytes remain available in Disassembly."));
-  Source->setAlignment(Qt::AlignCenter);
-  Source->setMargin(20);
+  Source = new ComparisonSourceView(Session, Tabs);
   Tabs->addTab(Source, tr("Pseudocode"));
+  connect(Source, &ComparisonSourceView::instructionSelected, this,
+          [this, Tabs](const QString &Side, int Row) {
+            const int Column = Side == "secondary" ? 6 : 0;
+            const auto Index = Instructions->index(Row, Column);
+            if (!Index.isValid())
+              return;
+            Tabs->setCurrentWidget(InstructionTable);
+            InstructionTable->setCurrentIndex(Index);
+            InstructionTable->scrollTo(Index,
+                                       QAbstractItemView::PositionAtCenter);
+            InstructionTable->setFocus();
+          });
   Split->setHandleWidth(6);
   Split->setChildrenCollapsible(false);
   Split->setStretchFactor(0, 1);
@@ -788,6 +796,7 @@ void ComparisonDialog::selectFunction(QString Which, QString Address) {
   DetailStopped = false;
   PrimaryAddress.clear();
   SecondaryAddress.clear();
+  Source->setFunctions({}, {});
   FunctionTitle->setText(tr("Loading %1…").arg(Address));
   Instructions->setQuery(
       {{"side", Which}, {"address", Address}, {"refresh", Refresh}});
@@ -842,7 +851,7 @@ void ComparisonDialog::showPage(const QJsonObject &Page) {
            "available. Use Retry difference to recompute.\n\n")
             .arg(Page["state"].toString().replace('_', ' ')));
   Evidence->setText(Text);
-  Source->setText(Page["pseudocode"].toObject()["reason"].toString());
+  Source->setFunctions(A, B);
   update();
 }
 void ComparisonDialog::edit(const QString &Kind) {
