@@ -218,6 +218,33 @@ TEST(X86VirtualizationSource, EveryOwnedInstructionSurvivesBothSourceRoutes) {
         }
 }
 
+TEST(X86SystemRegisterSource, NativeMovesClobberUndefinedArithmeticFlags) {
+  // CR/DR MOVs leave OF/SF/ZF/AF/PF/CF undefined. The compiler must not carry
+  // its own condition-code values across the native instruction.
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true})
+        for (const std::vector<uint8_t> &Instruction :
+             {std::vector<uint8_t>{0x0f, 0x20, 0xd8},    // MOV RAX/EAX, CR3
+              std::vector<uint8_t>{0x0f, 0x22, 0xd8},    // MOV CR3, RAX/EAX
+              std::vector<uint8_t>{0x0f, 0x21, 0xf8},    // MOV RAX/EAX, DR7
+              std::vector<uint8_t>{0x0f, 0x23, 0xf8}}) { // MOV DR7, RAX/EAX
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(NoOpt);
+          std::vector<uint8_t> Bytes = Instruction;
+          Bytes.push_back(0xc3);
+          auto Image = image(A, Format, std::move(Bytes));
+          std::string Native;
+          std::vector<uint8_t> Object;
+          sourceRoutes(Image, NoOpt, Entry, {}, nullptr, nullptr, {}, {},
+                       &Native, &Object);
+          ASSERT_FALSE(Object.empty());
+          EXPECT_NE(Native.find("~{flags}"), std::string::npos) << Native;
+        }
+}
+
 TEST(X86VirtualizationSource,
      CpuidAndSiblingIntrinsicsRetainTheirEffectAnchors) {
   struct Encoding {
