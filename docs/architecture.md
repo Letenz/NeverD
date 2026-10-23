@@ -1912,6 +1912,9 @@ low prefix before the remaining interleaved bits. Dense decision and carry
 caches prepay their bucket growth. Immutable word views avoid repeated copies
 and are discarded when the assumption changes; polynomial views remain valid
 throughout reconstruction.
+Ordinary HighIR expression cleanup also uses an iterative operand walk, keeping
+its large local-rewrite frame off nested worker stacks. Operand order, shared
+node visitation and ordered-memory guards remain unchanged.
 Long odd-product blocks can recursively pair exact modular signatures. A
 signature preserves the complete word except for its highest observed bit;
 that bit's correction may itself depend on the inputs. Addition, XOR, constant

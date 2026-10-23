@@ -1525,7 +1525,9 @@ tests cover menu/keyboard activation, cancellation with retained source,
 concurrent listing/function reads and reset on navigation. Worker source-cache
 tests count engine calls separately for each option set. `HighExprSimplify.*`
 checks exact masked status bits, signed extensions, shared expressions and
-effect preservation without the symbolic bridge. The x87 classification test
+effect preservation without the symbolic bridge. An 8,192-level worker-thread
+regression checks iterative operand traversal for both pure rewrites and
+ordered-memory ancestors that must remain intact. The x87 classification test
 executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
 
