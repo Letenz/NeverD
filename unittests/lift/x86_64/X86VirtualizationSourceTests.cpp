@@ -47,6 +47,7 @@
 #include <algorithm>
 #include <iterator>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -844,61 +845,89 @@ std::vector<uint8_t> fpEncodingFunction(Arch A) {
 }
 } // namespace
 
-TEST(X86SystemRegisterSource, EveryLegalAccessCompilesAndRetainsNativeFaults) {
+namespace {
+struct SystemRegisterTarget {
+  Arch TheArch;
+  BinaryFormat Format;
+  const char *Name;
+};
+
+void PrintTo(const SystemRegisterTarget &Target, std::ostream *OS) {
+  *OS << Target.Name;
+}
+
+class X86SystemRegisterAccess
+    : public testing::TestWithParam<SystemRegisterTarget> {};
+} // namespace
+
+TEST_P(X86SystemRegisterAccess,
+       EveryLegalAccessCompilesAndRetainsNativeFaults) {
+  const auto A = GetParam().TheArch;
+  const auto Format = GetParam().Format;
   unsigned Fixtures = 0;
-  for (const auto A : {Arch::X86, Arch::X64})
-    for (const auto Format :
-         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
-      for (bool Debug : {false, true})
-        for (unsigned Index = 0; Index <= 8; ++Index) {
-          if (Debug ? Index == 8
-                    : (Index != 0 && Index != 2 && Index != 3 && Index != 4 &&
-                       (Index != 8 || A != Arch::X64)))
+  for (bool Debug : {false, true})
+    for (unsigned Index = 0; Index <= 8; ++Index) {
+      if (Debug ? Index == 8
+                : (Index != 0 && Index != 2 && Index != 3 && Index != 4 &&
+                   (Index != 8 || A != Arch::X64)))
+        continue;
+      for (bool Write : {false, true})
+        for (bool Dead : {false, true}) {
+          if (Dead && Write)
             continue;
-          for (bool Write : {false, true})
-            for (bool Dead : {false, true}) {
-              if (Dead && Write)
-                continue;
-              SCOPED_TRACE(static_cast<unsigned>(A));
-              SCOPED_TRACE(static_cast<unsigned>(Format));
-              SCOPED_TRACE(Debug);
-              SCOPED_TRACE(Index);
-              SCOPED_TRACE(Write);
-              SCOPED_TRACE(Dead);
-              std::vector<uint8_t> Bytes;
-              if (Write)
-                Bytes =
-                    A == Arch::X64
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Debug);
+          SCOPED_TRACE(Index);
+          SCOPED_TRACE(Write);
+          SCOPED_TRACE(Dead);
+          std::vector<uint8_t> Bytes;
+          if (Write)
+            Bytes = A == Arch::X64
                         ? std::vector<uint8_t>{0x48, 0xb8, 0x55, 0xaa, 0x23,
                                                0x81, 0x67, 0x45, 0xfe, 0xab}
                         : std::vector<uint8_t>{0xb8, 0x55, 0xaa, 0x23, 0x81};
-              const auto Offset = Bytes.size();
-              if (Index == 8)
-                Bytes.push_back(0x44);
-              Bytes.insert(Bytes.end(),
-                           {0x0f, uint8_t(0x20 + Debug + 2 * Write),
-                            uint8_t(0xc0 + 8 * (Index & 7))});
-              if (Dead)
-                Bytes.insert(Bytes.end(), {0x31, 0xc0});
-              Bytes.push_back(0xc3);
-              auto Image = image(A, Format, std::move(Bytes));
-              // Allocation may change the GPR in ModRM. The opcode still
-              // distinguishes CR/DR reads/writes, including dead reads.
-              const std::vector<uint8_t> Opcode = {
-                  0x0f, uint8_t(0x20 + Debug + 2 * Write)};
-              // Every CPL3 access must match the original instruction's
-              // fault, including DR4/5. Other targets are compiled only.
-              compileRoutes(Image, false, Entry + Offset, {}, std::nullopt,
-                            false,
-                            A == Arch::X64 && Format == BinaryFormat::ELF, {},
-                            Opcode, 0, true);
-              if (::testing::Test::HasFailure())
-                return;
-              ++Fixtures;
-            }
+          const auto Offset = Bytes.size();
+          if (Index == 8)
+            Bytes.push_back(0x44);
+          Bytes.insert(Bytes.end(), {0x0f, uint8_t(0x20 + Debug + 2 * Write),
+                                     uint8_t(0xc0 + 8 * (Index & 7))});
+          if (Dead)
+            Bytes.insert(Bytes.end(), {0x31, 0xc0});
+          Bytes.push_back(0xc3);
+          auto Image = image(A, Format, std::move(Bytes));
+          // Allocation may change the GPR in ModRM. The opcode still
+          // distinguishes CR/DR reads/writes, including dead reads.
+          const std::vector<uint8_t> Opcode = {
+              0x0f, uint8_t(0x20 + Debug + 2 * Write)};
+          // Every CPL3 access must match the original instruction's
+          // fault, including DR4/5. Other targets are compiled only.
+          compileRoutes(Image, false, Entry + Offset, {}, std::nullopt, false,
+                        A == Arch::X64 && Format == BinaryFormat::ELF, {},
+                        Opcode, 0, true);
+          if (::testing::Test::HasFailure() || ::testing::Test::IsSkipped())
+            return;
+          ++Fixtures;
         }
+    }
+  EXPECT_EQ(Fixtures, A == Arch::X64 ? 39U : 36U);
   RecordProperty("source_fixtures", Fixtures);
 }
+
+// Each architecture/format keeps every CR/DR input and source route within its
+// own ordinary CTest deadline. The six cells retain all 225 native inputs.
+INSTANTIATE_TEST_SUITE_P(
+    NativeFormats, X86SystemRegisterAccess,
+    testing::Values(
+        SystemRegisterTarget{Arch::X86, BinaryFormat::ELF, "X86ELF"},
+        SystemRegisterTarget{Arch::X86, BinaryFormat::COFF, "X86COFF"},
+        SystemRegisterTarget{Arch::X86, BinaryFormat::MachO, "X86MachO"},
+        SystemRegisterTarget{Arch::X64, BinaryFormat::ELF, "X64ELF"},
+        SystemRegisterTarget{Arch::X64, BinaryFormat::COFF, "X64COFF"},
+        SystemRegisterTarget{Arch::X64, BinaryFormat::MachO, "X64MachO"}),
+    [](const testing::TestParamInfo<SystemRegisterTarget> &Info) {
+      return Info.param.Name;
+    });
 
 TEST(X86FPEncodingSource, BothModesSurviveEveryFormatAndSourceRoute) {
   for (const auto A : {Arch::X86, Arch::X64})
