@@ -5135,6 +5135,10 @@ return-address read. Run it with `NeverDMedStackAlignmentTests`,
 checks four architectures and three formats in both query orders. Accepted and
 moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and
 depth refusal must leave later queries correct in both batched and single use.
+`SharedJoinsKeepThePerQueryWorkLimit` checks shared-input joins on both sides
+of the work limit and recovery after refusal.
+`StackQueriesKeepDistinctValueKindsAndVersions` keeps register and temporary
+occurrences separate across many SSA versions.
 
 `MedStackAlignment.EntryLiveInQueriesKeepExactRegisterOccurrences` and the
 `EntryStackQueries*` cases check exact width, architecture, rename tag, physical

@@ -13,6 +13,8 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 
+#include "llvm/ADT/DenseMap.h"
+
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -69,6 +71,17 @@ std::optional<AlignmentMask> alignmentMask(const MedOp &Op,
   return std::nullopt;
 }
 
+unsigned definitionCapacity(const MedFunc &Func) {
+  unsigned Count = 0;
+  for (const MedBlock &Block : Func.Blocks) {
+    Count += Block.Phis.size();
+    for (const MedOp &Op : Block.Ops)
+      if (!Op.Output.isConst() && Op.Output.Size != 0)
+        ++Count;
+  }
+  return Count;
+}
+
 class StackOffsetProof {
   struct ValueDefinition {
     const MedOp *Op = nullptr;
@@ -87,7 +100,7 @@ public:
                    StackEntryKind Entry, bool FollowJoins = false)
       : Func(Func), TRI(getTargetRegInfo(Architecture)),
         Architecture(Architecture), Format(Format), Entry(Entry),
-        FollowJoins(FollowJoins) {
+        FollowJoins(FollowJoins), Definitions(definitionCapacity(Func)) {
     for (const MedBlock &Block : Func.Blocks) {
       for (const PhiNode &Phi : Block.Phis) {
         auto &Definition = Definitions[key(Phi.Output)];
@@ -310,9 +323,9 @@ private:
   // A realignment root must be established by the exact entry prefix already
   // executed before its mask. Ordinary entry-offset queries also follow joins.
   const std::set<const MedOp *> *AllowedDefinitions = nullptr;
-  // Stable nodes also own traversal state; visiting a value does not allocate
-  // an active-set entry. Offsets and failed proofs are deliberately not cached.
-  std::map<Key, ValueDefinition> Definitions;
+  // All definitions are inserted before queries begin, so their addresses stay
+  // stable during traversal. Offsets and failed proofs are not cached.
+  llvm::DenseMap<Key, ValueDefinition> Definitions;
   std::map<Key, int64_t> Assumed;
   bool CycleHit = false;
   static constexpr size_t kMaxProofSteps =
