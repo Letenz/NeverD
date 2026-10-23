@@ -41,6 +41,9 @@ unavailable execution is an explicit skip. Unresolved terminal prefixes and
 implicit-entry joins cannot escape into ordinary source. Frame fixtures reject
 mixed implicit/explicit signing recipes and preserve unrelated tail-call proofs
 across function-lifetime mode temporaries.
+Malformed-input checks reject invalid scalar kinds, mode widths and operand
+counts in every PACM operation. Pending prefixes require their exact LowIR
+shape and remain inadmissible in MedIR and native output.
 PACGA additionally checks independent inputs and rejects malformed widths.
 Its generated C is compiled back to LLVM to check operand and return flow.
 On a PAuth-capable Apple Silicon host,
