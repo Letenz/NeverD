@@ -199,3 +199,7 @@ add_neverd_unittest(NeverDX87TranslationTests
   LINK_COMPONENTS
   Translate
 )
+
+add_executable(NeverDX87PortableBenchmark X87PortableBenchmark.cpp)
+target_link_libraries(NeverDX87PortableBenchmark PRIVATE NeverDTranslate neverd_x87_runtime)
+set_target_properties(NeverDX87PortableBenchmark PROPERTIES FOLDER "NeverD/Tests")

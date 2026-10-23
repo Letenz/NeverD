@@ -27,6 +27,7 @@ jobs:
             prebuilt: 'ON'
             original_target: NeverDX87OriginalReplay
             original_argument: '--original-driver build-x87-portable/bin/NeverDX87OriginalReplay'
+            translation_argument: ''
           - arch: aarch64
             runner: ubuntu-24.04-arm
             # The pinned package set has no Linux AArch64 archive. Build the
@@ -34,6 +35,7 @@ jobs:
             prebuilt: 'OFF'
             original_target: ''
             original_argument: ''
+            translation_argument: '--translation-record build-x87-portable/translation-evidence/record.json'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +59,7 @@ jobs:
           sudo apt-get install --yes clang-23 lld-23 ninja-build
           echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
       - name: Verify strict observation and result auditing
-        run: python -m unittest scripts.tests.test_check_x87_portable_generated scripts.tests.test_check_x87_translation scripts.tests.test_check_x87_cross_host -v
+        run: python -m unittest scripts.tests.test_check_x87_portable_generated scripts.tests.test_check_x87_translation scripts.tests.test_check_x87_cross_host scripts.tests.test_benchmark_x87_portable -v
       - name: Configure the focused generated execution owners
         run: |
           cmake -S . -B build-x87-portable -G Ninja \
@@ -77,6 +79,7 @@ jobs:
           NeverDTranslationContractTests
           NeverDX87ArithmeticTests NeverDX87PortableContextTests
           NeverDX87PortableEmulatorTests NeverDX87ArithmeticReplay
+          NeverDX87PortableBenchmark
           ${{ matrix.original_target }}
       - name: Check preparation, runtimes and legacy translation regressions
         run: >-
@@ -108,6 +111,13 @@ jobs:
           ${{ matrix.original_argument }}
           --build-dir build-x87-portable
           --output-dir build-x87-portable/arithmetic-evidence
+      - name: Measure exact execution, refusals and state transport
+        run: >-
+          python scripts/benchmark_x87_portable.py
+          --generated-record build-x87-portable/evidence/record.json
+          ${{ matrix.translation_argument }}
+          --driver build-x87-portable/bin/NeverDX87PortableBenchmark
+          --output-dir build-x87-portable/performance-evidence
       - name: Retain failures and successful artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -117,6 +127,7 @@ jobs:
             build-x87-portable/evidence/
             build-x87-portable/translation-evidence/
             build-x87-portable/arithmetic-evidence/
+            build-x87-portable/performance-evidence/
             build-x87-portable/Testing/Temporary/
             build-x87-portable/neverd-build-receipt.json
             build-x87-portable/neverd-dependency-inputs.json
