@@ -6192,7 +6192,7 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // ExitProcess returns to no caller: Finish ends at its call, where it
   // would run on into the trap after it and the function after that.
   const std::string Finish = decompile("Finish");
-  EXPECT_NE(Finish.find("extern void ExitProcess(uint32_t uExitCode) "
+  EXPECT_NE(Finish.find("extern _Noreturn void ExitProcess(uint32_t uExitCode) "
                         "__attribute__((noreturn));"),
             std::string::npos)
       << Finish;
