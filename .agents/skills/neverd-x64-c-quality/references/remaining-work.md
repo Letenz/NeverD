@@ -18,6 +18,15 @@ observation, including CPUID scratch exchanges. Calls, exits, partial writes
 and exceptional edges keep their incoming evidence. A VM entry that stores
 registers into an escaping machine-state frame can still have genuine inputs
 unknown after earlier calls; never erase those inputs or replace them with zero.
+Integer call recovery now retains the complete SSA operand prefix published by
+callee-read summaries on x64 COFF, ELF and Mach-O. ARM/ARM64 count-only contracts
+still require actual setup values. This repairs operand loss; it does not
+recover an opaque callee's observable exit-register state. Native LLVM still
+models call clobbers with `freeze undef`, which source optimization can legally
+replace with zero. Recover the actual state contract or retain an explicit
+unsupported value through both projections; disabling optimization or deleting
+arguments does not establish that contract. Generic FP/vector summary operands
+need the same audit, including register-bank and scalar-width preservation.
 Complete header and explicit local FP/HFA declarations share the same checked
 carrier adapter. ARM64 cached imports retain the original loaded callable
 through bounded private-frame proofs. Selected LLVMC output includes the

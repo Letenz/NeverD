@@ -22,6 +22,8 @@
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -34,6 +36,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -41,6 +44,212 @@
 
 namespace {
 using namespace neverd;
+
+TEST(SummarizedCallArguments, RetainsReachingOperandsWithoutSetupWrites) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Indirect : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      SCOPED_TRACE(Indirect);
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      Image.Format = Format;
+      Image.Bits = Bitness::Bits64;
+      MedFunc Function;
+      Function.Entry = 0x1000;
+      Function.Name = "caller";
+      MedBlock Block;
+      Block.Id = 0;
+      MedOp Call;
+      Call.Opcode = Indirect ? NdOp::INDIR_CALL : NdOp::CALL;
+      Call.Addr = Function.Entry;
+      Call.addInput(MedVar::makeConst(0x2000, 8));
+      const std::vector<MedVar> Arguments = {
+          MedVar::makeConst(13, 1), MedVar::makeConst(257, 2),
+          MedVar::makeConst(65539, 4), MedVar::makeConst(0x100000007, 8)};
+      for (const MedVar &Argument : Arguments)
+        Call.addInput(Argument);
+      // LowToMed published these uses before SSA. Propagation may replace
+      // every register copy by its value; no local setup scan may erase them.
+      Call.CalleeRegisterArgs = Arguments.size();
+      Call.CalleeVectorArgs = 0;
+      Call.CalleeStackArgs = 0;
+      Block.Ops.push_back(Call);
+      Function.Blocks.push_back(std::move(Block));
+      std::map<va_t, int> RegisterArity{{0x2000, Arguments.size()}};
+      std::map<va_t, int> TotalArity = RegisterArity;
+      for (unsigned Repeat = 0; Repeat < 2; ++Repeat) {
+        recoverCallAbi(Function, Arch::X64, {{0x2000, "consumer"}}, &Image,
+                       &RegisterArity, &TotalArity);
+        ASSERT_EQ(Function.CallInfos.size(), 1u);
+        EXPECT_EQ(Function.CallInfos.front().Args, Arguments);
+      }
+    }
+}
+
+TEST(SummarizedCallArguments, UnknownRequiredOperandsDoNotBecomeZeroArity) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Bits = Bitness::Bits64;
+  MedFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "caller";
+  MedBlock Block;
+  Block.Id = 0;
+  MedOp EarlierCall;
+  EarlierCall.Opcode = NdOp::CALL;
+  EarlierCall.Addr = Function.Entry;
+  EarlierCall.addInput(MedVar::makeConst(0x3000, 8));
+  EarlierCall.CalleeRegisterArgs = 0;
+  EarlierCall.CalleeStackArgs = 0;
+  Block.Ops.push_back(EarlierCall);
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Function.Entry + 5;
+  Call.addInput(MedVar::makeConst(0x2000, 8));
+  const MedVar Unknown = MedVar::makeUnspecified(8, Arch::X64);
+  Call.addInput(Unknown);
+  Call.addInput(MedVar::makeConst(27, 8));
+  Call.CalleeRegisterArgs = 2;
+  Call.CalleeStackArgs = 0;
+  Block.Ops.push_back(Call);
+  Function.Blocks.push_back(std::move(Block));
+  std::map<va_t, int> RegisterArity{{0x2000, 2}};
+  std::map<va_t, int> TotalArity = RegisterArity;
+  recoverCallAbi(Function, Arch::X64, {{0x2000, "consumer"}}, &Image,
+                 &RegisterArity, &TotalArity);
+  ASSERT_EQ(Function.CallInfos.size(), 2u);
+  const auto &Arguments = Function.CallInfos.back().Args;
+  ASSERT_EQ(Arguments.size(), 2u);
+  EXPECT_EQ(Arguments.front(), Unknown);
+  EXPECT_EQ(Arguments.back(), Call.Inputs[2]);
+}
+
+TEST(SummarizedCallArguments, CountOnlyContractsStillReadTheirSetup) {
+  for (Arch Architecture : {Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    BinaryImage Image;
+    Image.Arch = Architecture;
+    Image.Format = BinaryFormat::COFF;
+    Image.Bits = Architecture == Arch::ARM ? Bitness::Bits32 : Bitness::Bits64;
+    const auto &Registers = getTargetRegInfo(Architecture);
+    MedFunc Function;
+    Function.Entry = 0x1000;
+    Function.Name = "caller";
+    MedBlock Block;
+    Block.Id = 0;
+    MedOp Setup;
+    Setup.Opcode = NdOp::COPY;
+    Setup.Output.Kind = MedVar::Reg;
+    Setup.Output.TheArch = Architecture;
+    Setup.Output.Id = 1;
+    Setup.Output.SSAVer = 1;
+    Setup.Output.Size = Registers.PointerSize;
+    Setup.Output.RegOff = Registers.integerParamRegs(Image.Format).front();
+    Setup.addInput(MedVar::makeConst(42, Registers.PointerSize));
+    Block.Ops.push_back(Setup);
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = Function.Entry + 4;
+    Call.addInput(MedVar::makeConst(0x2000, Registers.PointerSize));
+    Call.CalleeRegisterArgs = 1;
+    Call.CalleeStackArgs = 0;
+    Block.Ops.push_back(Call);
+    Function.Blocks.push_back(std::move(Block));
+    std::map<va_t, int> RegisterArity{{0x2000, 1}};
+    std::map<va_t, int> TotalArity = RegisterArity;
+    recoverCallAbi(Function, Architecture, {{0x2000, "consumer"}}, &Image,
+                   &RegisterArity, &TotalArity);
+    ASSERT_EQ(Function.CallInfos.size(), 1u);
+    ASSERT_EQ(Function.CallInfos.front().Args.size(), 1u);
+    EXPECT_EQ(Function.CallInfos.front().Args.front(), Setup.Inputs[0]);
+  }
+}
+
+TEST(SummarizedCallArguments, PropagatedOperandsExecuteWithTheirExactWidths) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Format = Format;
+    Image.Bits = Bitness::Bits64;
+    MedFunc Function;
+    Function.Entry = 0x1000;
+    Function.Name = "call_values";
+    Function.ReturnType = NdType::makeInt(8, false);
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = Function.Entry;
+    Call.Output.Kind = MedVar::Temp;
+    Call.Output.Id = 1;
+    Call.Output.SSAVer = 1;
+    Call.Output.Size = 8;
+    Call.Output.TheArch = Arch::X64;
+    Call.addInput(MedVar::makeConst(0x2000, 8));
+    Call.addInput(MedVar::makeConst(0xD3, 1));
+    Call.addInput(MedVar::makeConst(0xA157, 2));
+    Call.addInput(MedVar::makeConst(0x87654321, 4));
+    Call.addInput(MedVar::makeConst(0xFEDCBA9876543210, 8));
+    Call.CalleeRegisterArgs = 4;
+    Call.CalleeVectorArgs = 0;
+    Call.CalleeStackArgs = 0;
+    Block.Ops.push_back(Call);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Function.Entry + 5;
+    Return.addInput(Call.Output);
+    Block.Ops.push_back(Return);
+    Function.Blocks.push_back(std::move(Block));
+    std::map<va_t, int> RegisterArity{{0x2000, 4}};
+    std::map<va_t, int> TotalArity = RegisterArity;
+    recoverCallAbi(Function, Arch::X64, {{0x2000, "consume_values"}}, &Image,
+                   &RegisterArity, &TotalArity);
+    ASSERT_TRUE(Function.Params.empty());
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Function}, Context, "bound_operands", Arch::X64,
+                              {{0x2000, "consume_values"}}, &Image, Format);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    const auto *Callee = Module->getFunction("consume_values");
+    ASSERT_TRUE(Callee);
+    ASSERT_EQ(Callee->arg_size(), 4u);
+    const unsigned Widths[] = {8, 16, 32, 64};
+    for (unsigned I = 0; I < 4; ++I)
+      EXPECT_TRUE(
+          Callee->getFunctionType()->getParamType(I)->isIntegerTy(Widths[I]));
+    for (bool Optimize : {false, true}) {
+      SCOPED_TRACE(Optimize);
+      if (Optimize)
+        Pipeline::optimizeOrPromoteModule(*Module);
+      else
+        Pipeline::promoteScaffoldingAllocas(*Module);
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      ASSERT_TRUE(LLVMCEmitter().emit(*Module, Output, {}));
+      const std::string Oracle = R"(
+static unsigned observed;
+uint64_t consume_values(uint8_t a, uint16_t b, uint32_t c, uint64_t d) {
+  ++observed;
+  return a == 0xD3 && b == 0xA157 && c == UINT32_C(0x87654321) &&
+         d == UINT64_C(0xFEDCBA9876543210) ? UINT64_C(0x123456789ABCDE) : 0;
+}
+int main(void) {
+  return call_values() != UINT64_C(0x123456789ABCDE) || observed != 1;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+  }
+}
 
 constexpr va_t Text = 0x140001000;
 constexpr va_t Iat = 0x140003000;
@@ -127,6 +336,63 @@ PipelineResult run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   auto Result = Pipeline().run(Img, Ctx, Opts);
   EXPECT_TRUE(Result.Success) << Result.Error;
   return Result;
+}
+
+TEST(Win64CallContract, BoundIntegerOperandsAgreeAcrossSourceRoutes) {
+  constexpr va_t Consumer = Text + 0x80;
+  std::vector<uint8_t> Code(0xA0, 0xCC);
+  std::vector<uint8_t> Invoke = {
+      0xB9, 0x0D, 0x00, 0x00, 0x00,       // mov ecx,13
+      0xBA, 0x01, 0x01, 0x00, 0x00,       // mov edx,257
+      0x41, 0xB8, 0x03, 0x00, 0x01, 0x00, // mov r8d,65539
+      0x49, 0xB9, 0x07, 0x00, 0x00, 0x00, // mov r9,100000007h
+      0x01, 0x00, 0x00, 0x00, 0xE8};
+  const auto Displacement = rel32(Text + 4 + Invoke.size() + 4, Consumer);
+  Invoke.insert(Invoke.end(), Displacement.begin(), Displacement.end());
+  put(Code, Text, framed({Invoke}));
+  put(Code, Consumer,
+      {0x48, 0x8D, 0x04, 0x11, // lea rax,[rcx+rdx]
+       0x4C, 0x01, 0xC0,       // add rax,r8
+       0x4C, 0x31, 0xC8,       // xor rax,r9
+       0xC3});
+  const BinaryImage Image = makeImage(
+      Code, {{Text, "call_bound_values"}, {Consumer, "combine_values"}}, {});
+  for (bool LLVM : {false, true})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      SCOPED_TRACE(NoOpt);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text, Consumer};
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = true;
+      Options.NoOpt = NoOpt;
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+      } else
+        ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+      const std::string Oracle = R"(
+int main(void) {
+  const uint64_t expected = (UINT64_C(13) + 257 + 65539) ^ UINT64_C(0x100000007);
+  return (uint64_t)call_bound_values() != expected;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
 }
 
 /// HighC for the functions at \p Entries of \p Img.
