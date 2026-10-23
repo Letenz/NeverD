@@ -428,7 +428,7 @@ test_sources are regression source references, not passing results, CPU qualific
 - explicit incoming state; validated encoding, memory and CFG/call contract.
 - x86 GCC/Clang GNU assembly and target x87; actual source/target ABI and long-double layout; typed C value operations require 64-bit significand long double; admitted CFG/tag/control and call preconditions.
 - x86-64 GCC/Clang; FXSAVE/FXRSTOR; SSE3 for FISTTP; known CW/SW, tags and demanded payloads; valid PC/RC; no pending unmasked exception at waiting boundaries; authenticated ordinary memory; processor-dependent operations require explicit non-strict native-reference mode.
-- explicit setX87PortableMode(true); x64 owned state; known CW/SW and read payloads; authenticated ordinary memory; no pending waiting exception or stack fault; arithmetic/comparisons/integer stores require all masks and canonical finite operands; raw m80/register moves retain encodings; undefined C0/C2/C3/FOP/register FDP are not CPU identity.
+- explicit setX87PortableMode(true); x64 owned state; known CW/SW and read payloads; authenticated ordinary memory; no pending waiting exception or stack fault; data instructions require all exception masks; FLDCW admits only all-masked input; arithmetic/comparisons/integer stores require canonical finite operands; raw m80/register moves retain encodings; undefined C0/C2/C3/FOP/register FDP are not CPU identity.
 
 Test sources referenced by this inventory:
 

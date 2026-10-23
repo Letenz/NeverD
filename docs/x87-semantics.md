@@ -190,6 +190,9 @@ Arithmetic uses canonical finite operands with all exception masks set, all
 three valid PC settings and all four RC settings. Raw m80/register transport
 preserves all ten bytes, including NaN payloads and unsupported encodings.
 Using such a payload in finite arithmetic remains an explicit refusal.
+All data instructions in this initial slice require all six exception masks,
+including raw transport, FILD and sign changes. FLDCW admits only all-masked
+input; nonwaiting control/status operations retain their separate behavior.
 
 The existing FXSAVE64 context remains authoritative. TOP changes rotate logical
 slots while preserving physical payloads, physical tags and the physical
@@ -197,7 +200,7 @@ known-payload mask. A pop retains the empty register's bits. FNINIT resets the
 environment and tags but never invents payload provenance. An instruction only
 requires known payloads for the operands it reads; unrelated unknown slots do
 not become known. Waiting pending exceptions precede address evaluation.
-Invalid controls, unsupported forms/values, unmasked arithmetic controls, stack
+Invalid controls, unsupported forms/values, unmasked data-instruction controls, stack
 faults and unauthenticated memory refuse without committing state or a store.
 Unqualified MMX and external save/restore boundaries also refuse in lenient
 tracing mode; selecting the portable profile never turns them into skipped work.
