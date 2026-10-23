@@ -8101,7 +8101,7 @@ SHA-256 الثانوي: %3
     </message>
     <message>
         <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
-        <translation>فحص دعم تعليمة وملف تنفيذ. تُتحقق النتائج العددية والحالة المعمارية كلٌّ على حدة.</translation>
+        <translation>فحص دعم تعليمة وملف تنفيذ. يجري التحقق من النتائج العددية والحالة المعمارية بشكل منفصل.</translation>
     </message>
     <message>
         <source>Loading x87 support…</source>

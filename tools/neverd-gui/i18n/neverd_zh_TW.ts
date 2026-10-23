@@ -7905,7 +7905,7 @@ Secondary SHA-256: %3
     </message>
     <message>
         <source>Call contract: %1</source>
-        <translation>呼叫慣例：%1</translation>
+        <translation>呼叫契約：%1</translation>
     </message>
     <message>
         <source>Could not load x87 support: %1</source>
