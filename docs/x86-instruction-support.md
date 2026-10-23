@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`25b09571fe39`](https://github.com/NeverSight/llvm-project/commit/25b09571fe39)
+[`1592e44aefca`](https://github.com/NeverSight/llvm-project/commit/1592e44aefca)
 adds native instruction selection for the following APIs. NeverC's
-[`5113c5f12`](https://github.com/NeverSight/NeverC/commit/5113c5f12)
+[`a5c541999`](https://github.com/NeverSight/NeverC/commit/a5c541999)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -188,6 +188,8 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | --- | --- | --- |
 | `llvm.x86.vmread`, `llvm.x86.vmwrite` | x86-64 | i8 status: 0 = success, 1 = ZF/VMfailValid, 2 = CF/VMfailInvalid. VMREAD writes its memory destination only on success. |
 | `llvm.x86.vmread32`, `llvm.x86.vmwrite32` | i386 | Same completion contract, with 32-bit field/value operands. Calling the wrong mode's API fails explicitly. |
+| `llvm.x86.vmread.reg`, `llvm.x86.vmread.reg32` | x86-64 and i386 respectively | Register VMREAD returns `{word, i8 status}`; the word is the field value on success or the supplied prior value on either VMfail. |
+| `llvm.x86.vmwrite.mem`, `llvm.x86.vmwrite.mem32` | x86-64 and i386 respectively | Native VMWRITE reads its word-sized source memory itself; no eager compiler load changes its fault ordering. |
 | `llvm.x86.vmclear`, `llvm.x86.vmptrld`, `llvm.x86.vmxon` | i386 and x86-64 | Status plus an instruction-owned m64 physical-address operand. |
 | `llvm.x86.vmptrst`, `llvm.x86.vmxoff` | i386 and x86-64 | Void APIs with real memory/state effects and EFLAGS definitions. VMPTRST writes m64 in either mode. |
 | `llvm.x86.vmlaunch`, `llvm.x86.vmresume` | i386 and x86-64 | Return status on falling-through VMfail only; VMCS-controlled transfers remain separate. |
@@ -263,6 +265,11 @@ The new generic builtins are `__builtin_ia32_readcr`,
 `__builtin_ia32_writecr`, `__builtin_ia32_readdr` and
 `__builtin_ia32_writedr`. Five generator tests additionally protect the new
 write pseudo's stable opcode and synchronized metadata tables.
+NeverD's current CR/DR assembly bridge now declares the same arithmetic-flags
+clobber, preventing compiler condition codes from surviving the access. The
+source-route regression compiles 48 read/write cases across both word sizes,
+all three object formats and both pipeline optimization settings; it and the
+six existing virtualization source tests pass.
 
 REP qualification adds 1,000 LLVM cases across both code modes and 544 cases
 on each NeverC builtin spelling and the NeverC-to-fork route. MOVS/STOS execute
@@ -279,10 +286,53 @@ checks pass, together with LLVM's native-string and ordinary memcpy/memset
 regressions. ELF/COFF/Mach-O generation and AT&T/Intel assembly round trips
 also cover a repaired `movsdi` typo in the existing REP MOVSD Intel printer.
 
+The register-result VMREAD and memory-source VMWRITE forms add 520 full-fork
+cases and 260 cases each on NeverC and the NeverC-to-fork route. Tests cover
+full-width values, each result independently, discarded results, repeated
+accesses with independent statuses, ordinary memory barriers, saved registers
+and unmapped memory-source boundaries. The corresponding generic builtins are
+`__builtin_ia32_vmread_reg(field, prior, status_pointer)` and
+`__builtin_ia32_vmwrite_mem(field, source_pointer)`. The former returns the
+word and performs an ordinary C store of the status byte; that pointer is not
+an architectural VMREAD memory destination. Machine verification, O0/O2,
+optimized IR, wrong-mode diagnostics, all three native object formats, the
+29 intrinsic tests and 81 binary checks pass. The existing VMX completion
+matrix remains green. Four new generator tests protect the multi-result IIT
+encoding without changing older long-signature offsets; the complete overload
+audit reports zero mismatches after inserting the two NeverC intrinsic IDs.
+
+NeverC now has native `tdpbf8ps`, `tdpbhf8ps`, `tdphbf8ps`, `tdphf8ps`,
+`tileloaddrs64`, `tileloaddrst164` and historical `tmmultf32ps` builtins, including
+their features, immediate checks, intrinsic types, opcode tables and both
+assembler dialects. Full-fork, NeverC and NeverC-to-fork qualification each pass
+10,794 checks: all 336 distinct tile triples per compute operation, all load
+destinations, O0/O2, ELF/COFF/Mach-O, assembly round trips, forced EVEX assembly
+with high GPRs, and controlled completions with full pointers/strides, repeated
+operations, tile bank inputs/outputs, ordinary memory effects and saved C
+registers. These completions inject results; they do not qualify hardware AMX
+arithmetic, configuration validity, cache hints, faults or restart behavior.
+
+Both compilers reject a function that mixes physical tile interfaces with
+compiler-managed `x86_amx` values. Previously, NeverC could synthesize a tile
+configuration for a managed value while a physical FP8 operation used other,
+unconfigured tiles; LLVM's incremental model check also missed compute/row
+forms. Whole-function classification closes that gap, and invalid physical
+tile indices fail in release builds too. LLVM's 38 AMX regressions, NeverC's
+32 intrinsic tests, 81 existing binary checks and the complete intrinsic
+overload audit pass. The table generator preserves existing opcode/feature IDs.
+
+The next NeverC AMX gap contains twelve row forms: `tcvtrowd2ps/d2psi`,
+`tcvtrowps2bf16h/hi/l/li`, `tcvtrowps2phh/hi/l/li` and `tilemovrow/i`. The full
+fork's original 19-form object baseline covered 114 O0/O2 ELF/COFF/Mach-O builds;
+the twelve row forms still need corresponding NeverC interfaces and deeper
+qualification. Pointer APIs do not yet provide explicit segment/address width
+or forced-encoding selection, so these checkpoints do not yet replace NeverD's
+complete architectural-bank ASM contract.
+
 These tests qualify compiler transport, not successful privileged VM entry.
-The current pointer APIs cover the default address space. Register-result
-VMREAD, memory-source VMWRITE, segmented/address-size forms and the other
-instruction families still need native APIs before all of NeverD's existing
+The current pointer APIs cover the default address space. Segmented/address-size
+forms and the other instruction families still need native APIs before all of
+NeverD's existing
 assembly paths can be replaced. The final LLVM release and pin remain gated on
 the complete work described above.
 

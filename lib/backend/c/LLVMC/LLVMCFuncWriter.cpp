@@ -2936,6 +2936,13 @@ bool LLVMCWriter::valueFeedsPrintedUse(const llvm::Value *V) {
       const auto *UI = llvm::dyn_cast<llvm::Instruction>(U);
       if (!UI)
         return true;
+      // Return contracts are settled before either C projection. The machine
+      // IR keeps the return register, but a void source return does not read
+      // it. Use that shared fact even before setupFunction, when admitting a
+      // header's void prototype; other uses, including stores, stay live.
+      if (!Opts.PreserveLLVMFunctionTypes && llvm::isa<llvm::ReturnInst>(UI) &&
+          llvm_value_provenance::returnsNoValue(*UI->getFunction()))
+        continue;
       if (OmittedUnknowns.count(UI) || OmittedInlined.count(UI))
         continue;
       if (llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::PHINode,
