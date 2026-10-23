@@ -1760,4 +1760,170 @@ TEST(SymMBAPrefixResidue, ImprovedBitReadingsKeepShorterAffineCoordinates) {
   }
 }
 
+TEST(SymMBAPrefixResidue, PairedProductsRecoverLongMixedCarryFrontiers) {
+  std::mt19937_64 Random(0x5041495250524f44);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (auto Case : {std::array<unsigned, 3>{64, 7, 2},
+                      {96, 6, 2},
+                      {128, 6, 2},
+                      {128, 7, 2},
+                      {128, 7, 3},
+                      {128, 8, 2},
+                      {128, 8, 3}}) {
+      if (Width > 64 && Case[0] != 64)
+        continue;
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Case[0] << ':'
+                                        << Case[1] << ':' << Case[2]);
+      SymContext Ctx;
+      auto F = carryProductFixture(Ctx, Width, Case[0], Case[1], true, false,
+                                   Case[2]);
+      MBAOptions Opts;
+      Opts.MaxWork = 65536;
+      Opts.VerifySamples = 0;
+      auto Result = simplifyMBADeep(Ctx, F.Input, Opts);
+      ASSERT_LE(Result.SizeAfter, 13u);
+      EXPECT_LT(Result.Work, Opts.MaxWork);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &V : Values)
+          V = word(Width, Random);
+        if (Trial < 512)
+          Values = {llvm::APInt(Width, Trial / 64),
+                    llvm::APInt(Width, Trial / 8 % 8),
+                    llvm::APInt(Width, Trial % 8), llvm::APInt(Width, Trial)};
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
+struct PairedFlipFixture {
+  SymRef Input;
+  unsigned Width;
+  bool Neighbor;
+
+  llvm::APInt oracle(const std::array<llvm::APInt, 3> &V) const {
+    auto High =
+        (V[1] & ~llvm::APInt(Width, 1)) * (V[2] & ~llvm::APInt(Width, 1));
+    auto A = V[0] ^ High;
+    auto B = (V[0] + 32 + unsigned(Neighbor)) ^
+             (((V[1] + 16) & ~llvm::APInt(Width, 1)) *
+              (V[2] & ~llvm::APInt(Width, 1)));
+    auto Result = llvm::APInt(Width, 3).shl(Width - 6);
+    for (unsigned I = 0; I < 31; ++I)
+      Result *= A;
+    return Result * B;
+  }
+};
+
+PairedFlipFixture pairedFlipFixture(SymContext &Ctx, unsigned Width,
+                                    bool Neighbor = false) {
+  auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+  auto Z = Ctx.mkVar("z", Width);
+  auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
+  auto Mask = Ctx.mkConst(~llvm::APInt(Width, 1));
+  auto High = Ctx.mkMul(Ctx.mkAnd(Y, Mask), Ctx.mkAnd(Z, Mask));
+  auto A = Ctx.mkXor(X, High);
+  auto B = Ctx.mkXor(
+      Ctx.mkAdd(X, C(32 + unsigned(Neighbor))),
+      Ctx.mkMul(Ctx.mkAnd(Ctx.mkAdd(Y, C(16)), Mask), Ctx.mkAnd(Z, Mask)));
+  llvm::SmallVector<SymRef, 32> Factors(31, A);
+  Factors.push_back(B);
+  Factors.push_back(Ctx.mkConst(llvm::APInt(Width, 3).shl(Width - 6)));
+  return {Ctx.mkMul(Factors), Width, Neighbor};
+}
+
+TEST(SymMBAPrefixResidue, PairedProductsRetainVariableHighestBitCorrections) {
+  std::mt19937_64 Random(0x50414952464c4950);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (bool Neighbor : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Neighbor);
+      SymContext Ctx;
+      auto F = pairedFlipFixture(Ctx, Width, Neighbor);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      auto Result = detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage,
+                                                 false, 65536);
+      if (!Neighbor) {
+        ASSERT_LT(Ctx.readabilityCost(Result), Ctx.readabilityCost(F.Input));
+        EXPECT_LT(Budget.used(), 65536u);
+      }
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned Trial = 0; Trial < 1024; ++Trial) {
+        std::array<llvm::APInt, 3> Values;
+        for (auto &V : Values)
+          V = word(Width, Random);
+        if (Trial < 512)
+          Values = {llvm::APInt(Width, Trial / 64),
+                    llvm::APInt(Width, Trial / 8 % 8),
+                    llvm::APInt(Width, Trial % 8)};
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+      if (Width == 8 && !Neighbor)
+        for (unsigned X = 0; X < 64; ++X)
+          for (unsigned Y = 0; Y < 32; ++Y)
+            for (unsigned Z = 0; Z < 32; ++Z) {
+              std::array<llvm::APInt, 3> V{llvm::APInt(Width, X),
+                                           llvm::APInt(Width, Y),
+                                           llvm::APInt(Width, Z)};
+              ASSERT_EQ(Reduced.eval(V), F.oracle(V));
+            }
+    }
+}
+
+TEST(SymMBAPrefixResidue, PairedProductsHaveIndependentFullWidthProofs) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto F = pairedFlipFixture(Ctx, Width);
+    detail::WorkBudget Budget(65536);
+    size_t Storage = 1 << 24;
+    auto Result = detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage,
+                                               false, 65536);
+    ASSERT_LT(Ctx.readabilityCost(Result), Ctx.readabilityCost(F.Input));
+    solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
+    EXPECT_EQ(Verifier(Ctx, F.Input, Result), SynthVerification::Equivalent);
+  }
+}
+
+TEST(SymMBAPrefixResidue, PairedProductsKeepCumulativeResourceBounds) {
+  auto Run = [](size_t Work, size_t Storage, bool &Complete) {
+    SymContext Ctx;
+    auto F = pairedFlipFixture(Ctx, 64);
+    detail::WorkBudget Budget(Work);
+    const auto Available = Storage;
+    auto Result = detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage,
+                                               false, Work, nullptr, &Complete);
+    EXPECT_LE(Budget.used(), Work);
+    EXPECT_LE(Storage, Available);
+    SymEvalPlan Reduced(Ctx, Result);
+    std::mt19937_64 Random(0x5041495242554447);
+    for (unsigned I = 0; I < 128; ++I) {
+      std::array<llvm::APInt, 3> Values{word(64, Random), word(64, Random),
+                                        word(64, Random)};
+      EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+    }
+    return Budget.used();
+  };
+  bool Complete = false;
+  const auto Used = Run(65536, 1 << 24, Complete);
+  ASSERT_TRUE(Complete);
+  ASSERT_GT(Used, 1u);
+  Run(Used, 1 << 24, Complete);
+  EXPECT_TRUE(Complete);
+  Run(Used - 1, 1 << 24, Complete);
+  EXPECT_FALSE(Complete);
+  for (size_t Work : {size_t(0), size_t(1), size_t(32)}) {
+    Run(Work, 1 << 24, Complete);
+    EXPECT_FALSE(Complete);
+  }
+  for (size_t Storage : {size_t(0), size_t(1), size_t(256)}) {
+    Run(65536, Storage, Complete);
+    EXPECT_FALSE(Complete);
+  }
+}
+
 } // namespace

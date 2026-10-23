@@ -16,10 +16,27 @@ function(neverd_add_task_scheduler)
     return()
   endif()
   get_filename_component(_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." ABSOLUTE)
-  add_library(neverd_task_scheduler STATIC "${_root}/lib/support/Parallel.cpp")
-  target_compile_features(neverd_task_scheduler PUBLIC cxx_std_20)
-  target_include_directories(neverd_task_scheduler PUBLIC "${_root}/include")
-  set_target_properties(neverd_task_scheduler PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  find_package(Threads REQUIRED)
+  add_library(neverd_task_scheduler_runtime STATIC "${_root}/lib/support/Parallel.cpp")
+  target_compile_features(neverd_task_scheduler_runtime PUBLIC cxx_std_20)
+  target_include_directories(neverd_task_scheduler_runtime PUBLIC "${_root}/include")
+  target_link_libraries(neverd_task_scheduler_runtime PRIVATE Threads::Threads)
+  target_compile_definitions(neverd_task_scheduler_runtime PRIVATE NEVERD_TASK_SCHEDULER_EXPORTS)
+  set_target_properties(neverd_task_scheduler_runtime PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+  # Component archives are reused by standalone tools and SDK clients. Select
+  # the implementation at the final link, so an SDK client cannot embed a
+  # second scheduler through a component's transitive dependencies.
+  add_library(neverd_task_scheduler INTERFACE)
+  target_compile_features(neverd_task_scheduler INTERFACE cxx_std_20)
+  target_include_directories(neverd_task_scheduler INTERFACE "${_root}/include")
+  # Inspect the final link list at generation time: some SDK tests add their
+  # shared dependency after add_neverd_unittest has created the executable.
+  set(_shared_sdk "$<IN_LIST:neverd_shared,$<TARGET_PROPERTY:LINK_LIBRARIES>>")
+  set(_shared_override "$<BOOL:$<TARGET_PROPERTY:NEVERD_SHARED_TASK_SCHEDULER>>")
+  target_link_libraries(neverd_task_scheduler INTERFACE
+    "$<$<NOT:$<OR:${_shared_sdk},${_shared_override}>>:neverd_task_scheduler_runtime>")
   if(NOT NEVERD_ENABLE_TBB)
     return()
   endif()
@@ -35,20 +52,31 @@ function(neverd_add_task_scheduler)
   set(TBB_INSTALL OFF)
   set(TBB_ENABLE_IPO OFF)
   set(TBB_DISABLE_HWLOC_AUTOMATIC_SEARCH ON)
-  set(BUILD_SHARED_LIBS ON)
+  set(BUILD_SHARED_LIBS OFF)
   add_subdirectory("${neverd_tbb_SOURCE_DIR}"
     "${neverd_tbb_BINARY_DIR}" EXCLUDE_FROM_ALL)
-  target_compile_definitions(neverd_task_scheduler PRIVATE NEVERD_USE_TBB=1)
-  target_link_libraries(neverd_task_scheduler PRIVATE TBB::tbb)
-  install(TARGETS tbb RUNTIME DESTINATION bin LIBRARY DESTINATION lib)
+  set_target_properties(tbb PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_definitions(tbb INTERFACE __TBB_NO_IMPLICIT_LINKAGE=1)
+  target_compile_definitions(neverd_task_scheduler_runtime PRIVATE NEVERD_USE_TBB=1)
+  target_link_libraries(neverd_task_scheduler_runtime PRIVATE TBB::tbb)
   install(DIRECTORY "${neverd_tbb_NOTICES_DIR}/" DESTINATION share/neverd/licenses/oneTBB)
 endfunction()
 
-function(neverd_stage_task_runtime Target)
-  if(NEVERD_ENABLE_TBB AND WIN32 AND TARGET tbb)
-    add_custom_command(TARGET ${Target} POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:tbb>"
-        "$<TARGET_FILE_DIR:${Target}>" VERBATIM)
+function(neverd_use_shared_task_scheduler Target)
+  set_property(TARGET ${Target} PROPERTY NEVERD_SHARED_TASK_SCHEDULER ON)
+endfunction()
+
+function(neverd_own_task_scheduler Target)
+  set_property(TARGET ${Target} PROPERTY NEVERD_SHARED_TASK_SCHEDULER OFF)
+  target_link_libraries(${Target} PRIVATE neverd_task_scheduler)
+  if(NEVERD_ENABLE_TBB)
+    # Only NeverD's callback boundary is shared. Keep the embedded TBB ABI
+    # private so an embedding host cannot accidentally bind to our runtime.
+    if(APPLE)
+      target_link_options(${Target} PRIVATE "LINKER:-load_hidden,$<TARGET_FILE:tbb>")
+    elseif(UNIX)
+      target_link_options(${Target} PRIVATE "LINKER:--exclude-libs,$<TARGET_FILE_NAME:tbb>")
+    endif()
   endif()
 endfunction()
 

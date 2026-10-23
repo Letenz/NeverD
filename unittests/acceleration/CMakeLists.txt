@@ -61,7 +61,6 @@ endif()
 if(NEVERD_ENABLE_TBB)
   target_link_libraries(NeverDAccelerationTests PRIVATE TBB::tbb)
 endif()
-neverd_stage_task_runtime(NeverDAccelerationTests)
 neverd_stage_performance_notices(NeverDAccelerationTests)
 install(TARGETS NeverDAccelerationTests RUNTIME DESTINATION bin)
 if(APPLE)
@@ -73,6 +72,61 @@ include(GoogleTest)
 gtest_discover_tests(NeverDAccelerationTests DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 45 LABELS NeverDAccelerationTests)
 
+# Reproduce the product graph: a shared core owns the runtime, while a CLI
+# and plugin also consume component archives that require the task facade.
+add_library(NeverDTestSchedulerOwner SHARED SharedSchedulerBoundary.cpp)
+target_compile_definitions(NeverDTestSchedulerOwner PRIVATE
+  NEVERD_TEST_SHARED_BOUNDARY NEVERD_TEST_SCHEDULER_ENTRY=ownerRun)
+neverd_own_task_scheduler(NeverDTestSchedulerOwner)
+if(UNIX AND NOT APPLE)
+  # Match the SDK: interposition must not mask an accidental second runtime.
+  target_link_options(NeverDTestSchedulerOwner PRIVATE "LINKER:-Bsymbolic-functions")
+endif()
+add_library(NeverDTestSchedulerComponent STATIC SharedSchedulerBoundary.cpp)
+set_target_properties(NeverDTestSchedulerComponent PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(NeverDTestSchedulerComponent PRIVATE
+  NEVERD_TEST_SCHEDULER_ENTRY=componentRun)
+target_link_libraries(NeverDTestSchedulerComponent PUBLIC neverd_task_scheduler)
+# Standalone CI also exercises automatic selection for a direct SDK link.
+# In the full tree, keep this fixture independent of the real LLVM-backed SDK.
+set(_scheduler_owner NeverDTestSchedulerOwner)
+if(NOT TARGET neverd_shared)
+  add_library(neverd_shared ALIAS NeverDTestSchedulerOwner)
+  set(_scheduler_owner neverd_shared)
+endif()
+add_library(NeverDTestSchedulerPlugin SHARED SharedSchedulerBoundary.cpp)
+target_compile_definitions(NeverDTestSchedulerPlugin PRIVATE
+  NEVERD_TEST_SHARED_BOUNDARY NEVERD_TEST_SCHEDULER_ENTRY=pluginRun)
+target_link_libraries(NeverDTestSchedulerPlugin PRIVATE
+  NeverDTestSchedulerOwner NeverDTestSchedulerComponent)
+neverd_use_shared_task_scheduler(NeverDTestSchedulerPlugin)
+add_executable(NeverDSharedSchedulerTests SharedSchedulerTests.cpp)
+target_link_libraries(NeverDSharedSchedulerTests PRIVATE
+  ${_scheduler_owner} NeverDTestSchedulerPlugin
+  NeverDTestSchedulerComponent GTest::gtest_main)
+if(_scheduler_owner STREQUAL "NeverDTestSchedulerOwner")
+  neverd_use_shared_task_scheduler(NeverDSharedSchedulerTests)
+endif()
+if(TARGET NeverDUnitTests)
+  add_dependencies(NeverDUnitTests NeverDSharedSchedulerTests)
+endif()
+install(TARGETS NeverDSharedSchedulerTests NeverDTestSchedulerOwner NeverDTestSchedulerPlugin
+  RUNTIME DESTINATION bin LIBRARY DESTINATION lib)
+foreach(_target NeverDSharedSchedulerTests NeverDTestSchedulerOwner NeverDTestSchedulerPlugin)
+  if(APPLE)
+    set_property(TARGET ${_target} PROPERTY INSTALL_RPATH "@loader_path/../lib")
+  elseif(UNIX)
+    set_property(TARGET ${_target} PROPERTY INSTALL_RPATH "$ORIGIN/../lib")
+  endif()
+endforeach()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME NeverDSharedSchedulerTests
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verify.py"
+    "$<TARGET_FILE:NeverDSharedSchedulerTests>" "${CMAKE_CURRENT_BINARY_DIR}/shared-scheduler-evidence"
+    --minimum 2 --tbb-runtimes $<BOOL:${NEVERD_ENABLE_TBB}>)
+set_tests_properties(NeverDSharedSchedulerTests PROPERTIES
+  TIMEOUT 45 LABELS NeverDAccelerationTests)
+
 # A developer benchmark, not a CTest timing threshold. Reuses the actual text
 # normalizer; it is available when the parent already provides LLVM Support.
 if(TARGET LLVMSupport)
@@ -83,5 +137,4 @@ if(TARGET LLVMSupport)
   target_link_libraries(neverd-acceleration-bench PRIVATE neverd_text_acceleration
     neverd_task_scheduler neverd_tool_json LLVMSupport LLVMDemangle)
   neverd_link_mimalloc(neverd-acceleration-bench)
-  neverd_stage_task_runtime(neverd-acceleration-bench)
 endif()
