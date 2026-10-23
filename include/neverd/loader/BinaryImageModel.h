@@ -356,6 +356,9 @@ struct BinaryImage {
   std::vector<ObjCProtocol> ObjCProtocols;
   std::vector<ObjCProperty> ObjCProperties;
   std::map<va_t, ObjCSourceReference> ObjCSourceReferences;
+  /// Offline reference identities from authenticated or cache metadata. These
+  /// declarations do not establish runtime values or source object ownership.
+  std::map<va_t, ObjCSourceReference> ObjCMetadataReferences;
   std::vector<std::string> ObjCMetadataDiagnostics;
   /// A valid LC_FUNCTION_STARTS stream supplied linked Mach-O function
   /// identities.  Raw read-only metadata must not then be rescanned as an
@@ -381,6 +384,13 @@ struct BinaryImage {
   /// Immutable cache address space for analysis-only cross-image metadata.
   /// It does not extend readVA or establish a runtime pointer value.
   std::shared_ptr<const macho_loader::DyldSharedCache> MachOSharedCache;
+  /// Exact catalogue selection and hashes of all cache files, in file order.
+  /// Raw is a packed analysis view, while segment VAs retain cache addresses.
+  std::string MachOSharedCacheImagePath;
+  std::vector<std::array<uint8_t, 32>> MachOSharedCacheFileSHA256;
+  /// Indirect-table names on cache-owned slide slots. These are symbolic
+  /// references, not ordinary import-storage or unsigned-pointer proofs.
+  std::map<va_t, std::string> MachOSharedCacheSymbolPointers;
   std::string MachOChainedFixupsError;
   /// Any byte of an encoded signing recipe overlaps this storage range.
   bool hasMachOAuthenticatedPointerIn(va_t Address, uint64_t Size) const {

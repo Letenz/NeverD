@@ -12,6 +12,8 @@
 #include "neverd/support/BinaryLoading.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
+#include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/ObjectFileUtils.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/TextEncoding.h"
@@ -94,20 +96,28 @@ Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
                                  const BinaryLoadOptions &Opts) try {
   Opts.Progress.report("identify", 0, 1);
   std::unique_ptr<Loader> TheLoader;
-  switch (Opts.Choice.Format) {
-  case BinaryFormat::Unknown:
-    TheLoader = Loader::create(Path);
-    if (!TheLoader)
-      return make_error<StringError>(Loader::describeRefusal(Path),
-                                     inconvertibleErrorCode());
-    break;
-  case BinaryFormat::Raw:
-    TheLoader = std::make_unique<RawLoader>(Opts.Choice.Raw);
-    break;
-  default:
-    TheLoader = Loader::create(Opts.Choice.Format);
-    break;
-  }
+  if (!Opts.Choice.MachOSharedCacheImage.empty()) {
+    if (Opts.Choice.Format != BinaryFormat::Unknown &&
+        Opts.Choice.Format != BinaryFormat::MachO)
+      return createStringError(inconvertibleErrorCode(),
+                               macho_loader::cache_load::kChoiceInvalid);
+    TheLoader =
+        std::make_unique<MachOLoader>(Opts.Choice.MachOSharedCacheImage);
+  } else
+    switch (Opts.Choice.Format) {
+    case BinaryFormat::Unknown:
+      TheLoader = Loader::create(Path);
+      if (!TheLoader)
+        return make_error<StringError>(Loader::describeRefusal(Path),
+                                       inconvertibleErrorCode());
+      break;
+    case BinaryFormat::Raw:
+      TheLoader = std::make_unique<RawLoader>(Opts.Choice.Raw);
+      break;
+    default:
+      TheLoader = Loader::create(Opts.Choice.Format);
+      break;
+    }
   if (!TheLoader)
     return make_error<StringError>("no loader reads the chosen format",
                                    inconvertibleErrorCode());
@@ -136,6 +146,9 @@ Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
 Expected<BinaryImage> loadBinaryBuffer(llvm::MemoryBufferRef Buffer,
                                        const BinaryLoadOptions &Opts) try {
   Opts.Progress.report("identify", 0, 1);
+  if (!Opts.Choice.MachOSharedCacheImage.empty())
+    return createStringError(inconvertibleErrorCode(),
+                             macho_loader::cache_load::kBufferUnavailable);
   if (Opts.Choice.Format != BinaryFormat::Unknown)
     return make_error<StringError>(
         "native buffer does not accept a loader choice",

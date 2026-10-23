@@ -40,6 +40,7 @@
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
 #include "neverd/ArchSupport.h"
 #include "neverd/Limits.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -800,6 +801,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   Ctx = &LCtx;
   auto Mod_ = std::make_unique<llvm::Module>(ModName, LCtx);
   Mod = Mod_.get();
+  if (Img_ && Img_->MachOSharedCache)
+    Mod_->addModuleFlag(llvm::Module::Error,
+                        macho_loader::cache_load::kAnalysisFlag, 1);
   if (Img_ && (Img_->isArm64e() || !Img_->MachOAuthenticatedPointers.empty()))
     Mod_->addModuleFlag(llvm::Module::Error, kArm64eAnalysisModuleFlag, 1);
   if (const char *Triple = llvmEmitTriple(TheArch, Fmt)) {

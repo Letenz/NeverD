@@ -18,6 +18,8 @@
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/ELF/ELFLoader.h"
 #include "neverd/loader/EVM/EVMLoader.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
+#include "neverd/loader/MachO/DyldSharedCache.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/ObjectFileUtils.h"
 #include "neverd/support/Limits.h"
@@ -29,6 +31,7 @@
 #include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
+#include <climits>
 #include <system_error>
 
 namespace neverd {
@@ -163,37 +166,49 @@ std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path) {
                                             /*RequiresNullTerminator=*/false);
   // Whether no header names the file's format.
   bool Headerless = false;
+  bool SharedCache = false;
   if (Buffer) {
     // The loaders Loader::create picks for the file, in its order.
     const llvm::MemoryBufferRef Ref = (*Buffer)->getMemBufferRef();
-    switch (magicToFormat(llvm::identify_magic(Ref.getBuffer()))) {
-    case BinaryFormat::ELF:
-      ELFLoader::identify(Ref, Rows);
-      break;
-    case BinaryFormat::COFF:
-      COFFLoader::identify(Ref, Rows);
-      break;
-    case BinaryFormat::MachO:
-      MachOLoader::identify(Ref, Rows);
-      break;
-    case BinaryFormat::EVM:
-    case BinaryFormat::Unknown:
-    case BinaryFormat::Raw:
-      Headerless = true;
-      // Binary data under a name other tools share reads as bytecode only
-      // when the user chooses so.
-      switch (evm::matchEVMInput(Path)) {
-      case evm::EVMInputMatch::Bytecode:
-        EVMLoader::identify(Rows, /*ByName=*/false);
+    SharedCache = macho_loader::DyldSharedCache::hasMagic(Ref.getBuffer());
+    if (SharedCache) {
+      LoadCandidate Row;
+      Row.Row = LoadRow::DyldCache;
+      Row.Format = BinaryFormat::MachO;
+      Row.TheArch = Arch::AArch64;
+      Row.Bits = sizeof(uint64_t) * CHAR_BIT;
+      Row.Description = getLoadRowText(Row.Row).str();
+      Row.Reason = macho_loader::cache_load::kSelectionRequired;
+      Rows.push_back(std::move(Row));
+    } else
+      switch (magicToFormat(llvm::identify_magic(Ref.getBuffer()))) {
+      case BinaryFormat::ELF:
+        ELFLoader::identify(Ref, Rows);
         break;
-      case evm::EVMInputMatch::Name:
-        EVMLoader::identify(Rows, /*ByName=*/true);
+      case BinaryFormat::COFF:
+        COFFLoader::identify(Ref, Rows);
         break;
-      case evm::EVMInputMatch::None:
+      case BinaryFormat::MachO:
+        MachOLoader::identify(Ref, Rows);
+        break;
+      case BinaryFormat::EVM:
+      case BinaryFormat::Unknown:
+      case BinaryFormat::Raw:
+        Headerless = true;
+        // Binary data under a name other tools share reads as bytecode only
+        // when the user chooses so.
+        switch (evm::matchEVMInput(Path)) {
+        case evm::EVMInputMatch::Bytecode:
+          EVMLoader::identify(Rows, /*ByName=*/false);
+          break;
+        case evm::EVMInputMatch::Name:
+          EVMLoader::identify(Rows, /*ByName=*/true);
+          break;
+        case evm::EVMInputMatch::None:
+          break;
+        }
         break;
       }
-      break;
-    }
   }
   std::stable_partition(Rows.begin(), Rows.end(),
                         [](const LoadCandidate &Row) { return Row.First; });
@@ -204,7 +219,7 @@ std::vector<LoadCandidate> identifyFile(const std::filesystem::path &Path) {
   Binary.Description = getLoadRowText(LoadRow::Binary).str();
   Binary.Loadable = true;
   // When no header names a processor NeverD reads, only the bytes can.
-  if (Buffer &&
+  if (Buffer && !SharedCache &&
       (Headerless || llvm::none_of(Rows, [](const LoadCandidate &Row) {
          return Row.Loadable;
        })))
@@ -242,6 +257,10 @@ std::unique_ptr<Loader> Loader::create(BinaryFormat Format) {
 std::unique_ptr<Loader> Loader::create(const std::filesystem::path &Path) {
   BinaryFormat Fmt = detectFormat(Path);
   if (Fmt == BinaryFormat::Unknown) {
+    auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), false, false);
+    if (Buffer &&
+        macho_loader::DyldSharedCache::hasMagic((*Buffer)->getBuffer()))
+      return create(BinaryFormat::MachO);
     if (evm::matchEVMInput(Path) == evm::EVMInputMatch::Bytecode)
       Fmt = BinaryFormat::EVM;
     else

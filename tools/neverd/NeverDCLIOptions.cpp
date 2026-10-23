@@ -25,6 +25,7 @@
 #include "neverd/emulation/ProcessCLIStrings.h"
 #include "neverd/emulation/ProcessReportFields.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/pass/Limits.h"
 #include "neverd/sdk/Limits.h"
 #include "neverd/support/Limits.h"
@@ -474,12 +475,27 @@ cl::opt<bool> NoSymtab(
     cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
 
 cl::opt<std::string> LoadLoader(
-    "loader",
-    cl::desc("How to read an input that names no format itself: \"binary\" "
-             "as code of --processor at --load-base, \"evm\" as EVM "
-             "bytecode, \"auto\" as its header or contents say.  The choice "
-             "is kept with the input"),
-    cl::init(""), cl::value_desc("loader"), cl::sub(LiftCmd),
+    "loader", cl::desc(macho_loader::cache_load::kLoaderHelp), cl::init(""),
+    cl::value_desc("loader"), cl::sub(LiftCmd), cl::sub(DecompileCmd),
+    cl::sub(PatchCmd), cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
+    cl::sub(PathsCmd), cl::sub(CallTreeCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+cl::opt<bool> ListCacheImages(macho_loader::cache_load::kImagesOption,
+                              cl::desc(macho_loader::cache_load::kImagesHelp),
+                              cl::sub(InfoCmd));
+
+cl::opt<std::string> LoadCacheImage(
+    macho_loader::cache_load::kImageOption,
+    cl::desc(macho_loader::cache_load::kImageHelp),
+    cl::value_desc(macho_loader::cache_load::kImageValue), cl::sub(LiftCmd),
     cl::sub(DecompileCmd), cl::sub(PatchCmd), cl::sub(InfoCmd),
     cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(PathsCmd),
     cl::sub(CallTreeCmd), cl::sub(FuncsCmd), cl::sub(DisasmCmd),

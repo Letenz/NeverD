@@ -21,6 +21,7 @@
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/InputDigest.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
@@ -703,6 +704,16 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["format"] = S->Img.getFormatName();
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
   Root["file_path"] = jsonSafeText(pathToUTF8(S->FilePath));
+  if (S->Img.MachOSharedCache) {
+    using namespace macho_loader::cache_load;
+    auto Cache = sharedCacheIdentity(S->Img);
+    Cache[kAuthCountKey] = int64_t(S->Img.MachOAuthenticatedPointers.size());
+    Cache[kResolvedCountKey] =
+        int64_t(S->Img.MachOResolvedChainedPointerSlots.size());
+    Cache[kSymbolCountKey] =
+        int64_t(S->Img.MachOSharedCacheSymbolPointers.size());
+    Root[kCacheKey] = std::move(Cache);
+  }
 
   Root["file_size"] = static_cast<int64_t>(S->inputFileSize());
 
@@ -882,10 +893,10 @@ const char *neverd_project_json(neverd_session_t Sess) {
   }
   llvm::json::Object Input = projectInput(*S);
   std::optional<llvm::json::Object> Recorded = recordedInput(*S);
-  const bool Matches =
-      !Recorded || Recorded->getString("sha256") == Input.getString("sha256");
+  const bool Matches = !Recorded || matchesProjectInput(*Recorded, Input);
   return dupStr(jsonToString(llvm::json::Object{
-      {"folder", jsonSafeText(pathToUTF8(project_files::folder(S->FilePath)))},
+      {"folder",
+       jsonSafeText(pathToUTF8(project_files::folder(S->projectInputPath())))},
       {"input", std::move(Input)},
       {"recorded", Recorded ? llvm::json::Value(std::move(*Recorded))
                             : llvm::json::Value(nullptr)},

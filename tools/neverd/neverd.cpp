@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/StackSizeMain.h"
 
@@ -149,6 +150,35 @@ static int realMain(int Argc, char *Argv[]) {
     return 1;
   }
 
+  if (ListCacheImages) {
+    const char *Reply =
+        neverd_dyld_cache_images_json(InputFile.getValue().c_str());
+    const std::string Text = Reply ? Reply : "";
+    neverd_free_string(Reply);
+    auto Parsed = json::parse(Text);
+    if (!Parsed) {
+      logAllUnhandledErrors(Parsed.takeError(), errs());
+      return 1;
+    }
+    const auto *Object = Parsed->getAsObject();
+    if (JsonOutput) {
+      outs() << Text << '\n';
+    } else if (Object) {
+      if (auto Error = Object->getString(macho_loader::cache_load::kErrorKey))
+        errs() << *Error << '\n';
+      if (const auto *Images =
+              Object->getArray(macho_loader::cache_load::kImagesKey))
+        for (const auto &Image : *Images)
+          outs() << *Image.getAsObject()->getString(
+                        macho_loader::cache_load::kAddressKey)
+                 << " "
+                 << *Image.getAsObject()->getString(
+                        macho_loader::cache_load::kPathKey)
+                 << '\n';
+    }
+    return !Object || Object->get(macho_loader::cache_load::kErrorKey) ? 1 : 0;
+  }
+
   if (PdbUnverified && PdbFile.getValue().empty()) {
     WithColor::error() << "--pdb-unverified needs the PDB named by --pdb\n";
     return 1;
@@ -278,8 +308,13 @@ static int realMain(int Argc, char *Argv[]) {
         nullptr);
   }
   // A binary file reads as --loader and its placement say.
-  if (!LoadLoader.empty()) {
-    json::Object Options{{"loader", LoadLoader.getValue()}};
+  if (!LoadLoader.empty() || !LoadCacheImage.empty()) {
+    json::Object Options{{macho_loader::cache_load::kLoaderKey,
+                          LoadLoader.empty()
+                              ? std::string(macho_loader::cache_load::kLoader)
+                              : LoadLoader.getValue()}};
+    if (!LoadCacheImage.empty())
+      Options[macho_loader::cache_load::kImageKey] = LoadCacheImage.getValue();
     if (!LoadProcessor.empty())
       Options["processor"] = LoadProcessor.getValue();
     if (!LoadPlatform.empty())
@@ -312,7 +347,8 @@ static int realMain(int Argc, char *Argv[]) {
     return 1;
   }
   // The input is read this way from now on, as the GUI keeps it.
-  if (!LoadLoader.empty() && neverd_load_options_save(Sess) != 0)
+  if ((!LoadLoader.empty() || !LoadCacheImage.empty()) &&
+      neverd_load_options_save(Sess) != 0)
     WithColor::warning() << "load options were not kept: "
                          << takeLastError(Sess) << "\n";
   if (NameHint) {

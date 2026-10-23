@@ -42,7 +42,8 @@ public:
         Image.MachOChainedFixupsAmbiguous)
       return false;
     // Plain C object storage cannot reproduce authenticated arm64e isa fields.
-    if (Image.isArm64e() || !Image.MachOAuthenticatedPointers.empty())
+    if (Image.MachOSharedCache || Image.isArm64e() ||
+        !Image.MachOAuthenticatedPointers.empty())
       return false;
     return Image.Arch != Arch::AArch64 || Image.Raw.size() < 32 ||
            llvm::support::endian::read32le(Image.Raw.data()) !=

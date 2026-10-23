@@ -107,8 +107,22 @@ conditional relative lists, empty list headers, extended header-info rows,
 resource exhaustion and retained JSON origins. The real Foundation check
 requires all recovered methods to have names, no metadata diagnostics, retained
 image conditions and no local source-body proof for external IMPs.
-This tests the cache reader and metadata view,
-not yet CLI cached-image selection or native execution/reconstruction.
+Projection fixtures also cover compact symbol strings, N_INDR aliases,
+dylib module names, indirect symbol indices, section relocations, reordered
+commands, data-in-code offsets, malformed ranges and cancellation. Selected
+loading verifies exact source hashes, unchanged authenticated words, unsigned
+slide targets and separate symbolic references. With `NEVERD_DYLD_CACHE`, every
+catalogued image must produce an LLVM-readable projection and Foundation must
+load through `loadBinary` without Objective-C metadata diagnostics.
+`NeverDDyldCacheCAPITests` exercises catalogue selection, input identity,
+invalid options, isolated annotations and reopening a remembered selection
+through the public SDK, including simultaneous sessions and symlink-equivalent
+writer locks. Optimized GOT regressions retain surviving indirect-table names
+without import-storage proof and reject invalid indices. `ObjCStorage` tests
+separate arm64e bitfield and Swift declarations from native object ownership;
+the full Foundation load also requires recovered ivars and offline references
+without any `ObjCSourceReferences`. These checks qualify static cached-image analysis;
+they do not qualify native execution or standalone cache reconstruction.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent

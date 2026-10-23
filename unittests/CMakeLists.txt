@@ -309,6 +309,12 @@ if(TARGET neverd_shared)
   )
   target_include_directories(NeverDBinaryDiffSDKTests PRIVATE
     "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
+  add_neverd_unittest(NeverDDyldCacheCAPITests
+    DyldCacheCAPITests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDDyldCacheCAPITests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
     TypeConversionCAPITests.cpp

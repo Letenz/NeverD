@@ -19,6 +19,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -82,6 +83,7 @@ struct DyldCacheSelectorLayout {
 
 class DyldSharedCache {
 public:
+  static bool hasMagic(llvm::StringRef Bytes);
   /// Main file followed by its table's subcaches in table order. A failed
   /// parse publishes no mappings. Returned byte views live with this object.
   static llvm::Expected<DyldSharedCache>
@@ -93,10 +95,19 @@ public:
   llvm::ArrayRef<DyldCacheMapping> mappings() const { return Mappings; }
   llvm::ArrayRef<DyldCacheImage> images() const { return Images; }
   va_t baseAddress() const { return Base; }
+  /// Hash each exact owned input in main-file/subcache order. The prepared
+  /// Mach-O view is not the input's identity.
+  std::vector<std::array<uint8_t, 32>>
+  fileDigests(const LoadProgress &Progress = {}) const;
   const DyldCacheMapping *mappingFor(va_t Address) const;
   std::optional<llvm::ArrayRef<uint8_t>> readBytes(va_t Address,
                                                    uint64_t Size) const;
   llvm::Expected<DyldCacheImageLayout> readImageLayout(size_t ImageIndex) const;
+  /// A bounded contiguous view for ordinary Mach-O semantic readers. Keeps
+  /// original VAs but packs file ranges and referenced symbol strings. This
+  /// is an analysis projection, not a standalone or correctly signed dylib.
+  llvm::Expected<std::vector<uint8_t>>
+  prepareImage(size_t ImageIndex, const LoadProgress &Progress = {}) const;
   /// Addressing used by cached compact Objective-C method selectors. Missing
   /// optimization metadata is distinct from a malformed or unknown layout.
   llvm::Expected<std::optional<DyldCacheSelectorLayout>>

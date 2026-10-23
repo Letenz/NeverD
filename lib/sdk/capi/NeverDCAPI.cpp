@@ -282,16 +282,12 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
     DbgRequest =
         Policy->PackedProject ? Policy->LoadedDbgRequest : Policy->DbgRequest;
   }
-  // The file reads with the loader its project keeps, as a session load
-  // reads it; the pipeline refuses a binary file.
-  if (Policy && Policy->RequestedLoad) {
-    LoadOpts.Choice = *Policy->RequestedLoad;
-  } else if (auto Kept = readLoadOptionsSidecar(Path); !Kept) {
-    Err = llvm::toString(Kept.takeError());
+  auto Choice = sessionLoadOptions(Policy, Path);
+  if (!Choice) {
+    Err = llvm::toString(Choice.takeError());
     return false;
-  } else {
-    LoadOpts.Choice = *Kept;
   }
+  LoadOpts.Choice = *Choice;
   if (auto Unsettled = settleBinaryFileProcessor(Path, LoadOpts.Choice)) {
     Err = llvm::toString(std::move(Unsettled));
     return false;
@@ -777,17 +773,13 @@ int neverd_session_load_cancellable(neverd_session_t Sess, const char *Path,
     // A project an older NeverD kept as files beside the input moves into its
     // folder, where the rest of the C API and the workbench read it.
     project_files::migrate(P);
-    // The file reads with the loader the caller chose, else the one its
-    // project keeps.
-    if (S->RequestedLoad) {
-      LoadOpts.Choice = *S->RequestedLoad;
-    } else if (auto Kept = readLoadOptionsSidecar(P); !Kept) {
-      S->setError(llvm::toString(Kept.takeError()));
+    auto Choice = sessionLoadOptions(S, P);
+    if (!Choice) {
+      S->setError(llvm::toString(Choice.takeError()));
       Trace.finish(false);
       return 0;
-    } else {
-      LoadOpts.Choice = *Kept;
     }
+    LoadOpts.Choice = *Choice;
     if (auto Unsettled = settleBinaryFileProcessor(P, LoadOpts.Choice)) {
       S->setError(llvm::toString(std::move(Unsettled)));
       Trace.finish(false);

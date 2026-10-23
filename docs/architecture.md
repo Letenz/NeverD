@@ -181,14 +181,34 @@ IA/DA layout remain distinct. Embedded image file offsets resolve through that
 image's segments and the cache mappings; they are not relative to its header
 or necessarily in the same file. Cached section reads use their VM layout:
 some real signed images retain original section offsets in their headers.
-This public reader is the address-space foundation; the ordinary loader and
-CLI do not yet select or analyse cached images through it. The layouts follow
+`MachOLoader` selects an exact catalogue install name and reuses the ordinary
+Mach-O readers through `prepareImage`. The bounded analysis projection retains
+virtual addresses, symbol indices and alias/module names while packing only
+referenced linkedit bytes and strings. Packed linkedit has no projected VM
+ownership. Its original addresses remain readable through the cache. The
+cache slide reader supplies pointer semantics before metadata and discovery;
+authenticated bytes remain encoded, and only unsigned slide slots are patched.
+Indirect-table names are separate cache symbol references, never ordinary
+import-storage proof. Optimized `__got`/`__auth_got` sections retain names only
+for nonzero surviving slots validated against slide records; coalesced holes
+are not pointers. This follows Apple's [cache binding](https://github.com/apple-oss-distributions/dyld/blob/main/cache_builder/CacheDylib.cpp)
+and [section adjustment](https://github.com/apple-oss-distributions/dyld/blob/main/cache_builder/NewAdjustDylibSegments.cpp). `InputFileSHA256` hashes the exact main file, while the
+image retains every input file digest and its install name. `Raw` is explicitly
+an analysis projection. Module and source-replacement guards apply even when
+a cached image's subtype is ordinary arm64. The layouts follow
 [Apple's cache definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h).
 `BinaryImage::MachOSharedCache` retains that immutable address space for
 analysis-only metadata reads. Selected segment bytes take precedence; edits,
 overlapping ownership and stale signing recipes fail validation. Range slide
 queries validate complete intersecting pages without decoding the whole cache.
 Neither metadata access nor a signing recipe establishes runtime pointer trust.
+`parseObjCStorage` uses the metadata view for authenticated and cached images.
+Their `metadata_only` ivars retain file declarations, including bitfields,
+trailing arrays and absent Swift offset globals, without asserting a final
+runtime layout. Offline selector/class/ivar identities live in
+`ObjCMetadataReferences`, exported as `metadata_references`, separately from
+`ObjCSourceReferences`. Source object and receiver proofs consume only the
+latter. Plain-object admission also rejects ordinary-arm64 cache projections.
 Compact Objective-C selectors distinguish modern optimization versions 1/2
 and legacy versions 15/16, including the record-relative version-15 layout.
 Tagged relative method/property arrays retain each declaration's Objective-C
@@ -199,6 +219,17 @@ select an override. External cache IMPs remain declarations without local body
 proof. These layouts follow Apple's
 [Objective-C runtime structures](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-runtime-new.h)
 and [header information](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-private.h).
+The CLI lists catalogue entries with `neverd info CACHE --cache-images --json`
+and loads one with `--cache-image /exact/install/name`. The C SDK exposes the
+same catalogue and selection through `neverd_dyld_cache_images_json` and
+load-options JSON (`loader: "dyld-cache"`, `cache_image`). Project input records
+include `dyld_cache` identity. Address-bearing SDK sidecars and writer locks
+use an install-name SHA-256 namespace; the source file path stays unchanged,
+and the root load-options file remembers the selection. Namespace locks
+canonicalize the real cache input before appending the install-name namespace.
+An existing session and its reanalysis preserve their selected image when
+another session changes that root file. Cache provenance does
+not make a packed projection a runnable standalone dylib.
 Exception-level
 authentication, PACM state and CPA2 address arithmetic remain unsupported;
 recognizing x1's header does not claim those instruction semantics.

@@ -16,6 +16,7 @@
 #include "neverd/loader/MachO/MachOArm64e.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/SHA256.h"
 
 #include "llvm/Support/FormatVariadic.h"
 
@@ -869,6 +870,22 @@ DyldSharedCache::readMappingSlides(size_t MappingIndex, va_t First, va_t End,
     } while (true);
   }
   return Fixups;
+}
+
+bool DyldSharedCache::hasMagic(llvm::StringRef Bytes) {
+  return Bytes.size() >= kMagicBytes &&
+         std::memcmp(Bytes.data(), kMagic, kMagicBytes) == 0;
+}
+
+std::vector<std::array<uint8_t, 32>>
+DyldSharedCache::fileDigests(const LoadProgress &Progress) const {
+  std::vector<std::array<uint8_t, 32>> Result;
+  Result.reserve(Files.size());
+  for (const auto &File : Files) {
+    Progress.check();
+    Result.push_back(sha256(fileBytes(*File), Progress));
+  }
+  return Result;
 }
 
 } // namespace neverd::macho_loader
