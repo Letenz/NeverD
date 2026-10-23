@@ -67,6 +67,15 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
     return invalid("intrinsic has no constant intrinsic ID");
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  // The lifter publishes PACM as a pending instruction prefix. CFG resolves
+  // its executed successor before MedIR, where this marker is not admissible.
+  if (Id == Intrinsic::A64_PACMPending) {
+    if (Op.NumInputs != 1 || Op.Inputs[0].Size != 2 || Op.Output.Size ||
+        Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return invalid(kAArch64PAuthMalformedOperation);
+    return llvm::Error::success();
+  }
   if (isAArch64PAuthIntrinsic(Id) && !lowAArch64PAuthShapeIsValid(Op))
     return invalid(kAArch64PAuthMalformedOperation);
   if (aarch64CPAOperation(Id) && !lowAArch64CPAShapeIsValid(Op))

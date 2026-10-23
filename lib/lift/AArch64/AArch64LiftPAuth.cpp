@@ -28,6 +28,10 @@ bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   const NdVar SPModifier = NdVar::reg(a64reg::SP, kAArch64PAuthPointerBytes);
   const NdVar X16Modifier = NdVar::reg(a64reg::X16, kAArch64PAuthPointerBytes);
   const uint32_t Word = readLE<uint32_t>(Insn->bytes);
+  if (Word == kAArch64PACMEncoding) {
+    S.emitIntrinsic(Intrinsic::A64_PACMPending, {}, {});
+    return true;
+  }
   const NdVar X15Modifier = NdVar::reg(a64reg::X15, kAArch64PAuthPointerBytes);
   const NdVar PCModifier = NdVar::cst(S.Addr, kAArch64PAuthPointerBytes);
   const NdVar PCRelModifier = NdVar::cst(

@@ -127,10 +127,7 @@ NEVERD_A64_PAUTH_BRANCH(BLRABZ, 0xfffffc1f, 0xd63f0c1f, IB, true, INDIR_CALL)
 NEVERD_A64_PAUTH_BRANCH(RETAA, 0xffffffff, 0xd65f0bff, IA, false, RETURN)
 NEVERD_A64_PAUTH_BRANCH(RETAB, 0xffffffff, 0xd65f0fff, IB, false, RETURN)
 
-// Exception-level state and PACM control state require separate modelling.
-// PACM is HINT #39, but changes PSTATE.PACM when FEAT_PAuth_LR is enabled.
-// Dropping it would give subsequent baseline PAC/AUT the wrong modifier.
-NEVERD_A64_PAUTH_UNSUPPORTED_HINT(PACM, 0xd50324ff)
+// Exception-level state requires separate modelling.
 NEVERD_A64_PAUTH_UNSUPPORTED(ERETAA)
 NEVERD_A64_PAUTH_UNSUPPORTED(ERETAB)
 

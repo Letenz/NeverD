@@ -3,6 +3,11 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Entry-stack offset proofs and alignment rewrites.
+///
+//===----------------------------------------------------------------------===//
 
 #include "neverd/ir/med/MedStackAlignment.h"
 
@@ -15,6 +20,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -83,6 +89,13 @@ unsigned definitionCapacity(const MedFunc &Func) {
 }
 
 class StackOffsetProof {
+  struct CompletedProof {
+    MedVar Occurrence;
+    int64_t Offset;
+    size_t Steps;
+    unsigned Depth;
+  };
+
   struct ValueDefinition {
     const MedOp *Op = nullptr;
     const PhiNode *Join = nullptr;
@@ -230,9 +243,47 @@ private:
            Offset == static_cast<int64_t>(static_cast<int32_t>(Offset));
   }
 
+  std::optional<int64_t> resolveJoin(const MedVar &Value,
+                                     ValueDefinition &Definition,
+                                     unsigned Depth) {
+    // Shared joins branch into the same inputs repeatedly. Linear definitions
+    // keep their ordinary traversal; only this read-only join proof looks up
+    // completed work. The current resolve() has already charged its own step
+    // and checked the occurrence, depth and active definition.
+    const Key K = key(Value);
+    if (auto It = Completed.find(K); It != Completed.end()) {
+      const CompletedProof &Proof = It->second;
+      if (sameOccurrence(Value, Proof.Occurrence) &&
+          Proof.Steps <= kMaxProofSteps - Steps &&
+          Proof.Depth <=
+              ::neverd::limits::ir::kMedStackAlignmentResolveDepthLimit -
+                  Depth) {
+        // Charge every original input traversal, including repeated DAG edges.
+        Steps += Proof.Steps;
+        Deepest = std::max(Deepest, Depth + Proof.Depth);
+        return Proof.Offset;
+      }
+    }
+    const size_t Before = Steps;
+    const size_t BeforeContext = ContextUses;
+    const unsigned OuterDepth = Deepest;
+    Deepest = Depth;
+    const auto Result = join(*Definition.Join, Definition, Depth);
+    const unsigned InnerDepth = Deepest;
+    Deepest = std::max(OuterDepth, InnerDepth);
+    // A successful traversal that never reads a loop assumption or an active
+    // definition is independent of its ancestors. Failed or cyclic proofs
+    // remain live queries, including joins that establish an assumed offset.
+    if (Result && ContextUses == BeforeContext)
+      Completed.insert_or_assign(
+          K,
+          CompletedProof{Value, *Result, Steps - Before, InnerDepth - Depth});
+    return Result;
+  }
+
   std::optional<int64_t> resolve(const MedVar &Value, unsigned Depth) {
-    // Joins can share their inputs, and nothing is cached, so bound the work
-    // of one query.
+    Deepest = std::max(Deepest, Depth);
+    // Keep the per-query work limit even when shared inputs reuse a proof.
     if (++Steps > kMaxProofSteps)
       return std::nullopt;
     if (Depth > ::neverd::limits::ir::kMedStackAlignmentResolveDepthLimit ||
@@ -258,18 +309,20 @@ private:
          (FollowJoins && Value.SSAVer == 0 &&
           (!Definition || !Definition->Op))))
       return 0;
-    if (auto It = Assumed.find(K); It != Assumed.end())
+    if (auto It = Assumed.find(K); It != Assumed.end()) {
+      ++ContextUses;
       return It->second;
+    }
     if (!Definition)
       return std::nullopt;
     if (Definition->Active) {
+      ++ContextUses;
       CycleHit = true;
       return std::nullopt;
     }
     Definition->Active = true;
     if (Definition->Join) {
-      std::optional<int64_t> Result =
-          join(*Definition->Join, *Definition, Depth);
+      std::optional<int64_t> Result = resolveJoin(Value, *Definition, Depth);
       Definition->Active = false;
       return Result;
     }
@@ -324,8 +377,12 @@ private:
   // executed before its mask. Ordinary entry-offset queries also follow joins.
   const std::set<const MedOp *> *AllowedDefinitions = nullptr;
   // All definitions are inserted before queries begin, so their addresses stay
-  // stable during traversal. Offsets and failed proofs are not cached.
+  // stable during traversal. Only read-only proofs follow joins. Their
+  // completed traversals retain the exact occurrence, work and depth proved.
   llvm::DenseMap<Key, ValueDefinition> Definitions;
+  llvm::DenseMap<Key, CompletedProof> Completed;
+  size_t ContextUses = 0;
+  unsigned Deepest = 0;
   std::map<Key, int64_t> Assumed;
   bool CycleHit = false;
   static constexpr size_t kMaxProofSteps =
