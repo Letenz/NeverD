@@ -13,6 +13,7 @@
 #ifndef NEVERD_BACKEND_C_RENDER_AARCH64PAUTHC_H
 #define NEVERD_BACKEND_C_RENDER_AARCH64PAUTHC_H
 
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -20,6 +21,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FormatVariadic.h"
 
+#include <stdexcept>
 #include <string>
 
 namespace neverd {
@@ -56,6 +58,18 @@ inline std::string aarch64PAuthMachineC(const AArch64PAuthOperation &Operation,
                  : llvm::formatv(kAArch64PAuthCModifier, Modifier).str())
              .str() +
          Name + "; })";
+}
+
+inline std::string aarch64PAuthLRC(const AArch64PAuthLROperation &Operation,
+                                   llvm::ArrayRef<std::string> Args) {
+  if (Args.size() != 3)
+    throw std::invalid_argument(kAArch64PAuthMalformedOperation);
+  const std::string Name =
+      aarch64PAuthTemporary(kAArch64PAuthCPointer, {Args[0], Args[1], Args[2]});
+  return llvm::formatv(kAArch64PAuthLRMachineC, Name,
+                       escapeCString(Operation.llvmAsm()), Args[0], Args[1],
+                       Args[2])
+      .str();
 }
 
 inline std::string aarch64PAuthAuthenticateC(llvm::StringRef Pointer,

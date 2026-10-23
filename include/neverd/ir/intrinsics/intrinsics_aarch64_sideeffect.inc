@@ -104,3 +104,7 @@ SIDEEFFECT(Intrinsic::A64_AuthBranch);
 // Checked arithmetic observes architectural enable controls.
 #define NEVERD_A64_CPA(Id, ...) SIDEEFFECT(Intrinsic::Id);
 #include "neverd/ir/intrinsics/AArch64CPA.def"
+
+#define NEVERD_A64_PAUTH_LR_OPERATION(Id, Mnemonic, ...)                       \
+  SIDEEFFECT(Intrinsic::Id);
+#include "neverd/ir/intrinsics/AArch64PAuthLR.def"
