@@ -701,6 +701,31 @@ evaluation per operation, high-bit operands and VMREAD's failed-read prior.
 They do not claim successful privileged VM entry, VM exit or VMCB-state
 qualification. The production SDK tag, checksums and submodule are unchanged.
 
+The next native mapping covers CLTS, implicit-register WRMSRNS, RDMSRLIST,
+WRMSRLIST, register/default-memory LKGS, INVLPGB and TLBSYNC. LLVM and both C
+routes share that inventory. WRMSRNS combines the lifted EDX:EAX halves into
+the native i64 value; projecting a raw native call back to assembly evaluates
+that value once before splitting it. MSRLIST retains both instruction-owned
+table pointers and its actual full-width RCX completion, including dead-result
+effects. INVLPGB retains the code-mode distinction and long-mode address-size
+override. Native API calls with an incompatible mode, result or memory effect
+are rejected by the C projection.
+
+Segmented LKGS still uses the assembly contract because the current pointer
+API cannot represent a separate segment offset. This mapping does not replace
+other system instruction families with mismatched native interfaces. The
+production SDK continues to use assembly IR, while the same generated C can
+select NeverC's existing header-free builtins.
+
+Qualification passes 84 native modules and 240 NeverC C-to-IR compilations
+across both source routes, three formats and O0/O2, with explicit RSI/RDI
+fixture inputs on Win64. The C matrix also passes using the old pinned SDK's
+assembly IR. Both SDK profiles pass the system-state, implicit-MSR and system
+extension regressions; native-only checks explicitly skip on the old SDK.
+NeverC-compiled C passes the controlled MSR fault/completion/restart oracle,
+including dead outputs and empty masks. The 115 LLVM-to-C value tests pass on
+the native SDK. These checks do not establish successful privileged execution.
+
 ## Reproducible checks
 
 Build these targets in a configured test build (see [testing.md](testing.md)):

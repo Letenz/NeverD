@@ -21,6 +21,7 @@
 #include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86SystemRegister.h"
+#include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
 
@@ -1542,6 +1543,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if (Opts.TheArch == Arch::X64 &&
           x86VirtualizationContract(Ex.IntrinsicId).Mnemonic)
         NeedsX86VirtualizationDispatch = true;
+      if (Opts.TheArch == Arch::X64)
+        for (const auto Id : X86SystemStateNativeInventory)
+          NeedsX86SystemStateDispatch |= Id == Ex.IntrinsicId;
       if (Opts.Format != BinaryFormat::COFF &&
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
@@ -4417,6 +4421,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
     OS << X86SystemRegisterCompilerDispatch;
   if (NeedsX86VirtualizationDispatch)
     OS << X86VirtualizationCompilerDispatch;
+  if (NeedsX86SystemStateDispatch)
+    OS << X86SystemStateCompilerDispatch;
   writeX87ContextHelpers(Funcs);
   writeX86FPStateCHelpers(OS, X86FPStateHelpers);
   writeMemoryHelpers();

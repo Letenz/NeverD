@@ -2096,6 +2096,15 @@ compiled by the linked SDK rather than sent to an incompatible system Clang.
 `LLVMCValues.NativeVirtualizationKeepsStatusAndFailedReadPrior` supplies controlled
 VMX completion values to check C status conversion, exact operand evaluation
 and failed-read preservation without executing privileged instructions.
+`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 84 modules for
+CLTS, WRMSRNS, MSRLIST, default-address LKGS, INVLPGB and TLBSYNC. The corresponding
+NeverC test requires 240 C-to-native-IR compilations with no inline assembly;
+its fixtures explicitly initialize RSI/RDI across ABIs. The native-call refusal
+test checks mode, result identity and lost memory/nonreturning effects.
+`X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart` compiles both C
+routes with NeverC and executes the existing fault/register/completion/restart
+oracle at O0/O2. This uses controlled signal continuation and does not qualify
+successful privileged MSR access. Both NeverC tests use `NEVERD_TEST_NEVERC`.
 `SessionCAPITest.IntrinsicSourcePagesKeepTheExecutedInstruction` checks CPUID in
 C, LLVMC, pseudocode and HighIR, alongside CLI/STI effect rows. Native HighIR
 paging also shares the UTF-8,
