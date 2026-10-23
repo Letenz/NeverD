@@ -18,6 +18,7 @@
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
+#include "neverd/loader/MachO/MachOMetadataPointer.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/loader/RelocationProvenance.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -542,5 +543,106 @@ TEST(MachOArm64e, RejectsMalformedChainsWithoutPublishingTheirPrefix) {
     EXPECT_TRUE(F.Image.MachOAuthenticatedPointers.empty());
     EXPECT_TRUE(F.Image.MachOResolvedChainedPointerSlots.empty());
     EXPECT_TRUE(F.Image.DyldBindSlots.empty());
+  }
+}
+
+TEST(MachOArm64e, MetadataTargetsRequireUnchangedUnambiguousLocalRecipes) {
+  using macho_loader::readMetadataPointerTarget;
+  for (uint16_t Format : {1, 7, 9, 10, 12, 14}) {
+    Chain Fixture(Format);
+    // Segmented format 14 uses this fixture's segment zero + 0x80.
+    const uint64_t Raw = 0x8007432100000000ULL | (Format == 14 ? 0x80 : 0x1080);
+    Fixture.word(0, Raw);
+    Fixture.parse();
+    ASSERT_TRUE(Fixture.Image.MachOChainedFixupsError.empty());
+    ASSERT_EQ(Fixture.Image.MachOAuthenticatedPointers.size(), 1);
+    EXPECT_EQ(Fixture.Image.MachOAuthenticatedPointers.at(Data).EncodedValue,
+              Raw);
+    EXPECT_EQ(readMetadataPointerTarget(Fixture.Image, Data), Data + 0x80);
+    EXPECT_EQ(Fixture.word(0), Raw);
+    for (unsigned Invalid = 0; Invalid < 14; ++Invalid) {
+      SCOPED_TRACE(testing::Message() << Format << " " << Invalid);
+      auto Image = Fixture.Image;
+      auto &Recipe = Image.MachOAuthenticatedPointers.at(Data);
+      switch (Invalid) {
+      case 0:
+        Recipe.EncodedValue.reset();
+        break;
+      case 1:
+        Image.Segments[0].Data[0] ^= 1;
+        break;
+      case 2:
+        Recipe.Key = 1;
+        break;
+      case 3:
+        Recipe.Diversity ^= 1;
+        break;
+      case 4:
+        Recipe.AddressDiversity = false;
+        break;
+      case 5:
+        Recipe.Target = InvalidVA;
+        Recipe.Symbol = "_imported";
+        break;
+      case 6:
+        Recipe.Target = Data + 0x2000;
+        break;
+      case 7:
+        Image.MachOChainedFixupsAmbiguous = true;
+        break;
+      case 8:
+        Image.MachOResolvedChainedPointerSlots.insert(Data);
+        break;
+      case 9:
+        Image.MachOAuthenticatedPointers.emplace(Data + 4, Recipe);
+        break;
+      case 10:
+        Image.DyldBindSlots[Data - 4] = {"_conflict", 0};
+        break;
+      case 11:
+        Image.ConflictingImportStorageSlots.insert(Data);
+        break;
+      case 12:
+        Image.Segments.push_back(Image.Segments[0]);
+        break;
+      case 13:
+        Image.Segments[0].FileSz = 4;
+        break;
+      }
+      EXPECT_FALSE(readMetadataPointerTarget(Image, Data));
+    }
+    for (unsigned Offset = 1; Offset < 8; ++Offset)
+      EXPECT_FALSE(readMetadataPointerTarget(Fixture.Image, Data + Offset));
+  }
+}
+
+TEST(MachOArm64e, AuthenticatedInitializersAndFinalizersAreDiscovered) {
+  for (uint32_t Kind : {S_MOD_INIT_FUNC_POINTERS, S_MOD_TERM_FUNC_POINTERS,
+                        S_THREAD_LOCAL_INIT_FUNCTION_POINTERS}) {
+    Chain Fixture(DYLD_CHAINED_PTR_ARM64E_USERLAND);
+    const uint64_t Raw = 0x8000000000001080ULL;
+    Fixture.word(0, Raw);
+    Fixture.Image.Segments[0].Flags =
+        SegmentFlags::Readable | SegmentFlags::Executable;
+    Fixture.Image.Sections[0].Flags = Fixture.Image.Segments[0].Flags;
+    Fixture.parse();
+    macho_loader::SectionInfo Section{};
+    Section.Addr = Data;
+    Section.Size = 8;
+    Section.Flags = Kind;
+    macho_loader::parseRuntimeFunctionSections({Section}, Base, Fixture.Image);
+    const auto &Functions = Kind == S_MOD_TERM_FUNC_POINTERS
+                                ? Fixture.Image.DynInfo.FiniArray
+                                : Fixture.Image.DynInfo.InitArray;
+    ASSERT_EQ(Functions.size(), 1);
+    EXPECT_EQ(Functions[0], Data + 0x80);
+    EXPECT_EQ(Fixture.word(0), Raw);
+    EXPECT_TRUE(Fixture.Image.MachOResolvedChainedPointerSlots.empty());
+    Fixture.Image.DynInfo.InitArray.clear();
+    Fixture.Image.DynInfo.FiniArray.clear();
+    Fixture.word(0, Data + 0x80); // Editing bytes invalidates the recipe.
+    macho_loader::parseRuntimeFunctionSections({Section}, Base, Fixture.Image);
+    EXPECT_TRUE(Fixture.Image.DynInfo.InitArray.empty());
+    EXPECT_TRUE(Fixture.Image.DynInfo.FiniArray.empty());
   }
 }

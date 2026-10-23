@@ -87,15 +87,10 @@ class RuntimeReader {
   }
 
   std::optional<va_t> pointer(va_t VA) {
-    const auto *P = bytes(VA, 8);
-    if (!P)
-      return std::nullopt;
-    const uint64_t Value = llvm::support::endian::read64le(P);
-    if (Value && Img.MachOHasChainedFixups &&
-        !Img.MachOResolvedChainedPointerSlots.count(VA)) {
-      diagnostic("Objective-C pointer slot has an unresolved chained fixup");
-      return std::nullopt;
-    }
+    const objc::RuntimeData Data(Img, objc::PointerView::MetadataTarget);
+    const auto Value = Data.pointer(VA);
+    if (!Value)
+      diagnostic(macho_loader::arm64e::kObjCMetadataPointerUnavailable);
     return Value;
   }
 
@@ -259,7 +254,7 @@ class RuntimeReader {
 
   void readCategory(va_t VA, const ImportStorageSlotCollection &Imports,
                     std::set<va_t> &Classes) {
-    const objc::RuntimeData Data(Img);
+    const objc::RuntimeData Data(Img, objc::PointerView::MetadataTarget);
     // The non-fragile category ABI has six common pointer fields. The seventh
     // (class properties) and newer compiler size fields are optional on disk;
     // do not infer their presence from sizeof a current runtime structure.
@@ -376,7 +371,7 @@ public:
     // Categories may precede their classes in section order, and +load entries
     // appear in both lists. Resolve classes first and visit each category once.
     const auto Imports = Img.collectImportStorageSlots();
-    const objc::RuntimeData Data(Img);
+    const objc::RuntimeData Data(Img, objc::PointerView::MetadataTarget);
     std::set<va_t> Categories;
     for (const Section &Sec : Img.Sections) {
       if (Sec.Name != "__objc_catlist" && Sec.Name != "__objc_nlcatlist")

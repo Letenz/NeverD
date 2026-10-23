@@ -37,6 +37,14 @@ modifiers; each key must change at least one pointer, excluding a NOP profile.
 Other architectures skip both native checks. These tests do not certify
 arm64e ABI reconstruction or invalid-signature traps.
 
+The same target checks scalar CPA instructions through both decoder routes,
+including shifts, SP, XZR and overlapping operands. Malformed widths and
+arities cannot grant call-argument proofs. LLVM O2 and both C projections
+retain the actual instruction even with a dead result; generated C compiles
+at O0/O2, with parameter-flow checks for temporary-name collisions. Vector
+CPA forms must reject instead of becoming unchecked arithmetic. These are
+instruction-preservation checks, not native CPA/CPA2 execution qualification.
+
 The same target checks public Mach-O loading, CPU subtype capability bits,
 arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
 multi-start pages, tagged pointers, malformed chains and unsupported layouts.
@@ -50,6 +58,15 @@ and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
 also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
+Analysis-only metadata tests follow local authentication recipes for every
+supported chained format and for authenticated object relocations. Stale
+bytes, signing-field mismatches, conflicting provenance, overlapping storage
+and imported or unmapped targets reject. Initializer/finalizer discovery must
+leave recipe bytes unchanged. A real Clang arm64e Objective-C object at O0/O2
+must recover its class, selector, signature and signed IMP. Category fixtures
+exercise authenticated class, metaclass and method records in
+`NeverDObjCSourceCallTests`; its source-binding tests retain the plain-object
+reconstruction restriction.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent

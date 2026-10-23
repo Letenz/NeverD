@@ -6,6 +6,7 @@
 
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -64,6 +65,8 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
     return invalid("intrinsic has no constant intrinsic ID");
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (aarch64CPAOperation(Id) && !lowAArch64CPAShapeIsValid(Op))
+    return invalid(kAArch64CPAMalformedOperation);
   if (isX87ConstantControlIntrinsic(Id) &&
       !x87ConstantControlShapeIsValid(
           Id, x87ConstantControlLowShape(Op, Arch::X64)))

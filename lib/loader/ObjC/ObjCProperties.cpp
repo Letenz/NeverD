@@ -153,7 +153,7 @@ void accessorHints(ObjCProperty &Property, Arch Architecture) {
 
 bool readPropertyList(BinaryImage &Image, va_t Slot, const ObjCProperty &Owner,
                       size_t &Remaining) {
-  const RuntimeData Data(Image);
+  const RuntimeData Data(Image, PointerView::MetadataTarget);
   const auto List = Data.localPointer(Slot);
   if (!List) {
     diagnostic(Image, "Objective-C property-list pointer is unavailable");

@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
@@ -54,6 +55,16 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
   // Preserve the tied input/output of machine PAC/AUT/XPAC; the generic asm
   // renderer cannot infer that constraint from operand numbers alone.
   if (AArch64) {
+    for (const auto &Operation : kAArch64CPAOperations) {
+      if (AsmStr != Operation.MachineAsm)
+        continue;
+      const auto Value = aarch64CPAC(Operation, Args);
+      return {
+          ResultLive && !ResultName.empty()
+              ? llvm::formatv(kAArch64CPACAssignment, ResultName, Value).str()
+              : llvm::formatv(kAArch64CPACDiscard, Value).str(),
+          false};
+    }
     for (const auto &Auth : kAArch64PAuthOperations) {
       if (AsmStr != Auth.llvmAsm() || Args.size() != (Auth.Strip ? 1 : 2))
         continue;

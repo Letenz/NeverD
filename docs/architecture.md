@@ -118,6 +118,17 @@ PACGA retains two independent 64-bit inputs and its generic signing operation.
 Both C routes emit the real instruction with an explicit output constraint;
 they do not depend on a nonexistent ACLE builtin or an unresolved LLVM helper.
 
+Scalar FEAT_CPA `ADDPT`, `SUBPT`, `MADDPT` and `MSUBPT` retain checked-pointer
+operations rather than ordinary integer arithmetic. `AArch64CPA.def` owns
+their encodings, operand widths and LLVM contracts; `AArch64CPAC.def` owns
+both C projections. The machine instruction observes the execution host's
+checking controls and preserves poisoning behavior. Fixed scratch registers
+and raw instruction words support assemblers predating CPA mnemonics, with
+explicit operand and clobber constraints. Compilation does not establish CPU
+feature availability. SVE CPA forms fail explicitly until scalable state is
+modelled. These operations preserve call argument setup and frame taint,
+without proving a checked result is an ordinary arithmetic value.
+
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
 their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
 Segmented format 14 retains the original load-command segment indices and
@@ -129,6 +140,13 @@ diversity and addend. Original authenticated slot bytes remain on-disk recipes;
 they are neither process-signed values nor ordinary raw-pointer/import proofs.
 Immutable readers reject every overlapping byte. Source projections keep
 storage containing recipes external rather than inventing global initializers.
+Metadata discovery has a separate `readMetadataPointerTarget` path. Validated
+local recipes can identify Objective-C classes, categories, methods, protocols,
+properties and runtime initializer/finalizer functions. The original encoded
+word must still match the loader's snapshot and signing fields; imported,
+conflicting, overlapping or stale storage cannot establish a local target.
+The Objective-C reader opts into this view explicitly. Plain runtime value
+readers and source object reconstruction do not acquire that permission.
 The formats follow Apple's [dyld definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)
 and LLVM's [pointer-authentication contract](https://llvm.org/docs/PointerAuth.html).
 
