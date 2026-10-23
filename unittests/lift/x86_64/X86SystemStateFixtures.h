@@ -96,8 +96,44 @@ inline std::vector<SystemEncoding> systemMemoryEncodings(Arch A) {
   return E;
 }
 
+inline std::vector<SystemEncoding> systemExtensionEncodings(Arch A) {
+  std::vector<SystemEncoding> E = {
+      {{0xf3, 0x0f, 0x3a, 0xf0, 0xc0, 0xab},
+       Intrinsic::X86HistoryReset,
+       "hreset"},
+      {{0x0f, 0x01, 0xfe}, Intrinsic::X86InvalidateBroadcast, "invlpgb"},
+      {{0x0f, 0x01, 0xff}, Intrinsic::X86TlbSync, "tlbsync"}};
+  if (A == Arch::X64) {
+    E.push_back({{0x67, 0x0f, 0x01, 0xfe},
+                 Intrinsic::X86InvalidateBroadcast,
+                 "invlpgb"});
+    E.push_back(
+        {{0xf3, 0x0f, 0x01, 0xee}, Intrinsic::X86ClearUserInterrupt, "clui"});
+    E.push_back(
+        {{0xf3, 0x0f, 0x01, 0xef}, Intrinsic::X86SetUserInterrupt, "stui"});
+    E.push_back(
+        {{0xf3, 0x0f, 0x01, 0xed}, Intrinsic::X86TestUserInterrupt, "testui"});
+    E.push_back({{0xf3, 0x0f, 0xc7, 0xf6},
+                 Intrinsic::X86SendUserInterrupt,
+                 "senduipi"});
+    E.push_back({{0xf2, 0x0f, 0x00, 0xf6}, Intrinsic::X86LoadKernelGs, "lkgs"});
+    for (uint8_t Segment : {0, 0x64, 0x65})
+      for (bool Address32 : {false, true}) {
+        std::vector<uint8_t> Bytes;
+        if (Segment)
+          Bytes.push_back(Segment);
+        if (Address32)
+          Bytes.push_back(0x67);
+        Bytes.insert(Bytes.end(), {0xf2, 0x0f, 0x00, 0x36}); // word [rsi/esi]
+        E.push_back({Bytes, Intrinsic::X86LoadKernelGsMemory, "lkgs"});
+      }
+  }
+  return E;
+}
+
 inline std::vector<SystemEncoding> systemEncodings(Arch A) {
   std::vector<SystemEncoding> E = {
+      {{0x0f, 0x01, 0xc6}, Intrinsic::X86WriteMsrNonSerializing, "wrmsrns"},
       {{0xf3, 0x0f, 0xc7, 0xf8}, Intrinsic::X86ReadPid, "rdpid"},
       {{0x0f, 0x06}, Intrinsic::X86ClearTaskSwitched, "clts"},
       {{0xf3, 0x0f, 0xae, 0xf0}, Intrinsic::X86UserMonitor, "umonitor"},
@@ -112,12 +148,18 @@ inline std::vector<SystemEncoding> systemEncodings(Arch A) {
        Intrinsic::X86LoadAccessRightsMemory,
        "lar"},
   };
+  const auto Extensions = systemExtensionEncodings(A);
+  E.insert(E.end(), Extensions.begin(), Extensions.end());
   if (A == Arch::X86) {
     E.push_back({{0x63, 0xc8}, Intrinsic::X86AdjustRpl, "arpl"});
     E.push_back({{0x63, 0x0c, 0x24}, Intrinsic::X86AdjustRplMemory, "arpl"});
     E.push_back(
         {{0x64, 0x63, 0x0c, 0x24}, Intrinsic::X86AdjustRplMemory, "arpl"});
   } else {
+    E.push_back(
+        {{0xf2, 0x0f, 0x01, 0xc6}, Intrinsic::X86ReadMsrList, "rdmsrlist"});
+    E.push_back(
+        {{0xf3, 0x0f, 0x01, 0xc6}, Intrinsic::X86WriteMsrList, "wrmsrlist"});
     for (const bool Wide : {false, true})
       for (const unsigned Op : {0u, 1u, 2u, 3u}) {
         std::vector<uint8_t> Bytes{0xf3};

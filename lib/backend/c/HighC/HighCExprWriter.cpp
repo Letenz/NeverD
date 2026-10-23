@@ -14,6 +14,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86Sgx.h"
 #include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
@@ -1963,6 +1964,14 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX86SgxIntrinsic(E.IntrinsicId))
+    return renderX86SgxExpression(
+        Opts.TheArch, E,
+        [this](const HighExpr &V) { return intrinsicOperandStr(V); },
+        [this](const MedVar &V) { return varName(V); },
+        [this](const MedVar &V) {
+          return !Analysis.DeadVars.count(varName(V));
+        });
   if (isX87ContextIntrinsic(E.IntrinsicId))
     return renderX87ContextCall(E);
   // In an Itanium handler the exception the runtime took is the catch's
@@ -2014,7 +2023,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
            exprStr(*E.Operands[0]) + "); __asm__ volatile(\"" + Op +
            "\" : \"+r\"(" + Temp + ") :: \"memory\"); " + Result + "; })";
   }
-  if (isX86SystemStateIntrinsic(E.IntrinsicId)) {
+  if (isX86SystemStateIntrinsic(E.IntrinsicId) ||
+      E.IntrinsicId == Intrinsic::X86MsrAccess) {
     std::vector<std::string> Arguments;
     for (const auto &Operand : E.Operands)
       Arguments.push_back(Operand ? exprStr(*Operand) : "");

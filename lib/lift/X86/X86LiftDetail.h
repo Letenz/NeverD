@@ -366,6 +366,8 @@ bool liftSHA512(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                 const cs_x86 &X86);
 
 /// System state, selector and user-wait operands and completion.
+bool liftSgx(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
+             const cs_x86 &X86);
 bool liftSystemState(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                      const cs_x86 &X86);
 

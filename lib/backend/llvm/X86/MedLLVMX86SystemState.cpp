@@ -21,16 +21,44 @@ namespace neverd {
 
 llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
                                                 llvm::IRBuilder<> &Builder) {
+  if (Id == Intrinsic::X86MsrAccess) {
+    if (TargetArch != Arch::X64 ||
+        !intrinsicX86MsrAccessShapeIsValid(Id, x86MsrAccessMedShape(Op)))
+      llvm::report_fatal_error("invalid x86 MSR operand/output contract");
+    const auto P = x86MsrAccessAsm(
+        static_cast<X86MsrAccessKind>(Op.Inputs[1].ConstVal), TargetArch);
+    if (!P)
+      llvm::report_fatal_error("unsupported x86 MSR assembly contract");
+    std::vector<llvm::Value *> Arguments;
+    std::vector<llvm::Type *> Types;
+    for (size_t I = 0; I < P->InputBytes.size(); ++I) {
+      auto *T = sizeToType(P->InputBytes[I]);
+      auto *V = getVar(Op.Inputs[I + 2], Builder);
+      Arguments.push_back(V->getType()->isPointerTy()
+                              ? Builder.CreatePtrToInt(V, T)
+                              : Builder.CreateZExtOrTrunc(V, T));
+      Types.push_back(T);
+    }
+    auto *Result = P->OutputBytes.empty() ? Builder.getVoidTy()
+                                          : sizeToType(P->OutputBytes[0]);
+    auto *Asm = llvm::InlineAsm::get(
+        llvm::FunctionType::get(Result, Types, false), P->Text, P->Constraints,
+        /*hasSideEffects=*/true);
+    return Builder.CreateCall(Asm, Arguments);
+  }
   const auto Shape = x86SystemStateMedShape(Op, TargetArch);
   if (!x86SystemStateShapeIsValid(Id, Shape))
     llvm::report_fatal_error("invalid x86 system instruction operand contract");
   const auto C = x86SystemStateContract(Id);
-  const auto P = x86SystemStateAsm(
-      Id, TargetArch, x86SystemStateWidth(Id, Shape), Op.MemoryAddressSpace);
+  const auto P =
+      x86SystemStateAsm(Id, TargetArch, x86SystemStateWidth(Id, Shape),
+                        Op.MemoryAddressSpace, Shape.SegmentedBlockSelector);
   if (!P)
     llvm::report_fatal_error("unsupported x86 system assembly contract");
   std::vector<llvm::Value *> Arguments;
   std::vector<llvm::Type *> Types;
+  const unsigned FirstInput =
+      C.Kind == X86SystemStateKind::SegmentedBlock ? 2 : 1;
   for (size_t I = 0; I < P->InputBytes.size(); ++I) {
     auto *T = sizeToType(P->InputBytes[I]);
     llvm::Value *V;
@@ -43,8 +71,12 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
                                  sizeToType(AccessBytes), Builder, Space);
       if (Space == NdMemoryAddressSpace::Default)
         T = V->getType();
-    } else
-      V = getVar(Op.Inputs[I + 1], Builder);
+    } else if (C.Kind == X86SystemStateKind::SegmentedBlock)
+      // A segment offset may equal an image VA without naming its replacement.
+      // Reuse the FS/GS offset materializer, including non-constant SSA copies.
+      V = getRawSegmentOffset(Op.Inputs[I + FirstInput], Builder);
+    else
+      V = getVar(Op.Inputs[I + FirstInput], Builder);
     if (V->getType() != T)
       V = V->getType()->isPointerTy() ? Builder.CreatePtrToInt(V, T)
                                       : Builder.CreateZExtOrTrunc(V, T);

@@ -2147,9 +2147,6 @@ renderX86MultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 const char *x86HighCIntrinsicFatalReason(Intrinsic Id) {
   using I = Intrinsic;
   switch (Id) {
-  case I::X86MsrAccess:
-    return "x86 MSR access requires an authenticated architectural execution "
-           "environment";
   case I::X86RequireDivPrecondition:
     return "x86 division precondition requires an architectural fault "
            "environment";

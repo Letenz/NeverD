@@ -32,12 +32,14 @@ struct X86SystemStateAsm {
 
 inline std::optional<X86SystemStateAsm>
 x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
-                  NdMemoryAddressSpace Space) {
+                  NdMemoryAddressSpace Space,
+                  std::optional<uint16_t> Selector = std::nullopt) {
   const auto C = x86SystemStateContract(Id);
-  const auto L = x86SystemStateLayout(Id, TargetArch, Width);
+  const auto L = x86SystemStateLayout(Id, TargetArch, Width, Selector);
   if (!L || (TargetArch != Arch::X86 && TargetArch != Arch::X64) ||
       !isKnownMemoryAddressSpace(Space) ||
-      (C.MemoryArgument < 0 && Space != NdMemoryAddressSpace::Default))
+      ((C.MemoryArgument < 0 || C.Kind == X86SystemStateKind::MsrList) &&
+       Space != NdMemoryAddressSpace::Default))
     return std::nullopt;
   X86SystemStateAsm P;
   P.Id = Id;
@@ -66,6 +68,24 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   auto Memory = [&](unsigned I) { return Segment + "(" + Input(I) + ")"; };
   using K = X86SystemStateKind;
   switch (C.Kind) {
+  case K::SegmentedBlock: {
+    const char *Mnemonics[] = {"movdir64b", "enqcmd", "enqcmds"};
+    const char *Segments[] = {"%es:", "%cs:", "%ss:", "%ds:", "%fs:", "%gs:"};
+    const auto Value = *Selector;
+    const auto Modifier = Value & X86SegmentedBlockAddress16 ? ":w}" : ":k}";
+    auto Offset = [&](unsigned I) {
+      return "${" + std::to_string(P.OutputBytes.size() + I) + Modifier;
+    };
+    P.Text += "\n\t" + std::string(Mnemonics[Value & 3]) + " " +
+              Segments[(Value >> 2) & 7] + "(" + Offset(0) + "), " + Offset(1);
+    if (L->HasFlag)
+      P.Text += "\n\tsetz $0";
+    P.InputBytes = {4, 4};
+    // SI is a legal base for both addr16 and addr32. Explicitly name the
+    // source segment, including default SS, independently of allocation.
+    P.InputConstraints = {"{si}", "{di}"};
+    break;
+  }
   case K::ReadPid:
   case K::ReadBase:
     P.Text += " $0";
@@ -74,6 +94,28 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
     P.Text += " " + Input(0);
     break;
   case K::Void:
+  case K::Void64:
+    break;
+  case K::TestUserInterrupt:
+    P.Text += "\n\tsetc $0";
+    break;
+  case K::SendUserInterrupt:
+    P.Text += " " + Input(0);
+    break;
+  case K::LoadKernelGs:
+    P.Text += " " + (C.MemoryArgument == 0 ? Memory(0) : Input(0));
+    break;
+  case K::HistoryReset:
+    // The encoded imm8 is ignored, including nonzero values. Keep EAX live.
+    P.Text += " $$0";
+    P.InputConstraints = {"{ax}"};
+    break;
+  case K::InvalidateBroadcast:
+    P.InputConstraints = {"{ax}", "{dx}", "{cx}"};
+    // LLVM's mnemonic chooses the default address size. Preserve addr32
+    // explicitly even if the value could fit in a 64-bit operand.
+    if (TargetArch == Arch::X64 && Width == 4)
+      P.Text = "addr32 " + P.Text;
     break;
   case K::Monitor:
     if (!Segment.empty())
@@ -109,6 +151,13 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   case K::DirectStore64B:
     P.Text += " " + Memory(0) + ", " + Input(1);
     break;
+  case K::WriteMsr:
+    P.InputConstraints = {"{cx}", "{ax}", "{dx}"};
+    break;
+  case K::MsrList:
+    P.OutputConstraints = {"={cx}"};
+    P.InputConstraints = {"{si}", "{di}", "0"};
+    break;
   }
   auto Constraint = [&](const std::string &Text) {
     if (!P.Constraints.empty())
@@ -122,6 +171,56 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   if (P.ChangesFlags)
     Constraint("~{cc}");
   Constraint("~{memory}");
+  return P;
+}
+
+/// Fixed RAX data and RCX selector operands keep the documented ModRM roles.
+/// LLVM 23's URDMSR register assembler reverses those roles. Exact bytes also
+/// retain APX feature checks when an EVEX operand is allocated a low register.
+inline std::optional<X86SystemStateAsm> x86MsrAccessAsm(X86MsrAccessKind Kind,
+                                                        Arch TargetArch) {
+  if (TargetArch != Arch::X64 || Kind >= X86MsrAccessKind::Count)
+    return std::nullopt;
+  using K = X86MsrAccessKind;
+  const bool Write = x86MsrAccessIsWrite(Kind);
+  const bool Immediate = x86MsrAccessHasImmediateSelector(Kind);
+  const bool Privileged =
+      Kind == K::RdmsrImmediate || Kind == K::WrmsrnsImmediate ||
+      Kind == K::RdmsrVexImmediate || Kind == K::WrmsrnsVexImmediate;
+  const bool Evex =
+      Kind == K::RdmsrImmediate || Kind == K::WrmsrnsImmediate ||
+      Kind == K::UrdmsrEvexRegister || Kind == K::UwrmsrEvexRegister ||
+      Kind == K::UrdmsrEvexImmediate || Kind == K::UwrmsrEvexImmediate;
+  X86SystemStateAsm P;
+  P.Id = Intrinsic::X86MsrAccess;
+  P.Text = "# x86 MSR: ";
+  P.Text += Privileged ? (Write ? "wrmsrns" : "rdmsr")
+                       : (Write ? "uwrmsr" : "urdmsr");
+  P.Text += Evex ? " (EVEX)" : Immediate ? " (VEX)" : " (legacy)";
+  P.Text += "\n\t.byte ";
+  if (Evex) {
+    P.Text += Immediate ? "0x62,0xf7," : "0x62,0xf4,";
+    P.Text += Write ? "0x7e,0x08," : "0x7f,0x08,";
+  } else if (Immediate) {
+    P.Text += Write ? "0xc4,0xe7,0x7a," : "0xc4,0xe7,0x7b,";
+  } else {
+    P.Text += Write ? "0xf3,0x0f,0x38," : "0xf2,0x0f,0x38,";
+  }
+  P.Text += Privileged ? "0xf6," : "0xf8,";
+  P.Text += Immediate ? "0xc0" : "0xc8";
+  if (Immediate)
+    P.Text += Write ? "\n\t.long ${0:c}" : "\n\t.long ${1:c}";
+  P.InputConstraints = {Immediate ? "i" : "{cx}"};
+  P.InputBytes = {static_cast<uint16_t>(Immediate ? 4 : 8)};
+  if (Write) {
+    P.InputConstraints.push_back("{ax}");
+    P.InputBytes.push_back(8);
+    P.Constraints = Immediate ? "i,{ax},~{memory}" : "{cx},{ax},~{memory}";
+  } else {
+    P.OutputConstraints = {"={ax}"};
+    P.OutputBytes = {8};
+    P.Constraints = Immediate ? "={ax},i,~{memory}" : "={ax},{cx},~{memory}";
+  }
   return P;
 }
 

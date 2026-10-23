@@ -68,18 +68,22 @@ enum class X86MsrAccessKind : uint8_t {
   UwrmsrEvexRegister,
   UrdmsrEvexImmediate,
   UwrmsrEvexImmediate,
+  RdmsrVexImmediate,
+  WrmsrnsVexImmediate,
   Count,
 };
 
 constexpr bool x86MsrAccessIsWrite(X86MsrAccessKind Kind) {
   switch (Kind) {
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
   case X86MsrAccessKind::UwrmsrLegacyRegister:
   case X86MsrAccessKind::UwrmsrVexImmediate:
   case X86MsrAccessKind::UwrmsrEvexRegister:
   case X86MsrAccessKind::UwrmsrEvexImmediate:
     return true;
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrLegacyRegister:
   case X86MsrAccessKind::UrdmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrEvexRegister:
@@ -93,7 +97,9 @@ constexpr bool x86MsrAccessIsWrite(X86MsrAccessKind Kind) {
 constexpr bool x86MsrAccessHasImmediateSelector(X86MsrAccessKind Kind) {
   switch (Kind) {
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
   case X86MsrAccessKind::UrdmsrVexImmediate:
   case X86MsrAccessKind::UwrmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrEvexImmediate:
@@ -382,6 +388,12 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/X86SystemState.def"
 #undef NEVERD_X86_SYSTEM_STATE
 
+  // Append-only: bounded SGX supervisor/VMM completion.
+  X86Encls,
+  X86Enclv,
+  // Append-only: i386 source-segment/implicit-ES block transaction.
+  X86SegmentedBlockMemory,
+
   _Count = 16000
 };
 
@@ -397,7 +409,16 @@ enum class X86SystemStateKind : uint8_t {
   ShadowWrite,
   Enqueue,
   DirectStore,
-  DirectStore64B
+  DirectStore64B,
+  WriteMsr,
+  MsrList,
+  Void64,
+  TestUserInterrupt,
+  SendUserInterrupt,
+  LoadKernelGs,
+  HistoryReset,
+  InvalidateBroadcast,
+  SegmentedBlock
 };
 
 struct X86SystemStateContract {
@@ -424,14 +445,14 @@ constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
   return x86SystemStateContract(Id).Mnemonic != nullptr;
 }
 
-/// The enqueue portal and block direct-store destination are second addresses.
-/// Their implicit ES segment is flat in long mode and never inherits the
-/// source operand's FS/GS override.
+/// Enqueue, block direct stores and MSR lists take a second address. Only the
+/// first address may have a segment override; MSR lists use linear addresses.
 constexpr bool isX86SystemStateAddressArgument(Intrinsic Id, unsigned Index) {
   const auto C = x86SystemStateContract(Id);
   return (C.MemoryArgument >= 0 && Index == unsigned(C.MemoryArgument)) ||
          ((C.Kind == X86SystemStateKind::Enqueue ||
-           C.Kind == X86SystemStateKind::DirectStore64B) &&
+           C.Kind == X86SystemStateKind::DirectStore64B ||
+           C.Kind == X86SystemStateKind::MsrList) &&
           Index == 1);
 }
 
@@ -592,8 +613,8 @@ intrinsicX86InvalidateShapeIsValid(Intrinsic Id,
 }
 
 /// Representation-neutral contract for explicit-operand MSR instructions.
-/// No ordinary host operation may implement this intrinsic: an authenticated
-/// architectural environment owns CPUID/XCR0/CPL, USER_MSR_CTL bitmap,
+/// Native execution retains the encoding family; the CPU owns
+/// CPUID/XCR0/CPL, USER_MSR_CTL bitmap,
 /// virtualization interception, MSR-specific validation, and exception order.
 struct X86MsrAccessIntrinsicShape {
   Arch TargetArch = Arch::Unknown;
@@ -608,6 +629,7 @@ struct X86MsrAccessIntrinsicShape {
   uint64_t Kind = 0;
   uint16_t KindSize = 0;
   bool SelectorIsScalar = false;
+  bool SelectorIsConst = false;
   uint16_t SelectorSize = 0;
   bool ValueIsScalar = false;
   uint16_t ValueSize = 0;
@@ -627,8 +649,9 @@ intrinsicX86MsrAccessShapeIsValid(Intrinsic Id,
     return false;
 
   const auto Kind = static_cast<X86MsrAccessKind>(Shape.Kind);
-  if (Shape.SelectorSize !=
-      (x86MsrAccessHasImmediateSelector(Kind) ? uint16_t{4} : uint16_t{8}))
+  if ((x86MsrAccessHasImmediateSelector(Kind) && !Shape.SelectorIsConst) ||
+      Shape.SelectorSize !=
+          (x86MsrAccessHasImmediateSelector(Kind) ? uint16_t{4} : uint16_t{8}))
     return false;
   if (x86MsrAccessIsWrite(Kind))
     return Shape.NumInputs == 4 && Shape.OutputSize == 0 &&

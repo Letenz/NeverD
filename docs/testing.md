@@ -24,6 +24,16 @@ unavailable, retaining the compiler's actual intrinsic headers and emitted bodie
 The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
 
+`X86SegmentedBlock.*` and `X86SegmentedBlockSource.*` additionally cover i386
+MOVDIR64B/ENQCMD/ENQCMDS with explicit source segments and implicit ES. The
+matrix compiles every source segment and both address widths for ELF/COFF/Mach-O.
+Freestanding Linux i386 execution needs compatibility mode and `modify_ldt`;
+MOVDIR64B success also needs the host feature. The driver compares raw bytes
+with both C routes, LLVM and native objects, checks independent copied bytes
+and flags, and exercises nonflat ES/FS, read-only/limited ES, source limits and
+alignment faults in isolated children. Enqueue success on a real device is not
+qualified. The scalar emulator must refuse without descriptor state.
+
 The system-memory matrix also covers 24 MOVDIRI/MOVDIR64B encodings, including
 16-bit addressing within the i386 target, long-mode address-size overrides,
 both scalar widths and FS/GS. `X86DirectStore.*` checks scalar memory projection
@@ -39,6 +49,39 @@ load observes the direct store rather than a forwarded earlier value.
 hardware fence instructions survive LLVM optimization and object generation.
 These checks do not measure concurrent bus transactions or device completion;
 their native instruction and memory-effect contracts retain those operations.
+
+`X86MsrAccessSource.*` in `NeverDX86VirtualizationSourceTests` covers all 12
+explicit MSR families, live/dead read results, both pipeline settings and
+ELF/COFF/Mach-O source output. It checks exact object bytes from repository LLVM
+and O0/O2 compilation of both C routes and LLVM IR. Linux x64 subprocesses
+compare signal and fault code with original bytes using CPL3 and out-of-range
+USER_MSR selectors. A separate controlled signal completion then verifies
+full-width read results, write values and register selectors, including dead
+results. This isolates register transport from actual MSR accessibility.
+Recovered register arguments, immediate constness, fixed
+register constraints, wrong modes and forged assembly/effects have separate
+checks. These tests do not qualify successful CPL0 or USER_MSR-enabled accesses.
+The APX existing-GPR suite checks the same LowIR shape and emulator refusal;
+the Capstone `x86_apx_evex_msr` unit checks decode, access, groups and reserved
+fields.
+
+`X86ImplicitMsr.*` and `X86ImplicitMsrSource.*` extend the system-state/source
+targets with operand-free WRMSRNS and long-mode RDMSRLIST/WRMSRLIST. They
+check strict encoding/detail agreement, fixed input widths, linear addresses,
+RCX completion and malformed IR/assembly rejection. The common source matrix
+covers ELF/COFF/Mach-O and both word sizes where valid. Linux x64 probes
+compare real CPL3 faults with original bytes, then use a separate controlled
+signal handler to inspect fixed registers, supply a distinctive mask result,
+and resume the same instruction after clearing one mask bit. Sparse/empty
+masks and live/dead results expose eager table accesses or invented completion.
+These are register-transport and restart checks, not successful CPL0 MSR reads
+or writes; actual MSR validation, ordering and partial progress still need a
+privileged execution environment. Generated i386 WRMSRNS has compile-only
+native coverage. The scalar emulator must refuse without an MSR environment.
+`NeverDReturnContractTests` checks that validated system, VMX and explicit-MSR
+results survive return inference, while malformed outputs do not. The MSR
+source fixtures also assert non-void return types in HighIR and LLVM, so an
+incidental physical RAX value from a C `void` function cannot pass the oracle.
 
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
@@ -737,6 +780,19 @@ reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
 `rand_r` writes and invalid/read-only pointers. Native callers run at O0/O2
 with ordinary, packed and RELR relocations on available CPU backends. Custom
 state generators retain an explicit unsupported test.
+
+`X86SystemExtensions.*` checks bounded UINTR, LKGS, HRESET and AMD broadcast TLB
+control operands, TESTUI's six arithmetic flags, decoder-detail refusal and
+shared shapes. `X86SystemExtensionsSource.*` covers source/native return use,
+owned-assembly refusal and Linux x64 signal/code comparisons against original
+bytes. A separate signal completion oracle inspects actual instruction inputs
+and supplies both CF values through sigreturn; it does not qualify successful
+privileged execution, UITT/UPID writes or remote TLB completion. If UINTR is
+already enabled, its real result is compared instead of claiming controlled
+completion. The common system-source matrix also compiles i386 HRESET and
+INVLPGB/TLBSYNC and covers ELF/COFF/Mach-O, both optimization settings and
+FS/GS/address-size LKGS forms. The pinned MC corpus reports unsupported far
+returns separately; RETF/IRET must not lower to ordinary ABI returns.
 
 ## Allocator validation
 
@@ -1439,6 +1495,17 @@ reconstructs that exact source without rerunning the engine. The GUI's
 20,000-line responsiveness check retains its 15-second loading and 500-ms event
 gap limits. Rename isolation checks wait for initial navigation to settle before
 observing signals caused by the edit.
+
+`X86Sgx.*` in `NeverDX86SystemStateTests` checks ENCLS/ENCLV input/output
+widths, ignored and forbidden prefixes, strict emulator refusal, leaf-dependent
+CF/ZF/PF/AF/SF/OF projection and preserved DF. `X86SgxSource.*` in
+`NeverDX86VirtualizationSourceTests` checks dynamic leaf selection, all GPR
+transports, retained dead effects and malformed owned assembly. Both word sizes
+compile through LLVM, HighC and LLVMC for ELF, COFF and Mach-O with default/NoOpt
+and Clang O0/O2; the checks also build the actual native objects. Linux x64
+compares fault signal/code with original bytes, then injects controlled
+completions through sigreturn to check all result transports. This is not a
+successful privileged SGX or enclave-memory concurrency qualification.
 
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and

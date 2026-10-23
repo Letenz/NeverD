@@ -269,6 +269,63 @@ TEST(ReturnContracts, ASystemRegisterReadIsAValue) {
             std::vector<bool>{false});
 }
 
+TEST(ReturnContracts, ValidatedX86SystemCompletionsRemainReturnValues) {
+  const auto Constant = [](uint64_t Value, uint16_t Size) {
+    return MedVar::makeConst(Value, Size);
+  };
+  struct Case {
+    Intrinsic Id;
+    uint16_t Width;
+    std::vector<MedVar> Inputs;
+  };
+  const Case Cases[] = {
+      {Intrinsic::X86ReadPid, 8, {}},
+      {Intrinsic::X86ReadFsBase, 8, {}},
+      {Intrinsic::X86UserWait,
+       1,
+       {Constant(0, 4), Constant(1, 4), Constant(2, 4)}},
+      {Intrinsic::X86LoadAccessRights, 16, {Constant(0x23, 2)}},
+      {Intrinsic::X86ReadMsrList,
+       8,
+       {Constant(0x3000, 8), Constant(0x4000, 8), Constant(3, 8)}},
+      {Intrinsic::X86WriteMsrList,
+       8,
+       {Constant(0x3000, 8), Constant(0x4000, 8), Constant(3, 8)}},
+      {Intrinsic::VmxRead, 16, {Constant(0x4402, 8)}},
+      {Intrinsic::VmxWrite, 2, {Constant(0x4402, 8), Constant(0, 8)}},
+      {Intrinsic::X86MsrAccess,
+       8,
+       {Constant(static_cast<uint64_t>(X86MsrAccessKind::RdmsrVexImmediate), 1),
+        Constant(0x10, 4)}},
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(static_cast<unsigned>(C.Id));
+    MedOp Read = intrinsic(C.Id, C.Inputs);
+    Read.Output = temporary(20);
+    Read.Output.Size = C.Width;
+    MedOp Project =
+        C.Width < 8 ? operation(NdOp::INT_ZEXT, rax(1), {Read.Output})
+        : C.Width > 8
+            ? operation(NdOp::SUBBYTES, rax(1), {Read.Output, Constant(0, 4)})
+            : operation(NdOp::COPY, rax(1), {Read.Output});
+    EXPECT_EQ(settle({function(CalleeEntry,
+                               {block({Read, Project, returning(rax(1))})})}),
+              std::vector<bool>{false});
+    // A fabricated extra argument invalidates the owned completion contract.
+    Read.addInput(Constant(0, 8));
+    EXPECT_EQ(settle({function(CalleeEntry,
+                               {block({Read, Project, returning(rax(1))})})}),
+              std::vector<bool>{true});
+  }
+  EXPECT_EQ(
+      settle({function(CalleeEntry,
+                       {block({intrinsic(Intrinsic::X86WriteMsrNonSerializing,
+                                         {Constant(0x10, 4), Constant(1, 4),
+                                          Constant(2, 4)}),
+                               returning(rax(1))})})}),
+      std::vector<bool>{true});
+}
+
 TEST(ReturnContracts, ASystemCallResultACallerReadsIsAValue) {
   // An ntdll stub returns its system call's NTSTATUS, which its caller
   // tests.

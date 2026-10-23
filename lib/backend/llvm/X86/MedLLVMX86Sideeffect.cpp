@@ -1034,14 +1034,6 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
     Builder.CreateCall(IA, {Type, Descriptor});
     return true;
   }
-  if (IC == Intrinsic::X86MsrAccess) {
-    if (!intrinsicX86MsrAccessShapeIsValid(IC, x86MsrAccessMedShape(Op)))
-      llvm::report_fatal_error(
-          "x86 MSR access intrinsic has an invalid operand/output contract");
-    llvm::report_fatal_error(
-        "x86 MSR access requires an authenticated architectural execution "
-        "environment");
-  }
   if (IC == Intrinsic::AMXLoadConfig || IC == Intrinsic::AMXStoreConfig ||
       IC == Intrinsic::AMXTileLoad || IC == Intrinsic::AMXTileStore ||
       IC == Intrinsic::AMXTileZero || IC == Intrinsic::AMXClearStartRow ||

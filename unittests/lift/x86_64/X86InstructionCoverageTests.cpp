@@ -4,14 +4,15 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Decode and strictly lift the pinned Capstone x86 MC corpus. This measures
-/// actual encodings, not switch labels or mnemonic mentions. It does not claim
-/// complete ISA, emitter or executable semantic coverage.
+/// Decode the pinned Capstone x86 MC corpus and verify strict lifting or an
+/// explicit architectural refusal. Count actual lifted encodings separately.
+/// This does not claim complete ISA, emitter or executable semantic coverage.
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/lift/X86Lifter.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -24,10 +25,11 @@
 
 using namespace neverd;
 
-TEST(X86InstructionCoverage, PinnedDecoderCorpusStrictlyLifts) {
+TEST(X86InstructionCoverage, PinnedDecoderCorpusHasExplicitLiftResults) {
   const std::filesystem::path Directory = NEVERD_X86_MC_DIRECTORY;
   ASSERT_TRUE(std::filesystem::is_directory(Directory));
   size_t Samples = 0;
+  size_t Refused = 0;
   std::set<unsigned> Ids;
   for (const auto &File : std::filesystem::directory_iterator(Directory)) {
     if (File.path().extension() != ".cs")
@@ -66,6 +68,14 @@ TEST(X86InstructionCoverage, PinnedDecoderCorpusStrictlyLifts) {
       ASSERT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I),
                 Bytes.size());
       std::vector<LowOp> Ops;
+      if (I.Id == X86_INS_RETF || I.Id == X86_INS_RETFQ ||
+          I.Id == X86_INS_IRET || I.Id == X86_INS_IRETD ||
+          I.Id == X86_INS_IRETQ) {
+        EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+        ++Refused;
+        continue;
+      }
       EXPECT_NO_THROW(D.liftToLow(I, Ops));
       Ids.insert(I.Id);
       ++Samples;
@@ -74,4 +84,5 @@ TEST(X86InstructionCoverage, PinnedDecoderCorpusStrictlyLifts) {
   EXPECT_GT(Samples, 0u);
   RecordProperty("encoding_samples", Samples);
   RecordProperty("instruction_ids", Ids.size());
+  RecordProperty("explicitly_refused_samples", Refused);
 }

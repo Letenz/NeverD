@@ -5216,6 +5216,31 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
+INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
+returns CF and the lifter clears its other arithmetic flags. LKGS selector and
+descriptor reads remain inside the native instruction; active GS base is not
+changed. SENDUIPI's full-width index is scalar, as is INVLPGB's address/control
+descriptor. INVLPGB's input width selects native address size. HRESET's ignored
+imm8 is canonicalized to zero, while EAX remains an explicit input.
+`X86Sgx.h` separately owns bounded ENCLS/ENCLV completion: four natural-width
+GPR inputs, primary rAX and auxiliary rBX/CF-ZF outputs.
+`X86SgxLeaves.h` defines conditional register reads so unused leaf operands do
+not create source arguments or unknown-register traps; only EDBGRD publishes
+a changed rBX value. Call-graph register summaries evaluate
+constant selections with the shared LowIR scalar evaluator; MedIR folds the
+same chosen value before inferring SGX parameters, preserving its provenance. `X86SgxAsm.h` keeps
+LLVM and both C routes on the same volatile assembly and early-clobber
+constraints. The lifter projects native CF/ZF for flag-writing leaves, preserves
+all arithmetic flags for ECREATE/EADD/EEXTEND/EPA/EAUG, and never changes DF.
+Implicit DS accesses and all enclave checks remain inside the instruction;
+address/segment/REX overrides do not change the operands. Native outputs use
+no stack scratch. Return inference accepts the validated primary completion,
+while strict scalar emulation refuses the environment-dependent operation.
+ENCLU's entry, exit, resume and asynchronous continuation remain unsupported.
+Far/interrupt returns do not use the bounded system contract or ordinary ABI
+RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
+and its nonlocal continuation are represented.
 The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
 Their historical intrinsic IDs remain stable. Both enqueue operands are
 addresses; only the command-source address inherits FS/GS, while the portal
@@ -5226,6 +5251,15 @@ enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
 retry behavior; CET writes still require an execution environment it lacks.
 Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
 CET writes, after validating the same operand contract.
+The i386 forms of ENQCMD/ENQCMDS/MOVDIR64B instead use
+`X86SegmentedBlockMemory`. `X86SegmentedBlock.h` owns the serialized instruction,
+source-segment and address-size selector. The system shape requires a constant
+selector and two 32-bit offsets. Native lowering never resolves those offsets
+as process pointers: the hardware instruction owns source DS/ES/SS/CS/FS/GS and
+implicit destination ES, including descriptor rights and limits. Default SS
+selection happens in the lifter before changing the address register. The
+shared assembly plan uses SI/DI at the encoded address width. Static emulation
+refuses without descriptor state; it cannot inherit the flat x64 projection.
 MOVDIRI and long-mode MOVDIR64B also use the shared native memory contract.
 MOVDIRI retains its scalar width; MOVDIR64B carries both addresses, with FS/GS
 applying only to the source. No ordinary load, masked store or eager alignment
@@ -5238,6 +5272,32 @@ compiler memory effects; generic acquire/release fences do not guarantee the
 barriers required by direct or non-temporal stores.
 LLVM-to-C collects ISA headers from the same intrinsic-rendering decision on
 all architectures, including x86 fence assembly rendered as `_mm_*` calls.
+Explicit-operand MSR operations retain their encoding family in `X86MsrAccess`.
+The shared shape owns selector constness/width, full-width data and read/write
+completion. The MSR plan in `X86SystemStateAsm.h` supplies exact native bytes,
+fixed RAX data/RCX selector constraints, side effects and memory ordering to all
+three output routes. Exact bytes preserve the Intel-defined URDMSR register
+roles despite an LLVM 23 assembler discrepancy, and retain APX requirements
+for EVEX forms even when operands are allocated low registers. Native hardware
+owns feature/CPL/bitmap/intercept checks; software emulation without that state
+continues to refuse the effect. LLVM-to-C admits only the complete owned
+assembly/signature/constraint/effect contract, including constant immediate
+selectors. No declaration-only helper or legacy serializing MSR substitution
+implements these forms.
+Operand-free WRMSRNS instead uses `X86WriteMsrNonSerializing` with three
+32-bit inputs (ECX, EAX, EDX) on x86 and x64. The system inventory also owns
+long-mode `X86ReadMsrList` and `X86WriteMsrList`: two linear table addresses
+and a 64-bit mask produce the real remaining mask. Their assembly binds RSI,
+RDI and read/write RCX without adding segment bases or preloading table entries.
+Native hardware retains privilege, alignment, MSR validation, load-ahead,
+ordering and partial-completion behavior. Restart at the faulting instruction
+uses the updated RCX in the machine exception frame. The scalar emulator has
+no MSR environment and refuses these effects, including an empty list mask.
+This bounded native contract does not emulate privileged MSR execution.
+Return-contract analysis also consumes the validated system, virtualization
+and explicit-MSR output shapes. Side effects do not make an explicit result
+undefined; a function returning RCX after MSRLIST must retain a scalar return
+in both C routes. Invalid outputs on a void operation receive no such evidence.
 SHA512 message and round instructions instead lower to integer LowIR and need
 no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
 separates tested encodings, native output and remaining machine-state gaps.

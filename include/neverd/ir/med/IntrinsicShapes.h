@@ -17,6 +17,7 @@
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86Virtualization.h"
 #include "neverd/ir/med/MedIR.h"
@@ -366,6 +367,52 @@ x86VirtualizationMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
   return Shape;
 }
 
+inline X86SgxShape x86SgxMedShape(const MedOp &Op,
+                                  Arch TargetArch = Arch::Unknown) {
+  X86SgxShape S;
+  S.TargetArch = TargetArch;
+  if (S.TargetArch == Arch::Unknown && Op.Output.Kind == MedVar::Reg)
+    S.TargetArch = Op.Output.TheArch;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+              Op.Inputs[0].ConstVal <= UINT16_MAX;
+  if (Op.Output.Kind == MedVar::Reg && Op.Output.TheArch != S.TargetArch)
+    S.ValidId = false;
+  S.WritableOutput =
+      (Op.Output.Kind == MedVar::Reg || Op.Output.Kind == MedVar::Temp) &&
+      Op.Output.Id >= 0;
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    S.InputSizes[I] = Input.Size;
+    S.ScalarInputs[I] =
+        isMedIntrinsicScalarInput(Input) || Input.Kind == MedVar::Param ||
+        Input.Kind == MedVar::Stack || Input.Kind == MedVar::RetVal;
+    if (Input.Kind == MedVar::Reg) {
+      if (S.TargetArch == Arch::Unknown)
+        S.TargetArch = Input.TheArch;
+      else if (Input.TheArch != S.TargetArch)
+        S.ValidId = false;
+    }
+  }
+  if (Op.IntrinsicOutputs.size() != X86SgxAuxiliaryOutputs)
+    S.ValidId = false;
+  else
+    for (unsigned I = 0; I < X86SgxAuxiliaryOutputs; ++I) {
+      const auto &V = Op.IntrinsicOutputs[I];
+      if (V.Kind != MedVar::Temp || V.Id < 0 ||
+          V.Size != (I == 0 ? S.OutputSize : X86SgxFlagBytes))
+        S.ValidId = false;
+    }
+  if (Op.IntrinsicOutputs.size() == X86SgxAuxiliaryOutputs &&
+      Op.IntrinsicOutputs[0].Id == Op.IntrinsicOutputs[1].Id)
+    S.ValidId = false;
+  return S;
+}
+
 inline X86SystemStateShape
 x86SystemStateMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
   X86SystemStateShape Shape;
@@ -402,6 +449,12 @@ x86SystemStateMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
     else if (Input.Kind == MedVar::Reg && Input.TheArch != Shape.TargetArch)
       Shape.ValidId = false;
   }
+  if (Shape.ValidId &&
+      Op.Inputs[0].ConstVal ==
+          static_cast<uint16_t>(Intrinsic::X86SegmentedBlockMemory) &&
+      Op.NumInputs > 1 && Op.Inputs[1].isConst() && Op.Inputs[1].Size == 2 &&
+      Op.Inputs[1].ConstVal <= UINT16_MAX)
+    Shape.SegmentedBlockSelector = static_cast<uint16_t>(Op.Inputs[1].ConstVal);
   return Shape;
 }
 
@@ -440,6 +493,9 @@ inline X86InvalidateIntrinsicShape x86InvalidateMedShape(const MedOp &Op) {
 }
 
 inline X86MsrAccessIntrinsicShape x86MsrAccessMedShape(const MedOp &Op) {
+  const auto IsScalar = [](const MedVar &V) {
+    return isMedIntrinsicScalarInput(V) || V.Kind == MedVar::Param;
+  };
   Arch TargetArch = Arch::Unknown;
   const auto ObserveArch = [&](const MedVar &Value) {
     if (Value.isConst() || Value.Size == 0 || Value.TheArch == Arch::Unknown)
@@ -458,18 +514,18 @@ inline X86MsrAccessIntrinsicShape x86MsrAccessMedShape(const MedOp &Op) {
       .MemoryOrdering = Op.MemoryOrdering,
       .MemoryAddressSpace = Op.MemoryAddressSpace,
       .NumInputs = Op.NumInputs,
-      .IntrinsicIdIsConst = Op.NumInputs > 0 && Op.Inputs[0].isConst(),
+      .IntrinsicIdIsConst = Op.NumInputs > 0 && Op.Inputs[0].isConst() &&
+                            Op.IntrinsicOutputs.empty(),
       .IntrinsicIdSize = Op.NumInputs > 0 ? Op.Inputs[0].Size : uint16_t{0},
       .OutputIsWritableScalar = isMedIntrinsicWritableScalar(Op.Output),
       .OutputSize = Op.Output.Size,
       .KindIsConst = Op.NumInputs > 1 && Op.Inputs[1].isConst(),
       .Kind = Op.NumInputs > 1 ? Op.Inputs[1].ConstVal : UINT64_C(0),
       .KindSize = Op.NumInputs > 1 ? Op.Inputs[1].Size : uint16_t{0},
-      .SelectorIsScalar =
-          Op.NumInputs > 2 && isMedIntrinsicScalarInput(Op.Inputs[2]),
+      .SelectorIsScalar = Op.NumInputs > 2 && IsScalar(Op.Inputs[2]),
+      .SelectorIsConst = Op.NumInputs > 2 && Op.Inputs[2].isConst(),
       .SelectorSize = Op.NumInputs > 2 ? Op.Inputs[2].Size : uint16_t{0},
-      .ValueIsScalar =
-          Op.NumInputs > 3 && isMedIntrinsicScalarInput(Op.Inputs[3]),
+      .ValueIsScalar = Op.NumInputs > 3 && IsScalar(Op.Inputs[3]),
       .ValueSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : uint16_t{0},
   };
 }

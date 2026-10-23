@@ -152,6 +152,7 @@ void LowToMedConverter::propagate(MedFunc &Func) {
         case NdOp::INT_SLESS:
         case NdOp::INT_LESSEQUAL:
         case NdOp::INT_SLESSEQUAL:
+        case NdOp::SELECT:
           break;
         default:
           continue;
@@ -204,6 +205,29 @@ void LowToMedConverter::propagate(MedFunc &Func) {
         };
 
         auto A = ResolveConst(Op.Inputs[0]);
+        if (Op.Opcode == NdOp::SELECT) {
+          // A scalar constant chooses one SSA value. Preserve the chosen
+          // value's identity and relocation provenance, without evaluating
+          // or retaining dependencies on the unselected register.
+          if (Op.NumInputs != 3 || !A || !A->IsStableScalar ||
+              Op.RegistrationRoot != MedOp::RegistrationRootKind::None ||
+              Op.SourceCallHint || !Op.IntrinsicOutputs.empty() ||
+              Op.MemoryOrdering != NdMemoryOrdering::None ||
+              Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              !Op.Inputs[0].Size || Op.Inputs[0].Size > 8)
+            continue;
+          const unsigned Bits = Op.Inputs[0].Size * 8;
+          const uint64_t Condition =
+              Bits == 64 ? A->Value : A->Value & ((uint64_t{1} << Bits) - 1);
+          const auto Selected = Op.Inputs[Condition ? 1 : 2];
+          if (!Op.Output.Size || Selected.Size != Op.Output.Size)
+            continue;
+          Op.Opcode = NdOp::COPY;
+          Op.Inputs[0] = Selected;
+          Op.NumInputs = 1;
+          Changed = true;
+          continue;
+        }
         auto B = ResolveConst(Op.Inputs[1]);
         if (!A || !B)
           continue;

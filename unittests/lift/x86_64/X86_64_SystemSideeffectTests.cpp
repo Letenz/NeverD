@@ -203,9 +203,7 @@ TEST(X86SystemSideeffect, UnmodeledSystemInstructionsStayUnlifted) {
        {std::vector<uint8_t>{0x0f, 0x01, 0xd8},    // VMRUN
         std::vector<uint8_t>{0x0f, 0x01, 0xde},    // SKINIT
         std::vector<uint8_t>{0x0f, 0x37},          // GETSEC
-        std::vector<uint8_t>{0x0f, 0x01, 0xcf},    // ENCLS
-        std::vector<uint8_t>{0x0f, 0x01, 0xd7},    // ENCLU
-        std::vector<uint8_t>{0x0f, 0x01, 0xc0}}) { // ENCLV
+        std::vector<uint8_t>{0x0f, 0x01, 0xd7}}) { // ENCLU
     Decoder Dec;
     ASSERT_TRUE(Dec.init(Arch::X64));
     DecodedInsn Insn{};
