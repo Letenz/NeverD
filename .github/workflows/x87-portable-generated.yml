@@ -25,11 +25,15 @@ jobs:
           - arch: x86_64
             runner: ubuntu-24.04
             prebuilt: 'ON'
+            original_target: NeverDX87OriginalReplay
+            original_argument: '--original-driver build-x87-portable/bin/NeverDX87OriginalReplay'
           - arch: aarch64
             runner: ubuntu-24.04-arm
             # The pinned package set has no Linux AArch64 archive. Build the
             # exact repository LLVM revision instead of substituting LLVM.
             prebuilt: 'OFF'
+            original_target: ''
+            original_argument: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,7 +57,7 @@ jobs:
           sudo apt-get install --yes clang-23 lld-23 ninja-build
           echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
       - name: Verify strict observation and result auditing
-        run: python -m unittest scripts.tests.test_check_x87_portable_generated -v
+        run: python -m unittest scripts.tests.test_check_x87_portable_generated scripts.tests.test_check_x87_translation scripts.tests.test_check_x87_cross_host -v
       - name: Configure the focused generated execution owners
         run: |
           cmake -S . -B build-x87-portable -G Ninja \
@@ -69,10 +73,19 @@ jobs:
           python scripts/build.py build-x87-portable --parallel 4 --target
           NeverDX87PortableGeneratedTests NeverDX87PortableEmissionTests
           NeverDX87PortablePreparationTests NeverDX87PortableExecutionTests
-      - name: Check preparation, output ABI and C bridge regressions
+          NeverDX87TranslationRuntimeTests NeverDX87TranslationTests
+          NeverDTranslationContractTests
+          NeverDX87ArithmeticTests NeverDX87PortableContextTests
+          NeverDX87PortableEmulatorTests NeverDX87ArithmeticReplay
+          ${{ matrix.original_target }}
+      - name: Check preparation, runtimes and legacy translation regressions
         run: >-
           ctest --test-dir build-x87-portable --output-on-failure -j 4
-          -R 'X87PortableEmission|X87PortablePreparation|X87PortableExecution'
+          -L '^(NeverDX87PortableEmissionTests|NeverDX87PortablePreparationTests|NeverDX87PortableExecutionTests|NeverDX87TranslationRuntimeTests|NeverDTranslationContractTests|NeverDX87ArithmeticTests|NeverDX87PortableContextTests|NeverDX87PortableEmulatorTests)$'
+      - name: Check portable object control-flow boundaries
+        run: >-
+          ctest --test-dir build-x87-portable --output-on-failure -j 4
+          -R '^X87Translation\.'
       - name: Freeze actual native-host generated program execution
         run: >-
           python scripts/check_x87_portable_generated.py
@@ -81,6 +94,20 @@ jobs:
           --compiler /usr/lib/llvm-23/bin/clang
           --build-dir build-x87-portable
           --output-dir build-x87-portable/evidence
+      - name: Freeze native AArch64 translation objects and sessions
+        if: ${{ matrix.arch == 'aarch64' }}
+        run: >-
+          python scripts/check_x87_translation.py
+          --driver build-x87-portable/bin/NeverDX87TranslationTests
+          --build-dir build-x87-portable
+          --output-dir build-x87-portable/translation-evidence
+      - name: Record seeded arithmetic for cross-host comparison
+        run: >-
+          python scripts/check_x87_cross_host.py record
+          --portable-driver build-x87-portable/bin/NeverDX87ArithmeticReplay
+          ${{ matrix.original_argument }}
+          --build-dir build-x87-portable
+          --output-dir build-x87-portable/arithmetic-evidence
       - name: Retain failures and successful artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -88,9 +115,43 @@ jobs:
           name: x87-portable-generated-${{ matrix.arch }}-${{ github.sha }}
           path: |
             build-x87-portable/evidence/
+            build-x87-portable/translation-evidence/
+            build-x87-portable/arithmetic-evidence/
             build-x87-portable/Testing/Temporary/
             build-x87-portable/neverd-build-receipt.json
             build-x87-portable/neverd-dependency-inputs.json
             build-x87-portable/CMakeCache.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  compare:
+    name: Audit native cross-host state and arithmetic agreement
+    needs: generated
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: x87-portable-generated-x86_64-${{ github.sha }}
+          path: cross-host/x86_64
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: x87-portable-generated-aarch64-${{ github.sha }}
+          path: cross-host/aarch64
+      - name: Compare frozen native observations
+        run: >-
+          python scripts/check_x87_cross_host.py compare
+          --x64 cross-host/x86_64 --arm64 cross-host/aarch64
+          --output-dir cross-host/comparison
+      - name: Retain cross-host failures and comparison
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: x87-cross-host-comparison-${{ github.sha }}
+          path: cross-host/comparison/
           if-no-files-found: error
           retention-days: 30
