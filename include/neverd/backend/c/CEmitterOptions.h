@@ -135,7 +135,9 @@ struct CEmitterOptions {
   /// arrays, the definitions the program's local types give them.  A record
   /// left out, as one the local types do not define or define otherwise
   /// than the debug information the unit reads its members by, stays
-  /// declared only.
+  /// declared only. A pointer to a named record requests only its tag and
+  /// declaration, even if the library has its complete layout. A separate
+  /// by-value request for the same record still requires that layout.
   std::function<CRecordDefinitions(
       const std::vector<std::shared_ptr<NdType>> &)>
       RecordDefinitions;

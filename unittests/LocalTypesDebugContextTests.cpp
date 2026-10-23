@@ -101,6 +101,41 @@ TEST(LocalTypesDebugContext,
   EXPECT_EQ(Stop->PortablePrototypeDeclaration, "_Noreturn void Stop(void)");
 }
 
+TEST(LocalTypesDebugContext, PointerDeclarationsDoNotRequireRecordLayouts) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>(types::DataModel::LLP64);
+  ASSERT_TRUE(types::parseCTypes(R"(
+    struct Item { int Value; };
+    union Choice { int Number; void *Pointer; };
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  sdk::LocalTypesDebugContext Context(Names, Library);
+  const auto Item = NdType::makeNamedRecord("Item");
+  const auto Choice = NdType::makeNamedRecord("Choice");
+  const auto ItemPointer = NdType::makePtr(Item);
+  const auto ChoicePointer = NdType::makePtr(Choice);
+  const auto Declarations = Context.definitions({ItemPointer, ChoicePointer});
+  EXPECT_TRUE(Declarations.Text.empty());
+  EXPECT_TRUE(Declarations.Records.empty());
+  ASSERT_EQ(Declarations.Tags.size(), 2u);
+  EXPECT_FALSE(Declarations.Tags.at("Item"));
+  EXPECT_TRUE(Declarations.Tags.at("Choice"));
+  EXPECT_TRUE(Context.readTypes().contains("Item"));
+  EXPECT_TRUE(Context.readTypes().contains("Choice"));
+  // Requiring a value or a member layout wins regardless of query order.
+  for (const auto &Requests :
+       {std::vector<TypeRef>{ItemPointer, ChoicePointer, Item, Choice},
+        std::vector<TypeRef>{Item, Choice, ItemPointer, ChoicePointer}}) {
+    const auto Definitions = Context.definitions(Requests);
+    EXPECT_NE(Definitions.Text.find("int32_t Value"), std::string::npos);
+    EXPECT_EQ(Definitions.Records.size(), 2u);
+    EXPECT_FALSE(Definitions.Records.at("Item"));
+    EXPECT_TRUE(Definitions.Records.at("Choice"));
+  }
+}
+
 TEST(LocalTypesDebugContext, TypesTheFunctionsDebugInformationLeavesUntyped) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();

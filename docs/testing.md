@@ -235,6 +235,12 @@ qualifiers, convention ownership and `_Noreturn`. The original SDK check's
 `UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
 Windows architectures, independently of the synthetic import names.
 The qualifier execution cases also cover void results.
+They supply complete local struct/union layouts as well: pointer-only imports
+must keep forward declarations and compile alongside independent definitions.
+`LocalTypesDebugContext.PointerDeclarationsDoNotRequireRecordLayouts` checks
+tag kinds, type-dependency tracking and that a complete-layout request still
+wins in either order. The original SDK cases `UseCRTExceptionCopy`,
+`UseCRTTypeName` and `UseCRTTypeCleanup` cover both routes on x86/x64/ARM64.
 `Win64CallContract.AVoidSourceReturnDoesNotEraseAnObservedCallResult` checks
 that a volatile store of the machine result keeps it live despite a proposed
 void import prototype and a wrapper with a void source return.

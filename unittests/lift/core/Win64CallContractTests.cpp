@@ -733,7 +733,7 @@ TEST(Win64CallContract,
   ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_qualified", 0,
                                             ImportStorageEvidence::LoaderBind));
   for (bool Nested : {false, true})
-    for (bool Record : {false, true})
+    for (unsigned Record : {0u, 1u, 2u})
       for (bool VoidResult : {false, true})
         for (bool LLVM : {false, true}) {
           SCOPED_TRACE(Nested);
@@ -744,6 +744,7 @@ TEST(Win64CallContract,
           Debug.Slot = Iat;
           Debug.Nested = Nested;
           Debug.Record = Record;
+          Debug.Union = Record == 2;
           Debug.VoidResult = VoidResult;
           llvm::LLVMContext Context;
           PipelineOptions Options;
@@ -757,6 +758,21 @@ TEST(Win64CallContract,
           COptions.TheArch = Image.Arch;
           COptions.Format = Image.Format;
           COptions.Image = &Image;
+          COptions.RecordDefinitions = [&](const std::vector<TypeRef> &Types) {
+            CRecordDefinitions Definitions;
+            for (const TypeRef &Requested : Types) {
+              const bool Pointer = Requested->Kind == NdTypeKind::Ptr;
+              const auto &Type = Pointer ? Requested->Pointee : Requested;
+              if (!Type || Type->SourceName != "fixture_record")
+                continue;
+              Definitions.Tags["fixture_record"] = Debug.Union;
+              if (!Pointer) {
+                Definitions.Records["fixture_record"] = Debug.Union;
+                Definitions.Text = Debug.element() + " { uint16_t value; };";
+              }
+            }
+            return Definitions;
+          };
           std::string Source;
           llvm::raw_string_ostream Out(Source);
           if (LLVM) {
@@ -769,13 +785,13 @@ TEST(Win64CallContract,
           }
           // Independent C definitions require the same qualifiers, including
           // those behind a pointer and on an opaque record's returned pointer.
-          const std::string Element =
-              Record ? "struct fixture_record" : "uint16_t";
+          const std::string Element = Debug.element();
           const std::string Value =
               Record ? (Nested ? "(*input)->value" : "input->value")
                      : (Nested ? "**input" : "*input");
           const std::string Definition =
-              "\nstruct fixture_record { uint16_t value; };\n" +
+              std::string("\n") + (Debug.Union ? "union" : "struct") +
+              " fixture_record { uint16_t value; };\n" +
               (VoidResult ? "void " : "const " + Element + " *") +
               "fixture_qualified(const " + Element +
               (Nested ? " *const *input" : " *input") +

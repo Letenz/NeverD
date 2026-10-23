@@ -468,6 +468,13 @@ std::string LLVMCWriter::recordPointerSpelling(const NdType &Record) {
   return Tag + "*";
 }
 
+void LLVMCWriter::noteRecordValue(TypeRef Type) const {
+  while (Type && Type->Kind == NdTypeKind::Array)
+    Type = Type->ElemType;
+  if (Type && Type->Kind == NdTypeKind::Struct && !Type->SourceName.empty())
+    MemberRecords.insert(Type->SourceName);
+}
+
 /// \p Text with each use of \p Tag as a type (a declaration's, a cast's)
 /// spelled with its keyword: `struct stat buf`, where a function of the
 /// same name hides the bare one.
@@ -502,6 +509,7 @@ static void spellTagUses(std::string &Text, llvm::StringRef Tag,
 void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   if (!Opts.EmitIncludes)
     return;
+  CRecordDefinitions Definitions;
   // A name the unit gives a function or an object, of its own or one it
   // declares, is that, not a type.
   const auto Held = [&](const std::string &Name) {
@@ -517,12 +525,15 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
     for (const std::string &Tag : RecordPointerTags) {
       if (Defined.count(Tag) || HeaderCallRecords.count(Tag))
         continue;
+      const auto Known = Definitions.Tags.find(Tag);
+      const char *Keyword =
+          Known != Definitions.Tags.end() && Known->second ? "union" : "struct";
       if (Held(Tag) || libc::isKnownFunction(Tag) ||
           libc::headerOfDataObject(Tag)) {
-        spellTagUses(Text, Tag, "struct");
+        spellTagUses(Text, Tag, Keyword);
         continue;
       }
-      OS << "typedef struct " << Tag << " " << Tag << ";\n";
+      OS << "typedef " << Keyword << " " << Tag << " " << Tag << ";\n";
       Any = true;
     }
     if (Any)
@@ -550,13 +561,17 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   std::vector<TypeRef> Named;
   Named.reserve(Words.size());
   for (const std::string &Word : Words)
-    if (!HeaderCallRecords.count(Word))
-      Named.push_back(NdType::makeNamedRecord(Word, 0));
+    if (!HeaderCallRecords.count(Word)) {
+      TypeRef Type = NdType::makeNamedRecord(Word, 0);
+      if (RecordPointerTags.count(Word) && !MemberRecords.count(Word))
+        Type = NdType::makePtr(Type);
+      Named.push_back(std::move(Type));
+    }
   // And the records whose members it reads, which it need not spell.
   for (const std::string &Name : MemberRecords)
     if (!Words.count(Name) && !HeaderCallRecords.count(Name))
       Named.push_back(NdType::makeNamedRecord(Name, 0));
-  CRecordDefinitions Definitions = Opts.RecordDefinitions(Named);
+  Definitions = Opts.RecordDefinitions(Named);
   // The records and enumerations the text spells by their tags' names,
   // which typedefs of those names declare.
   std::vector<std::string> Spelled;

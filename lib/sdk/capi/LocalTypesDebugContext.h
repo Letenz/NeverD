@@ -205,6 +205,7 @@ public:
   /// the library's, or an enumerator of one the decompiler displays, which
   /// stands for that enumeration.  What the debug information gave types of
   /// the name, members or enumerators, must agree with the library too.
+  /// A pointer request obtains only a record's tag, without completing it.
   CRecordDefinitions definitions(const std::vector<TypeRef> &Records) const;
   /// The copy of the library this context reads, which its definitions
   /// render.
