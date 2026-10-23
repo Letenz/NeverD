@@ -143,3 +143,59 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(X87PortableRuntimeCHeader.c PROPERTIES
     COMPILE_OPTIONS "-fshort-enums")
 endif()
+
+add_neverd_unittest(NeverDX87PortablePreparationTests
+  X87PortablePreparationTests.cpp
+
+  LINK_COMPONENTS
+  Pipeline
+  BackendLLVM
+  BackendC
+  IRMed
+)
+
+add_neverd_unittest(NeverDX87PortableEmissionTests
+  X87PortableEmissionTests.cpp
+
+  LINK_COMPONENTS
+  Pipeline
+  BackendLLVM
+  BackendC
+  IRMed
+)
+
+add_neverd_unittest(NeverDX87PortableGeneratedTests
+  X87PortableGeneratedTests.cpp
+
+  LINK_COMPONENTS
+  Pipeline
+  BackendLLVM
+  BackendC
+  IRMed
+  Translate
+
+  LINK_LIBS
+  neverd_x87_runtime
+)
+target_compile_definitions(NeverDX87PortableGeneratedTests PRIVATE
+  NEVERD_X87_RUNTIME_PATH="$<TARGET_FILE:neverd_x87_runtime>")
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDX87PortableGeneratedTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
+add_neverd_unittest(NeverDX87TranslationRuntimeTests
+  RuntimeX87GuestStateTests.cpp
+  RuntimeX87HelpersTests.cpp
+
+  LINK_COMPONENTS
+  Translate
+)
+
+add_neverd_unittest(NeverDX87TranslationTests
+  X87TranslationTests.cpp
+  X87TranslationFrozenTests.cpp
+
+  LINK_COMPONENTS
+  Translate
+)

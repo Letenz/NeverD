@@ -314,6 +314,19 @@ The bridge catches C++ exceptions as `internal-error` before any instruction
 commit. Its closed export list contains only the two C helpers; it does not
 publish a stable C++ SDK or independently qualify generated/translation profiles.
 
+The explicit `preparePortableX87Function`/`emitPortableX87` C++ route prepares
+an ABI-recovered x64 owned-context integer leaf for this bridge. Source arguments
+become numeric guest values, followed by an execution pointer and a `uint64_t *`
+source-result argument; the C function returns `uint32_t` status. Each failed
+step returns immediately, preserving earlier completed effects and leaving the
+source result unchanged. A self-modifying store commits its bytes and pop,
+returns invalidation status, and does not continue to a later instruction.
+Only complete known 64-bit source return operands can be published. Calls,
+external state handoffs, floating source ABIs, unsupported x87 forms and ordinary
+guest-memory operations are refused before emission. Private control labels
+never become original-address rewrite evidence. This alternate interface does
+not change ordinary decompilation or enable translation admission.
+
 Invalid controls, unsupported forms/values, unmasked data-instruction controls, stack
 faults and unauthenticated memory refuse without committing state or a store.
 Unqualified MMX and external save/restore boundaries also refuse in lenient

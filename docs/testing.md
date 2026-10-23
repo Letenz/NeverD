@@ -3409,7 +3409,10 @@ straddling metadata ends, and cold-fragment ends without separate unwind
 records. Calls and traps share the fragment-end controls; adjacent fragments
 still continue. Owned NOP suffixes include runs beyond the heuristic lookahead
 limit, sized symbols/ranges and fragment-only ownership, with and without a
-neighbor entry. Prefix and MPX-disabled x86 NOPs share decoder classification;
+neighbor entry. Prefixed x86 NOPs and the architectural register NOP forms of
+`0F 1A/1B` share decoder classification. MPX memory forms retain instruction
+length, identity and explicit unsupported coverage until bounds state and
+fault behavior are modeled;
 REX.B register exchanges, upper-half-clearing copies, PAUSE and 32-bit INC remain
 observable controls. Interior NOP runs still reach real code, and an independent
 branch into a suffix retains its own ordinary fallthrough. Every partial
@@ -3593,6 +3596,35 @@ native or typed support from promoting portable, state or proof capabilities.
 `NeverDX87CapabilitiesPublicTests` compares unloaded-session C and CLI reports;
 Python API tests cover the ownership-safe adapter. These inventory tests do
 not establish native instruction or ARM64 portable execution coverage.
+
+`NeverDX87PortablePreparationTests` lifts authored x64 leaf, branch and loop
+bytes through the normal pipeline in default and NoOpt modes, then checks the
+private portable interface. It refuses malformed scalars/edges, counterfeit
+incoming-register copies, unsupported forms, external context handoffs and
+partial or unknown-upper-bit returns. It also verifies that ordinary emitters
+cannot publish the dedicated helpers. Run `NeverDMedMutableSourceTests` with it
+when changing the shared scalar-shape rules. These preparation checks do not
+establish generated execution or ARM64 translation coverage.
+
+`NeverDX87PortableEmissionTests` checks exact alternate function and helper
+types, effectful result consumption, original-address proof removal and output
+target refusals. `NeverDX87PortableGeneratedTests` compiles LLVM, HighC and
+LLVM-C shared artifacts at O0/O2 from default/NoOpt source pipelines. The authored
+x64 leaf, branch and loop fixtures cover every TOP and valid PC/RC setting,
+binary80 bits beyond binary64, success-only result publication, seven runtime
+refusals, both null-pointer guards and an untaken branch. Native x64 hosts also
+execute those exact original byte vectors and compare result bytes and defined
+state; relocated pointers and undefined C0/C2/C3 are excluded from that native
+comparison. Generated guest IP/DP are checked independently.
+
+`scripts/check_x87_portable_generated.py` freezes 36 compiled artifacts and
+6,096 observations on native Linux x64/AArch64. It requires complete coverage,
+cross-route/optimization agreement, no skips, stable source/build/compiler and
+runtime hashes, and retained raw state. On x64 it requires 5,760 original
+comparisons. The manual `x87-portable-generated.yml` workflow runs those hosts
+separately; this is generated-leaf evidence, not translation or a performance
+measurement. A pinned Linux AArch64 LLVM package is unavailable, so that lane
+builds the repository's exact LLVM revision from source.
 
 `NeverDWorkerX87Capabilities` compares the real worker with the C/Python report
 and, when the CLI target is present, the CLI. It checks unloaded and loaded

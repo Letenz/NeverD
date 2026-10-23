@@ -129,12 +129,14 @@ public:
               const std::unordered_set<std::string_view> *SharedNames = nullptr,
               CSourceRecorder *Recorder = nullptr,
               const HighCImageDataObjects *SharedDataObjects = nullptr,
-              const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr)
+              const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr,
+              const PreparedPortableX87Function *PortableInterface = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
         SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder),
         SharedDataObjects(SharedDataObjects),
-        SharedFunctionSymbols(SharedFunctionSymbols) {}
+        SharedFunctionSymbols(SharedFunctionSymbols),
+        PortableInterface(PortableInterface) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -1242,6 +1244,8 @@ public:
   HighCAnalysisState Analysis;
   bool InferredVoid = false;
   TypeRef FuncReturnType;
+  const PreparedPortableX87Function *PortableInterface = nullptr;
+  std::string renderPortableX87Call(const HighExpr &Expr);
   const HighFunc *CurrentFunc = nullptr;
   /// The parameter bindings and emitted types of the function last asked
   /// about.

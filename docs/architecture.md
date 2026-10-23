@@ -4789,8 +4789,10 @@ cold-fragment ends also bound calls and traps when no separate unwind record
 describes the fragment. An adjacent owned fragment still continues.
 Owned NOP suffixes also need observable code before the owner ends; a sized
 range containing alignment does not make the next function a continuation.
-Decoded NOP identity handles x86 prefixes and MPX-disabled compatibility forms,
-with mode-aware legacy alignment patterns shared by the decoder. Both peeking
+Decoded NOP identity handles x86 prefixes and the architectural register NOP
+forms of `0F 1A/1B`, with mode-aware legacy alignment patterns shared by the
+decoder. Their memory forms retain BNDLDX/BNDSTX identity: neither decoding nor
+lifting assumes that MPX is disabled. Both peeking
 and ordinary exploration reject an instruction that starts in sized ownership
 but borrows bytes outside the primary and its explicitly owned fragments.
 Contiguous fragments may supply those bytes; an ownership gap may not.
@@ -6980,6 +6982,25 @@ exports only those helper symbols and adapts a trusted, explicitly constructed
 consumption is a stateful, single-use operation; failure and nonproducing steps
 invalidate it. The internal C++ embedding layout must match the runtime build.
 The bridge itself establishes no generated-code or translation qualification.
+
+`preparePortableX87Function` owns the alternate generated-function interface.
+It admits an ABI-recovered x64 integer leaf only after checking its direct CFG,
+SSA dominance, owned context and portable forms. Source arguments remain numeric
+guest values. An explicit runtime pointer and source-result pointer follow them;
+the function returns a status. Each step has an immediate failure return, and
+only its exclusive success edge may consume a scalar result. A complete known
+64-bit source return is required; unknown upper RAX bits are never zero-filled.
+The immutable prepared body uses private control labels, carries no original
+code-range proof and exposes no mutable IR or public qualification switch.
+Ordinary LLVM and HighC entry points reject its dedicated helper intrinsics.
+Their `emitPortableX87` entry points create isolated emitters, revalidate the
+prepared body and retain exact runtime declarations without source-call ABI
+inference. Only the explicit execution parameter is a host pointer; guest IP,
+DP and source arguments remain integers. LLVM-C consumes this module with
+`PreserveLLVMFunctionTypes`. The private C writer retains unused parameter
+positions and omits source-architecture intrinsic headers and original-address
+annotations. Output targets require 64-bit little-endian x64/AArch64 C layouts;
+runtime linking and profile qualification remain explicit requirements.
 
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,

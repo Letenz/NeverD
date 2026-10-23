@@ -112,6 +112,8 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
+| BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
+| XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation; legacy standalone placeholder intrinsics cannot become NOPs. |
 
 The direct-store execution checks cover ordinary memory. Native instructions
 retain WC protocol, concurrent write completion and device transactions, but
@@ -124,6 +126,18 @@ and 1024-byte tile SSA value cannot be treated as the ambient CPU bank. Decoded
 AMX instructions now use the separate architectural-bank contract below. An
 opaque helper declaration, assembly that loses state, or a NOP does not close
 a missing semantic contract.
+
+MPX memory forms retain their decoded identity in both full and lightweight
+decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.
+Only the unprefixed register forms of `0F 1A/1B` remain architectural NOPs, as
+specified by the SDM's BNDLDX/BNDSTX descriptions. Strict lifting rejects the
+seven unmodeled MPX operations without appending partial effects. Existing
+serialized MPX, standalone HLE and generic SHA placeholder IDs remain readable,
+but both LLVM and HighC output fail explicitly instead of silently dropping
+them. Specific SHA and RTM instruction contracts are separate.
+Qualification covers 192 strict MPX form/register/mode/decode-route cases,
+60 legacy emitter refusals, the pinned decoder corpus, and all 86 instruction
+boundary tests. The related source and system-sideeffect suites pass too.
 
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and
@@ -157,10 +171,10 @@ incomplete intermediate batch.
    with separate expectations for decoding, strict lifting and each emitter.
    Include positive and negative forms for widths, register banks, masks,
    address sizes, segments and privilege-sensitive operations.
-2. Integrate the native bounded ENCLU APIs below into NeverD's shared SGX
-   state contract, including leaf proofs, exact register dependencies and
-   incoming flag preservation. Its entry/exit/resume leaves remain part of the
-   complete-state continuation work below.
+2. Integrate the native bounded ENCLU and GETSEC APIs below into NeverD's
+   shared state contracts, including leaf proofs, exact register dependencies
+   and incoming flag preservation. Their transferring leaves remain part of
+   the complete-state continuation work below.
 3. Introduce a versioned complete-machine-state boundary and explicit
    continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
@@ -179,9 +193,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`e3b29f4dffd9`](https://github.com/NeverSight/llvm-project/commit/e3b29f4dffd9)
+[`a8095b8deea9`](https://github.com/NeverSight/llvm-project/commit/a8095b8deea9)
 adds native instruction selection for the following APIs. NeverC's
-[`8506f06c7`](https://github.com/NeverSight/NeverC/commit/8506f06c7)
+[`f47d72b0b`](https://github.com/NeverSight/NeverC/commit/f47d72b0b)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -196,6 +210,7 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.vmlaunch`, `llvm.x86.vmresume` | i386 and x86-64 | Return status on falling-through VMfail only; VMCS-controlled transfers remain separate. |
 | `llvm.x86.invept`, `llvm.x86.invvpid` | x86-64 | Full i64 type selector, instruction-owned m128 descriptor and the same VMX completion status. |
 | `llvm.x86.invept32`, `llvm.x86.invvpid32` | i386 | Full i32 type selector and the same m128 descriptor/status contract. Wrong-mode APIs fail explicitly. |
+| `llvm.x86.{vmread,vmwrite.mem,invept,invvpid,vmclear,vmptrld,vmptrst,vmxon}.address` and `.address32` | x86-64 and i386 respectively | Integer offset, constant address width and architectural segment-prefix byte; native access and VMX completion remain instruction-owned. VMPTRST is void; the other seven return i8 status. |
 | `llvm.x86.rdmsr`, `llvm.x86.wrmsr` | i386 and x86-64 | i32 MSR index and full i64 value, transported through ECX and EDX:EAX. Unused reads retain their side effects. |
 | `llvm.x86.wrmsrns`, `llvm.x86.clts` | i386 and x86-64 | Operand-free WRMSRNS uses ECX and EDX:EAX; CLTS retains its ordered processor-state effect. |
 | `llvm.x86.rdmsrlist`, `llvm.x86.wrmsrlist` | x86-64 | Two table pointers and a full i64 mask, with actual RCX completion; table memory and fault ordering stay inside the instruction. |
@@ -216,6 +231,7 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.{lldt,ltr,lmsw}.{reg,mem}`, `llvm.x86.invd` | i386 and x86-64 | Native selector/control input and processor-state effects, including LTR's descriptor busy-bit write. |
 | `llvm.x86.encls`, `llvm.x86.enclv` and their `32` variants | x86-64 and i386 respectively | Four natural-width register inputs/results plus `CF | (ZF << 1)`; leaf selection uses EAX and all memory/state validation stays native. Flag-preserving leaves have no defined scalar status. |
 | `llvm.x86.enclu.bounded`, `llvm.x86.enclu.bounded32` | x86-64 and i386 respectively | Constant natural-width rAX selects one of nine fallthrough leaves through low EAX; four register results and CF/ZF retain native completion. Entry/exit/resume, dynamic and unknown leaves are rejected. |
+| `llvm.x86.getsec.bounded`, `llvm.x86.getsec.bounded32` | x86-64 and i386 respectively | Constant low EAX selects CAPABILITIES (0), PARAMETERS (6), SMCTRL (7) or WAKEUP (8); four natural-width register inputs/results retain unchanged bits on leaf-dependent paths. Transferring, reserved and dynamic leaves are rejected. |
 | `llvm.x86.vmload`, `llvm.x86.vmsave`, `llvm.x86.invlpga` and their `32` variants | x86-64 and i386 respectively | Integer rAX VMCB physical address or linear invalidation address; INVLPGA also reads the complete ECX ASID. No compiler dereference; default address width only. |
 | `llvm.x86.{vmload,vmsave,invlpga}.addr32` and `.addr16` | x86-64 and i386 respectively | Explicit address-size override with i32 or i16 address input; the native `67` prefix, full i32 INVLPGA ASID and instruction-owned memory effects survive lowering. |
 | `llvm.x86.stgi/clgi/clac/stac/hlt`, `llvm.x86.swapgs` | i386 and x86-64; SWAPGS requires x86-64 | Ordered native GIF, AC, halt/resume and GS-base effects, preserving arithmetic flags. HLT is resumable, with neither `noreturn` nor `willreturn`. |
@@ -589,16 +605,59 @@ pass. They include 8,288 native lane/bit-pattern checks, single evaluation,
 immediate diagnostics, and all three formats at O0/O2; six isolated installed-
 header compilation checks pass too.
 
-Pointer APIs still need explicit segment/address width and forced-encoding
-selection. These checkpoints therefore do not yet replace NeverD's complete
-architectural-bank ASM contract.
+Bounded GETSEC now transports all four natural-width registers, including the
+unchanged EBX/ECX paths of PARAMETERS. The allowed leaves preserve arithmetic
+flags; the API neither consumes compiler flags nor returns a scalar status.
+Frontend and backend validation share `X86SmxIntrinsics.h`, reject code16 and
+wrong word sizes, and do not require the unrelated SGX feature. Native
+processor, CR4.SMXE, privilege, chipset and measured-environment checks remain
+inside GETSEC. This follows [SDM 093 Volume 2D](https://cdrdv2.intel.com/v1/dl/getContent/671143),
+chapter 7. NeverD still rejects GETSEC until its explicit state and leaf-proof
+contract is integrated.
 
-These tests qualify compiler transport, not successful privileged VM entry.
-The current pointer APIs cover the default address space. Segmented/address-size
-forms and the other instruction families still need native APIs before all of
-NeverD's existing
-assembly paths can be replaced. The final LLVM release and pin remain gated on
-the complete work described above.
+GETSEC qualification passes 608 full-LLVM checks and 304 checks on each NeverC
+route, plus 16 real CPL3 boundaries per C route. It covers all four leaves,
+full-width inputs, every register output, dead/repeated calls, ordered memory,
+unmapped scalar inputs and all three native formats. The independent-byte
+oracle compares both faults and query results when the host permits execution.
+The shared harness now runs full LLVM's default O2 IR pipeline too; its SGX
+and bounded ENCLU matrices still pass (1,344/784/784 and 6,048/3,528/3,528).
+All 56 focused compiler tests, 81 binary checks, 26 generator tests and 12
+plugin checks pass, with no overload-bitmap mismatch. Only GETSEC opcode 1355's
+implicit RDX definition changes in the plugin schema; all 18,495 opcode IDs
+remain stable. These are compiler-transport and CPL3-boundary checks, not
+successful measured-environment qualification.
+
+VMX explicit-address APIs accept the natural-width selector (when present),
+natural-width offset, constant address bits and constant segment-prefix byte.
+Widths are 32/64 in long mode and 16/32 in i386; code16 and mismatched API modes
+fail explicitly. Prefix zero selects native DS, and `26/2e/36/3e/64/65` select
+ES/CS/SS/DS/FS/GS. These are prefix bytes, not LLVM address-space IDs. The
+offset is truncated before native segment-base addition; the base uses the
+B register so allocator selection cannot silently switch DS to SS.
+Dedicated machine nodes retain normal pointer register classes, memory effects
+and EFLAGS definitions until final encoding selects the narrow BX/EBX address.
+The APIs do not introduce ordinary loads or stores around the VMX operation.
+NeverC exposes all eight matching `__builtin_ia32_*_address` builtins.
+
+Qualification passes 8,416 full-LLVM checks and 4,208 checks on each C route,
+plus 896 real CPL3 fault boundaries per C route against independent raw bytes.
+It covers every width/prefix choice, three formats, both assembly dialects,
+all VMX status values, conditional VMREAD stores, repeated/dead results,
+live values, callee-saved registers, memory ordering and unmapped addresses.
+All 27 LLVM regression files, 58 focused compiler tests, 81 binary checks,
+29 generator tests and 12 plugin checks pass, with no overload-bitmap mismatch.
+Existing VMCS register/memory and management completion matrices still pass on
+all three routes. NeverC appends eight machine opcode records (18,503 total),
+leaving all prior records, register IDs and features unchanged. Its new schema
+digest is `65dca7dac754d4d908794896a9b9619c64eb112604cd2da8acd79ac230f7ec1e`.
+
+These tests qualify compiler transport and CPL3 faults, not successful
+privileged VM entry or segment descriptor validation. Other memory instruction
+families still need explicit segment/address-width APIs; forced EVEX/APX
+selection is separate. NeverD's existing assembly paths still need migration
+to these native APIs. The final LLVM release and pin remain gated on the
+complete work described above.
 
 ## Reproducible checks
 

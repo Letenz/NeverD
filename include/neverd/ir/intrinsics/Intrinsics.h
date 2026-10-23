@@ -420,8 +420,24 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64PAuthM.def"
 
+// Compiler-private portable runtime calls. Append to preserve serialized IDs.
+#define NEVERD_X87_PORTABLE_HELPER(Role, ...) PortableX87##Role,
+#include "neverd/ir/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
+
   _Count = 16000
 };
+
+constexpr bool isPortableX87Intrinsic(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X87_PORTABLE_HELPER(Role, ...) case Intrinsic::PortableX87##Role:
+#include "neverd/ir/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
+    return true;
+  default:
+    return false;
+  }
+}
 
 enum class X86SystemStateKind : uint8_t {
   ReadPid,

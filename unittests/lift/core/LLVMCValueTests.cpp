@@ -115,6 +115,44 @@ __attribute__((noreturn, force_align_arg_pointer)) void _start(void) {
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
 }
 
+TEST(LLVMCValues, TargetIndexWidthKeepsNegativeFrameOffsets) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires native Linux i386/x64 execution";
+#else
+  for (bool NativeI386 : {false, true}) {
+    SCOPED_TRACE(NativeI386);
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(R"ir(
+define i32 @probe() {
+  %frame = alloca [152 x i8], align 16
+  %top = getelementptr i8, ptr %frame, i64 72
+  %back = getelementptr i32, ptr %top, i64 -3
+  store volatile i32 739, ptr %back, align 4
+  %read = getelementptr i8, ptr %frame, i64 60
+  %value = load volatile i32, ptr %read, align 4
+  ret i32 %value
+}
+)ir",
+                                            Error, Context);
+    ASSERT_TRUE(Module) << Error.getMessage().str();
+    Module->setTargetTriple(
+        llvm::Triple(NativeI386 ? "i386-linux-gnu" : "x86_64-linux-gnu"));
+    Module->setDataLayout(NativeI386 ? "e-p:32:32" : "e-p:64:64");
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    neverd::CEmitterOptions Options;
+    Options.TheArch = NativeI386 ? neverd::Arch::X86 : neverd::Arch::X64;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+    Source += "\nint main(void) { return probe() != 739; }\n";
+    for (const char *Opt : {"-O0", "-O2"})
+      compileAndRun(Source, Opt, {}, false, NativeI386);
+  }
+#endif
+}
+
 TEST(LLVMCValues, X87MemoryViewsRetainBitsAndTenByteExtents) {
 #if !defined(__linux__) || !defined(__x86_64__)
   GTEST_SKIP() << "requires native Linux i386/x64 binary80 execution";

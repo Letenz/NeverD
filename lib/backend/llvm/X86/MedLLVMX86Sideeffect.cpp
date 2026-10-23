@@ -24,6 +24,7 @@
 #include "neverd/ir/X87Stack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
+#include "neverd/ir/intrinsics/X86Unsupported.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/ADT/APInt.h"
@@ -578,29 +579,6 @@ void MedLLVMEmitter::emitX86PortOut(const MedOp &Op,
 }
 
 //===----------------------------------------------------------------------===//
-// MPX / transactional memory (treated as NOP)
-//===----------------------------------------------------------------------===//
-
-static bool isX86MpxOrTransactional(Intrinsic IC) {
-  using I = Intrinsic;
-  switch (IC) {
-  case I::BndMk:
-  case I::BndMov:
-  case I::BndCl:
-  case I::BndCu:
-  case I::BndCn:
-  case I::BndLdx:
-  case I::BndStx:
-  case I::Xacquire:
-  case I::Xrelease:
-  case I::ShaGeneric:
-    return true;
-  default:
-    return false;
-  }
-}
-
-//===----------------------------------------------------------------------===//
 // Privileged / system instructions (CLI, STI, INVLPG, WRMSR, etc.)
 //===----------------------------------------------------------------------===//
 
@@ -1145,8 +1123,8 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
     return true;
   if (emitX86SystemAsm(Op, IC, Builder))
     return true;
-  if (isX86MpxOrTransactional(IC))
-    return true;
+  if (const char *Reason = x86UnsupportedIntrinsicReason(IC))
+    llvm::report_fatal_error(Reason);
   if (emitX86Privileged(Op, IC, Builder))
     return true;
   return false;

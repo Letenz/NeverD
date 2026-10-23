@@ -290,6 +290,8 @@ unsigned countedBits(const HighExpr &Operand) {
 }
 
 TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
+  if (PortableInterface)
+    return NdType::makeInt(4, false);
   // A bound source ABI is authoritative even when optional debug information
   // disagrees. Debug-only projections still use one type for their declaration,
   // body and return-value conversion.
@@ -4913,6 +4915,12 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
   std::vector<size_t> All;
   const auto DebugFn = debugFunction(Dbg, Func.Entry);
   const size_t N = Func.Params.size();
+  if (PortableInterface) {
+    All.resize(N);
+    for (size_t I = 0; I < N; ++I)
+      All[I] = I;
+    return All;
+  }
   // A va_start forwarder declares its named parameters; the saved registers
   // are its `...`.
   if (const HighFunc::VaStartForwarder *Va = vaStartForwarder(Func)) {
@@ -6043,7 +6051,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   std::string FName = functionIdentifier(Func);
 
-  if (EmitFunctionWrapper && Func.Entry)
+  if (EmitFunctionWrapper && Func.Entry && !PortableInterface)
     OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
   // A definition whose identifier is not its symbol names the symbol as its
   // language does (`QDomNode::nodeType() const`, `main.main`) or as the image

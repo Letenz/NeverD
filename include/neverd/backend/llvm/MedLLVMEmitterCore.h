@@ -53,6 +53,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
 
 #include <array>
 #include <cstdint>
@@ -75,6 +76,7 @@ class MedLLVMEmitterTestPeer;
 class RelocatedFunctionEntryVerifier;
 class MedLLVMProvenanceTestPeer;
 class LLVMSourceMap;
+class PreparedPortableX87Function;
 
 class MedLLVMEmitter {
 public:
@@ -131,11 +133,23 @@ public:
        bool MergeableGlobals = false,
        const std::vector<char> *BodyMask = nullptr);
 
+  /// Emit only a privately prepared portable leaf with its exact alternate C
+  /// ABI. Source image/debug settings on this emitter are not inherited.
+  llvm::Expected<std::unique_ptr<llvm::Module>>
+  emitPortableX87(const PreparedPortableX87Function &Prepared,
+                  llvm::LLVMContext &Context, llvm::StringRef OutputTriple);
+
   uint64_t unhandledValueIntrinsicCount() const {
     return UnhandledValueIntrinsicCount;
   }
 
 private:
+  const MedFunc *PortableBody = nullptr;
+  const PreparedPortableX87Function *PortableInterface = nullptr;
+  std::string PortableOutputTriple;
+  llvm::Function *declarePortableX87Function(const MedFunc &Function);
+  llvm::Value *emitPortableX87Intrinsic(const MedOp &Op,
+                                        llvm::IRBuilder<> &Builder);
   bool AnalystSourceProjection = false;
   const SourceTargetSignatures *AnalystTargets = nullptr;
   friend class MedLLVMEmitterTestPeer;

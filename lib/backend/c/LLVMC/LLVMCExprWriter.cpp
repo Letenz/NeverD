@@ -512,8 +512,12 @@ std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
     auto Base = imageDataVA(GEP->getPointerOperand());
     if (!Base)
       return std::nullopt;
-    llvm::APInt Off(64, 0);
-    if (CurMod && GEP->accumulateConstantOffset(CurMod->getDataLayout(), Off))
+    llvm::APInt Off(CurMod ? CurMod->getDataLayout().getIndexSizeInBits(
+                                 GEP->getPointerAddressSpace())
+                           : 64,
+                    0);
+    if (CurMod && GEP->accumulateConstantOffset(CurMod->getDataLayout(), Off) &&
+        Off.isSignedIntN(64))
       return static_cast<va_t>(static_cast<int64_t>(*Base) +
                                Off.getSExtValue());
     if (GEP->getNumOperands() == 2) {
@@ -2178,10 +2182,16 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
       }
     }
     if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(V)) {
-      llvm::APInt Acc(64, 0);
+      llvm::APInt Acc(CurMod ? CurMod->getDataLayout().getIndexSizeInBits(
+                                   GEP->getPointerAddressSpace())
+                             : 64,
+                      0);
       if (CurMod &&
-          GEP->accumulateConstantOffset(CurMod->getDataLayout(), Acc)) {
-        Off += Acc.getZExtValue();
+          GEP->accumulateConstantOffset(CurMod->getDataLayout(), Acc) &&
+          Acc.isSignedIntN(64)) {
+        // A negative target-width displacement stays negative when the
+        // synthetic frame offset uses the host-width unsigned carrier.
+        Off += static_cast<uint64_t>(Acc.getSExtValue());
         V = GEP->getPointerOperand();
         continue;
       }
