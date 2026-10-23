@@ -141,6 +141,35 @@ legacy PC signing and absolute state CFI, including DWARF fallback binding.
 The tests execute no fixture code. Missing Apple arm64e tools are explicit
 skips; after the baseline toolchain probe passes, fixture failures fail the test.
 
+`NeverDLanguageEHTests` checks the unified signing query's image/function
+provenance, exact PCs, source scopes and bounded CIE lookup.
+`NeverDUnwindFrameCAPITests` loads independent Mach-O fixtures through the
+public session API and covers all six query statuses, unsigned and absent
+sources, a shorter FDE than compact range, half-open boundaries and signing
+address zero. `NeverDUnwindFrameCLITests` compares complete CLI JSON against
+that same public API without adding dependencies to the C API suite.
+`pluginsdk/python/tests/test_unwind_query.py` checks the Python adapter's
+ownership, integer validation and complete JSON retention.
+
+Enable `NEVERD_BUILD_GUI` for the worker and GUI consumers. Build
+`neverd-worker-test-server`, `neverd-gui-unwind-tests`,
+`neverd-gui-query-tests` and `neverd-gui`, then run `NeverDWorkerUnwindQuery`,
+`NeverDWorkerTransport`, `NeverDGuiUnwindInfo` and `NeverDGuiQueries`.
+The worker tests preserve exact high addresses and all source statuses through
+the protocol. GUI tests use the real query dispatcher with a controlled sender,
+including stale replies, destruction, missing capability, keyboard closure,
+long diagnostics and large fonts. `NEVERD_UNWIND_GUI_CAPTURES` selects a
+directory for actual light/dark, RTL and large-font captures to inspect.
+
+`NeverDAArch64SVEPredicateTests` checks PTRUE encodings and all patterns,
+canonical predicate conversions across element widths, LLVM verification and
+object compilation, HighC projection and malformed LowIR/MedIR refusal.
+`NeverDBinaryDiffSDKTests` retains incomplete analysis for unmodelled MOVPRFX.
+These tests do not execute SVE hardware or qualify scalable calling conventions.
+`MachONativeInplace.*` and the public-entry cases in `MachOPatchTransaction`
+check raw arm64e/x1 subtype capabilities, absent caller annotations and output
+rollback, with genuine ordinary arm64 writes as positive controls.
+
 `NeverDDyldSharedCacheTests` checks immutable arm64e cache mappings, old/new
 subcache tables, suffix/UUID/placement validation, embedded image layouts and
 cross-file reads. Independently serialized v2/v3/v5 fixtures cover extra

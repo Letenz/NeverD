@@ -40,6 +40,7 @@
 #include "TitleBar.h"
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
+#include "UnwindInfoDialog.h"
 #include "WindowFrame.h"
 #include "X87CapabilitiesDialog.h"
 #include "mcp/GuiSessionBroker.h"
@@ -2053,6 +2054,21 @@ void MainWindow::connectActions() {
     QDesktopServices::openUrl(QUrl(QString::fromLatin1(DocumentationUrl)));
   });
   on(ActionId::HelpAbout, [this] { showAbout(); });
+  on(ActionId::ViewUnwindInfo, [this] {
+    const auto PC = currentAddress();
+    if (!PC || !session_.loaded() || !session_.reportsUnwindFrames() ||
+        focusedCodeView())
+      return;
+    auto *Dialog = new UnwindInfoDialog(session_.queries(), *PC, this);
+    Dialog->setAttribute(Qt::WA_DeleteOnClose);
+    const auto Update = [this, Dialog] {
+      Dialog->setProviderAvailable(session_.connected() && session_.loaded(),
+                                   session_.reportsUnwindFrames());
+    };
+    connect(&session_, &Session::stateChanged, Dialog, Update);
+    Update();
+    Dialog->show();
+  });
   on(ActionId::HelpX87Capabilities, [this] {
     auto *Dialog = new X87CapabilitiesDialog(session_.queries(), this);
     Dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -2086,6 +2102,9 @@ void MainWindow::updateActions() {
                         name == QLatin1String("ViewConnections");
     action->setEnabled(always || loaded);
   }
+  actions_.action(ActionId::ViewUnwindInfo)
+      ->setEnabled(location && !focusedCodeView() &&
+                   session_.reportsUnwindFrames());
   actions_.action(ActionId::JumpBack)
       ->setEnabled(loaded && disassembly_->canGoBack());
   actions_.action(ActionId::JumpForward)

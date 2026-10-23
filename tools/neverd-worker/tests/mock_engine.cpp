@@ -39,6 +39,19 @@ static std::filesystem::path projectFile(const std::string &input,
 }
 
 namespace {
+namespace unwind_query_fixture {
+#define NEVERD_UNWIND_TEST_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "UnwindQueryFixtures.def"
+struct Case {
+  const char *Address;
+  const char *Source;
+};
+constexpr Case Cases[] = {
+#define NEVERD_UNWIND_TEST_CASE(Address, Source, Expected) {Address, Source},
+#include "UnwindQueryFixtures.def"
+};
+} // namespace unwind_query_fixture
+
 constexpr std::uint64_t Base = 0xffff800012340000ULL;
 constexpr std::uint64_t CodeBase = Base + 0x2700;
 constexpr unsigned char CodeBytes[] = {0x90, 0x48, 0x83, 0xc4,
@@ -1964,7 +1977,13 @@ const char *neverd_function_chunks_json(neverd_session_t s) {
                                 {"function", hexAddress(Base)}}})
                   .dump());
 }
-const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
+const char *neverd_unwind_frame_json(neverd_session_t s, neverd_va_t address) {
+  if (session(s)->path.ends_with(unwind_query_fixture::kInputName)) {
+    for (const auto &Case : unwind_query_fixture::Cases)
+      if (address == parseAddress(Case.Address))
+        return copy(Case.Source);
+    return copy(unwind_query_fixture::kNull);
+  }
   // function_0 has a plain frame; function_1 names a personality.
   if (address >= Base && address < Base + 16)
     return copy(Json{

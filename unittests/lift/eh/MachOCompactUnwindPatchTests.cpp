@@ -12,6 +12,7 @@
 #include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
 #include "neverd/backend/codegen/MachO/MachOPatch.h"
+#include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/loader/MachO/CompactUnwind.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
@@ -79,6 +80,20 @@ constexpr CompactPAuthLRCase kCompactPAuthLRCases[] = {
                                      Offset, Valid)                            \
   {#Name, Encoding, BeginDelta, Length, Offset, Valid},
 #include "MachOCompactPAuthLRFixtures.def"
+};
+
+#define NEVERD_NATIVE_ABI_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#define NEVERD_NATIVE_ABI_TEXT(Name, Value) constexpr char Name[] = Value;
+#include "MachONativeABIPatchFixtures.def"
+
+struct Arm64eNativeABICase {
+  const char *Name;
+  uint32_t Subtype;
+};
+
+constexpr Arm64eNativeABICase kArm64eNativeABICases[] = {
+#define NEVERD_NATIVE_ABI_CASE(Name, Subtype) {#Name, Subtype},
+#include "MachONativeABIPatchFixtures.def"
 };
 
 void setMachOName(char (&Destination)[16], llvm::StringRef Name) {
@@ -1069,8 +1084,9 @@ makeMachOPatchTransactionFixture(size_t CompactCapacity,
   Header->magic = MH_MAGIC_64;
   Header->cputype =
       Architecture == Arch::X64 ? CPU_TYPE_X86_64 : CPU_TYPE_ARM64;
-  Header->cpusubtype = Architecture == Arch::X64 ? CPU_SUBTYPE_X86_64_ALL
-                                                 : CPU_SUBTYPE_ARM64_ALL;
+  Header->cpusubtype = Architecture == Arch::X64
+                           ? static_cast<uint32_t>(CPU_SUBTYPE_X86_64_ALL)
+                           : static_cast<uint32_t>(CPU_SUBTYPE_ARM64_ALL);
   Header->filetype = MH_EXECUTE;
   Header->ncmds = 5;
   Header->sizeofcmds = CommandSize;
@@ -4102,6 +4118,117 @@ TEST(MachOCompactUnwindInstall,
   expectInstallFailure(applyMachOCompactUnwindInstall(Binary, *Plan),
                        InstallFailure::ArchitectureMismatch);
   EXPECT_EQ(Binary, BeforeApply);
+}
+
+void checkMachONativeABIPatch(uint32_t Subtype, bool UseOptions,
+                              bool ExistingOutput, bool ExpectSuccess) {
+  std::vector<uint8_t> Binary =
+      makeClassicDyldStubAndZeroGOTFixture(kNativeABICompactCapacity);
+  ASSERT_FALSE(Binary.empty());
+  auto *Header = reinterpret_cast<llvm::MachO::mach_header_64 *>(Binary.data());
+  Header->cpusubtype = Subtype;
+
+  llvm::SmallString<kNativeABIPathBytes> InputPath;
+  llvm::SmallString<kNativeABIPathBytes> OutputPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(
+      kNativeABIInputPrefix, kNativeABIExtension, InputPath));
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(
+      kNativeABIOutputPrefix, kNativeABIExtension, OutputPath));
+  llvm::FileRemover RemoveInput(InputPath);
+  llvm::FileRemover RemoveOutput(OutputPath);
+  ASSERT_TRUE(writeFixtureFile(InputPath, Binary));
+  const llvm::StringRef Sentinel(kNativeABIOutputSentinel);
+  const std::vector<uint8_t> OutputSentinel(Sentinel.bytes_begin(),
+                                            Sentinel.bytes_end());
+  if (ExistingOutput)
+    ASSERT_TRUE(writeFixtureFile(OutputPath, OutputSentinel));
+  else
+    ASSERT_FALSE(llvm::sys::fs::remove(OutputPath));
+
+  auto Loaded = MachOLoader().load(InputPath.str().str());
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  ASSERT_EQ(Loaded->isArm64e(), !ExpectSuccess);
+  EXPECT_EQ(Loaded->MachOCPUSubtype, Subtype);
+
+  llvm::LLVMContext Context;
+  auto Module = makeMachOPatchTransactionModule(Context);
+  auto *Lifted = Module->getFunction(kNativeABIFunction);
+  auto *Personality = Module->getFunction(kNativeABIPersonality);
+  ASSERT_NE(Lifted, nullptr);
+  ASSERT_NE(Personality, nullptr);
+  llvm::IRBuilder<> Builder(&*Lifted->getEntryBlock().getFirstInsertionPt());
+  Builder.CreateCall(Personality);
+  ASSERT_EQ(Module->getModuleFlag(kArm64eAnalysisModuleFlag), nullptr);
+
+  // Neither public entry requires a pipeline-produced Module or cached image.
+  // The fresh input's subtype must authorize this transaction independently.
+  PatchResult Result;
+  testing::internal::CaptureStderr();
+  if (UseOptions) {
+    MachOPatcher Patcher;
+    Result = Patcher.patch(InputPath.str().str(), OutputPath.str().str(),
+                           *Module, Arch::AArch64, MachOPatchOptions{});
+  } else {
+    auto Patcher = BinaryPatcher::create(BinaryFormat::MachO);
+    Result = Patcher->patch(InputPath.str().str(), OutputPath.str().str(),
+                            *Module, Arch::AArch64);
+  }
+  const std::string Diagnostic = testing::internal::GetCapturedStderr();
+
+  EXPECT_EQ(readFixtureFile(InputPath), Binary);
+  if (!ExpectSuccess) {
+    EXPECT_FALSE(Result.Success);
+    EXPECT_NE(Diagnostic.find(kArm64eRebuildUnsupported), std::string::npos)
+        << Diagnostic;
+    EXPECT_EQ(Result.CodeSize, 0u);
+    EXPECT_EQ(Result.TrampolineCount, 0u);
+    EXPECT_TRUE(Result.OutputPath.empty());
+    EXPECT_TRUE(Result.PatchedFunctions.empty());
+    EXPECT_TRUE(Result.PatchedOriginalEntries.empty());
+    EXPECT_TRUE(Result.OriginalCallbacks.empty());
+    if (ExistingOutput)
+      EXPECT_EQ(readFixtureFile(OutputPath), OutputSentinel);
+    else
+      EXPECT_FALSE(llvm::sys::fs::exists(OutputPath));
+    return;
+  }
+
+  ASSERT_TRUE(Result.Success) << Diagnostic;
+  EXPECT_EQ(Result.TrampolineCount, 1u);
+  EXPECT_GT(Result.CodeSize, 0u);
+  EXPECT_EQ(Result.PatchedOriginalEntries,
+            (std::vector<va_t>{kTransactionFunctionVA}));
+  const std::vector<uint8_t> Output = readFixtureFile(OutputPath);
+  ASSERT_GT(Output.size(), Binary.size());
+  expectStrictInjectedSegmentLayout(Output, kDefaultNdTextSegment,
+                                    Arch::AArch64);
+  EXPECT_NE(
+      llvm::support::endian::read32le(Output.data() + kTransactionTextOff),
+      llvm::support::endian::read32le(Binary.data() + kTransactionTextOff));
+}
+
+TEST(MachOPatchTransaction,
+     RejectsArm64eAtPublicEntryWithoutAnalysisAnnotation) {
+  for (const Arm64eNativeABICase &Case : kArm64eNativeABICases) {
+    SCOPED_TRACE(Case.Name);
+    for (bool UseOptions : {false, true}) {
+      SCOPED_TRACE(UseOptions);
+      for (bool ExistingOutput : {false, true}) {
+        SCOPED_TRACE(ExistingOutput);
+        ASSERT_NO_FATAL_FAILURE(checkMachONativeABIPatch(
+            Case.Subtype, UseOptions, ExistingOutput, false));
+      }
+    }
+  }
+}
+
+TEST(MachOPatchTransaction,
+     AllowsOrdinaryARM64AtPublicEntryWithoutAnalysisAnnotation) {
+  for (bool UseOptions : {false, true}) {
+    SCOPED_TRACE(UseOptions);
+    ASSERT_NO_FATAL_FAILURE(checkMachONativeABIPatch(kNativeABIOrdinarySubtype,
+                                                     UseOptions, true, true));
+  }
 }
 
 TEST(MachOPatchTransaction,

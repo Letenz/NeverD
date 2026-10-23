@@ -323,6 +323,23 @@ if(TARGET neverd_shared)
     LINK_COMPONENTS Types
     LINK_LIBS neverd_shared
   )
+  add_neverd_unittest(NeverDUnwindFrameCAPITests
+    UnwindFrameCAPITests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDUnwindFrameCAPITests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
+  if(TARGET neverd)
+    add_neverd_unittest(NeverDUnwindFrameCLITests
+      UnwindFrameCLITests.cpp
+      LINK_LIBS neverd_shared LLVMSupport
+    )
+    target_include_directories(NeverDUnwindFrameCLITests PRIVATE
+      "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
+    target_compile_definitions(NeverDUnwindFrameCLITests PRIVATE
+      NEVERD_TEST_CLI="$<TARGET_FILE:neverd>")
+    add_dependencies(NeverDUnwindFrameCLITests neverd)
+  endif()
   add_neverd_unittest(NeverDFunctionDisasmCAPITests
     FunctionDisasmCAPITests.cpp
     LINK_LIBS neverd_shared LLVMSupport

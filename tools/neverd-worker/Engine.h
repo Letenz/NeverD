@@ -58,6 +58,8 @@ public:
   /// Whether the engine exposes its static x87 support matrix, independently
   /// of binary loading, host probing or execution.
   static bool reportsX87Capabilities();
+  /// Whether the engine can query unwind metadata at an exact address.
+  static bool reportsUnwindFrames();
   /// Whether the engine keeps function edits (function_create/_delete).
   static bool keepsFunctionEdits();
   /// Whether the engine keeps what the user states of a function

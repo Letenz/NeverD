@@ -1511,8 +1511,9 @@ _declare(
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,
 )
+UNWIND_FRAME_QUERY = "neverd_unwind_frame_json"
 _declare(
-    "neverd_unwind_frame_json",
+    UNWIND_FRAME_QUERY,
     "const char *",
     ["neverd_session_t", "neverd_va_t"],
     ownership=Ownership.OWNED_STRING,

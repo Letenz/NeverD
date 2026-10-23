@@ -15,6 +15,7 @@
 
 #include "NeverDCLI.h"
 #include "ResourceLimits.h"
+#include "UnwindQuery.h"
 
 #include "neverd/dalvik/Budget.h"
 #include "neverd/diff/Limits.h"
@@ -1419,6 +1420,11 @@ ConcolicStringList ConcolicSolverGates(
 //===----------------------------------------------------------------------===//
 // JSON output option (shared)
 //===----------------------------------------------------------------------===//
+
+cl::opt<std::string>
+    InfoUnwindFrame(unwind_query::kOption, cl::desc(unwind_query::kDescription),
+                    cl::value_desc(unwind_query::kAddressValue),
+                    cl::sub(InfoCmd));
 
 cl::opt<bool>
     JsonOutput("json", cl::desc("Output as JSON"), cl::sub(InfoCmd),

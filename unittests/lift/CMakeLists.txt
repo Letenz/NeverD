@@ -1930,6 +1930,11 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
 
+add_neverd_unittest(NeverDAArch64SVEPredicateTests
+  aarch64/AArch64SVEPredicateTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode IRLow IRMed Lift Support
+)
+
 add_neverd_unittest(NeverDAArch64DivisionSemanticTests
   aarch64/AArch64DivisionSemanticTests.cpp
   LINK_COMPONENTS Decode IRLow Support
@@ -2049,6 +2054,7 @@ add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/MachOARM32TransactionTests.cpp
   eh/MachOCompactUnwindPatchTests.cpp
   eh/MachOExceptionPatchTests.cpp
+  eh/MachONativeInplaceTests.cpp
   eh/NativeExceptionRewriteContractTests.cpp
   eh/PatchStorageTests.cpp
   eh/ReplacementIRTests.cpp
@@ -2368,6 +2374,7 @@ add_custom_target(NeverDWindowsEHSyntheticCorpus
 add_neverd_unittest(NeverDLanguageEHTests
   language/LanguageEHTests.cpp
   language/AArch64DwarfReturnAddressTests.cpp
+  language/ReturnAddressSigningTests.cpp
   language/AArch64LinkedUnwindTests.cpp
   language/LanguageEHDirectBranchTests.cpp
   language/DirectBranchDecodeTests.cpp

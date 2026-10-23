@@ -13,6 +13,7 @@
 #include "JSONText.h"
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
+#include "UnwindSigningJSON.h"
 
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
@@ -285,6 +286,9 @@ const char *neverd_unwind_frame_json(neverd_session_t Sess,
                          {"language_data", F->hasLanguageTable()}};
   if (!F->PersonalityName.empty())
     Obj["personality"] = jsonSafeText(F->PersonalityName);
+  if (S->Img.Arch == Arch::AArch64)
+    Obj[unwind_json::kReturnAddress] =
+        unwindSigningJSON(queryAArch64UnwindSigning(S->Img, *F, Address));
   return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
 }
 

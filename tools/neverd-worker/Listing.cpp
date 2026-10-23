@@ -7,6 +7,7 @@
 #include "StringReferences.h"
 #include "TablePage.h"
 #include "TextFold.h"
+#include "UnwindQuery.h"
 
 #include "neverd/DataAccessWidths.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
@@ -35,7 +36,7 @@ using FunctionDisasmFunction = const char *(*)(neverd_session_t, neverd_va_t,
                                                neverd_va_t, int, unsigned);
 using CodeRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using ImportSlotsFunction = const char *(*)(neverd_session_t);
-using UnwindFrameFunction = const char *(*)(neverd_session_t, neverd_va_t);
+using UnwindFrameFunction = unwind_query::Function;
 using FunctionChunksFunction = const char *(*)(neverd_session_t);
 using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using DiscoverFunctionsFunction = int (*)(neverd_session_t);
@@ -675,7 +676,7 @@ struct Listing::Impl {
         engineSymbol<FunctionDisasmFunction>("neverd_function_disasm_json");
     codeRefs = engineSymbol<CodeRefsFunction>("neverd_code_refs_json");
     importSlots = engineSymbol<ImportSlotsFunction>("neverd_import_slots_json");
-    unwindFrame = engineSymbol<UnwindFrameFunction>("neverd_unwind_frame_json");
+    unwindFrame = unwind_query::function();
     functionChunks =
         engineSymbol<FunctionChunksFunction>("neverd_function_chunks_json");
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");

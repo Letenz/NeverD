@@ -11,6 +11,7 @@
 #include "ResourceLimits.h"
 #include "TablePage.h"
 #include "TextFold.h"
+#include "UnwindQuery.h"
 
 #include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
@@ -405,7 +406,8 @@ void canonicalizeAddresses(Json &value) {
             address = hexAddress(parseAddress(address.get<std::string>()));
       } else if ((key == "addr" || key == "va" || key == "address" ||
                   key == "start" || key == "end" || key == "entry" ||
-                  key == "iat_addr" || key == "from" || key == "to") &&
+                  key == "iat_addr" || key == "from" || key == "to" ||
+                  unwind_query::isAddressField(key)) &&
                  it->is_string()) {
         const auto &text = it->get_ref<const std::string &>();
         if (text.starts_with("0x") || text.starts_with("0X"))
@@ -701,6 +703,9 @@ Engine::Engine()
 }
 Engine::~Engine() { neverd_session_destroy(session_); }
 std::string Engine::version() { return ownedString(neverd_version_number()); }
+bool Engine::reportsUnwindFrames() {
+  return unwind_query::function() != nullptr;
+}
 bool Engine::reportsX87Capabilities() {
   return x87CapabilitiesFunction() != nullptr;
 }
@@ -2602,6 +2607,18 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return result;
   }
   requireLoaded();
+  if (operation == unwind_query::kOperation) {
+    const auto Query = unwind_query::function();
+    if (!Query)
+      throw Error(unwind_query::kUnsupported, unwind_query::kUnavailable);
+    if (!p.is_object() || p.size() != unwind_query::kRequestFieldCount ||
+        !p.contains(unwind_query::kAddress))
+      throw Error(unwind_query::kInvalidRequest, unwind_query::kInvalidPayload);
+    const auto Address = parseAddress(stringField(p, unwind_query::kAddress));
+    // Preserve the exact query PC and both source scopes. The shared JSON
+    // adapter only canonicalizes hexadecimal spelling for the wire protocol.
+    return backendJson(Query(session_, Address), false);
+  }
   if (operation == "pdb_inspect" || operation == "pdb_load") {
     if (operation == "pdb_load" && p.contains("download")) {
       if (!p.at("download").is_object() ||
