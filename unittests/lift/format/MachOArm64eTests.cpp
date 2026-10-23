@@ -624,8 +624,20 @@ TEST(MachOArm64e, AuthenticatedInitializersAndFinalizersAreDiscovered) {
     Fixture.word(0, Raw);
     Fixture.Image.Segments[0].Flags =
         SegmentFlags::Readable | SegmentFlags::Executable;
-    Fixture.Image.Sections[0].Flags = Fixture.Image.Segments[0].Flags;
+    Fixture.Image.Sections[0].Size = Fixture.Image.Sections[0].FileSz = 8;
+    neverd::Section Text = Fixture.Image.Sections[0];
+    Text.Name = "__text";
+    Text.VA += 0x80;
+    Text.FileOff += 0x80;
+    Text.Size = Text.FileSz = 4;
+    Text.Type = S_ATTR_PURE_INSTRUCTIONS;
+    Text.Flags = Fixture.Image.Segments[0].Flags;
+    Fixture.Image.Sections.push_back(Text);
+    Fixture.word(0x80, 0xd65f03c0); // ret
     Fixture.parse();
+    ASSERT_TRUE(Fixture.Image.MachOChainedFixupsError.empty());
+    ASSERT_EQ(macho_loader::readMetadataPointerTarget(Fixture.Image, Data),
+              Data + 0x80);
     macho_loader::SectionInfo Section{};
     Section.Addr = Data;
     Section.Size = 8;

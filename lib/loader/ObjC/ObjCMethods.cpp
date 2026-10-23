@@ -183,10 +183,20 @@ class RuntimeReader {
             "Method selector or type encoding is unavailable");
       } else {
         hint(Method);
-        if (!Img.hasFunctionSymbolAt(*IMP))
+        // LC_FUNCTION_STARTS proves an entry, but its synthesized name must
+        // not hide a method identity recovered from validated metadata.
+        const Symbol *Name = Img.functionNameSymbolAt(*IMP);
+        if (Name && Name->IsFunc && Name->Origin == NameOrigin::Synthesized) {
+          Symbol &Existing = Img.Symbols[Name - Img.Symbols.data()];
+          Existing.Name = implementationName(Class, Category, ClassMethod,
+                                             Method.Selector, *IMP);
+          Existing.Origin = NameOrigin::Stated;
+          Existing.IsBoundaryGuess = false;
+        } else if (!Img.hasFunctionSymbolAt(*IMP)) {
           Img.addSymbol(implementationName(Class, Category, ClassMethod,
                                            Method.Selector, *IMP),
                         *IMP, 0, true);
+        }
       }
       Img.ObjCMethods.push_back(std::move(Method));
     }

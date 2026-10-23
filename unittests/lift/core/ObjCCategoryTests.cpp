@@ -197,6 +197,30 @@ TEST(ObjCCategories, NamesImplementationsAsClangDoes) {
   EXPECT_EQ(Placeholder->Name, "objc_imp_1100");
 }
 
+TEST(ObjCCategories, MetadataNamesReplaceOnlySynthesizedFunctionNames) {
+  for (NameOrigin Origin : {NameOrigin::Synthesized, NameOrigin::Analysis,
+                            NameOrigin::Stated, NameOrigin::User}) {
+    CategoryImage Fixture;
+    Symbol Existing = Symbol::makeFunc(0x1100, 16);
+    Existing.Origin = Origin;
+    Existing.IsBoundaryGuess = true;
+    Fixture.Image.Symbols.push_back(Existing);
+    parseObjCMethods(Fixture.Image);
+    EXPECT_EQ(Fixture.Image.getFunctionNameAt(0x1100),
+              Origin == NameOrigin::Synthesized ? "-[Container(Extra) step:]"
+                                                : Existing.Name);
+    EXPECT_EQ(Fixture.Image.Symbols.front().Size, 16U);
+    EXPECT_EQ(Fixture.Image.Symbols.front().IsBoundaryGuess,
+              Origin != NameOrigin::Synthesized);
+    EXPECT_EQ(Fixture.Image.Symbols.size(), 2U);
+    EXPECT_EQ(Fixture.Image.findSymbolAt(0x1100)->Name,
+              Fixture.Image.getFunctionNameAt(0x1100));
+    const size_t Count = Fixture.Image.Symbols.size();
+    parseObjCMethods(Fixture.Image);
+    EXPECT_EQ(Fixture.Image.Symbols.size(), Count);
+  }
+}
+
 TEST(ObjCCategories, DiscoversLocalOwnerWithoutAClassListEntry) {
   CategoryImage Fixture;
   Fixture.pointer(0x2000, 0);

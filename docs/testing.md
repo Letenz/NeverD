@@ -44,6 +44,11 @@ retain the actual instruction even with a dead result; generated C compiles
 at O0/O2, with parameter-flow checks for temporary-name collisions. Vector
 CPA forms must reject instead of becoming unchecked arithmetic. These are
 instruction-preservation checks, not native CPA/CPA2 execution qualification.
+`ReturnContracts.CheckedAArch64PointersRemainReturnValues` covers all baseline
+PAC/AUT/XPAC/PACGA, authenticated target and scalar CPA results. An effectful
+instruction must not turn a returned pointer into a void function; malformed
+operand widths cannot acquire that return-value contract. C compilation rejects
+unused-value warnings, including intentionally discarded CPA results.
 
 The same target checks public Mach-O loading, CPU subtype capability bits,
 arm64e and x1 identification, chained formats 1/7/9/10/12/14, signing metadata, signed import addends,
@@ -63,10 +68,14 @@ supported chained format and for authenticated object relocations. Stale
 bytes, signing-field mismatches, conflicting provenance, overlapping storage
 and imported or unmapped targets reject. Initializer/finalizer discovery must
 leave recipe bytes unchanged. A real Clang arm64e Objective-C object at O0/O2
-must recover its class, selector, signature and signed IMP. Category fixtures
-exercise authenticated class, metaclass and method records in
+must retain local class/metaclass record and signed IMP targets; it does not
+bypass the linked-image requirement for source types. On Apple Silicon the
+test also links a bundle with local symbols stripped and requires class,
+selector, signature, IMP and function-name recovery from its authenticated
+metadata. Category fixtures exercise authenticated class, metaclass and method records in
 `NeverDObjCSourceCallTests`; its source-binding tests retain the plain-object
-reconstruction restriction.
+reconstruction restriction. Metadata names replace synthesized function-start
+names while preserving stated, analysis and user names.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent

@@ -18,14 +18,12 @@ NEVERD_A64_CPA_C_TEXT(kAArch64CPACBinary,
                       "({{ uint64_t {0}; __asm__ volatile(\"mov x16, %1\\n\\t"
                       "mov x17, %2\\n\\t{1}\\n\\tmov %0, x16\" : \"=r\"({0}) : "
                       "\"r\"((uint64_t)({2})), \"r\"((uint64_t)({3})) : "
-                      "\"x16\", \"x17\"); {0}; }})")
+                      "\"x16\", \"x17\"); {0}; })")
 NEVERD_A64_CPA_C_TEXT(
     kAArch64CPACTernary,
     "({{ uint64_t {0}; __asm__ volatile(\"mov x16, %1\\n\\t"
     "mov x17, %2\\n\\tmov x15, %3\\n\\t{1}\\n\\tmov %0, x16\" : \"=r\"({0}) : "
     "\"r\"((uint64_t)({2})), \"r\"((uint64_t)({3})), \"r\"((uint64_t)({4})) : "
-    "\"x16\", \"x17\", \"x15\"); {0}; }})")
-NEVERD_A64_CPA_C_TEXT(kAArch64CPACAssignment, "{0} = {1};\n")
-NEVERD_A64_CPA_C_TEXT(kAArch64CPACDiscard, "(void){0};\n")
+    "\"x16\", \"x17\", \"x15\"); {0}; })")
 
 #undef NEVERD_A64_CPA_C_TEXT

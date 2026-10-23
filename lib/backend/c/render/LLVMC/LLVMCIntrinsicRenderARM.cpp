@@ -12,6 +12,7 @@
 
 #include "neverd/backend/c/render/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64PAuthC.h"
+#include "neverd/backend/c/render/AArch64PointerC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
@@ -61,8 +62,9 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
       const auto Value = aarch64CPAC(Operation, Args);
       return {
           ResultLive && !ResultName.empty()
-              ? llvm::formatv(kAArch64CPACAssignment, ResultName, Value).str()
-              : llvm::formatv(kAArch64CPACDiscard, Value).str(),
+              ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value)
+                    .str()
+              : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
           false};
     }
     for (const auto &Auth : kAArch64PAuthOperations) {
@@ -70,9 +72,12 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
         continue;
       const std::string Value =
           aarch64PAuthMachineC(Auth, Args[0], Auth.Strip ? "" : Args[1]);
-      const std::string Prefix =
-          ResultLive && !ResultName.empty() ? ResultName + " = " : "(void)";
-      return {Prefix + Value + ";\n", false};
+      return {
+          ResultLive && !ResultName.empty()
+              ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value)
+                    .str()
+              : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
+          false};
     }
   }
   if (Mnemonic == "sel" && Args.size() >= 2) {

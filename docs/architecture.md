@@ -95,7 +95,10 @@ rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 Generated C temporaries avoid every operand expression, preserving parameters
 and results that already use the renderer's preferred local names.
 Validated pointer-authentication operations preserve argument setup across
-both ABI recovery and C lowering. Tail-transfer proofs retain target taint
+both ABI recovery and C lowering. Return-contract recovery keeps their explicit
+results, including signatures and poisoned pointers, even when the operation
+also has side effects. It uses the lowering shape contract rather than treating
+every effectful intrinsic as void. Tail-transfer proofs retain target taint
 separately from the signing modifier and restore a saved signed link only
 after authentication with the matching key and entry-SP offset (or zero).
 Clang's explicit authentication-failure branch retains the setup of its sole
@@ -127,7 +130,8 @@ and raw instruction words support assemblers predating CPA mnemonics, with
 explicit operand and clobber constraints. Compilation does not establish CPU
 feature availability. SVE CPA forms fail explicitly until scalable state is
 modelled. These operations preserve call argument setup and frame taint,
-without proving a checked result is an ordinary arithmetic value.
+without proving a checked result is an ordinary arithmetic value. Their explicit
+results remain return values; discarded C expressions retain the instruction.
 
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
 their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
@@ -147,6 +151,8 @@ word must still match the loader's snapshot and signing fields; imported,
 conflicting, overlapping or stale storage cannot establish a local target.
 The Objective-C reader opts into this view explicitly. Plain runtime value
 readers and source object reconstruction do not acquire that permission.
+Recovered method names outrank synthesized function-start names while retaining
+existing stated, analysis and user function names.
 The formats follow Apple's [dyld definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)
 and LLVM's [pointer-authentication contract](https://llvm.org/docs/PointerAuth.html).
 

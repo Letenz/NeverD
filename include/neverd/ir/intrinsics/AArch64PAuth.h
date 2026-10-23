@@ -67,6 +67,11 @@ inline bool aarch64PAuthCodeKeyIsValid(uint64_t Key) {
   return Key == kAArch64PAuthKeyIA || Key == kAArch64PAuthKeyIB;
 }
 
+inline bool isAArch64PAuthIntrinsic(Intrinsic Id) {
+  return aarch64PAuthOperation(Id).has_value() || Id == Intrinsic::A64_Pacga ||
+         Id == Intrinsic::A64_AuthBranch;
+}
+
 /// Valid pointer authentication writes only its explicit output. It may read
 /// hidden key state or fault, but cannot clobber call arguments or memory.
 struct AArch64PAuthShape {

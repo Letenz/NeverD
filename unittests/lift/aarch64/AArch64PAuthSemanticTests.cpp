@@ -27,6 +27,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/MachO/MachOLoader.h"
+#include "neverd/loader/MachO/MachOMetadataPointer.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/IR/Dominators.h"
@@ -143,6 +144,7 @@ void compileArm64eC(const std::string &Source,
         "-I",
         NEVERD_ARM64E_TEST_HEADERS,
         "-std=gnu11",
+        "-Werror=unused-value",
         "-x",
         Language,
         Optimization,
@@ -221,7 +223,7 @@ MedFunc pointerFunction(Intrinsic Id, llvm::StringRef Name) {
 }
 } // namespace
 
-TEST(AArch64PAuthSemantics, CompilerObjCRecordsFollowAuthenticatedRelocations) {
+TEST(AArch64PAuthSemantics, CompilerObjCRecipesRetainLocalMetadataTargets) {
   const char Source[] = R"(
     __attribute__((objc_root_class))
     @interface ArmMetadata
@@ -240,20 +242,72 @@ TEST(AArch64PAuthSemantics, CompilerObjCRecordsFollowAuthenticatedRelocations) {
         ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
         EXPECT_TRUE(Image->isArm64e());
         EXPECT_FALSE(Image->MachOAuthenticatedPointers.empty());
-        ASSERT_EQ(Image->ObjCClasses.size(), 1);
-        ASSERT_EQ(Image->ObjCMethods.size(), 1);
-        const auto &Method = Image->ObjCMethods[0];
-        EXPECT_EQ(Method.ClassName, "ArmMetadata");
-        EXPECT_EQ(Method.Selector, "increment:");
-        EXPECT_EQ(Method.Status, "supported");
-        EXPECT_TRUE(Image->isCodeAddress(Method.Implementation));
-        ASSERT_TRUE(Method.TypeHint);
+        bool ClassRO = false, MetaclassRO = false, Implementation = false;
         for (const auto &[Slot, Recipe] : Image->MachOAuthenticatedPointers) {
           ASSERT_TRUE(Recipe.EncodedValue);
           EXPECT_EQ(readLE<uint64_t>(Image->readVA(Slot, 8)),
                     *Recipe.EncodedValue);
           EXPECT_FALSE(Image->CodePtrRelocSlots.count(Slot));
+          EXPECT_EQ(macho_loader::readMetadataPointerTarget(*Image, Slot),
+                    Recipe.Target);
+          ClassRO |= Recipe.Symbol == "__OBJC_CLASS_RO_$_ArmMetadata";
+          MetaclassRO |= Recipe.Symbol == "__OBJC_METACLASS_RO_$_ArmMetadata";
+          if (Recipe.Symbol == "-[ArmMetadata increment:]") {
+            Implementation = true;
+            EXPECT_TRUE(Image->isCodeAddress(Recipe.Target));
+          }
         }
+        EXPECT_TRUE(ClassRO && MetaclassRO && Implementation);
+        // Source type recovery still requires a linked image. Loading an
+        // object's recipes does not prove its runtime class/dispatch layout.
+        EXPECT_TRUE(Image->ObjCClasses.empty());
+        EXPECT_TRUE(Image->ObjCMethods.empty());
+#if defined(__APPLE__) && defined(__aarch64__)
+        // Apple's linker supplies a real linked metadata graph. Strip local
+        // symbols so class/method recovery must follow the signing recipes.
+        const auto Driver = llvm::sys::findProgramByName("clang");
+        ASSERT_TRUE(Driver);
+        llvm::SmallString<128> BundlePath;
+        ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-arm64e-objc",
+                                                        "bundle", BundlePath));
+        llvm::FileRemover RemoveBundle(BundlePath);
+        const llvm::StringRef Args[] = {*Driver,
+                                        "-target",
+                                        "arm64e-apple-macos",
+                                        "-bundle",
+                                        "-Wl,-undefined,dynamic_lookup",
+                                        "-Wl,-x",
+                                        Path,
+                                        "-o",
+                                        BundlePath};
+        std::string Error;
+        ASSERT_EQ(llvm::sys::ExecuteAndWait(*Driver, Args, std::nullopt, {}, 30,
+                                            0, &Error),
+                  0)
+            << Error;
+        auto BundleBytes = llvm::MemoryBuffer::getFile(BundlePath);
+        ASSERT_TRUE(BundleBytes);
+        auto Bundle =
+            MachOLoader().loadBuffer((*BundleBytes)->getMemBufferRef());
+        ASSERT_TRUE(bool(Bundle)) << llvm::toString(Bundle.takeError());
+        EXPECT_FALSE(Bundle->IsRelocatable);
+        ASSERT_EQ(Bundle->ObjCClasses.size(), 1);
+        ASSERT_EQ(Bundle->ObjCMethods.size(), 1);
+        const auto &Method = Bundle->ObjCMethods[0];
+        EXPECT_EQ(Method.ClassName, "ArmMetadata");
+        EXPECT_EQ(Method.Selector, "increment:");
+        EXPECT_EQ(Method.Status, "supported");
+        EXPECT_TRUE(Bundle->isCodeAddress(Method.Implementation));
+        EXPECT_EQ(Bundle->getFunctionNameAt(Method.Implementation),
+                  "-[ArmMetadata increment:]");
+        EXPECT_EQ(Bundle->statedFunctionNameAt(Method.Implementation),
+                  "-[ArmMetadata increment:]");
+        const Symbol *Name = Bundle->findSymbolAt(Method.Implementation);
+        ASSERT_TRUE(Name);
+        EXPECT_EQ(Name->Name, "-[ArmMetadata increment:]");
+        EXPECT_EQ(Name->Origin, NameOrigin::Stated);
+        ASSERT_TRUE(Method.TypeHint);
+#endif
       },
       false, {}, nullptr, "objective-c");
 }
@@ -478,6 +532,7 @@ TEST(AArch64CPASemantics,
         ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
       }
       EXPECT_NE(Source.find(Operation.MachineAsm), std::string::npos) << Source;
+      compileArm64eC(Source);
       std::vector<std::string> Args = {"__checked_pointer",
                                        "__checked_pointer_1"};
       if (Operation.Sources == 3)
