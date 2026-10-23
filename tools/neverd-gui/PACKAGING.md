@@ -36,11 +36,15 @@ also require `--config Release` for both build and installation. Build the
 engine with `NEVERD_ENABLE_PYTHON_PLUGINS=OFF` for a package without Python.
 
 Linux deployment requires `patchelf`. Libraries and plugins receive paths
-relative to the installed package. glibc, the ELF loader and graphics dispatch
+relative to the installed package. Original absolute paths and build-relative
+`$ORIGIN` paths remain available during dependency discovery, then external
+paths are removed before the final audit. glibc, the ELF loader and graphics dispatch
 libraries remain operating-system dependencies; other required libraries are
 copied privately. Build on the oldest supported Linux baseline: bundling Qt
 does not lower the glibc requirement of the compiled binaries. Windows keeps
-system DLLs external and bundles non-system dependencies with the executables.
+system DLLs under the actual `SystemRoot` external and bundles non-system
+dependencies with the executables. A vendor directory named `Windows` is not
+treated as the operating system.
 Build natively for the selected architecture and keep Qt, engine and CRT
 configurations consistent.
 
@@ -48,6 +52,9 @@ Only Qt's local SQLite driver is retained. Missing required files, unknown SQL
 drivers, unresolved dependencies, conflicting library names and dependencies
 that still resolve outside the completed package stop installation.
 `share/neverd/dependency-audit.txt` records hashes of the deployed runtime.
+The collector validates parent directories before writing or removing files;
+escaping, dangling and absolute symlinks stop installation. It replaces patched
+files, copied libraries and the audit without modifying shared hard-link inodes.
 
 The Linux collector regressions use small real ELF files to check transitive
 dependency relocation, missing libraries and SQL drivers, and preservation of
@@ -56,6 +63,12 @@ files outside the installation:
 ```sh
 python3 tools/neverd-gui/tests/test_desktop_runtime.py -v
 ```
+
+With Clang, `lld-link` and `llvm-objdump` available, the same suite also checks
+real PE import tables for x86, x64 and ARM64 in Debug and Release. Set
+`LLVM_OBJDUMP=/path/to/llvm-objdump` when the executable has a versioned name.
+These cross-compiled fixtures validate DLL collection and exclusions; they do
+not execute Windows code or qualify native Windows runtime behavior.
 
 Move the completed install directory away from the build tree and test it with
 developer environment variables cleared. For Linux, launch a native X11 or

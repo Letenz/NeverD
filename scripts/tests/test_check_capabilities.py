@@ -3238,6 +3238,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "translation.executable-engine": "experimental",
                 "translation.runtime-contract": "experimental",
                 "unpack.observed-entry": "experimental",
+                "x87.scoped-semantic-inventory": "experimental",
             },
         )
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
@@ -3374,6 +3375,12 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd_objc_methods_summary_json",
                     "neverd_swift_methods_json",
                 ],
+            },
+            "x87.scoped-semantic-inventory": {
+                "c": ["neverd_x87_capabilities_json"],
+                "python": ["Session.x87_capabilities"],
+                "cli": ["neverd x87-capabilities"],
+                "json": ["neverd_x87_capabilities_json"],
             },
             "debug.hardware": no_surfaces,
             "debug.local": no_surfaces,

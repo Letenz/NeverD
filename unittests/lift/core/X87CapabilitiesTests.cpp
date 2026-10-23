@@ -149,15 +149,15 @@ TEST(X87Capabilities, PortableCoverageCannotAdmitAnUnimplementedInstruction) {
   }
 }
 
-TEST(X87Capabilities, TypedKnownRefusalsAndPartialValuesAreDistinct) {
-  for (uint32_t Selector :
-       {0xc0dfU, 0xf6d9U, memory(0xdf, 0x20), memory(0xdf, 0x30)}) {
+TEST(X87Capabilities, TypedValueQualificationDoesNotClaimCompleteState) {
+  for (uint32_t Selector : {memory(0xdf, 0x20), memory(0xdf, 0x30)}) {
     auto Q = query(Selector);
     EXPECT_TRUE(queryX87Capability(Q).Implemented);
     Q.StatePath = X87StatePath::TypedStack;
     Q.Consumer = X87Consumer::Lift;
     Q.Backend = X87Backend::None;
-    EXPECT_FALSE(queryX87Capability(Q).Implemented);
+    EXPECT_TRUE(queryX87Capability(Q).Implemented);
+    EXPECT_EQ(queryX87Capability(Q).Numerical, X87Support::Unknown);
   }
   for (uint32_t Selector : {0xe0d9U, 0xe1d9U, 0xebd9U, memory(0xdf, 0x28)}) {
     auto Q = query(Selector);
@@ -171,6 +171,33 @@ TEST(X87Capabilities, TypedKnownRefusalsAndPartialValuesAreDistinct) {
   Q.StatePath = X87StatePath::TypedStack;
   Q.Consumer = X87Consumer::LLVM;
   EXPECT_EQ(queryX87Capability(Q).ArchitecturalState, X87Support::Unknown);
+}
+
+TEST(X87Capabilities, TypedNativeFormsDoNotQualifyConcreteOrPortableState) {
+  for (auto Mode : {X87SourceMode::I386, X87SourceMode::X64})
+    for (uint32_t Selector :
+         {0xc0dfU, 0xc7dfU, 0xf6d9U, memory(0xdf, 0x20), memory(0xdf, 0x30)}) {
+      auto Q = query(Selector);
+      Q.SourceMode = Mode;
+      Q.StatePath = X87StatePath::TypedStack;
+      Q.Backend = X87Backend::None;
+      Q.Consumer = X87Consumer::Lift;
+      EXPECT_TRUE(queryX87Capability(Q).Implemented);
+      for (auto Consumer :
+           {X87Consumer::LLVM, X87Consumer::HighC, X87Consumer::LLVMC}) {
+        Q.Consumer = Consumer;
+        Q.Backend = X87Backend::NativeX86;
+        const auto Cell = queryX87Capability(Q);
+        EXPECT_TRUE(Cell.Implemented);
+        EXPECT_EQ(Cell.ArchitecturalState, X87Support::Unknown);
+      }
+      Q.Consumer = X87Consumer::Concrete;
+      Q.Backend = X87Backend::Portable;
+      EXPECT_FALSE(queryX87Capability(Q).Implemented);
+      Q.SourceMode = X87SourceMode::X64;
+      Q.StatePath = X87StatePath::OwnedContext;
+      EXPECT_FALSE(queryX87Capability(Q).Implemented);
+    }
 }
 
 TEST(X87Capabilities, StateTransportCannotClaimNumericalQualification) {
@@ -302,7 +329,7 @@ TEST(X87Capabilities, ReportPreservesEveryDimensionAndLabelsSourceEvidence) {
   ASSERT_NE(Root->getArray("source_paths"), nullptr);
   EXPECT_EQ(Root->getArray("source_paths")->size(), 12U);
   ASSERT_NE(Root->getArray("coverage"), nullptr);
-  EXPECT_EQ(Root->getArray("coverage")->size(), 3888U);
+  EXPECT_EQ(Root->getArray("coverage")->size(), 3024U);
   EXPECT_TRUE(Root->getString("evidence")->contains("not passing"));
   for (const auto &Row : *Root->getArray("coverage")) {
     const auto *Cell = Row.getAsObject();

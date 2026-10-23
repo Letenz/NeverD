@@ -872,6 +872,10 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C,
     auto S = std::string(Buf.str());
     if (C->getType()->isFloatTy())
       S += "f";
+    else if (C->getType()->isX86_FP80Ty())
+      // An unsuffixed literal rounds as binary64 before any surrounding
+      // long-double expression can use its extra precision or exponent range.
+      S += "L";
     return S;
   }
 

@@ -5,6 +5,8 @@
 #include "LowInstructionSlice.h"
 
 #include "neverd/ir/X87Constant.h"
+#include "neverd/ir/X87GuardedValue.h"
+#include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
@@ -82,6 +84,13 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
       !x87ConstantControlShapeIsValid(
           Id, x87ConstantControlLowShape(Op, Arch::X64)))
     return invalid("x87 constant/control intrinsic has an invalid shape");
+  if (isX87GuardedValueIntrinsic(Id) &&
+      !x87GuardedValueShapeIsValid(x87GuardedValueLowShape(Op, Arch::Unknown)))
+    return invalid(
+        "guarded x87 intrinsic has an invalid value/control contract");
+  if (x87ValueInfo(Id) &&
+      !x87ValueShapeIsValid(x87ValueLowShape(Op, Arch::Unknown)))
+    return invalid("x87 scalar intrinsic has an invalid value/status contract");
   if (isApxAtomicIntrinsic(Id)) {
     if (!intrinsicApxAtomicShapeIsValid(Id,
                                         apxAtomicLowShape(Op, Arch::Unknown)))

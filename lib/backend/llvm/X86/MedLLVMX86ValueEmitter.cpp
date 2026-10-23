@@ -16,11 +16,14 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/llvm/LLVMX86DivRemAsm.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/backend/llvm/LLVMX87ContextAsm.h"
+#include "neverd/backend/llvm/LLVMX87GuardedValueAsm.h"
+#include "neverd/backend/llvm/LLVMX87ValueAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -501,9 +504,8 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
 //===----------------------------------------------------------------------===//
 
 // Maps an x87 value-producing intrinsic to the inline-asm text that computes it
-// and leaves the single result on the x87 stack top.  FPTAN/FXTRACT pop the
-// extra value they would otherwise push so each call yields one scalar (the
-// lifter re-creates the stack push).  Returns nullptr for non-x87 intrinsics.
+// and leaves the single result on the x87 stack top. Push instructions use
+// the guarded two-result contract instead. Returns nullptr for other IDs.
 static const char *x87AsmForIntrinsic(Intrinsic IC) {
   switch (IC) {
   case Intrinsic::X87Fsin:
@@ -524,12 +526,6 @@ static const char *x87AsmForIntrinsic(Intrinsic IC) {
     return "fyl2x";
   case Intrinsic::X87Fyl2xp1:
     return "fyl2xp1";
-  case Intrinsic::X87Fptan:
-    return "fptan\n\tfstp %st(0)";
-  case Intrinsic::X87Fxtractsig:
-    return "fxtract\n\tfstp %st(1)";
-  case Intrinsic::X87Fxtractexp:
-    return "fxtract\n\tfstp %st(0)";
   default:
     return nullptr;
   }
@@ -740,6 +736,32 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Result;
   }
 
+  if (isX87GuardedValueIntrinsic(IC)) {
+    if (!x87GuardedValueShapeIsValid(x87GuardedValueMedShape(Op, TargetArch)))
+      llvm::report_fatal_error("invalid guarded x87 value/control contract");
+    llvm::IRBuilder<> Entry(&CurFunc->getEntryBlock(),
+                            CurFunc->getEntryBlock().begin());
+    auto *Bits = Builder.getIntNTy(80);
+    auto *ResultBits = Builder.getIntNTy(x87GuardedValueBytes(IC) * 8);
+    auto *Source = Entry.CreateAlloca(Bits, nullptr, "x87_value_source");
+    auto *Result = Entry.CreateAlloca(ResultBits, nullptr, "x87_value_result");
+    auto *Control =
+        Entry.CreateAlloca(Builder.getInt16Ty(), nullptr, "x87_value_control");
+    auto *Status =
+        Entry.CreateAlloca(Builder.getInt16Ty(), nullptr, "x87_value_status");
+    Builder.CreateStore(getVar(Op.Inputs[1], Builder), Source);
+    Builder.CreateStore(getVar(Op.Inputs[2], Builder), Control);
+    auto *Ptr = llvm::PointerType::get(*Ctx, 0);
+    auto *Type = llvm::FunctionType::get(Builder.getVoidTy(),
+                                         {Ptr, Ptr, Ptr, Ptr}, false);
+    auto *Asm = llvm::InlineAsm::get(Type, x87GuardedValueAsm(IC),
+                                     x87GuardedValueConstraints(), true);
+    auto *Call = Builder.CreateCall(Asm, {Result, Source, Control, Status});
+    Call->setMetadata(X87GuardedValueAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+    PendingX87Status = Builder.CreateLoad(Builder.getInt16Ty(), Status);
+    PendingX87StatusBlock = Builder.GetInsertBlock();
+    return Builder.CreateLoad(ResultBits, Result);
+  }
   if (isX87ConstantControlIntrinsic(IC)) {
     if (!x87ConstantControlShapeIsValid(
             IC, x87ConstantControlMedShape(Op, TargetArch)))
@@ -1270,32 +1292,29 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Packed;
   }
 
-  // FPREM/FPREM1 expose partial-reduction progress and quotient bits through
-  // the x87 status word. The fused asm below captures status before a compiler
-  // spill can change TOP or condition codes; the next synthetic read takes it.
+  if (x87ValueInfo(IC) &&
+      !x87ValueShapeIsValid(x87ValueMedShape(Op, TargetArch)))
+    llvm::report_fatal_error("invalid x87 scalar value/status contract");
+
+  // Status-producing x87 intrinsics capture the word in their own asm before
+  // a compiler spill can change it. The synthetic read consumes that value.
   if (IC == I::X87ReadStatus) {
-    if (Op.NumInputs != 1 || Op.Output.Size != 2 || !PendingX87FpremStatus ||
-        PendingX87FpremBlock != Builder.GetInsertBlock())
+    if (Op.NumInputs != 1 || Op.Output.Size != 2 || !PendingX87Status ||
+        PendingX87StatusBlock != Builder.GetInsertBlock())
       llvm::report_fatal_error(
-          "X87ReadStatus requires an immediately preceding FPREM in the "
-          "same block");
-    llvm::Value *Status = PendingX87FpremStatus;
-    PendingX87FpremStatus = nullptr;
-    PendingX87FpremBlock = nullptr;
+          "X87ReadStatus requires an immediately preceding status-producing "
+          "x87 intrinsic in the same block");
+    llvm::Value *Status = PendingX87Status;
+    PendingX87Status = nullptr;
+    PendingX87StatusBlock = nullptr;
     return Status;
   }
 
-  // x87 transcendental / special ops: emit the genuine x87 instruction via
-  // inline asm so the recompiled object runs the same hardware op as the
-  // original (Unicorn executes it natively).  ST operands flow as doubles; the
-  // backend reloads/stores them around the asm.  Lowering to libm would not
-  // roundtrip and would call functions absent under Unicorn.
+  // Run the original x87 instruction on binary80 operands. A libm call has
+  // different precision, status and processor-specific approximation rules.
   if (const char *Mn = x87AsmForIntrinsic(IC)) {
-    if (Op.Output.Size == 0 || Op.NumInputs < 2)
-      return nullptr;
-    // The x87 stack registers are modeled at 80-bit extended precision, so the
-    // transcendental runs on x86_fp80 to match hardware (and the original under
-    // Unicorn) bit-for-bit instead of truncating to a 64-bit double.
+    // Keep native x87 working precision. Transcendental approximations depend
+    // on the processor; this projection does not promise cross-CPU identity.
     auto *F80Ty = llvm::Type::getX86_FP80Ty(*Ctx);
     auto *I80Ty = llvm::Type::getIntNTy(*Ctx, 80);
     auto ToX87 = [&](const MedVar &V) -> llvm::Value * {
@@ -1303,72 +1322,60 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
       llvm::Type *T = X->getType();
       if (T->isX86_FP80Ty())
         return X;
-      if (T->isFloatingPointTy())
-        return Builder.CreateFPExt(X, F80Ty, "x87in");
-      unsigned Bits = T->getIntegerBitWidth();
-      if (Bits == 80)
-        return Builder.CreateBitCast(X, F80Ty);
-      // Narrower register bits hold a float/double pattern: reinterpret at that
-      // width, then widen to the 80-bit working precision.
-      llvm::Type *SrcF = (Bits <= 32) ? llvm::Type::getFloatTy(*Ctx)
-                                      : llvm::Type::getDoubleTy(*Ctx);
-      unsigned FBits = SrcF->getPrimitiveSizeInBits();
-      if (Bits > FBits)
-        X = Builder.CreateTrunc(X, llvm::Type::getIntNTy(*Ctx, FBits));
-      else if (Bits < FBits)
-        X = Builder.CreateZExt(X, llvm::Type::getIntNTy(*Ctx, FBits));
-      return Builder.CreateFPExt(Builder.CreateBitCast(X, SrcF), F80Ty,
-                                 "x87in");
+      if (!T->isIntegerTy(80))
+        llvm::report_fatal_error(
+            "x87 scalar operand lost its binary80 carrier");
+      return Builder.CreateBitCast(X, F80Ty);
     };
-    bool TwoIn =
-        (IC != I::X87Fsin && IC != I::X87Fcos && IC != I::X87F2xm1 &&
-         IC != I::X87Fptan && IC != I::X87Fxtractsig && IC != I::X87Fxtractexp);
+    const auto Info = *x87ValueInfo(IC);
+    const bool TwoIn = Info.Operands == 2;
+    const bool PopsSecondInput = Info.PopsSecond;
+    const bool IsRemainder = IC == I::X87Fprem || IC == I::X87Fprem1;
+    const bool SamplesStatus = Info.SamplesStatus;
     llvm::Value *In0 = ToX87(Op.Inputs[1]);
     llvm::Value *Res = nullptr;
-    if (!TwoIn) {
+    if (SamplesStatus) {
+      auto *I16Ty = llvm::Type::getInt16Ty(*Ctx);
+      const char *PairName = IsRemainder ? "neverd.x87.fprem_result"
+                                         : "neverd.x87.value_status_result";
+      auto *PairTy = llvm::StructType::getTypeByName(*Ctx, PairName);
+      if (!PairTy)
+        PairTy = llvm::StructType::create(*Ctx, {F80Ty, I16Ty}, PairName);
+      if (PairTy->isOpaque() || PairTy->getNumElements() != 2 ||
+          PairTy->getElementType(0) != F80Ty ||
+          PairTy->getElementType(1) != I16Ty)
+        llvm::report_fatal_error("invalid x87 value/status result structure");
+      llvm::SmallVector<llvm::Value *, 2> Inputs{In0};
+      llvm::SmallVector<llvm::Type *, 2> Types{F80Ty};
+      if (TwoIn) {
+        Inputs.push_back(ToX87(Op.Inputs[2]));
+        Types.push_back(F80Ty);
+      }
+      auto *FnTy = llvm::FunctionType::get(PairTy, Types, false);
+      auto *IA = llvm::InlineAsm::get(
+          FnTy, std::string(Mn) + "\n\tfnstsw $1",
+          x87ValueStatusConstraints(TwoIn, PopsSecondInput),
+          /*hasSideEffects=*/true);
+      auto *Pair = Builder.CreateCall(IA, Inputs, "x87_value_status");
+      Res = Builder.CreateExtractValue(Pair, {0}, "x87_value");
+      PendingX87Status = Builder.CreateExtractValue(Pair, {1}, "x87_status");
+      PendingX87StatusBlock = Builder.GetInsertBlock();
+    } else if (!TwoIn) {
       auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty}, false);
       auto *IA =
           llvm::InlineAsm::get(FnTy, Mn, "=&{st},0,~{dirflag},~{fpsr},~{flags}",
                                /*hasSideEffects=*/true);
       Res = Builder.CreateCall(IA, {In0}, "x87");
     } else {
-      llvm::Value *In1 = (Op.NumInputs >= 3) ? ToX87(Op.Inputs[2]) : In0;
-      if (IC == I::X87Fprem || IC == I::X87Fprem1) {
-        auto *I16Ty = llvm::Type::getInt16Ty(*Ctx);
-        auto *PairTy =
-            llvm::StructType::getTypeByName(*Ctx, "neverd.x87.fprem_result");
-        if (!PairTy)
-          PairTy = llvm::StructType::create(*Ctx, {F80Ty, I16Ty},
-                                            "neverd.x87.fprem_result");
-        if (PairTy->isOpaque() || PairTy->getNumElements() != 2 ||
-            PairTy->getElementType(0) != F80Ty ||
-            PairTy->getElementType(1) != I16Ty)
-          llvm::report_fatal_error("invalid x87 FPREM result structure");
-        auto *FnTy = llvm::FunctionType::get(PairTy, {F80Ty, F80Ty}, false);
-        auto *IA = llvm::InlineAsm::get(
-            FnTy, std::string(Mn) + "\n\tfnstsw $1",
-            "=&{st},={ax},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
-            /*hasSideEffects=*/true);
-        auto *Pair = Builder.CreateCall(IA, {In0, In1}, "x87_fprem_pair");
-        Res = Builder.CreateExtractValue(Pair, {0}, "x87_fprem_value");
-        PendingX87FpremStatus =
-            Builder.CreateExtractValue(Pair, {1}, "x87_fprem_status");
-        PendingX87FpremBlock = Builder.GetInsertBlock();
-      } else {
-        bool PopsSecondInput = false;
-#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
-  if (IC == Intrinsic::ID)                                                     \
-    PopsSecondInput = PopsST1;
-#include "neverd/ir/intrinsics/X87ValueInstructions.def"
-        auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty, F80Ty}, false);
-        auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn,
-            PopsSecondInput
-                ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
-                : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
-            /*hasSideEffects=*/true);
-        Res = Builder.CreateCall(IA, {In0, In1}, "x87");
-      }
+      llvm::Value *In1 = ToX87(Op.Inputs[2]);
+      auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty, F80Ty}, false);
+      auto *IA = llvm::InlineAsm::get(
+          FnTy, Mn,
+          PopsSecondInput
+              ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
+              : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
+          /*hasSideEffects=*/true);
+      Res = Builder.CreateCall(IA, {In0, In1}, "x87");
     }
     llvm::Value *Bits = Builder.CreateBitCast(Res, I80Ty);
     auto *OutTy = sizeToType(Op.Output.Size);
@@ -1735,13 +1742,11 @@ llvm::Value *MedLLVMEmitter::emitX86WideDivRem(llvm::IRBuilder<> &Builder,
   llvm::Value *Hi = Builder.CreateTrunc(HiShifted, HalfTy, "div.hi");
   llvm::Value *DivHalf = Builder.CreateTrunc(Divisor, HalfTy, "div.src");
 
-  const char *AsmStr = (WideBits == 128) ? (IsSigned ? "idivq $4" : "divq $4")
-                                         : (IsSigned ? "idivl $4" : "divl $4");
   auto *RetTy = llvm::StructType::get(*Ctx, {HalfTy, HalfTy});
   auto *FnTy = llvm::FunctionType::get(RetTy, {HalfTy, HalfTy, HalfTy}, false);
-  auto *IA =
-      llvm::InlineAsm::get(FnTy, AsmStr, "={ax},={dx},{ax},{dx},r,~{flags}",
-                           /*hasSideEffects=*/true);
+  auto *IA = llvm::InlineAsm::get(FnTy, x86DivRemAssembly({HalfBits, IsSigned}),
+                                  X86DivRemAsmConstraints,
+                                  /*hasSideEffects=*/true);
 
   llvm::Value *AsmResult = Builder.CreateCall(IA, {Lo, Hi, DivHalf}, "divrem");
   unsigned Idx = WantRem ? 1 : 0;

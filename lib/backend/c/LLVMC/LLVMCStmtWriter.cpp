@@ -32,13 +32,16 @@
 #include "neverd/backend/MachineInstructionText.h"
 #include "neverd/backend/c/render/AArch64PAuthC.h"
 #include "neverd/backend/c/render/X87ContextRender.h"
+#include "neverd/backend/c/render/X87GuardedValueRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/LLVMX86DivRemAsm.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
+#include "neverd/backend/llvm/LLVMX87ValueAsm.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCRecordArguments.h"
@@ -1615,14 +1618,19 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         return;
       }
   }
-  // LLVM i80 is the exact ten-byte x87 memory image.  C has no scalar with a
-  // ten-byte object size, so use a zero-extended carrier and copy only ten
-  // bytes.  A typed __uint128_t dereference would read/write six extra bytes.
+  // Both i80 and x86_fp80 access the exact ten-byte x87 memory image. LLVM
+  // may fold an i80 load plus bitcast into an x86_fp80 load from the same
+  // integer alloca. Reading that C integer by value would convert it
+  // numerically. Copy the ten bytes for either LLVM view, without copying
+  // the padding in a C integer or long-double carrier.
+  const auto IsBinary80 = [](const llvm::Type *Type) {
+    return Type->isIntegerTy(80) || Type->isX86_FP80Ty();
+  };
   if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
-      Load && Load->getType()->isIntegerTy(80) &&
+      Load && IsBinary80(Load->getType()) &&
       Load->getPointerAddressSpace() == 0) {
     if (Load->isAtomic())
-      llvm::report_fatal_error("unsupported atomic i80 C projection");
+      llvm::report_fatal_error("unsupported atomic binary80 C projection");
     const llvm::Value *Address = Load->getPointerOperand();
     std::string Pointer = valueStr(Address);
     if (std::string Image = imageDataCName(Address); !Image.empty())
@@ -1647,18 +1655,18 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     return;
   }
   if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst);
-      Store && Store->getValueOperand()->getType()->isIntegerTy(80) &&
+      Store && IsBinary80(Store->getValueOperand()->getType()) &&
       Store->getPointerAddressSpace() == 0) {
     if (Store->isAtomic())
-      llvm::report_fatal_error("unsupported atomic i80 C projection");
+      llvm::report_fatal_error("unsupported atomic binary80 C projection");
     const llvm::Value *Address = Store->getPointerOperand();
     std::string Pointer = valueStr(Address);
     if (std::string Image = imageDataCName(Address); !Image.empty())
       Pointer = "&" + Image;
     const std::string Bits = freshVar("x87_bits");
     emitIndent(Indent);
-    OS << "{ __uint128_t " << Bits << " = "
-       << valueStr(Store->getValueOperand()) << ";\n";
+    OS << "{ " << typeToCLLVM(Store->getValueOperand()->getType()) << " "
+       << Bits << " = " << valueStr(Store->getValueOperand()) << ";\n";
     if (Store->isVolatile()) {
       const std::string Index = freshVar("x87_byte");
       emitIndent(Indent + 1);
@@ -4164,6 +4172,17 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     OS << renderX87ContextAsm(*Context, Args) << "\n";
     return true;
   }
+  if (auto Id = classifyX87GuardedValueAsm(Call)) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error("guarded x87 C projection requires x86");
+    emitIndent(Indent);
+    OS << renderX87GuardedValueAsm(*Id, {valueStr(Call.getArgOperand(0)),
+                                         valueStr(Call.getArgOperand(1)),
+                                         valueStr(Call.getArgOperand(2)),
+                                         valueStr(Call.getArgOperand(3))})
+       << ";\n";
+    return true;
+  }
   if (auto Selector = classifyX87ConstantAsm(Call)) {
     if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
       llvm::report_fatal_error(
@@ -4411,6 +4430,34 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   if (ResultLive && InferredVoid)
     ResultLive = isCallResultLive(Analysis, &Call);
 
+  if (const auto Divide = classifyX86DivRemAsm(Call)) {
+    if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
+        (Divide->Bits == 64 && Opts.TheArch != Arch::X64))
+      llvm::report_fatal_error("native x86 divide target/type mismatch");
+    const std::string Quotient = freshVar("divide_quotient");
+    const std::string Remainder = freshVar("divide_remainder");
+    emitIndent(Indent);
+    OS << "{ uint" << Divide->Bits << "_t " << Quotient << " = "
+       << valueStr(Call.getArgOperand(0)) << ";\n";
+    emitIndent(Indent + 1);
+    OS << "uint" << Divide->Bits << "_t " << Remainder << " = "
+       << valueStr(Call.getArgOperand(1)) << ";\n";
+    emitIndent(Indent + 1);
+    OS << "__asm__ volatile(\"" << x86DivRemMnemonic(*Divide)
+       << " %2\" : \"+a\"(" << Quotient << "), \"+d\"(" << Remainder
+       << ") : \"r\"((uint" << Divide->Bits << "_t)("
+       << valueStr(Call.getArgOperand(2)) << ")) : \"cc\");\n";
+    if (ResultLive && !Call.use_empty()) {
+      emitIndent(Indent + 1);
+      OS << Name << ".field_0 = " << Quotient << ";\n";
+      emitIndent(Indent + 1);
+      OS << Name << ".field_1 = " << Remainder << ";\n";
+    }
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
+
   // An SMC or HVC #0 under the SMC Calling Convention takes its function
   // identifier and arguments in x0-x7 (r0-r3) and hands back x0-x3 (r0-r3),
   // which register variables pin for the instruction.
@@ -4610,16 +4657,28 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       }
       return valueStr(Arg);
     };
+    unsigned StatusOperands =
+        AsmStr == "fprem\n\tfnstsw $1" || AsmStr == "fprem1\n\tfnstsw $1" ? 2
+                                                                          : 0;
+    bool StatusPopsST1 = false;
+#define NEVERD_X87_VALUE_HELPER(ID, CName, Asm, Operands, PopsST1,             \
+                                SamplesStatus)                                 \
+  if (SamplesStatus && AsmStr == Asm "\n\tfnstsw $1") {                        \
+    StatusOperands = Operands;                                                 \
+    StatusPopsST1 = PopsST1;                                                   \
+  }
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+    const bool BinaryStatus = StatusOperands == 2;
     const auto *PairType = llvm::dyn_cast<llvm::StructType>(Call.getType());
-    if ((AsmStr == "fprem\n\tfnstsw $1" || AsmStr == "fprem1\n\tfnstsw $1") &&
-        PairType && PairType->getNumElements() == 2 &&
+    if (StatusOperands && PairType && PairType->getNumElements() == 2 &&
         PairType->getElementType(0)->isX86_FP80Ty() &&
-        PairType->getElementType(1)->isIntegerTy(16) && Call.arg_size() == 2 &&
+        PairType->getElementType(1)->isIntegerTy(16) &&
+        Call.arg_size() == StatusOperands &&
         Call.getArgOperand(0)->getType()->isX86_FP80Ty() &&
-        Call.getArgOperand(1)->getType()->isX86_FP80Ty() &&
-        Constraints == "=&{st},={ax},0,{st(1)},~{dirflag},~{fpsr},~{flags}") {
+        (!BinaryStatus || Call.getArgOperand(1)->getType()->isX86_FP80Ty()) &&
+        Constraints == x87ValueStatusConstraints(BinaryStatus, StatusPopsST1)) {
       const std::string Dividend = X87Operand(0);
-      const std::string Divisor = X87Operand(1);
+      const std::string Divisor = BinaryStatus ? X87Operand(1) : "";
       const std::string Result =
           ResultLive ? Name : freshVar("x87_unused_pair");
       if (!ResultLive) {
@@ -4631,8 +4690,10 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       emitIndent(Indent);
       OS << "__asm__ volatile(\"" << Mnemonic
          << "\\n\\tfnstsw %%ax\" : \"=&t\"(" << Result << ".field_0), \"=a\"("
-         << Result << ".field_1) : \"0\"(" << Dividend << "), \"u\"(" << Divisor
-         << ") : \"cc\");\n";
+         << Result << ".field_1) : \"0\"(" << Dividend << ")";
+      if (BinaryStatus)
+        OS << ", \"u\"(" << Divisor << ")";
+      OS << " : " << (StatusPopsST1 ? "\"st(1)\", " : "") << "\"cc\");\n";
       return true;
     }
     if ((AsmStr == "fprem" || AsmStr == "fprem1") &&
@@ -4679,7 +4740,8 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       return true;
     }
     bool KnownBinaryValue = false, PopsSecondInput = false;
-#define NEVERD_X87_VALUE_HELPER(ID, CName, Asm, Operands, PopsST1)             \
+#define NEVERD_X87_VALUE_HELPER(ID, CName, Asm, Operands, PopsST1,             \
+                                SamplesStatus)                                 \
   if (Operands == 2 && AsmStr == Asm) {                                        \
     KnownBinaryValue = true;                                                   \
     PopsSecondInput = PopsST1;                                                 \
@@ -4722,22 +4784,27 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     if (Call.getType()->isVoidTy() && Call.arg_size() == 0) {
       // x87 state instructions keep their register-stack clobbers in C, so
       // the C compiler holds no x87 value in a register across them either.
-      const bool IsFfree = AsmStr.size() == 12 &&
-                           llvm::StringRef(AsmStr).starts_with("ffree %st(") &&
-                           AsmStr[10] >= '0' && AsmStr[10] <= '7' &&
-                           AsmStr[11] == ')';
+      const auto Text = llvm::StringRef(AsmStr);
+      const bool FreePop = Text.starts_with("ffreep %st(");
+      const unsigned RegisterOffset = FreePop ? 11 : 10;
+      const bool IsFree =
+          (FreePop || Text.starts_with("ffree %st(")) &&
+          Text.size() == RegisterOffset + 2 && Text[RegisterOffset] >= '0' &&
+          Text[RegisterOffset] <= '7' && Text[RegisterOffset + 1] == ')';
       std::optional<X87StateEffect> Effect;
       if (AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fninit))
         Effect = X87StateEffect::Reset;
-      else if (IsFfree || AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fincstp))
+      else if (IsFree ||
+               AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fincstp) ||
+               AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fdecstp))
         Effect = X87StateEffect::Stack;
       else if (AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Wait) ||
                AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fnclex))
         Effect = X87StateEffect::Status;
       if (Effect && x87StateEffectOf(Constraints) == Effect) {
         std::string Template = AsmStr;
-        if (IsFfree)
-          Template.insert(6, "%");
+        if (IsFree)
+          Template.insert(FreePop ? 7 : 6, "%");
         emitIndent(Indent);
         OS << "__asm__ volatile(\"" << Template
            << "\" ::: " << x87StateCClobbers(*Effect) << ");\n";

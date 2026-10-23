@@ -402,6 +402,19 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_PAUTH_LR_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64PAuthLR.def"
 
+  // Append-only: typed x87 rotation and free/pop. FFREEP carries the same
+  // physical-slot and decoded-relative-index operands as FFREE.
+  X87Fdecstp,
+  X87Ffreep,
+  // Append-only: raw packed-BCD/binary80 conversion under an explicit CW.
+  X87LoadPackedBCD,
+  X87StorePackedBCD,
+  // Append-only: one native operation returns ST(0), then ST(1), under
+  // explicit finite/masked guards before the typed stack commits its push.
+  X87FptanPair,
+  X87FsincosPair,
+  X87FxtractPair,
+
   // CFG consumes the pending prefix before publishing a native operation.
   A64_PACMPending,
 #define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,

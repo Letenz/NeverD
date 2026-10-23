@@ -760,6 +760,21 @@ input words and has independent full-width Z3 proofs at 8/16/32/64 bits. Nearby
 parity changes and exact/one-short work plus short storage check refusal and
 cumulative accounting. Real worker and CLI source tests also execute degree-64
 and degree-128 mixed pairs through all six source routes at O0/O2.
+`SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
+normalized products, nested additions, multi-input XOR carries and changed
+parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor
+fixture retains variable corrections and has full-width Z3 proofs at
+8/16/32/64 bits. Short work/storage budgets check refusal without increasing
+production limits. The worker source test also executes both degree-128
+masked carry fixtures through the six CLI/worker routes at O0/O2.
+Quadratic carry-count tests retain both observed correction bits without
+dividing by a noninvertible word. They compare complete products with
+independent APInt arithmetic through 257 bits and Z3 proofs at 8/16/32/64 bits.
+Constant masks/addends reuse existing decision edges and direct carries;
+work, storage and refusal checks remain shared with the full residue suite.
+Run `SymParse.*` and `SymParseLexer.*` when changing text operator dispatch:
+precedence, associativity, diagnostics and printed-expression round trips
+must stay identical while measuring the complete parse/prove/render query.
 `SymMBAPrefixResidue` adds independent APInt oracles through 257 bits,
 exhaustive small-word perturbations, nonzero coefficient/offset controls,
 zero-prefix versus zero-word refusal, exact/short resource budgets and Z3
@@ -2897,14 +2912,19 @@ LowIR with a serial build on x86/x64 in ELF, COFF and Mach-O. Injected failures
 must return only after all workers join. An unregistered callback stays on its
 original thread even when the caller supplies a parallel quota.
 
-`X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
-machine bytes, generated LLVM, HighC and a separately generated C caller linked
+`X87CallReplay.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
+machine bytes, generated LLVM, HighC, LLVM-C and a separately generated C caller linked
 to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
 pipelines and compiled O0/O2. Its binary80 sum retains bits below double
 precision, so a premature conversion cannot pass. DIV/IDIV leaves also execute
 through the same call/return paths without losing their x87 payload.
-These checks cover return
-transport and do not certify every x87 instruction, rounding mode or exception.
+`LLVMCValues.X86NativeDivide*` separately checks native 32/64-bit signed and
+unsigned quotient/remainder results, including discarded results, at O0/O2.
+Linux x64 subprocesses observe divide-by-zero and quotient-overflow SIGFPE;
+native i386 covers valid operands. Changed assembly contracts and incompatible
+C targets refuse. These checks cover return transport and selected integer
+divide faults; they do not certify every x87 instruction, rounding mode or
+exception.
 
 `X87Examine` checks the all-path slot-tag and payload proof across x86/x64 in
 ELF, COFF and Mach-O, including branches, pops, independent entries and opaque
@@ -3330,6 +3350,105 @@ ctest --test-dir build-release \
 
 ## Owned x64 x87 context
 
+`NeverDX87StackManagementTests` checks typed FDECSTP/FFREEP decoding across every
+TOP and register selector, malformed-operand refusal, both cleared tags and
+unknown-payload counterexamples across ELF/COFF/Mach-O. Its Linux x86 native
+fixture compares original instructions with LLVM, HighC and LLVM-C for i386
+and x64 at default/NoOpt and O0/O2, including cross-block rotation and retained
+sign/classification of empty slots and all ten raw payload bytes with adjacent
+memory guards. It does not qualify complete environment
+or exception state. `SymX87` keeps both freed slots and status conservative.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX87StackManagementTests NeverDSymbolicTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX87StackManagementTests$' --output-on-failure
+build-release/bin/NeverDSymbolicTests --gtest_filter='SymX87.*'
+```
+
+`NeverDX87PackedBCDTests` checks the typed raw-bit/control contract across
+Low/Med/High IR, malformed decoding, full/empty tag refusal and conservative
+concrete execution. Its Linux i386/x64 programs compare original
+FBLD/FBSTP with LLVM, HighC and LLVM-C at default/NoOpt and O0/O2. All valid
+PC/RC settings, signed zero, eighteen-digit bounds, raw nonfinite stores,
+defined arithmetic status and guarded ten-byte memory writes are observed.
+Each backend also executes every invalid decimal digit and unmasked control
+case to check its explicit unsupported-input trap. The native fixture needs
+both C runtimes: HighC's status handoff uses the current thread's TLS.
+Expected SIGILL is caught inside each negative program, so a host crash reporter
+does not process every intentional guard trap.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX87PackedBCDTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX87PackedBCDTests$' --output-on-failure
+```
+
+`NeverDX87TranscendentalTests` compares native i386/x64 FSIN/FCOS results,
+defined status and C2-dependent branches with LLVM, HighC and LLVM-C at
+default/NoOpt and O0/O2, including inputs at and beyond the reduction range.
+Status-only programs discard the value before returning. Guarded FPTAN,
+FSINCOS and FXTRACT tests compare both raw results under every valid PC/RC,
+check source/destination tag refusal, and require explicit traps with unchanged
+output memory for out-of-scope control words and operands. These are selected
+host observations, not processor-independent approximation or complete-state
+qualification. `NeverDX87PackedBCDTests` also checks the shared raw-value
+contract's malformed shapes and assembly authentication for all five forms.
+The same native driver compares F2XM1, FSCALE, FPATAN, FYL2X and FYL2XP1 on
+canonical finite inputs within their documented domains, including signed-zero
+second operands and directed rounding. Concrete negative cases keep native
+value operations from being skipped and prevent unknown post-call status from
+turning into zero.
+
+The same target mutates scalar x87 operand counts, raw binary80 widths, memory
+attributes, ID carriers and outputs across Low/Med/High contracts. Missing
+FSCALE operands must fail both instruction-boundary validation and MedIR
+verification. LLVM preflight and HighC publication reject malformed values and
+legacy single-result push helpers; a non-x86 LLVM destination refuses instead
+of inventing an external fallback function.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX87TranscendentalTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX87TranscendentalTests$' --output-on-failure
+```
+
+`NeverDX87WorkloadTests` replays a deterministic finite binary80 stream through
+loops with zero, one and multiple iterations, per-record cleared status,
+FSIN range branches and guarded output records. The original assembly and
+LLVM/HighC/LLVM-C programs run on Linux i386 typed, x64 typed and x64 owned
+state paths, each at default/NoOpt and O0/O2. The x64 paths also exercise the
+Microsoft source ABI using an actual `ms_abi` caller and RCX packet argument;
+generated functions expose the recovered logical argument to the Linux host.
+This does not establish native Windows runtime or long-double ABI support.
+All twelve valid PC/RC settings
+are checked. A separate raw FLD/FSTP loop provides a transport baseline.
+The seed, exact input/output streams, program sources, compiler commands and
+executables are retained by the native recorder. This is a bounded synthetic
+batch workload, not a claim about arbitrary applications or complete typed
+architectural state.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX87WorkloadTests --parallel 4
+python3 scripts/check_x87_native_regression.py --driver build-release/bin/NeverDX87WorkloadTests --state-path mixed --linker lld --output-dir build-release/x87-workload-run1 --build 'actual compiler, Release flags, pinned LLVM and build command'
+python3 scripts/benchmark_x87_workload.py --regression-record build-release/x87-workload-run1/record.json --output-dir build-release/x87-workload-timing1 --cpu 0
+```
+
+Choose an allowed logical CPU for `--cpu`; the tool pins its children there
+without changing frequency settings. The timing protocol verifies all frozen
+artifact/runtime hashes before and after running only the thirty default/O2
+programs. Five trials alternate original/generated order in separate processes,
+with one untimed warm-up batch followed by 128 batches of 2,048 samples.
+Timing uses PC=64, RC=nearest/even and seed `0x871677`; correctness covers all
+twelve PC/RC settings separately. `CLOCK_MONOTONIC` excludes process startup
+and file IO. Timing protocol v2 reads peak RSS from Linux `/proc/self/status`
+`VmHWM` for the executable's address space; it retains `ru_maxrss` separately
+because that counter can include the launcher's pre-exec peak. This covers the
+whole executable and cannot attribute memory to one function. Full trial values,
+min/median/max throughput and generated/original ratios are retained, including
+failures. The transport loop includes control/status clearing but omits FSIN
+and its status branch, so subtraction does not isolate one synchronization
+instruction. No reduced-precision mode or fallback dispatch exists in these
+fixtures; neither approximate-mode performance nor fallback frequency is
+measured. A measurement is not a speed-improvement claim.
+
 `NeverDX87CapabilityTests` exhausts admitted/rejected encoding and prefix
 combinations, checks independent operand/flag/wait fixtures, and prevents
 native or typed support from promoting portable, state or proof capabilities.
@@ -3358,14 +3477,22 @@ See the [x87 contracts](x87-semantics.md) for the meaning of each capability.
 
 The numerical replay protocol retains raw requests, responses and all failures
 with source/driver hashes, declared build commands, CPU/backend metadata and
-seeds. Build `NeverDX87ArithmeticReplay` for the portable driver. On an x64
-GCC/Clang build, `NeverDX87OriginalReplay` executes original instructions. On
+seeds. Build `NeverDX87ArithmeticReplay` for the portable driver. On an x86
+GCC/Clang build, `NeverDX87OriginalReplay` executes original instructions. Its
+C-only source checks x87/FXSAVE availability, rejects out-of-profile inputs and
+reports the actual i386 or x64 process mode. It does not need C++ headers or
+LLVM. On Linux x64 with the i386 C runtime installed, build the reference with
+`clang -m32 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c -o
+build-release/X87OriginalReplay32` and pass that path as `--original-driver`.
+This adds i386 numerical observations, not an i386 owned-state executor.
+The recorder retains source/driver copies and checks their hashes before/after
+execution; on Linux it also binds the driver runtime closure. On
 Apple ARM64 with Rosetta already installed, the original driver can be compiled
 separately without LLVM; it reports Rosetta explicitly:
 
 ```sh
-clang++ -arch x86_64 -std=c++20 -O2 -DNEVERD_X87_ORIGINAL_REFERENCE=1 unittests/lift/core/X87ArithmeticReplay.cpp -o build-release/X87OriginalReplay
-python3 scripts/check_x87_arithmetic_replay.py --portable-driver build-release/bin/NeverDX87ArithmeticReplay --original-driver build-release/X87OriginalReplay --output-dir build-release/x87-replay-run1 --portable-build 'configured Release build and pinned LLVM' --original-build 'clang++ -arch x86_64 -std=c++20 -O2 -DNEVERD_X87_ORIGINAL_REFERENCE=1'
+clang -arch x86_64 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c -o build-release/X87OriginalReplay
+python3 scripts/check_x87_arithmetic_replay.py --portable-driver build-release/bin/NeverDX87ArithmeticReplay --original-driver build-release/X87OriginalReplay --output-dir build-release/x87-replay-run1 --portable-build 'configured Release build and pinned LLVM' --original-build 'clang -arch x86_64 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c'
 ```
 
 Use a fresh output directory for every observation and record the actual build
@@ -3373,6 +3500,58 @@ configuration. A Rosetta pass is not native x86 hardware evidence. Process
 timings include startup and I/O and do not establish application throughput.
 
 `NeverDX86X87ConvertStateTests` compares original bytes with native LLVM, HighC and LLVMC at default/NoOpt and C O0/O2. Its fixtures pin the owned context on every host through `BinaryImage::X87ContextOverride`; the integer-load, sign and x87 FPU suites also exercise the typed System V projection. It checks conversions, eight arithmetic forms, flags, MMX/EMMS, full/empty stacks, calls, wrappers, entry loops and independent roots. Four FLDENV/FRSTOR formats cover pending exceptions, tags and retained payloads. All four RC values, three defined PC values and 64 exception masks are exercised where applicable. Direct Low/Med/High contracts reject malformed shapes, forged handles and truncated selectors. Narrow returns retain call effects and reject demanded unknown bits. The host oracle requires x64 and Clang; tests do not establish every instruction, native platform, CPU model, fault priority or typed floating import ABI.
+
+BCD cases cover valid eighteen-digit FBLD inputs, both zero signs and ignored
+sign-byte bits, FBSTP rounding/indefinite stores, suppressed unmasked stores and
+pops, and full/empty stack faults. The concrete executor rejects every A..F
+digit in every position without publishing state or a load. Native FFREEP and
+FDECSTP cases additionally compare retained payloads, tags and TOP.
+
+The same target includes twelve selected-host transcendental, scale/extract and
+remainder cases across PC/RC and exception masks. Their full-state comparison
+is CPU-specific, including implementation-dependent results; it is not portable
+numerical qualification. Five Linux x64 signal fixtures compare pending invalid
+against WAIT, waiting FBLD, nonwaiting FNSTCW/FXSAVE64 and FNCLEX. Child signal
+contexts retain CW/SW, tags, all raw slots, signal codes and protected memory
+addresses; relocated instruction/data pointers and resumption are excluded.
+
+On Linux x86-64, freeze a generated-code run in a fresh directory:
+
+```sh
+python3 scripts/build.py build-release --target NeverDX86X87ConvertStateTests --parallel 4
+python3 scripts/check_x87_native_regression.py --driver build-release/bin/NeverDX86X87ConvertStateTests --output-dir build-release/x87-native-state-run1 --build 'actual compiler, Release flags, pinned LLVM and build command'
+```
+
+The recorder binds the driver, compiler, linker and runtime libraries, current
+CPU/environment, source revision/patch and untracked source files. It retains
+original/generated sources, objects and executables, command arguments, outputs
+and GoogleTest XML, including failures. Default and NoOpt artifacts have distinct
+names. A changed source/driver/runtime during the run or a skipped case cannot
+produce a passing record. Deterministic fixture arrays have no random seed;
+their source and generated driver hashes identify the inputs. Relocated pointer
+identity, compiler XMM values, other CPUs/ABIs, general OS delivery/resumption
+and formal proof remain
+outside this record's scope. Elapsed time includes compilation and I/O and is
+not an execution-throughput measurement.
+
+Use `--state-path typed --linker lld` with `NeverDX87StackManagementTests`,
+`NeverDX87PackedBCDTests` or `NeverDX87TranscendentalTests` to retain their
+i386/x64 variants. Every default/NoOpt,
+LLVM/HighC/LLVM-C and O0/O2 executable has a distinct name. Original objects,
+sources and command outputs are retained. The recorder binds available 32-bit
+C runtime libraries before execution and verifies every generated executable's
+runtime closure against the original bindings. Typed records claim only the
+fixtures' selected value/status/memory observations, never complete x87 state.
+
+The same recorder can freeze `NeverDX87CallGraphTests` with
+`--filter 'X87CallReplay.*' --state-path typed --linker lld`. Those fixtures
+retain native i386 CRT
+stack-argument adapters and i386/x64 call loops, including binary80 values
+distinguishable from binary64. Call loops compare original machine code,
+LLVM, HighC and LLVM-C; a separately emitted HighC caller also links against
+the original machine callees. Default/NoOpt and O0/O2 artifacts are distinct.
+The CRT fixtures execute an independently defined test callee on Linux and
+compile a COFF object; they do not qualify a Windows CRT or Windows runtime.
 
 ## Inline C memory accesses
 
@@ -3422,6 +3601,19 @@ It checks every meaningful bit and the surrounding sentinels. Only unused bits
 of a final partial byte are excluded, as permitted by the
 [LLVM store semantics](https://llvm.org/docs/LangRef.html#store-instruction).
 Widths beyond the supported C carrier fail explicitly.
+
+`LLVMCValues.X87MemoryViewsRetainBitsAndTenByteExtents` executes i80/x86_fp80
+loads and stores through both integer and floating local storage on native
+i386/x64. It compares LLVM with ordinary and type-preserving C at O0/O2,
+including both memory spelling options and undefined-behavior traps. Finite
+raw payloads, signed zeros and subnormals must retain all ten bytes without
+changing adjacent guards. This catches a folded floating load from an i80
+slot becoming a numeric integer-to-floating conversion in C.
+`X87FiniteConstantsKeepExtendedPrecisionAndRange` exercises finite binary80
+constants as expressions and static initializers on both modes, including
+signed zero, subnormal/normal boundaries, significand bits below binary64
+precision and the extended exponent range. The C literals must have
+long-double precision before any surrounding expression evaluates them.
 
 ```sh
 cmake --build build-release --target NeverDCMemoryCopyTests \

@@ -16,6 +16,8 @@
 #include "neverd/ir/X86ShadowStack.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/X87GuardedValue.h"
+#include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -156,6 +158,73 @@ inline X87ConstantControlShape x87ConstantControlMedShape(const MedOp &Op,
   auto S = x87ConstantControlLowShape(Low, A);
   S.HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty() || !Matches;
   return S;
+}
+
+inline X87GuardedValueShape x87GuardedValueMedShape(const MedOp &Op, Arch A) {
+  if (Op.NumInputs != 3 || Op.NumInputs > Op.Inputs.size())
+    return {};
+  LowOp Low;
+  Low.Opcode = Op.Opcode;
+  Low.MemoryOrdering = Op.MemoryOrdering;
+  Low.MemoryAddressSpace = Op.MemoryAddressSpace;
+  Low.Output = NdVar::tmp(0, Op.Output.Size);
+  if (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp)
+    return {};
+  bool Matches = true;
+  const auto Observe = [&](const MedVar &V) {
+    if (V.TheArch == Arch::Unknown)
+      return;
+    if (A == Arch::Unknown)
+      A = V.TheArch;
+    else if (A != V.TheArch)
+      Matches = false;
+  };
+  Observe(Op.Output);
+  for (unsigned I = 0; I != Op.NumInputs; ++I) {
+    const auto &V = Op.Inputs[I];
+    Observe(V);
+    if (!V.isConst() && V.Kind != MedVar::Reg && V.Kind != MedVar::Temp &&
+        V.Kind != MedVar::Param)
+      return {};
+    Low.addInput(V.isConst() ? NdVar::cst(V.ConstVal, V.Size)
+                             : NdVar::tmp(0, V.Size));
+  }
+  auto Shape = x87GuardedValueLowShape(Low, A);
+  Shape.HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty() || !Matches;
+  return Shape;
+}
+
+inline X87ValueShape x87ValueMedShape(const MedOp &Op, Arch A) {
+  if (!hasValidMedIntrinsicId(Op) || Op.NumInputs > 3 ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp))
+    return {};
+  LowOp Low;
+  Low.Opcode = Op.Opcode;
+  Low.MemoryOrdering = Op.MemoryOrdering;
+  Low.MemoryAddressSpace = Op.MemoryAddressSpace;
+  Low.Output = NdVar::tmp(0, Op.Output.Size);
+  bool Matches = true;
+  const auto Observe = [&](const MedVar &V) {
+    if (V.TheArch == Arch::Unknown)
+      return;
+    if (A == Arch::Unknown)
+      A = V.TheArch;
+    else if (A != V.TheArch)
+      Matches = false;
+  };
+  Observe(Op.Output);
+  for (unsigned I = 0; I != Op.NumInputs; ++I) {
+    const auto &V = Op.Inputs[I];
+    Observe(V);
+    if (!V.isConst() && V.Kind != MedVar::Reg && V.Kind != MedVar::Temp &&
+        V.Kind != MedVar::Param)
+      return {};
+    Low.addInput(V.isConst() ? NdVar::cst(V.ConstVal, V.Size)
+                             : NdVar::tmp(0, V.Size));
+  }
+  auto Shape = x87ValueLowShape(Low, A);
+  Shape.HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty() || !Matches;
+  return Shape;
 }
 
 inline bool isMedIntrinsicScalarInput(const MedVar &Value) {

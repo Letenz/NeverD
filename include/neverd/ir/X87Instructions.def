@@ -126,11 +126,11 @@ NEVERD_X87_FORM(FIST_m16int, 0xdf, 0x10, 0x10, true, "FIST", "m16int", true,
                 ValueProjection, StoreInteger)
 NEVERD_X87_FORM(FISTP_m16int, 0xdf, 0x18, 0x18, true, "FISTP", "m16int", true,
                 ValueProjection, StoreIntegerPop)
-NEVERD_X87_FORM(FBLD_m80bcd, 0xdf, 0x20, 0x20, true, "FBLD", "m80bcd", false,
+NEVERD_X87_FORM(FBLD_m80bcd, 0xdf, 0x20, 0x20, true, "FBLD", "m80bcd", true,
                 ValueProjection, None)
 NEVERD_X87_FORM(FILD_m64int, 0xdf, 0x28, 0x28, true, "FILD", "m64int", true,
                 ExactValue, LoadInteger)
-NEVERD_X87_FORM(FBSTP_m80bcd, 0xdf, 0x30, 0x30, true, "FBSTP", "m80bcd", false,
+NEVERD_X87_FORM(FBSTP_m80bcd, 0xdf, 0x30, 0x30, true, "FBSTP", "m80bcd", true,
                 ValueProjection, None)
 NEVERD_X87_FORM(FISTP_m64int, 0xdf, 0x38, 0x38, true, "FISTP", "m64int", true,
                 ValueProjection, StoreIntegerPop)
@@ -214,7 +214,7 @@ NEVERD_X87_FORM(FXTRACT, 0xd9, 0xf4, 0xf4, false, "FXTRACT", "implicit", true,
                 ValueProjection, None)
 NEVERD_X87_FORM(FPREM1, 0xd9, 0xf5, 0xf5, false, "FPREM1", "implicit", true,
                 ProcessorDependent, None)
-NEVERD_X87_FORM(FDECSTP, 0xd9, 0xf6, 0xf6, false, "FDECSTP", "implicit", false,
+NEVERD_X87_FORM(FDECSTP, 0xd9, 0xf6, 0xf6, false, "FDECSTP", "implicit", true,
                 StateOnly, None)
 NEVERD_X87_FORM(FINCSTP, 0xd9, 0xf7, 0xf7, false, "FINCSTP", "implicit", true,
                 StateOnly, None)
@@ -278,7 +278,7 @@ NEVERD_X87_FORM(FUCOM_reg_dd, 0xdd, 0xe0, 0xe7, false, "FUCOM", "ST(i)", true,
                 ValueProjection, Compare)
 NEVERD_X87_FORM(FUCOMP_reg_dd, 0xdd, 0xe8, 0xef, false, "FUCOMP", "ST(i)", true,
                 ValueProjection, ComparePop)
-NEVERD_X87_FORM(FFREEP, 0xdf, 0xc0, 0xc7, false, "FFREEP", "ST(i)", false,
+NEVERD_X87_FORM(FFREEP, 0xdf, 0xc0, 0xc7, false, "FFREEP", "ST(i)", true,
                 StateOnly, None)
 NEVERD_X87_FORM(WAIT, 0x9b, 0x00, 0x00, false, "WAIT", "implicit", true,
                 StateOnly, Wait)

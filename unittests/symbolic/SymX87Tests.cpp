@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/ir/X87GuardedValue.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
@@ -106,6 +107,68 @@ TEST(SymX87, UnknownOperandMakesRemainderAndStatusUnknown) {
                                 NdVar::reg(x86reg::FPU_SW, 2))),
             StepResult::Continue);
   EXPECT_EQ(Exec.unmodelledCount(), 2u);
+}
+
+TEST(SymX87, FreePopInvalidatesBothPhysicalSlotsAndCannotInventKnownTop) {
+  for (unsigned Top = 0; Top != 8; ++Top)
+    for (unsigned Index = 0; Index != 8; ++Index) {
+      SymContext Ctx;
+      SymState State(Ctx);
+      SymExec Exec(Ctx, State);
+      State.write(SymSpace::Register, x86reg::FPU_SW, Ctx.mkConst(16, 0x4700));
+      for (unsigned Slot = 0; Slot != 8; ++Slot)
+        State.write(SymSpace::Register, x86reg::stReg(Slot),
+                    Ctx.mkConst(80, Slot));
+      LowOp Op = intrinsic(Intrinsic::X87Ffreep);
+      Op.addInput(NdVar::reg(x86reg::stReg((Top + Index) & 7), 10));
+      Op.addInput(NdVar::cst(Index, 1));
+      EXPECT_EQ(Exec.step(Op), StepResult::Unmodelled);
+      for (unsigned Slot = 0; Slot != 8; ++Slot)
+        EXPECT_EQ(Ctx.isConst(
+                      State.read(SymSpace::Register, x86reg::stReg(Slot), 10)),
+                  Slot != Top && Slot != ((Top + Index) & 7));
+      const auto Status = State.read(SymSpace::Register, x86reg::FPU_SW, 2);
+      EXPECT_FALSE(Ctx.isConst(Ctx.mkAnd(Status, Ctx.mkConst(16, 0x3800))));
+      EXPECT_FALSE(Ctx.isConst(Ctx.mkAnd(Status, Ctx.mkConst(16, 0x4700))));
+    }
+}
+
+TEST(SymX87, DecrementDoesNotInitializeARegisterOrPublishGuessedStatus) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  SymExec Exec(Ctx, State);
+  State.write(SymSpace::Register, x86reg::FPU_SW, Ctx.mkZero(16));
+  State.write(SymSpace::Register, x86reg::ST0, Ctx.mkConst(80, 42));
+  const auto Unknown = State.read(SymSpace::Register, x86reg::ST7, 10);
+  EXPECT_EQ(Exec.step(intrinsic(Intrinsic::X87Fdecstp)),
+            StepResult::Unmodelled);
+  EXPECT_EQ(State.read(SymSpace::Register, x86reg::ST0, 10),
+            Ctx.mkConst(80, 42));
+  EXPECT_EQ(State.read(SymSpace::Register, x86reg::ST7, 10), Unknown);
+  EXPECT_FALSE(Ctx.isConst(State.read(SymSpace::Register, x86reg::FPU_SW, 2)));
+}
+
+TEST(SymX87, GuardedNativeResultsAndStatusRemainExplicitlyUnknown) {
+  for (auto Id : {Intrinsic::X87LoadPackedBCD, Intrinsic::X87StorePackedBCD,
+                  Intrinsic::X87FptanPair, Intrinsic::X87FsincosPair,
+                  Intrinsic::X87FxtractPair}) {
+    SymContext Ctx;
+    SymState State(Ctx);
+    SymExec Exec(Ctx, State);
+    State.write(SymSpace::Register, x86reg::FPU_SW, Ctx.mkZero(16));
+    State.write(SymSpace::Register, x86reg::ST0, Ctx.mkConst(80, 1));
+    const unsigned Bytes = x87GuardedValueBytes(Id);
+    LowOp Op = intrinsic(Id, NdVar::tmp(90000, Bytes));
+    Op.addInput(NdVar::reg(x86reg::ST0, 10));
+    Op.addInput(NdVar::cst(0x37f, 2));
+    EXPECT_EQ(Exec.step(Op), StepResult::Unmodelled);
+    EXPECT_FALSE(Ctx.isConst(State.read(SymSpace::Temporary, 90000, Bytes)));
+    EXPECT_FALSE(
+        Ctx.isConst(State.read(SymSpace::Register, x86reg::FPU_SW, 2)));
+    EXPECT_EQ(State.read(SymSpace::Register, x86reg::ST0, 10),
+              Ctx.mkConst(80, 1));
+    EXPECT_EQ(Exec.unmodelledCount(), 1u);
+  }
 }
 
 TEST(SymX87, CompletedRemainderHasExactValueAndQuotientBits) {

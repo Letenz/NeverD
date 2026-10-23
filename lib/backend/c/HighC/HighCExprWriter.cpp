@@ -26,6 +26,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/render/AArch64PointerC.h"
+#include "neverd/backend/c/render/X87GuardedValueRender.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -34,6 +35,8 @@
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/high/X87ConstantShape.h"
+#include "neverd/ir/high/X87GuardedValueShape.h"
+#include "neverd/ir/high/X87ValueShape.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
@@ -1584,10 +1587,15 @@ std::optional<X87CHelper> HighCWriter::x87HelperFor(const HighExpr &E) const {
     return E.Op == NdOp::FLOAT_SQRT ? X87CHelper::Fsqrt : X87CHelper::Frndint;
   if (E.Kind != ExprKind::Call)
     return std::nullopt;
+  if (x87ValueInfo(E.IntrinsicId) &&
+      !x87ValueShapeIsValid(x87ValueHighShape(E, Opts.TheArch)))
+    llvm::report_fatal_error("invalid HighC x87 scalar value/status contract");
   if (E.IntrinsicId == Intrinsic::X87Fprem ||
-      E.IntrinsicId == Intrinsic::X87Fprem1 ||
-      E.IntrinsicId == Intrinsic::X87ReadStatus)
+      E.IntrinsicId == Intrinsic::X87Fprem1)
     return X87CHelper::Fprem;
+  if (E.IntrinsicId == Intrinsic::X87ReadStatus ||
+      isX87GuardedValueIntrinsic(E.IntrinsicId))
+    return X87CHelper::Status;
   return x87ValueHelper(E.IntrinsicId);
 }
 
@@ -1969,6 +1977,9 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (x87ValueInfo(E.IntrinsicId) &&
+      !x87ValueShapeIsValid(x87ValueHighShape(E, Opts.TheArch)))
+    llvm::report_fatal_error("invalid HighC x87 scalar value/status contract");
   if (E.IntrinsicId == Intrinsic::X86AMXState) {
     std::vector<std::string> Arguments;
     for (const auto &V : E.Operands) {
@@ -1995,6 +2006,23 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       isItaniumRuntimeCall(E, "__cxa_begin_catch"))
     return (ItaniumCatchParameter->second ? "" : "&") +
            ItaniumCatchParameter->first;
+  if (isX87GuardedValueIntrinsic(E.IntrinsicId)) {
+    if (!x87GuardedValueShapeIsValid(x87GuardedValueHighShape(E, Opts.TheArch)))
+      llvm::report_fatal_error(
+          "invalid HighC guarded x87 value/control contract");
+    const auto Source = MemoryIdentifiers.allocate("x87_value_source");
+    const auto Result = MemoryIdentifiers.allocate("x87_value_result");
+    const auto Control = MemoryIdentifiers.allocate("x87_value_control");
+    return "({ unsigned _BitInt(80) " + Source + " = " +
+           exprStr(*E.Operands[0]) + "; unsigned _BitInt(" +
+           std::to_string(x87GuardedValueBytes(E.IntrinsicId) * 8) + ") " +
+           Result + " = 0; uint16_t " + Control + " = " +
+           exprStr(*E.Operands[1]) + "; " +
+           renderX87GuardedValueAsm(E.IntrinsicId,
+                                    {"&" + Result, "&" + Source, "&" + Control,
+                                     "&neverd_x87_sampled_status"}) +
+           "; neverd_x87_status_pending = 1; " + Result + "; })";
+  }
   if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
     if (!x87ConstantControlShapeIsValid(
             E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))

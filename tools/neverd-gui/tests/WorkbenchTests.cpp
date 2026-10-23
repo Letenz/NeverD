@@ -3048,7 +3048,7 @@ private slots:
     Workbench bench;
     bench.window->openFile(
         writeFixture(directory, QStringLiteral("source-cache.bin")));
-    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
     QObject reader;
     QJsonObject first;
     const QJsonObject payload{{"address", hexAddress(Base)},
@@ -3084,18 +3084,32 @@ private slots:
     auto *listing = bench.window->disassembly()->listing();
     GraphView graph(bench.session);
     graph.showFunction(Base);
-    QTRY_VERIFY_WITH_TIMEOUT(graph.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        graph.loaded() && graph.currentAddress() == Base &&
+            !bench.session.analysisQueries(payload, &graph).hasPending(),
+        OpenTimeoutMs);
     // Count only changes caused by the rename. The initial listing can still
     // settle after the function model and graph have answered.
     QTRY_VERIFY_WITH_TIMEOUT(listing->currentItem().has_value() &&
                                  !listing->jumpPending() &&
                                  !bench.session.queries().hasPending(),
                              OpenTimeoutMs);
+    // Initial discovery and navigation may retire the first source replica.
+    // Establish the cache baseline after that setup, then require this same
+    // idle replica to survive both display-name commits.
+    first = {};
+    bench.session.read("decompile", payload, &reader,
+                       [&](const QJsonObject &page) { first = page; });
+    QTRY_VERIFY_WITH_TIMEOUT(!first.isEmpty(), OpenTimeoutMs);
     QSignalSpy listResets(&functions->model(), &QAbstractItemModel::modelReset);
     QSignalSpy listingMoves(listing, &ListingView::jumpSettled);
     QSignalSpy graphChanges(&graph, &GraphView::viewChanged);
     for (const auto &name :
          {QStringLiteral("current_thread"), QStringLiteral("thread_state")}) {
+      QTRY_VERIFY_WITH_TIMEOUT(
+          !bench.session.queries().hasPending() &&
+              !bench.session.analysisQueries(payload, &reader).hasPending(),
+          OpenTimeoutMs);
       const auto revision = bench.session.revision();
       edit["name"] = name;
       bench.session.editCode(edit, bench.session.epoch());

@@ -1331,7 +1331,8 @@ TEST(LowInstructionBoundary, X87FpremCapturesStatusInsideOneLLVMAsm) {
             (void)MedLLVMEmitter().emit({Unpaired}, BadContext,
                                         "x87-unpaired-status", Arch::X64);
           },
-          "X87ReadStatus requires an immediately preceding FPREM");
+          "X87ReadStatus requires an immediately preceding status-producing "
+          "x87 intrinsic");
     }
   }
 }

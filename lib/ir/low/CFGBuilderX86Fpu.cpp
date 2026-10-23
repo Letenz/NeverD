@@ -28,6 +28,8 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/X87GuardedValue.h"
+#include "neverd/ir/X87Stack.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterBody.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -105,6 +107,13 @@ bool isX87IntegerLoad(const LowOp &Op) {
          isStReg(Op.Output) && Op.Output.Size == 10 &&
          (Op.Inputs[0].Size == 2 || Op.Inputs[0].Size == 4 ||
           Op.Inputs[0].Size == 8);
+}
+
+bool isX87GuardedValueOperation(const LowOp &Op) {
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+         Op.Inputs[0].isConst() &&
+         isX87GuardedValueIntrinsic(
+             static_cast<Intrinsic>(Op.Inputs[0].Offset));
 }
 
 // All signed FILD source widths fit exactly in binary80's 64-bit
@@ -1134,6 +1143,11 @@ class X87CallEffectIndex {
     case Intrinsic::X87ReadControl:
     case Intrinsic::X87WriteControl:
     case Intrinsic::X87LoadConstant:
+    case Intrinsic::X87LoadPackedBCD:
+    case Intrinsic::X87StorePackedBCD:
+    case Intrinsic::X87FptanPair:
+    case Intrinsic::X87FsincosPair:
+    case Intrinsic::X87FxtractPair:
     case Intrinsic::X87Fsin:
     case Intrinsic::X87Fcos:
     case Intrinsic::X87F2xm1:
@@ -2325,7 +2339,8 @@ void CFGBuilder::fixupFpuStack(
       for (size_t O = Boundary.FirstOp;
            O < Boundary.FirstOp + Boundary.OpCount && O < Blk.Ops.size(); ++O) {
         LowOp &Op = Blk.Ops[O];
-        if (isX87SignOperation(Op) || isX87IntegerLoad(Op)) {
+        if (isX87SignOperation(Op) || isX87IntegerLoad(Op) ||
+            isX87GuardedValueOperation(Op)) {
           HasTagOperations = true;
           UnsupportedInstructionAddresses.insert(Op.Addr);
         }
@@ -2335,7 +2350,8 @@ void CFGBuilder::fixupFpuStack(
           HasTagOperations |= Id == Intrinsic::X87Fxam;
           if (Id == Intrinsic::X87Fxam)
             UnsupportedInstructionAddresses.insert(Op.Addr);
-          RotateOnly |= Id == Intrinsic::X87Fincstp;
+          if (const auto Stack = x87StackEffect(Id))
+            RotateOnly |= Stack->TopDelta != 0 && !Stack->Pops;
         }
         rebaseStReg(Op.Output, CallShift);
         for (uint8_t K = 0; K < Op.NumInputs; ++K)
@@ -2576,6 +2592,23 @@ void CFGBuilder::fixupFpuStack(
             if (State.Empty & Bit)
               ProvenTags[{Id, O}] = false;
           }
+          if (isX87GuardedValueOperation(Op) && Publish &&
+              x87GuardedValueShapeIsValid(
+                  x87GuardedValueLowShape(Op, CurrentImg->Arch))) {
+            const bool Pair = isX87PushPairIntrinsic(
+                static_cast<Intrinsic>(Op.Inputs[0].Offset));
+            const bool Load =
+                Op.Inputs[0].Offset == unsigned(Intrinsic::X87LoadPackedBCD);
+            const NdVar &Slot = Load ? Op.Output : Op.Inputs[1];
+            if (isStReg(Slot)) {
+              const unsigned Bit = 1u << x86reg::stRegIndex(Slot.Offset);
+              const unsigned PushBit =
+                  1u << ((x86reg::stRegIndex(Slot.Offset) + 7) & 7);
+              if (((Load ? State.Empty : State.Full & State.Payload) & Bit) &&
+                  (!Pair || (State.Empty & PushBit)))
+                ProvenTags[{Id, O}] = false;
+            }
+          }
           if (SignOperation && Publish) {
             const unsigned Bit = 1u << x86reg::stRegIndex(Op.Inputs[0].Offset);
             if ((State.Full & State.Payload) & Bit)
@@ -2610,9 +2643,12 @@ void CFGBuilder::fixupFpuStack(
                 // FNINIT empties tags without defining retained payload bits.
                 // FXAM still reads that payload's sign even for an empty slot.
                 State = {0, 0xff, State.Payload};
-              } else if (Kind == Intrinsic::X87Ffree && Op.NumInputs == 3 &&
-                         isStReg(Op.Inputs[1])) {
-                makeEmpty(x86reg::stRegIndex(Op.Inputs[1].Offset));
+              } else if (const auto Stack = x87StackEffect(Kind);
+                         Stack && Stack->FreesOperand) {
+                if (Op.NumInputs == 3 && isStReg(Op.Inputs[1]))
+                  makeEmpty(x86reg::stRegIndex(Op.Inputs[1].Offset));
+                else
+                  State = {};
               } else if (replacesX87Tags(Kind)) {
                 // A subsequent explicit definition can recover a slot.
                 State = {};
@@ -2701,7 +2737,8 @@ void CFGBuilder::fixupFpuStack(
       for (size_t O = 0; O < B.Ops.size(); ++O) {
         NewOffsets[O] = Rewritten.size();
         const LowOp &Op = B.Ops[O];
-        if (Op.ConsumesX87Argument || Op.X87ImportArguments) {
+        if (Op.ConsumesX87Argument || Op.X87ImportArguments ||
+            isX87GuardedValueOperation(Op)) {
           if (ProvenTags.count({B.Id, O}))
             Expanded.insert(Op.Addr);
           else {

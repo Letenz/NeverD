@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/ir/low/X87NativeContext.h"
 
+#include "neverd/ir/X87BCD.h"
 #include "neverd/ir/X87Context.h"
 
 #include "llvm/ADT/StringMap.h"
@@ -123,6 +124,10 @@ bool executeNativeX87Context(uint32_t Selector, std::array<uint8_t, 512> &State,
   const uint16_t Control = State[0] | (unsigned(State[1]) << 8);
   const uint16_t Status = State[2] | (unsigned(State[3]) << 8);
   if (Spec->Waiting && ((Status & 0x80) || (Status & ~Control & 0x3f)))
+    return false;
+  if ((Selector & X87ContextMemory) && (Selector & 0xffff) == 0x20df &&
+      !x87PackedBCDIsValid(
+          {static_cast<const uint8_t *>(Memory), Spec->MemoryBytes}))
     return false;
   if ((Selector & 0xff) == 0x9b)
     return true;

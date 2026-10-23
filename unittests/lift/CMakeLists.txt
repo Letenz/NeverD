@@ -13,11 +13,11 @@ add_neverd_unittest(NeverDX87PortableEmulatorTests
   LINK_COMPONENTS IRLow Lift)
 add_executable(NeverDX87ArithmeticReplay core/X87ArithmeticReplay.cpp)
 target_link_libraries(NeverDX87ArithmeticReplay PRIVATE NeverDIRLowValidation)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND
-   CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  add_executable(NeverDX87OriginalReplay core/X87ArithmeticReplay.cpp)
-  target_compile_definitions(NeverDX87OriginalReplay PRIVATE
-    NEVERD_X87_ORIGINAL_REFERENCE=1)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$" AND
+   CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  add_executable(NeverDX87OriginalReplay core/X87OriginalReplay.c)
+  set_target_properties(NeverDX87OriginalReplay PROPERTIES C_STANDARD 11
+                        C_STANDARD_REQUIRED ON)
 endif()
 if(TARGET unicorn)
   target_link_libraries(NeverDX87ArithmeticTests PRIVATE unicorn)
@@ -130,6 +130,46 @@ target_compile_definitions(NeverDX87CallGraphTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
   TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+
+add_neverd_unittest(NeverDX87StackManagementTests
+  x86_32/X87StackManagementTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87StackManagementTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87StackManagementTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_neverd_unittest(NeverDX87PackedBCDTests
+  x86_32/X87PackedBCDTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87PackedBCDTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87PackedBCDTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_neverd_unittest(NeverDX87TranscendentalTests
+  x86_32/X87TranscendentalTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87TranscendentalTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87TranscendentalTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_neverd_unittest(NeverDX87WorkloadTests
+  x86_32/X87WorkloadTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87WorkloadTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87WorkloadTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_neverd_unittest(NeverDX86FunctionDiscoveryTests
   x86_32/X86_32_FunctionDiscoveryTests.cpp
@@ -4310,6 +4350,9 @@ if(LLD_EXEC)
 endif()
 
 add_custom_target(lift-test-objects DEPENDS ${TEST_OBJECTS} ${ELF_EXECUTABLES})
+add_custom_target(lift-x87-test-objects
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/test_x87_fpu32.o")
+add_dependencies(NeverDX87CallGraphTests neverd lift-x87-test-objects)
 add_dependencies(NeverDLiftTests lift-test-objects)
 add_dependencies(NeverDJumpTableTests lift-test-objects)
 add_dependencies(NeverDNativePointerRelocationBoundaryTests lift-test-objects)
@@ -4516,6 +4559,7 @@ target_include_directories(NeverDX86X87IntegerLoadTests PRIVATE
 
 add_neverd_unittest(NeverDX86X87ConvertStateTests
   x86_64/X86_64_X87ConvertStateTests.cpp
+  x86_64/X86_64_X87FaultTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86X87ConvertStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
