@@ -41,6 +41,7 @@
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "WindowFrame.h"
+#include "X87CapabilitiesDialog.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 #include "web/PackageReviewDialog.h"
@@ -2052,6 +2053,17 @@ void MainWindow::connectActions() {
     QDesktopServices::openUrl(QUrl(QString::fromLatin1(DocumentationUrl)));
   });
   on(ActionId::HelpAbout, [this] { showAbout(); });
+  on(ActionId::HelpX87Capabilities, [this] {
+    auto *Dialog = new X87CapabilitiesDialog(session_.queries(), this);
+    Dialog->setAttribute(Qt::WA_DeleteOnClose);
+    const auto Update = [this, Dialog] {
+      Dialog->setProviderAvailable(session_.connected(),
+                                   session_.reportsX87Capabilities());
+    };
+    connect(&session_, &Session::stateChanged, Dialog, Update);
+    Update();
+    Dialog->show();
+  });
 }
 
 void MainWindow::updateActions() {

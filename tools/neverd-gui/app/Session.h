@@ -83,6 +83,9 @@ public:
   }
 
   bool connected() const { return connected_; }
+  bool reportsX87Capabilities() const {
+    return capabilities_.contains(QStringLiteral("x87_capabilities"));
+  }
   /// The configured NeverD worker, also used by separate offline workbenches.
   QString workerPath() const { return workerPath_; }
   bool loaded() const { return loaded_; }

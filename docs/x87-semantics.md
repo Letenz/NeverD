@@ -13,7 +13,19 @@ It does not close the issue's portable execution or qualification gates.
 unloaded session, do not execute input code or probe a CPU, and work without
 optional CPU emulation. C callers free the owned result with
 `neverd_free_string`; failure returns NULL with `neverd_last_error(session)`.
-Worker/GUI clients can consume this C API; no new GUI workflow is claimed.
+The worker advertises `x87_capabilities` when its engine exports the C API.
+The empty-object operation returns the report unchanged, before or after a
+binary loads, without changing the project revision. Older engines report
+the operation as unavailable.
+
+The desktop's **Help → x87 support** opens that report through the normal
+read dispatcher. Source mode, ABI, state path, consumer, backend and destination
+remain explicit. The table separates implementation, numerical results and
+architectural state; details retain the shared profile requirements, refusal
+reason, ABI call contract and regression source references. Unlisted cells
+remain unsupported, and malformed or newer schemas show an error instead of
+retaining earlier support claims. Inspection never executes an input or probes
+the host. Regression source references are not passing-run or proof receipts.
 
 `ir/X87Instructions.def` owns semantic coverage metadata.
 `ir/X87Capabilities.h` exposes the C++ query and report; malformed selectors,

@@ -192,6 +192,16 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/real_engine_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerRealEngine PROPERTIES TIMEOUT 60)
+      set(_neverd_x87_cli_args)
+      if(TARGET neverd)
+        list(APPEND _neverd_x87_cli_args --cli "$<TARGET_FILE:neverd>")
+      endif()
+      add_test(NAME NeverDWorkerX87Capabilities
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/x87_capabilities_test.py"
+                "$<TARGET_FILE:neverd-worker>" "$<TARGET_FILE:neverd_shared>"
+                --legacy-worker "$<TARGET_FILE:neverd-worker-test-server>"
+                ${_neverd_x87_cli_args})
+      set_tests_properties(NeverDWorkerX87Capabilities PROPERTIES TIMEOUT 60)
       add_test(NAME NeverDWorkerUnicodePaths
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode_path_test.py"
                 "$<TARGET_FILE:neverd-worker>")

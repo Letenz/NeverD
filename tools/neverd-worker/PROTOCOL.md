@@ -562,6 +562,7 @@ Heartbeat retains its native fields and adds
 
 | Operation | Payload fields after `schema_version` |
 |---|---|
+| `x87_capabilities` | Empty object; returns the C API's static x87 mode/ABI/state/consumer/backend matrix unchanged. Available before loading a binary; does not probe the host, execute code or change the project revision. Advertised only when the linked engine exports `neverd_x87_capabilities_json`; older engines return `unsupported`. Numerical and architectural-state support, profile requirements, unsupported reasons and test-source references retain their distinct meanings. Test-source references do not establish a passing run or a proof. |
 | `web_capabilities` | None; returns actual compiled capabilities, including unavailable status |
 | `web_import_preview` | `path`, optional `options` object using the C API import schema |
 | `web_import_commit` | `preview_token` |

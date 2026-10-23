@@ -610,6 +610,10 @@ NEVERD_ACTION(WindowsFocusCommand,
                                 "Move the keyboard focus to the command line"))
 
 // Help.
+NEVERD_ACTION(HelpX87Capabilities,
+              QT_TRANSLATE_NOOP("Actions", "x87 &support…"), "", "help",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Inspect x87 support and requirements"))
 NEVERD_ACTION(HelpContents, QT_TRANSLATE_NOOP("Actions", "&Help"), "F1", "help",
               QT_TRANSLATE_NOOP("Actions", "Open the NeverD documentation"))
 NEVERD_ACTION(HelpAbout, QT_TRANSLATE_NOOP("Actions", "&About NeverD"), "",

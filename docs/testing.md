@@ -3446,6 +3446,28 @@ native or typed support from promoting portable, state or proof capabilities.
 Python API tests cover the ownership-safe adapter. These inventory tests do
 not establish native instruction or ARM64 portable execution coverage.
 
+`NeverDWorkerX87Capabilities` compares the real worker with the C/Python report
+and, when the CLI target is present, the CLI. It checks unloaded and loaded
+sessions, unchanged bytes/project revisions, malformed requests, and refusal
+by the legacy mock engine that lacks the optional symbol.
+`NeverDGuiX87Capabilities` checks factorized joins, separate numerical/state
+claims, unlisted cells, invalid schemas, cancelled/retired replies, filtering,
+keyboard navigation and the real worker through `QueryService`. No fixture
+executes an imported program. Build these targets with the normal
+`scripts/build.py` wrapper; a standalone GUI build may use
+`NEVERD_ENGINE_LIBRARY` to select the matching shared engine.
+
+```sh
+python3 scripts/build.py build-gui --target neverd-gui-x87-tests neverd-worker-test-server --parallel 4
+ctest --test-dir build-gui -R '^NeverD(Worker|Gui)X87Capabilities$' --output-on-failure
+```
+
+For visual review, set `QT_QPA_PLATFORM=offscreen` and
+`NEVERD_X87_GUI_CAPTURES` to an artifact directory when running
+`neverd-gui-x87-tests realWorkerReportAndCaptures`. Repeat with
+`QT_SCALE_FACTOR=1` and `1.5`; the test captures light/dark, reduced-size, RTL
+and unavailable states with isolated preferences.
+
 ```sh
 cmake --build build-release --target NeverDX87CapabilityTests NeverDX87CapabilitiesPublicTests NeverDX87ArithmeticTests NeverDX87PortableContextTests NeverDX87PortableEmulatorTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX87(Capability|CapabilitiesPublic|Arithmetic|PortableContext|PortableEmulator)Tests$' --output-on-failure

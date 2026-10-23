@@ -351,6 +351,8 @@ Json hello() {
   if (Engine::findsCallPaths())
     for (const char *operation : {"call_paths", "call_tree"})
       result["capabilities"].push_back(operation);
+  if (Engine::reportsX87Capabilities())
+    result["capabilities"].push_back("x87_capabilities");
   result["web"] = WebEngine::capabilities();
   return result;
 }
