@@ -243,22 +243,22 @@ private:
            Offset == static_cast<int64_t>(static_cast<int32_t>(Offset));
   }
 
-  std::optional<int64_t> resolve(const MedVar &Value, unsigned Depth) {
-    // Alignment and realignment proofs can observe edits to the function.
-    // Only the read-only entry-offset proof may reuse a completed traversal.
-    if (!FollowJoins)
-      return resolveUncached(Value, Depth);
+  std::optional<int64_t> resolveJoin(const MedVar &Value,
+                                     ValueDefinition &Definition,
+                                     unsigned Depth) {
+    // Shared joins branch into the same inputs repeatedly. Linear definitions
+    // keep their ordinary traversal; only this read-only join proof looks up
+    // completed work. The current resolve() has already charged its own step
+    // and checked the occurrence, depth and active definition.
     const Key K = key(Value);
     if (auto It = Completed.find(K); It != Completed.end()) {
       const CompletedProof &Proof = It->second;
-      if (sameOccurrence(Value, Proof.Occurrence) && Steps <= kMaxProofSteps &&
+      if (sameOccurrence(Value, Proof.Occurrence) &&
           Proof.Steps <= kMaxProofSteps - Steps &&
-          Depth <= ::neverd::limits::ir::kMedStackAlignmentResolveDepthLimit &&
           Proof.Depth <=
               ::neverd::limits::ir::kMedStackAlignmentResolveDepthLimit -
                   Depth) {
-        // Charge the original traversal, including every repeated DAG edge.
-        // A cache hit must not admit a proof the work/depth limits refuse.
+        // Charge every original input traversal, including repeated DAG edges.
         Steps += Proof.Steps;
         Deepest = std::max(Deepest, Depth + Proof.Depth);
         return Proof.Offset;
@@ -268,7 +268,7 @@ private:
     const size_t BeforeContext = ContextUses;
     const unsigned OuterDepth = Deepest;
     Deepest = Depth;
-    const auto Result = resolveUncached(Value, Depth);
+    const auto Result = join(*Definition.Join, Definition, Depth);
     const unsigned InnerDepth = Deepest;
     Deepest = std::max(OuterDepth, InnerDepth);
     // A successful traversal that never reads a loop assumption or an active
@@ -281,7 +281,8 @@ private:
     return Result;
   }
 
-  std::optional<int64_t> resolveUncached(const MedVar &Value, unsigned Depth) {
+  std::optional<int64_t> resolve(const MedVar &Value, unsigned Depth) {
+    Deepest = std::max(Deepest, Depth);
     // Keep the per-query work limit even when shared inputs reuse a proof.
     if (++Steps > kMaxProofSteps)
       return std::nullopt;
@@ -321,8 +322,7 @@ private:
     }
     Definition->Active = true;
     if (Definition->Join) {
-      std::optional<int64_t> Result =
-          join(*Definition->Join, *Definition, Depth);
+      std::optional<int64_t> Result = resolveJoin(Value, *Definition, Depth);
       Definition->Active = false;
       return Result;
     }
@@ -377,8 +377,8 @@ private:
   // executed before its mask. Ordinary entry-offset queries also follow joins.
   const std::set<const MedOp *> *AllowedDefinitions = nullptr;
   // All definitions are inserted before queries begin, so their addresses stay
-  // stable during traversal. Completed proofs belong to this read-only
-  // instance and retain the exact occurrence, work and depth they proved.
+  // stable during traversal. Only read-only proofs follow joins. Their
+  // completed traversals retain the exact occurrence, work and depth proved.
   llvm::DenseMap<Key, ValueDefinition> Definitions;
   llvm::DenseMap<Key, CompletedProof> Completed;
   size_t ContextUses = 0;

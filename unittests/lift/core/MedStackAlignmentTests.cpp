@@ -760,6 +760,53 @@ TEST(MedStackAlignment, LoopAssumptionsDoNotBecomeIndependentProofs) {
   }
 }
 
+TEST(MedStackAlignment, ReusedJoinKeepsTheDepthOfItsNestedInputs) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      MedBlock Block;
+      Block.Id = 1;
+      Block.StartAddr = 0x1010;
+      PhiNode Join;
+      Join.Output = temp(100, Architecture);
+      Join.Args = {{0, reg(0, Architecture)}, {1, reg(0, Architecture)}};
+      Block.Phis.push_back(Join);
+      MedVar Previous = Join.Output;
+      MedVar WithinLimit;
+      for (unsigned I = 0; I < limits::ir::kMedStackAlignmentResolveDepthLimit;
+           ++I) {
+        const MedVar Next = temp(200 + I, Architecture);
+        Block.Ops.push_back(op(NdOp::COPY, Next, Previous));
+        Previous = Next;
+        if (I + 2 == limits::ir::kMedStackAlignmentResolveDepthLimit)
+          WithinLimit = Next;
+      }
+      Func.Blocks.push_back(std::move(Block));
+      // The shallow query can be reused at the last valid depth, but its
+      // incoming SP still needs one more level than a deeper use permits.
+      std::vector<MedVar> Values{Join.Output, WithinLimit, Previous,
+                                 Join.Output, Previous};
+      std::vector<std::optional<int64_t>> Expected{0, 0, std::nullopt, 0,
+                                                   std::nullopt};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                  Expected);
+        for (size_t I = 0; I < Values.size(); ++I)
+          EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                    Expected[I]);
+      }
+    }
+  }
+}
+
 TEST(MedStackAlignment, SharedJoinsKeepThePerQueryWorkLimit) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
@@ -784,10 +831,18 @@ TEST(MedStackAlignment, SharedJoinsKeepThePerQueryWorkLimit) {
         if (I == 14)
           WithinBudget = Previous;
       }
-      std::vector<MedVar> Values = {
-          WithinBudget, Previous, reg(0, Architecture), WithinBudget, Previous};
-      std::vector<std::optional<int64_t>> Expected = {0, std::nullopt, 0, 0,
-                                                      std::nullopt};
+      // This join reaches a previously proved input with some budget left,
+      // but one step too little for the input's entire original traversal.
+      PhiNode Asymmetric;
+      Asymmetric.Output = temp(200, Architecture);
+      Asymmetric.Args = {{0, reg(0, Architecture)}, {1, WithinBudget}};
+      Func.Blocks.back().Phis.push_back(Asymmetric);
+      std::vector<MedVar> Values = {WithinBudget,      Previous,
+                                    Asymmetric.Output, reg(0, Architecture),
+                                    WithinBudget,      Asymmetric.Output,
+                                    Previous};
+      std::vector<std::optional<int64_t>> Expected = {
+          0, std::nullopt, std::nullopt, 0, 0, std::nullopt, std::nullopt};
       for (bool Reversed : {false, true}) {
         SCOPED_TRACE(Reversed);
         if (Reversed) {
