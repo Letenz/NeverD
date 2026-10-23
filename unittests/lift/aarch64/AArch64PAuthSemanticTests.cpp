@@ -1489,58 +1489,8 @@ TEST(AArch64PAuthSemantics, AuthenticatedTailCallsRequireARestoredFrame) {
       {false, {0xdac1a3fe, 0xf3a0003f, 0xd61f081f}}, // wrong key
       {false, {0xdac1a3fe, 0xd50323bf, 0xd61f081f}}, // missing second modifier
       {false, {0xd503233f, 0xf380003f, 0xd61f081f}}, // extra second modifier
-      // A diamond signs the link at two PCs. Neither predecessor's recipe
-      // alone can justify authentication after the join.
-      {false,
-       {0xb4000081, 0xdac1a3fe, 0x14000004, 0xd503201f, 0xdac1a3fe, 0x14000001,
-        0xf38000bf, 0xd61f081f}},
-      {false,
-       {0xb4000081, 0xdac1a3fe, 0x14000004, 0xd503201f, 0xdac1a3fe, 0x14000001,
-        0xf380005f, 0xd61f081f}},
-      // Equal explicit modifiers remain known across both paths. X15 is
-      // an ordinary constant, independently of the signed-link recipe.
-      {true,
-       {0xaa1e03f1, 0x910003f0, 0xd282468f, 0xb4000061, 0xdac18bfe, 0x14000002,
-        0xdac18bfe, 0xdac1bbfe, 0xaa1103fe, 0xd61f081f}},
-      // A joined ordinary register cannot keep either incoming constant.
-      {false,
-       {0xaa1e03f1, 0x910003f0, 0xd282468f, 0xdac18bfe, 0xb4000061, 0xd282468f,
-        0x14000002, 0xd28246af, 0xdac1bbfe, 0xaa1103fe, 0xd61f081f}},
-      {false,
-       {0xaa1e03f1, 0x910003f0, 0xd282468f, 0xdac18bfe, 0xb4000061, 0xd28246af,
-        0x14000002, 0xd282468f, 0xdac1bbfe, 0xaa1103fe, 0xd61f081f}},
-      // A missing incoming constant cannot borrow the other path's value,
-      // independently of which predecessor the analysis visits first.
-      {false,
-       {0xaa1e03f1, 0x910003f0, 0xd282468f, 0xdac18bfe, 0xb4000061, 0xaa0203ef,
-        0x14000002, 0xd282468f, 0xdac1bbfe, 0xaa1103fe, 0xd61f081f}},
-      {false,
-       {0xaa1e03f1, 0x910003f0, 0xd282468f, 0xdac18bfe, 0xb4000061, 0xd282468f,
-        0x14000002, 0xaa0203ef, 0xdac1bbfe, 0xaa1103fe, 0xd61f081f}},
-      // Modifier constants have the same join contract in allocated stack
-      // cells. Reload after clearing X15 so only the spill can prove it.
-      {true,
-       {0xd10043ff, 0xaa1e03f1, 0x910003f0, 0xd282468f, 0xdac18bfe, 0xb4000061,
-        0xf90003ef, 0x14000003, 0xd282468f, 0xf90003ef, 0xaa1f03ef, 0xf94003ef,
-        0xdac1bbfe, 0xaa1103fe, 0x910043ff, 0xd61f081f}},
-      {false,
-       {0xd10043ff, 0xaa1e03f1, 0x910003f0, 0xd282468f, 0xdac18bfe, 0xb4000061,
-        0xf90003ef, 0x14000003, 0xd28246af, 0xf90003ef, 0xaa1f03ef, 0xf94003ef,
-        0xdac1bbfe, 0xaa1103fe, 0x910043ff, 0xd61f081f}},
-      {false,
-       {0xd10043ff, 0xaa1e03f1, 0x910003f0, 0xd282468f, 0xdac18bfe, 0xb4000061,
-        0xf90003ef, 0x14000003, 0xd282468f, 0xd503201f, 0xaa1f03ef, 0xf94003ef,
-        0xdac1bbfe, 0xaa1103fe, 0x910043ff, 0xd61f081f}},
-      // The same disagreement must be discarded for saved return cells,
-      // even after both paths overwrite the live link register.
-      {false,
-       {0xa9bf7bfd, 0xb40000a1, 0xdac1a3fe, 0xf90007fe, 0xd280001e, 0x14000004,
-        0xdac1a3fe, 0xf90007fe, 0xd280001e, 0xf94007fe, 0xf380011f, 0xf94003fd,
-        0x910043ff, 0xd61f081f}},
-      {false,
-       {0xa9bf7bfd, 0xb40000a1, 0xdac1a3fe, 0xf90007fe, 0xd280001e, 0x14000004,
-        0xdac1a3fe, 0xf90007fe, 0xd280001e, 0xf94007fe, 0xf380009f, 0xf94003fd,
-        0x910043ff, 0xd61f081f}},
+#define NEVERD_A64_PAUTH_FRAME_CASE(TailCall, ...) {TailCall, {__VA_ARGS__}},
+#include "AArch64PAuthFrameFixtures.def"
   };
   unsigned CaseIndex = 0;
   for (const auto &Case : Cases) {
