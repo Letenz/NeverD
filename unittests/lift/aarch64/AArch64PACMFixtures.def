@@ -21,6 +21,9 @@
 #ifndef NEVERD_PACM_UNRESOLVED
 #define NEVERD_PACM_UNRESOLVED(Offset, ...)
 #endif
+#ifndef NEVERD_PACM_RETURN_CASE
+#define NEVERD_PACM_RETURN_CASE(Name, Value, ...)
+#endif
 #ifndef NEVERD_PACM_VALUE
 #define NEVERD_PACM_VALUE(Type, Name, Value)
 #endif
@@ -94,6 +97,13 @@ NEVERD_PACM_UNRESOLVED(0, 0xd50324ff)
 NEVERD_PACM_UNRESOLVED(4, 0xd50324ff, 0xd503219f, 0xb5ffffc0, 0xd65f03c0)
 
 #undef NEVERD_PACM_UNRESOLVED
+// PACM; PACI*SP; MOV x0,#7; ADR x16,signing-PC; PACM; RETA*.
+NEVERD_PACM_RETURN_CASE(prefixed_return_a, 7, 0xd50324ff, 0xd503233f,
+                        0xd28000e0, 0x10ffffd0, 0xd50324ff, 0xd65f0bff)
+NEVERD_PACM_RETURN_CASE(prefixed_return_b, 7, 0xd50324ff, 0xd503237f,
+                        0xd28000e0, 0x10ffffd0, 0xd50324ff, 0xd65f0fff)
+
+#undef NEVERD_PACM_RETURN_CASE
 #undef NEVERD_PACM_CONSUMER
 #undef NEVERD_PACM_FLOW
 #undef NEVERD_PACM_VALUE

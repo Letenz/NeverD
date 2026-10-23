@@ -2031,3 +2031,69 @@ TEST(AArch64PACMSemantics, UnresolvedEntryStateCannotEscapeIntoSource) {
       renderARMIntrinsicCall(Intrinsic::A64_PACMPending, {}, 0, HasIntrinsics),
       std::invalid_argument);
 }
+
+TEST(AArch64PACMSemantics, PrefixedReturnsKeepX0AndTheOriginalSigningPC) {
+  const struct {
+    const char *Name;
+    uint64_t Value;
+    std::vector<uint32_t> Words;
+  } Cases[] = {
+#define NEVERD_PACM_RETURN_CASE(Name, Value, ...) {#Name, Value, {__VA_ARGS__}},
+#include "AArch64PACMFixtures.def"
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    auto Image = pacm_fixture::image(Case.Words);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::AArch64));
+    Dec.setStrict(true);
+    const auto Low =
+        CFGBuilder().build(Image, Dec, pacm_fixture::kBase, Case.Name);
+    ASSERT_TRUE(Low.hasCompleteLiftCoverage());
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Image);
+    auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Med}, Context, Case.Name, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    optimize(*Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    unsigned Operations = 0, Returns = 0;
+    for (const auto &Block : *Module->getFunction(Case.Name))
+      for (const auto &Insn : Block) {
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+            Call && Call->isInlineAsm()) {
+          ++Operations;
+          ASSERT_EQ(Call->arg_size(), 4u);
+          const auto *PC =
+              llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(2));
+          ASSERT_TRUE(PC);
+          EXPECT_EQ(PC->getZExtValue(),
+                    pacm_fixture::kBase + pacm_fixture::kWordBytes);
+        }
+        if (const auto *Return = llvm::dyn_cast<llvm::ReturnInst>(&Insn)) {
+          ++Returns;
+          const auto *Value =
+              llvm::dyn_cast<llvm::ConstantInt>(Return->getReturnValue());
+          ASSERT_TRUE(Value);
+          EXPECT_EQ(Value->getZExtValue(), Case.Value);
+        }
+      }
+    EXPECT_EQ(Operations, 2u);
+    EXPECT_EQ(Returns, 1u);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.Format = BinaryFormat::MachO;
+    for (bool LLVMRoute : {false, true}) {
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      if (LLVMRoute)
+        ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+      else
+        ASSERT_TRUE(HighCEmitter().emit(
+            {MedToHighConverter().convert(Med, Arch::AArch64)}, Out, Options));
+      compileArm64eC(Source);
+    }
+  }
+}
