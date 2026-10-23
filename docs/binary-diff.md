@@ -359,8 +359,9 @@ uses `med-fragments-v1` or `llvm-fragments-v1`. The desktop setting has the same
 name; the region view shows the recipe, depth, matched operations and external
 inputs. A depth of one verifies one operation and its immediate constants,
 parameter identities and types. Larger depths include more producer operations,
-up to the graph's configured rounds. PHIs, control transfers, memory/call effects
-and unknown operands are excluded inside the fragment. Their producers can
+up to the graph's configured rounds. PHIs, branches, switches, memory/call effects
+and unknown operands are excluded inside the fragment. Return-value observations
+can terminate a fragment. Excluded producers can
 remain outside it: this can retain an identical return computation after an O0
 PHI becomes an O2 select. Exact function attributes and instruction semantics
 are still required; the mode does not remove inconvenient contracts.

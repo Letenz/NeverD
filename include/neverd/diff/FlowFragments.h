@@ -50,7 +50,7 @@ public:
                     const DataFlowOptions &Options = {});
 };
 /// Depth is the number of included operation levels, from one through the
-/// prepared rounds. PHIs, control transfers, effects and unknown operands are
+/// prepared rounds. PHIs, branches, switches, effects and unknown operands are
 /// excluded internally. Their node definitions may lie outside the frontier.
 /// Immediate constants/types are checked even at the last included level.
 FlowNeighborhoodMatch
