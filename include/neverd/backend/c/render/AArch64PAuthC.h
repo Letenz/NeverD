@@ -18,6 +18,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -62,10 +63,15 @@ inline std::string aarch64PAuthMachineC(const AArch64PAuthOperation &Operation,
 
 inline std::string aarch64PAuthLRC(const AArch64PAuthLROperation &Operation,
                                    llvm::ArrayRef<std::string> Args) {
-  if (Args.size() != 3)
+  if (Args.size() != Operation.operandCount())
     throw std::invalid_argument(kAArch64PAuthMalformedOperation);
-  const std::string Name =
-      aarch64PAuthTemporary(kAArch64PAuthCPointer, {Args[0], Args[1], Args[2]});
+  llvm::SmallVector<llvm::StringRef, 4> Inputs(Args.begin(), Args.end());
+  const std::string Name = aarch64PAuthTemporary(kAArch64PAuthCPointer, Inputs);
+  if (Operation.ConditionalPrefix)
+    return llvm::formatv(kAArch64PACMMachineC, Name,
+                         escapeCString(Operation.machineAsm(/*C=*/true)),
+                         Args[0], Args[1], Args[2], Args[3])
+        .str();
   return llvm::formatv(kAArch64PAuthLRMachineC, Name,
                        escapeCString(Operation.llvmAsm()), Args[0], Args[1],
                        Args[2])

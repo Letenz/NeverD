@@ -25,6 +25,7 @@
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/MachO/MachOLoader.h"
@@ -186,8 +187,10 @@ MedFunc pointerFunction(Intrinsic Id, llvm::StringRef Name) {
   F.Entry = 0x1000;
   F.ReturnType = NdType::makeInt(8, false);
   const auto Checked = aarch64CPAOperation(Id);
-  const auto TwoModifiers = aarch64PAuthLROperation(Id);
-  const unsigned Params = TwoModifiers ? 3 : Checked ? Checked->Sources : 2;
+  const auto TwoModifiers = aarch64PAuthExtendedOperation(Id);
+  const unsigned Params = TwoModifiers ? TwoModifiers->operandCount()
+                          : Checked    ? Checked->Sources
+                                       : 2;
   for (unsigned Index = 0; Index < Params; ++Index) {
     MedVar V;
     V.Kind = MedVar::Param;
@@ -214,6 +217,8 @@ MedFunc pointerFunction(Intrinsic Id, llvm::StringRef Name) {
     Auth.addInput(F.Params[1]);
   if (TwoModifiers || (Checked && Checked->Sources == 3))
     Auth.addInput(F.Params[2]);
+  if (TwoModifiers && TwoModifiers->ConditionalPrefix)
+    Auth.addInput(F.Params[3]);
   MedOp Return;
   Return.Opcode = NdOp::RETURN;
   Return.addInput(Auth.Output);
@@ -1248,9 +1253,13 @@ TEST(AArch64PAuthLRSemantics, NativeTwoModifierKeysAgreeWithBothCProjections) {
   executeCProjections(Functions, (*Oracle)->getBuffer(), "arm64e-apple-macos");
 }
 
-TEST(AArch64PAuthSemantics, UnmodelledPACMNeverFallsBackToHints) {
-  for (bool Fast : {false, true})
-    EXPECT_THROW(lift(0xd50324ff, Fast), UnliftedInstruction);
+TEST(AArch64PACMSemantics, PendingPrefixIsNeverAnOrdinaryHint) {
+  for (bool Fast : {false, true}) {
+    const auto Ops = lift(kAArch64PACMEncoding, Fast);
+    ASSERT_EQ(Ops.size(), 1u);
+    expectIntrinsic(Ops.front(), Intrinsic::A64_PACMPending, 0);
+    EXPECT_FALSE(lowAArch64PAuthShapeIsValid(Ops.front()));
+  }
 }
 
 TEST(AArch64PAuthLRSemantics, ExplicitFormsRetainBothModifiersAndOriginalPC) {
@@ -1640,4 +1649,623 @@ __attribute__((noinline)) word dispatch_after_call(word (*fn)(word), word x) {
         compileArm64eC(LowC);
         compileArm64eC(HighC);
       });
+}
+
+namespace {
+namespace pacm_fixture {
+#define NEVERD_PACM_VALUE(Type, Name, Value) inline constexpr Type Name = Value;
+#define NEVERD_PACM_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AArch64PACMFixtures.def"
+
+BinaryImage image(llvm::ArrayRef<uint32_t> Words) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = kBase;
+  Text.Size = Text.FileSz = Words.size() * kWordBytes;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  for (size_t I = 0; I < Words.size(); ++I)
+    writeLE<uint32_t>(Text.Data.data() + I * kWordBytes, Words[I]);
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
+LowBlock instructionBlock(LowOp Op) {
+  LowBlock Block;
+  Block.StartAddr = Op.Addr = kBase;
+  Block.EndAddr = kBase + kWordBytes;
+  Block.Ops.push_back(Op);
+  LowInstructionBoundary Boundary;
+  Boundary.Address = Block.StartAddr;
+  Boundary.Size = kWordBytes;
+  Boundary.OpCount = Block.Ops.size();
+  Block.InstructionBoundaries.push_back(Boundary);
+  return Block;
+}
+} // namespace pacm_fixture
+} // namespace
+
+TEST(AArch64PACMSemantics, PointerOperandsRequireScalarValueKinds) {
+  const Intrinsic Cases[] = {
+#define NEVERD_PACM_SHAPE_ID(Id) Intrinsic::Id,
+#include "AArch64PACMFixtures.def"
+  };
+  for (Intrinsic Id : Cases) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
+    const auto Function = pointerFunction(Id, pacm_fixture::kShapeName);
+    const auto &Op = Function.Blocks.front().Ops.front();
+    ASSERT_TRUE(aarch64PAuthMedShapeIsValid(Op));
+    for (unsigned Index = 1; Index < Op.NumInputs; ++Index) {
+      SCOPED_TRACE(Index);
+      // AuthBranch's key is an immediate, not a scalar value operand.
+      if (Id == Intrinsic::A64_AuthBranch && Op.Inputs[Index].isConst())
+        continue;
+      for (auto Kind :
+           {MedVar::Reg, MedVar::Temp, MedVar::Param, MedVar::Const}) {
+        auto Valid = Op;
+        Valid.Inputs[Index].Kind = Kind;
+        EXPECT_TRUE(aarch64PAuthMedShapeIsValid(Valid));
+      }
+      for (auto Kind : {MedVar::Stack, MedVar::RetVal, MedVar::Flag,
+                        MedVar::EHException, MedVar::EHSelector,
+                        MedVar::SEHExceptionCode, MedVar::Unspecified}) {
+        SCOPED_TRACE(Kind);
+        auto Bad = Function;
+        auto &Malformed = Bad.Blocks.front().Ops.front();
+        Malformed.Inputs[Index].Kind = Kind;
+        EXPECT_FALSE(aarch64PAuthMedShapeIsValid(Malformed));
+        EXPECT_TRUE(endsCallArgumentSetup(Malformed));
+        EXPECT_FALSE(verifyMedFunc(Bad, pacm_fixture::kShapeName));
+      }
+    }
+  }
+}
+
+TEST(AArch64PACMSemantics, MalformedModesAndArityFailIRVerification) {
+  enum class Invalid { ModeWidth, ModeKind, MissingMode, ExtraMode };
+  for (const auto &Operation : kAArch64PAuthMOperations) {
+    SCOPED_TRACE(Operation.Mnemonic);
+    const auto Function =
+        pointerFunction(Operation.Id, pacm_fixture::kShapeName);
+    const auto &Med = Function.Blocks.front().Ops.front();
+    LowOp Op;
+    Op.Opcode = NdOp::INTRINSIC;
+    Op.Output = NdVar::tmp(0, kAArch64PAuthPointerBytes);
+    Op.addInput(NdVar::cst(static_cast<uint64_t>(Operation.Id),
+                           pacm_fixture::kIntrinsicIdBytes));
+    for (unsigned Index = 1; Index < Med.NumInputs; ++Index)
+      Op.addInput(NdVar::reg(Med.Inputs[Index].RegOff, Med.Inputs[Index].Size));
+    const auto Block = pacm_fixture::instructionBlock(Op);
+    auto Valid = validateLowInstructionBoundaries(Block);
+    ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+    ASSERT_TRUE(verifyMedFunc(Function, pacm_fixture::kShapeName));
+    for (auto Mutation : {Invalid::ModeWidth, Invalid::ModeKind,
+                          Invalid::MissingMode, Invalid::ExtraMode}) {
+      auto BadLow = Block;
+      auto BadMed = Function;
+      auto &Low = BadLow.Ops.front();
+      auto &Med = BadMed.Blocks.front().Ops.front();
+      switch (Mutation) {
+      case Invalid::ModeWidth:
+        Low.Inputs[kAArch64PACMOperandCount].Size =
+            Med.Inputs[kAArch64PACMOperandCount].Size =
+                pacm_fixture::kInvalidModeBytes;
+        break;
+      case Invalid::ModeKind:
+        Low.Inputs[kAArch64PACMOperandCount].Space = VnodeSpace::RAM;
+        Med.Inputs[kAArch64PACMOperandCount].Kind = MedVar::Stack;
+        break;
+      case Invalid::MissingMode:
+        --Low.NumInputs;
+        --Med.NumInputs;
+        break;
+      case Invalid::ExtraMode: {
+        const auto LowMode = Low.Inputs[kAArch64PACMOperandCount];
+        const auto MedMode = Med.Inputs[kAArch64PACMOperandCount];
+        Low.addInput(LowMode);
+        Med.addInput(MedMode);
+        break;
+      }
+      }
+      EXPECT_FALSE(lowAArch64PAuthShapeIsValid(Low));
+      auto Error = validateLowInstructionBoundaries(BadLow);
+      EXPECT_TRUE(bool(Error));
+      llvm::consumeError(std::move(Error));
+      EXPECT_FALSE(aarch64PAuthMedShapeIsValid(Med));
+      EXPECT_FALSE(verifyMedFunc(BadMed, pacm_fixture::kShapeName));
+    }
+  }
+}
+
+TEST(AArch64PACMSemantics, PendingMarkersRequireTheirLowIRShape) {
+  const auto Ops = lift(pacm_fixture::kPACM, false);
+  ASSERT_EQ(Ops.size(), 1u);
+  const auto Block = pacm_fixture::instructionBlock(Ops.front());
+  auto Valid = validateLowInstructionBoundaries(Block);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  using Mutation = void (*)(LowOp &);
+  const Mutation Mutations[] = {
+      [](LowOp &Op) { Op.Inputs[0].Size = pacm_fixture::kInvalidModeBytes; },
+      [](LowOp &Op) { Op.Inputs[0].Space = VnodeSpace::REG; },
+      [](LowOp &Op) { Op.Output = NdVar::tmp(0, kAArch64PAuthPointerBytes); },
+      [](LowOp &Op) { --Op.NumInputs; },
+      [](LowOp &Op) { Op.addInput(NdVar::cst(0, kAArch64PAuthPointerBytes)); },
+      [](LowOp &Op) { Op.MemoryOrdering = NdMemoryOrdering::Acquire; },
+      [](LowOp &Op) { Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS; },
+  };
+  for (Mutation Mutate : Mutations) {
+    auto Bad = Block;
+    Mutate(Bad.Ops.front());
+    auto Error = validateLowInstructionBoundaries(Bad);
+    EXPECT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+  }
+
+  LowFunc Low;
+  Low.Entry = Block.StartAddr;
+  Low.Blocks.push_back(Block);
+  LowToMedConverter Converter;
+  EXPECT_THROW(Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO),
+               LowToMedConversionError);
+  for (bool HasOutput : {false, true}) {
+    auto Function =
+        pointerFunction(Intrinsic::A64_AutiaM, pacm_fixture::kShapeName);
+    auto &Pending = Function.Blocks.front().Ops.front();
+    Pending.Inputs.front() =
+        MedVar::makeConst(static_cast<uint64_t>(Intrinsic::A64_PACMPending),
+                          pacm_fixture::kIntrinsicIdBytes);
+    if (!HasOutput) {
+      Pending.Output = {};
+      Pending.NumInputs = 1;
+    }
+    Function.Blocks.front().Ops.back().Inputs.front() =
+        MedVar::makeConst(0, kAArch64PAuthPointerBytes);
+    EXPECT_FALSE(verifyMedFunc(Function, pacm_fixture::kShapeName));
+    llvm::LLVMContext Context;
+    EXPECT_THROW(MedLLVMEmitter().emit({Function}, Context, Function.Name,
+                                       Arch::AArch64),
+                 std::runtime_error);
+  }
+}
+
+TEST(AArch64PACMSemantics, AllConsumersCaptureOriginalImplicitOperands) {
+  const struct {
+    uint32_t Word;
+    Intrinsic Id;
+    uint64_t Pointer, First, Second;
+    bool PC, Return;
+  } Cases[] = {
+#define NEVERD_PACM_CONSUMER(Word, Id, Pointer, Mod1, Mod2, PC, Return)        \
+  {Word, Intrinsic::Id, Pointer, Mod1, Mod2, PC, Return},
+#include "AArch64PACMFixtures.def"
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    auto Image = pacm_fixture::image(
+        {pacm_fixture::kPACM, Case.Word, pacm_fixture::kReturn});
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::AArch64));
+    Dec.setStrict(true);
+    const auto Low =
+        CFGBuilder().build(Image, Dec, pacm_fixture::kBase, "prefixed");
+    EXPECT_TRUE(Low.UnsupportedInstructionAddresses.empty());
+    if (auto Error = validateLowInstructionBoundaries(Low))
+      FAIL() << llvm::toString(std::move(Error));
+    unsigned Count = 0;
+    for (const auto &Block : Low.Blocks)
+      for (const auto &Op : Block.Ops) {
+        if (Op.Opcode != NdOp::INTRINSIC)
+          continue;
+        ++Count;
+        expectIntrinsic(Op, Case.Id, 4);
+        EXPECT_TRUE(lowAArch64PAuthShapeIsValid(Op));
+        expectRegister(Op.Inputs[1], Case.Pointer);
+        expectRegister(Op.Inputs[2], Case.First);
+        EXPECT_EQ(Op.Inputs[3].Offset, Case.Second);
+        EXPECT_EQ(Op.Inputs[3].isConst(), Case.PC);
+        EXPECT_EQ(Op.Inputs[4].Offset, 1u);
+        EXPECT_TRUE(Op.Inputs[4].isConst());
+      }
+    EXPECT_EQ(Count, 1u);
+    EXPECT_TRUE(Low.FunctionTemporaries.empty());
+  }
+}
+
+TEST(AArch64PACMSemantics, ExecutedEdgesOwnPrefixState) {
+  const struct {
+    const char *Name;
+    unsigned Count;
+    bool Mixed;
+    std::vector<uint32_t> Words;
+  } Cases[] = {
+#define NEVERD_PACM_FLOW(Name, Count, Mixed, ...)                              \
+  {#Name, Count, Mixed, {__VA_ARGS__}},
+#include "AArch64PACMFixtures.def"
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    auto Image = pacm_fixture::image(Case.Words);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::AArch64));
+    Dec.setStrict(true);
+    CFGBuilder Builder;
+    for (unsigned Attempt = 0; Attempt < 2; ++Attempt) {
+      const auto Low =
+          Builder.build(Image, Dec, pacm_fixture::kBase, Case.Name);
+      EXPECT_TRUE(Low.UnsupportedInstructionAddresses.empty());
+      if (auto Error = validateLowInstructionBoundaries(Low))
+        FAIL() << llvm::toString(std::move(Error));
+      unsigned Count = 0;
+      for (const auto &Block : Low.Blocks)
+        for (const auto &Op : Block.Ops) {
+          if (Op.Opcode != NdOp::INTRINSIC)
+            continue;
+          const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+          EXPECT_NE(Id, Intrinsic::A64_PACMPending);
+          if (!aarch64PAuthMOperation(Id))
+            continue;
+          ++Count;
+          EXPECT_EQ(Op.Inputs[4].isTemp(), Case.Mixed);
+        }
+      EXPECT_EQ(Count, Case.Count);
+      EXPECT_EQ(Low.FunctionTemporaries.size(), Case.Mixed ? 1u : 0u);
+      LowToMedConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto Med =
+          Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({Med}, Context, Case.Name, Arch::AArch64);
+      ASSERT_TRUE(Module);
+      EXPECT_FALSE(llvm::verifyModule(*Module));
+      optimize(*Module);
+      EXPECT_FALSE(llvm::verifyModule(*Module));
+      if (Case.Mixed) {
+        bool SawMode = false;
+        for (const auto &Block : *Module->getFunction(Case.Name))
+          for (const auto &Insn : Block) {
+            const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+            const auto *Asm =
+                Call ? llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())
+                     : nullptr;
+            if (!Asm || Asm->getAsmString().find(pacm_fixture::kPrefixLLVM) ==
+                            std::string::npos)
+              continue;
+            ASSERT_EQ(Call->arg_size(), 4u);
+            EXPECT_FALSE(llvm::isa<llvm::UndefValue>(Call->getArgOperand(3)));
+            EXPECT_FALSE(llvm::isa<llvm::PoisonValue>(Call->getArgOperand(3)));
+            // Loop peeling can specialize the first execution to one and
+            // its backedge to zero; the semantic oracle checks both paths.
+            if (const auto *Mode =
+                    llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(3)))
+              EXPECT_LE(Mode->getZExtValue(), 1u);
+            SawMode = true;
+          }
+        EXPECT_TRUE(SawMode);
+      }
+      if (Attempt != 0)
+        continue;
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      Options.Format = BinaryFormat::MachO;
+      for (bool LLVMRoute : {false, true}) {
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVMRoute)
+          ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+        else
+          ASSERT_TRUE(HighCEmitter().emit(
+              {MedToHighConverter().convert(Med, Arch::AArch64)}, Out,
+              Options));
+        compileArm64eC(Source);
+      }
+    }
+  }
+}
+
+TEST(AArch64PACMSemantics, BothCRoutesAndLLVMKeepThePrefixAdjacent) {
+  for (const auto &Case : kAArch64PAuthMOperations)
+    for (bool Dead : {false, true}) {
+      SCOPED_TRACE(testing::Message() << intrinsicName(Case.Id) << " " << Dead);
+      auto F = pointerFunction(Case.Id, "prefixed_pointer");
+      const auto &Op = F.Blocks[0].Ops[0];
+      ASSERT_TRUE(aarch64PAuthMedShapeIsValid(Op));
+      EXPECT_FALSE(endsCallArgumentSetup(Op));
+      for (unsigned I = 0; I < Op.NumInputs; ++I) {
+        auto Bad = Op;
+        (I ? Bad.Inputs[I] : Bad.Output).Size = 4;
+        EXPECT_FALSE(aarch64PAuthMedShapeIsValid(Bad));
+      }
+      if (Dead)
+        F.Blocks[0].Ops.back().Inputs[0] = MedVar::makeConst(0, 8);
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit({F}, Context, F.Name, Arch::AArch64);
+      ASSERT_TRUE(Module);
+      EXPECT_FALSE(llvm::verifyModule(*Module));
+      optimize(*Module);
+      EXPECT_FALSE(llvm::verifyModule(*Module));
+      unsigned Count = 0;
+      for (const auto &Block : *Module->getFunction(F.Name))
+        for (const auto &Insn : Block) {
+          const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+          const auto *Asm =
+              Call ? llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())
+                   : nullptr;
+          if (!Asm)
+            continue;
+          ++Count;
+          EXPECT_TRUE(Asm->hasSideEffects());
+          EXPECT_NE(Asm->getAsmString().find(pacm_fixture::kPrefixLLVM),
+                    std::string::npos);
+          EXPECT_EQ(Asm->getAsmString().find(pacm_fixture::kTrap) !=
+                        std::string::npos,
+                    Case.Return);
+          ASSERT_EQ(Call->arg_size(), 4u);
+          for (unsigned I = 0; I < 4; ++I)
+            EXPECT_EQ(Call->getArgOperand(I),
+                      Module->getFunction(F.Name)->getArg(I));
+        }
+      EXPECT_EQ(Count, 1u);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      Options.Format = BinaryFormat::MachO;
+      for (bool LLVMRoute : {false, true}) {
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVMRoute)
+          ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+        else
+          ASSERT_TRUE(HighCEmitter().emit(
+              {MedToHighConverter().convert(F, Arch::AArch64)}, Out, Options));
+        EXPECT_NE(Source.find(pacm_fixture::kPrefixC), std::string::npos)
+            << Source;
+        compileArm64eC(Source);
+      }
+      EXPECT_TRUE(Codegen()
+                      .compile(*Module, Arch::AArch64, BinaryFormat::MachO)
+                      .Success);
+    }
+}
+
+TEST(AArch64PACMSemantics, CTemporariesDoNotCaptureTheMode) {
+  const std::vector<std::string> Args = {"__pointer", "__pointer_",
+                                         "__pointer__", "__pointer___"};
+  for (const auto &Operation : kAArch64PAuthMOperations)
+    for (bool LLVMRoute : {false, true}) {
+      bool HasIntrinsics = false;
+      const std::string Body =
+          LLVMRoute ? renderARMInlineAsm(Arch::AArch64, Operation.llvmAsm(), "",
+                                         "__pointer", true, Args)
+                              .Code +
+                          "return __pointer;"
+                    : "return " +
+                          renderARMIntrinsicCall(Operation.Id, Args, 8,
+                                                 HasIntrinsics) +
+                          ";";
+      compileArm64eC(
+          std::string(pacm_fixture::kCaptureArgs) + Body + "}\n",
+          [&](llvm::StringRef Path) {
+            llvm::LLVMContext Context;
+            llvm::SMDiagnostic Diagnostic;
+            auto Module = llvm::parseIRFile(Path, Diagnostic, Context);
+            ASSERT_TRUE(Module);
+            auto *Fn = Module->getFunction("capture");
+            ASSERT_TRUE(Fn);
+            Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+            optimize(*Module);
+            unsigned Count = 0;
+            for (const auto &Block : *Fn)
+              for (const auto &Insn : Block) {
+                const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+                if (!Call || !Call->isInlineAsm())
+                  continue;
+                ++Count;
+                ASSERT_EQ(Call->arg_size(), 4u);
+                for (unsigned I = 0; I < 4; ++I)
+                  EXPECT_EQ(Call->getArgOperand(I), Fn->getArg(I));
+              }
+            EXPECT_EQ(Count, 1u);
+          },
+          /*EmitLLVM=*/true);
+    }
+}
+
+TEST(AArch64PACMSemantics, NativePrefixModesAgreeWithBothCProjections) {
+#define NEVERD_PACM_NATIVE_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "AArch64PACMNative.def"
+  if (!hasNativePAuth())
+    GTEST_SKIP() << kNativeUnavailable;
+  bool ExecutionAvailable = false;
+  compileArm64eC(std::string(kOracle) + kProbeMain, {}, /*EmitLLVM=*/false,
+                 kNativeTarget, &ExecutionAvailable);
+  if (HasFatalFailure())
+    return;
+  if (!ExecutionAvailable)
+    GTEST_SKIP() << kNativeUnavailable;
+  std::vector<MedFunc> Functions;
+  for (const auto &[Id, Name] :
+       {std::pair{Intrinsic::A64_PaciaM, "test_pacia_m"},
+        std::pair{Intrinsic::A64_PacibM, "test_pacib_m"},
+        std::pair{Intrinsic::A64_AutiaM, "test_autia_m"},
+        std::pair{Intrinsic::A64_AutibM, "test_autib_m"},
+        std::pair{Intrinsic::A64_AuthReturnIAM, "test_returnia_m"},
+        std::pair{Intrinsic::A64_AuthReturnIBM, "test_returnib_m"}}) {
+    auto F = pointerFunction(Id, Name);
+    F.Entry += Functions.size() * pacm_fixture::kWordBytes;
+    F.Blocks.front().StartAddr = F.Entry;
+    Functions.push_back(std::move(F));
+  }
+  executeCProjections(Functions, std::string(kOracle) + kCompareMain,
+                      kNativeTarget);
+}
+
+TEST(AArch64PACMSemantics, IncomingModeSurvivesSSAAndLoopBackedges) {
+  const struct {
+    const char *Name;
+    std::array<uint64_t, 3> Expected;
+    std::vector<uint32_t> Words;
+  } Cases[] = {
+#define NEVERD_PACM_MODE_CASE(Name, Zero, One, Two, ...)                       \
+  {#Name, {Zero, One, Two}, {__VA_ARGS__}},
+#include "AArch64PACMFixtures.def"
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    auto Image = pacm_fixture::image(Case.Words);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::AArch64));
+    Dec.setStrict(true);
+    auto Low = CFGBuilder().build(Image, Dec, pacm_fixture::kBase, Case.Name);
+    ASSERT_TRUE(Low.UnsupportedInstructionAddresses.empty());
+    unsigned Observed = 0;
+    for (auto &Block : Low.Blocks)
+      for (auto &Op : Block.Ops) {
+        if (Op.Opcode != NdOp::INTRINSIC ||
+            !aarch64PAuthMOperation(
+                static_cast<Intrinsic>(Op.Inputs[0].Offset)))
+          continue;
+        ++Observed;
+        Op.Opcode = NdOp::COPY;
+        Op.Inputs[0] = Op.Inputs[4];
+        Op.NumInputs = 1;
+      }
+    ASSERT_EQ(Observed, 1u);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Image);
+    auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Med}, Context, Case.Name, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    auto *Fn = Module->getFunction(Case.Name);
+    ASSERT_TRUE(Fn);
+    ASSERT_EQ(Fn->arg_size(), 1u);
+    Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+    std::vector<llvm::Function *> Observers;
+    for (unsigned I = 0; I < Case.Expected.size(); ++I) {
+      auto *Observer = llvm::Function::Create(
+          llvm::FunctionType::get(Fn->getReturnType(), false),
+          llvm::GlobalValue::ExternalLinkage, "observe", *Module);
+      llvm::IRBuilder<> Builder(
+          llvm::BasicBlock::Create(Context, "entry", Observer));
+      auto *Input = llvm::ConstantInt::get(Fn->getArg(0)->getType(), I);
+      Builder.CreateRet(Builder.CreateCall(Fn, {Input}));
+      Observers.push_back(Observer);
+    }
+    optimize(*Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    for (unsigned I = 0; I < Observers.size(); ++I) {
+      ASSERT_EQ(Observers[I]->size(), 1u);
+      const auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
+          Observers[I]->front().getTerminator());
+      ASSERT_TRUE(Return);
+      const auto *Result =
+          llvm::dyn_cast<llvm::ConstantInt>(Return->getReturnValue());
+      ASSERT_TRUE(Result);
+      EXPECT_EQ(Result->getZExtValue(), Case.Expected[I]);
+    }
+  }
+}
+
+TEST(AArch64PACMSemantics, UnresolvedEntryStateCannotEscapeIntoSource) {
+  const struct {
+    unsigned EntryOffset;
+    std::vector<uint32_t> Words;
+  } Cases[] = {
+#define NEVERD_PACM_UNRESOLVED(Offset, ...) {Offset, {__VA_ARGS__}},
+#include "AArch64PACMFixtures.def"
+  };
+  for (const auto &Case : Cases) {
+    auto Image = pacm_fixture::image(Case.Words);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::AArch64));
+    Dec.setStrict(true);
+    const auto Low =
+        CFGBuilder().build(Image, Dec, pacm_fixture::kBase + Case.EntryOffset,
+                           "unresolved_prefix");
+    EXPECT_FALSE(Low.UnsupportedInstructionAddresses.empty());
+    LowToMedConverter Converter;
+    EXPECT_THROW(Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO),
+                 LowToMedConversionError);
+  }
+  auto Med = pointerFunction(Intrinsic::A64_AutiaM, "pending_prefix");
+  Med.Blocks.front().Ops.front().Inputs[0] =
+      MedVar::makeConst(static_cast<uint64_t>(Intrinsic::A64_PACMPending), 2);
+  llvm::LLVMContext Context;
+  EXPECT_THROW(MedLLVMEmitter().emit({Med}, Context, Med.Name, Arch::AArch64),
+               std::runtime_error);
+  bool HasIntrinsics = false;
+  EXPECT_THROW(
+      renderARMIntrinsicCall(Intrinsic::A64_PACMPending, {}, 0, HasIntrinsics),
+      std::invalid_argument);
+}
+
+TEST(AArch64PACMSemantics, PrefixedReturnsKeepX0AndTheOriginalSigningPC) {
+  const struct {
+    const char *Name;
+    uint64_t Value;
+    std::vector<uint32_t> Words;
+  } Cases[] = {
+#define NEVERD_PACM_RETURN_CASE(Name, Value, ...) {#Name, Value, {__VA_ARGS__}},
+#include "AArch64PACMFixtures.def"
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Name);
+    auto Image = pacm_fixture::image(Case.Words);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::AArch64));
+    Dec.setStrict(true);
+    const auto Low =
+        CFGBuilder().build(Image, Dec, pacm_fixture::kBase, Case.Name);
+    ASSERT_TRUE(Low.hasCompleteLiftCoverage());
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Image);
+    auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Med}, Context, Case.Name, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    optimize(*Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    unsigned Operations = 0, Returns = 0;
+    for (const auto &Block : *Module->getFunction(Case.Name))
+      for (const auto &Insn : Block) {
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Insn);
+            Call && Call->isInlineAsm()) {
+          ++Operations;
+          ASSERT_EQ(Call->arg_size(), 4u);
+          const auto *PC =
+              llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(2));
+          ASSERT_TRUE(PC);
+          EXPECT_EQ(PC->getZExtValue(),
+                    pacm_fixture::kBase + pacm_fixture::kWordBytes);
+        }
+        if (const auto *Return = llvm::dyn_cast<llvm::ReturnInst>(&Insn)) {
+          ++Returns;
+          const auto *Value =
+              llvm::dyn_cast<llvm::ConstantInt>(Return->getReturnValue());
+          ASSERT_TRUE(Value);
+          EXPECT_EQ(Value->getZExtValue(), Case.Value);
+        }
+      }
+    EXPECT_EQ(Operations, 2u);
+    EXPECT_EQ(Returns, 1u);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.Format = BinaryFormat::MachO;
+    for (bool LLVMRoute : {false, true}) {
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      if (LLVMRoute)
+        ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+      else
+        ASSERT_TRUE(HighCEmitter().emit(
+            {MedToHighConverter().convert(Med, Arch::AArch64)}, Out, Options));
+      compileArm64eC(Source);
+    }
+  }
 }

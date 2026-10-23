@@ -35,8 +35,9 @@ inline bool lowAArch64CPAShapeIsValid(const LowOp &Op) {
 }
 
 inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 2 || Op.NumInputs > 4 ||
-      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 2 ||
+      Op.NumInputs > kAArch64PACMOperandCount + 1 || !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != 2 ||
       Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
       (!Op.Output.isReg() && !Op.Output.isTemp()) ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
@@ -47,7 +48,7 @@ inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
         !Op.Inputs[I].isConst())
       return false;
   const bool TwoModifiers =
-      aarch64PAuthLROperation(static_cast<Intrinsic>(Op.Inputs[0].Offset))
+      aarch64PAuthExtendedOperation(static_cast<Intrinsic>(Op.Inputs[0].Offset))
           .has_value();
   return aarch64PAuthShapeIsValid(
       static_cast<Intrinsic>(Op.Inputs[0].Offset),
@@ -59,7 +60,10 @@ inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
                ? Op.Inputs[TwoModifiers ? 2 : Op.NumInputs - 1].Size
                : 0U,
        .SecondModifierBytes =
-           TwoModifiers && Op.NumInputs == 4 ? Op.Inputs[3].Size : 0U,
+           TwoModifiers && Op.NumInputs >= 4 ? Op.Inputs[3].Size : 0U,
+       .ModeBytes = Op.NumInputs == kAArch64PACMOperandCount + 1
+                        ? Op.Inputs[kAArch64PACMOperandCount].Size
+                        : 0U,
        .KeyBytes = Op.NumInputs == 4 ? Op.Inputs[2].Size : 0U,
        .Key = Op.NumInputs == 4 && Op.Inputs[2].isConst()
                   ? std::optional<uint64_t>(Op.Inputs[2].Offset)

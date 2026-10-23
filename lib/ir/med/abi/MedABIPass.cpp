@@ -77,7 +77,7 @@ const MedBlock *authenticatedTailSetup(const MedBlock &Block, const MedOp &Call,
           return false;
         const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
         const auto Auth = aarch64PAuthOperation(Id);
-        const auto AuthLR = aarch64PAuthLROperation(Id);
+        const auto AuthLR = aarch64PAuthExtendedOperation(Id);
         return (Auth && Auth->Authenticate) || (AuthLR && AuthLR->Authenticate);
       }))
     return nullptr;

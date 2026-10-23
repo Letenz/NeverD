@@ -415,6 +415,11 @@ enum class Intrinsic : uint16_t {
   X87FsincosPair,
   X87FxtractPair,
 
+  // CFG consumes the pending prefix before publishing a native operation.
+  A64_PACMPending,
+#define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64PAuthM.def"
+
   _Count = 16000
 };
 
