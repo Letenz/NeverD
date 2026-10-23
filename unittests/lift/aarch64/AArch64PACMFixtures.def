@@ -24,6 +24,9 @@
 #ifndef NEVERD_PACM_RETURN_CASE
 #define NEVERD_PACM_RETURN_CASE(Name, Value, ...)
 #endif
+#ifndef NEVERD_PACM_SHAPE_ID
+#define NEVERD_PACM_SHAPE_ID(Id)
+#endif
 #ifndef NEVERD_PACM_VALUE
 #define NEVERD_PACM_VALUE(Type, Name, Value)
 #endif
@@ -35,6 +38,9 @@ NEVERD_PACM_VALUE(uint32_t, kPACM, 0xd50324ff)
 NEVERD_PACM_VALUE(uint32_t, kReturn, 0xd65f03c0)
 NEVERD_PACM_VALUE(va_t, kBase, 0x1000)
 NEVERD_PACM_VALUE(unsigned, kWordBytes, 4)
+NEVERD_PACM_VALUE(unsigned, kIntrinsicIdBytes, 2)
+NEVERD_PACM_VALUE(unsigned, kInvalidModeBytes, 4)
+NEVERD_PACM_TEXT(kShapeName, "pacm_shape")
 NEVERD_PACM_TEXT(kPrefixLLVM, ".inst 0xd50324ff\n2:\n.inst ")
 NEVERD_PACM_TEXT(kPrefixC, ".inst 0xd50324ff\\n2:\\n.inst ")
 NEVERD_PACM_TEXT(kTrap, "brk #0xc470")
@@ -42,6 +48,21 @@ NEVERD_PACM_TEXT(kCaptureArgs,
                  "#include <stdint.h>\nuint64_t capture(uint64_t __pointer, "
                  "uint64_t __pointer_, uint64_t __pointer__, "
                  "uint64_t __pointer___) { ")
+
+NEVERD_PACM_SHAPE_ID(Pacia)
+NEVERD_PACM_SHAPE_ID(Autia)
+NEVERD_PACM_SHAPE_ID(Xpaci)
+NEVERD_PACM_SHAPE_ID(A64_Pacga)
+NEVERD_PACM_SHAPE_ID(A64_AuthBranch)
+NEVERD_PACM_SHAPE_ID(A64_Pacia2)
+NEVERD_PACM_SHAPE_ID(A64_Autib2)
+NEVERD_PACM_SHAPE_ID(A64_AuthReturnIA2)
+NEVERD_PACM_SHAPE_ID(A64_PaciaM)
+NEVERD_PACM_SHAPE_ID(A64_PacibM)
+NEVERD_PACM_SHAPE_ID(A64_AutiaM)
+NEVERD_PACM_SHAPE_ID(A64_AutibM)
+NEVERD_PACM_SHAPE_ID(A64_AuthReturnIAM)
+NEVERD_PACM_SHAPE_ID(A64_AuthReturnIBM)
 
 NEVERD_PACM_CONSUMER(0xd503233f, A64_PaciaM, 240, 248, 0x1004, true, false)
 NEVERD_PACM_CONSUMER(0xd503237f, A64_PacibM, 240, 248, 0x1004, true, false)
@@ -104,6 +125,7 @@ NEVERD_PACM_RETURN_CASE(prefixed_return_b, 7, 0xd50324ff, 0xd503237f,
                         0xd28000e0, 0x10ffffd0, 0xd50324ff, 0xd65f0fff)
 
 #undef NEVERD_PACM_RETURN_CASE
+#undef NEVERD_PACM_SHAPE_ID
 #undef NEVERD_PACM_CONSUMER
 #undef NEVERD_PACM_FLOW
 #undef NEVERD_PACM_VALUE

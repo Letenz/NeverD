@@ -43,6 +43,10 @@ inline bool aarch64PAuthMedShapeIsValid(const MedOp &Op) {
       Op.MemoryOrdering != NdMemoryOrdering::None ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
+  for (unsigned I = 1; I < Op.NumInputs; ++I)
+    if (!Op.Inputs[I].isConst() && Op.Inputs[I].Kind != MedVar::Reg &&
+        Op.Inputs[I].Kind != MedVar::Temp && Op.Inputs[I].Kind != MedVar::Param)
+      return false;
   const bool TwoModifiers = aarch64PAuthExtendedOperation(
                                 static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
                                 .has_value();

@@ -1672,8 +1672,164 @@ BinaryImage image(llvm::ArrayRef<uint32_t> Words) {
   Image.Segments.push_back(std::move(Text));
   return Image;
 }
+
+LowBlock instructionBlock(LowOp Op) {
+  LowBlock Block;
+  Block.StartAddr = Op.Addr = kBase;
+  Block.EndAddr = kBase + kWordBytes;
+  Block.Ops.push_back(Op);
+  LowInstructionBoundary Boundary;
+  Boundary.Address = Block.StartAddr;
+  Boundary.Size = kWordBytes;
+  Boundary.OpCount = Block.Ops.size();
+  Block.InstructionBoundaries.push_back(Boundary);
+  return Block;
+}
 } // namespace pacm_fixture
 } // namespace
+
+TEST(AArch64PACMSemantics, PointerOperandsRequireScalarValueKinds) {
+  const Intrinsic Cases[] = {
+#define NEVERD_PACM_SHAPE_ID(Id) Intrinsic::Id,
+#include "AArch64PACMFixtures.def"
+  };
+  for (Intrinsic Id : Cases) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
+    const auto Function = pointerFunction(Id, pacm_fixture::kShapeName);
+    const auto &Op = Function.Blocks.front().Ops.front();
+    ASSERT_TRUE(aarch64PAuthMedShapeIsValid(Op));
+    for (unsigned Index = 1; Index < Op.NumInputs; ++Index) {
+      SCOPED_TRACE(Index);
+      // AuthBranch's key is an immediate, not a scalar value operand.
+      if (Id == Intrinsic::A64_AuthBranch && Op.Inputs[Index].isConst())
+        continue;
+      for (auto Kind :
+           {MedVar::Reg, MedVar::Temp, MedVar::Param, MedVar::Const}) {
+        auto Valid = Op;
+        Valid.Inputs[Index].Kind = Kind;
+        EXPECT_TRUE(aarch64PAuthMedShapeIsValid(Valid));
+      }
+      for (auto Kind : {MedVar::Stack, MedVar::RetVal, MedVar::Flag,
+                        MedVar::EHException, MedVar::EHSelector,
+                        MedVar::SEHExceptionCode, MedVar::Unspecified}) {
+        SCOPED_TRACE(Kind);
+        auto Bad = Function;
+        auto &Malformed = Bad.Blocks.front().Ops.front();
+        Malformed.Inputs[Index].Kind = Kind;
+        EXPECT_FALSE(aarch64PAuthMedShapeIsValid(Malformed));
+        EXPECT_TRUE(endsCallArgumentSetup(Malformed));
+        EXPECT_FALSE(verifyMedFunc(Bad, pacm_fixture::kShapeName));
+      }
+    }
+  }
+}
+
+TEST(AArch64PACMSemantics, MalformedModesAndArityFailIRVerification) {
+  enum class Invalid { ModeWidth, ModeKind, MissingMode, ExtraMode };
+  for (const auto &Operation : kAArch64PAuthMOperations) {
+    SCOPED_TRACE(Operation.Mnemonic);
+    const auto Function =
+        pointerFunction(Operation.Id, pacm_fixture::kShapeName);
+    const auto &Med = Function.Blocks.front().Ops.front();
+    LowOp Op;
+    Op.Opcode = NdOp::INTRINSIC;
+    Op.Output = NdVar::tmp(0, kAArch64PAuthPointerBytes);
+    Op.addInput(NdVar::cst(static_cast<uint64_t>(Operation.Id),
+                           pacm_fixture::kIntrinsicIdBytes));
+    for (unsigned Index = 1; Index < Med.NumInputs; ++Index)
+      Op.addInput(NdVar::reg(Med.Inputs[Index].RegOff, Med.Inputs[Index].Size));
+    const auto Block = pacm_fixture::instructionBlock(Op);
+    auto Valid = validateLowInstructionBoundaries(Block);
+    ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+    ASSERT_TRUE(verifyMedFunc(Function, pacm_fixture::kShapeName));
+    for (auto Mutation : {Invalid::ModeWidth, Invalid::ModeKind,
+                          Invalid::MissingMode, Invalid::ExtraMode}) {
+      auto BadLow = Block;
+      auto BadMed = Function;
+      auto &Low = BadLow.Ops.front();
+      auto &Med = BadMed.Blocks.front().Ops.front();
+      switch (Mutation) {
+      case Invalid::ModeWidth:
+        Low.Inputs[kAArch64PACMOperandCount].Size =
+            Med.Inputs[kAArch64PACMOperandCount].Size =
+                pacm_fixture::kInvalidModeBytes;
+        break;
+      case Invalid::ModeKind:
+        Low.Inputs[kAArch64PACMOperandCount].Space = VnodeSpace::RAM;
+        Med.Inputs[kAArch64PACMOperandCount].Kind = MedVar::Stack;
+        break;
+      case Invalid::MissingMode:
+        --Low.NumInputs;
+        --Med.NumInputs;
+        break;
+      case Invalid::ExtraMode: {
+        const auto LowMode = Low.Inputs[kAArch64PACMOperandCount];
+        const auto MedMode = Med.Inputs[kAArch64PACMOperandCount];
+        Low.addInput(LowMode);
+        Med.addInput(MedMode);
+        break;
+      }
+      }
+      EXPECT_FALSE(lowAArch64PAuthShapeIsValid(Low));
+      auto Error = validateLowInstructionBoundaries(BadLow);
+      EXPECT_TRUE(bool(Error));
+      llvm::consumeError(std::move(Error));
+      EXPECT_FALSE(aarch64PAuthMedShapeIsValid(Med));
+      EXPECT_FALSE(verifyMedFunc(BadMed, pacm_fixture::kShapeName));
+    }
+  }
+}
+
+TEST(AArch64PACMSemantics, PendingMarkersRequireTheirLowIRShape) {
+  const auto Ops = lift(pacm_fixture::kPACM, false);
+  ASSERT_EQ(Ops.size(), 1u);
+  const auto Block = pacm_fixture::instructionBlock(Ops.front());
+  auto Valid = validateLowInstructionBoundaries(Block);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  using Mutation = void (*)(LowOp &);
+  const Mutation Mutations[] = {
+      [](LowOp &Op) { Op.Inputs[0].Size = pacm_fixture::kInvalidModeBytes; },
+      [](LowOp &Op) { Op.Inputs[0].Space = VnodeSpace::REG; },
+      [](LowOp &Op) { Op.Output = NdVar::tmp(0, kAArch64PAuthPointerBytes); },
+      [](LowOp &Op) { --Op.NumInputs; },
+      [](LowOp &Op) { Op.addInput(NdVar::cst(0, kAArch64PAuthPointerBytes)); },
+      [](LowOp &Op) { Op.MemoryOrdering = NdMemoryOrdering::Acquire; },
+      [](LowOp &Op) { Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS; },
+  };
+  for (Mutation Mutate : Mutations) {
+    auto Bad = Block;
+    Mutate(Bad.Ops.front());
+    auto Error = validateLowInstructionBoundaries(Bad);
+    EXPECT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+  }
+
+  LowFunc Low;
+  Low.Entry = Block.StartAddr;
+  Low.Blocks.push_back(Block);
+  LowToMedConverter Converter;
+  EXPECT_THROW(Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO),
+               LowToMedConversionError);
+  for (bool HasOutput : {false, true}) {
+    auto Function =
+        pointerFunction(Intrinsic::A64_AutiaM, pacm_fixture::kShapeName);
+    auto &Pending = Function.Blocks.front().Ops.front();
+    Pending.Inputs.front() =
+        MedVar::makeConst(static_cast<uint64_t>(Intrinsic::A64_PACMPending),
+                          pacm_fixture::kIntrinsicIdBytes);
+    if (!HasOutput) {
+      Pending.Output = {};
+      Pending.NumInputs = 1;
+    }
+    Function.Blocks.front().Ops.back().Inputs.front() =
+        MedVar::makeConst(0, kAArch64PAuthPointerBytes);
+    EXPECT_FALSE(verifyMedFunc(Function, pacm_fixture::kShapeName));
+    llvm::LLVMContext Context;
+    EXPECT_THROW(MedLLVMEmitter().emit({Function}, Context, Function.Name,
+                                       Arch::AArch64),
+                 std::runtime_error);
+  }
+}
 
 TEST(AArch64PACMSemantics, AllConsumersCaptureOriginalImplicitOperands) {
   const struct {
