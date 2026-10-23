@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>Сравнить два бинарных файла, изучить изменения и соответствие функций</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>Просмотр поддержки x87 и требований</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>&amp;Поддержка x87…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -7939,6 +7947,184 @@ Secondary SHA-256: %3
     <message>
         <source> · Deleted</source>
         <translation> · Удалено</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>Форм инструкций: %1. Статический перечень; без проверки хоста, выполнения или доказательства.</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>&amp;Бэкенд:</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>&amp;Потребитель:</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>&amp;Назначение:</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>Пе&amp;резагрузить</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>Режим &amp;исходного кода:</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>Контракт вызова: %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>Не удалось загрузить сведения о поддержке x87: %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>Фильтр инструкций, операндов или поддержки…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>Фильтр инструкций x87</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>Просмотр поддержки инструкции и профиля выполнения. Численные результаты и архитектурное состояние проверяются отдельно.</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>Загрузка сведений о поддержке x87…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Нет</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>Причина: %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>Исходники регрессионных тестов: %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>Требования: %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>Выберите инструкцию для просмотра требований. Если формы не отображаются, очистите фильтр.</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>Требования и ограничения выбранной инструкции</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>&amp;ABI исходного кода:</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>Путь генерации исходного кода доступен: %1; по умолчанию для этого ABI: %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>Путь обработки &amp;состояния:</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>Соединение с процессом анализа разорвано.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>Эта комбинация не указана в перечне и не поддерживается.</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>Этот движок не предоставляет отчёт о поддержке x87.</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>Этот режим исходного кода / ABI / путь состояния не указан в перечне.</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>Ожидание процесса анализа.</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Да</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double: %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>Поддержка инструкций x87</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>Поддержка x87</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>Архитектурное состояние</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>Реализовано</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>Инструкция</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Нет</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>Численный результат</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>Операнды</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>Профиль</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>Движок вернул несовместимый отчёт о возможностях x87.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>Эта комбинация не указана в перечне и не поддерживается.</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>Не указано</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Да</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>не проверено</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>не поддерживается</translation>
     </message>
 </context>
 </TS>

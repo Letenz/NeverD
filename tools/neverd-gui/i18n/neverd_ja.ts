@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>2 つのバイナリを比較し、変更と関数の対応関係を確認</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>x87 の対応状況と要件を確認</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>x87 の対応状況(&amp;S)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -7867,6 +7875,184 @@ Secondary SHA-256: %3
     <message>
         <source> · Deleted</source>
         <translation> · 削除</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>%1 種の命令形式。静的な一覧です。ホストの調査、実行、証明は行っていません。</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>バックエンド(&amp;B):</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>利用側(&amp;C):</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>出力先(&amp;D):</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>再読み込み(&amp;R)</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>ソースモード(&amp;S):</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>呼び出し契約: %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>x87 の対応情報を読み込めませんでした: %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>命令、オペランド、対応状況を絞り込み…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>x87 命令を絞り込み</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>命令と実行プロファイルの対応状況を確認します。数値結果とアーキテクチャ状態は個別に検証されます。</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>x87 の対応情報を読み込み中…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>理由: %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>回帰テストのソース: %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>要件: %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>命令を選択して要件を確認してください。形式が表示されない場合はフィルターを解除してください。</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>選択した命令の要件と制限</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>ソース ABI(&amp;A):</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>ソース生成経路が利用可能: %1、この ABI の既定: %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>状態処理経路(&amp;P):</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>解析ワーカーとの接続が切れています。</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>この組み合わせは一覧になく、未対応です。</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>このエンジンは x87 の対応レポートを提供しません。</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>このソースモード／ABI／状態処理経路は一覧にありません。</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>解析ワーカーを待機中です。</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>はい</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double: %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>x87 命令の対応状況</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>x87 の対応状況</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>アーキテクチャ状態</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>実装済み</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>数値結果</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>オペランド</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>プロファイル</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>エンジンが互換性のない x87 機能レポートを返しました。</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>この組み合わせは一覧になく、未対応です。</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>一覧に記載なし</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>はい</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>未検証</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>未対応</translation>
     </message>
 </context>
 </TS>

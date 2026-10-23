@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>مقارنة ملفين ثنائيين وفحص التغييرات ومراجعة تطابق الدوال</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>فحص دعم x87 والمتطلبات</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>دعم x87(&amp;S)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -8047,6 +8055,184 @@ SHA-256 الثانوي: %3
     <message>
         <source> · Deleted</source>
         <translation> · محذوف</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>%1 صيغة تعليمات. قائمة ثابتة؛ دون فحص المضيف أو تنفيذ أو إثبات.</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>الواجهة الخلفية(&amp;B):</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>المستهلك(&amp;C):</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>الوجهة(&amp;D):</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>إعادة التحميل(&amp;R)</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>وضع المصدر(&amp;S):</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>عقد الاستدعاء: %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>تعذر تحميل معلومات دعم x87: %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>تصفية التعليمات أو المعاملات أو الدعم…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>تصفية تعليمات x87</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>فحص دعم تعليمة وملف تنفيذ. تُتحقق النتائج العددية والحالة المعمارية كلٌّ على حدة.</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>جارٍ تحميل معلومات دعم x87…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>لا</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>السبب: %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>مصادر اختبارات الانحدار: %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>المتطلبات: %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>اختر تعليمة لفحص متطلباتها. امسح عامل التصفية إذا لم تظهر أي صيغ.</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>متطلبات التعليمة المحددة وحدودها</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>ABI المصدر(&amp;A):</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>مسار توليد المصدر متاح: %1؛ الافتراضي لواجهة ABI هذه: %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>مسار الحالة(&amp;P):</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>عامل التحليل غير متصل.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>هذه التركيبة غير مدرجة؛ وهي غير مدعومة.</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>لا يوفر هذا المحرك تقرير دعم x87.</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>وضع المصدر / ABI / مسار الحالة هذا غير مدرج.</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>في انتظار عامل التحليل.</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>نعم</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double: %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>دعم تعليمات x87</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>دعم x87</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>الحالة المعمارية</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>مُنفّذ</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>تعليمة</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>لا</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>النتيجة العددية</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>المعاملات</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>الملف</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>أعاد المحرك تقرير قدرات x87 غير متوافق.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>هذه التركيبة غير مدرجة؛ وهي غير مدعومة.</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>غير مدرج</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>نعم</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>غير متحقق منه</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>غير مدعوم</translation>
     </message>
 </context>
 </TS>

@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>比較兩個二進位檔案，檢查更改並審查函式對應關係</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>查看 x87 支援情況和要求</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>x87 支援(&amp;S)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -7867,6 +7875,184 @@ Secondary SHA-256: %3
     <message>
         <source> · Deleted</source>
         <translation> · 已刪除</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>%1 種指令形式。僅為靜態清單；未探測主機、執行指令或進行證明。</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>後端(&amp;B)：</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>使用方(&amp;C)：</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>目標(&amp;D)：</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>重新載入(&amp;R)</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>原始碼模式(&amp;S)：</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>呼叫慣例：%1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>無法載入 x87 支援資訊：%1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>篩選指令、運算元或支援情況…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>篩選 x87 指令</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>查看指令及執行設定的支援情況。數值結果和架構狀態分別驗證。</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>正在載入 x87 支援資訊…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>否</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>原因：%1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>迴歸測試原始檔：%1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>要求：%1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>選擇指令以查看其要求。如果未顯示任何形式，請清除篩選條件。</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>所選指令的要求和限制</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>原始碼 ABI(&amp;A)：</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>原始碼產生路徑可用：%1；此 ABI 的預設路徑：%2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>狀態處理路徑(&amp;P)：</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>分析程序已中斷連線。</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>未列出此組合；不支援此組合。</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>此引擎不提供 x87 支援報告。</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>未列出此原始碼模式／ABI／狀態處理路徑。</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>正在等待分析程序。</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>是</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double：%1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>x87 指令支援</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>x87 支援</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>架構狀態</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>已實作</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>指令</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>否</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>數值結果</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>運算元</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>引擎傳回了不相容的 x87 能力報告。</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>未列出此組合；不支援此組合。</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>未列出</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>是</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>未驗證</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>不支援</translation>
     </message>
 </context>
 </TS>

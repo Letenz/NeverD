@@ -1111,6 +1111,14 @@
         <source>Compare two binaries, inspect changes and review function correspondence</source>
         <translation>Comparer deux binaires, inspecter les modifications et examiner les correspondances de fonctions</translation>
     </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>Examiner la prise en charge de x87 et ses exigences</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>Prise en &amp;charge de x87…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -7903,6 +7911,184 @@ SHA-256 secondaire : %3
     <message>
         <source> · Deleted</source>
         <translation> · Supprimé</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>%1 formes d’instructions. Inventaire statique ; aucune détection de l’hôte, exécution ou preuve.</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>&amp;Moteur :</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>&amp;Consommateur :</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>&amp;Destination :</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>&amp;Recharger</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>Mode &amp;source :</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>Contrat d’appel : %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>Impossible de charger la prise en charge de x87 : %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>Filtrer les instructions, les opérandes ou la prise en charge…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>Filtrer les instructions x87</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>Examiner la prise en charge d’une instruction et d’un profil d’exécution. Les résultats numériques et l’état architectural sont validés séparément.</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>Chargement de la prise en charge de x87…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Non</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>Motif : %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>Sources des tests de régression : %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>Exigences : %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>Sélectionnez une instruction pour examiner ses exigences. Effacez le filtre si aucune forme n’est visible.</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>Exigences et limites de l’instruction sélectionnée</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>&amp;ABI source :</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>Voie de génération du code source disponible : %1 ; voie par défaut pour cette ABI : %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>&amp;Voie de traitement de l’état :</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>Le processus d’analyse est déconnecté.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>Cette combinaison n’est pas répertoriée ; elle n’est pas prise en charge.</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>Ce moteur ne fournit pas de rapport de prise en charge de x87.</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>Ce mode source / cette ABI / cette voie de traitement de l’état n’est pas répertorié.</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>En attente du processus d’analyse.</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Oui</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double : %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>Prise en charge des instructions x87</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>Prise en charge de x87</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>État architectural</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>Implémenté</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>Instruction</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Non</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>Résultat numérique</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>Opérandes</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>Profil</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>Le moteur a renvoyé un rapport de capacités x87 incompatible.</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>Cette combinaison n’est pas répertoriée ; elle n’est pas prise en charge.</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>Non répertorié</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Oui</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>non validé</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>non pris en charge</translation>
     </message>
 </context>
 </TS>
