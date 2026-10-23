@@ -178,9 +178,9 @@ incomplete intermediate batch.
 ## Native LLVM intrinsic migration checkpoints
 
 The LLVM fork's
-[`e89e2dd02890`](https://github.com/NeverSight/llvm-project/commit/e89e2dd02890)
+[`a3f1a1e579c2`](https://github.com/NeverSight/llvm-project/commit/a3f1a1e579c2)
 adds native instruction selection for the following APIs. NeverC's
-[`fc8f95797`](https://github.com/NeverSight/NeverC/commit/fc8f95797)
+[`6e08b592b`](https://github.com/NeverSight/NeverC/commit/6e08b592b)
 includes the corresponding x86-64 frontend/backend fixes and interoperability
 tests. These are development checkpoints, not a released or pinned SDK.
 
@@ -194,6 +194,12 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.invept`, `llvm.x86.invvpid` | x86-64 | Full i64 type selector, instruction-owned m128 descriptor and the same VMX completion status. |
 | `llvm.x86.invept32`, `llvm.x86.invvpid32` | i386 | Full i32 type selector and the same m128 descriptor/status contract. Wrong-mode APIs fail explicitly. |
 | `llvm.x86.rdmsr`, `llvm.x86.wrmsr` | i386 and x86-64 | i32 MSR index and full i64 value, transported through ECX and EDX:EAX. Unused reads retain their side effects. |
+| `llvm.x86.wrmsrns`, `llvm.x86.clts` | i386 and x86-64 | Operand-free WRMSRNS uses ECX and EDX:EAX; CLTS retains its ordered processor-state effect. |
+| `llvm.x86.rdmsrlist`, `llvm.x86.wrmsrlist` | x86-64 | Two table pointers and a full i64 mask, with actual RCX completion; table memory and fault ordering stay inside the instruction. |
+| `llvm.x86.inbyte/inword/indword`, `llvm.x86.outbyte/outword/outdword` | i386 and x86-64 | Native port I/O through DX and AL/AX/EAX; unused reads remain observable. |
+| `llvm.x86.cli`, `llvm.x86.sti`, `llvm.x86.invlpg` | i386 and x86-64 | Ordered state effects; CLI/STI preserve arithmetic flags, and INVLPG does not preload its address. |
+| `llvm.x86.sgdt/sidt/lgdt/lidt` | i386 and x86-64 | Instruction-owned six-byte or ten-byte descriptor accesses, selected by code mode. |
+| `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
 
 The fork generates the instruction effects from TableGen. NeverC's pruned table
 has a checked generator for the same VMX effects. The old NeverC VMREAD register
@@ -220,10 +226,23 @@ and rejects ID changes that alter matcher byte lengths. Seven generator tests,
 a zero-mismatch audit of all overload flags, and 12 SSE/SSSE3/SSE4/AES/PCLMUL/CRC
 compilation probes qualify the metadata repair.
 
-MSR qualification adds 48 LLVM cases across both word sizes, 24 NeverC cases,
-and 24 NeverC-to-fork cases. The i386 WRMSR tests exposed and now cover the
+MSR qualification, including WRMSRNS, adds 64 LLVM cases across both word sizes,
+32 NeverC cases, and 32 NeverC-to-fork cases. The i386 WRMSR tests exposed and now cover the
 required custom legalization of its i64 input into EDX:EAX. The related counter
 and XCR intrinsic code-generation regressions also pass.
+
+MSRLIST adds 224 cases on each compiler route, covering full pointer/mask
+transport, actual RCX results, operand liveness, memory ordering and nonvolatile
+register restoration. Injected nonzero RCX completion is a compiler transport
+probe, not a claim about normal architectural return or fault restart.
+The fourteen port, descriptor and processor-state APIs add 264 LLVM cases,
+132 NeverC cases and 132 NeverC-to-fork cases. These check access widths,
+unmapped operands, unchanged sentinels, CPUID output slots and saved registers.
+All four controlled-completion runners enable LLVM machine verification on
+the NeverC route too. This exposed an incorrect CLI/STI dependency on arithmetic
+EFLAGS; both backends now retain the processor-state effect without inventing
+an arithmetic-flags input or clobber. NeverC's descriptor load/store effects
+are also generated from a checked schema.
 
 These tests qualify compiler transport, not successful privileged VM entry.
 The current pointer APIs cover the default address space. Register-result
