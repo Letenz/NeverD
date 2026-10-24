@@ -28,6 +28,10 @@ namespace neverd::limits::loader {
   inline constexpr Type Name = Value;
 #include "neverd/loader/ReturnAddressSigning.def"
 
+#define NEVERD_MACHO_ARM64E_LIMIT(Type, Name, Value)                           \
+  inline constexpr Type Name = Value;
+#include "neverd/loader/MachO/MachOArm64e.def"
+
 // include/neverd/loader/BinaryImageModel.h
 inline constexpr size_t kBinaryImageModelMaxDiagnostics = 64;
 

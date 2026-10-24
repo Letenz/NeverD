@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "MachODyldFixups.h"
+#include "MachOThreadedBind.h"
 
 #include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
@@ -24,8 +25,12 @@ namespace macho_loader {
 using namespace llvm::MachO;
 
 void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
-                      const DyldInfoOffsets &DyldInfo, BinaryImage &Img) {
+                      const DyldInfoOffsets &DyldInfo, BinaryImage &Img,
+                      va_t TextVMAddr) {
   if (!BasePtr)
+    return;
+  if (detail::parseThreadedBindStreams(BasePtr, FileSize, DyldInfo, TextVMAddr,
+                                       Img))
     return;
   uint32_t BindOff = DyldInfo.BindOff;
   uint32_t BindSize = DyldInfo.BindSize;

@@ -101,6 +101,17 @@ and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
 also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
+`MachOThreadedBind` covers original arm64e `LC_DYLD_INFO_ONLY` ordinal tables
+and chain roots, with independent words for all signing keys, address diversity,
+negative import/inline addends, nonzero header bases and multiple roots.
+Malformed bytecode, incomplete tables, reserved bits, duplicate roots,
+unavailable file storage and overflow must publish neither prefix fixups nor
+imports. Symbol payload bytes cannot select a different bytecode format.
+Both containers share the pointer-word decoder and exact-slot provenance;
+encoded authenticated bytes remain unchanged. A host Apple `ld-classic`
+fixture at O0/O2 removes local symbols before class/method recovery. Missing
+Apple tools are explicit skips. The format reference is
+[Apple dyld's original arm64e chain reader](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/common/MachOAnalyzer.cpp#L1953).
 Analysis-only metadata tests follow local authentication recipes for every
 supported chained format and for authenticated object relocations. Stale
 bytes, signing-field mismatches, conflicting provenance, overlapping storage
@@ -11955,3 +11966,9 @@ check distinct observations after LLVM optimization, unused values and a real
 function whose name collides with the internal marker spelling. These tests
 certify explicit source unavailability, not a reconstructed dynamic call-state
 contract.
+
+The threaded arm64e loader validates unique segment ownership and rejects roots
+at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams
+remain explicitly unsupported; their presence cannot silently discard fixups.
+The public-loader fixture checks that weak-bind offsets survive load-command
+parsing and trigger this admission rule before pointer publication.
