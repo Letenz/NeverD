@@ -171,7 +171,15 @@ revision checks and cooperative cancellation contract as source inspection.
 `refresh`. Both require `dataflow:true` or a bounded settings object at start.
 The settings object accepts `profile:"med-ssa-v2"` (default) or
 `profile:"llvm-ssa-v1"` (optimized machine integer SSA), or
-`profile:"llvm-parameter-ssa-v1"` (eligible native low-bit parameter views).
+`profile:"llvm-parameter-ssa-v1"` (eligible native low-bit parameter views), or
+`profile:"llvm-progress-ssa-v1"` (parameter views and independently proved
+return progress). Schema 5 adds `progress` with `kind`, `source_contract`,
+`observed_contract` and `loop_count`; full reports also contain `loops` witnesses
+with block/counter/update/compare IDs. Metadata pages omit that array and node
+rows include only their block's `progress_loop` or null. Proof rows share retained
+storage limits. Unproved loops remain available with their original attributes;
+progress does not establish equal iteration counts or results. Fresh restore
+binds the original contract and proof to the actual source projection.
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
 allowance; public node counts and coverage still count operations. Metadata

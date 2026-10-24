@@ -143,6 +143,18 @@ Object parameterView(const FlowParameterView &V) {
                                 {"index", hex(uint64_t(V.NativeSite->Index))}};
   return Out;
 }
+Object loopProgress(const FlowLoopProgress &L) {
+  return Object{{"block", L.Block},
+                {"counter", L.Counter},
+                {"update", L.Update},
+                {"compare", L.Compare}};
+}
+Object progress(const FlowProgress &P) {
+  return Object{{"kind", flowProgressName(P.Kind)},
+                {"source_contract", P.SourceContract},
+                {"observed_contract", P.ObservedContract},
+                {"loop_count", P.Loops.size()}};
+}
 uint64_t projectedParameters(const DataFlowGraph &G) {
   return llvm::count_if(G.ParameterViews,
                         [](const auto &V) { return V.ElidedTruncations != 0; });
@@ -158,10 +170,12 @@ Object metadata(const DataFlowGraph &G) {
              {"gap_mask", G.Gaps},
              {"node_count", G.Nodes.size()},
              {"block_count", G.Blocks.size()}};
-  if (G.Profile == LLVMParameterDataFlowProfile) {
+  if (hasParameterViews(G.Profile)) {
     Out["parameter_count"] = G.ParameterViews.size();
     Out["projected_parameter_count"] = projectedParameters(G);
   }
+  if (G.Progress)
+    Out["progress"] = progress(*G.Progress);
   return Out;
 }
 void page(unsigned Limit) {
@@ -355,6 +369,12 @@ Object dataFlowEntriesJSON(const DataFlowEvidence &E, uint64_t Offset,
 void writeDataFlowGraph(llvm::json::OStream &Out, const DataFlowGraph &G) {
   Out.object([&] {
     auto Header = metadata(G);
+    if (G.Progress) {
+      Array Loops;
+      for (const auto &L : G.Progress->Loops)
+        Loops.push_back(loopProgress(L));
+      (*Header.getObject("progress"))["loops"] = std::move(Loops);
+    }
     std::vector<std::string> Keys;
     for (const auto &[Key, Ignored] : Header) {
       (void)Ignored;
@@ -363,7 +383,7 @@ void writeDataFlowGraph(llvm::json::OStream &Out, const DataFlowGraph &G) {
     std::sort(Keys.begin(), Keys.end());
     for (const auto &Key : Keys)
       Out.attribute(Key, *Header.get(Key));
-    if (G.Profile == LLVMParameterDataFlowProfile)
+    if (hasParameterViews(G.Profile))
       Out.attributeArray("parameter_views", [&] {
         for (const auto &V : G.ParameterViews)
           Out.value(parameterView(V));
@@ -386,8 +406,16 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   DataFlowGraph G;
   G.Profile = text(field(O, "profile"), limits::kMaxFlowIdentityBytes);
   const bool Extended = isLLVMDataFlowProfile(G.Profile);
-  const bool Parameters = G.Profile == LLVMParameterDataFlowProfile;
-  if (Parameters)
+  const bool Parameters = hasParameterViews(G.Profile);
+  const bool Progress = G.Profile == LLVMProgressDataFlowProfile;
+  if (!Progress)
+    require(!O.get("progress"), "legacy graph contains progress evidence");
+  if (Progress)
+    fields(O, {"schema", "schema_version", "profile", "revision", "abi",
+               "function", "entry_block", "gap_mask", "node_count",
+               "block_count", "parameter_count", "projected_parameter_count",
+               "parameter_views", "progress", "blocks", "nodes"});
+  else if (Parameters)
     fields(O, {"schema", "schema_version", "profile", "revision", "abi",
                "function", "entry_block", "gap_mask", "node_count",
                "block_count", "parameter_count", "projected_parameter_count",
@@ -405,10 +433,44 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   G.Function = address(field(O, "function"));
   G.EntryBlock = count(field(O, "entry_block"));
   G.Gaps = count(field(O, "gap_mask"), AllFlowGaps);
-  uint64_t Edges = 0;
+  uint64_t Edges = 0, ProgressRows = 0;
+  if (Progress) {
+    const auto &P = object(field(O, "progress"));
+    fields(P, {"kind", "source_contract", "observed_contract", "loop_count",
+               "loops"});
+    FlowProgress Record;
+    const auto Kind = text(field(P, "kind"), limits::kMaxFlowIdentityBytes);
+    if (Kind == "unproven")
+      Record.Kind = FlowProgressKind::Unproven;
+    else if (Kind == "acyclic")
+      Record.Kind = FlowProgressKind::Acyclic;
+    else {
+      require(Kind == "counter_loops", "unknown progress proof kind");
+      Record.Kind = FlowProgressKind::CounterLoops;
+    }
+    Record.SourceContract =
+        text(field(P, "source_contract"), limits::kMaxFlowSemanticsBytes);
+    Record.ObservedContract =
+        text(field(P, "observed_contract"), limits::kMaxFlowSemanticsBytes);
+    Edges += 1 + Record.SourceContract.size() + Record.ObservedContract.size();
+    require(Edges <= Options.MaxWork, "progress exceeds work allowance");
+    for (const auto &Row : array(field(P, "loops"), Options.MaxNodes - 1)) {
+      require(++Edges <= Options.MaxWork, "loop proofs exceed work allowance");
+      const auto &L = object(Row);
+      fields(L, {"block", "counter", "update", "compare"});
+      Record.Loops.push_back({uint32_t(count(field(L, "block"))),
+                              uint32_t(count(field(L, "counter"))),
+                              uint32_t(count(field(L, "update"))),
+                              uint32_t(count(field(L, "compare")))});
+    }
+    require(count(field(P, "loop_count")) == Record.Loops.size(),
+            "progress loop count disagrees with witnesses");
+    ProgressRows = 1 + Record.Loops.size();
+    G.Progress = std::move(Record);
+  }
   if (Parameters) {
     for (const auto &Row :
-         array(field(O, "parameter_views"), Options.MaxNodes)) {
+         array(field(O, "parameter_views"), Options.MaxNodes - ProgressRows)) {
       const auto &P = object(Row);
       fields(P, {"source_bits", "view_bits", "attributes", "native_site",
                  "elided_truncations"});
@@ -452,7 +514,8 @@ DataFlowGraph readDataFlowGraph(const Value &V,
     G.Blocks.push_back(std::move(Block));
   }
   for (const auto &Row :
-       array(field(O, "nodes"), Options.MaxNodes - G.ParameterViews.size())) {
+       array(field(O, "nodes"),
+             Options.MaxNodes - G.ParameterViews.size() - ProgressRows)) {
     const auto &N = object(Row);
     if (Parameters)
       fields(N, {"opcode", "result_bytes", "memory_ordering",
@@ -534,7 +597,7 @@ Object dataFlowNodeJSON(const DataFlowGraph &G, uint32_t N) {
   auto Row = node(G.Nodes[N], isLLVMDataFlowProfile(G.Profile));
   Row["id"] = N;
   Row["gaps"] = gaps(G.Nodes[N].Gaps);
-  if (G.Profile == LLVMParameterDataFlowProfile) {
+  if (hasParameterViews(G.Profile)) {
     Array Views;
     for (uint32_t I = 0; I < G.Nodes[N].Inputs.size(); ++I) {
       const auto &Input = G.Nodes[N].Inputs[I];
@@ -547,6 +610,15 @@ Object dataFlowNodeJSON(const DataFlowGraph &G, uint32_t N) {
       Views.push_back(std::move(View));
     }
     Row["parameter_views"] = std::move(Views);
+  }
+  if (G.Progress) {
+    const auto &Loops = G.Progress->Loops;
+    const auto At = std::lower_bound(
+        Loops.begin(), Loops.end(), G.Nodes[N].Block,
+        [](const auto &L, uint32_t Block) { return L.Block < Block; });
+    Row["progress_loop"] = At != Loops.end() && At->Block == G.Nodes[N].Block
+                               ? Value(loopProgress(*At))
+                               : Value(nullptr);
   }
   return Row;
 }

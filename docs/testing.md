@@ -1679,6 +1679,21 @@ original instructions, slices and saved CLI parity. The real Qt test selects the
 optimized profile and displays plural origins with optional light/dark captures.
 These remain owned functional fixtures, not held-out accuracy or general
 optimization/obfuscation qualification.
+`BinaryDiffProgress` covers independent acyclic/nowrap-counter proof, signed
+and unsigned updates, underdefined seeds, exact widths and flags, reverse-sub
+and freeze/reset refusals, irreducible/re-entering cycles, attribute delimiter
+confusion, source promises without proof, parameter-elision remapping, finite
+operation admission, tampered witnesses and cumulative work/storage limits.
+`LoopProgressPagesBindWitnessesAndOriginalContracts` exercises real O0/O2
+machine bytes, SDK paging/slicing, fresh restore and structurally plausible
+source-attribute forgery. Stopped/empty collection tests retain the new profile.
+The owned compiler corpus retains the previous71 comparisons and adds30 loop
+cells across x64/AArch64 ELF/COFF/Mach-O: O0/O2, reopen, changed final constant,
+iteration bound and body multiplier. These are functional fixtures, not a
+held-out accuracy benchmark. Worker, Python and Qt tests inspect the same
+proofs and saved reports; GUI proof/selection checks run in light/dark and at
+fractional DPI. Offscreen renders do not qualify native window-manager behavior.
+
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
 missing/stack/overlapping sites, detached and foreign users, raw and retained

@@ -337,6 +337,44 @@ matching; changed control beyond a finite neighborhood remains an open frontier,
 and a deeper inspection checks that condition. These fixtures do not establish
 general optimization coverage, equivalent behavior, or loop correspondence.
 
+**Optimized SSA with loop analysis** (`--dataflow-profile=llvm-progress-ssa-v1`)
+includes parameter views and independently derives return-progress contracts.
+This lets supported O0 loop bodies correspond to computations in O2 unrolled
+code while retaining every original function attribute. The source LLVM body
+and machine ABI are unchanged. Only the detached observed contract gains
+`mustprogress` and `willreturn`, and only after proof. LLVM's `willreturn` allows
+undefined behavior or returning control; this does not promise a normal return
+for invalid inputs or establish equivalent results.
+
+The proof first admits finite scalar operations. It accepts acyclic control
+flow and single-block counter loops with a direct PHI-to-unit-update recurrence,
+a nowrap constraint, and a direct equality/inequality exit test against a
+constant. The test must consume the update itself. Signed-nowrap addition or
+subtraction by ±1 is supported; unsigned-nowrap-only updates use positive 1.
+No iteration simulation or fixed choice for `undef` is assumed. Removing the
+proved self edges must leave the entire represented CFG acyclic. Wrapping-only
+recurrences, frozen or reset counters, unrelated exit conditions, multi-block
+and nested cycles remain **unproven**, with their exact source contracts and
+available graphs. Unproven does not mean nonterminating.
+
+Schema 5 adds `progress:{kind,source_contract,observed_contract,loop_count,loops}`.
+Kinds are `unproven`, `acyclic` and `counter_loops`; each loop witness records
+`block`, `counter`, `update` and `compare` IDs. Step, width, flags and exit value
+remain exact in those nodes. Graph metadata pages omit the loop array; each
+paged node includes only its block's `progress_loop` or null. The proof root
+and witness rows share retained-item limits with nodes and parameter views.
+All analysis and contract text work use the original projection budget and
+cancellation mechanism. Structural reading rechecks finite operations and the
+proof; fresh source binding additionally authenticates the attribute change.
+Qt exposes the proof status, original/observed contracts and restored selection.
+
+The recipes are `llvm-progress-neighborhoods-v1` and
+`llvm-progress-fragments-v1`. Shared loop/unrolled computations retain open
+control/data frontiers and ambiguity between repeated copies. Changed iteration
+bounds, changed body arithmetic and native deltas remain visible. Progress is
+not equality of loop counts, whole-function behavior or patch presence. All
+previous profiles, schemas and saved encodings keep their existing behavior.
+
 Native-to-SSA change associations and call-effect contracts currently require
 the original MedIR profile. Change review explicitly reports an unsupported
 association profile for LLVM evidence while retaining native changes. Local

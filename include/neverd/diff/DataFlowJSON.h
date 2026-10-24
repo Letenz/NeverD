@@ -19,7 +19,10 @@ namespace neverd::diff {
 inline constexpr unsigned DataFlowSchemaVersion = 2;
 inline constexpr unsigned LLVMDataFlowSchemaVersion = 3;
 inline constexpr unsigned LLVMParameterDataFlowSchemaVersion = 4;
+inline constexpr unsigned LLVMProgressDataFlowSchemaVersion = 5;
 inline unsigned dataFlowSchemaVersion(llvm::StringRef Profile) {
+  if (Profile == LLVMProgressDataFlowProfile)
+    return LLVMProgressDataFlowSchemaVersion;
   if (Profile == LLVMParameterDataFlowProfile)
     return LLVMParameterDataFlowSchemaVersion;
   return Profile == LLVMDataFlowProfile ? LLVMDataFlowSchemaVersion

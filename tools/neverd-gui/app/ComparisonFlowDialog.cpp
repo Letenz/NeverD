@@ -189,6 +189,30 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
                  "dependencies. Synthetic operations have block provenance.")
                   .arg(Function["name"].toString(), Address)
                   .arg(Page["total"].toInt()));
+        FunctionStatus->setToolTip({});
+        const auto Progress = Page["progress"].toObject();
+        if (!Progress.isEmpty()) {
+          const auto Kind = Progress["kind"].toString();
+          const auto Status =
+              Kind == "acyclic"
+                  ? tr("Return progress proved: acyclic control flow.")
+              : Kind == "counter_loops"
+                  ? tr("Return progress proved · Counter loops: %1")
+                        .arg(Progress["loop_count"].toInt())
+                  : tr("Return progress unproved: original contracts "
+                       "retained.");
+          FunctionStatus->setText(FunctionStatus->text() + '\n' + Status);
+          FunctionStatus->setToolTip(
+              "<qt>" +
+              tr("Source contract:\n%1\nObserved contract:\n%2\n"
+                 "Progress does not establish equal loop counts or function "
+                 "results.")
+                  .arg(Progress["source_contract"].toString(),
+                       Progress["observed_contract"].toString())
+                  .toHtmlEscaped()
+                  .replace('\n', "<br>") +
+              "</qt>");
+        }
         if (Nodes->rowCount() && !NodeTable->currentIndex().isValid())
           NodeTable->selectRow(0);
         controls();
@@ -272,7 +296,9 @@ void ComparisonFlowDialog::selectSide() {
     Summary->setText(
         Summary->text() + '\n' +
         tr("SSA representation: %1")
-            .arg(Profile == ::neverd::limits::diff::kLLVMParameterSSAProfile
+            .arg(Profile == ::neverd::limits::diff::kLLVMProgressSSAProfile
+                     ? tr("Optimized SSA with loop analysis")
+                 : Profile == ::neverd::limits::diff::kLLVMParameterSSAProfile
                      ? tr("Optimized SSA with parameter views")
                  : Profile == ::neverd::limits::diff::kLLVMSSAProfile
                      ? tr("Optimized SSA")

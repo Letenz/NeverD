@@ -6413,6 +6413,14 @@ Couverture : %7</translation>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>Les vues des paramètres comparent les 32 bits de poids faible des paramètres natifs de 64 bits admissibles. Les largeurs et sources d’origine restent consultables.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>L’analyse des boucles prouve la terminaison dans les cas pris en charge avant de comparer les calculs. Elle inclut les vues des paramètres et conserve les contrats des boucles non prouvés.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6515,6 +6523,34 @@ Sélectionnez une opération pour suivre ses dépendances. Les opérations synth
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>SSA optimisé avec vues des paramètres</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>Terminaison prouvée : flot de contrôle acyclique.</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>Terminaison prouvée · Boucles à compteur : %1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>Terminaison non prouvée : contrats d’origine conservés.</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>Contrat d’origine :
+%1
+Contrat observé :
+%2
+La terminaison ne prouve pas l’égalité des nombres d’itérations ou des résultats des fonctions.</translation>
     </message>
 </context>
 <context>

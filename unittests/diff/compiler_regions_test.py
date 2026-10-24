@@ -258,6 +258,70 @@ def main():
         high_graph = changed_high['dataflow']['secondary']['entries'][0]['graph']
         assert all(v['elided_truncations'] == 0 for v in high_graph['parameter_views'])
         assert changed_high['flow_regions']['anchor_count'] == 0
+    progress_profile = ['--dataflow-profile=llvm-progress-ssa-v1', '--flow-fragments']
+    for arch, targets in (
+            ('x64', (('elf', 'x86_64-unknown-linux-gnu'),
+                     ('coff', 'x86_64-pc-windows-msvc'),
+                     ('macho', 'x86_64-apple-darwin'))),
+            ('aarch64', (('elf', 'aarch64-unknown-linux-gnu'),
+                         ('coff', 'aarch64-pc-windows-msvc'),
+                         ('macho', 'arm64-apple-macos11')))):
+        for fmt, triple in targets:
+            prefix = f'progress-{arch}-{fmt}'
+
+            def loop_input(name, level, definitions=()):
+                return build(f'{prefix}-{name}', args.clang,
+                             [f'--target={triple}', f'-O{level}',
+                              '-fno-asynchronous-unwind-tables', '-DFAMILY=2',
+                              *definitions], control)
+
+            a, b = loop_input('O0', 0), loop_input('O2', 2)
+            patch = loop_input('patch', 2, ['-DFINAL_ADD=5u'])
+            bound = loop_input('bound', 2, ['-DLOOP_MASK=3u'])
+            body = loop_input('body', 2, ['-DLOOP_MUL=11u'])
+            report = root / f'{prefix}.nddiff'
+            document = compare(prefix, a, b,
+                               [*progress_profile, '--save', str(report)])
+            graphs = [document['dataflow'][side]['entries'][0]['graph']
+                      for side in ('primary', 'secondary')]
+            assert all(g['schema_version'] == 5 for g in graphs)
+            assert graphs[0]['progress']['kind'] == 'counter_loops'
+            assert graphs[0]['progress']['loop_count'] == 1
+            assert graphs[1]['progress']['kind'] == 'acyclic'
+            assert 'willreturn' not in graphs[0]['progress']['source_contract']
+            assert 'willreturn' in graphs[0]['progress']['observed_contract']
+            regions = document['flow_regions']
+            assert regions['profile'] == 'llvm-progress-fragments-v1'
+            assert regions['semantic_validation'] == 'not_performed'
+            assert any(anchor['node_count'] >= 4 and anchor['frontier_count']
+                       for anchor in regions['anchors'])
+            assert all(anchor['open_control_frontier'] for anchor in regions['anchors'])
+            assert compare(prefix + '-reopen', a, b,
+                           ['--reopen', str(report)]) == document
+            changed = compare(prefix + '-patch', a, patch, progress_profile, False)
+            patched = changed['dataflow']['secondary']['entries'][0]['graph']
+            final_adds = {i for i, n in enumerate(patched['nodes'])
+                          if n['opcode'] == 'add' and
+                          any(v[0] == 1 and v[3] == '0x5' for v in n['inputs'])}
+            assert final_adds
+            assert all(pair[1] not in final_adds for anchor in changed['flow_regions']['anchors']
+                       for pair in anchor['nodes'])
+            changed_bound = compare(prefix + '-bound', a, bound, progress_profile, False)
+            smaller = changed_bound['dataflow']['secondary']['entries'][0]['graph']
+            assert any(n['opcode'] == 'and' and any(v[0] == 1 and v[3] == '0x3'
+                       for v in n['inputs']) for n in smaller['nodes'])
+            assert len(smaller['nodes']) != len(graphs[1]['nodes'])
+            assert all(anchor['open_control_frontier']
+                       for anchor in changed_bound['flow_regions']['anchors'])
+            changed_body = compare(prefix + '-body', a, body, progress_profile, False)
+            altered = changed_body['dataflow']['secondary']['entries'][0]['graph']
+            multiplications = {i for i, n in enumerate(altered['nodes'])
+                               if n['opcode'] == 'mul' and
+                               any(v[0] == 1 and v[3] == '0xb' for v in n['inputs'])}
+            assert multiplications
+            assert all(pair[1] not in multiplications
+                       for anchor in changed_body['flow_regions']['anchors']
+                       for pair in anchor['nodes'])
     manifest['status'] = 'passed'
     save_manifest()
     print(f"{len(manifest['comparisons'])} compiler/patch fixture comparisons; artifacts: {root}")

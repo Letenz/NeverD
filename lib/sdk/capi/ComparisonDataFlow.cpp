@@ -129,9 +129,12 @@ readComparisonDataFlow(Session &S, const Program &P,
             if (!Lifted || Lifted->getParent() != Result.LlvmModule.get())
               throw LLVMDataFlowUnsupported(
                   "no retained native LLVM function binding");
-            const auto Build = Settings.Profile == LLVMParameterDataFlowProfile
-                                   ? buildLLVMParameterDataFlow
-                                   : buildLLVMDataFlow;
+            const auto Build =
+                Settings.Profile == LLVMProgressDataFlowProfile
+                    ? buildLLVMProgressDataFlow
+                : Settings.Profile == LLVMParameterDataFlowProfile
+                    ? buildLLVMParameterDataFlow
+                    : buildLLVMDataFlow;
             Entry.Graph = Build(*Lifted, *Result.LLVMSources, F.Address,
                                 P.Identity.Revision, P.Identity.ABI, true,
                                 GraphOptions, Control);

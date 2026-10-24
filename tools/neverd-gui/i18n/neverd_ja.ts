@@ -6377,6 +6377,14 @@ Coverage: %7</source>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>パラメータビューは、条件を満たす 64 ビットのネイティブパラメータの下位 32 ビットを比較します。元のビット幅と出所も確認できます。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>ループ解析は、対応する範囲で終了性を証明してから計算を比較します。パラメータビューを含み、証明できないループの元の契約は保持します。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6479,6 +6487,34 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>パラメータビュー付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>終了性を証明済み：循環のない制御フロー。</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>終了性を証明済み · カウンターループ：%1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>終了性は未証明：元の契約を保持。</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>元の契約：
+%1
+観測された契約：
+%2
+終了性はループ回数や関数の結果の一致を証明するものではありません。</translation>
     </message>
 </context>
 <context>

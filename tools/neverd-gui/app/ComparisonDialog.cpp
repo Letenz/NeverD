@@ -295,6 +295,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
                        ::neverd::limits::diff::kLLVMSSAProfile);
   FlowProfile->addItem(tr("Optimized SSA with parameter views"),
                        ::neverd::limits::diff::kLLVMParameterSSAProfile);
+  FlowProfile->addItem(tr("Optimized SSA with loop analysis"),
+                       ::neverd::limits::diff::kLLVMProgressSSAProfile);
   FlowProfile->setEnabled(false);
   FlowProfile->setToolTip(
       tr("Optimized SSA reduces compiler scaffolding for comparison. Functions "
@@ -302,7 +304,12 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
       '\n' +
       tr("Parameter views compare the low 32 bits of eligible 64-bit native "
          "parameters. Original widths and sources remain available for "
-         "review."));
+         "review.") +
+      '\n' +
+      tr("Loop analysis proves return progress where supported before "
+         "comparing "
+         "computations. It includes parameter views and preserves unproved "
+         "loop contracts."));
   AnalyzeFlowRegions = new QCheckBox(tr("SSA region hypotheses"), Settings);
   AnalyzeFlowRegions->setObjectName("comparisonAnalyzeFlowRegions");
   AnalyzeFlowRegions->setToolTip(

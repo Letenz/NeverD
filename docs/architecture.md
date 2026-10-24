@@ -460,6 +460,20 @@ PHI predecessors survive substitution, and only detached node references and
 terminators are renumbered. `retainedItems()` counts parameter rows together
 with nodes for production, reading and collection validation without changing
 operation coverage. Legacy profiles retain their work and serialized contracts.
+`llvm-progress-ssa-v1` extends that projection with schema 5 progress provenance.
+`LLVMFlowSemantics` owns the finite scalar/intrinsic whitelist shared by original
+LLVM admission and saved proof checking. `FlowProgress` owns one linear,
+interruptible proof over detached graph nodes: acyclic control or direct
+nowrap-unit-counter self loops whose removal leaves a DAG. It never simulates
+iterations, assumes undef is fixed, or relies on existing progress attributes.
+Raw LLVM verification/admission and parameter elision precede this proof.
+`LLVMDataFlow` adds enum attributes to an AttributeSet copy, preserves both full
+contract prefixes, and changes only detached signatures. String attributes are
+never searched for flags or removed by text matching. `retainedItems()` includes
+the proof root and witnesses; work/cancellation stays within the original
+projection allowance. Graph validation reruns the same proof and finite-op
+admission; fresh source binding authenticates source-to-observed attributes.
+CLI, SDK, worker and Qt share this owner and do not derive their own loop facts.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.

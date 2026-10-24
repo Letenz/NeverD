@@ -11,6 +11,8 @@ add_neverd_component_library(NeverDDiff
   FlowFragments.cpp
   FlowMatch.cpp
   FlowParameterViews.cpp
+  FlowProgress.cpp
+  LLVMFlowSemantics.cpp
   FlowRegions.cpp
   FlowRegionsJSON.cpp
   Features.cpp

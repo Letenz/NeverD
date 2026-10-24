@@ -6413,6 +6413,14 @@ Coverage: %7</translation>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>Optimized SSA with loop analysis</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6515,6 +6523,34 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>Optimized SSA with parameter views</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>Optimized SSA with loop analysis</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>Return progress proved: acyclic control flow.</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>Return progress proved · Counter loops: %1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>Return progress unproved: original contracts retained.</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</translation>
     </message>
 </context>
 <context>

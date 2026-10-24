@@ -42,9 +42,14 @@ inline constexpr llvm::StringLiteral
     LLVMDataFlowProfile(limits::diff::kLLVMSSAProfile);
 inline constexpr llvm::StringLiteral
     LLVMParameterDataFlowProfile(limits::diff::kLLVMParameterSSAProfile);
+inline constexpr llvm::StringLiteral
+    LLVMProgressDataFlowProfile(limits::diff::kLLVMProgressSSAProfile);
+inline bool hasParameterViews(llvm::StringRef Profile) {
+  return Profile == LLVMParameterDataFlowProfile ||
+         Profile == LLVMProgressDataFlowProfile;
+}
 inline bool isLLVMDataFlowProfile(llvm::StringRef Profile) {
-  return Profile == LLVMDataFlowProfile ||
-         Profile == LLVMParameterDataFlowProfile;
+  return Profile == LLVMDataFlowProfile || hasParameterViews(Profile);
 }
 std::vector<llvm::StringRef> flowGapNames(uint32_t Mask);
 
@@ -153,6 +158,22 @@ struct FlowParameterView {
   bool operator==(const FlowParameterView &) const = default;
 };
 
+enum class FlowProgressKind : uint8_t { Unproven, Acyclic, CounterLoops };
+llvm::StringRef flowProgressName(FlowProgressKind Kind);
+struct FlowLoopProgress {
+  uint32_t Block = NoIndex, Counter = NoIndex, Update = NoIndex,
+           Compare = NoIndex;
+  bool operator==(const FlowLoopProgress &) const = default;
+};
+struct FlowProgress {
+  FlowProgressKind Kind = FlowProgressKind::Unproven;
+  /// Full prefixes prevent source string attributes from being mistaken for
+  /// operation flags. Fresh source binding authenticates the transformation.
+  std::string SourceContract, ObservedContract;
+  std::vector<FlowLoopProgress> Loops;
+  bool operator==(const FlowProgress &) const = default;
+};
+
 struct DataFlowGraph {
   std::string Revision;
   std::string Profile = DataFlowProfile.str();
@@ -163,10 +184,13 @@ struct DataFlowGraph {
   std::vector<FlowNode> Nodes;
   std::vector<FlowBlock> Blocks;
   /// Source argument order, including unused/unprojected parameters. Only the
-  /// parameter-view profile owns these records; they are not operation nodes.
+  /// parameter-view profiles own these records; they are not operation nodes.
   std::vector<FlowParameterView> ParameterViews;
+  /// Only the progress profile owns this independently derived property.
+  std::optional<FlowProgress> Progress;
   uint64_t retainedItems() const {
-    return uint64_t(Nodes.size()) + ParameterViews.size();
+    return uint64_t(Nodes.size()) + ParameterViews.size() +
+           (Progress ? 1 + Progress->Loops.size() : 0);
   }
   bool operator==(const DataFlowGraph &) const = default;
   std::optional<std::string> validate(const DataFlowOptions &Options) const;
