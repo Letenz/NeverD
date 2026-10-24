@@ -540,7 +540,7 @@ private slots:
     bench.window->openFile(writeFixture(directory, "focus-mode.bin"));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
-    const Address address = Base + (inFunction ? 0x140 : 0x2700);
+    const Address address = Base + (inFunction ? 0x140 : 0x3000);
     assembly->navigate(address);
     QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(address));
     QTRY_COMPARE(assembly->currentFunction(),
