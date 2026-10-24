@@ -817,6 +817,16 @@ input words and has independent full-width Z3 proofs at 8/16/32/64 bits. Nearby
 parity changes and exact/one-short work plus short storage check refusal and
 cumulative accounting. Real worker and CLI source tests also execute degree-64
 and degree-128 mixed pairs through all six source routes at O0/O2.
+`SymMBALazyPolynomial` checks deferred flat-polynomial construction and the
+streaming Boolean-polynomial reader. Dense carry fixtures retain their exact
+output costs under fixed work ceilings; independent APInt oracles cover
+8–257-bit words, common factors, complemented constants, flat ties and
+exact/short work and storage. Division, mixed-width extension and nested
+right shifts keep their opaque-input boundaries. Native-width common factors
+also require independent full-width Z3 proofs. Fused sum/carry decisions must
+finish both degree-64 carry products at the same benchmark allowance, with
+lower output costs. Exhausting all 65,536 low-byte input pairs for each product
+checks the resulting carries independently of the decision implementation.
 `SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
 normalized products, nested additions, multi-input XOR carries and changed
 parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor

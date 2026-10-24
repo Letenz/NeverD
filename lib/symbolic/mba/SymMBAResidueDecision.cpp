@@ -15,6 +15,8 @@
 #include "Limits.h"
 #include "SymMBADetail.h"
 
+#include "neverd/symbolic/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
@@ -71,6 +73,8 @@ class LowWordDecisions {
   bool *StorageLimited;
   size_t Work = 0;
   bool Failed = false;
+  unsigned RootWidth = 0;
+  bool PlainDecisionInputs = true;
   std::optional<std::pair<uint64_t, bool>> Assumption;
   std::optional<uint32_t> PriorityInput;
   // The low edge bit denotes complement. Negation never duplicates a graph;
@@ -89,7 +93,8 @@ class LowWordDecisions {
       return unsigned(llvm::hash_combine(K.A, K.B, K.C));
     }
   };
-  llvm::DenseMap<CarryKey, uint32_t, CarryInfo> Carries;
+  llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;
+  llvm::DenseMap<CarryKey, uint32_t, CarryInfo> Parities;
   std::unordered_map<uint64_t, Bits> Words;
   std::unordered_map<uint32_t, unsigned> Zeros;
   struct WordOperation {
@@ -322,21 +327,26 @@ class LowWordDecisions {
     return Result;
   }
 
-  // A full adder's carry is the majority of its three input bits. Compute
-  // that one function directly instead of retaining three temporary graphs.
-  uint32_t majority(uint32_t A, uint32_t B, uint32_t C, unsigned Depth = 0) {
+  // Recurse over the common decision frontier once for both output bits.
+  // The sum and majority are both self-dual: complementing all three inputs
+  // complements both results. One normalized cache entry therefore shares
+  // their traversal without retaining an intermediate two-input XOR graph.
+  std::pair<uint32_t, uint32_t> fullAdder(uint32_t A, uint32_t B, uint32_t C,
+                                          unsigned Depth = 0) {
     if (!charge())
-      return 0;
-    if (A == B || A == C)
-      return A;
+      return {};
+    if (A == B)
+      return {C, A};
+    if (A == C)
+      return {B, A};
     if (B == C)
-      return B;
+      return {A, B};
     if ((A ^ B) == 1)
-      return C;
+      return {C ^ 1, C};
     if ((A ^ C) == 1)
-      return B;
+      return {B ^ 1, B};
     if ((B ^ C) == 1)
-      return A;
+      return {A ^ 1, A};
     if (A > B)
       std::swap(A, B);
     if (B > C)
@@ -344,13 +354,60 @@ class LowWordDecisions {
     if (A > B)
       std::swap(A, B);
     if (A <= 1)
-      return apply(A ? Or : And, B, C);
+      return {apply(Xor, B, C) ^ A, apply(A ? Or : And, B, C)};
     const uint32_t Complement = A & 1;
     A ^= Complement;
     B ^= Complement;
     C ^= Complement;
     const CarryKey Key{A, B, C};
-    if (auto It = Carries.find(Key); It != Carries.end())
+    if (auto It = Adders.find(Key); It != Adders.end())
+      return {It->second.first ^ Complement, It->second.second ^ Complement};
+    if (Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return {};
+    }
+    const auto DA = decision(A), DB = decision(B), DC = decision(C);
+    const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
+    const auto L =
+        fullAdder(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+                  DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H = fullAdder(DA.Variable == V ? DA.High : A,
+                             DB.Variable == V ? DB.High : B,
+                             DC.Variable == V ? DC.High : C, Depth + 1);
+    const std::pair<uint32_t, uint32_t> R{node(V, L.first, H.first),
+                                          node(V, L.second, H.second)};
+    if (!charge(1, sizeof(CarryKey) + sizeof(R) + 4 * sizeof(void *)) ||
+        !reserveEntry(Adders))
+      return {};
+    Adders.try_emplace(Key, R);
+    return {R.first ^ Complement, R.second ^ Complement};
+  }
+
+  // A final column needs only parity. Normalize each input complement into
+  // one output flag and construct the three-way XOR directly.
+  uint32_t parity(uint32_t A, uint32_t B, uint32_t C, unsigned Depth = 0) {
+    if (!charge())
+      return 0;
+    const uint32_t Complement = (A ^ B ^ C) & 1;
+    A &= ~uint32_t(1);
+    B &= ~uint32_t(1);
+    C &= ~uint32_t(1);
+    if (A == B)
+      return C ^ Complement;
+    if (A == C)
+      return B ^ Complement;
+    if (B == C)
+      return A ^ Complement;
+    if (A > B)
+      std::swap(A, B);
+    if (B > C)
+      std::swap(B, C);
+    if (A > B)
+      std::swap(A, B);
+    if (!A)
+      return apply(Xor, B, C) ^ Complement;
+    const CarryKey Key{A, B, C};
+    if (auto It = Parities.find(Key); It != Parities.end())
       return It->second ^ Complement;
     if (Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
@@ -358,17 +415,17 @@ class LowWordDecisions {
     }
     const auto DA = decision(A), DB = decision(B), DC = decision(C);
     const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
-    auto L =
-        majority(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
-                 DC.Variable == V ? DC.Low : C, Depth + 1);
-    auto H =
-        majority(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
-                 DC.Variable == V ? DC.High : C, Depth + 1);
-    auto R = node(V, L, H);
+    const auto L =
+        parity(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+               DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H =
+        parity(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
+               DC.Variable == V ? DC.High : C, Depth + 1);
+    const auto R = node(V, L, H);
     if (!charge(1, sizeof(CarryKey) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
-        !reserveEntry(Carries))
+        !reserveEntry(Parities))
       return 0;
-    Carries.try_emplace(Key, R);
+    Parities.try_emplace(Key, R);
     return R ^ Complement;
   }
 
@@ -376,9 +433,13 @@ class LowWordDecisions {
     Bits Result;
     uint32_t Carry = 0;
     for (size_t I = 0; I < A.size(); ++I) {
-      Result.push_back(apply(Xor, apply(Xor, A[I], B[I]), Carry));
-      if (I + 1 != A.size())
-        Carry = majority(A[I], B[I], Carry);
+      if (I + 1 == A.size())
+        Result.push_back(parity(A[I], B[I], Carry));
+      else {
+        const auto [Sum, Next] = fullAdder(A[I], B[I], Carry);
+        Result.push_back(Sum);
+        Carry = Next;
+      }
     }
     return Result;
   }
@@ -677,6 +738,11 @@ class LowWordDecisions {
     } else {
       // Treat an unsupported word as an exact opaque input, without assuming
       // a relation between it and any other input word or path condition.
+      // Record the inputs actually used by the decisions. Transparency can
+      // depend on the requested bit count, so the earlier admission walk is
+      // insufficient to establish this property for nested shifts/extracts.
+      PlainDecisionInputs &=
+          Ctx.isVar(R) && Ctx.width(R) == RootWidth && Count <= Ctx.width(R);
       for (unsigned I = 0; I < Count; ++I)
         Result[I] =
             node(((PriorityInput && (R.index() != *PriorityInput ||
@@ -764,10 +830,12 @@ class LowWordDecisions {
         const auto A = Remaining.pop_back_val();
         const auto B = Remaining.pop_back_val();
         const auto C = Remaining.pop_back_val();
-        const auto Sum = apply(Xor, apply(Xor, A, B), C);
+        const auto [Sum, Carry] =
+            I + 1 < Count ? fullAdder(A, B, C)
+                          : std::make_pair(parity(A, B, C), uint32_t(0));
         if (Sum)
           Remaining.push_back(Sum);
-        if (I + 1 < Count && !Insert(I + 1, majority(A, B, C)))
+        if (I + 1 < Count && !Insert(I + 1, Carry))
           break;
       }
       if (!Remaining.empty())
@@ -1494,6 +1562,7 @@ public:
   SymRef simplify(SymRef Root, const llvm::APInt &Scale, unsigned Observed,
                   bool OddProductOnly, bool *Complete) {
     const auto Width = Ctx.width(Root);
+    RootWidth = Width;
     // Refuse broad domains before constructing decisions. This is only a
     // search admission rule; opaque words still retain all their possible bits.
     std::unordered_set<uint32_t> Seen, Inputs;
@@ -1560,7 +1629,8 @@ public:
           Words.clear();
           Arithmetic.clear();
           Applied.clear();
-          Carries.clear();
+          Adders.clear();
+          Parities.clear();
         }
       }
     }
@@ -1796,42 +1866,56 @@ public:
       auto Low = Self(Self, D.Low), High = Self(Self, D.High & ~uint32_t(1));
       if (!Low || !High)
         return nullptr;
-      auto Xor = [&](const Polynomial &A,
-                     const Polynomial &B) -> std::optional<Polynomial> {
-        if (&A == &B)
-          return Polynomial{};
-        const auto Size = A.size() + B.size();
-        if (!charge(Size, Size * sizeof(uint64_t)))
-          return std::nullopt;
-        Polynomial Result;
-        std::set_symmetric_difference(A.begin(), A.end(), B.begin(), B.end(),
-                                      std::back_inserter(Result));
-        if (Result.size() > limits::kMaxResidueDecisionPolynomialTerms)
-          return std::nullopt;
-        return Result;
-      };
-      auto Difference = Xor(*Low, *High);
-      if (!Difference)
+      // P = Low XOR x * (Low XOR High XOR complement). Neither child
+      // contains x, so the two outer sets are disjoint. Merge their sorted
+      // streams directly instead of allocating, shifting and re-merging an
+      // intermediate difference polynomial.
+      const bool Equal = Low == High;
+      const size_t Size = Low->size() +
+                          (Equal ? 0 : Low->size() + High->size()) +
+                          unsigned(D.High & 1);
+      if (!charge(Size, sizeof(Polynomial) + 2 * Size * sizeof(uint64_t)))
         return nullptr;
-      // Canonical decisions have an even low edge, so their polynomial has
-      // no constant term. A complemented high edge contributes only x here;
-      // do not copy and cache an entire second polynomial just to toggle 1.
-      if (D.High & 1) {
-        if (!charge(Difference->size() + 1))
-          return nullptr;
-        Difference->insert(Difference->begin(), 0);
-      }
-      if (!charge(Difference->size()))
-        return nullptr;
-      for (auto &Term : *Difference) {
-        // Ordered decisions place this variable before both children.
-        // Their polynomials cannot contain it; adding its bit preserves order.
+      Polynomial Result;
+      Result.reserve(
+          std::min(Size, limits::kMaxResidueDecisionPolynomialTerms + 1));
+      size_t L = 0, H = 0, Copy = 0;
+      auto Append = [&](uint64_t Term) {
         if (Term & Variable)
-          return nullptr;
+          return false;
         Term |= Variable;
+        while (Copy < Low->size() && (*Low)[Copy] < Term) {
+          Result.push_back((*Low)[Copy++]);
+          if (Result.size() > limits::kMaxResidueDecisionPolynomialTerms)
+            return false;
+        }
+        Result.push_back(Term);
+        return Result.size() <= limits::kMaxResidueDecisionPolynomialTerms;
+      };
+      if ((D.High & 1) && !Append(0))
+        return nullptr;
+      while (!Equal && (L < Low->size() || H < High->size())) {
+        uint64_t Term;
+        if (L == Low->size())
+          Term = (*High)[H++];
+        else if (H == High->size())
+          Term = (*Low)[L++];
+        else if ((*Low)[L] == (*High)[H]) {
+          ++L;
+          ++H;
+          continue;
+        } else if ((*Low)[L] < (*High)[H])
+          Term = (*Low)[L++];
+        else
+          Term = (*High)[H++];
+        if (!Append(Term))
+          return nullptr;
       }
-      auto Result = Xor(*Low, *Difference);
-      return Result ? Store(std::move(*Result)) : nullptr;
+      if (Result.size() + Low->size() - Copy >
+          limits::kMaxResidueDecisionPolynomialTerms)
+        return nullptr;
+      Result.append(Low->begin() + Copy, Low->end());
+      return Store(std::move(Result));
     };
     // Variable indices only grow during this reading, and Width is fixed.
     // A completed factored polynomial therefore keeps the same shifted inputs
@@ -1860,10 +1944,23 @@ public:
             Words,
             (size_t(Ctx.width(SymRef(uint32_t(Variable)))) - 1) / 64 + 1);
       }
-      if (!charge(Edges * (1 + Words),
-                  (Edges + 1) *
-                      (4 * sizeof(SymNode) + 8 * sizeof(SymRef) +
-                       4 * sizeof(llvm::APInt) + 4 * Words * sizeof(uint64_t))))
+      const bool HasConstant = !Form->empty() && !Form->front();
+      const bool LazyFlat =
+          PlainDecisionInputs && Width > 1 &&
+          PolynomialVariables.size() <= Edges &&
+          Form->size() - unsigned(HasConstant) >
+              ::neverd::limits::symbolic::kSymExprCompareMaxTerms;
+      // Distinct monomials over plain equally-wide shifted free inputs have
+      // no absorbing/complement pairs or extension contractions. Above the
+      // comparison recognizer's arity, XOR also preserves their exact spelling.
+      // Thus the flat form's reading score can be bounded without interning
+      // its monomials. Keep every other input shape on the established route.
+      const size_t ConstructionBytes =
+          4 * sizeof(SymNode) + 8 * sizeof(SymRef) + 4 * sizeof(llvm::APInt) +
+          4 * Words * sizeof(uint64_t);
+      const size_t InitialEdges = LazyFlat ? PolynomialVariables.size() : Edges;
+      if (!charge(InitialEdges * (1 + Words),
+                  (InitialEdges + 1) * ConstructionBytes))
         return Fallback;
       llvm::SmallVector<SymRef, 16> Inputs(PolynomialVariables.size());
       for (const auto &[Variable, Index] : PolynomialVariables) {
@@ -1873,20 +1970,37 @@ public:
                        Ctx.mkConst(Ctx.width(Input), variableBit(Variable))),
             Width);
       }
-      llvm::SmallVector<SymRef, 16> Terms;
-      for (auto Term : *Form) {
-        llvm::SmallVector<SymRef, 8> Factors;
-        while (Term) {
-          Factors.push_back(Inputs[std::countr_zero(Term)]);
-          Term &= Term - 1;
+      // Every plain input contributes at least one leaf and every distinct
+      // monomial occurrence needs its Boolean operator in the flat reading.
+      // Shifted inputs can only increase this bound. A factored result below
+      // it wins without a second frequency scan or flat construction; other
+      // results still use the established exact reading comparison.
+      const size_t Incidences = Edges - Form->size();
+      const SymReadability FlatLowerBound{1 + size_t(HasConstant) +
+                                              2 * Incidences,
+                                          size_t(HasConstant) + Incidences};
+      auto BuildFlat = [&]() -> SymRef {
+        // Fund only the construction that actually takes place. If the flat
+        // expression is needed after factoring, cumulative construction
+        // reservations still equal the original complete flat reservation.
+        if (LazyFlat && !charge((Edges - InitialEdges) * (1 + Words),
+                                (Edges - InitialEdges) * ConstructionBytes))
+          return {};
+        llvm::SmallVector<SymRef, 16> Terms;
+        for (auto Term : *Form) {
+          llvm::SmallVector<SymRef, 8> Factors;
+          while (Term) {
+            Factors.push_back(Inputs[std::countr_zero(Term)]);
+            Term &= Term - 1;
+          }
+          Terms.push_back(Factors.empty()
+                              ? Ctx.mkConst(llvm::APInt::getAllOnes(Width))
+                              : Ctx.mkAnd(Factors));
         }
-        Terms.push_back(Factors.empty()
-                            ? Ctx.mkConst(llvm::APInt::getAllOnes(Width))
-                            : Ctx.mkAnd(Factors));
-      }
-      auto Result =
-          Ctx.mkAnd(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms),
-                    Ctx.mkConst(Width, 1));
+        return Ctx.mkAnd(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms),
+                         Ctx.mkConst(Width, 1));
+      };
+      SymRef Result = LazyFlat ? SymRef{} : BuildFlat();
       auto Factor =
           [&](auto &&Self, const Polynomial &P, llvm::ArrayRef<SymRef> Basis,
               std::map<Polynomial, SymRef> &Cache, bool TryCoordinate,
@@ -2170,9 +2284,19 @@ public:
       };
       if (auto Smaller = Factor(Factor, *Form, Inputs, Factored, true)) {
         Smaller = Ctx.mkAnd(Smaller, Ctx.mkConst(Width, 1));
-        if (readingScore(Ctx, Smaller) < readingScore(Ctx, Result))
+        if (LazyFlat && readingScore(Ctx, Smaller) < FlatLowerBound) {
           Result = Smaller;
+        } else {
+          if (LazyFlat)
+            Result = BuildFlat();
+          if (Result && readingScore(Ctx, Smaller) < readingScore(Ctx, Result))
+            Result = Smaller;
+        }
+      } else if (LazyFlat && !Failed) {
+        Result = BuildFlat();
       }
+      if (!Result)
+        return Fallback;
       return !Fallback ||
                      readingScore(Ctx, Result) < readingScore(Ctx, Fallback)
                  ? Result
