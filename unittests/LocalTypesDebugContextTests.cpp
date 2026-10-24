@@ -109,7 +109,8 @@ TEST(LocalTypesDebugContext, PortablePrototypesRetainIntegerKeywordIdentity) {
     ASSERT_TRUE(types::parseCTypes(R"(
       typedef unsigned long DWORD;
       typedef enum { OpFirst = 1, OpSecond = 2 } Operation;
-      double Scalar(DWORD Flags, Operation Op, double Value, long *Output);
+      double Scalar(DWORD Flags, Operation Op, double Value, long *Output,
+                    const long long *Wide);
     )",
                                    *Library)
                     .ok());
@@ -128,6 +129,14 @@ TEST(LocalTypesDebugContext, PortablePrototypesRetainIntegerKeywordIdentity) {
               std::string::npos);
     EXPECT_EQ(Signature->Params[0].second->Size,
               Model == types::DataModel::LP64 ? 8u : 4u);
+    // Call conversions must use the declaration's C identity too. Equal
+    // widths do not make long *, long long * and int64_t * compatible.
+    EXPECT_NE(Signature->Params[3].second->Pointee->SourceName.find(
+                  "__typeof__(__builtin_choose_expr(sizeof(long) == " + Bytes),
+              std::string::npos);
+    EXPECT_NE(Signature->Params[4].second->Pointee->SourceName.find(
+                  "__typeof__(__builtin_choose_expr(sizeof(long long) == 8"),
+              std::string::npos);
     EXPECT_EQ(Context.resolvePrototype("Scalar")->PortablePrototypeDeclaration,
               Signature->PortablePrototypeDeclaration);
   }

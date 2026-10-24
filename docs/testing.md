@@ -357,6 +357,11 @@ their machine declarations, independently of call order. These emitter checks
 do not certify native platform execution. `NeverDWorkerStackText` also checks
 the qualified local declaration through fresh x64/ARM64 PE sessions on both
 C routes.
+The worker also compiles a `const long long *` call against an independent
+definition on the host, where `int64_t *` need not be compatible.
+`LocalTypesDebugContext.PortablePrototypesRetainIntegerKeywordIdentity` checks
+that both the declaration and scalar call conversions retain the same target
+integer identity across ILP32, LLP64 and LP64 models.
 They supply complete local struct/union layouts as well: pointer-only imports
 must keep forward declarations and compile alongside independent definitions.
 `LocalTypesDebugContext.PointerDeclarationsDoNotRequireRecordLayouts` checks
