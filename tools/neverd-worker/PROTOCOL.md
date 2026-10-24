@@ -979,7 +979,8 @@ analysis remain separate work. JSON DOM overhead may exceed serialized length.
 
 ## Declarative contribution manifests
 
-An explicit GUI import can register a JSON file such as:
+The GUI's **Analysis queries → Import queries…** action can register a JSON
+file such as:
 
 ```json
 {
@@ -1016,6 +1017,11 @@ strings as code. Registry changes have their own monotonic revision. Registry
 contents last for one worker lifetime; the GUI may remember explicitly imported
 manifest paths and import them again after restart. Registration does not
 authorize file writes or autonomous query execution.
+
+Analysis queries are distinct from executable plugins. The CLI exposes these
+analysis categories through its existing commands and can reuse saved argument
+files; see [Analysis queries from the CLI](../../docs/gui.md#analysis-queries-from-the-cli).
+Those argument files and these JSON manifests are different formats.
 
 ## Building and tests
 

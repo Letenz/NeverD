@@ -544,12 +544,12 @@
         <translation>管理 MCP 連線與工作階段共用</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>擴充功能(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>分析查詢</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>管理宣告式擴充功能</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>執行內建或匯入的分析查詢</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2097,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>匯入資訊清單…</translation>
+        <source>Import queries…</source>
+        <translation>匯入查詢…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>執行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>卸載</translation>
+        <source>Remove group</source>
+        <translation>移除查詢群組</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>匯入宣告式資訊清單，以新增分析命令與檢視。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>執行內建分析查詢，或從 JSON 檔案匯入查詢定義。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>選取擴充功能命令以檢視其結果。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>選取查詢並點選「執行」以檢視結果。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>匯入擴充功能資訊清單</translation>
+        <source>Import analysis queries</source>
+        <translation>匯入分析查詢</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>資訊清單 (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>查詢定義 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>移除所選群組中的全部查詢。</translation>
     </message>
 </context>
 <context>
@@ -2179,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>導覽列</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>擴充功能</translation>
+        <source>Analysis queries</source>
+        <translation>分析查詢</translation>
     </message>
     <message>
         <source>Hex View-1</source>

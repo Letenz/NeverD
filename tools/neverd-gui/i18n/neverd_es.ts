@@ -544,12 +544,12 @@
         <translation>Gestionar las conexiones MCP y el uso compartido de la sesión</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>E&amp;xtensiones</translation>
+        <source>Analysis queries</source>
+        <translation>Consultas de análisis</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>Gestionar las extensiones declarativas</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>Ejecutar consultas de análisis integradas o importadas</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2102,32 +2102,36 @@ Haga doble clic para ir a la declaración.</translation>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>Importar manifiesto…</translation>
+        <source>Import queries…</source>
+        <translation>Importar consultas…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>Ejecutar</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>Quitar</translation>
+        <source>Remove group</source>
+        <translation>Eliminar grupo</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>Importe un manifiesto declarativo para añadir comandos y vistas de análisis.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>Ejecutar consultas de análisis integradas o importar definiciones de consultas desde un archivo JSON.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>Seleccione un comando de extensión para examinar su resultado.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>Seleccione una consulta y pulse Ejecutar para ver el resultado.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>Importar manifiesto de extensión</translation>
+        <source>Import analysis queries</source>
+        <translation>Importar consultas de análisis</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>Manifiestos (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>Definiciones de consultas (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>Eliminar todas las consultas del grupo seleccionado.</translation>
     </message>
 </context>
 <context>
@@ -2185,8 +2189,8 @@ Haga doble clic para ir a la declaración.</translation>
         <translation>Banda de navegación</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>Extensiones</translation>
+        <source>Analysis queries</source>
+        <translation>Consultas de análisis</translation>
     </message>
     <message>
         <source>Hex View-1</source>

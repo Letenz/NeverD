@@ -1794,6 +1794,12 @@ and function-edit controller cases check that their scoped Ctrl+E still wins.
 
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
 its dock button and the tab context menu in both themes.
+`closedFloatingDocksReopenInWorkbench` closes floating panes through their
+native window and dock action, then reopens them in the main window. It covers
+disassembly, hex, functions, pseudocode, IR, types, analysis queries, output,
+overview and chooser panes, and preserves already open floating panes.
+`reopeningPaneDoesNotFollowFloatingAssembly` checks that a closed tab returns
+to the main window even when its previous tab group and disassembly are floating.
 `floatingAnalysisMenusStayWithTheirView` checks popup ownership and native
 transient parenting for floating text, graph, pseudocode and IR views.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and

@@ -544,12 +544,12 @@
         <translation>MCP 接続とセッション共有を管理します</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>拡張機能(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>宣言型拡張機能を管理します</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>組み込みまたはインポートした解析クエリを実行</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2097,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>マニフェストをインポート…</translation>
+        <source>Import queries…</source>
+        <translation>クエリをインポート…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>実行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>アンロード</translation>
+        <source>Remove group</source>
+        <translation>グループを削除</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>宣言型マニフェストをインポートして、解析コマンドとビューを追加します。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>組み込みの解析クエリを実行するか、JSON ファイルからクエリ定義をインポートします。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>拡張機能のコマンドを選択すると、結果を確認できます。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>クエリを選択して「実行」をクリックすると結果が表示されます。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>拡張機能マニフェストのインポート</translation>
+        <source>Import analysis queries</source>
+        <translation>解析クエリをインポート</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>マニフェスト (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>クエリ定義 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>選択したグループのクエリをすべて削除します。</translation>
     </message>
 </context>
 <context>
@@ -2179,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>ナビゲーションバンド</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>拡張機能</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
         <source>Hex View-1</source>
