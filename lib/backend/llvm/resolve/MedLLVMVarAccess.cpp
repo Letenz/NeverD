@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -865,10 +866,12 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
   // occurrence values; whole-function variable roles are not SSA evidence.
   if (CurMedFunc && CurMedFunc->SkippedSSA && V.isConst())
     return rawIntegerConstant(*Ctx, sizeToType(V.Size), V.ConstVal);
-  // Any fixed value is as good as another, but every read of one agrees.
-  if (V.Kind == MedVar::Unspecified)
-    return Builder.CreateFreeze(llvm::PoisonValue::get(
-        llvm::Type::getIntNTy(*Ctx, std::max<unsigned>(V.Size, 1) * 8)));
+  if (V.Kind == MedVar::Unspecified) {
+    auto *Type = llvm::Type::getIntNTy(*Ctx, std::max<unsigned>(V.Size, 1) * 8);
+    if (PreserveUnknownSourceValues)
+      return llvm_source_unknown::create(Builder, Type);
+    return Builder.CreateFreeze(llvm::PoisonValue::get(Type));
+  }
   if (V.Kind == MedVar::SEHExceptionCode) {
     // The native SEH lowering stores the handler's catch pad code here.
     // Without it no edge reaches the handler, so this read is unreachable.

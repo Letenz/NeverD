@@ -1491,6 +1491,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 }
 
 void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
+  if (llvm_source_unknown::isValue(&Inst))
+    return;
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
   if (RawMemoryUpdateInputs.count(&Inst))

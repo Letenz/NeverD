@@ -299,7 +299,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                             !Result.LibraryRecognitions.empty(),
                         Result.LibraryRecognitions, Dbg,
                         SourceViewOptions{.Symbolic = Opts.SymbolicLLVMSource},
-                        &Result.CallPrototypeArguments);
+                        &Result.CallPrototypeArguments,
+                        Opts.SourceProjection && !Opts.PatchMode);
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;
     Result.LlvmModule = std::move(Emission.Module);
@@ -310,6 +311,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
   } else {
     MedLLVMEmitter MedEmitter;
+    MedEmitter.setPreserveUnknownSourceValues(Opts.SourceProjection &&
+                                              !Opts.PatchMode);
     MedEmitter.setDebugContext(Dbg);
     MedEmitter.setPrototypeArgumentCallees(&Result.CallPrototypeArguments);
     if (Opts.RetainLLVMSourceObservations ||

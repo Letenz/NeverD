@@ -19,6 +19,7 @@
 #include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -462,6 +463,14 @@ TEST(I386CallContract, WindowsNonlocalCallsRetainTheirControlFlowContract) {
                 if (const auto *Target = Call->getCalledFunction();
                     Target && Target->isIntrinsic())
                   continue;
+                if (llvm_source_unknown::isValue(Call)) {
+                  // The continuation overwrites the actual result and does
+                  // not observe any volatile register's remaining state.
+                  EXPECT_TRUE(Call->use_empty());
+                  EXPECT_FALSE(Call->hasFnAttr(llvm::Attribute::ReturnsTwice));
+                  EXPECT_FALSE(Call->hasFnAttr(llvm::Attribute::NoReturn));
+                  continue;
+                }
                 ASSERT_EQ(ObservedCall, nullptr);
                 ObservedCall = Call;
               }

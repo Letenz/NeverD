@@ -21,20 +21,22 @@ unknown after earlier calls; never erase those inputs or replace them with zero.
 Integer call recovery now retains the complete SSA operand prefix published by
 callee-read summaries on x64 COFF, ELF and Mach-O. ARM/ARM64 count-only contracts
 still require actual setup values. This repairs operand loss; it does not
-recover an opaque callee's observable exit-register state. Native LLVM still
-models call clobbers with `freeze undef`, which source optimization can legally
-replace with zero. Recover the actual state contract or retain an explicit
-unsupported value through both projections; disabling optimization or deleting
-arguments does not establish that contract. Generic FP/vector summary operands
-need the same audit, including register-bank and scalar-width preservation.
+recover an opaque callee's observable exit-register state. Native reconstruction
+still models unproved call clobbers with `freeze undef`.
+C source paths retain wholly unknown clobbers and MedIR `Unspecified` values
+through a shared opaque marker, so source optimization cannot choose zero.
+HighC store/assignment printing no longer overrides unknown expressions with
+zero. This exposes missing state; recovering its actual dynamic contract and
+partially preserved vector suffixes remains open. Generic FP/vector summary
+operands need the same audit, including register-bank and scalar-width
+preservation.
 Bounded call-free x64 callees now publish scalar constants agreed at every
 return, before SSA, through the shared register-effect summary. Ordinary ABI
 result registers, addresses, exceptional roots and unknown paths remain outside
 that proof. Public caller stores execute through both C routes and real PE/ELF
 consumers, including cached query order; dynamic outputs such as CPUID and VM
-state still require a real call-state contract. HighC's explicit zero fallback
-for unknown memory stores is a separate confirmed gap, alongside LLVM's
-`freeze undef`; neither is closed by recovering the provable constants.
+state still require a real call-state contract. An explicit unsupported
+expression does not certify those dynamic values or executable reconstruction.
 Complete header and explicit local FP/HFA declarations share the same checked
 carrier adapter. ARM64 cached imports retain the original loaded callable
 through bounded private-frame proofs. Selected LLVMC output includes the
