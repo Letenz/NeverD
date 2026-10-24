@@ -21,8 +21,6 @@
 
 namespace neverd::gui {
 namespace {
-/// How far inside the visible edge a press still resizes the window.
-constexpr int InnerEdge = 4;
 /// How far along an edge from a corner a press resizes both edges.
 constexpr int CornerReach = 16;
 
@@ -172,8 +170,8 @@ WindowFrame::~WindowFrame() { showEdges({}); }
 Qt::Edges WindowFrame::edgesAt(QPoint at, QSize size, QMargins shadow) {
   const QRect window(QPoint(), size);
   const QRect visible = window.marginsRemoved(shadow);
-  const QRect inner =
-      visible.adjusted(InnerEdge, InnerEdge, -InnerEdge, -InnerEdge);
+  constexpr int inset = ::neverd::limits::gui_config::kWindowFrameResizeInset;
+  const QRect inner = visible.adjusted(inset, inset, -inset, -inset);
   if (!window.contains(at) || inner.contains(at))
     return {};
   Qt::Edges edges;

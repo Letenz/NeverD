@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>تبديل مساحة عمل عائمة تضم التفكيك والشيفرة الزائفة والمخرجات</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>وضع التركيز (&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>فتح(&amp;O)...</translation>
     </message>
@@ -2204,6 +2212,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>تعذرت استعادة التخطيط السابق لوضع التركيز.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>إعادة تحميل ملف الإدخال</translation>
@@ -8386,6 +8398,14 @@ SHA-256 الثانوي: %3
     <message>
         <source>Move window</source>
         <translation>تحريك النافذة</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>قفل النافذة العائمة</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>إلغاء قفل النافذة العائمة</translation>
     </message>
 </context>
 <context>

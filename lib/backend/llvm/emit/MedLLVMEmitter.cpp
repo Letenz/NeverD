@@ -983,6 +983,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   SegmentDataBases.clear();
   WritableSegmentGlobals.clear();
   CodePtrTableGlobals.clear();
+  ImageFunctionSymbolsIndexed = false;
+  ImageFunctionEntrySymbols.clear();
+  ImageFunctionEndSymbols.clear();
   DirectDataByteGlobals.clear();
   PreparedFuncBlocks.clear();
   LiftedCodeBlocks.clear();

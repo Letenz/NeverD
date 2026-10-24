@@ -22,6 +22,7 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #include <capstone/capstone.h>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -65,11 +66,21 @@ private:
   std::string TheOpStr;
 };
 
+/// Exact raw words captured together for one AArch64 prefix occurrence.
+struct AArch64PrefixWords {
+  uint32_t Prefix;
+  uint32_t Follower;
+};
+
 struct DecodedInsn {
   va_t Addr;
   uint16_t Size;
   uint32_t Id;
   cs_insn *Raw;
+  /// Snapshot of PC+4 from the same decode buffer for an AArch64 MOVPRFX.
+  /// Missing bytes never grant prefix semantics; this is not executed state.
+  /// Classification-only decoding carries no pair evidence.
+  std::optional<AArch64PrefixWords> AArch64Prefix = std::nullopt;
 };
 
 /// One loader-authenticated address occurrence inside an encoded instruction.
@@ -275,6 +286,10 @@ private:
   /// Use the AArch64 native decoder, returning zero when it declines.
   int decodeAArch64ForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
                            DecodedInsn &Out);
+
+  /// Capture the available follower of this decoded prefix occurrence.
+  void recordAArch64PrefixWords(const uint8_t *Bytes, size_t Len,
+                                DecodedInsn &Out) const;
 
   /// Select an authenticated initial mode for a mixed ARM/Thumb image.
   bool initARMImageMode(const BinaryImage &Img);

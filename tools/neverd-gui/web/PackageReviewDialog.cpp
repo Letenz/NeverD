@@ -62,6 +62,8 @@ PackageReviewDialog::PackageReviewDialog(const QString &WorkerPath,
     : QDialog(Parent), Session(WorkerPath, this), Model(this) {
   setObjectName(QStringLiteral("offlinePackageReview"));
   setWindowTitle(tr("Offline package review"));
+  setWindowFlags((windowFlags() | Qt::WindowMinMaxButtonsHint) &
+                 ~Qt::WindowContextHelpButtonHint);
   setAttribute(Qt::WA_DeleteOnClose);
   resize(1100, 780);
   setMinimumSize(640, 480);

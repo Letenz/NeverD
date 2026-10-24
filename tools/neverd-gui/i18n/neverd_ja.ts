@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>逆アセンブリ、疑似コード、出力を含むフローティング作業領域を切り替える</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>集中モード(&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>開く(&amp;O)...</translation>
     </message>
@@ -2174,6 +2182,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>集中モードに入る前のレイアウトを復元できませんでした。</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>入力ファイルの再読み込み</translation>
@@ -8206,6 +8218,14 @@ Secondary SHA-256: %3
     <message>
         <source>Move window</source>
         <translation>ウィンドウを移動</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>フローティングウィンドウを固定</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>フローティングウィンドウの固定を解除</translation>
     </message>
 </context>
 <context>

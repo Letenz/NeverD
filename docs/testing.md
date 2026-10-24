@@ -78,8 +78,8 @@ including shifts, SP, XZR and overlapping operands. Malformed widths and
 arities cannot grant call-argument proofs. LLVM O2 and both C projections
 retain the actual instruction even with a dead result; generated C compiles
 at O0/O2, with parameter-flow checks for temporary-name collisions. Vector
-CPA forms must reject instead of becoming unchecked arithmetic. These are
-instruction-preservation checks, not native CPA/CPA2 execution qualification.
+CPA coverage lives in `NeverDAArch64SVEPredicateTests`, described below. These
+are instruction-preservation checks, not native CPA/CPA2 execution qualification.
 `ReturnContracts.CheckedAArch64PointersRemainReturnValues` covers all baseline
 PAC/AUT/XPAC/PACGA, authenticated target and scalar CPA results. An effectful
 instruction must not turn a returned pointer into a void function; malformed
@@ -211,6 +211,28 @@ budgets, scalable ABI escape, opaque calls and unmodelled V/Z overlap through
 both Med-to-High and masked/unmasked LLVM emission. Run the existing
 `AArch64_SVEState`, `AArch64_SVEStore`, `AArch64_SVELength` and ordinary NEON/FP
 cases in `NeverDLiftTests` after changing these shared boundaries.
+`AArch64SVECPA` covers all six checked-pointer vector forms with independent
+raw words, high/aliased Z registers, merging P0/P7 operands and distinct
+multiply input roles through both decoders. LLVM verification and O2 retain
+side-effecting scalable assembly, including dead results and cross-element
+predicate producers. HighC compiles at O0/O2; both paths inspect emitted text
+sections for exact machine words. Raw local functions pass CFG/SSA and both
+output routes. Every vector/predicate input requires a local definition;
+malformed shapes cannot preserve call setup. Temporary-name collision tests
+compile the standalone C renderer. These checks do not execute CPA hardware
+or add scalable LLVM-to-C/ABI support.
+
+`AArch64SVEPrefix` in `NeverDAArch64SVEPredicateTests` checks independent
+MOVPRFX/CPA raw pairs through full, fast and lightweight decoding, all three
+prefix forms, high and overlapping registers, merging versus zeroing lanes,
+and canonical predicates across element widths. Invalid or incomplete pairs
+fail before appending LowIR, including in permissive mode. Reused decoder
+occurrences and classification-only scans cannot retain follower evidence.
+Missing operand detail fails explicitly. Raw CFG/SSA tests keep a branch
+into the consumer separate from the prefixed path; LLVM verification, native
+object inspection and HighC compilation at O0/O2 retain the checked consumer.
+These tests do not execute SVE or establish a scalable calling convention.
+
 The local-state suite also checks scalar PAuth, explicit PAuth_LR and resolved
 PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
@@ -408,6 +430,15 @@ qualifiers, convention ownership and `_Noreturn`. The original SDK check's
 `UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
 Windows architectures, independently of the synthetic import names.
 The qualifier execution cases also cover void results.
+
+`SummarizedCallArguments.*` in `NeverDWin64CallContractTests` checks that
+known scalar-only calls retain their exact operands without acquiring unused
+vector writes or PHIs. COFF, ELF and Mach-O cases cover direct/indirect calls,
+repeated recovery without omitted-callee metadata, unknown vector-demand
+controls, positional floating inputs and overlapping integer/vector reads.
+Independent providers compile and execute both C routes at O0/O2 with UBSan.
+Run the SysV, AAPCS64, i386 and FP-parameter suites alongside this shared ABI
+change; it does not recover unknown state that a callee actually observes.
 `Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
 checks the same contract for explicit local declarations.
 `LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
@@ -677,6 +708,10 @@ stack names, chunk headers/footers, bytecode ownership, and reference overlays
 that preserve an intervening independent call. Rename invalidation and paging
 from either direction must retain the cursor's recovered instruction even when
 an independent decode stream overlaps it.
+Saved x64 and ARM64 code items retain this recovery on the first literal jump,
+including after a manually created fragment entry is deleted. Explicit
+independent entries, data and undefined item overrides keep their identities;
+read-only queries must not rewrite either sidecar.
 Direct decompilation of a fragment, before navigation or after visiting its
 owner, must return the owner's C, LLVMC, source and IR pages. Paged source and
 graph snapshots use the same entry, including viewport requests through the
@@ -1868,7 +1903,13 @@ x86-discovery, library-recognition and session suites for this shared decision.
 `NativeLoadCancellation.*` and controlled `InputDigest.*` cases in
 `NeverDNativeBufferTests` check ELF/x64, ELF/AArch64, PE and Mach-O cancellation,
 retry byte/digest parity with LLVM, chunk/padding edges, and loader callback
-lifetime. `SessionCAPITest.Cancelled*Load*`/`CancelledPDBPublics*` check stopped
+lifetime. `NativeFileBuffer.*` in that target compares file and buffer loading
+around host page boundaries, including nonzero trailing overlay bytes and
+release/retry after a stopped file read. `RawFileBuffer.*` checks empty-input
+refusal, complete byte/digest identity and a window containing the last byte
+across small-file and page-size boundaries. These checks retain the bounded
+binary-input contract independently of LLVM's choice to map or copy a file.
+`SessionCAPITest.Cancelled*Load*`/`CancelledPDBPublics*` check stopped
 hash/copy/parse/debug/final-preparation stages, preserved image/analysis/edits,
 first-load retry, cross-architecture replacement and real PDB publics. Worker
 comparison checks stop during both inputs' hashing and retain the old comparison
@@ -1976,10 +2017,15 @@ reference selection. These cases also run in the native Windows/macOS checks;
 `NEVERD_SHORTCUT_CAPTURES` captures the source selection and list in both themes.
 
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
-its dock button and the tab context menu in both themes.
+its dock button and the tab context menu in both themes. Direct dock actions
+work with the floating lock enabled; title-bar docking first unlocks it.
 `NeverDGuiDocking` checks the drawn floating caption with both native-caption
 preferences for the other windows, including visible minimize and maximize
-controls.
+controls and full-size close targets. `doubleClickDetachStartsLocked` and
+`lockedDragsStayFloating` check the default lock, caption movement and rejected
+tab docking. `explicitDockIgnoresLock` clicks the dock button while locked.
+`floatingEdgesResizeWithoutDocking` resizes all four edges and all four corners
+with the lock both enabled and disabled, without opening a docking preview.
 Its native `dragIntoWorkbench` cases press and drag the title bar or tab, verify
 the drop preview, and release into a tab group or horizontal/vertical split.
 They cover separate, overlapping and maximized floating windows, and release
@@ -2006,8 +2052,9 @@ The Wayland runner requires GNOME Shell and creates a private headless desktop
 and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
 mouse events cannot authorize Wayland drag-and-drop. `customFloatingMoveAndResize`
 checks moving the floating window through its caption icon and resizing its
-drawn edges. The caption text and tab start docking drags; on Wayland the icon
-starts the compositor's desktop move. No system caption is added.
+drawn edges. Unlocking enables caption and tab docking drags; a locked caption
+moves the window on the desktop. On Wayland the icon also starts a compositor
+move while unlocked. No system caption is added.
 While a whole floating window is dragged, its native surface is minimized so
 it cannot obscure the target. Cancelled drags must restore its native position,
 size and window state, and accept another mouse click. No input is sent
@@ -2015,6 +2062,24 @@ to the existing desktop. `NEVERD_SHORTCUT_CAPTURES` saves floating-window and
 drop-preview captures, including the actual compositor desktop on Wayland.
 The desktop CI runs native drag cases on X11, Windows
 and macOS; offscreen runs skip gestures requiring native windows.
+
+`closingWorkbenchClosesDetachedWindows` checks clean exit and cancelling then
+discarding unsaved changes, including dialogs owned by floating panes and the
+workbench. Unrelated top-level windows remain open. `NeverDGuiWidgets` ends
+through the real application close path with detached panes and an auxiliary
+dialog; it must terminate without the probe forcing successful process exit.
+
+`codeOpensBesideFloatingDisassembly` checks new, existing and reopened source
+and IR panes beside their floating disassembly. `focusModeGroupsViewsAndRestoresLayout`
+presses Q three times to create one floating workspace with assembly on the
+left, code on the right and output across the bottom. It checks both themes,
+docked and floating origins, restoring the previous layout, unchanged data,
+and ordinary command input. `focusSequenceKeepsSingleQAndIgnoresAutoRepeat`
+checks that the Q sequence has a 400 ms interval, a single Q retains the
+hexadecimal-format action, and holding Q does not enter focus mode.
+`fileReviewWindowsOfferWindowControls` checks the offline
+package and binary-comparison dialogs; the title-bar unit cases exercise
+minimize, maximize and restore with default and customized dialog flags.
 
 `closedFloatingDocksReopenInWorkbench` closes floating panes through their
 native window and dock action, then reopens them in the main window. It covers
@@ -5523,6 +5588,15 @@ augmentation/indirect-LSDA refusals. Metadata negatives cover outer records,
 fragments, explicit entries, malformed identifiable starts, reversed order and
 cleared final annotations. Per-slot inventories must completely partition the
 fresh runtime extent; gaps, duplicates, extra slots and changed strides refuse.
+
+`ItaniumEHDriver` exercises recovery with and without prior extent discovery.
+It checks personality names added after extent publication, complete CIE/FDE
+recovery, malformed/partial section diagnostics across x86/x64/AArch64, and
+AArch64 entries preceding their frames. Truncated CIE and FDE instruction
+programs retain their header's code extent but fail full recovery. Relocatable
+extents must not decode unlinked bytes; recovery must observe edited frame
+bytes. Runtime-index extensions admit complete CIE/FDE programs and reject
+truncated ones before publishing their extents.
 
 `ItaniumEHDriver` and `DarwinUnwindSymbols` check section-wide structural failure
 propagation across x86/x64/AArch64, mixed good/bad record orders, unknown CIE
@@ -12129,8 +12203,43 @@ function whose name collides with the internal marker spelling. These tests
 certify explicit source unavailability, not a reconstructed dynamic call-state
 contract.
 
+`CallExitRegisters.UnknownOnlyJoinCopiesAreNotReads` checks HighC join copies.
+`ConditionalHomeSavesAreNotValueReads` and the `Absorbing*` cases execute both
+C routes at O0/O2, including the nonabsorbing inputs that must still diagnose
+unavailable values. `SummarizedCallArguments.UnreadRegisterTailsDoNotBecomeArguments`
+and `Win64CallContract.UnreadRegisterHolesBeforeStackArgumentsStayUnread` retain
+the complete pre-SSA argument prefix and the positions of stack arguments.
+`Win64CallContract.DebugNamedOmittedRuntimeKeepsItsFixedArity` and
+`NeverDSessionLLVMTests`'s `OmittedDebugNamedRuntimeUsesItsDeclaredArity` check
+that PDB public names reach argument recovery before either the module or
+single-function source route emits a call to an omitted runtime routine.
+`OverwrittenEntrySpillsAreNotValueReads` executes whole and split overwrites
+of incoming-register home slots through both routes. The companion
+`EntrySpillProofKeepsObservedBytesAndEscapes` retains partial observations,
+reads or calls before overwrite, returned frame addresses and branches where
+only one arm overwrites the saved bytes.
+
 The threaded arm64e loader validates unique segment ownership and rejects roots
 at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams
 remain explicitly unsupported; their presence cannot silently discard fixups.
 The public-loader fixture checks that weak-bind offsets survive load-command
 parsing and trigger this admission rule before pointer publication.
+
+## Finite image storage regressions
+
+`NeverDMedLLVMDirectDataTests` checks finite loads and stores independently of
+unrelated unresolved pointer slots across x86, x64, ARM and AArch64 and
+PE/COFF, ELF and Mach-O image models. Large relocation-free gaps must remain
+bounded by demand, retain aliases in both access orders, merge bridging
+accesses, and promote earlier byte objects when an address escapes. Backwards
+growth must preserve atomic alignment and the symbolized original address.
+Required unresolved pointers and shared-shard storage keep their rejection or
+whole-run contracts. Run the owning pointer and memory suites together:
+
+```bash
+ctest --test-dir build-release --build-config Release --output-on-failure \
+  -L '^(NeverDMedLLVMDirectDataTests|NeverDRelocatedFunctionEntryTests|NeverDMachOPointerRelocationBoundaryTests|NeverDNativePointerRelocationBoundaryTests|NeverDLLVMMemoryAlignmentTests)$'
+```
+
+The format/architecture matrix uses shared image models; it is not native
+execution qualification for every listed architecture or host platform.

@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>切換包含反組譯、虛擬碼和輸出的浮動工作區</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>專注模式(&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>開啟(&amp;O)...</translation>
     </message>
@@ -2174,6 +2182,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>無法還原進入專注模式前的配置。</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>重新載入輸入檔案</translation>
@@ -8206,6 +8218,14 @@ Secondary SHA-256: %3
     <message>
         <source>Move window</source>
         <translation>移動視窗</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>鎖定浮動視窗</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>解鎖浮動視窗</translation>
     </message>
 </context>
 <context>

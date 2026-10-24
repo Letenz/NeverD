@@ -1296,8 +1296,14 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
 
   std::mutex Mtx;
   std::atomic<size_t> NextJob{0};
-  std::vector<std::vector<func_detect_detail::CallScanStep>> PieceSteps(
-      PieceJobs.size());
+  // A step's start is the preceding step's end (or the piece start). Keep
+  // only those ends and the sparse calls, rather than three VAs per decoded
+  // instruction. Deferred subranges need boundaries, not a second call log.
+  struct PieceScan {
+    std::vector<va_t> Ends;
+    std::vector<std::pair<va_t, va_t>> Calls;
+  };
+  std::vector<PieceScan> PieceSteps(PieceJobs.size());
 
   auto Worker = [&]() {
     Decoder LocalDec;
@@ -1322,7 +1328,9 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
               Img, LocalDec, Piece.Seg, Cur, Piece.RangeEnd, Known);
           if (!Step)
             break;
-          PieceSteps[Job].push_back(*Step);
+          PieceSteps[Job].Ends.push_back(Step->Next);
+          if (Step->Target != InvalidVA)
+            PieceSteps[Job].Calls.emplace_back(Step->Addr, Step->Target);
           Cur = Step->Next;
         }
         continue;
@@ -1353,17 +1361,15 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
 
   // The targets the joined sweeps find, added to \p Out in order at the end.
   std::vector<va_t> Found;
-  std::vector<std::vector<func_detect_detail::CallScanStep>> RangeSteps(
-      SplitRanges.size());
+  std::vector<std::vector<va_t>> RangeSteps(SplitRanges.size());
   for (size_t RangeIndex = 0; RangeIndex < SplitRanges.size(); ++RangeIndex) {
     func_detect_detail::checkCancellation(Cancellation);
     const SplitRange &Range = SplitRanges[RangeIndex];
-    std::vector<func_detect_detail::CallScanStep> &Taken =
-        RangeSteps[RangeIndex];
+    auto &Taken = RangeSteps[RangeIndex];
     size_t PieceStepCount = 0;
     for (size_t Piece = Range.FirstPiece;
          Piece < Range.FirstPiece + Range.Pieces; ++Piece)
-      PieceStepCount += PieceSteps[Piece].size();
+      PieceStepCount += PieceSteps[Piece].Ends.size();
     Taken.reserve(PieceStepCount);
     va_t Pos = Range.Start;
     func_detect_detail::CodeInterval Known =
@@ -1371,14 +1377,20 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     for (size_t Piece = Range.FirstPiece;
          Piece < Range.FirstPiece + Range.Pieces; ++Piece) {
       func_detect_detail::checkCancellation(Cancellation);
-      const auto &Steps = PieceSteps[Piece];
-      auto It =
-          std::lower_bound(Steps.begin(), Steps.end(), Pos,
-                           [](const func_detect_detail::CallScanStep &Step,
-                              va_t Address) { return Step.Addr < Address; });
+      auto &Scan = PieceSteps[Piece];
+      const auto &Steps = Scan.Ends;
+      auto It = Steps.begin();
+      if (Pos > PieceJobs[Piece].Start) {
+        It = std::lower_bound(Steps.begin(), Steps.end(), Pos);
+        if (It != Steps.end())
+          ++It;
+      }
+      const auto AddressOf = [&] {
+        return It == Steps.begin() ? PieceJobs[Piece].Start : *std::prev(It);
+      };
       // Sweep on until this piece's sweep is reached.
       while (Pos < PieceJobs[Piece].End &&
-             (It == Steps.end() || It->Addr != Pos)) {
+             (It == Steps.end() || AddressOf() != Pos)) {
         func_detect_detail::checkCancellation(Cancellation);
         const auto Step = func_detect_detail::stepCallsX86(
             Img, Dec, Range.Seg, Pos, Range.End, Known);
@@ -1388,18 +1400,26 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
         }
         if (Step->Target != InvalidVA)
           Found.push_back(Step->Target);
-        Taken.push_back(*Step);
+        Taken.push_back(Step->Next);
         Pos = Step->Next;
-        while (It != Steps.end() && It->Addr < Pos)
+        while (It != Steps.end() && AddressOf() < Pos)
           ++It;
       }
-      for (; It != Steps.end() && It->Addr == Pos; ++It) {
+      if (It != Steps.end() && AddressOf() == Pos) {
         func_detect_detail::checkCancellation(Cancellation);
-        if (It->Target != InvalidVA)
-          Found.push_back(It->Target);
-        Taken.push_back(*It);
-        Pos = It->Next;
+        const auto Call = std::lower_bound(
+            Scan.Calls.begin(), Scan.Calls.end(), Pos,
+            [](const auto &C, va_t Address) { return C.first < Address; });
+        for (auto C = Call; C != Scan.Calls.end(); ++C) {
+          func_detect_detail::checkCancellation(Cancellation);
+          Found.push_back(C->second);
+        }
+        Taken.insert(Taken.end(), It, Steps.end());
+        Pos = Steps.back();
       }
+      // The canonical boundaries are now owned by Taken. Release each piece
+      // before joining the next range rather than retaining both full logs.
+      Scan = {};
     }
   }
   llvm::sort(Found);
@@ -1407,23 +1427,21 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
   for (va_t Target : Found)
     Hint = std::next(Out.insert(Hint, Target));
 
-  const auto ByAddress = [](const func_detect_detail::CallScanStep &Step,
-                            va_t Address) { return Step.Addr < Address; };
   for (const Deferred &Item : DeferredChunks) {
     func_detect_detail::checkCancellation(Cancellation);
     const auto &Taken = RangeSteps[Item.Range];
     const ScanChunk &Chunk = Item.Chunk;
     va_t From = Chunk.Start;
     const auto Start =
-        std::lower_bound(Taken.begin(), Taken.end(), Chunk.Start, ByAddress);
-    if (Start != Taken.end() && Start->Addr == Chunk.Start) {
+        std::lower_bound(Taken.begin(), Taken.end(), Chunk.Start);
+    if (Chunk.Start == SplitRanges[Item.Range].Start ||
+        (Start != Taken.end() && *Start == Chunk.Start)) {
       // The last step the long sweep takes before the chunk's end.
-      const auto Past =
-          std::lower_bound(Start, Taken.end(), Chunk.End, ByAddress);
-      const auto Last = std::prev(Past);
-      if (Last->Next <= Chunk.End)
+      const auto Last = std::lower_bound(Start, Taken.end(), Chunk.End);
+      if (Last == Taken.end() || *Last <= Chunk.End)
         continue;
-      From = Last->Addr;
+      From = Last == Taken.begin() ? SplitRanges[Item.Range].Start
+                                   : *std::prev(Last);
     }
     func_detect_detail::scanSegmentCalls(Img, Dec, Chunk.Seg, From, Chunk.End,
                                          Out, Cancellation);

@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CDeferredValue.h"
 #include "../VariadicImportStub.h"
 #include "../X86/X86GetPcThunk.h"
 #include "../render/X86/X86NativeFeatures.h"
@@ -559,6 +560,35 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
   FuncReturnType = InferredVoid
                        ? nullptr
                        : (DeclaredReturn ? DeclaredReturn : Func.ReturnType);
+}
+
+void HighCWriter::collectDeferredUnknowns(const HighFunc &Func) {
+  std::vector<CValueTransfer<std::string>> Transfers;
+  walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+    if (Stmt.Kind != StmtKind::Assign || !Stmt.Dst || !Stmt.Val ||
+        Analysis.DeadStmts.count(&Stmt) ||
+        (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi) ||
+        !Stmt.Dst->Type || Stmt.Dst->Type->Kind != NdTypeKind::Int ||
+        Stmt.Dst->Type->IsEnum)
+      return;
+    const std::string Name = varName(Stmt.Dst->Var);
+    if (!DeclaredCNames.count(Name) || UnknownOnlyNames.count(Name) ||
+        printedForwardedVar(Name, 0) != Name)
+      return;
+    CValueTransfer<std::string> Transfer{
+        Name, std::nullopt,
+        Stmt.IsPhiCopy && isUnknownCallOperand(Stmt.Val.get())};
+    const HighExpr *Value = peelIntegerViewOps(Stmt.Val.get());
+    if (Value && (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi))
+      Transfer.Source = copyForwardName(varName(Value->Var));
+    Transfers.push_back(std::move(Transfer));
+  });
+  for (const std::string &Name : deferredCValues(Transfers)) {
+    const std::string Flag = MemoryIdentifiers.allocate(Name + "_known");
+    DeferredUnknownFlags.emplace(Name, Flag);
+    emitIndent(1);
+    OS << "uint8_t " << Flag << " = 0;\n";
+  }
 }
 
 void HighCWriter::emitLocalDecls(const HighFunc &Func,
@@ -5678,6 +5708,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   CallResultNames.clear();
   CallResultTypes.clear();
   UnknownOnlyNames.clear();
+  DeferredUnknownFlags.clear();
+  ReadingDeferredPayload = false;
   AssignedNames.clear();
   CtorSourceNames.clear();
   CxxThrowPrints.clear();
@@ -6662,6 +6694,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     MemoryIdentifiers.allocate(Name);
   for (const auto &Name : ParamNames)
     MemoryIdentifiers.allocate(Name);
+  collectDeferredUnknowns(Func);
 
   // Frame projection can hide an ordinary-edge PHI copy after a try. Settle
   // clause exits against the statements that will actually be printed, while

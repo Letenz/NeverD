@@ -13,6 +13,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
+#include "neverd/backend/c/render/AArch64/AArch64SVECPAC.h"
 #include "neverd/backend/c/render/ARM/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
@@ -46,6 +47,9 @@ namespace {
 
 #define NEVERD_A64_SVE_VECTOR_C_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "neverd/backend/c/render/AArch64/AArch64SVEVectorC.def"
+
+#define NEVERD_A64_SVE_PREFIX_C_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "neverd/backend/c/render/AArch64/AArch64SVEPrefixC.def"
 
 struct SVEVectorCWidth {
   unsigned Bytes;
@@ -888,7 +892,12 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::A64_SveIndex:
   case I::A64_SveLastb:
   case I::A64_SveSt1:
-  case I::A64_SveStnt1: {
+  case I::A64_SveStnt1:
+#define NEVERD_A64_SVE_CPA_OPERATION(Id, ...) case I::Id:
+#include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"
+#define NEVERD_A64_SVE_PREFIX_OPERATION(Id, ...) case I::Id:
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEPrefix.def"
+  {
     const auto Operation = aarch64_sve::vectorOperation(Id);
     if (!Operation || Ops.size() != Operation->OperandCount ||
         OperandBytes.size() != Ops.size())
@@ -900,6 +909,20 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
       Shape.Operands[I] = {OperandBytes[I], constantOperand(Ops[I])};
     if (!aarch64_sve::isValidVectorShape(Id, Shape))
       return {};
+    if (const auto CPA = aarch64_sve::cpaOperation(Id)) {
+      HasCIntrinsics = true;
+      return aarch64SVECPAC(*CPA, llvm::ArrayRef<std::string>(Ops).drop_back());
+    }
+    if (const auto Prefix = aarch64_sve::prefixOperation(Id)) {
+      HasCIntrinsics = true;
+      const auto &Predicate = Ops[aarch64_sve::kPrefixPredicateInput];
+      const auto &Source = Ops[aarch64_sve::kPrefixSourceInput];
+      return Prefix->Form == aarch64_sve::PrefixForm::Merging
+                 ? llvm::formatv(kPrefixMergeC, Predicate, Source,
+                                 Ops[aarch64_sve::kPrefixMergeInput])
+                       .str()
+                 : llvm::formatv(kPrefixZeroC, Predicate, Source).str();
+    }
     const auto Element = constantOperand(Ops[Operation->ElementIndex]);
     const auto *Width = Element ? sveVectorCWidth(*Element) : nullptr;
     if (!Width)

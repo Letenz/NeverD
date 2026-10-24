@@ -135,6 +135,11 @@ jobs:
           frame_status=$?
           build-gui/bin/neverd-gui-tests \
             floatingDocksReturnToWorkbench \
+            closingWorkbenchClosesDetachedWindows \
+            codeOpensBesideFloatingDisassembly \
+            focusModeGroupsViewsAndRestoresLayout \
+            focusSequenceKeepsSingleQAndIgnoresAutoRepeat \
+            fileReviewWindowsOfferWindowControls \
             closedFloatingDocksReopenInWorkbench \
             reopeningPaneDoesNotFollowFloatingAssembly \
             floatingAnalysisMenusStayWithTheirView \

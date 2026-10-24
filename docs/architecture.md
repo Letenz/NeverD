@@ -104,11 +104,24 @@ substitute for a rejected parent. Failures retain the entry's audit disposition
 and first decode or unsupported-instruction address; source views can still
 return their partial analysis.
 
+LLVM function-symbol lookup builds its eligible entry/end indexes lazily for
+each emission. It retains the last eligible symbol in image order and prefers
+an independent entry to an adjacent function's exclusive end. Reusing an
+emitter clears the indexes and entry proofs. A fatal pointer proof prevents
+further mirror retries in that module without weakening the original refusal.
+
 PE32 discovery rejects heuristic entries inside the operand bytes of reachable,
 complete instructions. The owning entry's control-flow walk supplies this
 evidence; overlapping paths, data and section boundaries invalidate it.
 Independent symbols, exports, direct calls and relocated pointers retain their
 separate authority.
+
+Parallel x86 call sweeps retain contiguous instruction ends and sparse direct
+call targets. A piece's start is implicit in its first boundary, and later
+starts are the preceding ends. Joining still redecodes a misaligned prefix
+until it reaches the canonical sweep; nested ranges retain their independent
+end-boundary checks. Joined pieces release their storage immediately instead
+of retaining two complete instruction logs through discovery.
 
 The COFF CFG reader also requires unique, complete file-backed storage for the
 target's minimum instruction unit. The table must be immutable, while target
@@ -239,8 +252,7 @@ both C projections. The machine instruction observes the execution host's
 checking controls and preserves poisoning behavior. Fixed scratch registers
 and raw instruction words support assemblers predating CPA mnemonics, with
 explicit operand and clobber constraints. Compilation does not establish CPU
-feature availability. SVE CPA forms fail explicitly until scalable state is
-modelled. These operations preserve call argument setup and frame taint,
+feature availability. These operations preserve call argument setup and frame taint,
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
@@ -314,13 +326,34 @@ widths. `AArch64SVEPredicate.def` owns PTRUE encodings, legal shapes and C
 projection contracts; LowIR, MedIR and both emitters reject malformed forms.
 LLVM converts typed predicates at the producer and consumer boundaries. All
 architectural PTRUE patterns are retained, including reserved empty patterns.
-MOVPRFX and flag-setting PTRUES remain unsupported until their paired-instruction
-and NZCV contracts are modelled. This does not establish V/Z aliasing, an SVE
-call ABI or the six SVE checked-pointer instruction forms.
+Flag-setting PTRUES remains unsupported until its NZCV contract is modelled.
+This does not establish V/Z aliasing or an SVE call ABI.
 
 `AArch64SVEVector.def` owns typed DUP/INDEX/LASTB/ST1/STNT1 shapes. HighC
 stores local Z values as `svuint8_t` and reinterprets them at typed operation
 boundaries; LLVM retains its integer backing with scalable typed views.
+`AArch64SVECPA.def` owns all six scalable CPA forms: unpredicated and merging
+ADDPT/SUBPT, MADPT and MLAPT. Original words retain destructive inputs and
+MADPT's multiplicand versus MLAPT's addend. LLVM and HighC emit real checked
+instructions over active-width Z values and canonical predicates, preserving
+inactive destination lanes, signed multiply-overflow checks and runtime enable
+controls. The shared vector contract records every vector and predicate input;
+none may acquire a scalar or constant substitute. Dead results still execute
+the checking operation. This is local instruction preservation, without native
+SVE/CPA execution qualification or a scalable LLVM-to-C carrier.
+
+`AArch64SVEPrefix.def` owns all three MOVPRFX forms before compatible CPA
+consumers. Detailed decoding captures PC+4 from the same supplied byte buffer;
+the snapshot stays bound to the original prefix address and raw word.
+Missing, classification-only or mismatched occurrences confer no pair evidence.
+Raw admission checks matching destinations, predicates, .D elements and
+forbidden source aliases
+before emitting separate copy/selection dataflow. A branch into the consumer
+bypasses the prefix, and SSA keeps the two incoming destination values. Other
+SVE consumers remain refused until their pair contracts are owned. LLVM and
+HighC select the active .D source lanes, retaining old inactive lanes for /m
+and zeroing them for /z; the real CPA consumer retains runtime checks.
+
 IRMed's `validateAArch64SVEState` owns bounded, complete local Z/P definition
 and COPY/PHI closure for both Med-to-High and LLVM emission. It checks the
 executed CFG and every incoming definition before a consumer can use state.
@@ -688,6 +721,11 @@ and its sources; destruction/close releases them. Other immutable snapshot
 queries retain their session-independent contract.
 `LoadProgress` in support owns borrowed loading progress and stop checkpoints.
 It carries no session state and is never retained in a `BinaryImage`.
+`Loader::readFileBuffer` supplies length-bounded binary bytes without requiring
+a trailing NUL. This lets LLVM map page-aligned inputs instead of copying the
+whole file solely to append a terminator. LLVM retains its small-file and
+failed-mapping read fallbacks. The image still owns its parsed bytes, and input
+hashing covers every file byte, including any unmapped overlay.
 Controlled loader calls restore the previous control on every exit and translate
 stops to `operation_canceled`; legacy calls retain their existing contracts.
 Hashing keeps the shared hardware-accelerated SHA-256 implementation and polls
@@ -1989,7 +2027,11 @@ are cleared and the x87 state reset before every instruction, including after
 an unsupported lift. Returned references and transfer facts own their values.
 Disassembly pages own a workspace for that call; parallel access-width,
 reference and string-reference scans retire theirs with each worker. No TLS,
-session cache, new semantic shortcut or cross-instruction state is involved.
+session cache or cross-instruction state is involved. Width-only inventories
+omit LowIR for audited scalar x86 register/immediate forms with no memory
+operand. Memory, implicit-stack, string, system and other instruction families
+retain full lifting. Full flow/reference queries remain unchanged; the
+stateless full-lift width collector supplies an independent comparison oracle.
 
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
@@ -4488,6 +4530,14 @@ are checked even when the final annotation is absent. A contiguous per-slot
 storage inventory must partition the freshly proved runtime envelope exactly.
 Other architectures and complex tables retain their existing conservative rules.
 
+ELF and COFF extent discovery reads DWARF frame headers through the same
+bounded decoder as full exception recovery, without constructing the unused
+CFI instruction programs. These private header records supply only code
+extents, never unwind rules or language metadata. Runtime-index extension
+records retain the complete decode their admission requires. Full recovery
+still reads the current bytes after symbol/import discovery and validates all
+CFI programs, personalities and LSDAs before publishing exception metadata.
+
 DWARF frame-section decoding failures remain structural failures on every
 FDE-backed function from that section in Itanium and Darwin. A later language
 refresh cannot clear them; complete sections add no new refresh authority.
@@ -5198,6 +5248,14 @@ before writing, including arguments it only passes on to its own callees.
 For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
+
+A complete scalar register summary also publishes an empty vector bank.
+Win64 does so only when no tracked vector family is read; a positional float
+or overlapping integer/vector input retains its existing contract. The shared
+MedIR ABI pass keeps this zero distinct from unknown vector demand when an
+omitted callee's FP metadata is unavailable. Incidental XMM writes and
+call-clobbered PHIs therefore cannot become extra source-call arguments.
+Count-only and unsummarized calls still use ordinary argument recovery.
 
 The same owner proves scalar exit constants for bounded, complete x64 bodies
 without calls, intrinsics, unresolved control flow or exceptional/independent
@@ -7036,8 +7094,14 @@ should orchestrate those components rather than absorb their algorithms.
 ## LLVM C object storage
 
 Finite direct native memory accesses into pointer-bearing data use a canonical
-relocation-free byte interval in `MedLLVMEmitter`. They do not recursively
-materialize unrelated pointer slots. An address-valued, indexed or pointer-slot
+relocation-free byte interval in `MedLLVMEmitter`. A gap larger than the single
+embedding limit retains only demanded finite bytes, merging and rebinding
+overlapping intervals as demand grows. Unobserved alignment padding preserves
+atomic alignment during backwards growth; the encoded global base includes
+that padding so source and patch projections retain the original addresses.
+These bounded intervals require a mapping aligned to the shared maximum
+embedded-data alignment. They do not recursively materialize unrelated pointer
+slots. An address-valued, indexed or pointer-slot
 access still demands the complete relocation mirror; its creation rebinds all
 earlier direct accesses to that same storage. Required unresolved pointers keep
 failing emission. Mergeable shards retain whole-run storage so masked bodies

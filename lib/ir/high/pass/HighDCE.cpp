@@ -854,6 +854,10 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   iterativeDCE(Func, Entries);
   const auto TPost = Clock::now();
 
+  // A shared epilogue can retain load temporaries and PHI chains for saved
+  // registers until DCE. Revisit home-slot preservation after those reads
+  // disappear, while addresses still have their original SSA identities.
+  stripPrologueEpilogue(Func);
   elimUnreadPrivateFrameStores(Func, TargetArch);
   narrowSourceConcatLocals(Func);
   // Removing a vector carrier can expose a second, narrower scalar copy

@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Alternar un espacio flotante con desensamblado, pseudocódigo y salida</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>Modo de en&amp;foque</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Abrir...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Haga doble clic para ir a la declaración.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>No se pudo restaurar la disposición anterior al modo de enfoque.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Recargar el archivo de entrada</translation>
@@ -8242,6 +8254,14 @@ SHA-256 secundario: %3
     <message>
         <source>Move window</source>
         <translation>Mover ventana</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Bloquear ventana flotante</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Desbloquear ventana flotante</translation>
     </message>
 </context>
 <context>

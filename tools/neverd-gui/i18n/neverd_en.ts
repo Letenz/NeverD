@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Toggle a floating workspace with disassembly, pseudocode and output</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>&amp;Focus mode</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Open...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Double-click to go to the declaration.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Could not restore the layout before focus mode.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Reload the input file</translation>
@@ -8242,6 +8254,14 @@ Secondary SHA-256: %3
     <message>
         <source>Move window</source>
         <translation>Move window</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Lock floating window</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Unlock floating window</translation>
     </message>
 </context>
 <context>

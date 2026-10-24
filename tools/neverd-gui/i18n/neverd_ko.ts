@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>디스어셈블리, 의사 코드 및 출력을 포함하는 부동 작업 공간 전환</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>집중 모드(&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>열기(&amp;O)...</translation>
     </message>
@@ -2174,6 +2182,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>집중 모드 이전의 레이아웃을 복원할 수 없습니다.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>입력 파일 다시 불러오기</translation>
@@ -8206,6 +8218,14 @@ Secondary SHA-256: %3
     <message>
         <source>Move window</source>
         <translation>창 이동</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>떠 있는 창 잠금</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>떠 있는 창 잠금 해제</translation>
     </message>
 </context>
 <context>

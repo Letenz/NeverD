@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/lift/X86Regs.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -71,6 +72,62 @@ protected:
 
   Session State;
 };
+
+TEST_F(SessionLLVMTest, OmittedDebugNamedRuntimeUsesItsDeclaredArity) {
+  constexpr va_t Runtime = 0x2000;
+  class PublicNames : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<std::string> functionName(va_t Address) const override {
+      return Address == Runtime
+                 ? std::optional<std::string>("__security_check_cookie")
+                 : std::nullopt;
+    }
+  };
+  State.Dbg = std::make_unique<PublicNames>();
+  State.Img.Format = BinaryFormat::COFF;
+  MedFunc Function = sourceFunction();
+  Function.CC = CallingConv::Win64;
+  auto &Ops = Function.Blocks.front().Ops;
+  Ops.clear();
+  unsigned Id = 0;
+  for (uint64_t Register : {x86reg::RCX, x86reg::RDX, x86reg::R8}) {
+    MedOp Setup;
+    Setup.Opcode = NdOp::COPY;
+    Setup.Addr = Function.Entry + Id;
+    Setup.Output.Kind = MedVar::Reg;
+    Setup.Output.Id = ++Id;
+    Setup.Output.RegOff = Register;
+    Setup.Output.Size = 8;
+    Setup.Output.SSAVer = 1;
+    Setup.Output.TheArch = Arch::X64;
+    Setup.addInput(MedVar::makeConst(47 + Id, 8));
+    Ops.push_back(Setup);
+  }
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Function.Entry + Id;
+  Call.addInput(MedVar::makeConst(Runtime, 8));
+  Ops.push_back(Call);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Ops.push_back(Return);
+  State.PipeResult.MedFuncs.push_back(std::move(Function));
+  std::shared_ptr<LLVMSourceMap> Sources;
+  for (bool NoOpt : {false, true}) {
+    auto Module = State.emitNativeLlvm(NoOpt, nullptr, Sources);
+    ASSERT_TRUE(Module) << State.LastError;
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    const auto *RuntimeFunction =
+        Module->getFunction("__security_check_cookie");
+    ASSERT_TRUE(RuntimeFunction);
+    EXPECT_EQ(RuntimeFunction->arg_size(), 1u);
+    ASSERT_TRUE(State.NativeMedFuncs);
+    const auto &Calls = State.NativeMedFuncs->front().CallInfos;
+    ASSERT_EQ(Calls.size(), 1u);
+    EXPECT_EQ(Calls.front().Args.size(), 1u);
+  }
+}
 
 TEST_F(SessionLLVMTest, ExactAddressZeroIgnoresHelperNamesAndDeclarations) {
   addFunction("sub_0", std::nullopt);

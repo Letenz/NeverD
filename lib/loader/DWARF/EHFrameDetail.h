@@ -27,6 +27,16 @@
 namespace neverd::dwarf_eh {
 namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail {
 
+/// Read frame headers and augmentations for extent discovery, without
+/// constructing or diagnosing their CFI programs. The result is private to
+/// discovery: it must not supply unwind rules or language metadata. The full
+/// parseEHFrame reader still validates those programs during exception
+/// recovery. Runtime-index extension records also retain their full decode
+/// because their admission requires a complete record.
+ParseResult parseFrameHeaders(const BinaryImage &Img, const FrameSection &Sec,
+                              const PointerBases &Bases,
+                              const ParseLimits &Limits = {});
+
 /// Decode the call-frame instruction program of one entry.
 ///
 /// Returns false only when the program could not be decoded at all; a

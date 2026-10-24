@@ -2487,8 +2487,14 @@ void recoverCallAbi(
       // the real variadic arguments so the callee reads the wrong slots
       // (printf("p[%d]=%.3f", i, v) then prints "p[0]=0.000").
       std::vector<MedVar> FoundFP;
+      // The pre-SSA read summary already proves a complete scalar register
+      // prefix with no vector inputs. Missing omitted-callee FP metadata
+      // cannot turn residual vector state into another argument. A count-only
+      // or unknown vector contract (-1) still uses the ordinary recovery.
+      const bool NoVectorArguments =
+          SummarizedIntegerOperands && Op.CalleeVectorArgs == 0;
       if (RegArgsApply && !FPParamRegs.empty() && DarwinVarArgBase < 0 &&
-          !CoreRegisterFloats && !HeaderVariadic) {
+          !CoreRegisterFloats && !HeaderVariadic && !NoVectorArguments) {
         // The FP-argument registers to probe, in ABI order.  Default to the
         // architecture's FP parameter registers (XMM0-7 / V0-7 / ARM D0-7); for
         // a direct call whose callee's exact FP layout is known, use it instead
@@ -2724,10 +2730,9 @@ void recoverCallAbi(
       // integer arguments to it — otherwise a value merely live in a parameter
       // register (the caller's own incoming argument) would be handed to an
       // FP-only callee ahead of its FP arguments, misaligning them.  A
-      // pure-integer callee is left uncapped: a forwarder's parameters are
-      // promoted only during its own ABI recovery, so its arity is not yet
-      // known here, and the emitter truncates any surplus to the real
-      // signature.
+      // pure-integer callee without bound operands is left uncapped: a
+      // forwarder's parameters are promoted only during its own ABI
+      // recovery, so its arity is not yet known here.
       const int NumIntRegArgs = static_cast<int>(IntParamRegs.size());
       bool CalleeHasFP = false;
       if (!CheckedStackCall && !CI.IsIndirect && !IsRelocExtern &&
@@ -2735,8 +2740,12 @@ void recoverCallAbi(
         auto FIt = CalleeFPArity->find(CI.TargetAddr);
         CalleeHasFP = FIt != CalleeFPArity->end() && FIt->second > 0;
       }
-      int IntCap =
-          (CalleeHasFP && CalleeRegArgs >= 0) ? CalleeRegArgs : NumIntRegArgs;
+      // A complete pre-SSA read summary already supplies the register
+      // operands, including positional padding. Setup scans may find live
+      // scratch registers, but cannot extend that authoritative prefix.
+      int IntCap = SummarizedIntegerOperands             ? Op.CalleeRegisterArgs
+                   : (CalleeHasFP && CalleeRegArgs >= 0) ? CalleeRegArgs
+                                                         : NumIntRegArgs;
 
       // Where 64-bit arguments are pair-aligned (ARM AAPCS: an even-odd
       // register pair, an 8-byte aligned stack slot), argument lanes are not

@@ -15,13 +15,16 @@
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <utility>
 #include <vector>
@@ -37,6 +40,80 @@ Segment executableSegment(va_t Address, llvm::ArrayRef<uint8_t> Bytes) {
   Seg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Seg.Data.assign(Bytes.begin(), Bytes.end());
   return Seg;
+}
+
+// A long `.text` is swept for call targets in pieces on the worker threads
+// and the pieces joined as one sweep would have gone.  Random bytes decode to
+// every length of instruction and to bytes that do not decode at all, so the
+// pieces start in the middle of instructions; the symbols start wherever
+// they like, some where the long sweep never lands and some ending inside an
+// instruction.  What the detector finds must not depend on any of that.
+TEST(FuncDetectorCoverage, SweepsInPiecesExactlyAsInOnePiece) {
+  const auto PreviousWorkers = workerThreadOverride().load();
+  auto RestoreWorkers =
+      llvm::scope_exit([&] { setWorkerThreadCount(PreviousWorkers); });
+  constexpr va_t TextVA = 0x401000;
+  constexpr size_t TextSize = 512 * 1024;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0x400000;
+  Img.Entry = TextVA;
+
+  Segment Mapping;
+  Mapping.VA = TextVA;
+  Mapping.Size = TextSize;
+  Mapping.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Mapping.Data.resize(TextSize);
+  uint64_t State = 0x9E3779B97F4A7C15ull;
+  auto Next = [&] {
+    State ^= State << 13, State ^= State >> 7, State ^= State << 17;
+    return State;
+  };
+  for (uint8_t &Byte : Mapping.Data)
+    Byte = static_cast<uint8_t>(Next());
+  // Real calls among the noise: `push rbp; call rel32` into the text.
+  for (unsigned Call = 0; Call < 4000; ++Call) {
+    const size_t At = Next() % (TextSize - 16);
+    const size_t Target = Next() % (TextSize - 16) & ~size_t(15);
+    Mapping.Data[At] = 0x55;
+    Mapping.Data[At + 1] = 0xE8;
+    const int32_t Disp = static_cast<int32_t>(static_cast<int64_t>(Target) -
+                                              static_cast<int64_t>(At + 6));
+    std::memcpy(Mapping.Data.data() + At + 2, &Disp, sizeof(Disp));
+    std::memcpy(Mapping.Data.data() + Target, "\x55\x48\x89\xE5\x5D\xC3",
+                6); // a small function there
+  }
+  Img.Segments.push_back(std::move(Mapping));
+  Section Code;
+  Code.Name = ".text";
+  Code.VA = TextVA;
+  Code.Size = TextSize;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Code));
+  for (unsigned Sym = 0; Sym < 500; ++Sym) {
+    const va_t Start = TextVA + Next() % (TextSize - 64);
+    Img.Symbols.push_back(Symbol::makeFunc(Start, 1 + Next() % 60));
+  }
+
+  // Repeated nested ranges may begin/end inside canonical instructions.
+  Img.KnownCodeRanges = {{TextVA + 3, TextVA + 65539},
+                         {TextVA + 3, TextVA + 65539},
+                         {TextVA + 7, TextVA + 16391}};
+  auto DetectWith = [&](unsigned Threads) {
+    setWorkerThreadCount(Threads);
+    Decoder Dec;
+    EXPECT_TRUE(Dec.init(Arch::X64));
+    FuncDetector Detector;
+    auto Functions = Detector.detect(Img, Dec);
+    setWorkerThreadCount(0);
+    return Functions;
+  };
+  const auto OnePiece = DetectWith(1);
+  EXPECT_GT(OnePiece.size(), 1000u);
+  for (unsigned Workers : {2u, 4u, 16u})
+    EXPECT_EQ(DetectWith(Workers), OnePiece);
 }
 
 TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {

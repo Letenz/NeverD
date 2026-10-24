@@ -14,6 +14,7 @@
 #include "../CodeGenDetail.h"
 
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.h"
 
 namespace neverd {
 
@@ -60,6 +61,11 @@ detectTargetFeaturesAArch64(const std::set<std::string> &Names) {
     F += ",+faminmax";
   if (Has("aarch64.sve"))
     F += ",+sve";
+  for (const auto &Operation : aarch64_sve::kCPAOperations)
+    if (Has(Operation.MachineAsm)) {
+      F += aarch64_sve::kCPATargetFeatures;
+      break;
+    }
   if (Has("aarch64.crc32"))
     F += ",+crc";
   bool NeedsPAuth = Has(kAArch64PAuthIntrinsicPattern) ||

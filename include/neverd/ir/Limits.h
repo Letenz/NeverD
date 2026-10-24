@@ -86,6 +86,8 @@ inline constexpr size_t kSourceVariableFlowMaxNodes = 20000;
 inline constexpr size_t kSourceVariableFlowMaxWork = 2000000;
 // Shared per-function budget for source-only proofs of unwritten frame bytes.
 inline constexpr size_t kUnwrittenSourceFrameReadWork = 262144;
+// Shared per-function budget for source-only entry spill overwrite proofs.
+inline constexpr size_t kSourceEntrySpillWork = 262144;
 
 // lib/ir/high/HighSourceFlow.cpp
 inline constexpr size_t kHighSourceFlowMaxDiagnostics = 4096;
