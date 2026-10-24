@@ -19,6 +19,7 @@
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-sideeffect"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -178,16 +179,10 @@ bool MedLLVMEmitter::emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,
     }
   }
   if (IC == Intrinsic::A64_SveSt1 || IC == Intrinsic::A64_SveStnt1) {
-    if (Op.NumInputs < 6 || !Op.Inputs[4].isConst() || !Op.Inputs[5].isConst())
-      return true;
-    const unsigned LaneBytes = static_cast<unsigned>(Op.Inputs[4].ConstVal);
-    const unsigned StoreBytes = static_cast<unsigned>(Op.Inputs[5].ConstVal);
-    if ((LaneBytes != 1 && LaneBytes != 2 && LaneBytes != 4 &&
-         LaneBytes != 8) ||
-        (StoreBytes != 1 && StoreBytes != 2 && StoreBytes != 4 &&
-         StoreBytes != 8) ||
-        StoreBytes > LaneBytes)
-      return true;
+    if (!aarch64VectorMedShapeIsValid(Op))
+      llvm::report_fatal_error(aarch64_sve::kMalformedVector);
+    const unsigned LaneBytes = Op.Inputs[4].ConstVal;
+    const unsigned StoreBytes = Op.Inputs[5].ConstVal;
 
     const unsigned MinLanes = 16 / LaneBytes;
     auto *PredTy =

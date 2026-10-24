@@ -41,6 +41,12 @@ unavailable execution is an explicit skip. Unresolved terminal prefixes and
 implicit-entry joins cannot escape into ordinary source. Frame fixtures reject
 mixed implicit/explicit signing recipes and preserve unrelated tail-call proofs
 across function-lifetime mode temporaries.
+`AArch64ExceptionReturnSemantics` rejects plain ERET in both decoder routes
+and strict/permissive lifting. Handwritten LowIR, MedIR and HighIR cannot
+bypass the ELR/SPSR/PSTATE requirement through void/value, masked-body or
+cross-target emission. Ordinary RET remains supported. Authenticated exception
+returns retain their existing explicit refusal; this is not an exception-level
+runtime implementation.
 Malformed-input checks reject invalid scalar kinds, mode widths and operand
 counts in every PACM operation. Pending prefixes require their exact LowIR
 shape and remain inadmissible in MedIR and native output.
@@ -53,7 +59,10 @@ optimized LLVM output. Its ordinary arm64 process must produce a nonzero
 generic signature. PAC/AUT can be disabled in that process despite hardware
 feature discovery, so it cannot qualify pointer authentication.
 `NativeKeysAgreeWithBothCProjections` instead compiles an arm64e execution
-probe and explicitly skips if the host refuses it. On an eligible host it
+probe and explicitly skips unless all four signing keys change pointers and
+PACGA produces a nonzero signature in that process. A requested target triple
+or a runnable empty main cannot establish this: a linker may produce ordinary
+arm64 with inactive keys. On an eligible host it
 compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
 modifiers; each key must change at least one pointer, excluding a NOP profile.
 Other architectures skip the native checks.
@@ -92,6 +101,17 @@ and native rebuilding must fail explicitly. `NeverDMachOARM64RelocationTests`
 also covers authenticated object relocations, keys, diversity and reserved
 bits. Run these together with `NeverDMachOPointerRelocationBoundaryTests`
 when changing the shared pointer model.
+`MachOThreadedBind` covers original arm64e `LC_DYLD_INFO_ONLY` ordinal tables
+and chain roots, with independent words for all signing keys, address diversity,
+negative import/inline addends, nonzero header bases and multiple roots.
+Malformed bytecode, incomplete tables, reserved bits, duplicate roots,
+unavailable file storage and overflow must publish neither prefix fixups nor
+imports. Symbol payload bytes cannot select a different bytecode format.
+Both containers share the pointer-word decoder and exact-slot provenance;
+encoded authenticated bytes remain unchanged. A host Apple `ld-classic`
+fixture at O0/O2 removes local symbols before class/method recovery. Missing
+Apple tools are explicit skips. The format reference is
+[Apple dyld's original arm64e chain reader](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/common/MachOAnalyzer.cpp#L1953).
 Analysis-only metadata tests follow local authentication recipes for every
 supported chained format and for authenticated object relocations. Stale
 bytes, signing-field mismatches, conflicting provenance, overlapping storage
@@ -173,6 +193,30 @@ canonical predicate conversions across element widths, LLVM verification and
 object compilation, HighC projection and malformed LowIR/MedIR refusal.
 `NeverDBinaryDiffSDKTests` retains incomplete analysis for unmodelled MOVPRFX.
 These tests do not execute SVE hardware or qualify scalable calling conventions.
+The same target's `AArch64SVEVector` cases exercise all producer/consumer
+element widths, canonical HighC Z storage, COPY and real diamond/loop PHIs,
+typed LLVM boundaries and O0/O2 C compilation. Shared MedIR state admission
+rejects undefined, late or dead producers, invalid CFG/PHI edges, exhausted
+budgets, scalable ABI escape, opaque calls and unmodelled V/Z overlap through
+both Med-to-High and masked/unmasked LLVM emission. Run the existing
+`AArch64_SVEState`, `AArch64_SVEStore`, `AArch64_SVELength` and ordinary NEON/FP
+cases in `NeverDLiftTests` after changing these shared boundaries.
+The local-state suite also checks scalar PAuth, explicit PAuth_LR and resolved
+PACM operations, rejecting malformed shapes and unresolved PACM. A raw
+PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
+state must return a normal error for both one-function serial and eight-function
+sharded LLVM emission, with and without optimization.
+`AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
+writeback and dead-result retention through a single combined authenticated
+load, with independent emitted-word checks at O0/O2 through LLVM and both C
+routes. Malformed IR and unavailable SP execution contracts fail explicitly.
+HighC also validates supplied authenticated-load expressions before hiding or
+preparing source, rejecting extra outputs, indirect callees, dynamic encodings,
+invalid widths, SP execution and cross-target use without partial C output.
+These object checks do not qualify FPAC/FPACCOMBINE trap behavior on hardware.
+`AArch64_PAuth.CombinedLoadsRetainEarlierCallArguments` checks real LDRAA/LDRAB
+sequences with and without writeback before an imported call, at both LLVM
+optimization settings. The argument set before the load must remain intact.
 `MachONativeInplace.*` and the public-entry cases in `MachOPatchTransaction`
 check raw arm64e/x1 subtype capabilities, absent caller annotations and output
 rollback, with genuine ordinary arm64 writes as positive controls.
@@ -352,11 +396,17 @@ checks the same contract for explicit local declarations.
 on x64 and ARM64 across COFF, ELF and Mach-O. Independent C providers observe
 nested qualified pointers, void and pointer results, narrow signed/unsigned
 parameters, narrow integer results and no-parameter calls at O0/O2 with UBSan.
-Incompatible counts, carriers, conventions and live void results must retain
+Incompatible counts, carriers, conventions, live void results and observed
+upper bits beyond a local source result's width must retain
 their machine declarations, independently of call order. These emitter checks
 do not certify native platform execution. `NeverDWorkerStackText` also checks
 the qualified local declaration through fresh x64/ARM64 PE sessions on both
 C routes.
+The worker also compiles a `const long long *` call against an independent
+definition on the host, where `int64_t *` need not be compatible.
+`LocalTypesDebugContext.PortablePrototypesRetainIntegerKeywordIdentity` checks
+that both the declaration and scalar call conversions retain the same target
+integer identity across ILP32, LLP64 and LP64 models.
 They supply complete local struct/union layouts as well: pointer-only imports
 must keep forward declarations and compile alongside independent definitions.
 `LocalTypesDebugContext.PointerDeclarationsDoNotRequireRecordLayouts` checks
@@ -1863,6 +1913,19 @@ to the main window even when its previous tab group and disassembly are floating
 transient parenting for floating text, graph, pseudocode and IR views.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
+`analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
+jumps, export, Find, shortcut help, connections, calculator, About and x87
+information. Each browser permits real keyboard navigation behind it, follows
+floating/docked transitions, handles reopening, and closes with its pane or
+project as appropriate. `auxiliaryChoosersStayInteractive` checks Pathfinder
+and type-library choices, including invalidation by a project edit.
+`jumpBrowserKeepsItsOpeningAddress` evaluates relative expressions after
+background navigation. `commandPaletteReturnsToItsSource` checks cancellation
+and dispatch into the original docked or floating pane. Ordinary source xrefs
+also accept into their original code view after another code view gains focus.
+`changedSourceDismissesReferenceBrowsers` closes an already open ordinary xref
+browser when its source reloads, changes function or changes representation.
+These browser cases run with native Windows/macOS windows as well as offscreen.
 `floatingWindowsKeepMouseHistory` checks mouse Back and Forward in a floating
 listing. The Desktop GUI workflow runs these interactions with the native Qt
 platform on Windows and macOS, retaining separate logs beside the offscreen
@@ -2182,6 +2245,18 @@ and Clang O0/O2; the checks also build the actual native objects. Linux x64
 compares fault signal/code with original bytes, then injects controlled
 completions through sigreturn to check all result transports. This is not a
 successful privileged SGX or enclave-memory concurrency qualification.
+
+With `NEVERD_TEST_NEVERC` pointing to the qualified compiler,
+`X86SgxSource.NeverCCompletionMatchesOriginalRegistersAndFlags` executes both C
+routes against the same original-byte/sigreturn oracle.
+`NeverCCompilesNativeCompletionAndCombinedAmxFeatures` builds 192 native IR
+modules and 192 objects per SDK, including functions with both SGX and AMX;
+this catches lost features when separate target attributes would override one
+another. Native declaration validation rejects lost memory effects, wrong word
+sizes, mismatched operands and nonreturning/defined intrinsic impostors. The
+pinned SDK skips only the new native-declaration check; generated C still
+selects the current NeverC APIs. The separate PUSHF fixture snapshot retains
+its own LLVM implementation and is not an SGX assembly fallback.
 
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and
@@ -11927,3 +12002,9 @@ check distinct observations after LLVM optimization, unused values and a real
 function whose name collides with the internal marker spelling. These tests
 certify explicit source unavailability, not a reconstructed dynamic call-state
 contract.
+
+The threaded arm64e loader validates unique segment ownership and rejects roots
+at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams
+remain explicitly unsupported; their presence cannot silently discard fixups.
+The public-loader fixture checks that weak-bind offsets survive load-command
+parsing and trigger this admission rule before pointer publication.

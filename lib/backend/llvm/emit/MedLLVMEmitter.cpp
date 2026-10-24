@@ -33,7 +33,9 @@
 #include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/med/AArch64SVEState.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -771,6 +773,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // bodies. Validate mutable storage and metadata before any such traversal,
   // then reuse the same plan during emission.
   for (const auto &Func : Funcs) {
+    if (const char *Error = validateAArch64SVEState(Func, TheArch))
+      throw std::runtime_error(Error);
     if (Func.HasUnresolvedSEHFrame)
       throw std::runtime_error(
           "Windows SEH source projection has an unresolved runtime stack in " +
@@ -785,11 +789,23 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
               "intrinsic has an invalid intrinsic ID shape");
         if (Op.Opcode == NdOp::INTRINSIC) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isAArch64ExceptionReturnIntrinsic(Id))
+            throw std::runtime_error(kAArch64ExceptionReturnUnsupported);
+          if (isAArch64PAuthLoadIntrinsic(Id)) {
+            if (TheArch != Arch::AArch64 ||
+                !aarch64PAuthLoadMedShapeIsValid(Op))
+              throw std::runtime_error(kPAuthLoadMalformed);
+            if (aarch64PAuthLoadInstruction(Op.Inputs[2].ConstVal)->stackBase())
+              throw std::runtime_error(kPAuthLoadSPUnsupported);
+          }
           if (isPortableX87Intrinsic(Id) && &Func != PortableBody)
             throw std::invalid_argument(
                 "portable x87 helpers require a prepared emission entry");
           if (Id == Intrinsic::A64_PACMPending)
             throw std::runtime_error(kAArch64PAuthMalformedOperation);
+          if (aarch64_sve::vectorOperation(Id) &&
+              (TheArch != Arch::AArch64 || !aarch64VectorMedShapeIsValid(Op)))
+            throw std::runtime_error(aarch64_sve::kMalformedVector);
           if (Id == Intrinsic::A64_SvePtrue &&
               (TheArch != Arch::AArch64 || !aarch64PtrueMedShapeIsValid(Op)))
             throw std::runtime_error(aarch64_sve::kMalformedPtrue);

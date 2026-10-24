@@ -118,3 +118,6 @@ A(Intrinsic::A64_FcvtzuFixed,  "fcvtzu");
 #include "neverd/ir/intrinsics/AArch64PAuthM.def"
 #define NEVERD_A64_PAUTH_M_MARKER(Id, Name) A(Intrinsic::Id, Name);
 #include "neverd/ir/intrinsics/AArch64PAuthM.def"
+
+#define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, Mnemonic, ...) A(Intrinsic::Id, Mnemonic);
+#include "neverd/ir/intrinsics/AArch64PAuthLoad.def"

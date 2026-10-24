@@ -1921,6 +1921,7 @@ add_neverd_unittest(NeverDArm64eAnalysisTests
   aarch64/AArch64PAuthSemanticTests.cpp
   aarch64/AArch64_FastClassifyParityTests.cpp
   format/MachOArm64eTests.cpp
+  format/MachOThreadedBindTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode Lift Loader
 )
 target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE
@@ -1932,8 +1933,15 @@ endif()
 
 add_neverd_unittest(NeverDAArch64SVEPredicateTests
   aarch64/AArch64SVEPredicateTests.cpp
-  LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode IRLow IRMed Lift Support
+  aarch64/AArch64SVEVectorTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode IRHigh IRLow IRMed Lift Support
 )
+target_compile_definitions(NeverDAArch64SVEPredicateTests PRIVATE
+  NEVERD_SVE_TEST_HEADERS="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/arm64e")
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDAArch64SVEPredicateTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
 
 add_neverd_unittest(NeverDAArch64DivisionSemanticTests
   aarch64/AArch64DivisionSemanticTests.cpp

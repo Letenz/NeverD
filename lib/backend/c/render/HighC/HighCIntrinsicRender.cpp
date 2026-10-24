@@ -13,6 +13,10 @@
 
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
+#include "neverd/ir/intrinsics/AArch64PAuthLoad.h"
+#include "neverd/ir/intrinsics/AArch64SVEVector.h"
+
 #include <stdexcept>
 #include <string>
 
@@ -23,6 +27,8 @@ std::string MultiOutputRender::operator()(
     const std::vector<ExprPtr> &Operands,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive) const {
+  if (isAArch64ExceptionReturnIntrinsic(IID))
+    throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
   if (IID == Intrinsic::RawEnvironmentRequirementV1)
     throw std::invalid_argument(
         "raw environment requirement has no C runtime contract");
@@ -37,9 +43,15 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 uint16_t ResultBytes, bool &HasCIntrinsics,
                                 bool GnuToolchain,
                                 llvm::ArrayRef<uint16_t> OperandBytes) {
+  if (isAArch64ExceptionReturnIntrinsic(Id))
+    throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
   if (Id == Intrinsic::RawEnvironmentRequirementV1)
     throw std::invalid_argument(
         "raw environment requirement has no C runtime contract");
+  if (aarch64_sve::vectorOperation(Id) && TheArch != Arch::AArch64)
+    throw std::invalid_argument(aarch64_sve::kMalformedVector);
+  if (isAArch64PAuthLoadIntrinsic(Id) && TheArch != Arch::AArch64)
+    throw std::invalid_argument(kPAuthLoadMalformed);
   std::string Result;
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64) {
     if (TheArch == Arch::AArch64 && GnuToolchain)
@@ -48,7 +60,10 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
         HasCIntrinsics = true;
         return Half;
       }
-    Result = renderARMIntrinsicCall(Id, Ops, ResultBytes, HasCIntrinsics);
+    Result = renderARMIntrinsicCall(Id, Ops, ResultBytes, HasCIntrinsics,
+                                    OperandBytes);
+    if (Result.empty() && aarch64_sve::vectorOperation(Id))
+      throw std::invalid_argument(aarch64_sve::kMalformedVector);
     if (Result.empty())
       Result = renderNeonVectorIntrinsic(Id, Ops, OperandBytes, ResultBytes,
                                          HasCIntrinsics);

@@ -41,6 +41,36 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                           llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
+  if (isAArch64PAuthLoadIntrinsic(IC)) {
+    if (!aarch64PAuthLoadMedShapeIsValid(Op))
+      llvm::report_fatal_error(kPAuthLoadMalformed);
+    const auto Instruction =
+        *aarch64PAuthLoadInstruction(Op.Inputs[2].ConstVal);
+    if (Instruction.stackBase())
+      llvm::report_fatal_error(kPAuthLoadSPUnsupported);
+    llvm::Value *Base = getVar(Op.Inputs[1], Builder);
+    if (Base->getType()->isPointerTy())
+      Base = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
+    auto *ResultType = llvm::StructType::get(
+        *Ctx, {Builder.getInt64Ty(), Builder.getInt64Ty()});
+    auto *Asm = llvm::InlineAsm::get(
+        llvm::FunctionType::get(
+            ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
+        kPAuthLoadAsm, kPAuthLoadConstraints, /*hasSideEffects=*/true);
+    llvm::Value *Result = Builder.CreateCall(
+        Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
+        kPAuthLoadResult);
+    auto *PairType = Builder.getIntNTy(kPAuthLoadPairBits);
+    return Builder.CreateOr(
+        Builder.CreateZExt(
+            Builder.CreateExtractValue(Result, {kPAuthLoadValueIndex}),
+            PairType),
+        Builder.CreateShl(Builder.CreateZExt(Builder.CreateExtractValue(
+                                                 Result, {kPAuthLoadBaseIndex}),
+                                             PairType),
+                          kPAuthLoadPointerBits));
+  }
+
   if (const auto Auth = aarch64PAuthExtendedOperation(IC)) {
     if (!aarch64PAuthMedShapeIsValid(Op))
       llvm::report_fatal_error(kAArch64PAuthMalformedOperation);
@@ -165,18 +195,8 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     return Builder.CreateZExt(Value, Builder.getInt64Ty(), "wsp.value");
   }
 
-  auto sveElementSize = [&](unsigned InputIndex) -> unsigned {
-    if (InputIndex >= Op.NumInputs || !Op.Inputs[InputIndex].isConst())
-      return 1;
-    switch (Op.Inputs[InputIndex].ConstVal) {
-    case 2:
-    case 4:
-    case 8:
-      return static_cast<unsigned>(Op.Inputs[InputIndex].ConstVal);
-    default:
-      return 1;
-    }
-  };
+  if (aarch64_sve::vectorOperation(IC) && !aarch64VectorMedShapeIsValid(Op))
+    llvm::report_fatal_error(aarch64_sve::kMalformedVector);
   auto scalableToState = [&](llvm::Value *Value, unsigned StateBytes,
                              llvm::StringRef Name) -> llvm::Value * {
     auto *StateTy = llvm::IntegerType::get(*Ctx, StateBytes * 8);
@@ -213,7 +233,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
 
   if (IC == I::A64_SveDup && Op.Output.Size == a64reg::ZSize &&
       Op.NumInputs >= 3) {
-    unsigned ElemBytes = sveElementSize(2);
+    unsigned ElemBytes = Op.Inputs[2].ConstVal;
     auto *ElemTy = llvm::IntegerType::get(*Ctx, ElemBytes * 8);
     auto *VecTy = llvm::ScalableVectorType::get(ElemTy, 16 / ElemBytes);
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
@@ -227,7 +247,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
 
   if (IC == I::A64_SveIndex && Op.Output.Size == a64reg::ZSize &&
       Op.NumInputs >= 4) {
-    unsigned ElemBytes = sveElementSize(3);
+    unsigned ElemBytes = Op.Inputs[3].ConstVal;
     auto *ElemTy = llvm::IntegerType::get(*Ctx, ElemBytes * 8);
     auto *VecTy = llvm::ScalableVectorType::get(ElemTy, 16 / ElemBytes);
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
@@ -243,7 +263,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
   }
 
   if (IC == I::A64_SveLastb && Op.Output.Size > 0 && Op.NumInputs >= 4) {
-    unsigned ElemBytes = sveElementSize(3);
+    unsigned ElemBytes = Op.Inputs[3].ConstVal;
     auto *ElemTy = llvm::IntegerType::get(*Ctx, ElemBytes * 8);
     auto *PredTy = llvm::ScalableVectorType::get(llvm::Type::getInt1Ty(*Ctx),
                                                  16 / ElemBytes);

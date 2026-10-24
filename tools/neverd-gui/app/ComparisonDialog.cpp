@@ -22,6 +22,7 @@
 #include "ComparisonSourceView.h"
 #include "ComparisonValidationDialog.h"
 #include "Icons.h"
+#include "ModelessDialog.h"
 #include "Theme.h"
 
 #include <QCheckBox>
@@ -915,8 +916,7 @@ void ComparisonDialog::edit(const QString &Kind) {
     const bool NeedPrimary = SelectedSide == "secondary";
     auto *Picker = new ComparisonCounterpartDialog(
         Session, SelectedSide, NeedPrimary ? B : A, NeedPrimary ? A : B, this);
-    Picker->setAttribute(Qt::WA_DeleteOnClose);
-    Picker->open();
+    showModelessDialog(Picker, this);
     return;
   }
   Session.command("comparison_override",

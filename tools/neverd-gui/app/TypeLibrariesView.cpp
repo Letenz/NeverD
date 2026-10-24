@@ -7,6 +7,7 @@
 #include "TypeLibrariesView.h"
 
 #include "Icons.h"
+#include "ModelessDialog.h"
 #include "Session.h"
 #include "ShortcutHint.h"
 #include "ShrinkableRow.h"
@@ -251,13 +252,15 @@ void TypeLibrariesView::addLibrary() {
     return;
   // The libraries whose records lay out as the program's that join none of
   // its types now: the image's left out among them.
-  QDialog dialog(this);
-  dialog.setObjectName(QStringLiteral("addTypeLibraryDialog"));
-  dialog.setWindowTitle(tr("Add a Type Library"));
-  auto *layout = new QVBoxLayout(&dialog);
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  auto *dialog = new QDialog(this);
+  dialog->setObjectName(QStringLiteral("addTypeLibraryDialog"));
+  dialog->setWindowTitle(tr("Add a Type Library"));
+  auto *layout = new QVBoxLayout(dialog);
   layout->addWidget(new QLabel(
-      tr("Libraries whose records lay out as the program's:"), &dialog));
-  auto *choices = new QTreeWidget(&dialog);
+      tr("Libraries whose records lay out as the program's:"), dialog));
+  auto *choices = new QTreeWidget(dialog);
   choices->setObjectName(QStringLiteral("typeLibraryChoices"));
   choices->setColumnCount(3);
   choices->setHeaderLabels({tr("Library"), tr("Data model"), tr("Record ABI")});
@@ -278,20 +281,25 @@ void TypeLibrariesView::addLibrary() {
   choices->header()->resizeSections(QHeaderView::ResizeToContents);
   layout->addWidget(choices, 1);
   auto *buttons = new QDialogButtonBox(
-      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
   buttons->button(QDialogButtonBox::Ok)->setText(tr("Add"));
-  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  connect(choices, &QTreeWidget::itemActivated, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+  connect(choices, &QTreeWidget::itemActivated, dialog, &QDialog::accept);
   layout->addWidget(buttons);
-  if (dialog.exec() != QDialog::Accepted || !choices->currentItem())
-    return;
-  const QString name = choices->currentItem()->text(0);
-  QStringList added = added_, removed = removed_;
-  // One of the image's the user left out joins again as it did.
-  if (!removed.removeAll(name))
-    added.push_back(name);
-  choose(added, removed);
+  connect(&session_, &Session::revisionChanged, dialog, &QDialog::reject);
+  connect(dialog, &QDialog::accepted, this, [this, choices, epoch, revision] {
+    if (!choices->currentItem() || !session_.loaded() ||
+        session_.epoch() != epoch || session_.revision() != revision)
+      return;
+    const QString name = choices->currentItem()->text(0);
+    QStringList added = added_, removed = removed_;
+    // One of the image's libraries the user left out joins again.
+    if (!removed.removeAll(name))
+      added.push_back(name);
+    choose(added, removed);
+  });
+  showModelessDialog(dialog, this, &session_);
 }
 
 void TypeLibrariesView::removeLibrary() {

@@ -7,6 +7,7 @@
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87GuardedValue.h"
 #include "neverd/ir/X87Value.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
@@ -68,6 +69,8 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
     return invalid("intrinsic has no constant intrinsic ID");
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (isAArch64ExceptionReturnIntrinsic(Id))
+    return invalid(kAArch64ExceptionReturnUnsupported);
   // The lifter publishes PACM as a pending instruction prefix. CFG resolves
   // its executed successor before MedIR, where this marker is not admissible.
   if (Id == Intrinsic::A64_PACMPending) {
@@ -77,10 +80,14 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
       return invalid(kAArch64PAuthMalformedOperation);
     return llvm::Error::success();
   }
+  if (isAArch64PAuthLoadIntrinsic(Id) && !lowAArch64PAuthLoadShapeIsValid(Op))
+    return invalid(kPAuthLoadMalformed);
   if (isAArch64PAuthIntrinsic(Id) && !lowAArch64PAuthShapeIsValid(Op))
     return invalid(kAArch64PAuthMalformedOperation);
   if (aarch64CPAOperation(Id) && !lowAArch64CPAShapeIsValid(Op))
     return invalid(kAArch64CPAMalformedOperation);
+  if (aarch64_sve::vectorOperation(Id) && !lowAArch64VectorShapeIsValid(Op))
+    return invalid(aarch64_sve::kMalformedVector);
   if (Id == Intrinsic::A64_SvePtrue && !lowAArch64PtrueShapeIsValid(Op))
     return invalid(aarch64_sve::kMalformedPtrue);
   if (isX87ConstantControlIntrinsic(Id) &&

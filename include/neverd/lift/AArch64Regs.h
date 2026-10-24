@@ -13,6 +13,7 @@
 #define NEVERD_LIFT_AARCH64REGS_H
 
 #include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
+#include "neverd/ir/intrinsics/AArch64SVEVector.h"
 #include "neverd/lift/LiftCommon.h"
 
 #include <capstone/capstone.h>
@@ -58,20 +59,22 @@ constexpr uint64_t XZR = 264; // zero register
 
 /// SIMD/FP registers V0-V31 at offset 0x200, 16-byte each (128-bit)
 /// D0-D31 = low 64 bits, S0-S31 = low 32 bits, H/B = low 16/8 bits
-constexpr uint64_t V0 = 0x200;
-constexpr uint64_t V(unsigned N) { return V0 + N * 16; }
+constexpr uint64_t V0 = aarch64_sve::kNeonRegisterBase;
+constexpr uint64_t V(unsigned N) {
+  return V0 + N * aarch64_sve::kNeonStorageBytes;
+}
 
 /// SVE architectural state uses the architectural maximum vector length as a
 /// stable backing representation.  Runtime-VL operations bridge these slots to
 /// LLVM scalable vectors when they are emitted.
-constexpr uint16_t ZSize = 256; // 2048-bit architectural maximum.
-constexpr uint64_t Z0 = 0x1000;
+constexpr uint16_t ZSize = aarch64_sve::kVectorStorageBytes;
+constexpr uint64_t Z0 = aarch64_sve::kVectorRegisterBase;
 constexpr uint64_t Z(unsigned N) { return Z0 + N * ZSize; }
 
 constexpr uint16_t PSize = aarch64_sve::kPredicateStorageBytes;
-constexpr uint64_t P0 = 0x4000;
+constexpr uint64_t P0 = aarch64_sve::kPredicateRegisterBase;
 constexpr uint64_t P(unsigned N) { return P0 + N * PSize; }
-constexpr uint64_t FFR = P0 + 16 * PSize;
+constexpr uint64_t FFR = P0 + aarch64_sve::kPredicateRegisterCount * PSize;
 
 /// NZCV flags
 constexpr uint64_t NFLAG = 0x400;

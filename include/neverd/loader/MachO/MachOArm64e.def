@@ -12,8 +12,13 @@
 /// and diagnostics. Undefined macros ignore their rows.
 /// SUBTYPE(Name, Value, Label) also names CPU subtype values without ABI bits.
 /// SEGMENTED_FORMAT(Name, Stride) selects the segment-relative layout.
+/// LIMIT(Type, Name, Value) is expanded by the loader policy owner.
 ///
 //===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_MACHO_ARM64E_LIMIT
+#define NEVERD_MACHO_ARM64E_LIMIT(Type, Name, Value)
+#endif
 
 #ifndef NEVERD_MACHO_ARM64E_FORMAT
 #define NEVERD_MACHO_ARM64E_FORMAT(Name, Stride, Offset, OrdinalBits)
@@ -65,6 +70,17 @@ NEVERD_MACHO_ARM64E_FIELD(kSegmentedTargetIndex, 28, 4)
 NEVERD_MACHO_ARM64E_FIELD(kSegmentedReserved, 32, 19)
 NEVERD_MACHO_ARM64E_FIELD(kSegmentedNext, 51, 12)
 
+// Original arm64e chains encode these operations in LC_DYLD_INFO_ONLY.
+NEVERD_MACHO_ARM64E_VALUE(uint8_t, kThreadedOpcode, 0xd0)
+NEVERD_MACHO_ARM64E_VALUE(uint8_t, kThreadedTableSize, 0)
+NEVERD_MACHO_ARM64E_VALUE(uint8_t, kThreadedApply, 1)
+NEVERD_MACHO_ARM64E_VALUE(uint64_t, kThreadedMaxOrdinalCount, 0xffff)
+NEVERD_MACHO_ARM64E_LIMIT(size_t, kMachOThreadedMaxOpcodes, 1u << 22)
+NEVERD_MACHO_ARM64E_LIMIT(size_t, kMachOThreadedMaxCopiedBytes, 1u << 24)
+NEVERD_MACHO_ARM64E_TEXT(
+    kMalformedThreadedBinds,
+    "macho: malformed or unsupported arm64e threaded binds")
+
 NEVERD_MACHO_ARM64E_VALUE(unsigned, kHigh8Shift, 56)
 NEVERD_MACHO_ARM64E_VALUE(unsigned, kSmallPageBytes, 0x1000)
 NEVERD_MACHO_ARM64E_VALUE(unsigned, kLargePageBytes, 0x4000)
@@ -91,3 +107,5 @@ NEVERD_MACHO_ARM64E_TEXT(kObjCMetadataPointerUnavailable,
 #undef NEVERD_MACHO_ARM64E_TEXT
 #undef NEVERD_MACHO_ARM64E_SUBTYPE
 #undef NEVERD_MACHO_ARM64E_SEGMENTED_FORMAT
+
+#undef NEVERD_MACHO_ARM64E_LIMIT

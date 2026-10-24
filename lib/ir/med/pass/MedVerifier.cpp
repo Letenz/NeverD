@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -65,10 +66,18 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
                  Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isAArch64ExceptionReturnIntrinsic(Id))
+            Err(kAArch64ExceptionReturnUnsupported, Blk.Id, Op.Addr);
+          if (isAArch64PAuthLoadIntrinsic(Id) &&
+              !aarch64PAuthLoadMedShapeIsValid(Op))
+            Err(kPAuthLoadMalformed, Blk.Id, Op.Addr);
           if (isAArch64PAuthIntrinsic(Id) && !aarch64PAuthMedShapeIsValid(Op))
             Err(kAArch64PAuthMalformedOperation, Blk.Id, Op.Addr);
           if (aarch64CPAOperation(Id) && !aarch64CPAMedShapeIsValid(Op))
             Err(kAArch64CPAMalformedOperation, Blk.Id, Op.Addr);
+          if (aarch64_sve::vectorOperation(Id) &&
+              !aarch64VectorMedShapeIsValid(Op))
+            Err(aarch64_sve::kMalformedVector, Blk.Id, Op.Addr);
           if (Id == Intrinsic::A64_SvePtrue && !aarch64PtrueMedShapeIsValid(Op))
             Err(aarch64_sve::kMalformedPtrue, Blk.Id, Op.Addr);
           if (isPortableX87Intrinsic(Id) && !portableX87MedShapeIsValid(Op))

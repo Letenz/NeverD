@@ -12,10 +12,13 @@
 
 #include "neverd/backend/c/render/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64PAuthC.h"
+#include "neverd/backend/c/render/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
+#include "neverd/ir/intrinsics/AArch64SVEVector.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/support/IntegerLiterals.h"
 
@@ -40,6 +43,31 @@ namespace {
 #define NEVERD_A64_SVE_PREDICATE_C_TEXT(Name, Text)                            \
   constexpr char Name[] = Text;
 #include "neverd/backend/c/render/AArch64SVEPredicateC.def"
+
+#define NEVERD_A64_SVE_VECTOR_C_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "neverd/backend/c/render/AArch64SVEVectorC.def"
+
+struct SVEVectorCWidth {
+  unsigned Bytes;
+  const char *Scalar;
+  const char *Dup;
+  const char *Index;
+  const char *Last;
+  const char *ToCarrier;
+  const char *FromCarrier;
+};
+
+const SVEVectorCWidth *sveVectorCWidth(uint64_t Bytes) {
+  static constexpr SVEVectorCWidth Widths[] = {
+#define NEVERD_A64_SVE_VECTOR_C_WIDTH(Bytes, Scalar, Dup, Index, Last, To,     \
+                                      From)                                    \
+  {Bytes, Scalar, Dup, Index, Last, To, From},
+#include "neverd/backend/c/render/AArch64SVEVectorC.def"
+  };
+  const auto *Width = llvm::find_if(
+      Widths, [&](const auto &Entry) { return Entry.Bytes == Bytes; });
+  return Width == std::end(Widths) ? nullptr : Width;
+}
 
 bool isAlive(const MedVar &V, const IsAliveFn &Fn) { return !Fn || Fn(V); }
 
@@ -774,8 +802,21 @@ std::string renderA64FixedHalfConversion(Intrinsic Id,
 
 std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
-                                   uint16_t ResultBytes, bool &HasCIntrinsics) {
+                                   uint16_t ResultBytes, bool &HasCIntrinsics,
+                                   llvm::ArrayRef<uint16_t> OperandBytes) {
   using I = Intrinsic;
+  if (isAArch64ExceptionReturnIntrinsic(Id))
+    throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
+  if (isAArch64PAuthLoadIntrinsic(Id)) {
+    const auto Word = Ops.size() == kPAuthLoadOperandCount
+                          ? constantOperand(Ops[1])
+                          : std::nullopt;
+    if (OperandBytes.size() != kPAuthLoadOperandCount ||
+        !aarch64PAuthLoadShapeIsValid(Id, Ops.size() + 1, ResultBytes,
+                                      OperandBytes[0], OperandBytes[1], Word))
+      throw std::invalid_argument(kPAuthLoadMalformed);
+    return aarch64PAuthLoadC(*aarch64PAuthLoadInstruction(*Word), Ops[0]);
+  }
   if (Id == Intrinsic::A64_PACMPending)
     throw std::invalid_argument(kAArch64PAuthMalformedOperation);
   if (const auto Auth = aarch64PAuthExtendedOperation(Id)) {
@@ -843,64 +884,72 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     return All ? llvm::formatv(kPtrueAllFormat, Name).str()
                : llvm::formatv(kPtruePatternFormat, Name, Ops[0]).str();
   }
-  case I::A64_SveDup: {
-    if (Ops.size() < 2)
-      return {};
-    HasCIntrinsics = true;
-    const char *Name = Ops[1] == "2"   ? "svdup_n_u16"
-                       : Ops[1] == "4" ? "svdup_n_u32"
-                       : Ops[1] == "8" ? "svdup_n_u64"
-                                       : "svdup_n_u8";
-    return std::string(Name) + "(" + Ops[0] + ")";
-  }
-  case I::A64_SveIndex: {
-    if (Ops.size() < 3)
-      return {};
-    HasCIntrinsics = true;
-    const char *Name = Ops[2] == "2"   ? "svindex_u16"
-                       : Ops[2] == "4" ? "svindex_u32"
-                       : Ops[2] == "8" ? "svindex_u64"
-                                       : "svindex_u8";
-    const char *Type = Ops[2] == "2"   ? "uint16_t"
-                       : Ops[2] == "4" ? "uint32_t"
-                       : Ops[2] == "8" ? "uint64_t"
-                                       : "uint8_t";
-    return std::string(Name) + "((" + Type + ")(" + Ops[0] + "), (" + Type +
-           ")(" + Ops[1] + "))";
-  }
-  case I::A64_SveLastb: {
-    if (Ops.size() < 3)
-      return {};
-    HasCIntrinsics = true;
-    const char *Name = Ops[2] == "2"   ? "svlastb_u16"
-                       : Ops[2] == "4" ? "svlastb_u32"
-                       : Ops[2] == "8" ? "svlastb_u64"
-                                       : "svlastb_u8";
-    return std::string(Name) + "(" + Ops[0] + ", " + Ops[1] + ")";
-  }
+  case I::A64_SveDup:
+  case I::A64_SveIndex:
+  case I::A64_SveLastb:
   case I::A64_SveSt1:
   case I::A64_SveStnt1: {
-    if (Ops.size() < 5)
+    const auto Operation = aarch64_sve::vectorOperation(Id);
+    if (!Operation || Ops.size() != Operation->OperandCount ||
+        OperandBytes.size() != Ops.size())
+      return {};
+    aarch64_sve::VectorShape Shape;
+    Shape.NumOperands = Ops.size();
+    Shape.OutputBytes = ResultBytes;
+    for (size_t I = 0; I != Ops.size(); ++I)
+      Shape.Operands[I] = {OperandBytes[I], constantOperand(Ops[I])};
+    if (!aarch64_sve::isValidVectorShape(Id, Shape))
+      return {};
+    const auto Element = constantOperand(Ops[Operation->ElementIndex]);
+    const auto *Width = Element ? sveVectorCWidth(*Element) : nullptr;
+    if (!Width)
+      return {};
+    if (Operation->ProducesVector) {
+      if (ResultBytes != aarch64_sve::kVectorStorageBytes)
+        return {};
+      // LLVM zero-extends the original scalar bit width before widening a
+      // lane. C's usual signed conversion must not sign-extend it instead.
+      auto ScalarBits = [&](size_t I) {
+        const auto *SourceWidth = sveVectorCWidth(OperandBytes[I]);
+        return llvm::formatv(kVectorScalarBits, SourceWidth->Scalar, Ops[I])
+            .str();
+      };
+      const std::string Value =
+          Id == I::A64_SveDup
+              ? llvm::formatv(kVectorDup, Width->Dup, Width->Scalar,
+                              ScalarBits(0))
+                    .str()
+              : llvm::formatv(kVectorIndex, Width->Index, Width->Scalar,
+                              ScalarBits(0), ScalarBits(1))
+                    .str();
+      HasCIntrinsics = true;
+      return llvm::formatv(kVectorCall, Width->ToCarrier, Value).str();
+    }
+    const std::string Value = llvm::formatv(kVectorCall, Width->FromCarrier,
+                                            Ops[aarch64_sve::kVectorInputIndex])
+                                  .str();
+    if (Id == I::A64_SveLastb) {
+      if (!aarch64_sve::isValidElementBytes(ResultBytes) ||
+          ResultBytes < *Element)
+        return {};
+      HasCIntrinsics = true;
+      return llvm::formatv(kVectorLast, Width->Last, Ops[0], Value).str();
+    }
+    const auto Store = constantOperand(Ops.back());
+    const auto *StoreWidth = Store ? sveVectorCWidth(*Store) : nullptr;
+    if (ResultBytes || !StoreWidth)
+      return {};
+    const char *Name = nullptr;
+#define NEVERD_A64_SVE_VECTOR_C_STORE(Lane, Bytes, Normal, NonTemporal)        \
+  if (*Element == Lane && *Store == Bytes)                                     \
+    Name = Id == I::A64_SveSt1 ? Normal : NonTemporal;
+#include "neverd/backend/c/render/AArch64SVEVectorC.def"
+    if (!Name)
       return {};
     HasCIntrinsics = true;
-    const std::string &LaneBytes = Ops[3];
-    const std::string &StoreBytes = Ops[4];
-    const char *LaneSuffix = LaneBytes == "2"   ? "16"
-                             : LaneBytes == "4" ? "32"
-                             : LaneBytes == "8" ? "64"
-                                                : "8";
-    const char *PtrType = StoreBytes == "2"   ? "uint16_t"
-                          : StoreBytes == "4" ? "uint32_t"
-                          : StoreBytes == "8" ? "uint64_t"
-                                              : "uint8_t";
-    std::string Name = Id == I::A64_SveStnt1 ? "svstnt1" : "svst1";
-    if (Id == I::A64_SveSt1 && StoreBytes != LaneBytes) {
-      Name += StoreBytes == "1" ? "b" : StoreBytes == "2" ? "h" : "w";
-    }
-    Name += "_u";
-    Name += LaneSuffix;
-    return Name + "(" + Ops[0] + ", (" + PtrType + " *)(uintptr_t)(" + Ops[2] +
-           "), " + Ops[1] + ")";
+    return llvm::formatv(kVectorStore, Name, Ops[0], StoreWidth->Scalar, Ops[2],
+                         Value)
+        .str();
   }
   case I::A64_SveCntb:
   case I::A64_SveCnth:

@@ -21,6 +21,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/RuntimeRoutineIntrinsics.h"
@@ -773,6 +774,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
           llvm::report_fatal_error("intrinsic has no constant intrinsic ID");
         const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+        if (isAArch64ExceptionReturnIntrinsic(Id))
+          throw LowToMedConversionError(kAArch64ExceptionReturnUnsupported);
         if (Id == Intrinsic::A64_PACMPending)
           throw LowToMedConversionError(kAArch64PAuthMalformedOperation);
         if (isApxAtomicIntrinsic(Id)) {

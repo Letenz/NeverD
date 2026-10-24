@@ -25,6 +25,7 @@
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
+#include "../render/X86AmxState.h"
 #include "../render/X86DescriptorState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86ScalarSystem.h"
@@ -1888,6 +1889,15 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           Fits =
               Scalar(Source->ReturnType) && (Call->getType()->isIntegerTy() ||
                                              Call->getType()->isPointerTy());
+        // A local declaration does not prove the upper bits of a wider
+        // machine result. Keep that result's carrier when it remains live.
+        if (Fits && Source->PrototypeLibrary == UserPrototypeLibrary &&
+            (Source->ReturnType->Kind == NdTypeKind::Int ||
+             (Source->ReturnType->Kind == NdTypeKind::Struct &&
+              Source->ReturnType->IsEnum)) &&
+            Mod.getDataLayout().getTypeStoreSize(Call->getType()) >
+                Source->ReturnType->Size)
+          Fits = !valueFeedsPrintedUse(Call);
         if (Fits)
           SourceImportPrototypes.insert_or_assign(Name, *Source);
         else {
@@ -2547,6 +2557,9 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (isX86AmxNativeRowCall(*Call, TheArch))
+      return true;
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (const auto Shape = classifyX86FPStateAsm(*Call);
         Shape && isX86FPNumericalStateIntrinsic(Shape->first))

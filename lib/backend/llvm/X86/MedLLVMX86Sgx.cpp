@@ -9,9 +9,11 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/X86SgxAsm.h"
+#include "neverd/backend/llvm/X86SgxNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <vector>
@@ -30,6 +32,25 @@ llvm::Value *MedLLVMEmitter::emitX86Sgx(const MedOp &Op, Intrinsic Id,
     Arguments.push_back(V->getType()->isPointerTy()
                             ? B.CreatePtrToInt(V, Word)
                             : B.CreateZExtOrTrunc(V, Word));
+  }
+  const auto NativeID =
+      llvm::Intrinsic::lookupIntrinsicID(x86SgxNativeName(Id, TargetArch));
+  if (NativeID) {
+    auto *Function = B.GetInsertBlock()->getParent();
+    auto Features =
+        Function->getFnAttribute("target-features").getValueAsString().str();
+    Function->addFnAttr("target-features",
+                        Features.empty() ? "+sgx" : Features + ",+sgx");
+    auto *Call = B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+                                  Function->getParent(), NativeID),
+                              Arguments);
+    PendingIntrinsicCount = X86SgxAuxiliaryOutputs;
+    PendingIntrinsicOutputs[0] = B.CreateExtractValue(Call, 1);
+    auto *Status = B.CreateZExt(B.CreateExtractValue(Call, 4),
+                                sizeToType(X86SgxFlagBytes));
+    PendingIntrinsicOutputs[1] = B.CreateOr(
+        B.CreateAnd(Status, 1), B.CreateShl(B.CreateAnd(Status, 2), 7));
+    return B.CreateExtractValue(Call, 0);
   }
   auto *Result =
       llvm::StructType::get(*Ctx, {Word, Word, sizeToType(X86SgxFlagBytes)});

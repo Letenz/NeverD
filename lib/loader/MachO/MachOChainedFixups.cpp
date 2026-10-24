@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "MachOArm64eFixups.h"
 #include "MachODyldFixups.h"
 
 #include "neverd/loader/Limits.h"
@@ -34,20 +35,13 @@ using namespace llvm::MachO;
 
 namespace {
 
-struct ChainedImportRecord {
-  std::string Name;
-  std::string Module;
-  std::string DisplayModule;
-  int64_t Addend = 0;
-  bool WeakImport = false;
-  bool Valid = false;
-};
+using detail::Arm64eImportRecord;
 
 /// Decode the import table without deduplicating it: chained pointer records
 /// refer to this table by ordinal, so even two equal names must retain distinct
 /// indices and addends.  A malformed entry remains an invalid element rather
 /// than shifting every ordinal after it.
-std::optional<std::vector<ChainedImportRecord>>
+std::optional<std::vector<Arm64eImportRecord>>
 decodeChainedImports(const uint8_t *BasePtr, size_t FileSize,
                      const ChainedFixupsInfo &Info, const BinaryImage &Img) {
   const uint64_t DataOff = Info.DataOff;
@@ -60,7 +54,7 @@ decodeChainedImports(const uint8_t *BasePtr, size_t FileSize,
   dyld_chained_fixups_header Hdr{};
   std::memcpy(&Hdr, BasePtr + DataOff, sizeof(Hdr));
   if (Hdr.imports_count == 0)
-    return std::vector<ChainedImportRecord>{};
+    return std::vector<Arm64eImportRecord>{};
   if (Hdr.imports_offset == 0 || Hdr.symbols_offset == 0 ||
       Hdr.symbols_format != 0 || Hdr.imports_offset >= DataSize ||
       Hdr.symbols_offset >= DataSize)
@@ -93,7 +87,7 @@ decodeChainedImports(const uint8_t *BasePtr, size_t FileSize,
   if (!rangeInBounds(ImportsAbs, ImportsSize, DataEnd))
     return std::nullopt;
 
-  std::vector<ChainedImportRecord> Records(Hdr.imports_count);
+  std::vector<Arm64eImportRecord> Records(Hdr.imports_count);
 
   for (uint32_t I = 0; I < Hdr.imports_count; ++I) {
     uint32_t NameOff = 0;
@@ -187,18 +181,6 @@ decodeChainedImports(const uint8_t *BasePtr, size_t FileSize,
   return Records;
 }
 
-void joinImportSlot(BinaryImage &Img, llvm::StringRef Name,
-                    llvm::StringRef Module, va_t SlotVA) {
-  for (Import &Imp : Img.Imports)
-    if (Imp.Name == Name) {
-      if (Imp.Module.empty() && !Module.empty())
-        Imp.Module = Module.str();
-      if (Imp.IATAddr == 0)
-        Imp.IATAddr = SlotVA;
-      return;
-    }
-}
-
 /// Decode a whole segment before publishing any of its fixups. Authenticated
 /// slots keep a signing recipe and their original bytes; only unauthenticated
 /// slots are materialized as preferred-base runtime pointer values.
@@ -206,15 +188,8 @@ bool parseArm64eSegment(
     const dyld_chained_starts_in_segment &Seg,
     const arm64e::ChainFormat &Format, const uint8_t *Bytes, va_t Base,
     uint32_t SegmentIndex,
-    const std::optional<std::vector<ChainedImportRecord>> &Imports,
+    const std::optional<std::vector<Arm64eImportRecord>> &Imports,
     BinaryImage &Img) {
-  struct Fixup {
-    va_t Slot;
-    va_t Target = InvalidVA;
-    const ChainedImportRecord *Import = nullptr;
-    int64_t Addend = 0;
-    std::optional<MachOAuthenticatedPointer> Authentication;
-  };
   const auto fail = [&]() {
     Img.MachOChainedFixupsError = arm64e::kMalformedChainedFixups;
     return false;
@@ -240,7 +215,7 @@ bool parseArm64eSegment(
   const auto startAt = [&](size_t Index) {
     return readLE<uint16_t>(Bytes + StartOffset + Index * sizeof(uint16_t));
   };
-  std::vector<Fixup> Pending;
+  std::vector<detail::Arm64eFixup> Pending;
   std::set<va_t> Slots;
   for (unsigned Page = 0; Page < Seg.page_count; ++Page) {
     const uint16_t Start = startAt(Page);
@@ -288,69 +263,12 @@ bool parseArm64eSegment(
             Img.MachOResolvedChainedPointerSlots.count(Slot))
           return fail();
         const uint64_t Raw = readLE<uint64_t>(Storage);
-        const bool Auth = arm64e::kAuthentication.extract(Raw);
-        const bool Bind = !Format.Segmented && arm64e::kBind.extract(Raw);
-        const uint32_t Next =
-            (Format.Segmented ? arm64e::kSegmentedNext : arm64e::kNext)
-                .extract(Raw);
-        Fixup F{Slot};
-        if (Auth) {
-          F.Authentication.emplace();
-          F.Authentication->EncodedValue = Raw;
-          F.Authentication->Diversity = arm64e::kDiversity.extract(Raw);
-          F.Authentication->AddressDiversity =
-              arm64e::kAddressDiversity.extract(Raw);
-          F.Authentication->Key = arm64e::kKey.extract(Raw);
-        }
-        if (Format.Segmented) {
-          // Segment indices name load commands, not a sorted address view.
-          // Linked Mach-O images retain those entries, including empty ones.
-          const uint32_t Index = arm64e::kSegmentedTargetIndex.extract(Raw);
-          const uint64_t Offset = arm64e::kSegmentedTargetOffset.extract(Raw);
-          if ((!Auth && arm64e::kSegmentedReserved.extract(Raw)) ||
-              Index >= Img.Segments.size())
-            return fail();
-          const Segment &Target = Img.Segments[Index];
-          if (Offset > Target.Size || Offset > InvalidVA - Target.VA)
-            return fail();
-          F.Target = Target.VA + Offset;
-          if (Auth)
-            F.Authentication->Target = F.Target;
-        } else if (Bind) {
-          const uint32_t Ordinal =
-              Raw & llvm::maskTrailingOnes<uint32_t>(Format.OrdinalBits);
-          if ((arm64e::kOrdinalStorage.extract(Raw) >> Format.OrdinalBits) !=
-                  0 ||
-              !Imports || Ordinal >= Imports->size() ||
-              !(*Imports)[Ordinal].Valid)
-            return fail();
-          F.Import = &(*Imports)[Ordinal];
-          if (!Auth && !Img.isValidImportStorageSlot(Slot, F.Import->Name))
-            return fail();
-          const int64_t InlineAddend =
-              Auth ? 0 : arm64e::kInlineAddend.signExtend(Raw);
-          if (llvm::AddOverflow(F.Import->Addend, InlineAddend, F.Addend))
-            return fail();
-          if (Auth) {
-            F.Authentication->Symbol = F.Import->Name;
-            F.Authentication->Module = F.Import->Module;
-            F.Authentication->Addend = F.Addend;
-            F.Authentication->WeakImport = F.Import->WeakImport;
-          }
-        } else {
-          F.Target =
-              Auth ? arm64e::kAuthenticatedTarget.extract(Raw)
-                   : arm64e::kTarget.extract(Raw) |
-                         (arm64e::kHigh8.extract(Raw) << arm64e::kHigh8Shift);
-          if (Auth || Format.Offset) {
-            if (F.Target > InvalidVA - Base)
-              return fail();
-            F.Target += Base;
-          }
-          if (Auth)
-            F.Authentication->Target = F.Target;
-        }
-        Pending.push_back(std::move(F));
+        auto F =
+            detail::decodeArm64eFixup(Raw, Format, Slot, Base, *Imports, Img);
+        if (!F)
+          return fail();
+        const uint32_t Next = F->Next;
+        Pending.push_back(std::move(*F));
         if (!Next)
           break;
         const unsigned Delta = Next * Format.Stride;
@@ -360,26 +278,7 @@ bool parseArm64eSegment(
       }
     }
   }
-  for (const auto &F : Pending) {
-    if (F.Authentication) {
-      detail::clearLocalPointerClassification(Img, F.Slot);
-      Img.MachOAuthenticatedPointers.emplace(F.Slot, *F.Authentication);
-      // The recipe owns the symbolic binding too. Publishing an ordinary
-      // import-storage proof would let clients replace signing with a raw
-      // function or data address.
-    } else if (F.Import) {
-      if (Img.isValidImportStorageSlot(F.Slot, F.Import->Name)) {
-        detail::clearLocalPointerClassification(Img, F.Slot);
-        if (Img.recordDyldBindSlot(F.Slot, F.Import->Name, F.Addend,
-                                   F.Import->Module, F.Import->WeakImport))
-          joinImportSlot(Img, F.Import->Name, F.Import->DisplayModule, F.Slot);
-      }
-    } else {
-      detail::recordAbsolutePointerSlot(Img, F.Slot, F.Target);
-      Img.patchPtr(F.Slot, F.Target);
-      Img.MachOResolvedChainedPointerSlots.insert(F.Slot);
-    }
-  }
+  detail::publishArm64eFixups(Pending, Img);
   return true;
 }
 
@@ -396,7 +295,7 @@ void parseChainedFixupsImports(const uint8_t *BasePtr, size_t FileSize,
   for (const auto &Imp : Img.Imports)
     SeenNames.insert(Imp.Name);
 
-  for (const ChainedImportRecord &Record : *Records) {
+  for (const Arm64eImportRecord &Record : *Records) {
     if (!Record.Valid || !SeenNames.insert(Record.Name).second)
       continue;
 
@@ -544,7 +443,7 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
           std::memcpy(&B, &Raw, sizeof(B));
           Next = B.next;
           if (ImportRecords && B.ordinal < ImportRecords->size()) {
-            const ChainedImportRecord &Record = (*ImportRecords)[B.ordinal];
+            const Arm64eImportRecord &Record = (*ImportRecords)[B.ordinal];
             int64_t EffectiveAddend = 0;
             const int64_t PointerAddend = static_cast<int64_t>(B.addend);
             if (Record.Valid && !llvm::AddOverflow(Record.Addend, PointerAddend,
@@ -554,8 +453,8 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
                 if (Img.recordDyldBindSlot(ChainVA, Record.Name,
                                            EffectiveAddend, Record.Module,
                                            Record.WeakImport)) {
-                  joinImportSlot(Img, Record.Name, Record.DisplayModule,
-                                 ChainVA);
+                  detail::joinImportSlot(Img, Record.Name, Record.DisplayModule,
+                                         ChainVA);
                   ++NumRecorded;
                 }
               }

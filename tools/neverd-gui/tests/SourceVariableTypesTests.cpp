@@ -118,8 +118,11 @@ private slots:
         Input = true;
         Dialog->setTextValue(Kind == "immediate" ? "42" : "eax");
         Dialog->accept();
-      } else if (auto *Message = qobject_cast<QMessageBox *>(
-                     QApplication::activeModalWidget())) {
+      } else if (auto *Message = Window.findChild<QMessageBox *>(
+                     QStringLiteral("registerValueDialog"));
+                 Message && Message->isVisible()) {
+        QCOMPARE(Message->windowModality(), Qt::NonModal);
+        QVERIFY(!QApplication::activeModalWidget());
         Value = Message->text().contains("0x2A") &&
                 Message->text().contains("before instruction");
         Message->accept();

@@ -9,6 +9,8 @@
 /// compare faults with the original bytes on the same host.
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/render/X86AmxState.h"
+#include "../../../lib/backend/c/render/X86Sgx.h"
 #include "../../../lib/backend/c/render/X86SystemState.h"
 #include "../../../lib/backend/c/render/X86Virtualization.h"
 #include "X86AMXFixtures.h"
@@ -26,9 +28,11 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/X86AmxAsm.h"
+#include "neverd/backend/llvm/X86AmxNative.h"
 #include "neverd/backend/llvm/X86DescriptorStateNative.h"
 #include "neverd/backend/llvm/X86ScalarSystemNative.h"
 #include "neverd/backend/llvm/X86SgxAsm.h"
+#include "neverd/backend/llvm/X86SgxNative.h"
 #include "neverd/backend/llvm/X86SystemStateAsm.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -176,7 +180,9 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
                          isX86SystemStateNativeName(F.getName()) ||
                          isX86ScalarSystemNativeName(F.getName()) ||
                          isX86DescriptorStateNativeName(F.getName()) ||
-                         isX86SystemRegisterNativeName(F.getName());
+                         isX86SystemRegisterNativeName(F.getName()) ||
+                         isX86SgxNativeName(F.getName().str()) ||
+                         x86AmxNativeDescriptor(F.getName().str()).has_value();
   if (NativeObject) {
     auto Copy = llvm::CloneModule(*Module);
     auto Object = Codegen().compile(*Copy, Image.Arch, Image.Format);
@@ -1167,7 +1173,8 @@ namespace {
 void compileNativeC(const std::string &Compiler, llvm::StringRef Directory,
                     BinaryFormat Format, const std::string &Source,
                     const std::string &LLVMName, unsigned &Cases,
-                    std::optional<uint16_t> RequiredPort = std::nullopt) {
+                    std::optional<uint16_t> RequiredPort = std::nullopt,
+                    bool CompileObject = false) {
   llvm::SmallString<128> Input(Directory), Output(Directory), Errors(Directory);
   llvm::sys::path::append(Input, "source.c");
   llvm::sys::path::append(Output, "source.ll");
@@ -1216,6 +1223,23 @@ void compileNativeC(const std::string &Compiler, llvm::StringRef Directory,
       EXPECT_TRUE((*IR)->getBuffer().contains("@" + LLVMName + "(i16 " +
                                               std::to_string(*RequiredPort)))
           << (*IR)->getBuffer().str();
+    if (CompileObject) {
+      auto ObjectArguments = Arguments;
+      ObjectArguments.erase(std::find(ObjectArguments.begin(),
+                                      ObjectArguments.end(), "-emit-llvm"));
+      *std::find(ObjectArguments.begin(), ObjectArguments.end(), "-S") = "-c";
+      ObjectArguments.emplace_back("-mllvm");
+      ObjectArguments.emplace_back("-verify-machineinstrs");
+      const int ObjectStatus = llvm::sys::ExecuteAndWait(
+          Compiler, ObjectArguments, std::nullopt, Redirects, 30);
+      const auto ObjectDiagnostics = llvm::MemoryBuffer::getFile(Errors);
+      ASSERT_EQ(ObjectStatus, 0)
+          << (ObjectDiagnostics ? (*ObjectDiagnostics)->getBuffer().str() : "")
+          << Source;
+      const auto Object = llvm::MemoryBuffer::getFile(Output);
+      ASSERT_TRUE(Object);
+      EXPECT_FALSE((*Object)->getBuffer().empty());
+    }
     ++Cases;
   }
 }
@@ -4064,6 +4088,139 @@ TEST(X86SgxSource, MalformedAssemblyCannotDropRegistersOrEffects) {
       }
 }
 
+TEST(X86SgxSource, NeverCCompletionMatchesOriginalRegistersAndFlags) {
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  for (bool Supervisor : {false, true})
+    for (bool NoOpt : {false, true})
+      for (bool Dead : {false, true}) {
+        SCOPED_TRACE(Supervisor);
+        SCOPED_TRACE(NoOpt);
+        SCOPED_TRACE(Dead);
+        size_t Offset;
+        auto Image = image(Arch::X64, BinaryFormat::ELF,
+                           sgxFunction(Arch::X64, Supervisor, Dead, Offset));
+        const std::vector<uint8_t> Encoding = {
+            0x0f, 0x01, static_cast<uint8_t>(Supervisor ? 0xcf : 0xc0)};
+        compileRoutes(Image, NoOpt, Entry + Offset,
+                      Supervisor ? "encls" : "enclv", std::nullopt, false,
+                      false, sgxDriver(Image, Supervisor, Dead), Encoding, 8,
+                      false, Compiler);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+TEST(X86SgxSource, NativeContractsRejectLostEffectsAndMode) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.encls"))
+    GTEST_SKIP() << "native SGX completion requires the qualified fork";
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Id : {Intrinsic::X86Encls, Intrinsic::X86Enclv})
+      for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Id));
+        SCOPED_TRACE(Mutation);
+        llvm::LLVMContext Context;
+        llvm::Module Module("sgx-native-contract", Context);
+        llvm::IRBuilder<> B(Context);
+        const auto ID =
+            llvm::Intrinsic::lookupIntrinsicID(x86SgxNativeName(Id, A));
+        auto *F = llvm::Intrinsic::getOrInsertDeclaration(&Module, ID);
+        auto *Owner = llvm::Function::Create(
+            llvm::FunctionType::get(B.getVoidTy(), false),
+            llvm::GlobalValue::ExternalLinkage, "owner", Module);
+        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Owner));
+        auto *Word = A == Arch::X64 ? B.getInt64Ty() : B.getInt32Ty();
+        auto *Call = B.CreateCall(
+            F, std::vector<llvm::Value *>(4, llvm::ConstantInt::get(Word, 0)));
+        if (Mutation == 1)
+          Call->setOnlyReadsMemory();
+        if (Mutation == 2)
+          Call->setOnlyWritesMemory();
+        if (Mutation == 3)
+          Call->setDoesNotReturn();
+        if (Mutation == 4)
+          Call->setArgOperand(0, B.getInt16(0));
+        if (Mutation == 6)
+          llvm::BasicBlock::Create(Context, "definition", F);
+        const auto Mode =
+            Mutation == 5 ? (A == Arch::X64 ? Arch::X86 : Arch::X64) : A;
+        const std::vector<std::string> Arguments(4, "input");
+        if (Mutation)
+          EXPECT_THROW(renderX86SgxCall(Mode, *Call, {}, false, Arguments),
+                       std::invalid_argument);
+        else
+          EXPECT_TRUE(renderX86SgxCall(Mode, *Call, {}, false, Arguments));
+      }
+}
+
+TEST(X86SgxSource, NeverCCompilesNativeCompletionAndCombinedAmxFeatures) {
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-sgx-native-c", Directory));
+  const auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  unsigned Cases = 0;
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool Supervisor : {false, true})
+      for (bool Dead : {false, true})
+        for (bool NoOpt : {false, true})
+          for (bool Amx : {false, true}) {
+            SCOPED_TRACE(static_cast<unsigned>(Format));
+            SCOPED_TRACE(Supervisor);
+            SCOPED_TRACE(Dead);
+            SCOPED_TRACE(NoOpt);
+            SCOPED_TRACE(Amx);
+            size_t Offset;
+            auto Bytes = sgxFunction(Arch::X64, Supervisor, Dead, Offset);
+            if (Format == BinaryFormat::COFF)
+              Bytes[3] = 0xc8;
+            if (Amx) {
+              const auto &Zero = amxEncodings()[3].Bytes;
+              Bytes.insert(Bytes.begin() + Offset + 3, Zero.begin(),
+                           Zero.end());
+            }
+            auto Image = image(Arch::X64, Format, Bytes);
+            std::string High, LLVM, Native;
+            sourceRoutes(Image, NoOpt, Entry + Offset, {}, &High, &LLVM, {}, {},
+                         &Native);
+            if (::testing::Test::HasFailure())
+              return;
+            const auto Name = x86SgxNativeName(Supervisor ? Intrinsic::X86Encls
+                                                          : Intrinsic::X86Enclv,
+                                               Arch::X64);
+            if (llvm::Intrinsic::lookupIntrinsicID(Name)) {
+              EXPECT_NE(Native.find("@" + Name + "("), std::string::npos)
+                  << Native;
+              // The fixture also owns a separate PUSHF snapshot. Check the
+              // migrated SGX boundary without discarding that flag effect.
+              EXPECT_EQ(Native.find("asm sideeffect \"encls"),
+                        std::string::npos)
+                  << Native;
+              EXPECT_EQ(Native.find("asm sideeffect \"enclv"),
+                        std::string::npos)
+                  << Native;
+              if (Amx)
+                EXPECT_EQ(Native.find("asm sideeffect \"# neverd AMX"),
+                          std::string::npos)
+                    << Native;
+            }
+            for (const auto &Source : {High, LLVM}) {
+              compileNativeC(Compiler, Directory, Format, Source, Name, Cases,
+                             std::nullopt, true);
+              if (::testing::Test::HasFailure())
+                return;
+            }
+          }
+  EXPECT_EQ(Cases, 192u);
+  RecordProperty("sgx_native_c_ir_and_object_compilations", Cases);
+}
+
 TEST(X86SgxSource, UnusedLeafRegistersDoNotBecomeParametersOrTraps) {
   for (const auto A : {Arch::X86, Arch::X64})
     for (bool NoOpt : {false, true}) {
@@ -4442,6 +4599,123 @@ TEST(X86AmxSource, EveryBankOperationAndEncodingCompilesAcrossNativeFormats) {
         if (::testing::Test::HasFailure())
           return;
       }
+}
+
+TEST(X86AmxSource, NativeContractsRejectLostEffectsAndControls) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.ldtilecfg.address"))
+    GTEST_SKIP() << "linked SDK predates explicit AMX controls";
+  for (unsigned K = 0; K != unsigned(X86AmxOp::Count); ++K)
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(K);
+      SCOPED_TRACE(Mutation);
+      const auto Kind = X86AmxOp(K);
+      uint32_t D = X86AmxStateVersion | K;
+      if (x86AmxIsCompute(Kind))
+        D |= (1u << 8) | (2u << 11);
+      llvm::LLVMContext Context;
+      llvm::Module Module("amx-native", Context);
+      llvm::IRBuilder<> B(Context);
+      const auto ID = llvm::Intrinsic::lookupIntrinsicID("llvm.x86." +
+                                                         x86AmxNativeSuffix(D));
+      ASSERT_NE(ID, 0u);
+      auto *F = llvm::Intrinsic::getOrInsertDeclaration(&Module, ID);
+      auto *Owner = llvm::Function::Create(
+          llvm::FunctionType::get(B.getVoidTy(), {B.getInt32Ty()}, false),
+          llvm::GlobalValue::ExternalLinkage, "test", Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Owner));
+      std::vector<llvm::Value *> Values;
+      for (auto *T : F->getFunctionType()->params())
+        Values.push_back(llvm::Constant::getNullValue(T));
+      if (x86AmxIsCompute(Kind)) {
+        Values[1] = B.getInt8(1);
+        Values[2] = B.getInt8(2);
+      }
+      const unsigned Width = x86AmxIsTileMemory(Kind) ? 3 : 1;
+      if (x86AmxIsMemory(Kind))
+        Values[Width] = B.getInt32(64);
+      auto *Call = B.CreateCall(F, Values);
+      bool Invalid = Mutation >= 1 && Mutation <= 3;
+      if (Mutation == 1)
+        Call->setOnlyReadsMemory();
+      if (Mutation == 2)
+        Call->setOnlyWritesMemory();
+      if (Mutation == 3)
+        Call->setDoesNotReturn();
+      if (Mutation >= 4 && x86AmxIsMemory(Kind)) {
+        Invalid = true;
+        if (Mutation == 4)
+          Call->setArgOperand(Width, B.getInt32(16));
+        if (Mutation == 5)
+          Call->setArgOperand(Width + 1, B.getInt32(1));
+        if (Mutation == 6)
+          Call->setArgOperand(Width + 2, B.getInt32(2));
+        if (Mutation == 7)
+          Call->setArgOperand(Width, Owner->getArg(0));
+      } else if (Mutation >= 4 && x86AmxIsRow(Kind)) {
+        Invalid = true;
+        if (Mutation == 4)
+          Call->setArgOperand(0, B.getInt8(8));
+        else if (Mutation == 5)
+          Call->setArgOperand(2, B.getInt32(2));
+        else
+          Call->setArgOperand(2, Owner->getArg(0));
+      } else if (Mutation >= 4 && x86AmxIsCompute(Kind)) {
+        Invalid = true;
+        Call->setArgOperand(1, B.getInt8(Mutation == 4 ? 8 : 0));
+      }
+      const auto Args = std::vector<std::string>(Values.size(), "input");
+      if (Invalid)
+        EXPECT_THROW(renderX86AmxCall(Arch::X64, *Call, Args),
+                     std::invalid_argument);
+      else
+        EXPECT_TRUE(renderX86AmxCall(Arch::X64, *Call, Args));
+    }
+}
+
+TEST(X86AmxSource, NeverCCompilesBothRoutesWithoutAssembly) {
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-amx-native-c", Directory));
+  const auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  unsigned Cases = 0;
+  for (const auto &E : amxEncodings())
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(E.Assembly);
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        size_t Offset;
+        auto Image = image(Arch::X64, Format, amxFunction(E, Offset));
+        std::string High, LLVM, Native;
+        sourceRoutes(Image, NoOpt, Entry + Offset, {}, &High, &LLVM, {}, {},
+                     &Native);
+        if (::testing::Test::HasFailure())
+          return;
+        uint32_t D = X86AmxStateVersion | E.Kind;
+        if (x86AmxIsCompute(X86AmxOp(E.Kind)))
+          D |= (1u << 8) | (2u << 11);
+        if (x86AmxIsRow(X86AmxOp(E.Kind)) &&
+            llvm::StringRef(E.Assembly).contains('$'))
+          D |= X86AmxImmediateRow;
+        const auto Name = "llvm.x86." + x86AmxNativeSuffix(D);
+        if (llvm::Intrinsic::lookupIntrinsicID("llvm.x86.ldtilecfg.address")) {
+          EXPECT_NE(Native.find("@" + Name + "("), std::string::npos) << Native;
+          EXPECT_EQ(Native.find(" asm "), std::string::npos) << Native;
+        }
+        for (const auto &Source : {High, LLVM}) {
+          compileNativeC(Compiler, Directory, Format, Source, Name, Cases,
+                         std::nullopt, true);
+          if (::testing::Test::HasFailure())
+            return;
+        }
+      }
+  EXPECT_EQ(Cases, amxEncodings().size() * 24);
+  RecordProperty("amx_native_c_compilations", Cases);
+  RecordProperty("amx_native_c_object_compilations", Cases);
 }
 
 TEST(X86AmxSource, NativeCompletionAndFaultsMatchOriginalBytes) {
