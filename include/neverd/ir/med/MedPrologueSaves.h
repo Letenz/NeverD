@@ -23,7 +23,7 @@ namespace neverd {
 /// its version zero, or the entry seed that copies it (`COPY RSI.1 = RSI`).
 bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff);
 
-/// Mark source-mode prologue saves, unobserved entry spills and return-address
+/// Mark source-mode prologue saves, unobserved scratch spills and return-address
 /// reads using one frame access analysis. Complete fixed integer call operands
 /// reading private frame bytes proved never written on any incoming path become
 /// explicit unavailable values in source only. General partial-byte
