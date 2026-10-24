@@ -38,7 +38,7 @@ class Projection {
   const DataFlowOptions &Options;
   const ComparisonControl &Control;
   const bool ParameterViews;
-  const bool Progress;
+  const StringRef ProgressProfile;
   DataFlowGraph G;
   uint64_t Work = 0;
   std::map<const BasicBlock *, uint32_t> Blocks;
@@ -345,8 +345,9 @@ class Projection {
   }
 
   void projectProgress() {
-    auto P = proveFlowProgress(G, FunctionContract, Options,
-                               [&](uint64_t N) { charge(N); });
+    auto P = proveFlowProgress(
+        G, FunctionContract, Options, [&](uint64_t N) { charge(N); },
+        ProgressProfile == LLVMMultiBlockProgressDataFlowProfile);
     if (P.Kind != FlowProgressKind::Unproven) {
       // Add enum attributes to a copy; strings may contain arbitrary attribute
       // names or delimiters. Source LLVM and all other contracts stay exact.
@@ -363,7 +364,7 @@ class Projection {
         signature(N.Semantics);
       }
     }
-    G.Profile = LLVMProgressDataFlowProfile.str();
+    G.Profile = ProgressProfile.str();
     G.Progress = std::move(P);
     if (auto Error =
             validateFlowProgress(G, Options, [&](uint64_t N) { charge(N); }))
@@ -377,9 +378,9 @@ public:
   Projection(const Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
              StringRef Revision, StringRef ABI, bool NativeComplete,
              const DataFlowOptions &Options, const ComparisonControl &Control,
-             bool ParameterViews = false, bool Progress = false)
+             bool ParameterViews = false, StringRef ProgressProfile = {})
       : F(F), Sources(Sources), Options(Options), Control(Control),
-        ParameterViews(ParameterViews), Progress(Progress) {
+        ParameterViews(ParameterViews), ProgressProfile(ProgressProfile) {
     G.Profile = LLVMDataFlowProfile.str();
     G.Function = Entry;
     G.Revision = Revision.str();
@@ -471,7 +472,7 @@ public:
       throw std::invalid_argument(*Error);
     if (ParameterViews)
       projectParameters();
-    if (Progress)
+    if (!ProgressProfile.empty())
       projectProgress();
     poll();
     return std::move(G);
@@ -501,7 +502,15 @@ DataFlowGraph buildLLVMProgressDataFlow(
     llvm::StringRef Revision, llvm::StringRef ABI, bool NativeComplete,
     const DataFlowOptions &Options, const ComparisonControl &Control) {
   return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
-                    Control, true, true)
+                    Control, true, LLVMProgressDataFlowProfile)
+      .run();
+}
+DataFlowGraph buildLLVMMultiBlockProgressDataFlow(
+    const llvm::Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
+    llvm::StringRef Revision, llvm::StringRef ABI, bool NativeComplete,
+    const DataFlowOptions &Options, const ComparisonControl &Control) {
+  return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
+                    Control, true, LLVMMultiBlockProgressDataFlowProfile)
       .run();
 }
 } // namespace neverd::diff

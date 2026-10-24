@@ -2596,7 +2596,8 @@ TEST_F(BinaryDiffSDK, ParameterViewsPageAndBindTheOriginalSourceSignature) {
 
 TEST_F(BinaryDiffSDK,
        ParameterViewsStoppedAndEmptyCollectionsKeepTheirProfile) {
-  for (const auto *Profile : {"llvm-parameter-ssa-v1", "llvm-progress-ssa-v1"})
+  for (const auto *Profile : {"llvm-parameter-ssa-v1", "llvm-progress-ssa-v1",
+                              "llvm-progress-ssa-v2"})
     for (bool Fragments : {false, true})
       for (const auto *Phase :
            {"primary:discovery", "primary:decode", "primary:dataflow"}) {
@@ -2628,7 +2629,10 @@ TEST_F(BinaryDiffSDK,
         EXPECT_EQ(Document->getAsObject()
                       ->getObject("flow_regions")
                       ->getString("profile"),
-                  std::string(Profile) == "llvm-progress-ssa-v1"
+                  std::string(Profile) == "llvm-progress-ssa-v2"
+                      ? (Fragments ? "llvm-progress-fragments-v2"
+                                   : "llvm-progress-neighborhoods-v2")
+                  : std::string(Profile) == "llvm-progress-ssa-v1"
                       ? (Fragments ? "llvm-progress-fragments-v1"
                                    : "llvm-progress-neighborhoods-v1")
                       : (Fragments ? "llvm-parameter-fragments-v1"
@@ -2738,4 +2742,77 @@ TEST_F(BinaryDiffSDK, LoopProgressPagesBindWitnessesAndOriginalContracts) {
       Limited, R"({"kind":"nodes","address":"0x1000"})"));
   EXPECT_EQ(LimitedPage.getAsObject()->getString("availability"),
             "resource_limited");
+}
+
+TEST_F(BinaryDiffSDK, MultiBlockProgressBindsPagedHeadersAndFreshSource) {
+  // Owned control_regions_fixture.c family3, clang x64 ELF O0. Inspect only.
+  const auto Bytes = llvm::fromHex(
+      "554889e5897dfc8975f88b45f883e0078945f48b45f489c183c1ff894df483f800746e8b"
+      "45fc83e00183f80074528b45fc83f0176bc00783c0098945fc8b45fcc1e8058b4dfcc1e1"
+      "1b09c88945fc8b45fc05674523013345f88945fc8b45fc8b4dfcc1e90b31c86bc00d8945"
+      "fc8b45fcc1e0078b4dfcc1e91909c88945fceb0f8b45fc83c0116b4df80d31c88945fceb"
+      "828b45fc3345f883c0035dc3");
+  const auto A =
+      input(llvm::ArrayRef<uint8_t>(
+                reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()),
+            0x1000);
+  const auto B =
+      input(llvm::ArrayRef<uint8_t>(
+                reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()),
+            0x8000);
+  const auto Options =
+      R"({"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v2"},"flow_regions":{"fragments":true}})";
+  const auto C = compare(A, B, Options);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(
+      Summary.getAsObject()->getObject("flow_regions")->getString("profile"),
+      "llvm-progress-fragments-v2");
+  auto Page = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000","limit":200})"));
+  ASSERT_EQ(Page.getAsObject()->getString("availability"), "available")
+      << render(Page);
+  EXPECT_EQ(Page.getAsObject()->getInteger("schema_version"), 6);
+  ASSERT_EQ(Page.getAsObject()->getObject("progress")->getString("kind"),
+            "counter_loops")
+      << render(Page);
+  EXPECT_FALSE(Page.getAsObject()->getObject("progress")->get("loops"));
+  bool Seen = false;
+  for (const auto &Row : *Page.getAsObject()->getArray("rows"))
+    if (const auto *Loop = Row.getAsObject()->getObject("progress_loop")) {
+      Seen = true;
+      EXPECT_NE(Loop->getInteger("header"), Loop->getInteger("block"));
+      auto Slice = parsed(neverd_comparison_slice_json(
+          C,
+          render(llvm::json::Object{
+                     {"address", "0x1000"},
+                     {"seeds", llvm::json::Array{*Loop->getInteger("update")}}})
+              .c_str()));
+      EXPECT_EQ(Slice.getAsObject()->getInteger("schema_version"), 6);
+      break;
+    }
+  EXPECT_TRUE(Seen);
+  const auto Reopened = compare(A, B, Options);
+  ASSERT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+  EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
+  for (const auto Header : {false, true}) {
+    auto V = llvm::json::parse(Saved);
+    auto *Proof = V->getAsObject()
+                      ->getObject("dataflow")
+                      ->getObject("primary")
+                      ->getArray("entries")
+                      ->front()
+                      .getAsObject()
+                      ->getObject("graph")
+                      ->getObject("progress");
+    if (Header) {
+      auto *L = Proof->getArray("loops")->front().getAsObject();
+      (*L)["header"] = *L->getInteger("block");
+    } else
+      (*Proof)["source_contract"] =
+          Proof->getString("observed_contract")->str();
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*V).c_str()), 0);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
 }

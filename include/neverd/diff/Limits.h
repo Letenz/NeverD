@@ -131,6 +131,8 @@ inline constexpr char kMedSSAProfile[] = "med-ssa-v2";
 inline constexpr char kLLVMSSAProfile[] = "llvm-ssa-v1";
 inline constexpr char kLLVMParameterSSAProfile[] = "llvm-parameter-ssa-v1";
 inline constexpr char kLLVMProgressSSAProfile[] = "llvm-progress-ssa-v1";
+inline constexpr char kLLVMMultiBlockProgressSSAProfile[] =
+    "llvm-progress-ssa-v2";
 inline constexpr uint32_t kDefaultFlowMaxNodes = 65536;
 inline constexpr uint32_t kMaxFlowNodes = 1u << 20;
 inline constexpr uint32_t kDefaultFlowMaxBlocks = 1024;

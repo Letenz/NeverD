@@ -215,7 +215,10 @@ neverd_comparison_flow_regions_json(neverd_comparison_t Comparison,
 /// Bounded SSA observations from run option dataflow:true or settings object.
 /// Settings profile: med-ssa-v2 (default), llvm-ssa-v1 (optimized integer
 /// SSA), llvm-parameter-ssa-v1 (eligible native low-bit parameter views), or
-/// llvm-progress-ssa-v1 (parameter views and independently proved progress).
+/// llvm-progress-ssa-v1 (parameter views and independently proved progress),
+/// llvm-progress-ssa-v2 (also single-entry multi-block counter components).
+/// Schema 6 witnesses add header to block (latch)/counter/update/compare.
+/// Only latch-node pages carry these witnesses; v1/schema5 remain unchanged.
 /// Schema 4 retains parameter source/view widths, optional native site and
 /// elision counts; paged nodes expose only their referenced parameter records.
 /// Parameter rows consume the same retained-item allowances as nodes; node

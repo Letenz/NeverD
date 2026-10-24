@@ -6421,6 +6421,10 @@ Couverture : %7</translation>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>L’analyse des boucles prouve la terminaison dans les cas pris en charge avant de comparer les calculs. Elle inclut les vues des paramètres et conserve les contrats des boucles non prouvés.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à plusieurs blocs</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6551,6 +6555,14 @@ Progress does not establish equal loop counts or function results.</source>
 Contrat observé :
 %2
 La terminaison ne prouve pas l’égalité des nombres d’itérations ou des résultats des fonctions.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à plusieurs blocs</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Boucle démontrée : bloc d’entrée %1 → bloc de retour %2 · compteur #%3 → mise à jour #%4 · condition #%5</translation>
     </message>
 </context>
 <context>

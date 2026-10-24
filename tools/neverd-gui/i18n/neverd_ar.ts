@@ -6565,6 +6565,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>يثبت تحليل الحلقات الانتهاء في الحالات المدعومة قبل مقارنة الحسابات. ويشمل عروض المعاملات ويحافظ على عقود الحلقات غير المثبتة.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات متعددة الكتل</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6695,6 +6699,14 @@ Progress does not establish equal loop counts or function results.</source>
 العقد المرصود:
 %2
 لا يثبت الانتهاء تساوي عدد تكرارات الحلقات أو نتائج الدوال.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات متعددة الكتل</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>حلقة مثبتة: كتلة البداية %1 → كتلة العودة %2 · العداد #%3 → التحديث #%4 · الشرط #%5</translation>
     </message>
 </context>
 <context>
