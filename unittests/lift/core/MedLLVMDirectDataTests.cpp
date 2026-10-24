@@ -521,4 +521,68 @@ TEST(MedLLVMDirectData, LargeGapBackwardGrowthPreservesAtomicAlignment) {
   }
 }
 
+TEST(MedLLVMDirectData, LargeGapsKeepAdjacentSegmentsIndependent) {
+  for (Arch A : {Arch::X64, Arch::X86, Arch::AArch64, Arch::ARM})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(Reverse);
+        BinaryImage Image = image(A, Format, true);
+        // The last finite bytes of one mapping touch the first finite bytes of
+        // another. Their storage and permissions remain independent in either
+        // access order, even though both relocation-free gaps exceed the limit.
+        auto &First = Image.Segments.back();
+        First.Size = First.FileSz = 2 * 1024 * 1024;
+        First.Data.resize(First.Size, 0x35);
+        Image.CodePtrRelocSlots.erase(DataVA + 0x78);
+        const va_t Boundary = First.VA + First.Size;
+        Segment Second;
+        Second.VA = Boundary;
+        Second.Size = Second.FileSz = First.Size;
+        Second.Data.resize(Second.Size, 0x79);
+        Second.Flags = SegmentFlags::Readable;
+        Image.CodePtrRelocSlots.insert(Second.VA + Second.Size - 8);
+        Image.Segments.push_back(std::move(Second));
+
+        MedFunc F = function(Image);
+        const va_t Addresses[] = {Boundary - 4, Boundary};
+        load(F, Image, Addresses[Reverse ? 1 : 0], 4);
+        load(F, Image, Addresses[Reverse ? 0 : 1], 4);
+        finish(F, Image);
+        llvm::LLVMContext Context;
+        auto Module = emit(Image, {F}, Context);
+        ASSERT_NE(Module, nullptr);
+        EXPECT_EQ(Module->global_size(), 2u);
+        unsigned Reads = 0;
+        for (auto &BB : *Module->getFunction("probe"))
+          for (auto &I : BB)
+            if (auto *Read = llvm::dyn_cast<llvm::LoadInst>(&I);
+                Read && Read->isVolatile()) {
+              int64_t Offset = 0;
+              auto *Storage = llvm::dyn_cast<llvm::GlobalVariable>(
+                  llvm::GetPointerBaseWithConstantOffset(
+                      Read->getPointerOperand(), Offset,
+                      Module->getDataLayout()));
+              ASSERT_NE(Storage, nullptr);
+              ASSERT_LT(Reads, 2u);
+              const bool IsSecond =
+                  Addresses[Reverse ? 1 - Reads : Reads] == Boundary;
+              EXPECT_EQ(Storage->isConstant(), IsSecond);
+              auto *Bytes = llvm::dyn_cast<llvm::ConstantDataArray>(
+                  Storage->getInitializer());
+              ASSERT_NE(Bytes, nullptr);
+              ASSERT_GE(Offset, 0);
+              ASSERT_LE(static_cast<uint64_t>(Offset) + 4,
+                        Bytes->getNumElements());
+              for (unsigned Byte = 0; Byte != 4; ++Byte)
+                EXPECT_EQ(Bytes->getElementAsInteger(Offset + Byte),
+                          IsSecond ? 0x79u : 0x35u);
+              ++Reads;
+            }
+        EXPECT_EQ(Reads, 2u);
+      }
+}
+
 } // namespace

@@ -157,7 +157,7 @@ private:
   void openCodeDock(Dock *dock);
   void toggleFocusMode();
   void leaveFocusMode();
-  void finishFocusSequence(bool applySingleKey);
+  void resetFocusSequence();
   /// Title the pseudocode and IR windows by what they show, lettered apart.
   void retitleCodeDocks();
 

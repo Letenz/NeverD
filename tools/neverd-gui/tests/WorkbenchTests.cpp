@@ -516,16 +516,19 @@ private slots:
   void focusModeGroupsViewsAndRestoresLayout_data() {
     QTest::addColumn<bool>("floating");
     QTest::addColumn<bool>("dark");
+    QTest::addColumn<bool>("inFunction");
     for (bool floating : {false, true})
       for (bool dark : {false, true})
         QTest::newRow(qPrintable(QString(floating ? "floating" : "docked") +
                                  (dark ? "-dark" : "-light")))
-            << floating << dark;
+            << floating << dark << true;
+    QTest::newRow("data-address") << false << false << false;
   }
 
   void focusModeGroupsViewsAndRestoresLayout() {
     QFETCH(bool, floating);
     QFETCH(bool, dark);
+    QFETCH(bool, inFunction);
     auto &theme = Theme::instance();
     const auto previous = theme.mode();
     const auto restoreTheme = qScopeGuard([&] { theme.setMode(previous); });
@@ -537,9 +540,11 @@ private slots:
     bench.window->openFile(writeFixture(directory, "focus-mode.bin"));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
-    assembly->navigate(Base + 0x140);
+    const Address address = Base + (inFunction ? 0x140 : 0x3000);
+    assembly->navigate(address);
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(address));
     QTRY_COMPARE(assembly->currentFunction(),
-                 std::optional<Address>(Base + 0x140));
+                 inFunction ? std::optional<Address>(address) : std::nullopt);
     QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
     auto *output = bench.window->findChild<OutputWindow *>();
     auto *assemblyDock = bench.dockFor(assembly);
@@ -553,9 +558,10 @@ private slots:
     QVERIFY(mode->isEnabled());
     QSignalSpy hex(bench.action(ActionId::EditOperandHex), &QAction::triggered);
     const bool dirty = bench.session.dirty();
-    QTest::keyClicks(assembly->listing(), "qq");
+    QTest::keyClick(assembly->window()->windowHandle(), Qt::Key_F);
+    QTest::keyClick(assembly->window()->windowHandle(), Qt::Key_F);
     QVERIFY(!mode->isChecked());
-    QTest::keyClick(assembly->listing(), Qt::Key_Q);
+    QTest::keyClick(assembly->window()->windowHandle(), Qt::Key_F);
     QTRY_VERIFY(mode->isChecked());
     auto *workspace = assembly->window();
     QVERIFY(workspace != bench.window.get());
@@ -576,8 +582,9 @@ private slots:
     QVERIFY(input);
     QVERIFY(activateTestWindow(workspace));
     input->setFocus();
-    QTest::keyClicks(input, "qqq");
-    QCOMPARE(input->text(), QStringLiteral("qqq"));
+    for (int i = 0; i < 3; ++i)
+      QTest::keyClick(input->window()->windowHandle(), Qt::Key_F);
+    QCOMPARE(input->text(), QStringLiteral("fff"));
     QVERIFY(mode->isChecked());
     input->clear();
     QTest::keyClicks(input, "help");
@@ -591,7 +598,8 @@ private slots:
                                      QTest::currentDataTag() + ".png"));
     }
     code->text()->setFocus();
-    QTest::keyClicks(code->text(), "qqq");
+    for (int i = 0; i < 3; ++i)
+      QTest::keyClick(code->window()->windowHandle(), Qt::Key_F);
     QTRY_VERIFY(!mode->isChecked());
     QCOMPARE(assembly->window() != bench.window.get(), floating);
     QCOMPARE(output->window(), bench.window.get());
@@ -609,7 +617,7 @@ private slots:
         << int(ActionId::FileCompare) << QStringLiteral("binaryComparison");
   }
 
-  void focusSequenceKeepsSingleQAndIgnoresAutoRepeat() {
+  void focusSequenceUsesNativeKeysAndIgnoresTyping() {
     QTemporaryDir directory;
     Workbench bench;
     LoadDialogAcceptor loads;
@@ -634,22 +642,59 @@ private slots:
     QVERIFY(hexAction->isEnabled());
     QSignalSpy hex(hexAction, &QAction::triggered);
     auto *mode = bench.action(ActionId::ViewFocusMode);
-    QTest::keyClick(code, Qt::Key_Q);
-    QKeyEvent held(QEvent::KeyPress, Qt::Key_Q, Qt::NoModifier,
-                   QStringLiteral("q"), true);
-    QApplication::sendEvent(code, &held);
-    QApplication::sendEvent(code, &held);
-    QVERIFY(!mode->isChecked());
-    QTRY_COMPARE(hex.size(), 1);
+    QTest::keyClick(code->window()->windowHandle(), Qt::Key_Q);
+    QCOMPARE(hex.size(), 1); // No delay waiting to distinguish a Q sequence.
     QTRY_VERIFY(!code->loading() &&
                 code->allText().contains(QStringLiteral("v0 + 0x18; /* 8 */")));
     QCOMPARE(code->window(), bench.window.get());
     code->setCursorLine(1);
     QVERIFY(code->findText(QStringLiteral("0x18"), true));
-    QTest::keyClicks(code, "qqq");
+    auto *output = bench.window->findChild<OutputWindow *>();
+    auto *input = output->findChild<QLineEdit *>();
+    QVERIFY(input);
+    const auto tap = [code] {
+      QTest::keyClick(code->window()->windowHandle(), Qt::Key_F);
+    };
+    tap();
+    QKeyEvent held(QEvent::KeyPress, Qt::Key_F, Qt::NoModifier,
+                   QStringLiteral("f"), true);
+    QApplication::sendEvent(code->window()->windowHandle(), &held);
+    QApplication::sendEvent(code->window()->windowHandle(), &held);
+    QVERIFY(!mode->isChecked());
+    // Another key, a focus change, or a long gap breaks the sequence.
+    QTest::keyClick(code->window()->windowHandle(), Qt::Key_Right);
+    tap();
+    tap();
+    QVERIFY(!mode->isChecked());
+    input->setFocus();
+    for (int i = 0; i < 3; ++i)
+      QTest::keyClick(input->window()->windowHandle(), Qt::Key_F);
+    QCOMPARE(input->text(), QStringLiteral("fff"));
+    QVERIFY(!mode->isChecked());
+    code->setFocus();
+    tap();
+    QVERIFY(!mode->isChecked());
+    tap();
+    QTest::qWait(1100);
+    tap();
+    QVERIFY(!mode->isChecked());
+    input->setFocus();
+    code->setFocus();
+    bench.dockFor(assembly)->forceClose();
+    QVERIFY(!assembly->isVisible());
+    code->setFocus();
+    // Deliberate taps need not fit the previous 400 ms interval. Route every
+    // key through QWindow, including its forwarding to the focused widget.
+    tap();
+    QTest::qWait(600);
+    tap();
+    QTest::qWait(600);
+    tap();
     QTRY_VERIFY(mode->isChecked());
+    QVERIFY(assembly->isVisible());
     QCOMPARE(hex.size(), 1);
     mode->trigger();
+    QVERIFY(!assembly->isVisible());
     QTRY_VERIFY(!mode->isChecked());
     QVERIFY(view->isVisible());
     QCOMPARE(code->window(), bench.window.get());
