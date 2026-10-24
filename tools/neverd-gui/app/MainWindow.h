@@ -127,7 +127,9 @@ private:
   static KDDockWidgets::Core::DockWidget *createDock(const QString &name);
   Dock *dockNamed(const QString &name);
   void retranslateUi();
-  void openDock(Dock *dock, bool tabbed);
+  void
+  openDock(Dock *dock, bool tabbed,
+           KDDockWidgets::Location location = KDDockWidgets::Location_OnBottom);
   void showConnections();
 
   void buildMenusAndToolbars();

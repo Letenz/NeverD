@@ -100,7 +100,11 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
   Nodes = new ComparisonModel(Session, ComparisonModel::Kind::FlowNodes, this);
   NodeTable = table(Top, Nodes, "flowNodes");
   NodeTable->setColumnWidth(2, 145);
-  NodeTable->setColumnWidth(4, 190);
+  NodeTable->horizontalHeader()->setStretchLastSection(false);
+  NodeTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+  NodeTable->horizontalHeader()->setResizeContentsPrecision(0);
+  NodeTable->horizontalHeader()->setSectionResizeMode(
+      5, QHeaderView::ResizeToContents);
   TopLayout->addWidget(NodeTable, 1);
   auto *Actions = new QHBoxLayout;
   Backward = new QPushButton(tr("Trace inputs"), Top);
@@ -127,7 +131,11 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
   Slice = new ComparisonModel(Session, ComparisonModel::Kind::FlowSlice, this);
   SliceTable = table(Bottom, Slice, "flowSlice");
   SliceTable->setColumnWidth(2, 145);
-  SliceTable->setColumnWidth(4, 190);
+  SliceTable->horizontalHeader()->setStretchLastSection(false);
+  SliceTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+  SliceTable->horizontalHeader()->setResizeContentsPrecision(0);
+  SliceTable->horizontalHeader()->setSectionResizeMode(
+      5, QHeaderView::ResizeToContents);
   BottomLayout->addWidget(SliceTable, 1);
   Inspect = new QPushButton(tr("Inspect original function"), Bottom);
   Inspect->setObjectName("flowInspect");
@@ -261,11 +269,14 @@ void ComparisonFlowDialog::selectSide() {
                          .arg(E["resource_limited"].toInt())
                          .arg(E["failed"].toInt())
                          .arg(E["state"].toString().replace('_', ' ')));
-    Summary->setText(Summary->text() + '\n' +
-                     tr("SSA representation: %1")
-                         .arg(Profile == ::neverd::limits::diff::kLLVMSSAProfile
-                                  ? tr("Optimized SSA")
-                                  : tr("Original SSA")));
+    Summary->setText(
+        Summary->text() + '\n' +
+        tr("SSA representation: %1")
+            .arg(Profile == ::neverd::limits::diff::kLLVMParameterSSAProfile
+                     ? tr("Optimized SSA with parameter views")
+                 : Profile == ::neverd::limits::diff::kLLVMSSAProfile
+                     ? tr("Optimized SSA")
+                     : tr("Original SSA")));
     Functions->setQuery({{"side", SideName}, {"kind", "functions"}});
   }
   controls();

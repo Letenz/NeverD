@@ -51,6 +51,7 @@ struct DataFlowEvidence {
   uint64_t EligibleFunctions = 0;
   std::vector<DataFlowEntry> Entries;
   uint64_t nodes() const;
+  uint64_t retainedItems() const;
   const DataFlowEntry *find(uint64_t Function) const;
 };
 

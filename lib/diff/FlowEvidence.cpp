@@ -21,7 +21,7 @@ namespace neverd::diff {
 namespace limits = neverd::limits::diff;
 
 std::optional<std::string> DataFlowSettings::validate() const {
-  if (Profile != DataFlowProfile && Profile != LLVMDataFlowProfile)
+  if (Profile != DataFlowProfile && !isLLVMDataFlowProfile(Profile))
     return "unsupported dataflow profile";
   if (!MaxFunctions || MaxFunctions > limits::kMaxFlowFunctions ||
       !MaxNativeInstructions ||
@@ -70,6 +70,13 @@ uint64_t DataFlowEvidence::nodes() const {
       Total += E.Graph->Nodes.size();
   return Total;
 }
+uint64_t DataFlowEvidence::retainedItems() const {
+  uint64_t Total = 0;
+  for (const auto &E : Entries)
+    if (E.Graph)
+      Total += E.Graph->retainedItems();
+  return Total;
+}
 const DataFlowEntry *DataFlowEvidence::find(uint64_t Function) const {
   const auto I = std::lower_bound(
       Entries.begin(), Entries.end(), Function,
@@ -87,7 +94,8 @@ std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
     return {};
   if (!stateNamed(stateName(E->State)) || E->Recipe.empty() ||
       E->Recipe.size() > limits::kMaxFlowIdentityBytes ||
-      E->Entries.size() > S.MaxFunctions || E->nodes() > S.MaxTotalNodes)
+      E->Entries.size() > S.MaxFunctions ||
+      E->retainedItems() > S.MaxTotalNodes)
     return "dataflow collection exceeds its bounds or has no recipe";
   std::vector<uint64_t> Eligible;
   for (const auto &F : P.Functions)

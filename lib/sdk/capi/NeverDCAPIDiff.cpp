@@ -1924,7 +1924,7 @@ const char *neverd_comparison_dataflow_json(neverd_comparison_t Handle,
     Out["schema"] = "neverd.bindiff.dataflow.page";
     Out["schema_version"] =
         dataFlowSchemaVersion(C.Result.Settings.DataFlow.Profile);
-    if (C.Result.Settings.DataFlow.Profile == LLVMDataFlowProfile)
+    if (isLLVMDataFlowProfile(C.Result.Settings.DataFlow.Profile))
       Out["profile"] = C.Result.Settings.DataFlow.Profile;
     Out["side"] = Side;
     Out["revision"] = P.Identity.Revision;
@@ -2437,7 +2437,7 @@ const char *neverd_comparison_flow_regions_json(neverd_comparison_t Handle,
             G.Nodes[N].OriginSequence >= 0 && It != Original.end()
                 ? llvm::json::Value(instruction(P, It->second))
                 : nullptr;
-        if (G.Profile == LLVMDataFlowProfile) {
+        if (isLLVMDataFlowProfile(G.Profile)) {
           llvm::json::Array Originals;
           std::optional<uint64_t> Previous;
           for (const auto &Origin : G.Nodes[N].Origins) {

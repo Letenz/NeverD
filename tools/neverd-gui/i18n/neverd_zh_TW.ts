@@ -544,12 +544,12 @@
         <translation>管理 MCP 連線與工作階段共用</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>擴充功能(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>分析查詢</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>管理宣告式擴充功能</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>執行內建或匯入的分析查詢</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2097,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>匯入資訊清單…</translation>
+        <source>Import queries…</source>
+        <translation>匯入查詢…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>執行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>卸載</translation>
+        <source>Remove group</source>
+        <translation>移除查詢群組</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>匯入宣告式資訊清單，以新增分析命令與檢視。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>執行內建分析查詢，或從 JSON 檔案匯入查詢定義。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>選取擴充功能命令以檢視其結果。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>選取查詢並點選「執行」以檢視結果。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>匯入擴充功能資訊清單</translation>
+        <source>Import analysis queries</source>
+        <translation>匯入分析查詢</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>資訊清單 (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>查詢定義 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>移除所選群組中的全部查詢。</translation>
     </message>
 </context>
 <context>
@@ -2179,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>導覽列</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>擴充功能</translation>
+        <source>Analysis queries</source>
+        <translation>分析查詢</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6365,6 +6369,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>在相依性變更時尋找共用計算。外部輸入的產生節點仍未驗證。包含 SSA 區域假設。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>含參數檢視的最佳化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>參數檢視比較符合條件的 64 位元原生參數的低 32 位元。仍可檢視原始位寬與來源。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6463,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表示：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>含參數檢視的最佳化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7246,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部輸入對應；產生這些輸入的節點尚未比較。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>參數 %1：%3 位元中的低 %2 位元</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>主要輸入：%1
+次要輸入：%2
+投影參數的每次使用皆讀取相同的低位元。整個函式的行為尚未驗證。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>此參數的每次使用皆讀取相同的低位元；原始位寬與原生位置皆已保留。</translation>
     </message>
 </context>
 <context>

@@ -10,9 +10,12 @@
 
 #include "neverd/diff/DataFlowJSON.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
+#include <bit>
+#include <initializer_list>
 #include <stdexcept>
 
 namespace neverd::diff {
@@ -32,6 +35,13 @@ const Object &object(const Value &V) {
 const Value &field(const Object &O, llvm::StringRef Key) {
   require(O.get(Key), "missing field " + Key.str());
   return *O.get(Key);
+}
+void fields(const Object &O, std::initializer_list<llvm::StringRef> Keys) {
+  for (const auto &[Key, Ignored] : O) {
+    (void)Ignored;
+    require(llvm::is_contained(Keys, llvm::StringRef(Key)),
+            "unknown field " + Key.str());
+  }
 }
 uint64_t count(const Value &V, uint64_t Maximum = UINT32_MAX) {
   const auto N = V.getAsInteger();
@@ -122,17 +132,37 @@ Object block(const FlowBlock &B) {
                 {"successors", indices(B.Successors)},
                 {"gap_mask", B.Gaps}};
 }
+Object parameterView(const FlowParameterView &V) {
+  Object Out{{"source_bits", V.SourceBits},
+             {"view_bits", V.ViewBits},
+             {"attributes", V.Attributes},
+             {"elided_truncations", V.ElidedTruncations},
+             {"native_site", nullptr}};
+  if (V.NativeSite)
+    Out["native_site"] = Object{{"register", hex(V.NativeSite->Register)},
+                                {"index", hex(uint64_t(V.NativeSite->Index))}};
+  return Out;
+}
+uint64_t projectedParameters(const DataFlowGraph &G) {
+  return llvm::count_if(G.ParameterViews,
+                        [](const auto &V) { return V.ElidedTruncations != 0; });
+}
 Object metadata(const DataFlowGraph &G) {
-  return Object{{"schema", "neverd.bindiff.dataflow"},
-                {"schema_version", dataFlowSchemaVersion(G.Profile)},
-                {"profile", G.Profile},
-                {"revision", G.Revision},
-                {"abi", G.ABI},
-                {"function", hex(G.Function)},
-                {"entry_block", G.EntryBlock},
-                {"gap_mask", G.Gaps},
-                {"node_count", G.Nodes.size()},
-                {"block_count", G.Blocks.size()}};
+  Object Out{{"schema", "neverd.bindiff.dataflow"},
+             {"schema_version", dataFlowSchemaVersion(G.Profile)},
+             {"profile", G.Profile},
+             {"revision", G.Revision},
+             {"abi", G.ABI},
+             {"function", hex(G.Function)},
+             {"entry_block", G.EntryBlock},
+             {"gap_mask", G.Gaps},
+             {"node_count", G.Nodes.size()},
+             {"block_count", G.Blocks.size()}};
+  if (G.Profile == LLVMParameterDataFlowProfile) {
+    Out["parameter_count"] = G.ParameterViews.size();
+    Out["projected_parameter_count"] = projectedParameters(G);
+  }
+  return Out;
 }
 void page(unsigned Limit) {
   require(Limit && Limit <= limits::kMaxPageSize,
@@ -287,7 +317,7 @@ readDataFlowEvidence(const Value &V, const DataFlowSettings &S) {
       Options.MaxNodes =
           std::min<uint64_t>(Options.MaxNodes, S.MaxTotalNodes - Nodes);
       Entry.Graph = readDataFlowGraph(Graph, Options);
-      Nodes += Entry.Graph->Nodes.size();
+      Nodes += Entry.Graph->retainedItems();
     }
     require(bool(Entry.Graph) ==
                     (Entry.Availability == FlowAvailability::Available) &&
@@ -333,13 +363,18 @@ void writeDataFlowGraph(llvm::json::OStream &Out, const DataFlowGraph &G) {
     std::sort(Keys.begin(), Keys.end());
     for (const auto &Key : Keys)
       Out.attribute(Key, *Header.get(Key));
+    if (G.Profile == LLVMParameterDataFlowProfile)
+      Out.attributeArray("parameter_views", [&] {
+        for (const auto &V : G.ParameterViews)
+          Out.value(parameterView(V));
+      });
     Out.attributeArray("blocks", [&] {
       for (const auto &B : G.Blocks)
         Out.value(block(B));
     });
     Out.attributeArray("nodes", [&] {
       for (const auto &N : G.Nodes)
-        Out.value(node(N, G.Profile == LLVMDataFlowProfile));
+        Out.value(node(N, isLLVMDataFlowProfile(G.Profile)));
     });
   });
 }
@@ -350,7 +385,17 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   const auto &O = object(V);
   DataFlowGraph G;
   G.Profile = text(field(O, "profile"), limits::kMaxFlowIdentityBytes);
-  const bool Extended = G.Profile == LLVMDataFlowProfile;
+  const bool Extended = isLLVMDataFlowProfile(G.Profile);
+  const bool Parameters = G.Profile == LLVMParameterDataFlowProfile;
+  if (Parameters)
+    fields(O, {"schema", "schema_version", "profile", "revision", "abi",
+               "function", "entry_block", "gap_mask", "node_count",
+               "block_count", "parameter_count", "projected_parameter_count",
+               "parameter_views", "blocks", "nodes"});
+  else
+    require(!O.get("parameter_views") && !O.get("parameter_count") &&
+                !O.get("projected_parameter_count"),
+            "legacy graph contains parameter-view metadata");
   require(field(O, "schema").getAsString() == "neverd.bindiff.dataflow" &&
               count(field(O, "schema_version")) ==
                   dataFlowSchemaVersion(G.Profile),
@@ -361,8 +406,40 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   G.EntryBlock = count(field(O, "entry_block"));
   G.Gaps = count(field(O, "gap_mask"), AllFlowGaps);
   uint64_t Edges = 0;
+  if (Parameters) {
+    for (const auto &Row :
+         array(field(O, "parameter_views"), Options.MaxNodes)) {
+      const auto &P = object(Row);
+      fields(P, {"source_bits", "view_bits", "attributes", "native_site",
+                 "elided_truncations"});
+      FlowParameterView View;
+      View.SourceBits = count(field(P, "source_bits"), 64);
+      View.ViewBits = count(field(P, "view_bits"), 64);
+      View.Attributes =
+          text(field(P, "attributes"), limits::kMaxFlowSemanticsBytes);
+      View.ElidedTruncations =
+          count(field(P, "elided_truncations"), Options.MaxNodes);
+      Edges += 1 + View.Attributes.size() + View.ElidedTruncations;
+      require(Edges <= Options.MaxWork, "parameters exceed work allowance");
+      const auto &Native = field(P, "native_site");
+      if (Native.kind() != Value::Null) {
+        const auto &Site = object(Native);
+        fields(Site, {"register", "index"});
+        View.NativeSite = FlowParameterSite{
+            address(field(Site, "register")),
+            std::bit_cast<int64_t>(address(field(Site, "index")))};
+      }
+      G.ParameterViews.push_back(std::move(View));
+    }
+    require(count(field(O, "parameter_count")) == G.ParameterViews.size() &&
+                count(field(O, "projected_parameter_count")) ==
+                    projectedParameters(G),
+            "parameter inventory counts disagree");
+  }
   for (const auto &Row : array(field(O, "blocks"), Options.MaxBlocks)) {
     const auto &B = object(Row);
+    if (Parameters)
+      fields(B, {"begin", "end", "terminator", "successors", "gap_mask"});
     FlowBlock Block;
     Block.Begin = address(field(B, "begin"));
     Block.End = address(field(B, "end"));
@@ -374,8 +451,17 @@ DataFlowGraph readDataFlowGraph(const Value &V,
     }
     G.Blocks.push_back(std::move(Block));
   }
-  for (const auto &Row : array(field(O, "nodes"), Options.MaxNodes)) {
+  for (const auto &Row :
+       array(field(O, "nodes"), Options.MaxNodes - G.ParameterViews.size())) {
     const auto &N = object(Row);
+    if (Parameters)
+      fields(N, {"opcode", "result_bytes", "memory_ordering",
+                 "memory_address_space", "block", "address", "origin_sequence",
+                 "phi", "commutative", "gap_mask", "call_argument_begin",
+                 "call_argument_count", "inputs", "semantics", "origins"});
+    else
+      require(!N.get("parameter_views"),
+              "legacy node contains parameter-view metadata");
     FlowNode Node;
     Node.Opcode = text(field(N, "opcode"), limits::kMaxFlowOpcodeBytes);
     Node.ResultBytes = count(field(N, "result_bytes"), UINT16_MAX);
@@ -401,6 +487,8 @@ DataFlowGraph readDataFlowGraph(const Value &V,
       for (const auto &Origin : array(field(N, "origins"), Options.MaxWork)) {
         require(++Edges <= Options.MaxWork, "origins exceed work allowance");
         const auto &O = object(Origin);
+        if (Parameters)
+          fields(O, {"address", "sequence"});
         Node.Origins.push_back(
             {address(field(O, "address")),
              int32_t(count(field(O, "sequence"), INT32_MAX))});
@@ -443,9 +531,23 @@ DataFlowGraph readDataFlowGraph(const Value &V,
 }
 Object dataFlowNodeJSON(const DataFlowGraph &G, uint32_t N) {
   require(N < G.Nodes.size(), "missing graph node");
-  auto Row = node(G.Nodes[N], G.Profile == LLVMDataFlowProfile);
+  auto Row = node(G.Nodes[N], isLLVMDataFlowProfile(G.Profile));
   Row["id"] = N;
   Row["gaps"] = gaps(G.Nodes[N].Gaps);
+  if (G.Profile == LLVMParameterDataFlowProfile) {
+    Array Views;
+    for (uint32_t I = 0; I < G.Nodes[N].Inputs.size(); ++I) {
+      const auto &Input = G.Nodes[N].Inputs[I];
+      if (Input.Type != FlowOperand::Kind::Parameter)
+        continue;
+      require(Input.Value < G.ParameterViews.size(), "missing parameter view");
+      auto View = parameterView(G.ParameterViews[Input.Value]);
+      View["input"] = I;
+      View["parameter"] = Input.Value;
+      Views.push_back(std::move(View));
+    }
+    Row["parameter_views"] = std::move(Views);
+  }
   return Row;
 }
 Object dataFlowPageJSON(const DataFlowGraph &G, bool Blocks, uint64_t Offset,

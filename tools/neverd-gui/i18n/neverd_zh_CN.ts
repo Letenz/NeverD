@@ -544,12 +544,12 @@
         <translation>管理 MCP 连接与会话共享</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>扩展(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>分析查询</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>管理声明式扩展</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>运行内置或导入的分析查询</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2097,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>导入清单…</translation>
+        <source>Import queries…</source>
+        <translation>导入查询…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>运行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>卸载</translation>
+        <source>Remove group</source>
+        <translation>移除查询组</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>导入声明式清单，以添加分析命令与视图。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>运行内置分析查询，或从 JSON 文件导入查询定义。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>选择扩展命令以查看其结果。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>选择查询并点击“运行”查看结果。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>导入扩展清单</translation>
+        <source>Import analysis queries</source>
+        <translation>导入分析查询</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>清单 (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>查询定义 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>移除所选组中的全部查询。</translation>
     </message>
 </context>
 <context>
@@ -2179,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>导航栏</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>扩展</translation>
+        <source>Analysis queries</source>
+        <translation>分析查询</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6365,6 +6369,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>在依赖发生变化时查找共享计算。外部输入的产生节点仍未验证。包含 SSA 区域假设。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>带参数视图的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>参数视图比较符合条件的 64 位原生参数的低 32 位。原始位宽和来源仍可查看。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6463,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表示：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>带参数视图的优化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7246,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部输入映射；产生这些输入的节点尚未比较。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>参数 %1：%3 位中的低 %2 位</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>主输入：%1
+次输入：%2
+投影参数的每次使用都读取相同的低位。整个函数的行为尚未验证。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>此参数的每次使用都读取相同的低位；原始位宽和原生位置均已保留。</translation>
     </message>
 </context>
 <context>

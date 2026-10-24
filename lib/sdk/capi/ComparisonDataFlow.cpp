@@ -34,7 +34,7 @@ readComparisonDataFlow(Session &S, const Program &P,
   auto Evidence = std::make_shared<DataFlowEvidence>();
   Evidence->Recipe = std::string(VersionString) + ":native-" +
                      Settings.Profile + ":" + Settings.describe();
-  const bool Optimized = Settings.Profile == LLVMDataFlowProfile;
+  const bool Optimized = isLLVMDataFlowProfile(Settings.Profile);
   if (Optimized)
     Evidence->Recipe += ":llvm=" LLVM_VERSION_STRING;
   Evidence->EligibleFunctions = llvm::count_if(
@@ -129,15 +129,18 @@ readComparisonDataFlow(Session &S, const Program &P,
             if (!Lifted || Lifted->getParent() != Result.LlvmModule.get())
               throw LLVMDataFlowUnsupported(
                   "no retained native LLVM function binding");
-            Entry.Graph = buildLLVMDataFlow(
-                *Lifted, *Result.LLVMSources, F.Address, P.Identity.Revision,
-                P.Identity.ABI, true, GraphOptions, Control);
+            const auto Build = Settings.Profile == LLVMParameterDataFlowProfile
+                                   ? buildLLVMParameterDataFlow
+                                   : buildLLVMDataFlow;
+            Entry.Graph = Build(*Lifted, *Result.LLVMSources, F.Address,
+                                P.Identity.Revision, P.Identity.ABI, true,
+                                GraphOptions, Control);
           } else {
             Entry.Graph =
                 buildMedDataFlow(*Function, P.Identity.Revision, P.Identity.ABI,
                                  true, GraphOptions, Control);
           }
-          TotalNodes += Entry.Graph->Nodes.size();
+          TotalNodes += Entry.Graph->retainedItems();
           Entry.Availability = FlowAvailability::Available;
         }
       } catch (const DataFlowInterrupted &Stop) {

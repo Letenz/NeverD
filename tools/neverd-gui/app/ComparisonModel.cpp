@@ -14,6 +14,7 @@
 #include "ComparisonSession.h"
 #include "Theme.h"
 
+#include <QHash>
 #include <QJsonDocument>
 #include <QTimer>
 #include <utility>
@@ -46,6 +47,24 @@ QString names(const QJsonArray &Functions) {
 ComparisonModel::ComparisonModel(ComparisonSession &S, Kind K, QObject *Parent)
     : QAbstractTableModel(Parent), Session(S), Type(K),
       Pages(::neverd::limits::gui::kComparisonCachedPages) {}
+QString ComparisonModel::parameterViewText(const QJsonObject &V) {
+  if (!V["elided_truncations"].toInt())
+    return {};
+  return tr("param %1: low %2 of %3 bits")
+      .arg(V["parameter"].toInt())
+      .arg(V["view_bits"].toInt())
+      .arg(V["source_bits"].toInt());
+}
+QString ComparisonModel::parameterViewsText(const QJsonObject &N) {
+  QStringList Views;
+  for (const auto &V : N["parameter_views"].toArray()) {
+    const auto Text = parameterViewText(V.toObject());
+    if (!Text.isEmpty())
+      Views << Text;
+  }
+  Views.removeDuplicates();
+  return Views.join(", ");
+}
 QString ComparisonModel::callEffectText(const QJsonObject &Effect) {
   auto Status = Effect["status"].toString();
   if (Status == "qualified_contract") {
@@ -191,6 +210,17 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
                 "unverified.\n%1")
           .arg(QString::fromUtf8(
               QJsonDocument(R).toJson(QJsonDocument::Indented)));
+    if (Type == Kind::FlowRegionNodes &&
+        (!parameterViewsText(R["primary"].toObject()).isEmpty() ||
+         !parameterViewsText(R["secondary"].toObject()).isEmpty()))
+      return tr("Primary: %1\nSecondary: %2\nEvery use of a projected "
+                "parameter "
+                "reads the same low bits. Whole-function behavior remains "
+                "unverified.\n%3")
+          .arg(parameterViewsText(R["primary"].toObject()),
+               parameterViewsText(R["secondary"].toObject()),
+               QString::fromUtf8(
+                   QJsonDocument(R).toJson(QJsonDocument::Indented)));
     if (Type == Kind::FlowRegions || Type == Kind::FlowRegionAnchors ||
         Type == Kind::FlowRegionNodes)
       return tr("Finite SSA correspondence; open effects and control require "
@@ -201,12 +231,19 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
       return R["reason"].toString();
     if ((Type == Kind::FlowNodes || Type == Kind::FlowSlice) &&
         R.contains("origins"))
-      return tr("Block %1 · Original addresses: %2\n%3")
-          .arg(R["block"].toInt())
-          .arg(originAddresses(R).isEmpty() ? tr("Synthetic")
-                                            : originAddresses(R))
-          .arg(QString::fromUtf8(
-              QJsonDocument(R).toJson(QJsonDocument::Indented)));
+      return (parameterViewsText(R).isEmpty()
+                  ? QString()
+                  : parameterViewsText(R) + '\n' +
+                        tr("Every use of this parameter reads the same low "
+                           "bits; "
+                           "the original width and native site are retained.") +
+                        '\n') +
+             tr("Block %1 · Original addresses: %2\n%3")
+                 .arg(R["block"].toInt())
+                 .arg(originAddresses(R).isEmpty() ? tr("Synthetic")
+                                                   : originAddresses(R))
+                 .arg(QString::fromUtf8(
+                     QJsonDocument(R).toJson(QJsonDocument::Indented)));
     if (Type == Kind::FlowNodes || Type == Kind::FlowSlice)
       return tr("Block %1 · Original operation %2\n%3")
           .arg(R["block"].toInt())
@@ -389,6 +426,15 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
       const auto Values = R["inputs"].toArray();
       const auto ArgumentBegin = R["call_argument_begin"].toInt(-1);
       const auto ArgumentCount = R["call_argument_count"].toInt();
+      QHash<int, QString> ParameterViews;
+      for (const auto &V : R["parameter_views"].toArray()) {
+        const auto View = V.toObject();
+        const auto Text = parameterViewText(View);
+        ParameterViews.insert(
+            View["input"].toInt(),
+            Text.isEmpty() ? tr("param %1").arg(View["parameter"].toInt())
+                           : Text);
+      }
       for (qsizetype N = 0; N < Values.size(); ++N) {
         const auto I = Values[N].toArray();
         if (I.size() != 7 && I.size() != 8)
@@ -398,6 +444,8 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
                        : Kind == 1 ? I[3].toString()
                        : Kind == 2 ? tr("param %1").arg(I[3].toString())
                                    : tr("unknown");
+        if (ParameterViews.contains(N))
+          Text = ParameterViews.value(N);
         if (!I[6].isNull())
           Text += tr(" @b%1").arg(I[6].toInt());
         if (ArgumentBegin >= 0 && N >= ArgumentBegin &&
@@ -446,9 +494,11 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
         QStringList Instructions;
         for (const auto &O : N["originals"].toArray())
           Instructions << code(O.toObject());
-        return N["opcode"].toString() + (Instructions.isEmpty()
-                                             ? QString()
-                                             : " · " + Instructions.join("; "));
+        const auto Views = parameterViewsText(N);
+        return N["opcode"].toString() +
+               (Views.isEmpty() ? QString() : " · " + Views) +
+               (Instructions.isEmpty() ? QString()
+                                       : " · " + Instructions.join("; "));
       }
       return N["opcode"].toString() +
              (Original.isEmpty() ? QString()

@@ -539,9 +539,8 @@ void MainWindow::fillPlaceholder(QMenu *menu, const QString &name) {
           action->setShortcut(
               QKeySequence(QStringLiteral("Alt+%1").arg(index)));
         ++index;
-        connect(action, &QAction::triggered, this, [dock] {
-          dock->open();
-          dock->raise();
+        connect(action, &QAction::triggered, this, [this, dock] {
+          openDock(dock, true);
           if (auto *widget = dock->widget())
             widget->setFocus();
         });
@@ -589,8 +588,8 @@ MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
   if (name == QLatin1String(ExtensionsDock)) {
     extensions_ = new ExtensionsView(session_);
     extensions_->setLocationProvider([this] { return currentAddress(); });
-    return makeDock(name, QT_TR_NOOP("Extensions"),
-                    QStringLiteral("extensions"), extensions_);
+    return makeDock(name, QT_TR_NOOP("Analysis queries"),
+                    QStringLiteral("search_text"), extensions_);
   }
   if (name == QLatin1String(LocalTypesDock)) {
     localTypes_ = new LocalTypesView(session_);
@@ -618,14 +617,26 @@ MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
   return nullptr;
 }
 
-void MainWindow::openDock(Dock *dock, bool tabbed) {
+void MainWindow::openDock(Dock *dock, bool tabbed,
+                          KDDockWidgets::Location location) {
   if (!dock)
     return;
   if (!dock->isOpen()) {
-    if (tabbed)
-      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
-    else
-      addDockWidget(dock, KDDockWidgets::Location_OnBottom);
+    // Reuse the last embedded position, even if the user closed a floating
+    // window. A pane that is already open keeps its current placement.
+    dock->setFloating(false);
+    if (dock->QWidget::window() != this) {
+      auto *anchor = docks_.value(DisassemblyDock);
+      if (!anchor || anchor == dock || !anchor->isOpen() ||
+          anchor->QWidget::window() != this)
+        anchor = nullptr;
+      if (tabbed && anchor)
+        anchor->addDockWidgetAsTab(dock);
+      else
+        addDockWidget(dock, location,
+                      location == KDDockWidgets::Location_OnRight ? anchor
+                                                                  : nullptr);
+    }
   }
   dock->open();
   dock->raise();
@@ -784,10 +795,7 @@ void MainWindow::jumpNewWindow(Address target) {
     return;
   }
   auto *view = qobject_cast<DisassemblyView *>(dock->widget());
-  addDockWidget(dock, KDDockWidgets::Location_OnRight,
-                docks_.value(DisassemblyDock));
-  dock->open();
-  dock->raise();
+  openDock(dock, false, KDDockWidgets::Location_OnRight);
   disassembly_ = view;
   overview_->setGraph(view->graph());
   view->navigate(target);
@@ -948,7 +956,7 @@ void MainWindow::showOverview() {
     return;
   // Under the functions window, as in the classic graph layout.
   auto *functions = docks_.value(FunctionsDock);
-  if (functions->isOpen() && !functions->isFloating())
+  if (functions->isOpen() && functions->QWidget::window() == this)
     addDockWidget(
         dock, KDDockWidgets::Location_OnBottom, functions,
         InitialOption(
@@ -959,7 +967,7 @@ void MainWindow::showOverview() {
         InitialOption(
             QSize(::neverd::limits::gui_config::kMainWindowFunctionsWidth,
                   ::neverd::limits::gui_config::kMainWindowOverviewHeight)));
-  dock->open();
+  openDock(dock, false);
 }
 
 void MainWindow::buildStatusBar() {
@@ -1389,16 +1397,13 @@ void MainWindow::showLinkedAddress(Address address, LinkView view) {
   const auto list = [this, address](ChooserKind kind) {
     navigate(address);
     if (kind == ChooserKind::Functions) {
-      docks_.value(FunctionsDock)->open();
-      docks_.value(FunctionsDock)->raise();
+      openDock(docks_.value(FunctionsDock), false,
+               KDDockWidgets::Location_OnLeft);
       functions_->revealAddress(address);
       return;
     }
     auto *dock = chooserDock(kind);
-    if (!dock->isOpen())
-      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
-    dock->open();
-    dock->raise();
+    openDock(dock, true);
     choosers_.value(int(kind))->revealAddress(address);
   };
   switch (view) {
@@ -1426,8 +1431,7 @@ void MainWindow::showLinkedAddress(Address address, LinkView view) {
   case LinkView::Hexdump:
     navigate(address);
     if (auto *dock = docks_.value(HexDock)) {
-      dock->open();
-      dock->raise();
+      openDock(dock, true);
     }
     return;
   case LinkView::Functions:
@@ -1510,8 +1514,7 @@ void MainWindow::navigate(Address address) {
   auto *view = disassembly_;
   for (auto *dock : std::as_const(docks_))
     if (dock->widget() == view) {
-      dock->open();
-      dock->raise();
+      openDock(dock, true, KDDockWidgets::Location_OnTop);
       break;
     }
   disassembly_ = view;
@@ -1865,10 +1868,7 @@ void MainWindow::connectActions() {
     choosers_.value(int(ChooserKind::Bookmarks))
         ->model()
         .setLocalRows(bookmarks());
-    if (!dock->isOpen())
-      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
-    dock->open();
-    dock->raise();
+    openDock(dock, true);
   });
 
   on(ActionId::SearchText,
@@ -1903,8 +1903,8 @@ void MainWindow::connectActions() {
   on(ActionId::ViewDisassembly, [this] {
     disassembly_ = primaryDisassembly_;
     overview_->setGraph(disassembly_->graph());
-    docks_.value(DisassemblyDock)->open();
-    docks_.value(DisassemblyDock)->raise();
+    openDock(docks_.value(DisassemblyDock), false,
+             KDDockWidgets::Location_OnTop);
   });
   on(ActionId::ViewToggleGraph, [this] { toggleGraph(); });
   on(ActionId::ViewPseudocode,
@@ -1915,17 +1915,12 @@ void MainWindow::connectActions() {
   on(ActionId::ViewHighIR, [this] { showPseudocode(QStringLiteral("high")); });
   on(ActionId::ViewLLVMIR, [this] { showPseudocode(QStringLiteral("llvm")); });
   on(ActionId::ViewHex, [this] {
-    docks_.value(HexDock)->open();
-    docks_.value(HexDock)->raise();
+    openDock(docks_.value(HexDock), true);
     hexActive_ = true;
     hex_->setFocus();
   });
   const auto openChooser = [this](ChooserKind kind) {
-    auto *dock = chooserDock(kind);
-    if (!dock->isOpen())
-      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
-    dock->open();
-    dock->raise();
+    openDock(chooserDock(kind), true);
   };
   on(ActionId::ViewExports,
      [openChooser] { openChooser(ChooserKind::Exports); });
@@ -1942,8 +1937,8 @@ void MainWindow::connectActions() {
   on(ActionId::ViewSegments,
      [openChooser] { openChooser(ChooserKind::Segments); });
   on(ActionId::ViewFunctions, [this] {
-    docks_.value(FunctionsDock)->open();
-    docks_.value(FunctionsDock)->raise();
+    openDock(docks_.value(FunctionsDock), false,
+             KDDockWidgets::Location_OnLeft);
   });
   on(ActionId::ViewCrossReferences,
      [this] { showCrossReferences(currentAddress(), true); });
@@ -1964,8 +1959,7 @@ void MainWindow::connectActions() {
   on(ActionId::ViewBookmarks,
      [this] { actions_.action(ActionId::JumpMark)->trigger(); });
   on(ActionId::ViewOutput, [this] {
-    docks_.value(OutputDock)->open();
-    docks_.value(OutputDock)->raise();
+    openDock(docks_.value(OutputDock), false);
     output_->focusCommandLine();
   });
   on(ActionId::ViewGraphOverview, [this] {
@@ -2037,7 +2031,7 @@ void MainWindow::connectActions() {
       }
   });
   on(ActionId::WindowsFocusCommand, [this] {
-    docks_.value(OutputDock)->open();
+    openDock(docks_.value(OutputDock), false);
     output_->focusCommandLine();
   });
   on(ActionId::HelpContents, [] {
@@ -3117,19 +3111,19 @@ void MainWindow::showPseudocode(const QString &representation,
         functions && functions->isOpen()
             ? functions->dockWidget()->sizeInLayout().width()
             : 0;
-    addDockWidget(dock, KDDockWidgets::Location_OnRight,
-                  docks_.value(DisassemblyDock));
+    openDock(dock, false, KDDockWidgets::Location_OnRight);
     if (functionsWidth)
       functions->dockWidget()->resizeInLayout(
           0, 0,
           functionsWidth - functions->dockWidget()->sizeInLayout().width(), 0);
-    const int difference =
-        docks_.value(DisassemblyDock)->dockWidget()->sizeInLayout().width() -
-        dock->dockWidget()->sizeInLayout().width();
-    dock->dockWidget()->resizeInLayout(difference / 2, 0, 0, 0);
+    if (auto *assembly = docks_.value(DisassemblyDock);
+        assembly->QWidget::window() == this) {
+      const int difference = assembly->dockWidget()->sizeInLayout().width() -
+                             dock->dockWidget()->sizeInLayout().width();
+      dock->dockWidget()->resizeInLayout(difference / 2, 0, 0, 0);
+    }
   }
-  dock->open();
-  dock->raise();
+  openDock(dock, false, KDDockWidgets::Location_OnRight);
   view->setRepresentation(representation);
   // Reusing the loaded function keeps its cursor and folding state. Tab is
   // the only ordinary cursor action that selects an address in the other pane.
@@ -3230,10 +3224,7 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
             choosers_.value(int(ChooserKind::SearchResults))
                 ->model()
                 .setLocalRows(items);
-            if (!dock->isOpen())
-              addDockWidget(dock, KDDockWidgets::Location_OnBottom,
-                            docks_.value(DisassemblyDock));
-            dock->open();
+            openDock(dock, false);
             if (!payload.value("complete").toBool())
               output_->append(
                   tr("Showing %1 matches; use Next to continue the search.")
@@ -3347,10 +3338,7 @@ void MainWindow::queryRegister(const QString &kind) {
               choosers_.value(int(ChooserKind::SearchResults))
                   ->model()
                   .setLocalRows(items);
-              if (!dock->isOpen())
-                addDockWidget(dock, KDDockWidgets::Location_OnBottom,
-                              docks_.value(DisassemblyDock));
-              dock->open();
+              openDock(dock, false);
               if (items.size() == 1 && !reply.value("unknown").toBool())
                 if (auto target =
                         addressValue(items.first().toObject().value("address")))

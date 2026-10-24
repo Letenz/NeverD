@@ -544,12 +544,12 @@
         <translation>Gestionar las conexiones MCP y el uso compartido de la sesión</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>E&amp;xtensiones</translation>
+        <source>Analysis queries</source>
+        <translation>Consultas de análisis</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>Gestionar las extensiones declarativas</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>Ejecutar consultas de análisis integradas o importadas</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2102,32 +2102,36 @@ Haga doble clic para ir a la declaración.</translation>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>Importar manifiesto…</translation>
+        <source>Import queries…</source>
+        <translation>Importar consultas…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>Ejecutar</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>Quitar</translation>
+        <source>Remove group</source>
+        <translation>Eliminar grupo</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>Importe un manifiesto declarativo para añadir comandos y vistas de análisis.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>Ejecutar consultas de análisis integradas o importar definiciones de consultas desde un archivo JSON.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>Seleccione un comando de extensión para examinar su resultado.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>Seleccione una consulta y pulse Ejecutar para ver el resultado.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>Importar manifiesto de extensión</translation>
+        <source>Import analysis queries</source>
+        <translation>Importar consultas de análisis</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>Manifiestos (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>Definiciones de consultas (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>Eliminar todas las consultas del grupo seleccionado.</translation>
     </message>
 </context>
 <context>
@@ -2185,8 +2189,8 @@ Haga doble clic para ir a la declaración.</translation>
         <translation>Banda de navegación</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>Extensiones</translation>
+        <source>Analysis queries</source>
+        <translation>Consultas de análisis</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6401,6 +6405,14 @@ Cobertura: %7</translation>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Buscar cálculos comunes aunque cambien las dependencias. Los productores de las entradas externas quedan sin verificar. Incluye hipótesis de regiones SSA.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA optimizado con vistas de parámetros</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Las vistas de parámetros comparan los 32 bits inferiores de los parámetros nativos de 64 bits que cumplen las condiciones. Se conservan las anchuras y los orígenes para su revisión.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6499,6 +6511,10 @@ Seleccione una operación para seguir las dependencias. Las operaciones sintéti
     <message>
         <source>SSA representation: %1</source>
         <translation>Representación SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA optimizado con vistas de parámetros</translation>
     </message>
 </context>
 <context>
@@ -7282,6 +7298,24 @@ Explicaciones heurísticas; comportamiento no validado.
 %1</source>
         <translation>Correspondencia de entradas externas; sus productores no se han comparado.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>parámetro %1: %2 bits inferiores de %3</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Primario: %1
+Secundario: %2
+Cada uso de un parámetro proyectado lee los mismos bits inferiores. El comportamiento de la función completa sigue sin verificarse.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Cada uso de este parámetro lee los mismos bits inferiores; se conservan la anchura original y la ubicación nativa.</translation>
     </message>
 </context>
 <context>

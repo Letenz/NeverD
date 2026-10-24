@@ -129,6 +129,7 @@ inline constexpr double kRegionMaxConfidence = 0.95;
 // SSA dependency snapshots, neighborhood candidates and slices.
 inline constexpr char kMedSSAProfile[] = "med-ssa-v2";
 inline constexpr char kLLVMSSAProfile[] = "llvm-ssa-v1";
+inline constexpr char kLLVMParameterSSAProfile[] = "llvm-parameter-ssa-v1";
 inline constexpr uint32_t kDefaultFlowMaxNodes = 65536;
 inline constexpr uint32_t kMaxFlowNodes = 1u << 20;
 inline constexpr uint32_t kDefaultFlowMaxBlocks = 1024;

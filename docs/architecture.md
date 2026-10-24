@@ -474,6 +474,17 @@ invented origins. Schema 3 keeps sorted plural origins and typed signatures;
 original Med schema 2, recipes and fingerprints stay unchanged. Region profile
 identity follows the requested graph profile even before extraction completes.
 Med-only change/call associations abstain explicitly for optimized graphs.
+The separate `llvm-parameter-ssa-v1` mode has the same `LLVMDataFlow` owner.
+After raw admission it may replace all origin-free, unflagged i64-to-i32 trunc
+uses of one native parameter with an exact low-bit leaf. `FlowParameterViews`
+owns shared signature and native-range admission; missing, stack, overlapping
+or invalid sites and any ineligible use prevent that argument's projection.
+Source widths, attributes, site and elision counts stay in schema 4 provenance;
+snapshot-local MedVar IDs bind on restore but do not enter correspondence keys.
+PHI predecessors survive substitution, and only detached node references and
+terminators are renumbered. `retainedItems()` counts parameter rows together
+with nodes for production, reading and collection validation without changing
+operation coverage. Legacy profiles retain their work and serialized contracts.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
