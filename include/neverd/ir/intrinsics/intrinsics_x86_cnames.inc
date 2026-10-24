@@ -265,5 +265,7 @@ C(Intrinsic::X86FPMaskCompareMemoryState,
 
 #define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, ...)                             \
   C(Intrinsic::Id, "__neverd_" Mnemonic);
+#define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE

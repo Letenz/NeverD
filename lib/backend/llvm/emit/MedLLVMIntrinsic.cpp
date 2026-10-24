@@ -107,6 +107,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
 
   using I = Intrinsic;
   auto IC = static_cast<I>(IntrCode);
+  if (isPortableX87Intrinsic(IC))
+    return emitPortableX87Intrinsic(Op, Builder);
 
   if (IC == Intrinsic::X86AMXState)
     return emitX86AmxState(Op, Builder);

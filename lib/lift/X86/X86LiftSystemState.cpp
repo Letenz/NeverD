@@ -355,7 +355,8 @@ bool liftSystemState(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
          {x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF, x86reg::OF})
       S.emit(NdOp::COPY, NdVar::reg(Flag, 1), {NdVar::scalar(0, 1)});
     return true;
-  case X86_INS_LAR: {
+  case X86_INS_LAR:
+  case X86_INS_LSL: {
     if (X86.op_count != 2)
       return false;
     const auto &Dst = X86.operands[0];
@@ -374,9 +375,12 @@ bool liftSystemState(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
         Memory ? S.computeEA(Src)
                : NdVar::reg(
                      mapCapstoneReg(static_cast<x86_reg>(Src.reg)).Offset, 2);
-    S.emitIntrinsic(Memory ? Intrinsic::X86LoadAccessRightsMemory
-                           : Intrinsic::X86LoadAccessRights,
-                    Result, {Selector}, NdMemoryOrdering::None,
+    const Intrinsic Id = Insn->id == X86_INS_LSL
+                             ? Memory ? Intrinsic::X86LoadSegmentLimitMemory
+                                      : Intrinsic::X86LoadSegmentLimit
+                         : Memory ? Intrinsic::X86LoadAccessRightsMemory
+                                  : Intrinsic::X86LoadAccessRights;
+    S.emitIntrinsic(Id, Result, {Selector}, NdMemoryOrdering::None,
                     Memory ? S.memoryAddressSpace(Src)
                            : NdMemoryAddressSpace::Default);
     copyFlag(S, Result, Width);

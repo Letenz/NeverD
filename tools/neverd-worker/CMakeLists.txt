@@ -239,6 +239,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       add_test(NAME NeverDWorkerStackFrame
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_test.py" $<TARGET_FILE:neverd-worker> --cc "${_neverd_worker_source_cc}")
       set_tests_properties(NeverDWorkerStackFrame PROPERTIES TIMEOUT 120)
+      add_test(NAME NeverDWorkerStackText
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_text_test.py"
+                "$<TARGET_FILE:neverd-worker>" --cc "${_neverd_worker_source_cc}")
+      set_tests_properties(NeverDWorkerStackText PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
       add_test(NAME NeverDWorkerHeaderRecords
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/header_records_test.py"
                 "$<TARGET_FILE:neverd-worker>" --cc "${CMAKE_C_COMPILER}")

@@ -8,6 +8,8 @@ add_neverd_component_library(NeverDTranslate
   RuntimeGuestState.cpp
   RuntimeHelpers.cpp
   RuntimeSymbolRegistry.cpp
+  RuntimeX87GuestState.cpp
+  RuntimeX87Helpers.cpp
   TranslationOptions.cpp
   TranslationResult.cpp
   TranslationSession.cpp

@@ -18,6 +18,7 @@
 #include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/SourceCallTypeHint.h"
+#include "neverd/ir/SourceFrameBytes.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/SourceClassGetterCall.h"
@@ -457,6 +458,8 @@ struct MedCallInfo {
 };
 
 struct MedFunc {
+  /// Display observations of the original machine bytes; never rewrite facts.
+  std::vector<SourceFrameBytes> FrameBytes;
   bool AnalystStackFrame = false;
   va_t Entry = 0;
   uint64_t OriginalSize = 0;

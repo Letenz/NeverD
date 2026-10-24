@@ -4,6 +4,12 @@
 
 # NeverD Architecture
 
+`X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
+LLVM/C API names. LLVM emission and both C projections share that contract.
+The LLVM-to-C adapter validates the complete native call or legacy assembly
+before rendering it; neither a mnemonic nor an intrinsic declaration alone
+authorizes an architectural register access. Both forms retain unknown memory
+effects, undefined arithmetic flags and native faults, including dead reads.
 
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
@@ -1456,6 +1462,15 @@ the typed callee, including immutable import identities absent from libc tables.
 Windows x64 and ARM64 publish these operands before SSA and record the scalar
 return width; later call setup recovery preserves them. Writable import slots
 retain their runtime target even when the declaration establishes its ABI.
+`floatingCallTypes` reconstructs and reclassifies complete scalar/HFA groups;
+bound call validation and cached-pointer analysis share it. `importedCallSlotFacts`
+uses exact import declarations to cross ABI-preserved registers, and delegates
+private spill identity to `SourceFrameAnalysis`. Queries share a work budget,
+require every reaching byte and reject frame escapes, partial writes and
+unproved intervening calls. The argument area, including slot padding, loses
+its old byte identities at each call. Low-to-Med snapshots the original loaded
+pointer and forwards only proven reloads before binding operands and building
+SSA; it does not replace a cached pointer with another read of the import slot.
 Omitted-callee conversion and its cache include the same signatures,
 independently of the selected functions. Forwarding recovery keeps each scalar
 argument width separate from the result width and admits incoming FP parameters
@@ -1470,9 +1485,15 @@ four bytes apart and exhausting the FP bank does not exhaust the integer bank.
 The native LLVM adapter uses an array for each HFA parameter: flattening it,
 or using an LLVM literal struct, can split a record between registers and the
 stack. Both C routes rebuild the original source record and retain complete
-return fields, including a single float and a three-float result whose C
-integer carrier has padding. Locally supplied header records get complete
-value definitions; records supplied by an included header are not redefined.
+return fields, including a single float and a three-float result. MedIR keeps
+the packed result's machine identity; `MedToHighConverter` maps its checked HFA
+signature to a record of returned registers, and consumers read typed fields.
+HighC verifies that carrier's complete layout against the header before copying
+the result bytes. A three/four-double result therefore needs no 192/256-bit C
+integer on AArch64. Locally supplied header records get complete value
+definitions; records supplied by an included header are not redefined.
+LLVM C uses its validated import prototype for the record conversions even
+when a call through an import slot has no separate debug-function identity.
 Padded or over-aligned HFAs, special conventions and Apple stack packing remain
 outside this adapter. A source aggregate return for an untyped wrapper still
 needs independent source or caller evidence.
@@ -4774,8 +4795,10 @@ cold-fragment ends also bound calls and traps when no separate unwind record
 describes the fragment. An adjacent owned fragment still continues.
 Owned NOP suffixes also need observable code before the owner ends; a sized
 range containing alignment does not make the next function a continuation.
-Decoded NOP identity handles x86 prefixes and MPX-disabled compatibility forms,
-with mode-aware legacy alignment patterns shared by the decoder. Both peeking
+Decoded NOP identity handles x86 prefixes and the architectural register NOP
+forms of `0F 1A/1B`, with mode-aware legacy alignment patterns shared by the
+decoder. Their memory forms retain BNDLDX/BNDSTX identity: neither decoding nor
+lifting assumes that MPX is disabled. Both peeking
 and ordinary exploration reject an instruction that starts in sized ownership
 but borrows bytes outside the primary and its explicitly owned fragments.
 Contiguous fragments may supply those bytes; an ownership gap may not.
@@ -5013,6 +5036,19 @@ For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
 
+The same owner proves scalar exit constants for bounded, complete x64 bodies
+without calls, intrinsics, unresolved control flow or exceptional/independent
+entries. It uses the existing LowIR scalar evaluator within each return block
+and intersects the full-register constants at every return. It does not read
+image memory or turn an address identity into an integer fact. The operation
+budget lives in `Limits.h`; there is no inter-block symbolic search. LowToMed
+publishes these extra register definitions after the call, before SSA, for
+both C routes. Ordinary ABI result registers keep their existing return
+contract. Deferred source views, native session recovery and omitted-callee
+memo keys retain the same facts, including their memory accounting. Dynamic
+callee outputs and constants requiring predecessor reasoning remain separate
+machine-state recovery work.
+
 A call through a function-pointer variable passes the arguments of the routine
 the variable starts at (`collectPointerVariableCallees`): another module's
 routine, by the prototype the variable's absolute relocation names, or a
@@ -5038,8 +5074,9 @@ that passes a two-load target's object finds none in a register that holds the
 target. HighIR's stack scan takes no prologue save for an indirect call either
 (`isIncomingRegisterSave`, shared with recovery).
 
-A caller-saved register holds, after a call, only what that call left in it,
-so no compiler passes that value on as an argument. `ValuesLeftByCalls`
+A caller-saved register holds, after a call, whatever that call left in it.
+Without a proved exit value, that residue alone supplies no evidence of an
+additional source argument. `ValuesLeftByCalls`
 (`MedCallLeftovers.h`) names such values: each call's clobber of a register it
 may change whole, and each join of nothing else, loops of joins included.
 Clobbers that keep a preserved low half do not count, nor do clobbers the
@@ -6943,7 +6980,7 @@ Protocol identity must be bound by a trusted profile/invocation and included in
 artifact/cache identity before activation. It cannot be inferred from a control
 record, including a successful or eight-byte record, or selected by retrying a
 failed scalar validation. This foundational validator enables no new profile;
-existing integer dispatch, artifact admission and helpers remain scalar-v1.
+default integer dispatch, artifact admission and helpers remain scalar-v1.
 
 `X87PortableRuntime` adapts the existing portable semantic owner to this checked
 memory boundary. Its separate versioned state includes explicit environment
@@ -6965,6 +7002,48 @@ exports only those helper symbols and adapts a trusted, explicitly constructed
 consumption is a stateful, single-use operation; failure and nonproducing steps
 invalidate it. The internal C++ embedding layout must match the runtime build.
 The bridge itself establishes no generated-code or translation qualification.
+
+`preparePortableX87Function` owns the alternate generated-function interface.
+It admits an ABI-recovered x64 integer leaf only after checking its direct CFG,
+SSA dominance, owned context and portable forms. Source arguments remain numeric
+guest values. An explicit runtime pointer and source-result pointer follow them;
+the function returns a status. Each step has an immediate failure return, and
+only its exclusive success edge may consume a scalar result. A complete known
+64-bit source return is required; unknown upper RAX bits are never zero-filled.
+The immutable prepared body uses private control labels, carries no original
+code-range proof and exposes no mutable IR or public qualification switch.
+Ordinary LLVM and HighC entry points reject its dedicated helper intrinsics.
+Their `emitPortableX87` entry points create isolated emitters, revalidate the
+prepared body and retain exact runtime declarations without source-call ABI
+inference. Only the explicit execution parameter is a host pointer; guest IP,
+DP and source arguments remain integers. LLVM-C consumes this module with
+`PreserveLLVMFunctionTypes`. The private C writer retains unused parameter
+positions and omits source-architecture intrinsic headers and original-address
+annotations. Output targets require 64-bit little-endian x64/AArch64 C layouts;
+runtime linking and profile qualification remain explicit requirements.
+
+`isPortableX87RuntimeInstruction` in the shared instruction inventory owns
+Step V1 instruction admission for generated preparation, translation and public
+queries. This boundary excludes the concrete interpreter's integer-flag x87
+forms. `RuntimeX87GuestState` composes the legacy integer state with the versioned
+portable image and separate last-step diagnostics; logical snapshots serialize
+only the named extension in explicit little-endian order.
+`RuntimeX87Helpers` owns terminal step execution and post-invocation validation.
+It reuses the existing transactional semantic/memory owner and never accesses
+host x87 state. Successful FNSTSW updates AX without changing upper RAX.
+
+The explicit C++ `TranslationRuntimeProfileV1::PortableX87` targets native Linux
+AArch64 ELF. Its block builder stops at the first x87 instruction, its lowerer
+flushes the integer prefix before the terminal helper, and its dispatcher resumes
+only after validating completion and the selected PC. Partial completion,
+cancellation, executable-store invalidation and budget resumption retain their
+separate outcomes. The profile owns exact-span validation and refuses
+`ValidateBeforeDispatch`; legacy integer invocation cannot enter its larger
+state ABI. Runtime profile, memory policy, state/helper layout, descriptor and
+actual native symbol bindings participate in object/registry/linker/cache checks.
+Object pipeline schema 17 and lowering schema 10 separate these artifacts from
+the old contracts. Credentials and dynamic state are invocation inputs, never
+host pointers embedded in reusable cache identities.
 
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
@@ -7012,7 +7091,8 @@ forms compute their architecturally defined flags while preserving `AF` in the
 NeverD state model. Canonical `C3` `RET`
 and `C2 iw` `RET imm16` terminate return blocks; canonical `EB cb` and `E9 cd`
 direct-relative `JMP` encodings terminate direct-branch blocks. The published
-lowering schema is 9. Canonical, legacy-prefix-free traditional Jcc branches
+lowering schema is 10; the default scalar instruction subset is unchanged.
+Canonical, legacy-prefix-free traditional Jcc branches
 terminate blocks only in these forms: `JO`/`JNO` short `70/71 cb` or near
 `0F 80/81 cd`; `JB`/`JAE` short `72/73 cb` or near `0F 82/83 cd`; `JE`/`JNE`
 short `74/75 cb` or near `0F 84/85 cd`; `JBE`/`JA` short `76/77 cb` or near
@@ -7078,15 +7158,21 @@ remains exact across blocks, and successful guest stops commit executed state
 and authoritative memory together. Cancellation is linearized against that
 final commit.
 
-This is an executable vertical slice, not a complete translator. It does not
-yet cover ordinary guest-memory instructions, partial registers, conditional
-control flow outside the exact schema-9 traditional-Jcc slice above—including
+The default scalar profile is an executable vertical slice, not a complete
+translator. It does not cover ordinary guest-memory instructions, partial
+registers, conditional control flow outside the exact schema-9 traditional-Jcc slice above—including
 `JRCXZ`/`JECXZ`/`JCXZ` and `LOOP`/`LOOPE`/`LOOPNE`—indirect control flow, calls,
 floating-point, SIMD, x87, atomics, system instructions, general exception
 propagation, block caching, other guest/host pairs, or the reverse
 AArch64-to-x86-64 direction. The execution session has no C, Python, CLI, or
 JSON surface yet, and debugging remains separate and unsupported. The object
 APIs above remain useful without opting into native execution.
+The separately selected portable x87 profile adds only its admitted x64 owned
+instructions and authenticated extension on Linux AArch64. It does not widen
+these scalar object APIs, add a floating calling convention, or admit MMX,
+general environment operations, arbitrary memory instructions or other hosts.
+The [x87 contracts](x87-semantics.md) and [qualification record](x87-qualification.md)
+define that scope independently of complete state or formal proof.
 
 The generated-IR contract requires every translated block governed by it to be
 hidden and non-preemptible with the C ABI `i32 (ptr state, ptr runtime)`.
@@ -10865,3 +10951,5 @@ The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter in
 `EntryFrameExcludedObjects` declares complete x64 entry GPR values as symbolic object roots with signed, nonempty `[Begin, End)` bounds. The x64 raw owner validates distinct bindings, excludes RSP and overlapping entry constants, and requires explicit nonfaulting, CET-disabled state with entry-frame bounds. Each complete object and the frame must be nonwrapping and disjoint. Objects may alias each other; equal object/frame root values are allowed when their relative ranges are disjoint. The declaration supplies no accessibility, initial bytes or loaded-pointer facts.
 
 Core retains exact root/offset relations through complete registers and frame spills, intersects them at joins and forgets overwritten or possibly corrupted relations. Fresh node roots restore only retained relations; lost entry bindings are never recreated. Physical frame addresses and native stack offsets remain frame-only. `ProveStoreFrameSeparation` separately proves that each complete executed write misses the frame, including wide, conditional atomic and full segmented addresses. Declarations grant no unchecked store exemption. Preparation, operations and symbolic nodes use existing budgets. Raw integrity binds every declaration field and order; an empty vector preserves the prior digest encoding. Ordinary source and native proof consumers still refuse this raw domain.
+
+Before original calls, `SourceFrameAnalysis` can observe proven private bytes on x64/ARM64 in a bounded, call-free, acyclic prefix. `observeSourceFrameBytes` authenticates immutable image loads without relocations; HighC and LLVM C show terminated text as comments without changing operations. Exact alignment guards remain active. These observations grant no ABI or native-rewrite authority.

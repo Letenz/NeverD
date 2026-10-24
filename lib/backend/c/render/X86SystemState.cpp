@@ -13,6 +13,7 @@
 #include "neverd/ir/high/HighIR.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 
@@ -29,6 +30,8 @@ std::string unsignedType(uint16_t Bytes) {
 std::string gnuConstraint(const std::string &Text) {
   if (Text == "{ax}")
     return "a";
+  if (Text == "{bx}")
+    return "b";
   if (Text == "={ax}")
     return "=a";
   if (Text == "{cx}")
@@ -109,7 +112,51 @@ std::string renderAsm(const X86SystemStateAsm &P,
   return Text + "\"memory\");";
 }
 
-bool matchesReturn(const llvm::CallInst &Call, const X86SystemStateAsm &P) {
+std::string nativeBody(const X86SystemStateNative &Plan,
+                       const std::vector<std::string> &Arguments,
+                       const std::vector<std::string> &Outputs) {
+  const auto Id = Plan.Assembly.Id;
+  std::string Text = Outputs.empty() ? "" : Outputs[0] + " = ";
+  Text += Plan.Builtin + "(";
+  for (size_t I = 0; I < Arguments.size(); ++I) {
+    if (I)
+      Text += ", ";
+    std::string Type = unsignedType(Plan.InputBytes[I]);
+    if (isX86SystemStateAddressArgument(Id, I) && !Plan.AddressBits)
+      Type =
+          Id == Intrinsic::X86ReadMsrList && I == 1 ? "void *" : "const void *";
+    Text += "(" + Type + ")(" + Arguments[I] + ")";
+  }
+  if (Plan.DescriptorQuery)
+    Text += ", &(" + Outputs[1] + ")";
+  return Text + ");";
+}
+
+std::string renderInstruction(const X86SystemStateAsm &Plan, Arch TargetArch,
+                              uint16_t Width, NdMemoryAddressSpace Space,
+                              const std::vector<std::string> &Outputs,
+                              const std::vector<std::string> &Inputs) {
+  const auto Assembly = renderAsm(Plan, Outputs, Inputs);
+  const auto Native = x86SystemStateNative(Plan.Id, TargetArch, Width, Space);
+  if (!Native || TargetArch != Arch::X64)
+    return Assembly;
+  auto Arguments = Inputs;
+  if (Native->PackMsr)
+    Arguments = {Inputs[0], "((uint64_t)(uint32_t)(" + Inputs[1] +
+                                ") | ((uint64_t)(uint32_t)(" + Inputs[2] +
+                                ") << 32))"};
+  if (Native->AddressBits) {
+    Arguments.push_back(std::to_string(Native->AddressBits));
+    Arguments.push_back(std::to_string(Native->SegmentPrefix));
+  }
+  if (Native->DescriptorQuery)
+    Arguments.push_back("0");
+  return "NEVERD_X86_SYSTEM_STATE(({ " +
+         nativeBody(*Native, Arguments, Outputs) + " }), ({ " + Assembly +
+         " }));";
+}
+
+bool matchesReturn(const llvm::CallBase &Call, const X86SystemStateAsm &P) {
   const auto *T = Call.getType();
   if (P.OutputBytes.empty())
     return T->isVoidTy();
@@ -287,7 +334,8 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
       C.Kind == X86SystemStateKind::SegmentedBlock
           ? std::vector<std::string>(Arguments.begin() + 1, Arguments.end())
           : Arguments;
-  Text += renderAsm(*P, Outputs, NativeArguments);
+  Text += renderInstruction(*P, TargetArch, x86SystemStateWidth(Id, Shape),
+                            Shape.MemoryAddressSpace, Outputs, NativeArguments);
   if (Outputs.size() == 1)
     Text += " " + Outputs[0] + ";";
   else if (Outputs.size() == 2) {
@@ -313,7 +361,9 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
   const Intrinsic Inventory[] = {
 #define NEVERD_X86_SYSTEM_STATE(Id, ...) Intrinsic::Id,
 #define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
+#define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_EXISTING_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
   };
@@ -371,27 +421,134 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
         if (!Types)
           continue;
         if (P->OutputBytes.empty())
-          return renderAsm(*P, {}, Arguments) + '\n';
+          return renderInstruction(*P, TargetArch, Width, Space, {},
+                                   Arguments) +
+                 '\n';
         if (ResultLive) {
           if (Result.empty())
             throw std::invalid_argument("system result has no C identity");
-          return renderAsm(*P,
-                           P->OutputBytes.size() == 1
-                               ? std::vector<std::string>{Result}
-                               : std::vector<std::string>{Result + ".field_0",
-                                                          Result + ".field_1"},
-                           Arguments) +
+          return renderInstruction(
+                     *P, TargetArch, Width, Space,
+                     P->OutputBytes.size() == 1
+                         ? std::vector<std::string>{Result}
+                         : std::vector<std::string>{Result + ".field_0",
+                                                    Result + ".field_1"},
+                     Arguments) +
                  '\n';
         }
         std::vector<std::string> Outputs;
         std::string Text = "{ " + locals(*P, Outputs);
-        return Text + renderAsm(*P, Outputs, Arguments) + " }\n";
+        return Text +
+               renderInstruction(*P, TargetArch, Width, Space, Outputs,
+                                 Arguments) +
+               " }\n";
       }
   }
   if (Known)
     throw std::invalid_argument(
         "unsupported x86 system inline assembly contract");
   return {};
+}
+
+bool isX86SystemStateNativeName(llvm::StringRef Name) {
+  if (!Name.consume_front("llvm.x86."))
+    return false;
+  Name = Name.split('.').first;
+  Name.consume_back("32");
+  for (const auto Id : X86SystemStateNativeInventory)
+    if (Name == x86SystemStateContract(Id).Mnemonic)
+      return true;
+  return false;
+}
+
+std::optional<std::string>
+renderX86SystemStateNativeCall(Arch TargetArch, const llvm::CallBase &Call,
+                               const std::string &Result, bool ResultLive,
+                               const std::vector<std::string> &Arguments) {
+  const auto *Callee = Call.getCalledFunction();
+  if (!Callee || !isX86SystemStateNativeName(Callee->getName()))
+    return {};
+  std::optional<X86SystemStateNativeAddress> Address;
+  if (Callee->getName().ends_with(".address") ||
+      Callee->getName().ends_with(".address32")) {
+    if (Call.arg_size() < 3)
+      throw std::invalid_argument("native descriptor address has no controls");
+    const auto *Bits = llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(1));
+    const auto *Segment =
+        llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(2));
+    if (!Bits || !Segment || !Bits->getType()->isIntegerTy(32) ||
+        !Segment->getType()->isIntegerTy(32))
+      throw std::invalid_argument(
+          "native descriptor address controls must be constant i32");
+    Address = X86SystemStateNativeAddress{
+        static_cast<unsigned>(Bits->getZExtValue()),
+        static_cast<unsigned>(Segment->getZExtValue())};
+  }
+  for (const auto Id : X86SystemStateNativeInventory)
+    for (const uint16_t Width : {0, 2, 4, 8}) {
+      const auto P = x86SystemStateNative(
+          Id, TargetArch, Width, NdMemoryAddressSpace::Default, Address);
+      if (!P || P->LLVMName != Callee->getName())
+        continue;
+      const auto &Assembly = P->Assembly;
+      const auto Count = P->InputBytes.size();
+      if (!Callee->isIntrinsic() || Call.getNumOperandBundles() ||
+          Call.onlyReadsMemory() || Call.onlyWritesMemory() ||
+          Call.doesNotReturn() || Call.getFunctionType()->isVarArg() ||
+          Call.arg_size() != Count || Arguments.size() != Count ||
+          !matchesReturn(Call, Assembly))
+        continue;
+      bool Valid = true;
+      for (size_t I = 0; I < Count; ++I) {
+        const auto *T = Call.getArgOperand(I)->getType();
+        Valid &= isX86SystemStateAddressArgument(Id, I) && !P->AddressBits
+                     ? T->isPointerTy() && T->getPointerAddressSpace() == 0
+                     : T->isIntegerTy(8 * P->InputBytes[I]);
+      }
+      if (!Valid)
+        continue;
+      if (ResultLive && Result.empty())
+        throw std::invalid_argument("native system result has no C identity");
+      auto NativeArguments = Arguments;
+      auto AsmArguments = Arguments;
+      if (P->AddressBits)
+        AsmArguments.erase(AsmArguments.begin() + 1, AsmArguments.begin() + 3);
+      std::string Text = "{ ";
+      if (P->PackMsr) {
+        // Both halves come from one LLVM operand. Materialize it once before
+        // projecting EDX:EAX, including when valueStr inlines an expression.
+        Text += "uint64_t __neverd_system_msr = " + Arguments[1] + "; ";
+        NativeArguments[1] = "__neverd_system_msr";
+        AsmArguments = {Arguments[0], "(uint32_t)__neverd_system_msr",
+                        "(uint32_t)(__neverd_system_msr >> 32)"};
+      }
+      if (P->DescriptorQuery) {
+        Text += unsignedType(Assembly.OutputBytes[0]) +
+                " __neverd_system_prior = " + Arguments.back() + "; ";
+        NativeArguments.back() = "__neverd_system_prior";
+        AsmArguments.pop_back();
+      }
+      std::vector<std::string> Outputs;
+      if (!Assembly.OutputBytes.empty()) {
+        if (ResultLive) {
+          if (P->DescriptorQuery)
+            Outputs = {Result + ".field_0", Result + ".field_1"};
+          else
+            Outputs.push_back(Result);
+        } else
+          Text += locals(Assembly, Outputs);
+      }
+      auto Fallback = renderAsm(Assembly, Outputs, AsmArguments);
+      if (P->DescriptorQuery)
+        Fallback += " " + Outputs[0] + " = " + Outputs[1] + " ? " + Outputs[0] +
+                    " : __neverd_system_prior;";
+      if (TargetArch == Arch::X86)
+        return Text + Fallback + " }\n";
+      return Text + "NEVERD_X86_SYSTEM_STATE(({ " +
+             nativeBody(*P, NativeArguments, Outputs) + " }), ({ " + Fallback +
+             " })); }\n";
+    }
+  throw std::invalid_argument("unsupported native x86 system C contract");
 }
 
 } // namespace neverd

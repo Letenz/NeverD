@@ -1163,6 +1163,7 @@ struct Session {
       PipelineResult Recovery;
       Recovery.MedFuncs = PipeResult.MedFuncs;
       Recovery.CallMayWriteGPRs = PipeResult.CallMayWriteGPRs;
+      Recovery.CallExitConstants = PipeResult.CallExitConstants;
       Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
       Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
       Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;

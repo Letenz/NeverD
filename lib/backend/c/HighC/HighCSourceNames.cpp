@@ -108,10 +108,13 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
         for (const auto &[Name, Type] : Callee->Params)
           VisitImportType(Type, NeedsDeclaration);
         // Definitions are collected before headers are written. Known
-        // library headers supply their own value records.
+        // library headers supply their own value records, but cannot supply
+        // a user declaration's records merely because its name matches.
         if (const auto Floating =
                 libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
-            Floating && !libc::headerFor(Callee->Name) &&
+            Floating &&
+            (Callee->PrototypeLibrary == UserPrototypeLibrary ||
+             !libc::headerFor(Callee->Name)) &&
             (!Floating->ParameterElements.empty() ||
              Floating->ReturnElements)) {
           Visit(Callee->ReturnType);

@@ -30,6 +30,7 @@
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
+#include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
@@ -578,6 +579,8 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
     EmittedName = It->second;
   if (auto *Existing = Mod->getFunction(EmittedName))
     return Existing;
+  if (&Func == PortableBody)
+    return declarePortableX87Function(Func);
 
   const auto &TRI = getTargetRegInfo(TargetArch);
   auto *Vec2I64 = llvm::FixedVectorType::get(llvm::Type::getInt64Ty(*Ctx), 2);
@@ -728,6 +731,7 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   if (Func.DoesNotReturn)
     LLVMFunc->addFnAttr(llvm::Attribute::NoReturn);
   rewrite_source::setOriginalVA(*LLVMFunc, Func.Entry);
+  writeSourceFrameBytes(*LLVMFunc, Func.FrameBytes);
   return LLVMFunc;
 }
 
@@ -781,6 +785,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
               "intrinsic has an invalid intrinsic ID shape");
         if (Op.Opcode == NdOp::INTRINSIC) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isPortableX87Intrinsic(Id) && &Func != PortableBody)
+            throw std::invalid_argument(
+                "portable x87 helpers require a prepared emission entry");
           if (Id == Intrinsic::A64_PACMPending)
             throw std::runtime_error(kAArch64PAuthMalformedOperation);
           if (Id == Intrinsic::A64_SvePtrue &&
@@ -823,7 +830,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                         macho_loader::cache_load::kAnalysisFlag, 1);
   if (Img_ && (Img_->isArm64e() || !Img_->MachOAuthenticatedPointers.empty()))
     Mod_->addModuleFlag(llvm::Module::Error, kArm64eAnalysisModuleFlag, 1);
-  if (const char *Triple = llvmEmitTriple(TheArch, Fmt)) {
+  if (PortableBody) {
+    Mod_->setTargetTriple(llvm::Triple(PortableOutputTriple));
+    Mod_->setDataLayout(Mod_->getTargetTriple().computeDataLayout());
+  } else if (const char *Triple = llvmEmitTriple(TheArch, Fmt)) {
     Mod_->setTargetTriple(llvm::Triple(Triple));
     // Address folding, aggregate layout and C projection run before native
     // codegen. They need the same target layout on every architecture/format,

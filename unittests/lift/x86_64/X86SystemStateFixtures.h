@@ -144,9 +144,21 @@ inline std::vector<SystemEncoding> systemEncodings(Arch A) {
       {{0x0f, 0x02, 0xc1}, Intrinsic::X86LoadAccessRights, "lar"},
       {{0x66, 0x0f, 0x02, 0xc1}, Intrinsic::X86LoadAccessRights, "lar"},
       {{0x0f, 0x02, 0x04, 0x24}, Intrinsic::X86LoadAccessRightsMemory, "lar"},
+      {{0x66, 0x0f, 0x02, 0x04, 0x24},
+       Intrinsic::X86LoadAccessRightsMemory,
+       "lar"},
       {{0x65, 0x0f, 0x02, 0x04, 0x24},
        Intrinsic::X86LoadAccessRightsMemory,
        "lar"},
+      {{0x0f, 0x03, 0xc1}, Intrinsic::X86LoadSegmentLimit, "lsl"},
+      {{0x66, 0x0f, 0x03, 0xc1}, Intrinsic::X86LoadSegmentLimit, "lsl"},
+      {{0x0f, 0x03, 0x04, 0x24}, Intrinsic::X86LoadSegmentLimitMemory, "lsl"},
+      {{0x66, 0x0f, 0x03, 0x04, 0x24},
+       Intrinsic::X86LoadSegmentLimitMemory,
+       "lsl"},
+      {{0x65, 0x0f, 0x03, 0x04, 0x24},
+       Intrinsic::X86LoadSegmentLimitMemory,
+       "lsl"},
   };
   const auto Extensions = systemExtensionEncodings(A);
   E.insert(E.end(), Extensions.begin(), Extensions.end());
@@ -178,6 +190,11 @@ inline std::vector<SystemEncoding> systemEncodings(Arch A) {
     E.push_back({{0x48, 0x0f, 0x02, 0x04, 0x24},
                  Intrinsic::X86LoadAccessRightsMemory,
                  "lar"});
+    E.push_back(
+        {{0x48, 0x0f, 0x03, 0xc1}, Intrinsic::X86LoadSegmentLimit, "lsl"});
+    E.push_back({{0x48, 0x0f, 0x03, 0x04, 0x24},
+                 Intrinsic::X86LoadSegmentLimitMemory,
+                 "lsl"});
   }
   return E;
 }

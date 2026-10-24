@@ -2148,3 +2148,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 入口オブジェクトの回帰は、記号的コピー、退避・コピー済みスロット、実行時ループ、失われた束縛と合流、オブジェクトのエイリアス、完全な幅広・アトミック・セグメント書き込み、相対境界、不正な宣言、整合性情報の変更、準備・操作予算の丁度および不足境界とノード予算の枯渇を検査する。独立したバイト／レジスターのオラクルで保持された効果を確認する。担当スイートと raw 消費側の拒否を共に実行する。関数全体、コンパイル済み C、通常 ABI の証明書は得られない。
 
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）と `NeverDCSourcePresentationTests` を実行し、バイトの由来、経路の一致、上書きまたは逸出した記憶領域、不変のイメージ範囲、予算、文字コード、メタデータ境界を確認します。`NeverDWorkerStackText` は公開の x64/ARM64 PE 例をコンパイルし、未知の上書きを含めて両方の C 経路を検証します。Clang と lld-link が必要で、Windows のネイティブ実行は別途検証します。

@@ -45,48 +45,82 @@ static const AsmToCEntry X86AsmTable[] = {
 
 } // anonymous namespace
 
+bool isX86SystemRegisterNativeName(llvm::StringRef Name) {
+  if (!Name.consume_front("llvm.x86."))
+    return false;
+  Name.consume_back("32");
+  return Name == "readcr" || Name == "writecr" || Name == "readdr" ||
+         Name == "writedr";
+}
+
 std::optional<InlineAsmRender>
 renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
-                            const llvm::CallInst &Call,
+                            const llvm::CallBase &Call,
                             const std::string &ResultName, bool ResultLive,
                             const std::vector<std::string> &Args) {
-  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
-  if (!Asm)
-    return std::nullopt;
-  llvm::StringRef Text = Asm->getAsmString();
-  if (!Text.contains("%cr") && !Text.contains("%dr"))
-    return std::nullopt;
   auto Reject = []() -> std::optional<InlineAsmRender> {
     throw std::invalid_argument(
-        "unsupported x86 system register assembly contract");
+        "unsupported x86 system register call contract");
   };
-  if (!Text.consume_front("mov "))
-    return Reject();
-  auto [First, Second] = Text.split(',');
-  First = First.trim();
-  Second = Second.trim();
-  const bool Read = Second == "$0";
-  const auto Reg = Read ? First : Second;
-  uint64_t Index;
-  if ((!Reg.starts_with("%cr") && !Reg.starts_with("%dr")) ||
-      Reg.drop_front(3).getAsInteger(10, Index))
-    return Reject();
-  const bool Debug = Reg.starts_with("%dr");
-  const std::string CName = std::string(Read ? "__read" : "__write") +
-                            (Debug ? "dr" : "cr" + std::to_string(Index));
-  const auto P =
-      x86SystemRegisterAsm(intrinsicFromName(CName.c_str()), TheArch, Index);
-  if (!P || P->Text != Asm->getAsmString() ||
-      P->Constraints != Asm->getConstraintString() || !Asm->hasSideEffects() ||
-      Asm->isAlignStack() || Asm->canThrow() ||
-      Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
-      Call.getNumOperandBundles() ||
+  std::optional<X86SystemRegisterAsm> P;
+  unsigned FirstValue = 0;
+  if (const auto *Callee = Call.getCalledFunction();
+      Callee && isX86SystemRegisterNativeName(Callee->getName())) {
+    if (!Callee->isIntrinsic() || !Callee->isDeclaration() || Call.arg_empty())
+      return Reject();
+    const auto *Index =
+        llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(0));
+    if (!Index || !Index->getType()->isIntegerTy(32))
+      return Reject();
+    auto Access = Callee->getName().drop_front(9);
+    Access.consume_back("32");
+    const bool Debug = Access.ends_with("dr");
+    const std::string CName =
+        "__" + Access.str() +
+        (Debug ? "" : std::to_string(Index->getZExtValue()));
+    P = x86SystemRegisterAsm(intrinsicFromName(CName.c_str()), TheArch,
+                             Index->getZExtValue());
+    if (!P || P->LLVMName != Callee->getName() ||
+        Call.getCallingConv() != llvm::CallingConv::C)
+      return Reject();
+    FirstValue = 1;
+  } else {
+    const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+    if (!Asm)
+      return std::nullopt;
+    llvm::StringRef Text = Asm->getAsmString();
+    if (!Text.contains("%cr") && !Text.contains("%dr"))
+      return std::nullopt;
+    if (!Text.consume_front("mov "))
+      return Reject();
+    auto [First, Second] = Text.split(',');
+    First = First.trim();
+    Second = Second.trim();
+    const bool Read = Second == "$0";
+    const auto Reg = Read ? First : Second;
+    uint64_t Index;
+    if ((!Reg.starts_with("%cr") && !Reg.starts_with("%dr")) ||
+        Reg.drop_front(3).getAsInteger(10, Index))
+      return Reject();
+    const bool Debug = Reg.starts_with("%dr");
+    const std::string CName = std::string(Read ? "__read" : "__write") +
+                              (Debug ? "dr" : "cr" + std::to_string(Index));
+    P = x86SystemRegisterAsm(intrinsicFromName(CName.c_str()), TheArch, Index);
+    if (!P || P->Text != Asm->getAsmString() ||
+        P->Constraints != Asm->getConstraintString() ||
+        !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
+        Asm->getDialect() != llvm::InlineAsm::AD_ATT)
+      return Reject();
+  }
+  if (Call.getNumOperandBundles() ||
       Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
       Call.doesNotReturn() || Call.getFunctionType()->isVarArg() ||
-      Call.arg_size() != (P->Write ? 1 : 0) || Args.size() != Call.arg_size() ||
+      Call.arg_size() != FirstValue + unsigned(P->Write) ||
+      Args.size() != Call.arg_size() ||
       (P->Write
-           ? !Call.getType()->isVoidTy() ||
-                 !Call.getArgOperand(0)->getType()->isIntegerTy(8 * P->Bytes)
+           ? !Call.getType()->isVoidTy() || !Call.getArgOperand(FirstValue)
+                                                 ->getType()
+                                                 ->isIntegerTy(8 * P->Bytes)
            : !Call.getType()->isIntegerTy(8 * P->Bytes)) ||
       (ResultLive && !P->Write && ResultName.empty()))
     return Reject();
@@ -96,7 +130,10 @@ renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
                              : ResultLive ? ResultName + " = "
                                           : "(void)";
   return InlineAsmRender{
-      Prefix + renderX86SystemRegisterExpression(*P, Microsoft, Args) + ";\n",
+      Prefix +
+          renderX86SystemRegisterExpression(
+              *P, Microsoft, {Args.begin() + FirstValue, Args.end()}) +
+          ";\n",
       Microsoft};
 }
 

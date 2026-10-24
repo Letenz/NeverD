@@ -229,7 +229,7 @@ TEST(X87Capabilities, ProcessorDependentOperationsRemainExplicitlyOptIn) {
   }
 }
 
-TEST(X87Capabilities, MalformedQueriesAndAllTranslationCellsFailClosed) {
+TEST(X87Capabilities, MalformedQueriesAndUnselectedTranslationFailClosed) {
   auto Valid = query(0xc1d8);
   for (unsigned Dimension = 0; Dimension != 7; ++Dimension) {
     auto Q = Valid;
@@ -273,6 +273,48 @@ TEST(X87Capabilities, MalformedQueriesAndAllTranslationCellsFailClosed) {
   }
 }
 
+TEST(X87Capabilities, PortableRuntimeRoutesRequireTheirExplicitBoundary) {
+  for (auto Consumer : {X87Consumer::LLVM, X87Consumer::HighC,
+                        X87Consumer::LLVMC, X87Consumer::Translation}) {
+    auto Q = query(memory(0xdb, 0x28)); // Exact raw 80-bit load.
+    Q.Consumer = Consumer;
+    Q.Backend = X87Backend::Portable;
+    Q.Destination = X87Destination::ARM64;
+    auto Result = queryX87Capability(Q);
+    EXPECT_TRUE(Result.Implemented);
+    EXPECT_EQ(Result.Numerical, X87Support::Exact);
+    EXPECT_EQ(Result.ArchitecturalState, X87Support::Unknown);
+    EXPECT_STREQ(Result.Profile, "intel64-architectural-masked-v1");
+    EXPECT_NE(std::string(Result.Requirements).find("explicit C++"),
+              std::string::npos);
+    Q.StatePath = X87StatePath::TypedStack;
+    EXPECT_FALSE(queryX87Capability(Q).Implemented);
+    Q.StatePath = X87StatePath::OwnedContext;
+    Q.Destination = X87Destination::I386;
+    EXPECT_FALSE(queryX87Capability(Q).Implemented);
+    Q.Destination = X87Destination::X64;
+    EXPECT_EQ(queryX87Capability(Q).Implemented,
+              Consumer != X87Consumer::Translation);
+    Q.Destination = X87Destination::ARM64;
+    for (uint32_t Selector :
+         {0xf1dfU, 0xfed9U, 0x770fU, memory(0xd9, 0x30), memory(0xdf, 0x20)}) {
+      Q.Selector = Selector; // EFLAGS, FSIN, MMX, FNSTENV and BCD.
+      EXPECT_FALSE(queryX87Capability(Q).Implemented) << Selector;
+      EXPECT_FALSE(isPortableX87RuntimeInstruction(Selector));
+    }
+    Q.Selector = 0xe3db; // Initialization is state behavior, not a value.
+    EXPECT_TRUE(queryX87Capability(Q).Implemented);
+    EXPECT_EQ(queryX87Capability(Q).Numerical, X87Support::Unknown);
+  }
+  auto Flags = query(0xf1df);
+  Flags.Backend = X87Backend::Portable;
+  Flags.Destination = X87Destination::ARM64;
+  EXPECT_TRUE(queryX87Capability(Flags).Implemented);
+  EXPECT_EQ(queryX87Capability(Flags).Numerical, X87Support::Exact);
+  EXPECT_FALSE(isPortableX87RuntimeInstruction(Flags.Selector));
+  EXPECT_FALSE(isPortableX87RuntimeInstruction(0x8000e3db));
+}
+
 TEST(X87Capabilities, FactoredReportNeverWidensAnIndividualInstruction) {
   for (const auto &Form : x87InstructionForms()) {
     uint32_t Representative = memory(0xd8, 0);
@@ -292,6 +334,9 @@ TEST(X87Capabilities, FactoredReportNeverWidensAnIndividualInstruction) {
                                                                       : 0xc1d8;
     auto Q = query(Form.Memory ? memory(Form.Escape, Form.FirstModRM)
                                : Form.Escape | (Form.FirstModRM << 8));
+    if (Form.PortableOperation != X87PortableOperation::None &&
+        x87ContextInstruction(Q.Selector)->ReadsFlags)
+      Representative = 0xf1df;
     for (unsigned Mode = 0; Mode != 2; ++Mode)
       for (unsigned Path = 0; Path != 2; ++Path)
         for (unsigned Consumer = 0; Consumer != 9; ++Consumer)
@@ -329,7 +374,7 @@ TEST(X87Capabilities, ReportPreservesEveryDimensionAndLabelsSourceEvidence) {
   ASSERT_NE(Root->getArray("source_paths"), nullptr);
   EXPECT_EQ(Root->getArray("source_paths")->size(), 12U);
   ASSERT_NE(Root->getArray("coverage"), nullptr);
-  EXPECT_EQ(Root->getArray("coverage")->size(), 3024U);
+  EXPECT_EQ(Root->getArray("coverage")->size(), 3456U);
   EXPECT_TRUE(Root->getString("evidence")->contains("not passing"));
   for (const auto &Row : *Root->getArray("coverage")) {
     const auto *Cell = Row.getAsObject();

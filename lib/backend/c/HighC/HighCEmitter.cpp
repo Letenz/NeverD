@@ -21,6 +21,8 @@
 #include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86SystemRegister.h"
+#include "../render/X86SystemState.h"
+#include "../render/X86Virtualization.h"
 #include "HighCWriter.h"
 
 #include "neverd/backend/Limits.h"
@@ -681,10 +683,16 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         E.Kind == ExprKind::Load && useMsvcSegmentedRead(Opts, CurrentFunc);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
+      // These renderers pass raw offsets to native instructions. They do not
+      // form C pointers in a target-specific segmented address space.
+      const bool InstructionMemory =
+          E.Kind == ExprKind::Call &&
+          (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
+           x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0);
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
-      if (!MsvcSegmentedScalar)
+      if (!MsvcSegmentedScalar && !InstructionMemory)
         HasSegmentedMemory = true;
-      else if (Opts.Format == BinaryFormat::COFF)
+      else if (MsvcSegmentedScalar && Opts.Format == BinaryFormat::COFF)
         NeedsMsvcIntrinsics = true;
       const bool IsMemoryExpr =
           E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
@@ -1530,9 +1538,15 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesMsvcIntrinsicHeader(Ex.IntrinsicId))
         NeedsMsvcIntrinsics = true;
-      if (Opts.Format == BinaryFormat::COFF &&
+      if ((Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF) &&
           x86SystemRegisterName(Ex.IntrinsicId, 0))
         NeedsX86SystemRegisterDispatch = true;
+      if (Opts.TheArch == Arch::X64 &&
+          x86VirtualizationContract(Ex.IntrinsicId).Mnemonic)
+        NeedsX86VirtualizationDispatch = true;
+      if (Opts.TheArch == Arch::X64)
+        for (const auto Id : X86SystemStateNativeInventory)
+          NeedsX86SystemStateDispatch |= Id == Ex.IntrinsicId;
       if (Opts.Format != BinaryFormat::COFF &&
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
@@ -1773,7 +1787,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (NeedsDarwinAffineTransformBridge)
     Headers.insert("string.h");
 
-  if (HasCIntrinsics)
+  if (HasCIntrinsics && !PortableInterface)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))
       Headers.insert(Hdr);
   if (NeedsMsvcIntrinsics)
@@ -4406,6 +4420,10 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86VirtualizationDispatch)
+    OS << X86VirtualizationCompilerDispatch;
+  if (NeedsX86SystemStateDispatch)
+    OS << X86SystemStateCompilerDispatch;
   writeX87ContextHelpers(Funcs);
   writeX86FPStateCHelpers(OS, X86FPStateHelpers);
   writeMemoryHelpers();
@@ -4495,11 +4513,16 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     Opts.SourceMap->Variables.clear();
   // Check the complete supplied IR before source-only hiding or preparation
   // can discard an unreachable or malformed environment requirement.
+  const bool Portable =
+      PortableInterface && Funcs.size() == 1 && &Funcs.front() == PortableBody;
   std::set<const HighExpr *> Seen;
   std::function<void(const ExprPtr &)> CheckRequirement =
       [&](const ExprPtr &Expr) {
         if (!Expr || !Seen.insert(Expr.get()).second)
           return;
+        if (isPortableX87Intrinsic(Expr->IntrinsicId) && !Portable)
+          throw std::invalid_argument(
+              "portable x87 helpers require a prepared emission entry");
         if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
           throw std::invalid_argument(
               "raw environment requirement has no C runtime contract");
@@ -4537,7 +4560,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     HighCWriter W(OS, Opts, Dbg, true,
                   Prepared ? &PreparedImageFunctionNames : nullptr, Recorder,
                   Prepared ? &PreparedDataObjects : nullptr,
-                  Prepared ? &PreparedFunctionSymbols : nullptr);
+                  Prepared ? &PreparedFunctionSymbols : nullptr,
+                  Portable ? PortableInterface : nullptr);
     W.ExtraRecords = Extra;
     W.WantedRecords = Wanted;
     W.prepareFunctionReturns(Working);

@@ -144,8 +144,9 @@ TEST(X86SystemSideeffect, SystemInstructionsKeepTheirRegisterOperands) {
   EXPECT_EQ(findIntrinsic(Verw.Ops, Intrinsic::Hlt), nullptr);
 
   const LiftedInstruction Lsl = liftX64({0x0f, 0x03, 0xc0}); // lsl eax, eax
-  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimit), nullptr);
-  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimitValid), nullptr);
+  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::X86LoadSegmentLimit), nullptr);
+  EXPECT_EQ(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimit), nullptr);
+  EXPECT_EQ(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimitValid), nullptr);
   EXPECT_TRUE(writes(Lsl.Ops, x86reg::RAX));
 
   const LiftedInstruction Monitor = liftX64({0x0f, 0x01, 0xc8});

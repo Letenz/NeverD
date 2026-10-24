@@ -14,6 +14,9 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 
+#include <algorithm>
+#include <utility>
+
 namespace neverd {
 
 std::optional<FloatingCallArguments>
@@ -172,6 +175,79 @@ floatingCallArguments(Arch A, BinaryFormat F, const TypeRef &ReturnType,
     Result.ParameterBytes.push_back(Parameters[I]->Size);
   }
   return Result;
+}
+
+std::optional<FloatingCallTypes>
+floatingCallTypes(Arch A, BinaryFormat F,
+                  const FloatingCallArguments &Signature) {
+  if ((A != Arch::X86 && A != Arch::X64 && A != Arch::AArch64) ||
+      Signature.Scalars.size() >
+          static_cast<size_t>(limits::kMaxBoundSourceCallArgs) ||
+      Signature.ParameterBytes.size() >
+          static_cast<size_t>(limits::kMaxBoundSourceCallArgs) ||
+      Signature.ParameterElements.size() >
+          static_cast<size_t>(limits::kMaxBoundSourceCallArgs) ||
+      Signature.ReturnElements > 4)
+    return std::nullopt;
+  FloatingCallTypes Types;
+  const auto Record = [](llvm::ArrayRef<TypeRef> Members) -> TypeRef {
+    if (Members.empty() || Members.size() > 4)
+      return nullptr;
+    for (const auto &Member : Members)
+      if (Member->Kind != NdTypeKind::Float ||
+          Member->Size != Members.front()->Size)
+        return nullptr;
+    auto Type = NdType::makeStruct(
+        std::vector<TypeRef>(Members.begin(), Members.end()));
+    if (Type)
+      Type->Passing = NdRecordPassing::ByValue;
+    return Type;
+  };
+  for (const auto &Parameter : Signature.Scalars) {
+    if (Parameter.Pointer &&
+        (Parameter.Floating ||
+         Parameter.Bytes != getTargetRegInfo(A).PointerSize))
+      return std::nullopt;
+    auto Type = Parameter.Floating  ? NdType::makeFloat(Parameter.Bytes)
+                : Parameter.Pointer ? NdType::makePtr()
+                                    : NdType::makeInt(Parameter.Bytes);
+    Type->Size = Parameter.Bytes;
+    Types.Parameters.push_back(std::move(Type));
+  }
+  if (Signature.Scalars.empty())
+    for (uint16_t Bytes : Signature.ParameterBytes)
+      Types.Parameters.push_back(NdType::makeFloat(Bytes));
+  if (!Signature.ParameterElements.empty()) {
+    std::vector<TypeRef> Grouped;
+    size_t At = 0;
+    for (uint16_t Count : Signature.ParameterElements) {
+      const size_t Pieces = std::max<uint16_t>(Count, 1);
+      if (Pieces > Types.Parameters.size() - At)
+        return std::nullopt;
+      auto Type =
+          Count ? Record(llvm::ArrayRef(Types.Parameters).slice(At, Pieces))
+                : Types.Parameters[At];
+      if (!Type)
+        return std::nullopt;
+      Grouped.push_back(std::move(Type));
+      At += Pieces;
+    }
+    if (At != Types.Parameters.size())
+      return std::nullopt;
+    Types.Parameters = std::move(Grouped);
+  }
+  Types.Result = NdType::makeFloat(Signature.ReturnBytes);
+  if (Signature.ReturnElements) {
+    if (Signature.ReturnBytes % Signature.ReturnElements)
+      return std::nullopt;
+    Types.Result = Record(std::vector<TypeRef>(
+        Signature.ReturnElements,
+        NdType::makeFloat(Signature.ReturnBytes / Signature.ReturnElements)));
+  }
+  const auto Expected =
+      floatingCallArguments(A, F, Types.Result, Types.Parameters);
+  return Expected && *Expected == Signature ? std::optional(std::move(Types))
+                                            : std::nullopt;
 }
 
 } // namespace neverd

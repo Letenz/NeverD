@@ -512,8 +512,12 @@ std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
     auto Base = imageDataVA(GEP->getPointerOperand());
     if (!Base)
       return std::nullopt;
-    llvm::APInt Off(64, 0);
-    if (CurMod && GEP->accumulateConstantOffset(CurMod->getDataLayout(), Off))
+    llvm::APInt Off(CurMod ? CurMod->getDataLayout().getIndexSizeInBits(
+                                 GEP->getPointerAddressSpace())
+                           : 64,
+                    0);
+    if (CurMod && GEP->accumulateConstantOffset(CurMod->getDataLayout(), Off) &&
+        Off.isSignedIntN(64))
       return static_cast<va_t>(static_cast<int64_t>(*Base) +
                                Off.getSExtValue());
     if (GEP->getNumOperands() == 2) {
@@ -1216,14 +1220,10 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
         auto Text = Self(Self, Operand);
         if (!Text)
           return std::nullopt;
-        uint64_t Bits = 0;
-        int64_t Signed = 0;
-        if (llvm::StringRef(*Text).getAsInteger(0, Bits)) {
-          if (llvm::StringRef(*Text).getAsInteger(0, Signed))
-            return std::nullopt;
-          Bits = static_cast<uint64_t>(Signed);
-        }
-        Operands.push_back(llvm::ConstantInt::get(Ty, Bits));
+        const auto Bits = ParseInteger(*Text, Ty->getBitWidth());
+        if (!Bits)
+          return std::nullopt;
+        Operands.push_back(llvm::ConstantInt::get(Ty->getContext(), *Bits));
       }
       if (CurMod)
         if (const auto *C = llvm::dyn_cast_or_null<llvm::ConstantInt>(
@@ -2178,10 +2178,16 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
       }
     }
     if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(V)) {
-      llvm::APInt Acc(64, 0);
+      llvm::APInt Acc(CurMod ? CurMod->getDataLayout().getIndexSizeInBits(
+                                   GEP->getPointerAddressSpace())
+                             : 64,
+                      0);
       if (CurMod &&
-          GEP->accumulateConstantOffset(CurMod->getDataLayout(), Acc)) {
-        Off += Acc.getZExtValue();
+          GEP->accumulateConstantOffset(CurMod->getDataLayout(), Acc) &&
+          Acc.isSignedIntN(64)) {
+        // A negative target-width displacement stays negative when the
+        // synthetic frame offset uses the host-width unsigned carrier.
+        Off += static_cast<uint64_t>(Acc.getSExtValue());
         V = GEP->getPointerOperand();
         continue;
       }
