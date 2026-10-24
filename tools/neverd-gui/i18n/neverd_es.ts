@@ -1127,6 +1127,14 @@
         <source>Inspect unwind metadata at the selected instruction</source>
         <translation>Inspeccionar los metadatos de desenrollado en la instrucción seleccionada</translation>
     </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copiar o guardar los bytes seleccionados</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Exportar datos...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2971,8 +2979,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Otro enlace ocupó el lugar de este.</translation>
     </message>
     <message>
-        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
-        <translation>IDA clásico (legacy). Los comandos de una lista tienen prioridad cuando tiene el foco.</translation>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>Los comandos de la lista tienen prioridad cuando esta tiene el foco.</translation>
     </message>
     <message>
         <source>Filter by action, shortcut or scope</source>
@@ -8141,6 +8149,100 @@ SHA-256 secundario: %3
     <message>
         <source>unsupported</source>
         <translation>no compatible</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Volver a acoplar a la ventana principal</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 bytes listos.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 bytes listos. La vista previa muestra los primeros %2; copiar y guardar usan todo el intervalo.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Arreglo de bytes C (decimal)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Arreglo de bytes C (hexadecimal)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Literal de cadena C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>No se puede leer todo el intervalo en %1. No se exportó nada.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copiar</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>No se pudo guardar %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Dirección final (incluida):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Introduzca un intervalo de direcciones válido.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Exportar datos</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>Se pueden exportar como máximo %1 bytes; seleccione un intervalo menor.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Formato:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Cadena hexadecimal</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Bytes sin procesar (solo archivo)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Leyendo bytes...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Leyendo bytes: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Guardar como...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>Se guardaron %1 bytes en %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Cadena hexadecimal con espacios</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Dirección inicial:</translation>
     </message>
 </context>
 </TS>

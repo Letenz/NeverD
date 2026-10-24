@@ -1127,6 +1127,14 @@
         <source>Inspect unwind metadata at the selected instruction</source>
         <translation>Просмотреть метаданные раскрутки стека для выбранной инструкции</translation>
     </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Копировать или сохранить выбранные байты</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Экспорт данных...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2977,8 +2985,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Эту ссылку заменила другая.</translation>
     </message>
     <message>
-        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
-        <translation>Классическая схема IDA (legacy). Команды списка имеют приоритет, пока он в фокусе.</translation>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>Команды списка имеют приоритет, пока список в фокусе.</translation>
     </message>
     <message>
         <source>Filter by action, shortcut or scope</source>
@@ -8177,6 +8185,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>не поддерживается</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Вернуть в главное окно</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>Готово: %1 байт.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>Готово: %1 байт. Показаны первые %2; копирование и сохранение используют весь диапазон.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Массив байтов C (десятичный)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Массив байтов C (шестнадцатеричный)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Строковый литерал C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Не удалось прочитать весь диапазон по адресу %1. Данные не экспортированы.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Копировать</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Не удалось сохранить %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Конечный адрес (включительно):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Введите допустимый диапазон адресов.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Экспорт данных</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>Можно экспортировать не более %1 байт; выберите меньший диапазон.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Формат:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Шестнадцатеричная строка</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Необработанные байты (только файл)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Чтение байтов...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Чтение байтов: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Сохранить как...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>Сохранено %1 байт в %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Шестнадцатеричная строка с пробелами</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Начальный адрес:</translation>
     </message>
 </context>
 </TS>

@@ -157,10 +157,6 @@ private:
 class CommandCenter final : public HoverButton {
 public:
   using HoverButton::HoverButton;
-  void setKeyHint(const QString &hint) {
-    keyHint_ = hint;
-    update();
-  }
 
 protected:
   void paintEvent(QPaintEvent *) override {
@@ -176,21 +172,15 @@ protected:
     // The magnifier and the name, centered together; a long name keeps both
     // of its ends.
     const QFontMetrics metrics(font());
-    const int hintWidth =
-        keyHint_.isEmpty()
-            ? 0
-            : metrics.horizontalAdvance(keyHint_) +
-                  ::neverd::limits::gui_config::kTitleBarCenterPadding;
-    const int nameWidth = width() - hintWidth;
     const QString name = metrics.elidedText(
         text(), Qt::ElideMiddle,
-        nameWidth - 2 * ::neverd::limits::gui_config::kTitleBarCenterPadding -
+        width() - 2 * ::neverd::limits::gui_config::kTitleBarCenterPadding -
             ::neverd::limits::gui_config::kTitleBarLensSize -
             ::neverd::limits::gui_config::kTitleBarLensGap);
     const int content = ::neverd::limits::gui_config::kTitleBarLensSize +
                         ::neverd::limits::gui_config::kTitleBarLensGap +
                         metrics.horizontalAdvance(name);
-    const double left = std::round((nameWidth - content) / 2.0);
+    const double left = std::round((width() - content) / 2.0);
     const double middle = height() / 2.0;
     const QColor ink = titleText(window_);
     painter.setBrush(Qt::NoBrush);
@@ -207,16 +197,7 @@ protected:
                    ::neverd::limits::gui_config::kTitleBarLensGap,
                0, width(), height()),
         Qt::AlignLeft | Qt::AlignVCenter, name);
-    if (!keyHint_.isEmpty())
-      painter.drawText(
-          rect().adjusted(nameWidth, 0,
-                          -::neverd::limits::gui_config::kTitleBarCenterPadding,
-                          0),
-          Qt::AlignRight | Qt::AlignVCenter, keyHint_);
   }
-
-private:
-  QString keyHint_;
 };
 } // namespace
 
@@ -266,17 +247,13 @@ void TitleBar::setCommandCenterAction(QAction *action) {
   command_ = action;
   if (!commandCenter_)
     return;
-  const auto updateHint = [this] {
-    const QString hint =
-        command_ ? command_->shortcut().toString(QKeySequence::NativeText)
-                 : QString();
-    static_cast<CommandCenter *>(commandCenter_)->setKeyHint(hint);
+  const auto updateDescription = [this] {
     commandCenter_->setAccessibleDescription(command_ ? command_->toolTip()
                                                       : QString());
   };
   if (action)
-    connect(action, &QAction::changed, commandCenter_, updateHint);
-  updateHint();
+    connect(action, &QAction::changed, commandCenter_, updateDescription);
+  updateDescription();
 }
 
 QSize TitleBar::sizeHint() const {

@@ -1779,8 +1779,8 @@ missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
 
-`NeverDGuiUnits::toolbarButtonsShowTheirActualShortcuts` checks visible toolbar
-key labels, action changes, translation and disabled actions.
+`NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
+and shortcut tooltips through action changes, translation and disabled actions.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
 Ctrl+E/P/L/S keys, filtering, Enter, cancellation and navigation history with
 the fixture worker. `shortcutsCanBeFoundByKeyAndScope` checks the shortcut
@@ -1789,6 +1789,19 @@ browser's scoped Ctrl+E commands and unassigned actions;
 Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
 repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
 and function-edit controller cases check that their scoped Ctrl+E still wins.
+
+`floatingDocksReturnToWorkbench` checks returning through the client title bar,
+its dock button and the tab context menu in both themes.
+`floatingAnalysisMenusStayWithTheirView` checks popup ownership and native
+transient parenting for floating text, graph, pseudocode and IR views.
+The jump-chooser matrix also runs from floating views.
+`selectedBytesExportWithIdasKey` presses Shift+E in docked and floating listing
+and hex selections, checks every text format and compares saved raw bytes.
+`byteExportsRejectHolesAndRetireStaleReads` covers paged ranges, unreadable
+tails, invalid bounds, input changes and project closure without replacing an
+existing file. The same `NEVERD_SHORTCUT_CAPTURES` directory captures these
+dialogs and windows. Repeat with the native Qt platform for compositor behavior;
+offscreen checks alone do not exercise native dragging or window stacking.
 
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
 unwind coverage, cached and uncached selections, actual split-chunk ownership,

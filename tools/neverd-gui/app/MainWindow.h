@@ -279,10 +279,12 @@ private:
   /// Choose a jump target without changing the corresponding dock's state.
   void chooseLocation(ChooserKind kind, ActionId command);
   QWidget *commandFocusWidget() const;
+  QWidget *commandWindow() const;
   /// Edit > Copy: the selection of the view holding the focus.
   void copySelection();
   void showCommandPalette();
   void exportCurrent(bool pseudocode);
+  void exportData();
   void loadPdb();
   /// File, Load file, DWARF file: the DWARF of the open ELF or Mach-O image
   /// from a separate file the user picks.

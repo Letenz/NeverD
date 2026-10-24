@@ -1127,6 +1127,14 @@
         <source>Inspect unwind metadata at the selected instruction</source>
         <translation>選択した命令位置のアンワインドメタデータを調べる</translation>
     </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>選択したバイトをコピーまたは保存</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>データをエクスポート...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2965,8 +2973,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>別のリンクがこのリンクに代わりました。</translation>
     </message>
     <message>
-        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
-        <translation>IDA Classic（legacy）。リストにフォーカスがある間は、そのリストのコマンドが優先されます。</translation>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>リストにフォーカスがある間は、リストのコマンドが優先されます。</translation>
     </message>
     <message>
         <source>Filter by action, shortcut or scope</source>
@@ -8105,6 +8113,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>未対応</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>メインウィンドウに戻してドッキング</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 バイトの準備ができました。</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 バイトの準備ができました。プレビューは先頭 %2 バイトです。コピーと保存には範囲全体を使用します。</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C バイト配列（10進数）</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C バイト配列（16進数）</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C 文字列リテラル</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>%1 の範囲全体を読み取れません。何もエクスポートされませんでした。</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>コピー</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>%1 を保存できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>終了アドレス（含む）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>有効なアドレス範囲を入力してください。</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>データをエクスポート</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>エクスポートは最大 %1 バイトです。範囲を狭めてください。</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>形式：</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>16進数文字列</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>生バイト（ファイルのみ）</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>バイトを読み取り中...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>バイトを読み取り中：%1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>名前を付けて保存...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 バイトを %2 に保存しました</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>空白区切りの16進数文字列</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>開始アドレス：</translation>
     </message>
 </context>
 </TS>

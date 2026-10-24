@@ -1,7 +1,6 @@
 #include "ActionRegistry.h"
 
 #include "Icons.h"
-#include "ShortcutHint.h"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -56,6 +55,12 @@ ActionRegistry::ActionRegistry(QObject *parent) : QObject(parent) {
 
 void ActionRegistry::attachViewShortcuts(QWidget *view) const {
   view->addActions(viewActions_);
+}
+
+void ActionRegistry::attachWindowShortcuts(QWidget *view) const {
+  for (auto *action : all_)
+    if (action->shortcutContext() == Qt::WindowShortcut)
+      view->addAction(action);
 }
 
 void ActionRegistry::buildMenus(QMenuBar *bar, const PlaceholderFiller &fill) {
@@ -117,6 +122,7 @@ QList<QToolBar *> ActionRegistry::buildToolbars(QMainWindow *window) {
     auto *toolbar = new QToolBar(window);
     toolbar->setObjectName(QStringLiteral("toolbar") + QString::fromLatin1(id));
     toolbar->setIconSize(QSize(16, 16));
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     toolbar->setMovable(true);
     window->addToolBar(Qt::TopToolBarArea, toolbar);
     byId.insert(QString::fromLatin1(id), toolbar);
@@ -125,17 +131,8 @@ QList<QToolBar *> ActionRegistry::buildToolbars(QMainWindow *window) {
   };
   const auto addItem = [&](const char *toolbarId, const char *actionId) {
     if (auto *toolbar = byId.value(QString::fromLatin1(toolbarId)))
-      if (auto *action = actionByName(actionId)) {
+      if (auto *action = actionByName(actionId))
         toolbar->addAction(action);
-        if (auto *button =
-                qobject_cast<QToolButton *>(toolbar->widgetForAction(action))) {
-          const auto updateHint = [button, action] {
-            setShortcutHint(*button, action->shortcut());
-          };
-          connect(action, &QAction::changed, button, updateHint);
-          updateHint();
-        }
-      }
   };
   const auto addSeparator = [&](const char *toolbarId) {
     if (auto *toolbar = byId.value(QString::fromLatin1(toolbarId)))

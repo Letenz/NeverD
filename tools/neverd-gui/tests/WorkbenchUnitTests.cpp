@@ -537,7 +537,7 @@ private slots:
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
   }
 
-  void toolbarButtonsShowTheirActualShortcuts() {
+  void toolbarButtonsKeepKeysInTooltips() {
     QMainWindow window;
     ActionRegistry registry;
     const auto toolbars = registry.buildToolbars(&window);
@@ -548,15 +548,12 @@ private slots:
             qobject_cast<QToolButton *>(toolbar->widgetForAction(action));
         if (!button)
           continue;
-        if (action->shortcut().isEmpty()) {
-          QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+        QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+        if (action->shortcut().isEmpty())
           continue;
-        }
         ++hinted;
-        QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
-        QCOMPARE(button->text(),
-                 action->shortcut().toString(QKeySequence::NativeText));
-        QVERIFY(!button->accessibleName().isEmpty());
+        QVERIFY(button->toolTip().contains(
+            action->shortcut().toString(QKeySequence::NativeText)));
         QVERIFY(action->isShortcutVisibleInContextMenu());
       }
     QVERIFY(hinted > 10);
@@ -567,15 +564,13 @@ private slots:
               qobject_cast<QToolButton *>(toolbar->widgetForAction(action)))
         entry = button;
     QVERIFY(entry);
-    QCOMPARE(
-        entry->text(),
-        QKeySequence(Qt::CTRL | Qt::Key_E).toString(QKeySequence::NativeText));
-    // The label follows the binding and survives translation and disabling.
+    QVERIFY(entry->toolTip().contains(QStringLiteral("Ctrl+E")));
+    // Translation and action updates preserve the compact toolbar.
     action->setShortcut(QKeySequence(Qt::Key_F12));
-    QCOMPARE(entry->text(), QStringLiteral("F12"));
     registry.retranslate();
     action->setEnabled(false);
-    QCOMPARE(entry->text(), QStringLiteral("F12"));
+    QVERIFY(entry->toolTip().contains(QStringLiteral("F12")));
+    QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
     action->setShortcut({});
     QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
   }

@@ -9,6 +9,7 @@
 #include "DisassemblyView.h"
 #include "Docking.h"
 #include "DwarfPromptDialog.h"
+#include "ExportDataDialog.h"
 #include "ExtensionsView.h"
 #include "FindInViewDialog.h"
 #include "FunctionEditDialog.h"
@@ -557,6 +558,7 @@ MainWindow::Dock *MainWindow::makeDock(const QString &id, const char *title,
   }
   dock->setIcon(icon(iconName));
   dock->setWidget(content);
+  actions_.attachWindowShortcuts(dock);
   docks_.insert(id, dock);
   return dock;
 }
@@ -670,6 +672,7 @@ void MainWindow::buildDocks() {
   connectDisassembly(disassembly_);
   connect(hex_, &HexView::locationChanged, this,
           [this](Address address) { disassembly_->navigate(address, false); });
+  hex_->setExportAction(actions_.action(ActionId::EditExportData));
   connect(output_, &OutputWindow::navigateRequested, this,
           [this](Address address) { jump(address); });
   // The output window and dialogs act on the last analysis view used.
@@ -1699,6 +1702,7 @@ void MainWindow::connectActions() {
   on(ActionId::EditUndo, [this] { session_.undo(); });
   on(ActionId::EditRedo, [this] { session_.redo(); });
   on(ActionId::EditCopy, [this] { copySelection(); });
+  on(ActionId::EditExportData, [this] { exportData(); });
   on(ActionId::EditCopyAddress, [this] {
     if (const auto address = currentAddress())
       QApplication::clipboard()->setText(hexAddress(*address));
@@ -1711,9 +1715,9 @@ void MainWindow::connectActions() {
     if (!address)
       return;
     bool ok = false;
-    const auto text =
-        QInputDialog::getText(this, tr("Mark position"), tr("Description:"),
-                              QLineEdit::Normal, displayAddress(*address), &ok);
+    const auto text = QInputDialog::getText(
+        commandWindow(), tr("Mark position"), tr("Description:"),
+        QLineEdit::Normal, displayAddress(*address), &ok);
     if (!ok)
       return;
     // Marking a marked address again renames its bookmark.
@@ -1888,9 +1892,11 @@ void MainWindow::connectActions() {
   on(ActionId::SearchInView, [this] {
     auto *code = focusedCodeView();
     if (!FindDialog) {
-      FindDialog = new FindInViewDialog(this);
+      FindDialog = new FindInViewDialog(commandWindow());
       connect(&session_, &Session::unloaded, FindDialog, &QDialog::reject);
     }
+    if (FindDialog->parentWidget() != commandWindow())
+      FindDialog->setParent(commandWindow(), FindDialog->windowFlags());
     FindDialog->search(code ? code->text() : nullptr, disassembly_->listing());
   });
 
@@ -2044,7 +2050,8 @@ void MainWindow::connectActions() {
     if (!PC || !session_.loaded() || !session_.reportsUnwindFrames() ||
         focusedCodeView())
       return;
-    auto *Dialog = new UnwindInfoDialog(session_.queries(), *PC, this);
+    auto *Dialog =
+        new UnwindInfoDialog(session_.queries(), *PC, commandWindow());
     Dialog->setAttribute(Qt::WA_DeleteOnClose);
     const auto Update = [this, Dialog] {
       Dialog->setProviderAvailable(session_.connected() && session_.loaded(),
@@ -2090,6 +2097,10 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::ViewUnwindInfo)
       ->setEnabled(location && !focusedCodeView() &&
                    session_.reportsUnwindFrames());
+  actions_.action(ActionId::EditExportData)
+      ->setEnabled(loaded && !focusedCodeView() &&
+                   (hexActive_ ? hex_->byteSelection().has_value()
+                               : !disassembly_->graphMode() && location));
   actions_.action(ActionId::JumpBack)
       ->setEnabled(loaded && disassembly_->canGoBack());
   actions_.action(ActionId::JumpForward)
@@ -2724,7 +2735,7 @@ void MainWindow::rename() {
                                   {"identity", target.value("identity")}},
                                  epoch);
       const auto name =
-          QInputDialog::getText(this, tr("Rename"), tr("New name:"),
+          QInputDialog::getText(view->window(), tr("Rename"), tr("New name:"),
                                 QLineEdit::Normal, current, &ok)
               .trimmed();
       if (view) {
@@ -2775,13 +2786,16 @@ void MainWindow::rename() {
   // A name under the cursor renames what it denotes; otherwise the item the
   // cursor is on: a function at its entry, data, or a label in code.
   const Address address = target ? *target : *item;
+  const QPointer<QWidget> owner = commandWindow();
   session_.read(
       QStringLiteral("resolve"), {{"query", hexAddress(address)}}, this,
-      [this, address, epoch](const QJsonObject &payload) {
+      [this, address, epoch, owner](const QJsonObject &payload) {
+        if (!owner || session_.epoch() != epoch)
+          return;
         const QString current = payload.value("address_name").toString();
         bool ok = false;
         const auto name = QInputDialog::getText(
-            this, tr("Rename address"),
+            owner, tr("Rename address"),
             tr("Name of %1:").arg(displayAddress(address)), QLineEdit::Normal,
             current, &ok);
         if (ok && !name.trimmed().isEmpty() && name.trimmed() != current)
@@ -2813,8 +2827,8 @@ void MainWindow::comment() {
         return;
       bool ok = false;
       const auto text = QInputDialog::getMultiLineText(
-          this, tr("Please enter text"), tr("Comment this source line:"),
-          current, &ok);
+          view->window(), tr("Please enter text"),
+          tr("Comment this source line:"), current, &ok);
       if (view) {
         view->window()->activateWindow();
         view->text()->setFocus();
@@ -2851,11 +2865,15 @@ void MainWindow::comment() {
   if (!address)
     return;
   const quint64 epoch = session_.epoch();
+  const QPointer<QWidget> owner = commandWindow();
   session_.read(QStringLiteral("resolve"), {{"query", hexAddress(*address)}},
-                this, [this, address, epoch](const QJsonObject &payload) {
+                this,
+                [this, address, epoch, owner](const QJsonObject &payload) {
+                  if (!owner || session_.epoch() != epoch)
+                    return;
                   bool ok = false;
                   const auto text = QInputDialog::getMultiLineText(
-                      this, tr("Please enter text"),
+                      owner, tr("Please enter text"),
                       tr("Comment at %1:").arg(displayAddress(*address)),
                       payload.value("comment").toString(), &ok);
                   if (ok)
@@ -2866,7 +2884,7 @@ void MainWindow::comment() {
 void MainWindow::jumpAnywhere() {
   if (!session_.loaded())
     return;
-  JumpDialog dialog(session_, this);
+  JumpDialog dialog(session_, commandWindow());
   if (dialog.exec() != QDialog::Accepted)
     return;
   navigateExpression(dialog.result());
@@ -2963,7 +2981,7 @@ void MainWindow::showLocalReferences(CodeView *origin,
            representation == view->representation() &&
            version == view->text()->documentVersion();
   };
-  QDialog dialog(this);
+  QDialog dialog(view->window());
   dialog.setObjectName(QStringLiteral("localReferencesDialog"));
   dialog.setWindowTitle(tr("xrefs to %1").arg(target.value("name").toString()));
   dialog.setWindowIcon(icon(QStringLiteral("xrefs")));
@@ -3026,7 +3044,7 @@ void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
   ReferencesDialog dialog(
       session_, space_, title,
       {{"address", hexAddress(*address)}, {"direction", to ? "to" : "from"}},
-      this);
+      commandWindow());
   if (dialog.exec() != QDialog::Accepted || epoch != session_.epoch() ||
       serial != codeNavigationSerial_)
     return;
@@ -3580,6 +3598,30 @@ QWidget *MainWindow::commandFocusWidget() const {
   return QApplication::focusWidget();
 }
 
+QWidget *MainWindow::commandWindow() const {
+  if (auto *focus = commandFocusWidget())
+    for (auto *dock : docks_)
+      if (dock == focus || dock->isAncestorOf(focus))
+        return dock->QWidget::window();
+  // Activating a window shortcut may briefly leave the focus widget null.
+  // Keep its active floating owner instead of falling back behind it.
+  if (auto *active = QApplication::activeWindow())
+    for (auto *dock : docks_)
+      if (dock->QWidget::window() == active)
+        return active;
+  return const_cast<MainWindow *>(this);
+}
+
+void MainWindow::exportData() {
+  const auto range = hexActive_ ? hex_->byteSelection()
+                                : disassembly_->listing()->byteSelection();
+  if (!range || focusedCodeView())
+    return;
+  ExportDataDialog dialog(session_, range->first, range->second,
+                          commandWindow());
+  dialog.exec();
+}
+
 void MainWindow::copySelection() {
   // The view holding the focus copies its selection: any code view, a
   // chooser's rows, the hex view's bytes or a text field; the disassembly
@@ -3611,7 +3653,7 @@ void MainWindow::copySelection() {
 }
 
 void MainWindow::chooseLocation(ChooserKind kind, ActionId command) {
-  QDialog dialog(this);
+  QDialog dialog(commandWindow());
   dialog.setObjectName(QStringLiteral("locationChooser"));
   dialog.setWindowTitle(
       actions_.action(command)->text().remove(QLatin1Char('&')));
@@ -3661,10 +3703,8 @@ void MainWindow::showShortcuts() {
   dialog.resize(::neverd::limits::gui_config::kShortcutsDialogSize);
   dialog.setSizeGripEnabled(true);
   auto *layout = new QVBoxLayout(&dialog);
-  auto *note =
-      new QLabel(tr("IDA Classic (legacy). List commands take priority "
-                    "while their list has focus."),
-                 &dialog);
+  auto *note = new QLabel(
+      tr("List commands take priority while their list has focus."), &dialog);
   note->setWordWrap(true);
   layout->addWidget(note);
   auto *filter = new QLineEdit(&dialog);
@@ -3730,7 +3770,8 @@ void MainWindow::showShortcuts() {
 }
 
 void MainWindow::showCommandPalette() {
-  QDialog dialog(this, Qt::Popup | Qt::FramelessWindowHint);
+  auto *owner = commandWindow();
+  QDialog dialog(owner, Qt::Popup | Qt::FramelessWindowHint);
   dialog.setObjectName(QStringLiteral("commandPalette"));
   dialog.setWindowTitle(tr("Command palette"));
   dialog.resize(560, 420);
@@ -3764,7 +3805,8 @@ void MainWindow::showCommandPalette() {
   connect(filter, &QLineEdit::returnPressed, &dialog, &QDialog::accept);
   connect(list, &QListWidget::itemActivated, &dialog, &QDialog::accept);
   filter->installEventFilter(&dialog);
-  dialog.move(geometry().center() - QPoint(280, 240));
+  dialog.move(owner->mapToGlobal(owner->rect().center()) -
+              dialog.rect().center());
   if (dialog.exec() != QDialog::Accepted || !list->currentItem())
     return;
   const QString id = list->currentItem()->data(Qt::UserRole).toString();
@@ -3942,7 +3984,8 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   contextMenuFocus_ = origin ? origin : commandFocusWidget();
   // The click moved the cursor: the commands act where it is now.
   updateActions();
-  QMenu menu(this);
+  QMenu menu(commandWindow());
+  menu.setObjectName(QStringLiteral("analysisContextMenu"));
   if (auto *code = focusedCodeView())
     addNumberActions(menu, code);
   for (const auto id : {ActionId::JumpOperand, ActionId::JumpXrefOperand,
@@ -3963,6 +4006,7 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   }
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditRename));
+  menu.addAction(actions_.action(ActionId::EditExportData));
   // Hex-Rays offers a variable's type, and a parameter's pointer to a
   // record, after its rename.
   if (auto *type = actions_.action(ActionId::EditSetType); type->isEnabled())
@@ -4075,7 +4119,7 @@ void MainWindow::functionsMenu(const QPoint &position) {
   const auto entry = functions_->currentAddress();
   if (!entry)
     return;
-  QMenu menu(this);
+  QMenu menu(table->window());
   // The commands of the disassembly's, run on the row's function.
   auto *edit = actions_.action(ActionId::EditFunction);
   auto *rowEdit = menu.addAction(edit->icon(), edit->text());
@@ -4124,7 +4168,7 @@ void MainWindow::chooseStructOffset() {
     query.insert(QStringLiteral("operand"), *operand);
   // The edit goes to the session the dialog was opened for.
   const auto epoch = session_.epoch();
-  TypePickerDialog dialog(session_, query, {}, this);
+  TypePickerDialog dialog(session_, query, {}, commandWindow());
   if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
     return;
   session_.formatOperandStruct(*address, dialog.operand(), dialog.typeName(),
@@ -4174,7 +4218,8 @@ void MainWindow::setType() {
   if (name.isEmpty())
     name = displayAddress(*function);
   const auto epoch = session_.epoch();
-  SetTypeDialog dialog(session_, *function, parameter, name, this, variable);
+  SetTypeDialog dialog(session_, *function, parameter, name, commandWindow(),
+                       variable);
   const bool accepted = dialog.exec() == QDialog::Accepted;
   if (view) {
     view->window()->activateWindow();
@@ -4204,7 +4249,7 @@ void MainWindow::editDataPresentation(const QString &kind) {
   const auto epoch = session_.epoch();
   const auto revision = session_.revision();
   const auto operand = disassembly_->currentOperand();
-  QDialog dialog(this);
+  QDialog dialog(commandWindow());
   dialog.setObjectName("dataPresentationDialog");
   dialog.setWindowTitle(kind == "array"       ? tr("Make array")
                         : kind == "alignment" ? tr("Make alignment")
@@ -4292,18 +4337,19 @@ void MainWindow::editStackFrame(int mode) {
     return;
   const auto epoch = session_.epoch();
   const auto revision = session_.revision();
+  const QPointer<QWidget> owner = commandWindow();
   session_.read(
       "stack_frame", {{"address", hexAddress(*function)}}, this,
-      [this, function, address, epoch, revision,
+      [this, function, address, epoch, revision, owner,
        mode](const QJsonObject &reply) {
-        if (session_.epoch() != epoch || session_.revision() != revision ||
-            currentFunction() != function)
+        if (!owner || session_.epoch() != epoch ||
+            session_.revision() != revision || currentFunction() != function)
           return;
         auto policy = reply.value("policy").toObject();
         policy.remove("input_sha256");
         policy.insert("snapshot", reply.value("snapshot"));
         const auto stale = reply.value("stale").toString();
-        QDialog dialog(this);
+        QDialog dialog(owner);
         dialog.setObjectName("stackFrameDialog");
         dialog.setWindowTitle(mode == 1 ? tr("Change stack pointer")
                                         : tr("Stack variables"));
@@ -4525,7 +4571,7 @@ void MainWindow::editCallType(bool resetAll) {
         if (calls.size() > 1) {
           bool accepted = false;
           const auto selected = QInputDialog::getItem(
-              this, tr("Select call instruction"),
+              view->window(), tr("Select call instruction"),
               tr("This source row contains multiple calls:"), labels, 0, false,
               &accepted);
           if (!accepted)
@@ -4536,7 +4582,7 @@ void MainWindow::editCallType(bool resetAll) {
         const auto id = call.value("id").toString();
         const auto stated =
             reply.value("types").toObject().value(id).toObject();
-        QDialog dialog(this);
+        QDialog dialog(view->window());
         dialog.setObjectName("callTypeDialog");
         dialog.setWindowTitle(tr("Set call type"));
         dialog.resize(660, 440);
@@ -4665,7 +4711,7 @@ void MainWindow::editVariable(const QString &action) {
           }
           bool accepted = false;
           const auto selected = QInputDialog::getItem(
-              this, tr("Map variable"),
+              view->window(), tr("Map variable"),
               tr("Destination variable (the engine checks copy relationships "
                  "and live ranges):"),
               labels, 0, false, &accepted);
@@ -4717,7 +4763,7 @@ void MainWindow::convertToStruct() {
   const auto epoch = session_.epoch();
   TypePickerDialog dialog(
       session_, {{"function", hexAddress(*function)}, {"parameter", parameter}},
-      name, this);
+      name, view->window());
   const bool accepted = dialog.exec() == QDialog::Accepted;
   if (view) {
     view->window()->activateWindow();
@@ -4837,10 +4883,11 @@ void MainWindow::editFunction(Address entry) {
   // The dialog shows what the worker reports now, and its edits go to the
   // session they were made for.
   const auto epoch = session_.epoch();
+  const QPointer<QWidget> owner = commandWindow();
   session_.read(
       QStringLiteral("function_attributes"), {{"address", hexAddress(entry)}},
-      this, [this, entry, epoch](const QJsonObject &attributes) {
-        if (session_.epoch() != epoch)
+      this, [this, entry, epoch, owner](const QJsonObject &attributes) {
+        if (!owner || session_.epoch() != epoch)
           return;
         const int digits = session_.bitness() == 64 ? 16 : 8;
         const auto shown = [&](const QJsonValue &value) {
@@ -4852,7 +4899,7 @@ void MainWindow::editFunction(Address entry) {
                  displayAddress(*address, digits);
         };
         FunctionEditDialog dialog(attributes, shown(attributes.value("start")),
-                                  shown(attributes.value("end")), this);
+                                  shown(attributes.value("end")), owner);
         if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
           return;
         // A new name is a rename, and the attributes an edit of their own:
