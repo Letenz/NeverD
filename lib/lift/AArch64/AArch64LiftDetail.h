@@ -23,7 +23,7 @@
 #ifndef NEVERD_LIFT_AARCH64_AARCH64LIFTDETAIL_H
 #define NEVERD_LIFT_AARCH64_AARCH64LIFTDETAIL_H
 
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 
 #include <capstone/capstone.h>
 #include <optional>

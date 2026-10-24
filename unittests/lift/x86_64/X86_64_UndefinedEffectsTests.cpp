@@ -8,7 +8,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/LowUndefinedEffects.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <cstdint>
 #include <vector>

@@ -16,7 +16,7 @@
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHMetadataEncoder.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ExceptionFunction.h"
 
 #include "llvm/ADT/STLExtras.h"

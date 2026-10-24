@@ -9,9 +9,9 @@
 #include "SEHFrameProofDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/X87Context.h"
+#include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/low/SEHFrameProof.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Errc.h"

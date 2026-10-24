@@ -9,8 +9,8 @@
 
 #include "X86FPStateAccuracyFixture.h"
 
-#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
-#include "neverd/ir/high/X87ConstantShape.h"
+#include "neverd/backend/llvm/X86/LLVMX87ConstantAsm.h"
+#include "neverd/ir/high/X86/X87ConstantShape.h"
 
 namespace {
 LowOp constantOp(unsigned Selector, uint16_t Control) {

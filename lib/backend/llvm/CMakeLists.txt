@@ -101,7 +101,7 @@ add_neverd_component_library(NeverDBackendLLVM
   emit/MedLLVMFuncBody.cpp
   emit/MedLLVMIntrinsic.cpp
   emit/MedLLVMOpEmitter.cpp
-  emit/MedLLVMPortableX87.cpp
+  X86/MedLLVMPortableX87.cpp
   emit/MedLLVMReturn.cpp
   emit/MedLLVMSwitch.cpp
   emit/MedLLVMSwitchIndex.cpp

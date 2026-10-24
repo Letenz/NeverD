@@ -91,6 +91,26 @@ std::string machineName(uint16_t Machine) {
 // COFFLoader public interface
 // ---------------------------------------------------------------------------
 
+bool COFFLoader::hasExpectedPEMappingInventory(const BinaryImage &Image,
+                                               std::size_t SectionCount) {
+  if (!Image.isCOFF() || Image.IsRelocatable || Image.Raw.empty() ||
+      !Image.LoadOnlyFunctionEntries.empty() ||
+      Image.Segments.size() != Image.Sections.size() ||
+      SectionCount > Image.Segments.size())
+    return false;
+  auto Headers = coff_loader::getPEHeaderMapping(Image.Raw);
+  const bool HasHeaders = bool(Headers);
+  if (!Headers)
+    llvm::consumeError(Headers.takeError());
+  if (Image.Segments.size() - SectionCount != size_t(HasHeaders))
+    return false;
+  for (size_t Index = 0; Index < SectionCount; ++Index)
+    if (Image.Sections[Index].IsImageHeader)
+      return false;
+  return !HasHeaders || coff_loader::matchesPEHeaderMapping(
+                            Image, SectionCount, *Headers, Image.Raw);
+}
+
 llvm::Expected<BinaryImage>
 COFFLoader::load(const std::filesystem::path &Path) {
   auto BufOrErr = readFileBuffer(Path, BinaryFormat::COFF, Progress);

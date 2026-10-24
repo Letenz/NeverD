@@ -168,9 +168,9 @@ add_neverd_component_library(NeverDLoader
   Swift/SwiftVirtualCalls.cpp
   Rust/RustEH.cpp
   discovery/FunctionDiscovery.cpp
-  discovery/FunctionDiscoveryAArch64.cpp
-  discovery/FunctionDiscoveryARM.cpp
-  discovery/FunctionDiscoveryX86.cpp
+  discovery/AArch64/FunctionDiscoveryAArch64.cpp
+  discovery/ARM/FunctionDiscoveryARM.cpp
+  discovery/X86/FunctionDiscoveryX86.cpp
   language/LanguageEH.cpp
   language/LanguagePersonality.cpp
   language/LanguageRuntime.cpp

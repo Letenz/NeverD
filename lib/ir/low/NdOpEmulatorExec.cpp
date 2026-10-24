@@ -14,13 +14,13 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "X86ApproxReference.h"
-#include "X86FPConvertRounding.h"
+#include "X86/X86ApproxReference.h"
+#include "X86/X86FPConvertRounding.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"

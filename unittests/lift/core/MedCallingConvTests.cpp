@@ -20,8 +20,8 @@
 #include "neverd/ir/med/MedSwitchNorm.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/StackProbeIndex.h"
-#include "neverd/lift/ARMRegs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/ARM/ARMRegs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"

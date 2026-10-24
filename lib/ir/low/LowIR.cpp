@@ -4,12 +4,12 @@
 
 #include "LowInstructionSlice.h"
 
-#include "neverd/ir/X87Constant.h"
-#include "neverd/ir/X87GuardedValue.h"
-#include "neverd/ir/X87Value.h"
-#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
+#include "neverd/ir/X86/X87Constant.h"
+#include "neverd/ir/X86/X87GuardedValue.h"
+#include "neverd/ir/X86/X87Value.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X86DescriptorState.h"
+#include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 

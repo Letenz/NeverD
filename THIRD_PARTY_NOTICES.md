@@ -544,8 +544,8 @@ test object and is not shipped.
 The following files incorporate publicly released x86 approximation reference
 implementations:
 
-- `lib/ir/low/X86ApproxReference.c`
-- `lib/ir/low/X86ApproxReference28.c`
+- `lib/ir/low/X86/X86ApproxReference.c`
+- `lib/ir/low/X86/X86ApproxReference28.c`
 
 Copyright (c) 2015, Intel Corporation
 

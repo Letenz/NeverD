@@ -20,7 +20,7 @@ namespace neverd::limits::ir {
 
 #define NEVERD_A64_SVE_STATE_LIMIT(Name, Value)                                \
   inline constexpr size_t Name = Value;
-#include "neverd/ir/med/AArch64SVEState.def"
+#include "neverd/ir/med/AArch64/AArch64SVEState.def"
 
 /// Shared HighIR text printing, including structured statement children.
 inline constexpr unsigned kMaxHighIRPrintNesting = 200;
@@ -193,7 +193,7 @@ inline constexpr size_t kHighLoopRecoveryBudget = 1000000;
 /// blocks, and copying it once per clause stays well within this.
 inline constexpr unsigned kItaniumHandlersMaxPadStatements = 4096;
 
-// lib/ir/high/structure/X86RegistrationFilter.cpp
+// lib/ir/high/structure/X86/X86RegistrationFilter.cpp
 inline constexpr size_t kX86RegistrationFilterRegistrationFilterValueBudget =
     256;
 
@@ -204,7 +204,7 @@ inline constexpr size_t kX86RegistrationFilterRegistrationFilterValueBudget =
 inline constexpr size_t kCFGBuilderMaxScratchDecodeAttempts = 1024;
 inline constexpr unsigned kCFGBuilderMaxLookaheadInstructions = 32;
 
-// lib/ir/low/CFGBuilderX86Fpu.cpp
+// lib/ir/low/X86/CFGBuilderX86Fpu.cpp
 inline constexpr size_t kCFGBuilderX86FpuMaxPendingGraphs = 32;
 inline constexpr size_t kCFGBuilderX86FpuMaxPendingBytes = 1024 * 1024;
 inline constexpr size_t kCFGBuilderX86FpuMaxRefusals = size_t(1) << 18;
@@ -336,7 +336,7 @@ inline constexpr int kImportedMemoryCopyReadRecordOpsSizeLimit = 32;
 // include/neverd/ir/low/SourceFrameEffects.h
 inline constexpr int kSourceFrameEffectsMatchABIValueIdentitySizeLimit = 256;
 
-// include/neverd/ir/med/I386PicAddress.h
+// include/neverd/ir/med/X86/I386PicAddress.h
 inline constexpr int kI386PicAddressFoldI386PicAddressVisitDepthLimit = 16;
 
 // lib/ir/NdTypes.cpp
@@ -441,7 +441,7 @@ inline constexpr int
     kCallArgCollectionMedToHighConverterCollectCallArgsInlineUniqueLoadVarsDepthLimit =
         8;
 
-// lib/ir/high/lower/CallArgCollectionWin64.cpp
+// lib/ir/high/lower/X86/CallArgCollectionWin64.cpp
 inline constexpr int
     kCallArgCollectionWin64ResolvePassThroughParamsIsConstLikeDepthLimit = 8;
 inline constexpr int
@@ -546,7 +546,7 @@ inline constexpr int
     kCFGBuilderBuildOnceRelocationFreeProofStillMatchesOccurrenceArithmeticProofSizeLimit =
         32;
 
-// lib/ir/low/CFGBuilderX86Fpu.cpp
+// lib/ir/low/X86/CFGBuilderX86Fpu.cpp
 inline constexpr int
     kCFGBuilderX86FpuCFGBuilderWaitForX87CallGraphWaitersForTestingSeconds = 5;
 inline constexpr int kCFGBuilderX86FpuPrepareCallsBytesLimit = 4096;
@@ -747,14 +747,14 @@ inline constexpr int
 inline constexpr int kMedCallingConvFPDetectFPParamsShiftAmountsDepthLimit = 4;
 inline constexpr int kMedCallingConvFPDetectFPParamsConstantBitsDepthLimit = 16;
 
-// lib/ir/med/abi/MedCallingConvX86.cpp
+// lib/ir/med/abi/X86/MedCallingConvX86.cpp
 inline constexpr int
     kMedCallingConvX86DetectCdeclStackParamsTraceOffDepthLimit = 4096;
 
 // lib/ir/med/abi/MedVariadic.cpp
 inline constexpr int kMedVariadicEntrySpDeltaDepth0Default = 64;
 
-// lib/ir/med/abi/MedVariadicDarwin.cpp
+// lib/ir/med/abi/AArch64/MedVariadicDarwin.cpp
 inline constexpr int
     kMedVariadicDarwinHasDarwinVariadicPrologueThruCopyDepthLimit = 32;
 inline constexpr int

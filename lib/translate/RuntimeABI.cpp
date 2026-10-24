@@ -6,8 +6,8 @@
 
 #include "neverd/translate/RuntimeABI.h"
 
-#include "neverd/translate/RuntimeX87Helpers.h"
 #include "neverd/translate/TranslationResult.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"

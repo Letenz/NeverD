@@ -22,7 +22,7 @@
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
-#include "neverd/backend/c/render/ArmCoprocessorAcle.h"
+#include "neverd/backend/c/render/ARM/ArmCoprocessorAcle.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"

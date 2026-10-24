@@ -15,6 +15,8 @@
 #include "Limits.h"
 #include "SymMBADetail.h"
 
+#include "neverd/symbolic/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
@@ -71,6 +73,8 @@ class LowWordDecisions {
   bool *StorageLimited;
   size_t Work = 0;
   bool Failed = false;
+  unsigned RootWidth = 0;
+  bool PlainDecisionInputs = true;
   std::optional<std::pair<uint64_t, bool>> Assumption;
   std::optional<uint32_t> PriorityInput;
   // The low edge bit denotes complement. Negation never duplicates a graph;
@@ -89,7 +93,8 @@ class LowWordDecisions {
       return unsigned(llvm::hash_combine(K.A, K.B, K.C));
     }
   };
-  llvm::DenseMap<CarryKey, uint32_t, CarryInfo> Carries;
+  llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;
+  llvm::DenseMap<CarryKey, uint32_t, CarryInfo> Parities;
   std::unordered_map<uint64_t, Bits> Words;
   std::unordered_map<uint32_t, unsigned> Zeros;
   struct WordOperation {
@@ -322,21 +327,26 @@ class LowWordDecisions {
     return Result;
   }
 
-  // A full adder's carry is the majority of its three input bits. Compute
-  // that one function directly instead of retaining three temporary graphs.
-  uint32_t majority(uint32_t A, uint32_t B, uint32_t C, unsigned Depth = 0) {
+  // Recurse over the common decision frontier once for both output bits.
+  // The sum and majority are both self-dual: complementing all three inputs
+  // complements both results. One normalized cache entry therefore shares
+  // their traversal without retaining an intermediate two-input XOR graph.
+  std::pair<uint32_t, uint32_t> fullAdder(uint32_t A, uint32_t B, uint32_t C,
+                                          unsigned Depth = 0) {
     if (!charge())
-      return 0;
-    if (A == B || A == C)
-      return A;
+      return {};
+    if (A == B)
+      return {C, A};
+    if (A == C)
+      return {B, A};
     if (B == C)
-      return B;
+      return {A, B};
     if ((A ^ B) == 1)
-      return C;
+      return {C ^ 1, C};
     if ((A ^ C) == 1)
-      return B;
+      return {B ^ 1, B};
     if ((B ^ C) == 1)
-      return A;
+      return {A ^ 1, A};
     if (A > B)
       std::swap(A, B);
     if (B > C)
@@ -344,13 +354,60 @@ class LowWordDecisions {
     if (A > B)
       std::swap(A, B);
     if (A <= 1)
-      return apply(A ? Or : And, B, C);
+      return {apply(Xor, B, C) ^ A, apply(A ? Or : And, B, C)};
     const uint32_t Complement = A & 1;
     A ^= Complement;
     B ^= Complement;
     C ^= Complement;
     const CarryKey Key{A, B, C};
-    if (auto It = Carries.find(Key); It != Carries.end())
+    if (auto It = Adders.find(Key); It != Adders.end())
+      return {It->second.first ^ Complement, It->second.second ^ Complement};
+    if (Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return {};
+    }
+    const auto DA = decision(A), DB = decision(B), DC = decision(C);
+    const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
+    const auto L =
+        fullAdder(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+                  DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H = fullAdder(DA.Variable == V ? DA.High : A,
+                             DB.Variable == V ? DB.High : B,
+                             DC.Variable == V ? DC.High : C, Depth + 1);
+    const std::pair<uint32_t, uint32_t> R{node(V, L.first, H.first),
+                                          node(V, L.second, H.second)};
+    if (!charge(1, sizeof(CarryKey) + sizeof(R) + 4 * sizeof(void *)) ||
+        !reserveEntry(Adders))
+      return {};
+    Adders.try_emplace(Key, R);
+    return {R.first ^ Complement, R.second ^ Complement};
+  }
+
+  // A final column needs only parity. Normalize each input complement into
+  // one output flag and construct the three-way XOR directly.
+  uint32_t parity(uint32_t A, uint32_t B, uint32_t C, unsigned Depth = 0) {
+    if (!charge())
+      return 0;
+    const uint32_t Complement = (A ^ B ^ C) & 1;
+    A &= ~uint32_t(1);
+    B &= ~uint32_t(1);
+    C &= ~uint32_t(1);
+    if (A == B)
+      return C ^ Complement;
+    if (A == C)
+      return B ^ Complement;
+    if (B == C)
+      return A ^ Complement;
+    if (A > B)
+      std::swap(A, B);
+    if (B > C)
+      std::swap(B, C);
+    if (A > B)
+      std::swap(A, B);
+    if (!A)
+      return apply(Xor, B, C) ^ Complement;
+    const CarryKey Key{A, B, C};
+    if (auto It = Parities.find(Key); It != Parities.end())
       return It->second ^ Complement;
     if (Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
@@ -358,17 +415,17 @@ class LowWordDecisions {
     }
     const auto DA = decision(A), DB = decision(B), DC = decision(C);
     const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
-    auto L =
-        majority(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
-                 DC.Variable == V ? DC.Low : C, Depth + 1);
-    auto H =
-        majority(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
-                 DC.Variable == V ? DC.High : C, Depth + 1);
-    auto R = node(V, L, H);
+    const auto L =
+        parity(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+               DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H =
+        parity(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
+               DC.Variable == V ? DC.High : C, Depth + 1);
+    const auto R = node(V, L, H);
     if (!charge(1, sizeof(CarryKey) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
-        !reserveEntry(Carries))
+        !reserveEntry(Parities))
       return 0;
-    Carries.try_emplace(Key, R);
+    Parities.try_emplace(Key, R);
     return R ^ Complement;
   }
 
@@ -376,14 +433,31 @@ class LowWordDecisions {
     Bits Result;
     uint32_t Carry = 0;
     for (size_t I = 0; I < A.size(); ++I) {
-      Result.push_back(apply(Xor, apply(Xor, A[I], B[I]), Carry));
-      if (I + 1 != A.size())
-        Carry = majority(A[I], B[I], Carry);
+      if (I + 1 == A.size())
+        Result.push_back(parity(A[I], B[I], Carry));
+      else {
+        const auto [Sum, Next] = fullAdder(A[I], B[I], Carry);
+        Result.push_back(Sum);
+        Carry = Next;
+      }
     }
     return Result;
   }
 
   Bits square(const Bits &A) {
+    // For an odd word A=1+2U, A*A=1+4*(U*U+U). Only N-2 bits
+    // of U survive, so avoid constructing the unobserved upper carries.
+    if (A.size() > 2 && A.front() == 1) {
+      if (!charge(A.size(), 2 * sizeof(Bits)))
+        return Bits(A.size(), 0);
+      Bits U(A.begin() + 1, A.end() - 1);
+      const auto Correction =
+          calculate(SymOp::Add, U, calculate(SymOp::Mul, U, U));
+      Bits Result(A.size(), 0);
+      Result.front() = 1;
+      std::copy(Correction.begin(), Correction.end(), Result.begin() + 2);
+      return Result;
+    }
     Bits Result(A.size(), 0);
     for (size_t I = 0; I < A.size() && !Failed; ++I) {
       Bits Row(A.size(), 0);
@@ -506,6 +580,30 @@ class LowWordDecisions {
     const auto &Empty = EmptyWords[Count];
     if (!charge())
       return Empty;
+    // This cache describes only Count low bits. Canonicalize native constant
+    // operands in that quotient before interning its key, so different source
+    // offsets/masks reuse the same low-word view. The original expression and
+    // every wider cache entry retain their complete constant. Native constants
+    // are inline; wide constants keep the existing APInt accounting below.
+    const auto InitialOp = Ctx.op(R);
+    if ((InitialOp == SymOp::Add || InitialOp == SymOp::And ||
+         InitialOp == SymOp::Or || InitialOp == SymOp::Xor) &&
+        Ctx.numOperands(R) == 2 &&
+        Ctx.width(R) <= std::numeric_limits<uint64_t>::digits &&
+        Ctx.isConst(Ctx.operand(R, 0))) {
+      const auto Constant = Ctx.operand(R, 0), Other = Ctx.operand(R, 1);
+      const uint64_t Value = Ctx.node(Constant).Aux;
+      const uint64_t Low = Value & ((uint64_t(1) << Count) - 1);
+      if (Low != Value) {
+        if (!charge(2, 2 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+          return Empty;
+        const auto K = Ctx.mkConst(Ctx.width(R), Low);
+        R = InitialOp == SymOp::Add   ? Ctx.mkAdd(K, Other)
+            : InitialOp == SymOp::And ? Ctx.mkAnd(K, Other)
+            : InitialOp == SymOp::Or  ? Ctx.mkOr(K, Other)
+                                      : Ctx.mkXor(K, Other);
+      }
+    }
     const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
     if (auto It = Words.find(Key); It != Words.end())
       return It->second;
@@ -677,6 +775,11 @@ class LowWordDecisions {
     } else {
       // Treat an unsupported word as an exact opaque input, without assuming
       // a relation between it and any other input word or path condition.
+      // Record the inputs actually used by the decisions. Transparency can
+      // depend on the requested bit count, so the earlier admission walk is
+      // insufficient to establish this property for nested shifts/extracts.
+      PlainDecisionInputs &=
+          Ctx.isVar(R) && Ctx.width(R) == RootWidth && Count <= Ctx.width(R);
       for (unsigned I = 0; I < Count; ++I)
         Result[I] =
             node(((PriorityInput && (R.index() != *PriorityInput ||
@@ -764,10 +867,12 @@ class LowWordDecisions {
         const auto A = Remaining.pop_back_val();
         const auto B = Remaining.pop_back_val();
         const auto C = Remaining.pop_back_val();
-        const auto Sum = apply(Xor, apply(Xor, A, B), C);
+        const auto [Sum, Carry] =
+            I + 1 < Count ? fullAdder(A, B, C)
+                          : std::make_pair(parity(A, B, C), uint32_t(0));
         if (Sum)
           Remaining.push_back(Sum);
-        if (I + 1 < Count && !Insert(I + 1, majority(A, B, C)))
+        if (I + 1 < Count && !Insert(I + 1, Carry))
           break;
       }
       if (!Remaining.empty())
@@ -971,6 +1076,8 @@ class LowWordDecisions {
     return Identity;
   }
 
+  // Recursive low-word construction can grow the context operand pool.
+  // Reacquire operands by stable node/index instead of retaining its spans.
   ResidueSignature residueSignature(PairingState &State, SymRef R,
                                     unsigned Count, unsigned Depth = 0) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
@@ -991,15 +1098,16 @@ class LowWordDecisions {
       Result = {internSignature(State, {0, Count, Low & (Top - 1)}),
                 uint32_t(bool(Low & Top))};
     } else if (Op == SymOp::Add || Op == SymOp::Xor) {
-      const auto Operands = Ctx.operands(R);
-      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      if (!charge(OperandCount * (1 + std::bit_width(OperandCount)),
+                  2 * (OperandCount + 3) * sizeof(uint64_t)))
         return {};
       uint64_t Literal = 0;
       uint32_t Flip = 0;
       SignatureKey Children;
-      Children.reserve(Operands.size() + 3);
-      for (auto Child : Operands) {
+      Children.reserve(OperandCount + 3);
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         if (Ctx.isConst(Child)) {
           auto Value = literal(Child);
           if (!Value)
@@ -1057,14 +1165,15 @@ class LowWordDecisions {
                            Mask & Top ? Child.Flip : 0};
       }
     } else if (Op == SymOp::Mul) {
-      const auto Operands = Ctx.operands(R);
-      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
-                      2 * (4 * Operands.size() + 1) * sizeof(uint32_t)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      if (!charge(OperandCount * (1 + std::bit_width(OperandCount)),
+                  2 * (OperandCount + 3) * sizeof(uint64_t) +
+                      2 * (4 * OperandCount + 1) * sizeof(uint32_t)))
         return {};
       unsigned TotalZeros = 0;
       llvm::SmallVector<unsigned, 16> Zeros;
-      for (auto Child : Operands) {
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         const auto Zero = std::min(Count, knownZeros(Child));
         Zeros.push_back(Zero);
         TotalZeros = std::min(Count, TotalZeros + Zero);
@@ -1073,11 +1182,12 @@ class LowWordDecisions {
         Result = {internSignature(State, {0, Count, 0}), 0};
       else if (Count - TotalZeros >= 2) {
         SignatureKey Children;
-        Children.reserve(Operands.size() + 2);
+        Children.reserve(OperandCount + 2);
         Bits Flips;
-        for (size_t I = 0; I < Operands.size(); ++I) {
-          const auto Value = residueSignature(
-              State, Operands[I], Count - TotalZeros + Zeros[I], Depth + 1);
+        for (size_t I = 0; I < OperandCount; ++I) {
+          const auto Value =
+              residueSignature(State, Ctx.operand(R, I),
+                               Count - TotalZeros + Zeros[I], Depth + 1);
           Children.push_back(Value.Identity);
           Flips.push_back(Value.Flip);
         }
@@ -1088,13 +1198,13 @@ class LowWordDecisions {
           // two bits, so products of two highest-bit disturbances vanish.
           // Prefix and suffix parities retain every linear contribution,
           // including even normalized operands, without division.
-          Bits Parities, Prefix(Operands.size() + 1, 1);
-          for (size_t I = 0; I < Operands.size(); ++I) {
-            Parities.push_back(word(Operands[I], Zeros[I] + 1)[Zeros[I]]);
+          Bits Parities, Prefix(OperandCount + 1, 1);
+          for (size_t I = 0; I < OperandCount; ++I) {
+            Parities.push_back(word(Ctx.operand(R, I), Zeros[I] + 1)[Zeros[I]]);
             Prefix[I + 1] = apply(And, Prefix[I], Parities.back());
           }
           uint32_t Suffix = 1;
-          for (size_t I = Operands.size(); I-- != 0;) {
+          for (size_t I = OperandCount; I-- != 0;) {
             if (Flips[I])
               Flip = apply(Xor, Flip,
                            apply(And, Flips[I], apply(And, Prefix[I], Suffix)));
@@ -1218,16 +1328,17 @@ class LowWordDecisions {
       Result = {internSignature(State, {0, Count, Low & (Unit - 1)}),
                 {uint32_t(bool(Low & Unit)), uint32_t(bool(Low & (2 * Unit)))}};
     } else if (Op == SymOp::Add || Op == SymOp::Xor) {
-      const auto Operands = Ctx.operands(R);
-      const auto Nonconstant = Operands.size() - Ctx.isConst(Operands.front());
-      if (!charge(Operands.size() + Nonconstant * std::bit_width(Nonconstant),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
-                      2 * Operands.size() * sizeof(WideSignature)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      const auto Nonconstant = OperandCount - Ctx.isConst(Ctx.operand(R, 0));
+      if (!charge(OperandCount + Nonconstant * std::bit_width(Nonconstant),
+                  2 * (OperandCount + 3) * sizeof(uint64_t) +
+                      2 * OperandCount * sizeof(WideSignature)))
         return {};
       SignatureKey Children;
       llvm::SmallVector<WideSignature, 8> Values;
       uint64_t Literal = 0;
-      for (auto Child : Operands) {
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         if (Ctx.isConst(Child)) {
           auto Value = literal(Child);
           if (!Value)
@@ -1259,15 +1370,15 @@ class LowWordDecisions {
           if (Value.Delta[1])
             D[1] = apply(Xor, D[1], Value.Delta[1]);
         }
-        for (size_t I = 0; I < Operands.size(); ++I) {
-          if (Ctx.isConst(Operands[I]))
+        for (size_t I = 0; I < OperandCount; ++I) {
+          if (Ctx.isConst(Ctx.operand(R, I)))
             continue;
           const auto Coefficient =
               Values[I].Delta[0] ? apply(Xor, D[0], Values[I].Delta[0]) : D[0];
           if (Coefficient)
-            D[1] = apply(
-                Xor, D[1],
-                apply(And, Coefficient, highestBit(Operands[I], Count - 1)));
+            D[1] = apply(Xor, D[1],
+                         apply(And, Coefficient,
+                               highestBit(Ctx.operand(R, I), Count - 1)));
         }
         if (Literal & Unit)
           D[1] = apply(Xor, D[1], D[0] ^ 1);
@@ -1320,14 +1431,15 @@ class LowWordDecisions {
         }
       }
     } else if (Op == SymOp::Mul) {
-      const auto Operands = Ctx.operands(R);
-      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
-                      2 * (4 * Operands.size() + 1) * sizeof(Bits)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      if (!charge(OperandCount * (1 + std::bit_width(OperandCount)),
+                  2 * (OperandCount + 3) * sizeof(uint64_t) +
+                      2 * (4 * OperandCount + 1) * sizeof(Bits)))
         return {};
       unsigned TotalZeros = 0;
       llvm::SmallVector<unsigned, 16> Zeros;
-      for (auto Child : Operands) {
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         const auto Z = std::min(Count, knownZeros(Child));
         Zeros.push_back(Z);
         TotalZeros = std::min(Count, TotalZeros + Z);
@@ -1338,8 +1450,8 @@ class LowWordDecisions {
         SignatureKey Children;
         llvm::SmallVector<Bits, 16> Deltas, Low, Prefix;
         bool Changed = false;
-        for (size_t I = 0; I < Operands.size(); ++I) {
-          auto S = wideSignature(State, Operands[I],
+        for (size_t I = 0; I < OperandCount; ++I) {
+          auto S = wideSignature(State, Ctx.operand(R, I),
                                  Count - TotalZeros + Zeros[I], Depth + 1);
           Children.push_back(S.Identity);
           Deltas.push_back(Delta(S));
@@ -1348,13 +1460,13 @@ class LowWordDecisions {
         Bits D(2, 0);
         if (Changed) {
           Prefix.push_back({1, 0});
-          for (size_t I = 0; I < Operands.size(); ++I) {
-            const auto &V = word(Operands[I], Zeros[I] + 2);
+          for (size_t I = 0; I < OperandCount; ++I) {
+            const auto &V = word(Ctx.operand(R, I), Zeros[I] + 2);
             Low.push_back({V[Zeros[I]], V[Zeros[I] + 1]});
             Prefix.push_back(multiplyCorrection(Prefix.back(), Low.back()));
           }
           Bits Suffix{1, 0};
-          for (size_t I = Operands.size(); I-- != 0;) {
+          for (size_t I = OperandCount; I-- != 0;) {
             D = sumCorrection(
                 D, multiplyCorrection(Deltas[I],
                                       multiplyCorrection(Prefix[I], Suffix)));
@@ -1494,6 +1606,7 @@ public:
   SymRef simplify(SymRef Root, const llvm::APInt &Scale, unsigned Observed,
                   bool OddProductOnly, bool *Complete) {
     const auto Width = Ctx.width(Root);
+    RootWidth = Width;
     // Refuse broad domains before constructing decisions. This is only a
     // search admission rule; opaque words still retain all their possible bits.
     std::unordered_set<uint32_t> Seen, Inputs;
@@ -1560,7 +1673,8 @@ public:
           Words.clear();
           Arithmetic.clear();
           Applied.clear();
-          Carries.clear();
+          Adders.clear();
+          Parities.clear();
         }
       }
     }
@@ -1573,11 +1687,15 @@ public:
     // factor must independently be odd under the current assumption.
     const size_t PairingBlock = size_t(1) << (Observed - 1);
     const size_t WideBlock = size_t(1) << (Observed - std::min(Observed, 2u));
+    // Partial blocks can already contain pairs one smaller period apart.
+    // The probe only admits a search; signatures still prove every pair.
+    const size_t WideProbeBlock =
+        WideBlock / limits::kResidueDecisionPartialPairingDivisor;
     const bool FullBlock =
         Nonconstant >= PairingBlock && !(Nonconstant % PairingBlock);
     bool AllOdd = Assumption &&
                   Observed >= limits::kMinResidueDecisionPairingBits &&
-                  (FullBlock || Nonconstant > WideBlock);
+                  (FullBlock || Nonconstant > WideProbeBlock);
     llvm::SmallVector<SymRef, 16> Nonconstants;
     if (AllOdd) {
       if (!charge(Factors.size(), Factors.size() * sizeof(SymRef)))
@@ -1604,13 +1722,15 @@ public:
       bool Wide = false;
       if (!PreferSingle &&
           Observed >= limits::kMinResidueDecisionWidePairingBits &&
-          Nonconstants.size() > WideBlock &&
+          Nonconstants.size() > WideProbeBlock &&
           charge(1, sizeof(WidePairingState))) {
         State.Wide = std::make_unique<WidePairingState>();
         const auto A =
             wideSignature(*State.Wide, Nonconstants.front(), Observed);
+        const auto Probe =
+            Nonconstants.size() > WideBlock ? WideBlock : WideProbeBlock;
         const auto B =
-            wideSignature(*State.Wide, Nonconstants[WideBlock], Observed);
+            wideSignature(*State.Wide, Nonconstants[Probe], Observed);
         Wide = A.Identity == B.Identity;
       }
       Product = Wide        ? widePairedProduct(State, Nonconstants, Observed)
@@ -1622,9 +1742,9 @@ public:
     if (Failed || Product.empty())
       return Root;
     Assumption.reset();
-    if (Parity != 1)
-      for (auto &Bit : Product)
-        Bit = apply(And, Parity, Bit);
+    // Every product bit was proved under the same parity condition. Keep it
+    // outside the complete emitted word instead of repeating it in every bit.
+    // The other branch is zero by the selector or factor-count proof above.
 
     // Equal output decisions share their complete modular coefficient.
     std::map<uint32_t, llvm::APInt> Coefficients;
@@ -1705,7 +1825,10 @@ public:
         Reachable.insert(Id);
         const auto D = decision(Id);
         Variables.try_emplace(D.Variable, 0);
-        if (Variables.size() > limits::kMaxResidueDecisionSynthesisInputs)
+        // Admission counts the whole guarded function, including the bit
+        // fixed by the assumption while constructing this cofactor.
+        if (Variables.size() + unsigned(Parity != 1) >
+            limits::kMaxResidueDecisionSynthesisInputs)
           return Fallback;
         Pending.push_back(D.Low);
         Pending.push_back(D.High);
@@ -1796,43 +1919,61 @@ public:
       auto Low = Self(Self, D.Low), High = Self(Self, D.High & ~uint32_t(1));
       if (!Low || !High)
         return nullptr;
-      auto Xor = [&](const Polynomial &A,
-                     const Polynomial &B) -> std::optional<Polynomial> {
-        if (&A == &B)
-          return Polynomial{};
-        const auto Size = A.size() + B.size();
-        if (!charge(Size, Size * sizeof(uint64_t)))
-          return std::nullopt;
-        Polynomial Result;
-        std::set_symmetric_difference(A.begin(), A.end(), B.begin(), B.end(),
-                                      std::back_inserter(Result));
-        if (Result.size() > limits::kMaxResidueDecisionPolynomialTerms)
-          return std::nullopt;
-        return Result;
-      };
-      auto Difference = Xor(*Low, *High);
-      if (!Difference)
+      // P = Low XOR x * (Low XOR High XOR complement). Neither child
+      // contains x, so the two outer sets are disjoint. Merge their sorted
+      // streams directly instead of allocating, shifting and re-merging an
+      // intermediate difference polynomial.
+      const bool Equal = Low == High;
+      const size_t Size = Low->size() +
+                          (Equal ? 0 : Low->size() + High->size()) +
+                          unsigned(D.High & 1);
+      if (!charge(Size, sizeof(Polynomial) + 2 * Size * sizeof(uint64_t)))
         return nullptr;
-      // Canonical decisions have an even low edge, so their polynomial has
-      // no constant term. A complemented high edge contributes only x here;
-      // do not copy and cache an entire second polynomial just to toggle 1.
-      if (D.High & 1) {
-        if (!charge(Difference->size() + 1))
-          return nullptr;
-        Difference->insert(Difference->begin(), 0);
-      }
-      if (!charge(Difference->size()))
-        return nullptr;
-      for (auto &Term : *Difference) {
-        // Ordered decisions place this variable before both children.
-        // Their polynomials cannot contain it; adding its bit preserves order.
+      Polynomial Result;
+      Result.reserve(
+          std::min(Size, limits::kMaxResidueDecisionPolynomialTerms + 1));
+      size_t L = 0, H = 0, Copy = 0;
+      auto Append = [&](uint64_t Term) {
         if (Term & Variable)
-          return nullptr;
+          return false;
         Term |= Variable;
+        while (Copy < Low->size() && (*Low)[Copy] < Term) {
+          Result.push_back((*Low)[Copy++]);
+          if (Result.size() > limits::kMaxResidueDecisionPolynomialTerms)
+            return false;
+        }
+        Result.push_back(Term);
+        return Result.size() <= limits::kMaxResidueDecisionPolynomialTerms;
+      };
+      if ((D.High & 1) && !Append(0))
+        return nullptr;
+      while (!Equal && (L < Low->size() || H < High->size())) {
+        uint64_t Term;
+        if (L == Low->size())
+          Term = (*High)[H++];
+        else if (H == High->size())
+          Term = (*Low)[L++];
+        else if ((*Low)[L] == (*High)[H]) {
+          ++L;
+          ++H;
+          continue;
+        } else if ((*Low)[L] < (*High)[H])
+          Term = (*Low)[L++];
+        else
+          Term = (*High)[H++];
+        if (!Append(Term))
+          return nullptr;
       }
-      auto Result = Xor(*Low, *Difference);
-      return Result ? Store(std::move(*Result)) : nullptr;
+      if (Result.size() + Low->size() - Copy >
+          limits::kMaxResidueDecisionPolynomialTerms)
+        return nullptr;
+      Result.append(Low->begin() + Copy, Low->end());
+      return Store(std::move(Result));
     };
+    // Variable indices only grow during this reading, and Width is fixed.
+    // A completed factored polynomial therefore keeps the same shifted inputs
+    // across output bits, even when a later bit adds previously unseen inputs.
+    std::map<Polynomial, SymRef> Factored;
     auto SynthesizePolynomial = [&](uint32_t Id, SymRef Fallback) -> SymRef {
       auto Form = ReadPolynomial(ReadPolynomial, Id & ~uint32_t(1));
       if (!Form)
@@ -1856,10 +1997,23 @@ public:
             Words,
             (size_t(Ctx.width(SymRef(uint32_t(Variable)))) - 1) / 64 + 1);
       }
-      if (!charge(Edges * (1 + Words),
-                  (Edges + 1) *
-                      (4 * sizeof(SymNode) + 8 * sizeof(SymRef) +
-                       4 * sizeof(llvm::APInt) + 4 * Words * sizeof(uint64_t))))
+      const bool HasConstant = !Form->empty() && !Form->front();
+      const bool LazyFlat =
+          PlainDecisionInputs && Width > 1 &&
+          PolynomialVariables.size() <= Edges &&
+          Form->size() - unsigned(HasConstant) >
+              ::neverd::limits::symbolic::kSymExprCompareMaxTerms;
+      // Distinct monomials over plain equally-wide shifted free inputs have
+      // no absorbing/complement pairs or extension contractions. Above the
+      // comparison recognizer's arity, XOR also preserves their exact spelling.
+      // Thus the flat form's reading score can be bounded without interning
+      // its monomials. Keep every other input shape on the established route.
+      const size_t ConstructionBytes =
+          4 * sizeof(SymNode) + 8 * sizeof(SymRef) + 4 * sizeof(llvm::APInt) +
+          4 * Words * sizeof(uint64_t);
+      const size_t InitialEdges = LazyFlat ? PolynomialVariables.size() : Edges;
+      if (!charge(InitialEdges * (1 + Words),
+                  (InitialEdges + 1) * ConstructionBytes))
         return Fallback;
       llvm::SmallVector<SymRef, 16> Inputs(PolynomialVariables.size());
       for (const auto &[Variable, Index] : PolynomialVariables) {
@@ -1869,89 +2023,292 @@ public:
                        Ctx.mkConst(Ctx.width(Input), variableBit(Variable))),
             Width);
       }
-      llvm::SmallVector<SymRef, 16> Terms;
-      for (auto Term : *Form) {
-        llvm::SmallVector<SymRef, 8> Factors;
-        while (Term) {
-          Factors.push_back(Inputs[std::countr_zero(Term)]);
-          Term &= Term - 1;
+      // Every plain input contributes at least one leaf and every distinct
+      // monomial occurrence needs its Boolean operator in the flat reading.
+      // Shifted inputs can only increase this bound. A factored result below
+      // it wins without a second frequency scan or flat construction; other
+      // results still use the established exact reading comparison.
+      const size_t Incidences = Edges - Form->size();
+      const SymReadability FlatLowerBound{1 + size_t(HasConstant) +
+                                              2 * Incidences,
+                                          size_t(HasConstant) + Incidences};
+      auto BuildFlat = [&]() -> SymRef {
+        // Fund only the construction that actually takes place. If the flat
+        // expression is needed after factoring, cumulative construction
+        // reservations still equal the original complete flat reservation.
+        if (LazyFlat && !charge((Edges - InitialEdges) * (1 + Words),
+                                (Edges - InitialEdges) * ConstructionBytes))
+          return {};
+        llvm::SmallVector<SymRef, 16> Terms;
+        for (auto Term : *Form) {
+          llvm::SmallVector<SymRef, 8> Factors;
+          while (Term) {
+            Factors.push_back(Inputs[std::countr_zero(Term)]);
+            Term &= Term - 1;
+          }
+          Terms.push_back(Factors.empty()
+                              ? Ctx.mkConst(llvm::APInt::getAllOnes(Width))
+                              : Ctx.mkAnd(Factors));
         }
-        Terms.push_back(Factors.empty()
-                            ? Ctx.mkConst(llvm::APInt::getAllOnes(Width))
-                            : Ctx.mkAnd(Factors));
-      }
-      auto Result =
-          Ctx.mkAnd(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms),
-                    Ctx.mkConst(Width, 1));
-      std::map<Polynomial, SymRef> Factored;
-      auto Factor = [&](auto &&Self, const Polynomial &P) -> SymRef {
-        if (!charge(1 + P.size(), sizeof(decltype(Factored)::value_type) +
-                                      4 * sizeof(void *) +
-                                      P.size() * sizeof(uint64_t)))
+        return Ctx.mkAnd(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkXor(Terms),
+                         Ctx.mkConst(Width, 1));
+      };
+      SymRef Result = LazyFlat ? SymRef{} : BuildFlat();
+      auto Factor =
+          [&](auto &&Self, const Polynomial &P, llvm::ArrayRef<SymRef> Basis,
+              std::map<Polynomial, SymRef> &Cache, bool TryCoordinate,
+              llvm::ArrayRef<unsigned> KnownFrequencies = {}) -> SymRef {
+        if (!charge(1 + P.size()))
           return {};
         if (P.empty())
           return Ctx.mkZero(Width);
         if (P.size() == 1 && !P.front())
           return Ctx.mkConst(llvm::APInt::getAllOnes(Width));
-        if (auto It = Factored.find(P); It != Factored.end())
+        if (auto It = Cache.find(P); It != Cache.end())
           return It->second;
-        if (!charge(Inputs.size(), Inputs.size() * sizeof(unsigned)))
+        // Cache hits allocate no map entry or copied polynomial. Reserve a
+        // complete entry before constructing a new result; failed attempts
+        // retain this conservative reservation and are never cached.
+        if (!charge(0, sizeof(decltype(Factored)::value_type) +
+                           4 * sizeof(void *) + P.size() * sizeof(uint64_t)))
           return {};
-        llvm::SmallVector<unsigned, 16> Frequencies(Inputs.size(), 0);
-        for (auto Term : P)
-          while (Term) {
-            if (!charge())
-              return {};
-            ++Frequencies[std::countr_zero(Term)];
-            Term &= Term - 1;
-          }
+        llvm::SmallVector<unsigned, 16> CountedFrequencies;
+        llvm::ArrayRef<unsigned> Frequencies = KnownFrequencies;
+        if (Frequencies.empty()) {
+          if (!charge(Basis.size(), Basis.size() * sizeof(unsigned)))
+            return {};
+          CountedFrequencies.resize(Basis.size(), 0);
+          for (auto Term : P)
+            while (Term) {
+              if (!charge())
+                return {};
+              ++CountedFrequencies[std::countr_zero(Term)];
+              Term &= Term - 1;
+            }
+          Frequencies = CountedFrequencies;
+        }
         const auto Best =
             std::max_element(Frequencies.begin(), Frequencies.end());
+        if (TryCoordinate && *Best != P.size()) {
+          if (!charge(Basis.size()))
+            return {};
+          // A variable present in every term is already a common factor.
+          // Test only the two most frequent remaining variables, using the
+          // frequencies that the ordinary factorization already computed.
+          unsigned First = Basis.size(), Second = Basis.size();
+          for (unsigned I = 0; I < Frequencies.size(); ++I) {
+            if (!Frequencies[I] || Frequencies[I] == P.size())
+              continue;
+            if (First == Basis.size() || Frequencies[I] > Frequencies[First]) {
+              Second = First;
+              First = I;
+            } else if (Second == Basis.size() ||
+                       Frequencies[I] > Frequencies[Second]) {
+              Second = I;
+            }
+          }
+          if (Second != Basis.size()) {
+            const uint64_t IBit = uint64_t(1) << Second;
+            const uint64_t JBit = uint64_t(1) << First;
+            const uint64_t PairMask = IBit | JBit;
+            // Each inline vector object owns its inline storage. A grown
+            // SmallVector has capacity below twice its requested size; fund
+            // that possible heap capacity before constructing each vector.
+            if (!charge(P.size(), 4 * sizeof(Polynomial) +
+                                      2 * P.size() * sizeof(uint64_t)))
+              return {};
+            Polynomial Groups[4];
+            for (auto Term : P) {
+              const unsigned Group =
+                  unsigned(bool(Term & IBit)) + 2 * unsigned(bool(Term & JBit));
+              Groups[Group].push_back(Term & ~PairMask);
+            }
+            // P=A XOR i*B XOR j*C XOR i*j*D. With t=i XOR j this is
+            // A XOR t*B XOR j*(B XOR C XOR D) XOR t*j*D. Fixed-variable
+            // projections preserve order, so both differences are linear.
+            const auto DifferenceSize = Groups[1].size() + Groups[3].size();
+            if (!charge(DifferenceSize,
+                        sizeof(Polynomial) +
+                            2 * DifferenceSize * sizeof(uint64_t)))
+              return {};
+            Polynomial Difference;
+            Difference.reserve(DifferenceSize);
+            std::set_symmetric_difference(Groups[1].begin(), Groups[1].end(),
+                                          Groups[3].begin(), Groups[3].end(),
+                                          std::back_inserter(Difference));
+            const auto CombinedSize = Difference.size() + Groups[2].size();
+            if (!charge(CombinedSize, sizeof(Polynomial) +
+                                          2 * CombinedSize * sizeof(uint64_t)))
+              return {};
+            Polynomial Combined;
+            Combined.reserve(CombinedSize);
+            std::set_symmetric_difference(Difference.begin(), Difference.end(),
+                                          Groups[2].begin(), Groups[2].end(),
+                                          std::back_inserter(Combined));
+            // Demand a reduction in both one-variable cofactors, rather
+            // than accepting a small advantage from their frequency order.
+            if (Combined.size() < Groups[1].size() &&
+                Combined.size() < Groups[2].size()) {
+              const auto NewSize =
+                  P.size() - Groups[2].size() + Combined.size();
+              if (!charge(P.size() + Combined.size() + Basis.size() + 1,
+                          sizeof(Polynomial) + 2 * NewSize * sizeof(uint64_t) +
+                              sizeof(llvm::SmallVector<SymRef, 16>) +
+                              2 * Basis.size() * sizeof(SymRef) +
+                              sizeof(std::map<Polynomial, SymRef>) +
+                              sizeof(SymNode) + 4 * sizeof(SymRef)))
+                return {};
+              Polynomial Transformed;
+              Transformed.reserve(NewSize);
+              size_t Original = 0, Replacement = 0;
+              while (Original != P.size() || Replacement != Combined.size()) {
+                while (Original != P.size() && (P[Original] & PairMask) == JBit)
+                  ++Original;
+                if (Replacement != Combined.size() &&
+                    (Original == P.size() ||
+                     (Combined[Replacement] | JBit) < P[Original]))
+                  Transformed.push_back(Combined[Replacement++] | JBit);
+                else if (Original != P.size())
+                  Transformed.push_back(P[Original++]);
+              }
+              if (!charge(Frequencies.size(),
+                          sizeof(llvm::SmallVector<unsigned, 16>) +
+                              2 * Frequencies.size() * sizeof(unsigned)))
+                return {};
+              llvm::SmallVector<unsigned, 16> CoordinateFrequencies(
+                  Frequencies);
+              // The new polynomial changes only j*C into j*Combined.
+              // Update the existing counts instead of rescanning every
+              // unchanged term in the transformed root.
+              for (auto Term : Groups[2]) {
+                Term |= JBit;
+                while (Term) {
+                  if (!charge())
+                    return {};
+                  --CoordinateFrequencies[std::countr_zero(Term)];
+                  Term &= Term - 1;
+                }
+              }
+              for (auto Term : Combined) {
+                Term |= JBit;
+                while (Term) {
+                  if (!charge())
+                    return {};
+                  ++CoordinateFrequencies[std::countr_zero(Term)];
+                  Term &= Term - 1;
+                }
+              }
+              llvm::SmallVector<SymRef, 16> CoordinateInputs(Basis);
+              CoordinateInputs[Second] = Ctx.mkXor(Basis[Second], Basis[First]);
+              // Polynomial keys only identify expressions within one basis.
+              // Keep the changed basis separate; its final result again has
+              // exactly P's original full-width bitwise semantics.
+              std::map<Polynomial, SymRef> CoordinateCache;
+              auto Value = Self(Self, Transformed, CoordinateInputs,
+                                CoordinateCache, false, CoordinateFrequencies);
+              if (Value)
+                Cache.emplace(P, Value);
+              return Value;
+            }
+          }
+        }
         const unsigned Variable = Best - Frequencies.begin();
         const auto Bit = uint64_t(1) << Variable;
         Polynomial Low, High;
+        uint64_t LowSupport = 0, HighSupport = 0;
         for (auto Term : P) {
-          if (Term & Bit)
+          if (Term & Bit) {
             High.push_back(Term ^ Bit);
-          else
+            HighSupport |= Term ^ Bit;
+          } else {
             Low.push_back(Term);
+            LowSupport |= Term;
+          }
+        }
+        // Equal cofactors give Low AND NOT x. Cofactors differing only in
+        // their constant term give Low OR x. Compare the canonical tails
+        // directly before constructing quotient groups and their remainders.
+        llvm::ArrayRef<uint64_t> LowTail(Low), HighTail(High);
+        const bool LowConstant = !Low.empty() && !Low.front();
+        const bool HighConstant = !High.empty() && !High.front();
+        if (LowConstant)
+          LowTail = LowTail.drop_front();
+        if (HighConstant)
+          HighTail = HighTail.drop_front();
+        if (LowTail.size() == HighTail.size()) {
+          if (!charge(1 + LowTail.size()))
+            return {};
+          if (LowTail == HighTail) {
+            auto A = Self(Self, Low, Basis, Cache, false);
+            const unsigned Nodes = LowConstant == HighConstant ? 2 : 1;
+            if (!A ||
+                !charge(Nodes, Nodes * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+              return {};
+            auto Value = LowConstant == HighConstant
+                             ? Ctx.mkAnd(A, Ctx.mkNot(Basis[Variable]))
+                             : Ctx.mkOr(A, Basis[Variable]);
+            Cache.emplace(P, Value);
+            return Value;
+          }
         }
         // P = Low XOR (x AND High). Partition Low over the variables not
         // present in High. A group sharing most of High can reuse that exact
         // cofactor: Low = R XOR (Q AND High), hence
         // P = R XOR ((x XOR Q) AND High). Symmetric difference proves the
         // remainder, including complemented and partially matching groups.
-        if (Low.size() > High.size() / 2 &&
-            !(High.size() == 1 && !High.front())) {
-          if (!charge(High.size() + Low.size(),
-                      Low.size() * (sizeof(uint64_t) + sizeof(Polynomial) +
-                                    4 * sizeof(void *) + 2 * sizeof(uint64_t))))
+        // When Low has no variables outside High's support, its partition
+        // has one group. The same exact difference needs no map or re-sort.
+        const bool Reusable = Low.size() > High.size() / 2 &&
+                              !(High.size() == 1 && !High.front());
+        const bool SingleGroup = !(LowSupport & ~HighSupport);
+        if (Reusable && SingleGroup) {
+          const auto Size = Low.size() + High.size();
+          if (!charge(Size, sizeof(Polynomial) + 2 * Size * sizeof(uint64_t)))
             return {};
-          uint64_t Support = 0;
-          for (auto Term : High)
-            Support |= Term;
-          std::map<uint64_t, Polynomial> Groups;
-          for (auto Term : Low) {
-            if (!charge(1 + std::bit_width(Groups.size())))
+          Polynomial Difference;
+          Difference.reserve(Size);
+          std::set_symmetric_difference(Low.begin(), Low.end(), High.begin(),
+                                        High.end(),
+                                        std::back_inserter(Difference));
+          if (Difference.size() < Low.size()) {
+            Polynomial Quotient{0, Bit};
+            auto Q = Self(Self, Quotient, Basis, Cache, false),
+                 H = Self(Self, High, Basis, Cache, false),
+                 R = Self(Self, Difference, Basis, Cache, false);
+            if (!Q || !H || !R ||
+                !charge(2, 2 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
               return {};
-            Groups[Term & ~Support].push_back(Term & Support);
+            auto Value = Ctx.mkXor(R, Ctx.mkAnd(Q, H));
+            Cache.emplace(P, Value);
+            return Value;
           }
+        }
+        if (Reusable && !SingleGroup) {
+          const auto OutsideMask = LowSupport & ~HighSupport;
+          const bool TwoGroups = std::has_single_bit(OutsideMask);
+          const size_t Bytes =
+              TwoGroups
+                  ? 2 * sizeof(Polynomial) + 4 * Low.size() * sizeof(uint64_t)
+                  : Low.size() * (sizeof(uint64_t) + sizeof(Polynomial) +
+                                  4 * sizeof(void *) + 2 * sizeof(uint64_t));
+          if (!charge(High.size() + Low.size(), Bytes))
+            return {};
           Polynomial Quotient{Bit}, Remainder;
           bool Found = false;
-          for (const auto &[Outside, Inside] : Groups) {
+          auto ReuseGroup = [&](uint64_t Outside, const Polynomial &Inside) {
             // |Inside XOR High| < |Inside| requires more than half of High
             // to occur in Inside. Smaller groups cannot reuse this cofactor;
             // retain them directly instead of scanning High for every group.
             if (Inside.size() <= High.size() / 2) {
               if (!charge(Inside.size()))
-                return {};
+                return false;
               for (auto Term : Inside)
                 Remainder.push_back(Term | Outside);
-              continue;
+              return true;
             }
             const auto Size = Inside.size() + High.size();
-            if (!charge(Size, Size * sizeof(uint64_t)))
-              return {};
+            if (!charge(Size, sizeof(Polynomial) + 2 * Size * sizeof(uint64_t)))
+              return false;
             Polynomial Difference;
             std::set_symmetric_difference(Inside.begin(), Inside.end(),
                                           High.begin(), High.end(),
@@ -1963,6 +2320,27 @@ public:
             }
             for (auto Term : Reuse ? Difference : Inside)
               Remainder.push_back(Term | Outside);
+            return true;
+          };
+          if (TwoGroups) {
+            // One outside variable selects exactly two possible groups.
+            // Clearing that fixed bit preserves each group's term order.
+            std::array<Polynomial, 2> Groups;
+            for (auto Term : Low)
+              Groups[bool(Term & OutsideMask)].push_back(Term & HighSupport);
+            for (unsigned I = 0; I < Groups.size(); ++I)
+              if (!ReuseGroup(I ? OutsideMask : 0, Groups[I]))
+                return {};
+          } else {
+            std::map<uint64_t, Polynomial> Groups;
+            for (auto Term : Low) {
+              if (!charge(1 + std::bit_width(Groups.size())))
+                return {};
+              Groups[Term & ~HighSupport].push_back(Term & HighSupport);
+            }
+            for (const auto &[Outside, Inside] : Groups)
+              if (!ReuseGroup(Outside, Inside))
+                return {};
           }
           if (Found) {
             const auto Size = Quotient.size() + Remainder.size();
@@ -1971,28 +2349,54 @@ public:
               return {};
             std::sort(Quotient.begin(), Quotient.end());
             std::sort(Remainder.begin(), Remainder.end());
-            auto Q = Self(Self, Quotient), H = Self(Self, High),
-                 R = Self(Self, Remainder);
+            auto Q = Self(Self, Quotient, Basis, Cache, false),
+                 H = Self(Self, High, Basis, Cache, false),
+                 R = Self(Self, Remainder, Basis, Cache, false);
             if (!Q || !H || !R ||
                 !charge(2, 2 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
               return {};
             auto Value = Ctx.mkXor(R, Ctx.mkAnd(Q, H));
-            Factored.emplace(P, Value);
+            Cache.emplace(P, Value);
             return Value;
           }
         }
-        auto A = Self(Self, Low), B = Self(Self, High);
+        auto A = Self(Self, Low, Basis, Cache, false);
+        SymRef B;
+        if (TryCoordinate && Low.empty()) {
+          // All terms contain this common factor. Its removal changes only
+          // that variable's frequency. Carry the single coordinate attempt
+          // past common factors without recounting the untouched variables.
+          if (!charge(Frequencies.size(),
+                      sizeof(llvm::SmallVector<unsigned, 16>) +
+                          2 * Frequencies.size() * sizeof(unsigned)))
+            return {};
+          llvm::SmallVector<unsigned, 16> HighFrequencies(Frequencies);
+          HighFrequencies[Variable] = 0;
+          B = Self(Self, High, Basis, Cache, true, HighFrequencies);
+        } else {
+          B = Self(Self, High, Basis, Cache, false);
+        }
         if (!A || !B || !charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
           return {};
-        auto Value = Ctx.mkXor(A, Ctx.mkAnd(Inputs[Variable], B));
-        Factored.emplace(P, Value);
+        auto Value = Ctx.mkXor(A, Ctx.mkAnd(Basis[Variable], B));
+        Cache.emplace(P, Value);
         return Value;
       };
-      if (auto Smaller = Factor(Factor, *Form)) {
+      if (auto Smaller = Factor(Factor, *Form, Inputs, Factored, true)) {
         Smaller = Ctx.mkAnd(Smaller, Ctx.mkConst(Width, 1));
-        if (readingScore(Ctx, Smaller) < readingScore(Ctx, Result))
+        if (LazyFlat && readingScore(Ctx, Smaller) < FlatLowerBound) {
           Result = Smaller;
+        } else {
+          if (LazyFlat)
+            Result = BuildFlat();
+          if (Result && readingScore(Ctx, Smaller) < readingScore(Ctx, Result))
+            Result = Smaller;
+        }
+      } else if (LazyFlat && !Failed) {
+        Result = BuildFlat();
       }
+      if (!Result)
+        return Fallback;
       return !Fallback ||
                      readingScore(Ctx, Result) < readingScore(Ctx, Fallback)
                  ? Result
@@ -2042,7 +2446,18 @@ public:
                 (Terms.size() + 1) * (sizeof(SymNode) + 4 * sizeof(SymRef)))) {
       return Root;
     }
-    auto Result = Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(Terms);
+    SymRef OutputGate;
+    if (Parity != 1) {
+      OutputGate = Emit(Emit, Parity, 0);
+      if (!OutputGate || Failed ||
+          !charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+        return Root;
+      OutputGate = Ctx.mkAnd(OutputGate, Ctx.mkConst(Width, 1));
+    }
+    auto Gate = [&](SymRef R) {
+      return OutputGate ? Ctx.mkMul(OutputGate, R) : R;
+    };
+    auto Result = Gate(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(Terms));
     // Finish the proved reading before optional Boolean recipe search.
     // A later refusal must retain that complete result, including when one
     // output bit has a more complicated support than the others.
@@ -2066,7 +2481,7 @@ public:
         if (!Term)
           break;
         Terms[I] = Term;
-        auto Next = Ctx.mkAdd(Terms);
+        auto Next = Gate(Ctx.mkAdd(Terms));
         if (readingScore(Ctx, Next) < readingScore(Ctx, Result))
           Result = Next;
       }

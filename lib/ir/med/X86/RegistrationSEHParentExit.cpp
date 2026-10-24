@@ -10,8 +10,8 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
-#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHParentExit.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
 

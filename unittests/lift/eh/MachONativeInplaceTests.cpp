@@ -12,7 +12,7 @@
 
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/object/SectionNames.h"
 

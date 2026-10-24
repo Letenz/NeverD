@@ -9,8 +9,8 @@
 
 #include "X86LiftDetail.h"
 
-#include "neverd/ir/intrinsics/X86AmxState.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/intrinsics/X86/X86AmxState.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include <cstdint>
 #include <optional>

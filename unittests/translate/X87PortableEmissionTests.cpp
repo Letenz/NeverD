@@ -12,8 +12,8 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/ir/X87PortableABI.h"
-#include "neverd/ir/med/PortableX87Function.h"
+#include "neverd/ir/X86/X87PortableABI.h"
+#include "neverd/ir/med/X86/PortableX87Function.h"
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Verifier.h"

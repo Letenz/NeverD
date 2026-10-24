@@ -21,13 +21,17 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QProcess>
+#include <QPushButton>
+#include <QScreen>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QStyle>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 #include <QWindow>
+#include <algorithm>
 #include <kddockwidgets/KDDockWidgets.h>
 #include <kddockwidgets/core/DropArea.h>
 #include <kddockwidgets/core/DropIndicatorOverlay.h>
@@ -39,6 +43,9 @@
 #include <kddockwidgets/qtwidgets/views/TitleBar.h>
 
 #ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 #endif
 
@@ -180,18 +187,23 @@ struct Desktop {
 
   Desktop() {
     Window.setWindowTitle(QStringLiteral("Docking test workbench"));
-    Window.resize(950, 650);
+    const QSize screen = Window.screen()->availableGeometry().size();
+    Window.resize(std::min(950, screen.width() * 3 / 5),
+                  std::min(650, screen.height() * 2 / 3));
     WindowFrame::attach(Window);
     Target.setTitle(QStringLiteral("Target pane"));
     Target.setWidget(new QLabel(QStringLiteral("Target")));
     Source.setTitle(QStringLiteral("Source pane"));
     Source.setIcon(QApplication::style()->standardIcon(QStyle::SP_FileIcon));
-    Source.setWidget(new QLabel(QStringLiteral("Source")));
+    auto *source = new QPushButton(QStringLiteral("Source"));
+    source->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    Source.setWidget(source);
     Window.addDockWidget(&Target, KD::Location_OnLeft);
     Target.addDockWidgetAsTab(&Source);
     Window.show();
     Source.setFloating(true);
-    Source.QWidget::window()->resize(450, 350);
+    Source.QWidget::window()->resize(std::min(450, screen.width() / 3),
+                                     std::min(350, screen.height() / 2));
   }
 
   KD::QtWidgets::TitleBar *titleBar() const {
@@ -240,49 +252,51 @@ private slots:
     auto *floating = desktop.Source.QWidget::window();
     QVERIFY(QTest::qWaitForWindowExposed(floating));
     QVERIFY(desktop.titleBar());
+    auto *maximize = floating->findChild<QAbstractButton *>(
+        QStringLiteral("floatingMaximizeButton"));
+    auto *minimize = floating->findChild<QAbstractButton *>(
+        QStringLiteral("floatingMinimizeButton"));
+    QVERIFY(maximize && maximize->isVisible());
+    QVERIFY(minimize && minimize->isVisible());
     if (onWayland()) {
-      // This catches the native caption that swallowed docking drags.
       QVERIFY(floating->windowFlags() & Qt::FramelessWindowHint);
       QCOMPARE(floating->windowHandle()->frameMargins(), QMargins());
-      auto *move = floating->findChild<QLabel *>(
-          QStringLiteral("floatingWindowMoveHandle"));
-      QVERIFY(move && move->isVisible());
-      QCOMPARE(move->cursor().shape(), Qt::SizeAllCursor);
     }
     QSettings().remove(settings::NativeTitleBar);
   }
 
-  void floatingWindowStillMovesAndResizes() {
+  void customFloatingMoveAndResize() {
     if (!onWayland() || !qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER"))
-      QSKIP(
-          "Exercises the replacement Wayland frame with native pointer input.");
+      QSKIP("Uses the isolated compositor for trusted move/resize input.");
     Desktop desktop;
     QWidget *floating = desktop.Source.QWidget::window();
+    QVERIFY(QTest::qWaitForWindowExposed(&desktop.Window));
     QVERIFY(QTest::qWaitForWindowExposed(floating));
+    QTest::qWait(250);
     QVERIFY(place(*floating, QPoint(1100, 180)));
     QTest::qWait(100);
-    auto *handle = floating->findChild<QLabel *>(
-        QStringLiteral("floatingWindowMoveHandle"));
-    QVERIFY(handle);
     QVERIFY(
         shell(QStringLiteral("global.neverdBeforeMove = (%1).get_frame_rect();")
                   .arg(nativeWindow(*floating))));
     Pointer pointer;
-    const QPoint start = handle->rect().center();
-    QVERIFY(pointer.move(*handle, start, false));
+    auto *handle = floating->findChild<QWidget *>(
+        QStringLiteral("floatingWindowMoveHandle"));
+    QVERIFY(handle && handle->isVisible());
+    const QPoint start = handle->mapTo(floating, handle->rect().center());
+    QVERIFY(pointer.move(*floating, start, false));
     QTest::qWait(50);
-    QVERIFY(pointer.button(*handle, start, true));
+    QVERIFY(pointer.button(*floating, start, true));
     QTest::qWait(50);
-    QVERIFY(pointer.move(*handle, start + QPoint(80, 60), true));
+    QVERIFY(pointer.move(*floating, start + QPoint(80, 60), true));
     QTest::qWait(100);
-    QVERIFY(pointer.button(*handle, start, false));
+    QVERIFY(pointer.button(*floating, start, false));
     QVERIFY(shell(QStringLiteral("(() => {const r = (%1).get_frame_rect();"
                                  "if(r.x === global.neverdBeforeMove.x && "
                                  "r.y === global.neverdBeforeMove.y) throw "
                                  "Error('window did not move');})()")
                       .arg(nativeWindow(*floating))));
     const QSize size = floating->size();
-    const QPoint corner = floating->contentsRect().bottomRight();
+    const QPoint corner = floating->rect().bottomRight() - QPoint(2, 2);
     QVERIFY(pointer.move(*floating, corner, false));
     QTest::qWait(50);
     QVERIFY(pointer.button(*floating, corner, true));
@@ -295,21 +309,100 @@ private slots:
     QVERIFY(desktop.Source.isFloating());
   }
 
+  void floatingWindowStates() {
+    if (QGuiApplication::platformName() == QLatin1String("offscreen"))
+      QSKIP("Requires a native window manager.");
+    Desktop desktop;
+    QWidget *floating = desktop.Source.QWidget::window();
+    QVERIFY(QTest::qWaitForWindowExposed(&desktop.Window));
+    QVERIFY(QTest::qWaitForWindowExposed(floating));
+    QTest::qWait(250);
+    QVERIFY(place(*floating, QPoint(100, 100)));
+    QTest::qWait(100);
+    const QSize normalSize = floating->size();
+    auto *maximize = floating->findChild<QAbstractButton *>(
+        QStringLiteral("floatingMaximizeButton"));
+    QVERIFY(maximize && maximize->isVisible());
+    QSignalSpy maximizedClicks(maximize, &QAbstractButton::clicked);
+    Pointer pointer;
+    int clicks = 0;
+    for (bool maximized : {true, false}) {
+      const QPoint center = maximize->rect().center();
+      QVERIFY(pointer.move(*maximize, center, false));
+      QTest::qWait(50);
+      QVERIFY(pointer.button(*maximize, center, true));
+      QTest::qWait(50);
+      QVERIFY(pointer.button(*maximize, center, false));
+      ++clicks;
+      QTRY_COMPARE(maximizedClicks.size(), clicks);
+      QTRY_COMPARE(floating->isMaximized(), maximized);
+      // Qt reports the new state before the compositor finishes moving the
+      // caption buttons to their final screen positions.
+      QTest::qWait(500);
+    }
+    QTRY_COMPARE(floating->size(), normalSize);
+    auto *minimize = floating->findChild<QAbstractButton *>(
+        QStringLiteral("floatingMinimizeButton"));
+    QVERIFY(minimize && minimize->isVisible());
+    QSignalSpy minimizedClicks(minimize, &QAbstractButton::clicked);
+    const QPoint center = minimize->rect().center();
+    QVERIFY(pointer.move(*minimize, center, false));
+    QTest::qWait(50);
+    QVERIFY(pointer.button(*minimize, center, true));
+    QTest::qWait(50);
+    QVERIFY(pointer.button(*minimize, center, false));
+    QTRY_COMPARE(minimizedClicks.size(), 1);
+    QTest::qWait(500);
+    // Wayland does not report the minimized state back to the Qt client.
+    // Verify the actual compositor window instead of QWidget's cached state.
+    if (onWayland())
+      QVERIFY(shell(QStringLiteral("if (!(%1).minimized) "
+                                   "throw Error('window did not minimize');")
+                        .arg(nativeWindow(*floating))));
+    else
+      QTRY_VERIFY(floating->isMinimized());
+    floating->showNormal();
+    // Restore as a user selecting the window in the desktop would. Wayland
+    // can reject an activation request from an unfocused client.
+    QVERIFY(place(*floating, QPoint(100, 100)));
+    QTRY_VERIFY(!floating->isMinimized());
+    QVERIFY(QTest::qWaitForWindowExposed(floating));
+    if (onWayland())
+      QTRY_VERIFY(shell(QStringLiteral("if ((%1).minimized) "
+                                       "throw Error('window did not restore');")
+                            .arg(nativeWindow(*floating))));
+    QTRY_COMPARE(floating->size(), normalSize);
+    floating->showFullScreen();
+    QTRY_VERIFY(floating->isFullScreen());
+    floating->showNormal();
+    QTRY_VERIFY(!floating->isFullScreen());
+    QTRY_COMPARE(floating->size(), normalSize);
+    QVERIFY(desktop.titleBar());
+    QVERIFY(desktop.Source.isFloating());
+    QVERIFY(desktop.Source.widget()->isVisible());
+  }
+
   void dragIntoWorkbench_data() {
     QTest::addColumn<bool>("dark");
     QTest::addColumn<bool>("tab");
     QTest::addColumn<int>("location");
-    for (bool dark : {false, true})
-      for (bool tab : {false, true})
-        for (auto location : {KD::DropLocation_Center, KD::DropLocation_Right,
-                              KD::DropLocation_Bottom, KD::DropLocation_None}) {
-          const auto name = QStringLiteral("%1-%2-%3")
-                                .arg(dark ? "dark" : "light")
-                                .arg(tab ? "tab" : "caption")
-                                .arg(static_cast<int>(location));
-          QTest::newRow(qPrintable(name))
-              << dark << tab << static_cast<int>(location);
-        }
+    QTest::addColumn<QString>("placement");
+    for (const auto &placement :
+         {QStringLiteral("separate"), QStringLiteral("overlap"),
+          QStringLiteral("maximized")})
+      for (bool dark : {false, true})
+        for (bool tab : {false, true})
+          for (auto location :
+               {KD::DropLocation_Center, KD::DropLocation_Right,
+                KD::DropLocation_Bottom, KD::DropLocation_None}) {
+            const auto name = QStringLiteral("%1-%2-%3-%4")
+                                  .arg(dark ? "dark" : "light")
+                                  .arg(tab ? "tab" : "caption")
+                                  .arg(static_cast<int>(location))
+                                  .arg(placement);
+            QTest::newRow(qPrintable(name))
+                << dark << tab << static_cast<int>(location) << placement;
+          }
   }
 
   void dragIntoWorkbench() {
@@ -324,17 +417,33 @@ private slots:
     QFETCH(bool, dark);
     QFETCH(bool, tab);
     QFETCH(int, location);
+    QFETCH(QString, placement);
     Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
     Theme::instance().apply();
     Desktop desktop;
     QWidget *floating = desktop.Source.QWidget::window();
+    QVERIFY(QTest::qWaitForWindowExposed(&desktop.Window));
     QVERIFY(QTest::qWaitForWindowExposed(floating));
+    QTest::qWait(250); // Allow the compositor's initial placement to finish.
     QVERIFY(place(desktop.Window, QPoint(20, 50)));
-    QVERIFY(place(*floating, QPoint(qRound(desktop.Window.width() *
-                                           desktop.Window.devicePixelRatioF()) +
-                                        100,
-                                    180)));
+    const qreal scale = onWayland() ? desktop.Window.devicePixelRatioF() : 1;
+    QVERIFY(
+        place(*floating,
+              placement != QLatin1String("separate")
+                  ? QPoint(20 + qRound(300 * scale), 50 + qRound(200 * scale))
+                  : QPoint(qRound(desktop.Window.width() * scale) + 60, 180)));
+    if (placement == QLatin1String("maximized")) {
+      floating->showMaximized();
+      QTRY_VERIFY(floating->isMaximized());
+      QTest::qWait(250);
+    }
     QTest::qWait(100);
+    const QPointer<QWindow> native = floating->windowHandle();
+    const auto originalStates = native->windowStates();
+    if (onWayland())
+      QVERIFY(shell(
+          QStringLiteral("global.neverdBeforeDrag = (%1).get_frame_rect();")
+              .arg(nativeWindow(*floating))));
     QWidget *source = desktop.titleBar();
     QVERIFY(source);
     QPoint start = source->rect().center();
@@ -376,6 +485,18 @@ private slots:
         const QString name = QString::fromLatin1(QTest::currentDataTag());
         desktop.Window.grab().save(captures + "/" + name + "-preview.png");
         floating->grab().save(captures + "/" + name + "-floating.png");
+        if (onWayland())
+          QProcess::execute(
+              QStringLiteral("gdbus"),
+              {QStringLiteral("call"), QStringLiteral("--session"),
+               QStringLiteral("--dest"),
+               QStringLiteral("org.gnome.Shell.Screenshot"),
+               QStringLiteral("--object-path"),
+               QStringLiteral("/org/gnome/Shell/Screenshot"),
+               QStringLiteral("--method"),
+               QStringLiteral("org.gnome.Shell.Screenshot.Screenshot"),
+               QStringLiteral("false"), QStringLiteral("false"),
+               captures + "/" + name + "-desktop.png"});
       }
       preview = area->currentDropLocation() == location;
       released = pointer.button(desktop.Window, destination, false);
@@ -394,9 +515,34 @@ private slots:
     QTRY_COMPARE(desktop.Source.isFloating(),
                  location == KD::DropLocation_None);
     QVERIFY(desktop.Source.widget()->isVisible());
-    if (location == KD::DropLocation_None)
+    if (location == KD::DropLocation_None) {
       QCOMPARE(desktop.Source.QWidget::window(), floating);
-    else {
+      QTRY_VERIFY(!floating->isMinimized());
+      QTest::qWait(300);
+      QCOMPARE(floating->windowHandle(), native.data());
+      if (onWayland()) {
+        QCOMPARE(native->windowStates(), originalStates);
+        QVERIFY(shell(
+            QStringLiteral(
+                "(() => {const w = %1;"
+                "if(w.minimized) throw Error('still minimized');"
+                "const r = w.get_frame_rect(), b = global.neverdBeforeDrag;"
+                "if(r.x !== b.x || r.y !== b.y || r.width !== b.width || "
+                "r.height !== b.height)"
+                "throw Error('cancel changed native geometry');"
+                "})()")
+                .arg(nativeWindow(*floating))));
+      }
+      auto *button = qobject_cast<QPushButton *>(desktop.Source.widget());
+      QSignalSpy clicks(button, &QPushButton::clicked);
+      const QPoint center = button->rect().center();
+      QVERIFY(pointer.move(*button, center, false));
+      QTest::qWait(50);
+      QVERIFY(pointer.button(*button, center, true));
+      QTest::qWait(50);
+      QVERIFY(pointer.button(*button, center, false));
+      QTRY_COMPARE(clicks.size(), 1);
+    } else {
       QCOMPARE(desktop.Source.QWidget::window(), &desktop.Window);
       QCOMPARE(desktop.Source.group() == desktop.Target.group(),
                location == KD::DropLocation_Center);

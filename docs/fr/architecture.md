@@ -1434,7 +1434,7 @@ La politique temporelle des processus Windows appartient à `WindowsProcessTime.
 
 Les reprises après un point de surveillance exposent `ProcessView::watchedMemoryUnchanged()` uniquement si la mémoire couverte par les plages de surveillance en écriture précédentes ne peut pas avoir changé. Les services OS et les continuations d’exception ou d’appel retirent cette garantie par prudence. L’observateur de transfert réutilise alors les instantanés validés, mais une page nouvellement visitée actualise toujours la fin possible d’une instruction sur la page suivante. WHP conserve l’état de débogage persistant réellement capturé entre les pas confirmés et le réinitialise avant l’exécution libre, évitant une installation de registres redondante par instruction vérifiée sans affaiblir l’authentification des arrêts privés.
 
-`arch/X64Imports.cpp` possède le décodage et l’émission des instructions d’import x64. `dynamic/ProcessImports.cpp` prouve les appels exportés purs et les résultats de chargement d’adresses par observation seule du processus ; l’écriture PE utilise ces preuves sans dupliquer les règles d’instruction.
+`arch/x86_64/X64Imports.cpp` possède le décodage et l’émission des instructions d’import x64. `dynamic/ProcessImports.cpp` prouve les appels exportés purs et les résultats de chargement d’adresses par observation seule du processus ; l’écriture PE utilise ces preuves sans dupliquer les règles d’instruction.
 
 Une adresse d’export appartient à une seule exécution. La preuve du helper conserve le module et le nom ou ordinal résolus pendant cette exécution ; l’écriture PE compare ces identités par valeur. Une adresse découverte peut être liée après l’entrée, mais seule son identité courante autorise la réparation.
 

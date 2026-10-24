@@ -11,7 +11,7 @@
 #include "AArch64LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/AArch64CPA.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
 #include "neverd/support/BinaryEncoding.h"
 
 namespace neverd {
@@ -27,7 +27,7 @@ bool liftCPA(AArch64Lifter &L, AArch64Lifter::LiftState &S, const cs_insn *Insn,
   case AARCH64_INS_##Insn:                                                     \
     Id = Intrinsic::IdValue;                                                   \
     break;
-#include "neverd/ir/intrinsics/AArch64CPA.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.def"
   case AARCH64_INS_MADPT:
   case AARCH64_INS_MLAPT:
     // SVE forms require runtime-vector-width state.

@@ -11,10 +11,10 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/X87Binary80.h"
-#include "neverd/ir/X87Context.h"
+#include "neverd/ir/X86/X87Binary80.h"
+#include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/low/NdOpEmulator.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 

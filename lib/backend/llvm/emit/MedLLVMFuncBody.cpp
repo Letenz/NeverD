@@ -29,10 +29,10 @@
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
-#include "neverd/backend/llvm/X86RegistrationFrame.h"
+#include "neverd/backend/llvm/X86/X86RegistrationFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedMutableSource.h"
-#include "neverd/loader/X86GetPcThunk.h"
+#include "neverd/loader/X86/X86GetPcThunk.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/Constants.h"

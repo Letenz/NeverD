@@ -15,7 +15,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
-#include "neverd/ir/med/X86RegistrationSEHParentExit.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHParentExit.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/DenseMap.h"

@@ -13,8 +13,8 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/decode/Limits.h"
-#include "neverd/ir/X87Context.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include "capstone/capstone.h"
 

@@ -51,15 +51,15 @@ struct CNameTable {
     };
 #define NEVERD_X87_PORTABLE_HELPER(Role, Name, ...)                            \
   C(Intrinsic::PortableX87##Role, #Name);
-#include "neverd/ir/X87PortableABI.def"
+#include "neverd/ir/X86/X87PortableABI.def"
 #undef NEVERD_X87_PORTABLE_HELPER
     C(Intrinsic::X86SEHRegisterRead, "__neverd_seh_register_read");
     C(Intrinsic::X86SEHRegisterWrite, "__neverd_seh_register_write");
 
-#include "neverd/ir/intrinsics/intrinsics_aarch64_cnames.inc"
-#include "neverd/ir/intrinsics/intrinsics_arm_cnames.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86_cnames.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86_fp_state_cnames.inc"
+#include "neverd/ir/intrinsics/AArch64/intrinsics_aarch64_cnames.inc"
+#include "neverd/ir/intrinsics/ARM/intrinsics_arm_cnames.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86_cnames.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86_fp_state_cnames.inc"
   }
 };
 
@@ -77,9 +77,9 @@ struct AsmTable {
       names[static_cast<size_t>(Id)] = N;
     };
 
-#include "neverd/ir/intrinsics/intrinsics_aarch64_asm.inc"
-#include "neverd/ir/intrinsics/intrinsics_arm_asm.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86_asm.inc"
+#include "neverd/ir/intrinsics/AArch64/intrinsics_aarch64_asm.inc"
+#include "neverd/ir/intrinsics/ARM/intrinsics_arm_asm.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86_asm.inc"
   }
 };
 
@@ -147,13 +147,13 @@ struct SideEffectTable {
 
 #define NEVERD_X87_PORTABLE_HELPER(Role, ...)                                  \
   SIDEEFFECT(Intrinsic::PortableX87##Role);
-#include "neverd/ir/X87PortableABI.def"
+#include "neverd/ir/X86/X87PortableABI.def"
 #undef NEVERD_X87_PORTABLE_HELPER
     SIDEEFFECT(Intrinsic::Syscall);
     SIDEEFFECT(Intrinsic::RawEnvironmentRequirementV1);
-#include "neverd/ir/intrinsics/intrinsics_aarch64_sideeffect.inc"
-#include "neverd/ir/intrinsics/intrinsics_arm_sideeffect.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86_sideeffect.inc"
+#include "neverd/ir/intrinsics/AArch64/intrinsics_aarch64_sideeffect.inc"
+#include "neverd/ir/intrinsics/ARM/intrinsics_arm_sideeffect.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86_sideeffect.inc"
   }
 };
 

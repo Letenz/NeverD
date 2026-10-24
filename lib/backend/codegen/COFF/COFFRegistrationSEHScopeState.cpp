@@ -9,7 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/ir/med/MedStackAlignment.h"
-#include "neverd/ir/med/X86RegistrationSEHStateStore.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHStateStore.h"
 
 #include <functional>
 #include <tuple>

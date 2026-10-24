@@ -10,9 +10,9 @@
 #include "gtest/gtest.h"
 
 #include "neverd/ir/med/MedABIPass.h"
-#include "neverd/ir/med/X86RegistrationSEHCall.h"
-#include "neverd/ir/med/X86RegistrationSEHJump.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHCall.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHJump.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 

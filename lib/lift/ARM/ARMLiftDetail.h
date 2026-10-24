@@ -27,8 +27,8 @@
 #define NEVERD_LIFT_ARM_ARMLIFTDETAIL_H
 
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
-#include "neverd/lift/ARMLifter.h"
-#include "neverd/support/ARMTrap.h"
+#include "neverd/lift/ARM/ARMLifter.h"
+#include "neverd/support/ARM/ARMTrap.h"
 
 #include <capstone/capstone.h>
 #include <cstdint>

@@ -9,8 +9,8 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
-#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
-#include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ArrayRef.h"

@@ -17,7 +17,7 @@
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/IR/Constants.h"

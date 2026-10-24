@@ -6,9 +6,9 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/ir/X87GuardedValue.h"
+#include "neverd/ir/X86/X87GuardedValue.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/APInt.h"

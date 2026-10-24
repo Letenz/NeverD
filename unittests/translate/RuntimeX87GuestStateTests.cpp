@@ -6,7 +6,7 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/translate/RuntimeX87GuestState.h"
+#include "neverd/translate/X86/RuntimeX87GuestState.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"

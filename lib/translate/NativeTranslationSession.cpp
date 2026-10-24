@@ -10,9 +10,9 @@
 #include "neverd/translate/RuntimeGuestState.h"
 #include "neverd/translate/RuntimeHelpers.h"
 #include "neverd/translate/RuntimeSymbolRegistry.h"
-#include "neverd/translate/RuntimeX87Helpers.h"
 #include "neverd/translate/TranslationJITLinker.h"
 #include "neverd/translate/TranslationObjectRequest.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/Twine.h"

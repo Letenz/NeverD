@@ -10,8 +10,8 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/ir/X87Capabilities.h"
-#include "neverd/ir/X87Context.h"
+#include "neverd/ir/X86/X87Capabilities.h"
+#include "neverd/ir/X86/X87Context.h"
 
 #include "llvm/Support/JSON.h"
 

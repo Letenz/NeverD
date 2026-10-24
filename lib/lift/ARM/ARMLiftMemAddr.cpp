@@ -12,7 +12,7 @@
 
 #include "ARMLiftDetail.h"
 
-#include "neverd/lift/ARMLifter.h"
+#include "neverd/lift/ARM/ARMLifter.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -85,8 +85,8 @@ void ARMLifter::emitLdrdStrdWriteback(LiftState &S, const cs_insn *Insn,
     if (WBOffset != 0)
       S.emit(NdOp::INT_ADD, BaseReg,
              {BaseReg,
-              NdVar::cst(
-                  static_cast<uint64_t>(static_cast<uint32_t>(WBOffset)), 4)});
+              NdVar::cst(static_cast<uint64_t>(static_cast<uint32_t>(WBOffset)),
+                         4)});
   } else {
     // Pre-indexed: base takes the computed access address.
     S.emit(NdOp::COPY, BaseReg, {EA});
@@ -94,8 +94,7 @@ void ARMLifter::emitLdrdStrdWriteback(LiftState &S, const cs_insn *Insn,
 }
 
 NdVar ARMLifter::emitSingleMemAddr(LiftState &S, const cs_insn *Insn,
-                                     const cs_arm &ARM,
-                                     const cs_arm_op &MemOp) {
+                                   const cs_arm &ARM, const cs_arm_op &MemOp) {
   // Post-indexed access uses the UNMODIFIED base; the entire offset (register
   // or immediate) folds into the base writeback rather than the access address
   // — otherwise it is double-applied (once to the address, once by the
@@ -161,8 +160,8 @@ NdVar ARMLifter::emitSingleMemAddr(LiftState &S, const cs_insn *Insn,
       if (WBOffset != 0)
         S.emit(NdOp::INT_ADD, BaseReg,
                {BaseReg, NdVar::cst(static_cast<uint64_t>(
-                                          static_cast<uint32_t>(WBOffset)),
-                                      4)});
+                                        static_cast<uint32_t>(WBOffset)),
+                                    4)});
     }
   }
   return EA;

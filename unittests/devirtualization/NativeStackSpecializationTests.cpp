@@ -8,7 +8,7 @@
 
 #include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/ArrayRef.h"

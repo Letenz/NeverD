@@ -4,7 +4,7 @@
 
 #include "neverd/translate/GuestMemoryRuntime.h"
 #include "neverd/translate/GuestState.h"
-#include "neverd/translate/X86TranslationBlockBuilder.h"
+#include "neverd/translate/X86/X86TranslationBlockBuilder.h"
 
 #include "llvm/Support/Error.h"
 

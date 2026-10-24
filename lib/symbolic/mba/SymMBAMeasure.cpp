@@ -36,6 +36,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -524,7 +525,8 @@ void affineResidualCandidates(SymContext &Ctx,
   const unsigned Count = static_cast<unsigned>(Atoms.size());
   // This search reuses only the existing small exact Boolean recipes. A
   // larger caller ceiling must not trigger the four-input optimal table here.
-  if (Count < 2 || Count > std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+  if (Count < 2 || Count > std::min({limits::kMaxResidualSynthesisAtoms,
+                                     Limits.MaxOptimalSynthesisAtoms,
                                      Limits.MaxSynthesisAtoms}))
     return;
   if (TermBudget < 3)
@@ -694,7 +696,8 @@ void booleanResidualCandidates(SymContext &Ctx,
   // XOR and its complement. Two XOR tables cannot give four value pairs, so
   // one selector is an affine atom already covered by the earlier reading.
   if (Count < 3 ||
-      Count > std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+      Count > std::min({limits::kMaxResidualSynthesisAtoms,
+                        Limits.MaxOptimalSynthesisAtoms,
                         Limits.MaxSynthesisAtoms}) ||
       TermBudget < 3)
     return;

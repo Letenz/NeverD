@@ -8,8 +8,8 @@ add_neverd_component_library(NeverDTranslate
   RuntimeGuestState.cpp
   RuntimeHelpers.cpp
   RuntimeSymbolRegistry.cpp
-  RuntimeX87GuestState.cpp
-  RuntimeX87Helpers.cpp
+  X86/RuntimeX87GuestState.cpp
+  X86/RuntimeX87Helpers.cpp
   TranslationOptions.cpp
   TranslationResult.cpp
   TranslationSession.cpp
@@ -21,9 +21,9 @@ add_neverd_component_library(NeverDTranslate
   TranslationObjectCompiler.cpp
   TranslationObjectRequest.cpp
   TranslationTargetMachine.cpp
-  X86TranslationBlockBuilder.cpp
-  X86TranslationBlockLowerer.cpp
-  X87PortableRuntime.cpp
+  X86/X86TranslationBlockBuilder.cpp
+  X86/X86TranslationBlockLowerer.cpp
+  X86/X87PortableRuntime.cpp
 
   LINK_COMPONENTS
   Decode
@@ -35,7 +35,7 @@ add_neverd_component_library(NeverDTranslate
 
 # The generated-code ABI exports only its exact C helper table. Its C++ host
 # context is an internal embedding contract and must match this source build.
-add_library(neverd_x87_runtime SHARED X87PortableExecution.cpp)
+add_library(neverd_x87_runtime SHARED X86/X87PortableExecution.cpp)
 target_link_libraries(neverd_x87_runtime PRIVATE NeverDTranslate)
 target_compile_definitions(neverd_x87_runtime PRIVATE NEVERD_X87_RUNTIME_EXPORTS)
 target_compile_features(neverd_x87_runtime PRIVATE cxx_std_20)
@@ -46,7 +46,7 @@ set_target_properties(neverd_x87_runtime PROPERTIES
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN YES)
 
-set(_x87_abi_table "${CMAKE_SOURCE_DIR}/include/neverd/ir/X87PortableABI.def")
+set(_x87_abi_table "${CMAKE_SOURCE_DIR}/include/neverd/ir/X86/X87PortableABI.def")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_x87_abi_table}")
 file(READ "${_x87_abi_table}" _x87_abi_text)
 string(REGEX MATCHALL "nvd_x87_v1_[a-z0-9_]+" _x87_exports "${_x87_abi_text}")

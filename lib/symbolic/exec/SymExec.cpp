@@ -27,13 +27,13 @@
 
 #include "neverd/symbolic/SymExec.h"
 
-#include "neverd/ir/X87GuardedValue.h"
-#include "neverd/ir/X87Stack.h"
-#include "neverd/ir/X87Value.h"
+#include "neverd/ir/X86/X87GuardedValue.h"
+#include "neverd/ir/X86/X87Stack.h"
+#include "neverd/ir/X86/X87Value.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
-#include "neverd/ir/low/X87PartialRemainder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/low/X86/X87PartialRemainder.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/symbolic/SymIntegerIntrinsics.h"
 
 #include "llvm/ADT/APInt.h"

@@ -677,6 +677,11 @@ stack names, chunk headers/footers, bytecode ownership, and reference overlays
 that preserve an intervening independent call. Rename invalidation and paging
 from either direction must retain the cursor's recovered instruction even when
 an independent decode stream overlaps it.
+Direct decompilation of a fragment, before navigation or after visiting its
+owner, must return the owner's C, LLVMC, source and IR pages. Paged source and
+graph snapshots use the same entry, including viewport requests through the
+fragment address. These queries must not create a new function for the fragment
+or absorb an intervening independent entry.
 Run it with `NeverDWorkerPEFunctionParts` to retain explicit unwind-metadata
 chunks and their parent identity alongside recovered fragments.
 
@@ -953,6 +958,33 @@ input words and has independent full-width Z3 proofs at 8/16/32/64 bits. Nearby
 parity changes and exact/one-short work plus short storage check refusal and
 cumulative accounting. Real worker and CLI source tests also execute degree-64
 and degree-128 mixed pairs through all six source routes at O0/O2.
+`SymMBALazyPolynomial` checks deferred flat-polynomial construction and the
+streaming Boolean-polynomial reader. Dense carry fixtures retain their exact
+output costs under fixed work ceilings; independent APInt oracles cover
+8–257-bit words, common factors, complemented constants, flat ties and
+exact/short work and storage. Division, mixed-width extension and nested
+right shifts keep their opaque-input boundaries. Native-width common factors
+also require independent full-width Z3 proofs. Fused sum/carry decisions must
+finish both degree-64 carry products at the same benchmark allowance, with
+lower output costs. Exhausting all 65,536 low-byte input pairs for each product
+checks the resulting carries independently of the decision implementation.
+Single- and two-group cofactor partitions also avoid redundant maps and sorts.
+A degree-24 fixture must finish within the shared work budget; exhaustive
+eight-bit supports and independent 8–257-bit arithmetic oracles retain
+remainders with variables outside the reused cofactor's support.
+Shared parity guards and reduced-precision odd squares retain both selector
+branches, including complemented parity, with independent 8–257-bit oracles
+and full-width Z3 checks at 8/16/32/64 bits. Dense public-entry work and cost
+ceilings protect the corresponding reduction in repeated bit-level work.
+Low-word constant views also complete a degree-96 mixed masked product at
+native widths; the independent oracle retains its full arithmetic wraparound.
+Partial blocks also admit proved pairs from a smaller trial period. A degree-32
+mixed product must finish below 45,000 work units with cost at most 27; nearby
+factor counts, complemented parity and short budgets retain exact values.
+The real worker and both CLI source projections execute that product at C O0/O2.
+The degree-47 mixed product also exercises operand-pool growth during recursive
+signature construction; run its regression with AddressSanitizer to detect stale
+operand views, and retain the independent full-width value oracle.
 `SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
 normalized products, nested additions, multi-input XOR carries and changed
 parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor
@@ -1488,6 +1520,16 @@ rows while refreshing or navigating, then checks that the first-content signal
 waits for current rows and resets after clearing the input. Record a real
 workbench run after changing the report producer; worker replies and loaded
 prefetch rows do not independently establish painted instruction coverage.
+`initialNavigationOverviewDoesNotWaitForRefreshDebounce` checks that opening
+admits the initial address-map request in the same event turn, before the
+refresh debounce, and publishes the returned map for listing navigation.
+The query service's background-snapshot cases cover publication after open
+subscribers, cache reuse, correlation/context rejection, cancellation, and
+subscriber retirement/destruction. `replySnapshotsRejectOlderHeartbeatsInTheSameProject`
+checks publication ordering independently of opaque listing generations.
+`NeverDWorkerTransport` checks reply/heartbeat sequence agreement and the
+overview's generation against its executor snapshot. Keep real GUI startup
+comparisons separate from these protocol and controller checks.
 
 ## Configure a test build
 
@@ -1921,10 +1963,15 @@ reference selection. These cases also run in the native Windows/macOS checks;
 
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
 its dock button and the tab context menu in both themes.
-`NeverDGuiDocking` checks the floating caption with both native-caption settings.
+`NeverDGuiDocking` checks the drawn floating caption with both native-caption
+preferences for the other windows, including visible minimize and maximize
+controls.
 Its native `dragIntoWorkbench` cases press and drag the title bar or tab, verify
 the drop preview, and release into a tab group or horizontal/vertical split.
-They also release away from the indicators to verify cancellation. Run these
+They cover separate, overlapping and maximized floating windows, and release
+away from the indicators to verify cancellation and subsequent mouse input.
+`floatingWindowStates` clicks the drawn maximize/restore and minimize buttons,
+then checks full screen and restoring on every native platform. Run these
 in both themes with a window manager and `xdotool` for native X11 input (Xvfb
 alone has no window stacking list):
 
@@ -1943,10 +1990,16 @@ python tools/neverd-gui/tests/run_wayland_docking.py --scale 1.5 \
 
 The Wayland runner requires GNOME Shell and creates a private headless desktop
 and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
-mouse events cannot authorize Wayland drag-and-drop. It also checks moving the
-floating window with its title icon and resizing its edges. No input is sent
+mouse events cannot authorize Wayland drag-and-drop. `customFloatingMoveAndResize`
+checks moving the floating window through its caption icon and resizing its
+drawn edges. The caption text and tab start docking drags; on Wayland the icon
+starts the compositor's desktop move. No system caption is added.
+While a whole floating window is dragged, its native surface is minimized so
+it cannot obscure the target. Cancelled drags must restore its native position,
+size and window state, and accept another mouse click. No input is sent
 to the existing desktop. `NEVERD_SHORTCUT_CAPTURES` saves floating-window and
-drop-preview captures. The desktop CI runs native drag cases on X11, Windows
+drop-preview captures, including the actual compositor desktop on Wayland.
+The desktop CI runs native drag cases on X11, Windows
 and macOS; offscreen runs skip gestures requiring native windows.
 
 `closedFloatingDocksReopenInWorkbench` closes floating panes through their
@@ -4899,6 +4952,12 @@ Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
 
+`SymMBALinearAdmission` checks rejection of dense corner measurements only
+when every linear candidate consumer is excluded. It covers exact group and
+conjunction limits, retained small residual synthesis, hidden subtraction
+nodes, exact/short work and table storage, all Boolean corners and independent
+8–257-bit arithmetic oracles. Rejection witnesses never establish equivalence.
+
 `SymMBAMinimumTests` checks proved binary-leaf minima with only traversal work,
 exhausts cheaper functions at small widths, and covers wide words, resource
 refusals and related or opaque inputs that still require full simplification.
@@ -6012,6 +6071,8 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 `NeverDPEHeaderMappingTests` covers PE32/PE32+ on x86, x64, ARM32 and AArch64, full/restricted loading, long DOS stubs and zero-VirtualSize sections. Negative cases cover truncated or wrapping headers, shared pages, raw aliases, malformed imports, unterminated lookup arrays, header-targeting IAT/relocation/cookie writes, overwritten loader metadata, missing or partial cookie fixups, unsupported initialization protocols and bounded-work exhaustion. ImageBase remains address-bearing while adjacent scalar bytes stay readable. `PEFixedImageTest.HeaderMappingMustMatchTheCurrentRawSnapshot` rejects missing, stale or changed header bytes/permissions, and `RawArchitectureReceiptCompatibility` retains explicit v5 snapshot goldens without changing raw evidence/exit identities. `NativePointerRelocationBoundary.PEHeaderImageBaseRetainsItsMirroredStorageIdentity` verifies and cross-compiles all four target modules; on Linux x64 it executes only authored accessors at O0/O2 and compares the complete mirrored header with the original bytes, except the reconstructed self address.
 
+`PEHeaderMapping.InventoryRejectsMissingDuplicateOrChangedHeaderIdentity` covers missing, duplicate, misplaced and mismatched segment/section inventories plus altered header bytes, flags and metadata. The same inventory gate accepts layouts whose analysis loader intentionally omits the header. With emulation enabled, `WindowsProcessImage.KeepsOneOriginalHeaderRegionBesideRealSections` checks x64/AArch64 execution admission and `DriverImage.MapsVirtualZeroFillAndOriginalPermissions` checks driver admission: both retain exactly one original-byte header region alongside the real sections.
+
 `TerminalImportSpecialization.*` checks physical external-call target ordering,
 one stack push and the original return address with an independent scalar
 oracle, including an aliasing state used solely to test expansion semantics.
@@ -6183,6 +6244,11 @@ annotations. It also checks a function that has both a saved register and a
 return-address read. Run it with `NeverDMedStackAlignmentTests`,
 `NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
 `NeverDPipelineOutcomeTests` after changing source stack-access analysis.
+`PipelineSourceStackAccesses` checks source, LLVM source projection, machine
+lift, patch and analysis requests on ARM32 and x64, including a restore the
+body consumes. The Mach-O ARM/Thumb five-input MBA source tests execute both
+C routes at O0/O2 after wide-return recovery reconverts the caller; its saved
+R8 must not become an unknown-register trap.
 
 `MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
 checks four architectures and three formats in both query orders. Accepted and

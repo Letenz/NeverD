@@ -16,13 +16,13 @@
 #include "neverd/ir/low/NdOpEmulator.h"
 
 #include "neverd/Limits.h"
-#include "neverd/ir/X87Constant.h"
-#include "neverd/ir/X87Context.h"
-#include "neverd/ir/X87GuardedValue.h"
-#include "neverd/ir/X87Stack.h"
+#include "neverd/ir/X86/X87Constant.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/X86/X87GuardedValue.h"
+#include "neverd/ir/X86/X87Stack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 #include <array>
@@ -643,7 +643,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
                                 SamplesStatus)                                 \
   if (Id == Intrinsic::ID)                                                     \
     return false;
-#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+#include "neverd/ir/intrinsics/X86/X87ValueInstructions.def"
       if (Id == Intrinsic::X87Fprem || Id == Intrinsic::X87Fprem1 ||
           Id == Intrinsic::X87ReadStatus || Id == Intrinsic::X87Fninit ||
           Id == Intrinsic::X87Fnclex || Id == Intrinsic::X87Wait ||

@@ -11,7 +11,7 @@
 #include "neverd/emulation/GuestMemory.h"
 #include "neverd/emulation/Registers.h"
 #include "neverd/emulation/ResourceEvent.h"
-#include "neverd/emulation/X64BranchModel.h"
+#include "neverd/emulation/arch/x86_64/X64BranchModel.h"
 
 #include <array>
 #include <functional>

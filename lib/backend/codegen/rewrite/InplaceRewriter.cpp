@@ -15,7 +15,7 @@
 #include "neverd/backend/codegen/BinaryUtils.h"
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
 #include "neverd/backend/codegen/COFF/COFFPatch.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/support/TargetCodegenInfo.h"
 

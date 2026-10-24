@@ -109,8 +109,8 @@ def main():
         name: sha256(source_root / name) for name in (
             "unittests/lift/core/X87ArithmeticReplay.cpp",
             "unittests/lift/core/X87OriginalReplay.c",
-            "include/neverd/ir/X87Binary80.h", "include/neverd/ir/X87Control.h",
-            "include/neverd/ir/low/X87Arithmetic.h", "lib/ir/low/X87Arithmetic.cpp",
+            "include/neverd/ir/X86/X87Binary80.h", "include/neverd/ir/X86/X87Control.h",
+            "include/neverd/ir/low/X86/X87Arithmetic.h", "lib/ir/low/X86/X87Arithmetic.cpp",
             "scripts/check_x87_arithmetic_replay.py",
             "scripts/check_x87_native_regression.py",
         )

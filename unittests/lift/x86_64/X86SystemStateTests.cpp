@@ -11,11 +11,11 @@
 #include "X86SystemStateFixtures.h"
 #include "gtest/gtest.h"
 
-#include "neverd/backend/llvm/X86SystemStateAsm.h"
+#include "neverd/backend/llvm/X86/X86SystemStateAsm.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/NdOpEmulator.h"
-#include "neverd/lift/X86Lifter.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 #include <cstdint>

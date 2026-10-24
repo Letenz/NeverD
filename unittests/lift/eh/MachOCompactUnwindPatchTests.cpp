@@ -12,7 +12,7 @@
 #include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
 #include "neverd/backend/codegen/MachO/MachOPatch.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/MachO/CompactUnwind.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"

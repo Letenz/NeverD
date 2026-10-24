@@ -9,9 +9,9 @@
 
 #include "X86FPStateAccuracyFixture.h"
 
-#include "neverd/ir/X87BCD.h"
-#include "neverd/ir/X87Context.h"
-#include "neverd/ir/high/X87ContextShape.h"
+#include "neverd/ir/X86/X87BCD.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/high/X86/X87ContextShape.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 

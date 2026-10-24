@@ -1,7 +1,7 @@
 add_neverd_component_library(NeverDIRMed
-  AArch64SVEState.cpp
-  PortableX87Function.cpp
-  PortableX87Validation.cpp
+  AArch64/AArch64SVEState.cpp
+  X86/PortableX87Function.cpp
+  X86/PortableX87Validation.cpp
   MedLibraryRecognition.cpp
   MedComLibraryRecognition.cpp
   MedDispatchSlots.cpp
@@ -37,43 +37,43 @@ add_neverd_component_library(NeverDIRMed
   X86/SEHFrame.cpp
   X86/SEHSourceRoots.cpp
   abi/MedABIPass.cpp
-  abi/MedABIPassI386.cpp
+  abi/X86/MedABIPassI386.cpp
   abi/MedABIPassSupport.cpp
-  abi/MedABIPassWin64.cpp
+  abi/X86/MedABIPassWin64.cpp
   abi/MedCallConvention.cpp
-  abi/MedCallConventionAAPCS32.cpp
-  abi/MedCallConventionAAPCS64.cpp
-  abi/MedCallConventionDarwinAArch64.cpp
-  abi/MedCallConventionI386.cpp
-  abi/MedCallConventionSysV.cpp
-  abi/MedCallConventionWin64.cpp
-  abi/MedCallConventionWindowsAArch64.cpp
+  abi/ARM/MedCallConventionAAPCS32.cpp
+  abi/AArch64/MedCallConventionAAPCS64.cpp
+  abi/AArch64/MedCallConventionDarwinAArch64.cpp
+  abi/X86/MedCallConventionI386.cpp
+  abi/X86/MedCallConventionSysV.cpp
+  abi/X86/MedCallConventionWin64.cpp
+  abi/AArch64/MedCallConventionWindowsAArch64.cpp
   abi/MedCallLeftovers.cpp
   abi/MedCallingConv.cpp
   abi/MedCallingConvFP.cpp
-  abi/MedCallingConvX86.cpp
-  abi/MedSmcccConvention.cpp
+  abi/X86/MedCallingConvX86.cpp
+  abi/ARM/MedSmcccConvention.cpp
   abi/MedSyscallConvention.cpp
   abi/MedSyscallConventionLinux.cpp
   abi/MedVariadic.cpp
-  abi/MedVariadicAArch64.cpp
-  abi/MedVariadicARM.cpp
-  abi/MedVariadicDarwin.cpp
-  abi/MedVariadicX86.cpp
+  abi/AArch64/MedVariadicAArch64.cpp
+  abi/ARM/MedVariadicARM.cpp
+  abi/AArch64/MedVariadicDarwin.cpp
+  abi/X86/MedVariadicX86.cpp
   flags/MedFlags.cpp
-  flags/MedFlagsARM.cpp
-  flags/MedFlagsX86.cpp
+  flags/ARM/MedFlagsARM.cpp
+  flags/X86/MedFlagsX86.cpp
   lower/LowToMed.cpp
   lower/LowToMedSourceCalls.cpp
-  lower/LowToMedARM.cpp
+  lower/ARM/LowToMedARM.cpp
   lower/LowToMedCallReturnFP.cpp
   lower/LowToMedCallReturnStruct.cpp
   lower/LowToMedCallReturnWideInt.cpp
-  lower/LowToMedCallReturnX87.cpp
+  lower/X86/LowToMedCallReturnX87.cpp
   lower/LowToMedStack.cpp
   lower/LowToMedSubReg.cpp
-  lower/LowToMedX86.cpp
-  lower/LowToMedX86CrossBlock.cpp
+  lower/X86/LowToMedX86.cpp
+  lower/X86/LowToMedX86CrossBlock.cpp
   lower/LowToMedMachineFlags.cpp
   pass/MedCFGSimplify.cpp
   pass/MedConstantPropagation.cpp

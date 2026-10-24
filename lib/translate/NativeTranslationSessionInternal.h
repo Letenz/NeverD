@@ -4,8 +4,8 @@
 #define NEVERD_LIB_TRANSLATE_NATIVETRANSLATIONSESSIONINTERNAL_H
 
 #include "neverd/translate/RuntimeGuestState.h"
-#include "neverd/translate/RuntimeX87GuestState.h"
 #include "neverd/translate/TranslationObjectRequest.h"
+#include "neverd/translate/X86/RuntimeX87GuestState.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/Error.h"

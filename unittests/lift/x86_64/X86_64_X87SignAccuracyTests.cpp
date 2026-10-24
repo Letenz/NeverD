@@ -9,8 +9,8 @@
 
 #include "X86FPStateAccuracyFixture.h"
 
-#include "neverd/ir/X87Context.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ScopeExit.h"
