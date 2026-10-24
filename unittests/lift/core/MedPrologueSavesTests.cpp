@@ -13,6 +13,7 @@
 #include "neverd/lift/X86/X86Regs.h"
 
 #include <initializer_list>
+#include <limits>
 #include <utility>
 
 namespace {
@@ -361,6 +362,25 @@ TEST_P(MedPrologueSaves, AnArgumentSpillIsNoSave) {
   Func.Blocks[0].Ops[4] = op(NdOp::STORE, none(), {sp(1), rcx(0)});
   markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
+}
+
+TEST_P(MedPrologueSaves, OutOfFrameExtentsAreNotPrivateStorage) {
+  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF})
+    for (int64_t Offset :
+         {std::numeric_limits<int64_t>::max(),
+          std::numeric_limits<int64_t>::max() - 7,
+          std::numeric_limits<int64_t>::max() - 8,
+          std::numeric_limits<int64_t>::min(), int64_t{-9}, int64_t{0}}) {
+      SCOPED_TRACE(testing::Message() << unsigned(Format) << ':' << Offset);
+      MedFunc Func =
+          pushedRbx(Format == BinaryFormat::COFF ? CallingConv::Win64
+                                                 : CallingConv::SysV_AMD64);
+      Func.Blocks[0].Ops[3] =
+          op(NdOp::INT_ADD, sp(1),
+             {sp(0), MedVar::makeConst(uint64_t(Offset), 8)});
+      markStackAccesses(Func, Arch::X64, Format);
+      EXPECT_FALSE(save(Func).PrologueSave);
+    }
 }
 
 /// `mov [rsp+8], rbx; …; mov rbx, [rsp+8]; ret`: MSVC saves rbx in the home

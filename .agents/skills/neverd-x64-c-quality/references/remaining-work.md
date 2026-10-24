@@ -25,6 +25,8 @@ restores require a register overwrite before a later call, or a normal exit;
 ABI-preserved/result registers, PHIs and implicit clobber readers keep their
 values. This bounded shared proof removes avoidable HighC/LLVMC traps but does
 not recover escaping VM state or authorize a dynamic code-address fallback.
+Both spill proofs share a checked private-frame extent predicate: extreme
+positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by
 callee-read summaries on x64 COFF, ELF and Mach-O. Authenticated fixed scalar
 stack declarations now bind their exact-width operands before SSA, using shared

@@ -12282,6 +12282,9 @@ counter. Flags execution cases explicitly skip on non-x64 hosts. This does not
 qualify native Windows or Darwin execution. All scratch
 proofs share the existing per-function work budget; opaque calls, unknown memory
 accesses, partial overwrites and escaping addresses remain barriers.
+`MedPrologueSaves.OutOfFrameExtentsAreNotPrivateStorage` checks both source
+entry points at signed offset limits and across the private frame and return
+slot boundaries. Extents must fit before either proof computes an end offset.
 
 The threaded arm64e loader validates unique segment ownership and rejects roots
 at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams

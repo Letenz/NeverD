@@ -102,6 +102,23 @@ struct FrameAccess {
   }
 };
 
+/// Validate the start and remaining space before computing an end offset.
+/// An extreme positive offset must not wrap into the private frame or a home
+/// slot. A zero-width access cannot establish private storage either.
+bool isPrivateFrameAccess(const MedFunc &Func,
+                          const IntegerArgumentLayout &Layout, int64_t Offset,
+                          uint16_t Bytes) {
+  if (!Bytes)
+    return false;
+  if (Func.FrameSize > 0 && Offset >= -Func.FrameSize && Offset < 0 &&
+      Bytes <= -Offset)
+    return true;
+  const int64_t HomeBegin = Layout.EntryStackBase - Layout.CallStackBase;
+  return Layout.CallStackBase && Offset >= HomeBegin &&
+         Offset < Layout.EntryStackBase &&
+         Bytes <= Layout.EntryStackBase - Offset;
+}
+
 /// Every plain load and store of \p Func whose address resolves against the
 /// entry stack pointer, all by one proof.
 void frameAccessesOf(MedFunc &Func, Arch Architecture, BinaryFormat Format,
@@ -144,7 +161,6 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
   // return address: MSVC saves nonvolatile registers there.
   const IntegerArgumentLayout Layout =
       TRI.integerArgumentLayout(Convention == BinaryFormat::COFF);
-  const int64_t HomeBegin = Layout.EntryStackBase - Layout.CallStackBase;
 
   frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
 
@@ -156,12 +172,9 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
         !(TRI.isCallPreserved(Saved.RegOff, Saved.Size, Convention) ||
           TRI.isFramePointer(Saved.RegOff) || TRI.isLinkRegister(Saved.RegOff)))
       continue;
-    const int64_t End = Save.Offset + Saved.Size;
-    const bool OwnFrame =
-        Func.FrameSize > 0 && Save.Offset >= -Func.FrameSize && End <= 0;
-    const bool Home = Save.Offset >= HomeBegin && End <= Layout.EntryStackBase;
-    if (!OwnFrame && !Home)
+    if (!isPrivateFrameAccess(Func, Layout, Save.Offset, Saved.Size))
       continue;
+    const int64_t End = Save.Offset + Saved.Size;
     // A later store into the same bytes makes them storage the body uses.
     if (llvm::any_of(Stores, [&](const FrameAccess &Other) {
           return Other.Op != Save.Op && Other.overlaps(Save.Offset, End);
@@ -298,13 +311,8 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
     return;
   const auto &TRI = getTargetRegInfo(Architecture);
   const auto Layout = TRI.integerArgumentLayout(Format);
-  const int64_t HomeBegin = Layout.EntryStackBase - Layout.CallStackBase;
   const auto Private = [&](int64_t At, uint16_t Bytes) {
-    return Bytes && ((Func.FrameSize > 0 && At >= -Func.FrameSize && At < 0 &&
-                      At + Bytes <= 0) ||
-                     (Layout.CallStackBase && At >= HomeBegin &&
-                      At < Layout.EntryStackBase &&
-                      Bytes <= Layout.EntryStackBase - At));
+    return isPrivateFrameAccess(Func, Layout, At, Bytes);
   };
   std::map<const MedOp *, const FrameAccess *> Accesses;
   for (const FrameAccess &Access : Loads)
