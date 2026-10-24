@@ -3210,6 +3210,15 @@ std::string LLVMCWriter::memberAsAccessed(const llvm::LoadInst &Load,
 std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  if (auto Flag = DeferredUnknownFlags.find(V);
+      Flag != DeferredUnknownFlags.end()) {
+    if (ReadingDeferredPayload)
+      return getName(V);
+    return "(" + Flag->second + " ? " + getName(V) +
+           " : (__builtin_trap(), 0 /* unknown machine state */))";
+  }
+  if (llvm_source_unknown::isValue(V))
+    return "(__builtin_trap(), 0 /* unknown machine state */)";
   // A parameter the signature types as a pointer is the integer the code
   // computes with.
   if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(V);
@@ -3240,8 +3249,6 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     if (auto It = SelectUseText.find(LI); It != SelectUseText.end())
       return It->second;
   }
-  if (llvm_source_unknown::isValue(V))
-    return "(__builtin_trap(), 0 /* unknown machine state */)";
   if (isCallClobberValue(V))
     return "0 /* unknown */";
   if (llvm::isa<llvm::FreezeInst>(V))

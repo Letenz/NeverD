@@ -558,6 +558,286 @@ TEST(CallExitRegisters, SourceUnknownMarkersDoNotClaimNamedFunctions) {
       Source + "\nint main(void) { return legitimate_name() != 17; }\n");
 }
 
+TEST(CallExitRegisters, UnknownPhiInputsFailOnlyWhenSelected) {
+  for (bool Optimize : {false, true})
+    for (bool LLVM : {false, true}) {
+      if (!LLVM && Optimize)
+        continue;
+      SCOPED_TRACE(LLVM);
+      SCOPED_TRACE(Optimize);
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      if (LLVM) {
+        llvm::LLVMContext Context;
+        llvm::Module Module("deferred-phi", Context);
+        Module.setDataLayout("e-p:64:64");
+        auto *Word = llvm::Type::getInt32Ty(Context);
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Word, {Word}, false),
+            llvm::GlobalValue::ExternalLinkage, "deferred_scan", Module);
+        auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+        auto *Loop = llvm::BasicBlock::Create(Context, "loop", Function);
+        auto *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
+        llvm::IRBuilder<> Builder(Entry);
+        auto *Unknown = llvm_source_unknown::create(Builder, Word);
+        Builder.CreateBr(Loop);
+        Builder.SetInsertPoint(Loop);
+        auto *Counter = Builder.CreatePHI(Word, 2, "counter");
+        auto *Old = Builder.CreatePHI(Word, 2, "old");
+        Counter->addIncoming(Function->getArg(0), Entry);
+        Old->addIncoming(Unknown, Entry);
+        auto *Zero = Builder.CreateICmpEQ(Counter, Builder.getInt32(0));
+        auto *Value = Builder.CreateSelect(Zero, Old, Counter, "index");
+        auto *Next = Builder.CreateSub(Counter, Builder.getInt32(1));
+        Counter->addIncoming(Next, Loop);
+        Old->addIncoming(Value, Loop);
+        Builder.CreateCondBr(Zero, Exit, Loop);
+        Builder.SetInsertPoint(Exit);
+        Builder.CreateRet(Value);
+        if (Optimize)
+          Pipeline::optimizeModule(Module);
+        ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+        ASSERT_TRUE(LLVMCEmitter().emit(Module, Output));
+      } else {
+        HighFunc Function;
+        Function.Name = "deferred_scan";
+        Function.ReturnType = NdType::makeInt(4, false);
+        Function.Params.push_back({"arg0", NdType::makeInt(4, false)});
+        auto Variable = [](int Id) {
+          MedVar Value;
+          Value.Kind = MedVar::Temp;
+          Value.Id = Id;
+          Value.Size = 4;
+          Value.TheArch = Arch::X64;
+          return Value;
+        };
+        auto Assign = [](MedVar Dst, ExprPtr Value, bool Phi = false) {
+          HighStmt Statement;
+          Statement.Kind = StmtKind::Assign;
+          Statement.Dst = HighExpr::makeVar(Dst);
+          Statement.Val = std::move(Value);
+          Statement.IsPhiCopy = Phi;
+          return Statement;
+        };
+        MedVar Parameter = Variable(0);
+        Parameter.Kind = MedVar::Param;
+        const MedVar Counter = Variable(1), Old = Variable(2),
+                     Value = Variable(3);
+        auto Zero =
+            HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Counter),
+                                HighExpr::makeConst(0, 4));
+        Function.Body = {Assign(Counter, HighExpr::makeVar(Parameter), true),
+                         Assign(Old, HighExpr::makeUndef(4), true)};
+        HighStmt Loop;
+        Loop.Kind = StmtKind::While;
+        Loop.Cond = HighExpr::makeConst(1, 1);
+        auto Select = std::make_shared<HighExpr>();
+        Select->Kind = ExprKind::BinOp;
+        Select->Op = NdOp::SELECT;
+        Select->Type = NdType::makeInt(4, false);
+        Select->Operands = {Zero, HighExpr::makeVar(Old),
+                            HighExpr::makeVar(Counter)};
+        Loop.Body.push_back(Assign(Value, Select));
+        HighStmt Exit;
+        Exit.Kind = StmtKind::IfElse;
+        Exit.Cond = Zero;
+        HighStmt Return;
+        Return.Kind = StmtKind::Return;
+        Return.RetVal = HighExpr::makeVar(Value);
+        Exit.Body = {Return};
+        Loop.Body.push_back(Exit);
+        Loop.Body.push_back(Assign(
+            Counter,
+            HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(Counter),
+                                HighExpr::makeConst(1, 4)),
+            true));
+        Loop.Body.push_back(Assign(Old, HighExpr::makeVar(Value), true));
+        Function.Body.push_back(Loop);
+        ASSERT_TRUE(HighCEmitter().emit({Function}, Output));
+      }
+      const std::string Guard = R"(
+static unsigned unavailable_count;
+static void observe_unavailable(void) { ++unavailable_count; }
+#define __builtin_trap() observe_unavailable()
+)";
+      const std::string Oracle = R"(
+int main(void) {
+  if (deferred_scan(4) != 1 || unavailable_count != 0) return 1;
+  if (deferred_scan(1) != 1 || unavailable_count != 0) return 2;
+  if (deferred_scan(0) != 0 || unavailable_count != 1) return 3;
+  return 0;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Guard + Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+}
+
+TEST(CallExitRegisters, BitScanLoopsDeferClobberedDestinationReads) {
+  for (bool Forward : {false, true})
+    for (bool Initialized : {false, true})
+      for (bool WrapResult : {false, true}) {
+        SCOPED_TRACE(Forward);
+        SCOPED_TRACE(Initialized);
+        SCOPED_TRACE(WrapResult);
+        // Keep the source in EBX across rand(), which leaves ECX unavailable.
+        // Repeated BSF/BSR removes one set bit at a time. The zero-source exit
+        // observes the preserved destination; a nonempty input defines it
+        // first.
+        std::vector<uint8_t> Code = {0x53, 0x48, 0x83, 0xEC, 0x20, 0x89, 0xCB};
+        const auto Call = throughSlot(Text + Code.size(), slot(0));
+        Code.insert(Code.end(), Call.begin(), Call.end());
+        if (Initialized)
+          Code.insert(Code.end(), {0xB9, 0x10, 0x32, 0x54, 0x76});
+        Code.insert(Code.end(),
+                    {0x0F, static_cast<uint8_t>(Forward ? 0xBC : 0xBD), 0xCB,
+                     0x74, 0x0B, 0xB8, 1, 0, 0, 0, 0xD3, 0xE0, 0x31, 0xC3, 0xEB,
+                     0xF0, 0x89, 0xC8});
+        // The folded zero-input return must retain unknown observations even
+        // inside a scalar expression, not only as a bare return value.
+        if (WrapResult)
+          Code.insert(Code.end(), {0x83, 0xF0, 0x01}); // xor eax,1
+        Code.insert(Code.end(), {0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3});
+        auto Image = makeImage(Code, {{Text, "scan_bits"}}, {"rand"});
+        ASSERT_TRUE(Image.recordImportStorageSlot(
+            Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
+        for (bool LLVM : {false, true})
+          for (bool NoOpt : {false, true}) {
+            SCOPED_TRACE(LLVM);
+            SCOPED_TRACE(NoOpt);
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.OnlyFunctionEntries = {Text};
+            Options.LiftMode = LLVM;
+            Options.SourceProjection = true;
+            Options.NoOpt = NoOpt;
+            auto Result = Pipeline().run(Image, Context, Options);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            std::string Source;
+            llvm::raw_string_ostream Output(Source);
+            CEmitterOptions COptions;
+            COptions.TheArch = Image.Arch;
+            COptions.Format = Image.Format;
+            COptions.Image = &Image;
+            if (LLVM) {
+              ASSERT_TRUE(Result.LlvmModule);
+              ASSERT_FALSE(
+                  llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+              ASSERT_TRUE(
+                  LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+            } else
+              ASSERT_TRUE(
+                  HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+            const std::string Guard = R"(
+static unsigned unavailable_count;
+static void observe_unavailable(void) { ++unavailable_count; }
+#define __builtin_trap() observe_unavailable()
+)";
+            const std::string Oracle = R"(
+int main(void) {
+  const uint32_t result_mask = )" + std::string(WrapResult ? "1" : "0") +
+                                       R"(;
+  for (unsigned bit = 0; bit < 32; ++bit)
+    if (scan_bits((uint32_t)1 << bit) != (bit ^ result_mask) || unavailable_count) return 1;
+  if (scan_bits(0x20000081u) != ()" + std::string(Forward ? "29" : "0") +
+                                       R"( ^ result_mask)
+      || unavailable_count) return 2;
+  if (scan_bits(0) != ()" + std::string(Initialized ? "0x76543210u" : "0") +
+                                       R"( ^ result_mask)
+      || unavailable_count != )" + std::string(Initialized ? "0" : "1") +
+                                       R"()
+    return 3;
+  return 0;
+}
+)";
+            for (llvm::StringRef Level : {"-O0", "-O2"})
+              source_call_execution_test::compileAndRun(
+                  Guard + Source + Oracle,
+                  {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+          }
+      }
+}
+
+TEST(CallExitRegisters, DeferredPhiCopiesPreserveParallelEdgesAndWidths) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("deferred-phi-swaps", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Word = llvm::Type::getInt32Ty(Context);
+  auto *Byte = llvm::Type::getInt8Ty(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Word, {Word, Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "swap_unknown", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  auto *Loop = llvm::BasicBlock::Create(Context, "loop", Function);
+  auto *Step = llvm::BasicBlock::Create(Context, "step", Function);
+  auto *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
+  auto *Read = llvm::BasicBlock::Create(Context, "read", Function);
+  auto *Skip = llvm::BasicBlock::Create(Context, "skip", Function);
+  llvm::IRBuilder<> Builder(Entry);
+  auto *Unknown = llvm_source_unknown::create(Builder, Byte);
+  auto *UnusedWide = Builder.CreateZExt(Unknown, Word);
+  Builder.CreateBr(Loop);
+  Builder.SetInsertPoint(Loop);
+  auto *Counter = Builder.CreatePHI(Word, 2, "counter");
+  auto *Left = Builder.CreatePHI(Byte, 2, "left");
+  auto *Right = Builder.CreatePHI(Byte, 2, "right");
+  auto *Unused = Builder.CreatePHI(Word, 2, "unused");
+  Counter->addIncoming(Function->getArg(0), Entry);
+  Left->addIncoming(Unknown, Entry);
+  Right->addIncoming(Builder.getInt8(0xF2), Entry);
+  Unused->addIncoming(UnusedWide, Entry);
+  Builder.CreateCondBr(Builder.CreateICmpEQ(Counter, Builder.getInt32(0)), Exit,
+                       Step);
+  Builder.SetInsertPoint(Step);
+  Counter->addIncoming(Builder.CreateSub(Counter, Builder.getInt32(1)), Step);
+  Left->addIncoming(Right, Step);
+  Right->addIncoming(Left, Step);
+  // A copy-only cycle has no observation or payload declaration.
+  Unused->addIncoming(
+      Builder.CreateZExt(Builder.CreateTrunc(Unused, Byte), Word), Step);
+  Builder.CreateBr(Loop);
+  Builder.SetInsertPoint(Exit);
+  // The casts are transport too. Merely crossing them on the skipped read
+  // must not observe the unavailable byte or lose sign extension.
+  auto *Signed = Builder.CreateSExt(Right, Word);
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Function->getArg(1), Builder.getInt32(0)), Read,
+      Skip);
+  Builder.SetInsertPoint(Read);
+  Builder.CreateRet(Signed);
+  Builder.SetInsertPoint(Skip);
+  Builder.CreateRet(Builder.getInt32(17));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Output));
+  const std::string Guard = R"(
+static unsigned unavailable_count;
+static void observe_unavailable(void) { ++unavailable_count; }
+#define __builtin_trap() observe_unavailable()
+)";
+  const std::string Oracle = R"(
+int main(void) {
+  for (unsigned n = 0; n < 8; ++n) {
+    if (swap_unknown(n, 0) != 17 || unavailable_count) return 1;
+    int32_t result = swap_unknown(n, 1);
+    if (n & 1) {
+      if (result != 0 || unavailable_count != 1) return 2;
+    } else if (result != -14 || unavailable_count) return 3;
+    unavailable_count = 0;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Guard + Source + Oracle,
+        {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+}
+
 TEST(CallExitRegisters, TypedMemberStoresRetainUnknownExpressions) {
   for (const TypeRef &Field :
        {NdType::makeInt(8, false), NdType::makePtr(NdType::makeVoid()),
