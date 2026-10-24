@@ -1995,6 +1995,7 @@
           "Session.strings",
           "Session.symbol_count",
           "Session.symbols",
+          "Session.unwind_frame",
           "Session.version",
           "Session.xrefs_from",
           "Session.xrefs_to",

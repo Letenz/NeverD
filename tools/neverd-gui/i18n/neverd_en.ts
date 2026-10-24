@@ -6405,6 +6405,14 @@ Coverage: %7</translation>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Optimized SSA with parameter views</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6503,6 +6511,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA representation: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Optimized SSA with parameter views</translation>
     </message>
 </context>
 <context>
@@ -7286,6 +7298,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>External input binding; the producers have not been compared.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>param %1: low %2 of %3 bits</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Every use of this parameter reads the same low bits; the original width and native site are retained.</translation>
     </message>
 </context>
 <context>

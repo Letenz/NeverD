@@ -170,7 +170,15 @@ revision checks and cooperative cancellation contract as source inspection.
 (`backward`/`forward`), `control`, `timeout_ms`, `offset`, `limit`, and optional
 `refresh`. Both require `dataflow:true` or a bounded settings object at start.
 The settings object accepts `profile:"med-ssa-v2"` (default) or
-`profile:"llvm-ssa-v1"` (optimized machine integer SSA). LLVM dependency schema 3
+`profile:"llvm-ssa-v1"` (optimized machine integer SSA), or
+`profile:"llvm-parameter-ssa-v1"` (eligible native low-bit parameter views).
+Schema 4 retains source/view bits, argument attributes, optional native site
+and elided truncation counts. Parameter rows consume the shared retained-item
+allowance; public node counts and coverage still count operations. Metadata
+pages expose parameter counts, and each node page exposes only its referenced
+parameter rows with input and parameter positions. Reopen binds all source
+records to fresh extraction, including snapshot-local MedIR indices.
+LLVM dependency schema 3
 adds typed `semantics` and plural `origins:[{address,sequence}]`; operands have an
 eighth exact type/attribute field. Its region profile is `llvm-neighborhoods-v1`.
 Optimized region nodes return `originals` for every distinct native address and

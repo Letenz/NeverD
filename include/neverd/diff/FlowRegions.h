@@ -24,6 +24,20 @@ inline constexpr llvm::StringLiteral LLVMFlowRegionProfile =
 inline constexpr llvm::StringLiteral FlowFragmentProfile = "med-fragments-v1";
 inline constexpr llvm::StringLiteral LLVMFlowFragmentProfile =
     "llvm-fragments-v1";
+inline constexpr llvm::StringLiteral LLVMParameterFlowRegionProfile =
+    "llvm-parameter-neighborhoods-v1";
+inline constexpr llvm::StringLiteral LLVMParameterFlowFragmentProfile =
+    "llvm-parameter-fragments-v1";
+inline bool isFlowFragmentProfile(llvm::StringRef Profile) {
+  return Profile == FlowFragmentProfile || Profile == LLVMFlowFragmentProfile ||
+         Profile == LLVMParameterFlowFragmentProfile;
+}
+inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
+  return Profile == LLVMFlowRegionProfile ||
+         Profile == LLVMFlowFragmentProfile ||
+         Profile == LLVMParameterFlowRegionProfile ||
+         Profile == LLVMParameterFlowFragmentProfile;
+}
 llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
                                   bool Fragments = false);
 struct FlowRegionSettings {

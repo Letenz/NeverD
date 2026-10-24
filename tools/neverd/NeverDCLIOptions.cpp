@@ -1527,11 +1527,12 @@ cl::opt<bool>
     DiffDataFlow("dataflow",
                  cl::desc("Capture bounded native SSA dependency evidence"),
                  cl::sub(DiffCmd));
-cl::opt<std::string>
-    DiffDataFlowProfile("dataflow-profile",
-                        cl::desc("SSA evidence profile: med-ssa-v2 (default) "
-                                 "or llvm-ssa-v1 (optimized)"),
-                        cl::sub(DiffCmd));
+cl::opt<std::string> DiffDataFlowProfile(
+    "dataflow-profile",
+    cl::desc("SSA evidence profile: med-ssa-v2 (default) "
+             "or llvm-ssa-v1 (optimized) or "
+             "llvm-parameter-ssa-v1 (native low-bit views)"),
+    cl::sub(DiffCmd));
 cl::opt<bool>
     DiffFlowFragments("flow-fragments",
                       cl::desc("Match finite SSA fragments with explicit "

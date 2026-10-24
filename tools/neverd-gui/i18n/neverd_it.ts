@@ -6405,6 +6405,14 @@ Copertura: %7</translation>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Trova calcoli comuni anche se le dipendenze cambiano. I produttori degli input esterni restano non verificati. Include le ipotesi sulle regioni SSA.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA ottimizzato con viste dei parametri</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Le viste dei parametri confrontano i 32 bit meno significativi dei parametri nativi a 64 bit idonei. Le larghezze e le origini originali restano consultabili.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6503,6 +6511,10 @@ Seleziona un&apos;operazione per seguirne le dipendenze. Le operazioni sintetich
     <message>
         <source>SSA representation: %1</source>
         <translation>Rappresentazione SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA ottimizzato con viste dei parametri</translation>
     </message>
 </context>
 <context>
@@ -7286,6 +7298,24 @@ Spiegazioni euristiche, comportamento non convalidato.
 %1</source>
         <translation>Corrispondenza degli input esterni; i produttori non sono stati confrontati.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>parametro %1: %2 bit meno significativi su %3</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Primario: %1
+Secondario: %2
+Ogni uso di un parametro proiettato legge gli stessi bit meno significativi. Il comportamento dell’intera funzione resta non verificato.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Ogni uso di questo parametro legge gli stessi bit meno significativi; la larghezza originale e la posizione nativa vengono conservate.</translation>
     </message>
 </context>
 <context>

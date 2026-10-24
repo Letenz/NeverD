@@ -189,8 +189,7 @@ def main():
                        for i in n['inputs']) for n in graph['nodes']), (fmt, side, graph)
     run('fragments-incompatible-abi', [args.neverd, 'diff', '--structural',
         '-a', str(branch_inputs['elf']), '-b', str(branch_inputs['coff']), *fragments, '--json'], (1,))
-    # Keep the unresolved x64 parameter projection and loop attribute cells
-    # observable. No positive correspondence threshold is imposed on these.
+    # Keep legacy profiles and unresolved loop attribute cells observable.
     for arch, triple in (('x64', 'x86_64-unknown-linux-gnu'),
                          ('aarch64', 'aarch64-unknown-linux-gnu')):
         for family in (1, 2):
@@ -198,6 +197,67 @@ def main():
                      [f'--target={triple}', f'-O{level}', '-fno-asynchronous-unwind-tables',
                       f'-DFAMILY={family}'], control) for level in (0, 2)]
             compare(f'control-{arch}-family{family}', *paths, fragments, False)
+    parameter_profile = ['--dataflow-profile=llvm-parameter-ssa-v1']
+    deeper_options = root / 'parameter-deeper-options.json'
+    deeper_options.write_text(json.dumps({'dataflow': {'profile': 'llvm-parameter-ssa-v1',
+                                                       'graph': {'rounds': 16}}}))
+    for fmt, triple in (('elf', 'x86_64-unknown-linux-gnu'),
+                        ('coff', 'x86_64-pc-windows-msvc'),
+                        ('macho', 'x86_64-apple-darwin')):
+        def parameter_input(name, level, definitions=()):
+            return build(f'parameter-{fmt}-{name}', args.clang,
+                         [f'--target={triple}', f'-O{level}',
+                          '-fno-asynchronous-unwind-tables', '-DFAMILY=1',
+                          *definitions], control)
+        a = parameter_input('O0', 0)
+        b = parameter_input('O2', 2)
+        patch = parameter_input('patch', 2, ['-DFINAL_ADD=5u'])
+        branch = parameter_input('branch', 2, ['-DCHANGED_BRANCH'])
+        high = parameter_input('high', 2, ['-DHIGH_INPUT'])
+        report = root / f'parameter-{fmt}.nddiff'
+        document = compare(f'parameter-{fmt}', a, b,
+                           [*parameter_profile, '--save', str(report)])
+        graphs = [document['dataflow'][side]['entries'][0]['graph']
+                  for side in ('primary', 'secondary')]
+        assert all(g['schema_version'] == 4 for g in graphs)
+        assert any(v['source_bits'] == 64 and v['view_bits'] == 32 and
+                   v['elided_truncations'] > 0 for v in graphs[1]['parameter_views'])
+        assert len(graphs[0]['nodes']) == len(graphs[1]['nodes'])
+        assert any(anchor['phi_block_count'] and anchor['node_count'] >= 4 and
+                   min(anchor['primary_origins'], anchor['secondary_origins']) >= 2
+                   for anchor in document['flow_regions']['anchors'])
+        assert compare(f'parameter-{fmt}-reopen', a, b,
+                       ['--reopen', str(report)]) == document
+        changed = compare(f'parameter-{fmt}-patch', a, patch, parameter_profile)
+        assert any('constants' in pair['changes'] for pair in changed['matches'])
+        # The changed final add is not included in a correspondence, while the
+        # genuinely shared prefix remains available for review.
+        patched_graph = changed['dataflow']['secondary']['entries'][0]['graph']
+        final_adds = {i for i, n in enumerate(patched_graph['nodes'])
+                      if n['opcode'] == 'add' and
+                      any(v[0] == 1 and v[3] == '0x5' for v in n['inputs'])}
+        assert final_adds
+        assert all(pair[1] not in final_adds for anchor in changed['flow_regions']['anchors']
+                   for pair in anchor['nodes'])
+        changed_branch = compare(f'parameter-{fmt}-branch', a, branch,
+                                 parameter_profile, False)
+        branch_graph = changed_branch['dataflow']['secondary']['entries'][0]['graph']
+        changed_conditions = {i for i, n in enumerate(branch_graph['nodes'])
+                              if n['opcode'] == 'icmp'}
+        assert changed_conditions
+        assert all(pair[1] not in changed_conditions
+                   for anchor in changed_branch['flow_regions']['anchors']
+                   for pair in anchor['nodes'])
+        assert all(anchor['open_control_frontier'] and anchor['open_data_frontier']
+                   for anchor in changed_branch['flow_regions']['anchors'])
+        deeper = compare(f'parameter-{fmt}-branch-deeper', a, branch,
+                         [*parameter_profile, '--options', str(deeper_options)], False)
+        assert deeper['flow_regions']['anchor_count'] == 0
+        changed_high = compare(f'parameter-{fmt}-high', a, high,
+                               parameter_profile, False)
+        high_graph = changed_high['dataflow']['secondary']['entries'][0]['graph']
+        assert all(v['elided_truncations'] == 0 for v in high_graph['parameter_views'])
+        assert changed_high['flow_regions']['anchor_count'] == 0
     manifest['status'] = 'passed'
     save_manifest()
     print(f"{len(manifest['comparisons'])} compiler/patch fixture comparisons; artifacts: {root}")

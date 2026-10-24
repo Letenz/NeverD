@@ -74,6 +74,33 @@ class ComparisonIntegrationTests(unittest.TestCase):
             abi.CancelProbeCallback(), None,
         ), 1)
 
+    def test_native_parameter_views_use_the_shared_report_abi(self) -> None:
+        from neverd_plugin import abi
+
+        # Owned x64 O2 control fixture; only inspect its bytes.
+        self.binary.write_bytes(bytes.fromhex(
+            "39f7731183f7178d04fd0000000029f883c009eb0b83c7118d04768d0486"
+            "31f831f083c003c3"))
+        left, right = self.session(), self.session()
+        for session in (left, right):
+            self.assertEqual(self.host.call("neverd_session_load", session,
+                                            str(self.binary).encode()), 1)
+        comparison = self.comparison()
+        options = b'{"discover":false,"dataflow":{"profile":"llvm-parameter-ssa-v1"}}'
+        self.assertEqual(self.host.call("neverd_comparison_run", comparison,
+            left, right, options, abi.ComparisonProgressCallback(), None), 1)
+        page = json.loads(self.host.owned_string("neverd_comparison_dataflow_json",
+            comparison, b'{"kind":"nodes","address":"0x1000","limit":200}'))
+        self.assertEqual(page["schema_version"], 4)
+        self.assertEqual(page["projected_parameter_count"], 1)
+        self.assertNotIn("parameter_views", page)
+        self.assertTrue(any(view["source_bits"] == 64 and view["view_bits"] == 32
+                            for node in page["rows"] for view in node["parameter_views"]))
+        saved = self.host.owned_string("neverd_comparison_export_json", comparison)
+        self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                        saved.encode()), 1)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
+
     def test_comparison_progress_transfer_and_owned_reports(self) -> None:
         from neverd_plugin import abi
 

@@ -6369,6 +6369,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>종속성이 변경되어도 공통 계산을 찾습니다. 외부 입력을 생성하는 노드는 검증되지 않은 상태로 남습니다. SSA 영역 가설을 포함합니다.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>매개변수 뷰가 포함된 최적화 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>매개변수 뷰는 조건에 맞는 64비트 네이티브 매개변수의 하위 32비트를 비교합니다. 원래 비트 너비와 출처도 확인할 수 있습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6467,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 표현: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>매개변수 뷰가 포함된 최적화 SSA</translation>
     </message>
 </context>
 <context>
@@ -7250,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>외부 입력 대응 관계입니다. 입력을 생성하는 노드는 비교하지 않았습니다.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>매개변수 %1: %3비트 중 하위 %2비트</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>기본 입력: %1
+보조 입력: %2
+투영된 매개변수는 모든 사용 지점에서 같은 하위 비트를 읽습니다. 함수 전체의 동작은 아직 검증되지 않았습니다.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>이 매개변수는 모든 사용 지점에서 같은 하위 비트를 읽으며, 원래 비트 너비와 네이티브 위치는 유지됩니다.</translation>
     </message>
 </context>
 <context>

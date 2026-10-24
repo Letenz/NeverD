@@ -6369,6 +6369,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>在相依性變更時尋找共用計算。外部輸入的產生節點仍未驗證。包含 SSA 區域假設。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>含參數檢視的最佳化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>參數檢視比較符合條件的 64 位元原生參數的低 32 位元。仍可檢視原始位寬與來源。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6467,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表示：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>含參數檢視的最佳化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7250,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部輸入對應；產生這些輸入的節點尚未比較。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>參數 %1：%3 位元中的低 %2 位元</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>主要輸入：%1
+次要輸入：%2
+投影參數的每次使用皆讀取相同的低位元。整個函式的行為尚未驗證。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>此參數的每次使用皆讀取相同的低位元；原始位寬與原生位置皆已保留。</translation>
     </message>
 </context>
 <context>
