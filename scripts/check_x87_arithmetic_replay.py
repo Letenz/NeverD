@@ -107,8 +107,8 @@ def main():
     source_root = Path(__file__).resolve().parent.parent
     record["source_sha256"] = {
         name: sha256(source_root / name) for name in (
-            "unittests/lift/core/X87ArithmeticReplay.cpp",
-            "unittests/lift/core/X87OriginalReplay.c",
+            "unittests/lift/x86/X87ArithmeticReplay.cpp",
+            "unittests/lift/x86/X87OriginalReplay.c",
             "include/neverd/ir/X86/X87Binary80.h", "include/neverd/ir/X86/X87Control.h",
             "include/neverd/ir/low/X86/X87Arithmetic.h", "lib/ir/low/X86/X87Arithmetic.cpp",
             "scripts/check_x87_arithmetic_replay.py",

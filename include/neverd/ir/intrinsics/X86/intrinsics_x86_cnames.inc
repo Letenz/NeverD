@@ -269,3 +269,14 @@ C(Intrinsic::X86FPMaskCompareMemoryState,
 #include "neverd/ir/intrinsics/X86/X86SystemState.def"
 #undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
+
+#define NEVERD_X86_REP_STATE(Id, Name, ...)                                    \
+  C(Intrinsic::Id, "__builtin_ia32_rep_" Name "_state");
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE
+
+// Bounded leaf state and unresolved decoder markers.
+C(Intrinsic::X86EncluPending, "__neverd_enclu_pending");
+C(Intrinsic::X86GetsecPending, "__neverd_getsec_pending");
+C(Intrinsic::X86EncluBounded, "__neverd_enclu_bounded");
+C(Intrinsic::X86GetsecBounded, "__neverd_getsec_bounded");

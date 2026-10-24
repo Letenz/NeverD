@@ -1546,6 +1546,11 @@ must select `NEVERD_ENABLE_TBB=OFF`.
 Its task arena limits each batch, while nested batches drain on a fresh native
 worker stack. It never links `tbbmalloc` or `tbbmalloc_proxy`.
 
+`SessionCAPITest.EntryPoints*` checks runtime entry kinds and order, repeated
+addresses, absent native entries and the EVM entry at zero. Batched name queries
+must retain export/symbol precedence and equal-rank order, and reread image
+names after symbol edits or new exports.
+
 Performance measurements belong in ignored build directories. Measure Release
 with matching inputs, process allocator and thread count; separate primitive
 throughput from whole-request latency and compare all non-timing output.
@@ -1729,6 +1734,21 @@ illegal-to-valid transition through full, light and native-fast routes, includin
 direct permissive lifter calls. It also runs the existing independent Capstone
 parity sweeps with poisoned reused-buffer validity state. The SDK case requires
 incomplete DIFF evidence and no invented flow/reference facts for the same bytes.
+`AArch64DecodeOccurrence` in that target covers PAC, authenticated loads and
+transfers, scalar/vector CPA, ordinary arithmetic, calls and NOP. It crosses
+all three decode routes with detail/text settings, cold/reused buffers and both
+strictness settings. Complete native detail without text remains usable;
+classification never publishes stale operands. Tests cover failed attempts,
+reset/reinitialization, reconstructed decoder objects, altered records, direct
+missing-detail calls and copied MOVPRFX records with a changed follower.
+Deep snapshots remain usable across decoder replacement; shallow copies expire.
+Refused attempts clear prior undefined-output and preserved-state evidence,
+including real x64 certificates retained across an architecture change.
+Operand queries reject a mismatched requested architecture for both owned
+snapshots and expired borrowed records before reading their detail.
+Raw classifiers and BL targets still work without detail, while operand queries
+and expired records remain conservative. These are decode/lift lifecycle checks,
+not qualification of native PAC/CPA execution or additional ISA families.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw
@@ -2091,10 +2111,10 @@ python tools/neverd-gui/tests/run_wayland_docking.py --scale 1.5 \
 The Wayland runner requires GNOME Shell and creates a private headless desktop
 and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
 mouse events cannot authorize Wayland drag-and-drop. `customFloatingMoveAndResize`
-checks moving the floating window through its caption icon and resizing its
+checks moving the floating window through its blank caption and resizing its
 drawn edges. Unlocking enables caption and tab docking drags; a locked caption
-moves the window on the desktop. On Wayland the icon also starts a compositor
-move while unlocked. No system caption is added.
+moves the window on the desktop. Pane names and icons remain in the tabs;
+the floating caption contains only window controls. No system caption is added.
 While a whole floating window is dragged, its native surface is minimized so
 it cannot obscure the target. Cancelled drags must restore its native position,
 size and window state, and accept another mouse click. No input is sent
@@ -2111,12 +2131,23 @@ dialog; it must terminate without the probe forcing successful process exit.
 
 `codeOpensBesideFloatingDisassembly` checks new, existing and reopened source
 and IR panes beside their floating disassembly. `focusModeGroupsViewsAndRestoresLayout`
-presses F three times to create one floating workspace with assembly on the
-left, code on the right and output across the bottom. It checks both themes,
-docked and floating origins, restoring the previous layout, unchanged data,
-data addresses outside functions, and ordinary command input. Keys enter
-through `QWindow` so forwarding to the focused widget cannot silently reset
-the sequence.
+presses F three times to create one maximized floating workspace with assembly
+on the left, code on the right and output across the bottom. It checks both
+themes, docked and floating origins, restoring the previous layout and window
+state, unchanged data, data addresses outside functions, and ordinary command
+input. Keys enter through `QWindow` so forwarding to the focused widget cannot
+silently reset the sequence.
+`focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
+list, triangle clicks, unchanged analysis geometry, single-click navigation in
+both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
+away do not toggle the sidebar. The normal Functions window keeps its own filter;
+reentering focus mode starts folded in both themes.
+The right edge resizes the sidebar and its function-name column, keeps the
+analysis panes in place, clamps to the workspace, and retains the width when
+folded and reopened. Pointer drags and keyboard resizing exercise this in both
+themes. Closing the focus workspace through its caption or a desktop close
+request restores the same layout as the F sequence, including Output and its
+retained text.
 `focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
 one second apart, interruption by another key or focus change, timeout,
 auto-repeat, ordinary text input, reopening a closed assembly pane, and
@@ -4169,7 +4200,7 @@ GCC/Clang build, `NeverDX87OriginalReplay` executes original instructions. Its
 C-only source checks x87/FXSAVE availability, rejects out-of-profile inputs and
 reports the actual i386 or x64 process mode. It does not need C++ headers or
 LLVM. On Linux x64 with the i386 C runtime installed, build the reference with
-`clang -m32 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c -o
+`clang -m32 -std=c11 -O2 unittests/lift/x86/X87OriginalReplay.c -o
 build-release/X87OriginalReplay32` and pass that path as `--original-driver`.
 This adds i386 numerical observations, not an i386 owned-state executor.
 The recorder retains source/driver copies and checks their hashes before/after
@@ -4178,8 +4209,8 @@ Apple ARM64 with Rosetta already installed, the original driver can be compiled
 separately without LLVM; it reports Rosetta explicitly:
 
 ```sh
-clang -arch x86_64 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c -o build-release/X87OriginalReplay
-python3 scripts/check_x87_arithmetic_replay.py --portable-driver build-release/bin/NeverDX87ArithmeticReplay --original-driver build-release/X87OriginalReplay --output-dir build-release/x87-replay-run1 --portable-build 'configured Release build and pinned LLVM' --original-build 'clang -arch x86_64 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c'
+clang -arch x86_64 -std=c11 -O2 unittests/lift/x86/X87OriginalReplay.c -o build-release/X87OriginalReplay
+python3 scripts/check_x87_arithmetic_replay.py --portable-driver build-release/bin/NeverDX87ArithmeticReplay --original-driver build-release/X87OriginalReplay --output-dir build-release/x87-replay-run1 --portable-build 'configured Release build and pinned LLVM' --original-build 'clang -arch x86_64 -std=c11 -O2 unittests/lift/x86/X87OriginalReplay.c'
 ```
 
 Use a fresh output directory for every observation and record the actual build
@@ -12312,3 +12343,35 @@ ctest --test-dir build-release --build-config Release --output-on-failure \
 
 The format/architecture matrix uses shared image models; it is not native
 execution qualification for every listed architecture or host platform.
+
+
+### Bounded ENCLU/GETSEC state
+
+`NeverDX86BoundedLeafTests` checks both modes, CFG joins/loops/partial writes,
+independent and exception entries, malformed inputs and both source routes.
+It compiles 156 complete pipeline fixtures across ELF, COFF and Mach-O.
+Set `NEVERD_BOUNDED_LEAF_EXPORT_DIR` to export complete-state C/IR/object
+wrappers and pipeline C fixtures for independent qualification:
+
+```sh
+cmake --build build --target NeverDX86BoundedLeafTests
+NEVERD_BOUNDED_LEAF_EXPORT_DIR="$PWD/build/bounded-exports" \
+  build/bin/NeverDX86BoundedLeafTests
+python scripts/verify_x86_bounded_leaf.py \
+  --exports build/bounded-exports \
+  --oracle /path/to/NeverC/tests/verify-sgx-supervisor-completion.py \
+  --route high --compiler clang --bits 64 --report build/bounded-high.json
+```
+
+Use `--route llvm` for LLVM-to-C, `--route ir --llc /path/to/llc` for the
+exported LLVM IR, `--route object` for NeverD's production objects and
+`--route pipeline` to cross-compile the full C fixtures. `--neverc` additionally
+requires native builtin IR without inline asm. `--bits 32` runs the i386
+controlled checks; `--abi win64` tests Windows register preservation without
+executing a Windows binary on Linux. The script needs Capstone, LIEF, Unicorn
+and a NeverC checkout containing the independent raw-opcode signal-context
+fixtures. Linux x64 physical outcomes are recorded separately from controlled
+completions; fault-only observations do not qualify successful enclave/SMX
+execution. New-SDK IR must use the native state intrinsics, while the pinned
+older SDK exercises the owned assembly path. Keep LLVM builds separate from
+NeverD native-profile tests so linked compiler tools do not change mid-run.

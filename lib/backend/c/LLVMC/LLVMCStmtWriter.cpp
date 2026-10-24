@@ -15,7 +15,9 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86/X86AmxState.h"
+#include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86FPStateHelpers.h"
+#include "../render/X86/X86RepState.h"
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
 #include "../render/X86/X86Virtualization.h"
@@ -3875,6 +3877,45 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (Callee->getName().starts_with("llvm.x86.rep.")) {
+    const auto *Instruction = llvm::dyn_cast<llvm::CallInst>(&Call);
+    if (!Instruction)
+      throw std::invalid_argument(
+          "REP native intrinsic requires a direct call");
+    std::vector<std::string> Arguments;
+    for (const auto &Argument : Call.args())
+      Arguments.push_back(valueStr(Argument.get()));
+    const bool ResultLive = valueFeedsPrintedUse(&Call);
+    const auto Code = renderX86RepCall(Opts.TheArch, *Instruction,
+                                       ResultLive ? getName(&Call) : "",
+                                       ResultLive, Arguments);
+    if (!Code)
+      throw std::invalid_argument("invalid REP native intrinsic");
+    emitIndent(Indent);
+    OS << *Code;
+    return true;
+  }
+
+  if ((Callee->getName().starts_with("llvm.x86.enclu.bounded.state") ||
+       Callee->getName().starts_with("llvm.x86.getsec.bounded.state"))) {
+    const auto *Instruction = llvm::dyn_cast<llvm::CallInst>(&Call);
+    if (!Instruction)
+      throw std::invalid_argument(
+          "bounded leaf native intrinsic requires a direct call");
+    std::vector<std::string> Arguments;
+    for (const auto &Argument : Call.args())
+      Arguments.push_back(valueStr(Argument.get()));
+    const bool ResultLive = valueFeedsPrintedUse(&Call);
+    const auto Code = renderX86BoundedLeafCall(Opts.TheArch, *Instruction,
+                                               ResultLive ? getName(&Call) : "",
+                                               ResultLive, Arguments);
+    if (!Code)
+      throw std::invalid_argument("invalid bounded leaf native intrinsic");
+    emitIndent(Indent);
+    OS << *Code;
+    return true;
+  }
+
   if (isX86SgxNativeName(Callee->getName().str())) {
     const auto *Instruction = llvm::dyn_cast<llvm::CallInst>(&Call);
     if (!Instruction)
@@ -4552,6 +4593,19 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   if (ResultLive && InferredVoid)
     ResultLive = isCallResultLive(Analysis, &Call);
 
+  if (llvm::StringRef(AsmStr).starts_with(X86RepAsmMarker)) {
+    std::vector<std::string> Arguments;
+    for (const auto &Argument : Call.args())
+      Arguments.push_back(valueStr(Argument.get()));
+    const auto Code = renderX86RepCall(Opts.TheArch, Call, Name,
+                                       valueFeedsPrintedUse(&Call), Arguments);
+    if (!Code)
+      throw std::invalid_argument("invalid owned REP completion assembly");
+    emitIndent(Indent);
+    OS << *Code;
+    return true;
+  }
+
   if (const auto Divide = classifyX86DivRemAsm(Call)) {
     if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
         (Divide->Bits == 64 && Opts.TheArch != Arch::X64))
@@ -5091,6 +5145,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
                                   typeToCLLVM(Call.getType()))) {
     emitIndent(Indent);
     OS << *Amx;
+    return true;
+  }
+  if (auto BoundedLeaf = renderX86BoundedLeafCall(Opts.TheArch, Call, Name,
+                                                  ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << *BoundedLeaf;
     return true;
   }
   if (auto Sgx =

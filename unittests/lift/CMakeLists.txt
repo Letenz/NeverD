@@ -1,21 +1,21 @@
 add_neverd_unittest(NeverDX87CapabilityTests
-  core/X87CapabilitiesTests.cpp
+  x86/X87CapabilitiesTests.cpp
   LINK_COMPONENTS IRLowValidation)
 
 add_neverd_unittest(NeverDX87ArithmeticTests
-  core/X87ArithmeticTests.cpp
+  x86/X87ArithmeticTests.cpp
   LINK_COMPONENTS IRLowValidation)
 add_neverd_unittest(NeverDX87PortableContextTests
-  core/X87PortableContextTests.cpp
+  x86/X87PortableContextTests.cpp
   LINK_COMPONENTS IRLowValidation)
 add_neverd_unittest(NeverDX87PortableEmulatorTests
-  core/X87PortableEmulatorTests.cpp
+  x86/X87PortableEmulatorTests.cpp
   LINK_COMPONENTS IRLow Lift)
-add_executable(NeverDX87ArithmeticReplay core/X87ArithmeticReplay.cpp)
+add_executable(NeverDX87ArithmeticReplay x86/X87ArithmeticReplay.cpp)
 target_link_libraries(NeverDX87ArithmeticReplay PRIVATE NeverDIRLowValidation)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$" AND
    CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-  add_executable(NeverDX87OriginalReplay core/X87OriginalReplay.c)
+  add_executable(NeverDX87OriginalReplay x86/X87OriginalReplay.c)
   set_target_properties(NeverDX87OriginalReplay PROPERTIES C_STANDARD 11
                         C_STANDARD_REQUIRED ON)
 endif()
@@ -30,7 +30,7 @@ endif()
 
 if(TARGET neverd_shared AND TARGET neverd)
   add_neverd_unittest(NeverDX87CapabilitiesPublicTests
-    core/X87CapabilitiesPublicTests.cpp
+    x86/X87CapabilitiesPublicTests.cpp
     LINK_LIBS neverd_shared)
   target_include_directories(NeverDX87CapabilitiesPublicTests PRIVATE
     ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
@@ -200,7 +200,7 @@ add_neverd_unittest(NeverDLiftTemporaryTests
 )
 
 add_neverd_unittest(NeverDLiftTests
-  core/X64MemoryCallTargetTests.cpp
+  x86_64/X64MemoryCallTargetTests.cpp
   aarch64/AArch64_ArithTests.cpp
   aarch64/AArch64_AtomicTests.cpp
   aarch64/AArch64_BitShiftTests.cpp
@@ -396,7 +396,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCBlocksTests.cpp
   core/ObjCBlockCallHintTests.cpp
   core/HighFrameTemporaryTests.cpp
-  core/HighX86CallSetupTests.cpp
+  x86_32/HighX86CallSetupTests.cpp
   core/HalfFMAHostTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/LowZeroIdiomTests.cpp
@@ -684,6 +684,14 @@ add_neverd_unittest(NeverDX86VirtualizationSourceTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
+add_neverd_unittest(NeverDX86BoundedLeafTests
+  x86/X86BoundedLeafTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86RepStateTests
+  x86_64/X86RepStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
 
 add_neverd_unittest(NeverDX86SystemSideeffectTests
   x86_64/X86_64_SystemSideeffectTests.cpp
@@ -1488,7 +1496,7 @@ target_include_directories(NeverDAAPCS64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
 add_neverd_unittest(NeverDWin64CallContractTests
-  core/Win64CallContractTests.cpp
+  x86_64/Win64CallContractTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
 )
 target_include_directories(NeverDWin64CallContractTests PRIVATE
@@ -1516,7 +1524,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
-  core/HighX86CallSetupTests.cpp
+  x86_32/HighX86CallSetupTests.cpp
   eh/WindowsSEHFallbackTests.cpp
   LINK_COMPONENTS
   BackendC
@@ -1954,6 +1962,7 @@ target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
 )
 
 add_neverd_unittest(NeverDAArch64DecodeValidityTests
+  aarch64/AArch64DecodeOccurrenceTests.cpp
   aarch64/AArch64DecodeValidityTests.cpp
   aarch64/AArch64_NativeDecodeParityTests.cpp
   aarch64/AArch64_NativeDecodeParityControlTests.cpp

@@ -127,6 +127,11 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   }
   if (Id == Intrinsic::X86AMXState && !x86AmxShapeIsValid(x86AmxLowShape(Op)))
     return invalid("AMX architectural bank operation has an invalid shape");
+  if (isX86BoundedLeafIntrinsic(Id) || isX86BoundedLeafPending(Id)) {
+    if (!x86BoundedLeafShapeIsValid(Id, x86BoundedLeafLowShape(Op)))
+      return invalid(X86BoundedLeafUnproven);
+    return llvm::Error::success();
+  }
   if (isX86SgxIntrinsic(Id)) {
     if (!x86SgxShapeIsValid(Id, x86SgxLowShape(Op)))
       return invalid("x86 SGX intrinsic has an invalid completion contract");
@@ -193,6 +198,11 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
         !Op.Inputs[5].isConst() || Op.Inputs[3].Offset > 28 ||
         (Op.Inputs[3].Offset & 3) != 0 || Op.Inputs[5].Offset > 1)
       return invalid("x86 VP4DP intrinsic has an invalid operand/output shape");
+    return llvm::Error::success();
+  }
+  if (isX86RepStateIntrinsic(Id)) {
+    if (!x86RepShapeIsValid(Id, x86RepLowShape(Op)))
+      return invalid("x86 REP intrinsic has an invalid operand/output shape");
     return llvm::Error::success();
   }
   if (!HasExplicitAddressSpace && isX86StringIntrinsic(Id)) {

@@ -13,6 +13,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/X86/X86RegistrationSEHParentExit.h"
@@ -482,6 +483,20 @@ void LowToMedConverter::runDce(MedFunc &Func) {
            Op.MemoryOrdering != NdMemoryOrdering::None ||
            Op.MemoryAddressSpace != NdMemoryAddressSpace::Default;
   };
+  // These bounded leaves never use arithmetic flags to select memory or
+  // control effects. Their explicit old flags affect only the returned flags
+  // on normal completion. Keeping that dependency conditional prevents a dead
+  // flags result from creating an undefined entry flag or source parameter.
+  const auto FlagResult = [](const MedOp &Op) -> const MedVar * {
+    if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+        !Op.Inputs[0].isConst())
+      return nullptr;
+    const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+    if (!isX86BoundedLeafIntrinsic(Id) ||
+        !x86BoundedLeafShapeIsValid(Id, x86BoundedLeafMedShape(Op)))
+      return nullptr;
+    return &Op.IntrinsicOutputs.back();
+  };
   llvm::DenseMap<std::pair<int, int>, llvm::SmallVector<MedOp *, 1>,
                  DCEValueKeyInfo>
       OpDefs;
@@ -492,18 +507,26 @@ void LowToMedConverter::runDce(MedFunc &Func) {
     for (auto &Phi : Blk.Phis)
       if (Phi.Output.Id >= 0)
         PhiDefs[{Phi.Output.Id, Phi.Output.SSAVer}].push_back(&Phi);
-    for (auto &Op : Blk.Ops)
+    for (auto &Op : Blk.Ops) {
       if (Op.Output.Id >= 0)
         OpDefs[{Op.Output.Id, Op.Output.SSAVer}].push_back(&Op);
+      if (const auto *Flags = FlagResult(Op))
+        OpDefs[{Flags->Id, Flags->SSAVer}].push_back(&Op);
+    }
   }
   std::vector<std::pair<int, int>> Worklist(LiveDefs.begin(), LiveDefs.end());
   auto markInputs = [&](const MedOp &Op) {
-    for (uint8_t I = 0; I < Op.NumInputs; ++I)
+    for (uint8_t I = 0; I < Op.NumInputs; ++I) {
+      if (I == X86BoundedLeafFlagOperand)
+        if (const auto *Flags = FlagResult(Op);
+            Flags && !LiveDefs.count({Flags->Id, Flags->SSAVer}))
+          continue;
       if (Op.Inputs[I].Id >= 0) {
         auto Key = std::make_pair(Op.Inputs[I].Id, Op.Inputs[I].SSAVer);
         if (LiveDefs.insert(Key).second)
           Worklist.push_back(Key);
       }
+    }
   };
   for (auto &Blk : Func.Blocks)
     for (auto &Op : Blk.Ops)
@@ -526,6 +549,10 @@ void LowToMedConverter::runDce(MedFunc &Func) {
   }
   for (auto &Blk : Func.Blocks)
     for (auto &Op : Blk.Ops) {
+      if (const auto *Flags = FlagResult(Op);
+          Flags && !LiveDefs.count({Flags->Id, Flags->SSAVer}))
+        Op.Inputs[X86BoundedLeafFlagOperand] = MedVar::makeConst(
+            0, X86ArithmeticFlagsBytes, ConstantAddressProvenance::Scalar);
       const bool OutputLive =
           Op.Output.Id >= 0 && LiveDefs.count({Op.Output.Id, Op.Output.SSAVer});
       if (isEssential(Op) || OutputLive)

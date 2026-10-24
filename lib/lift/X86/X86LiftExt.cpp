@@ -290,8 +290,11 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     bool Repeat = false;
     for (uint8_t Prefix : X86.prefix)
       Repeat |= Prefix == X86_PREFIX_REP || Prefix == X86_PREFIX_REPNE;
-    NdVar Count =
-        Repeat ? NdVar::reg(x86reg::RCX, AddrSz) : NdVar::scalar(1, AddrSz);
+    if (Repeat) {
+      liftRepState(*this, S, X86, Intrinsic::X86RepOutsState, ElemSz);
+      return;
+    }
+    NdVar Count = NdVar::scalar(1, AddrSz);
     NdVar Df = NdVar::reg(x86reg::DF, 1);
     S.emitIntrinsic(Id, NdVar(),
                     {NdVar::reg(x86reg::RSI, AddrSz), Count,
@@ -307,17 +310,17 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     NdVar NewSi = S.makeTemp(AddrSz);
     S.emit(NdOp::INT_ADD, NewSi, {NdVar::reg(x86reg::RSI, AddrSz), Delta});
     S.emit(NdOp::COPY, NdVar::reg(x86reg::RSI, AddrSz), {NewSi});
-    if (Repeat)
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::RCX, AddrSz),
-             {NdVar::scalar(0, AddrSz)});
   };
   auto LiftIns = [&](Intrinsic Id, unsigned ElemSz) {
     const uint16_t AddrSz = S.AddressSize;
     bool Repeat = false;
     for (uint8_t Prefix : X86.prefix)
       Repeat |= Prefix == X86_PREFIX_REP || Prefix == X86_PREFIX_REPNE;
-    NdVar Count =
-        Repeat ? NdVar::reg(x86reg::RCX, AddrSz) : NdVar::scalar(1, AddrSz);
+    if (Repeat) {
+      liftRepState(*this, S, X86, Intrinsic::X86RepInsState, ElemSz);
+      return;
+    }
+    NdVar Count = NdVar::scalar(1, AddrSz);
     NdVar Df = NdVar::reg(x86reg::DF, 1);
     S.emitIntrinsic(Id, NdVar(),
                     {NdVar::reg(x86reg::RDI, AddrSz), Count,
@@ -332,9 +335,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     NdVar NewDi = S.makeTemp(AddrSz);
     S.emit(NdOp::INT_ADD, NewDi, {NdVar::reg(x86reg::RDI, AddrSz), Delta});
     S.emit(NdOp::COPY, NdVar::reg(x86reg::RDI, AddrSz), {NewDi});
-    if (Repeat)
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::RCX, AddrSz),
-             {NdVar::scalar(0, AddrSz)});
   };
   switch (InsnId) {
 
@@ -798,11 +798,13 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_ENCLV:
     return liftSgx(*this, S, Insn, X86);
 
+  case X86_INS_GETSEC:
+  case X86_INS_ENCLU:
+    return liftBoundedLeaf(*this, S, Insn, X86);
+
   // Machine transitions need a complete-state continuation contract.
   case X86_INS_VMRUN:
   case X86_INS_SKINIT:
-  case X86_INS_GETSEC:
-  case X86_INS_ENCLU:
     return false;
 
   // These change processor state only; none of them produces a value, so

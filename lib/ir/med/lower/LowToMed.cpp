@@ -792,6 +792,14 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
         if (isAArch64ExceptionReturnIntrinsic(Id))
           throw LowToMedConversionError(kAArch64ExceptionReturnUnsupported);
+        if (isX86BoundedLeafPending(Id))
+          throw LowToMedConversionError(X86BoundedLeafUnproven);
+        if (isX86BoundedLeafIntrinsic(Id)) {
+          if (!x86BoundedLeafShapeIsValid(Id,
+                                          x86BoundedLeafLowShape(Op, TheArch)))
+            throw LowToMedConversionError(X86BoundedLeafUnproven);
+          continue;
+        }
         if (Id == Intrinsic::A64_PACMPending)
           throw LowToMedConversionError(kAArch64PAuthMalformedOperation);
         if (isApxAtomicIntrinsic(Id)) {
@@ -815,6 +823,12 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
           if (!x86AmxShapeIsValid(x86AmxLowShape(Op, TheArch)))
             llvm::report_fatal_error(
                 "invalid AMX architectural bank operation");
+          continue;
+        }
+        if (isX86RepStateIntrinsic(Id)) {
+          if (!x86RepShapeIsValid(Id, x86RepLowShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "invalid x86 REP completion LowIR contract");
           continue;
         }
         if (isX86SgxIntrinsic(Id)) {
@@ -1697,8 +1711,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
           return std::any_of(B.Ops.begin(), B.Ops.end(), [](const auto &Op) {
             return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
                    Op.Inputs[0].isConst() &&
-                   isX86SgxIntrinsic(
-                       static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
+                   (isX86SgxIntrinsic(
+                        static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) ||
+                    isX86BoundedLeafIntrinsic(
+                        static_cast<Intrinsic>(Op.Inputs[0].ConstVal)));
           });
         });
     if (HasSgx) {

@@ -211,3 +211,14 @@ A(Intrinsic::X86Lgdt16, "lgdtw");
 A(Intrinsic::X86Lidt16, "lidtw");
 A(Intrinsic::X86Sgdt16, "sgdtw");
 A(Intrinsic::X86Sidt16, "sidtw");
+
+#define NEVERD_X86_REP_STATE(Id, Name, ...)                                    \
+  A(Intrinsic::Id, "x86_rep_" Name "_state");
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE
+
+// Bounded leaf state and unresolved decoder markers.
+A(Intrinsic::X86EncluPending, "enclu.pending");
+A(Intrinsic::X86GetsecPending, "getsec.pending");
+A(Intrinsic::X86EncluBounded, "enclu");
+A(Intrinsic::X86GetsecBounded, "getsec");

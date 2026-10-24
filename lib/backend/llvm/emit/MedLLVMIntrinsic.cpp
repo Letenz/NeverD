@@ -116,6 +116,12 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
 
   if (IC == Intrinsic::X86AMXState)
     return emitX86AmxState(Op, Builder);
+  if (isX86RepStateIntrinsic(IC))
+    return emitX86RepState(Op, IC, Builder);
+  if (isX86BoundedLeafIntrinsic(IC))
+    return emitX86BoundedLeaf(Op, IC, Builder);
+  if (isX86BoundedLeafPending(IC))
+    llvm::report_fatal_error(X86BoundedLeafUnproven);
   if (isX86SgxIntrinsic(IC))
     return emitX86Sgx(Op, IC, Builder);
   if (isX86SystemStateIntrinsic(IC) || IC == I::X86MsrAccess)

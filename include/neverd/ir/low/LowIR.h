@@ -20,6 +20,8 @@
 #include "neverd/ir/X86/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
+#include "neverd/ir/intrinsics/X86/X86BoundedLeaf.h"
+#include "neverd/ir/intrinsics/X86/X86RepState.h"
 #include "neverd/ir/intrinsics/X86/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86/X86Virtualization.h"
@@ -416,6 +418,30 @@ inline X86AmxShape x86AmxLowShape(const LowOp &Op, Arch A = Arch::Unknown) {
   return S;
 }
 
+inline X86RepShape x86RepLowShape(const LowOp &Op,
+                                  Arch TargetArch = Arch::Unknown) {
+  X86RepShape S;
+  S.TargetArch = TargetArch;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+              Op.Inputs[0].Offset <= UINT16_MAX;
+  S.WritableOutput = Op.Output.isReg() || Op.Output.isTemp();
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    S.InputSizes[I] = Input.Size;
+    S.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
+  }
+  if (Op.NumInputs > 5 && Op.Inputs[5].isConst() &&
+      Op.Inputs[5].Size == X86RepDescriptorBytes &&
+      Op.Inputs[5].Offset <= UINT32_MAX)
+    S.Descriptor = static_cast<uint32_t>(Op.Inputs[5].Offset);
+  return S;
+}
+
 inline X86SgxShape x86SgxLowShape(const LowOp &Op,
                                   Arch TargetArch = Arch::Unknown) {
   X86SgxShape S;
@@ -433,6 +459,29 @@ inline X86SgxShape x86SgxLowShape(const LowOp &Op,
     S.InputSizes[I] = Input.Size;
     S.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
   }
+  return S;
+}
+
+inline X86BoundedLeafShape
+x86BoundedLeafLowShape(const LowOp &Op, Arch TargetArch = Arch::Unknown) {
+  X86BoundedLeafShape S;
+  S.TargetArch = TargetArch;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+              Op.Inputs[0].Offset <= UINT16_MAX;
+  S.WritableOutput = Op.Output.isReg() || Op.Output.isTemp();
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    S.InputSizes[I] = Input.Size;
+    S.ScalarInputs[I] = Input.isConst() || Input.isReg() || Input.isTemp();
+  }
+  if (Op.NumInputs > 1 && Op.Inputs[1].isConst() &&
+      !isAddressProvenance(Op.Inputs[1].Provenance))
+    S.Ax = Op.Inputs[1].Offset;
   return S;
 }
 

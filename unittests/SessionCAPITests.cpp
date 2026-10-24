@@ -2931,6 +2931,93 @@ TEST_F(SessionCAPITest, EntryPointsOmitAbsentNativeAddress) {
             static_cast<int64_t>(Entries->size()));
 }
 
+TEST_F(SessionCAPITest, EntryPointsPreserveKindsOrderDuplicatesAndNames) {
+  const auto Input = write("runtime-entries.elf", makeNamedNativeELF("entry"));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  auto &Img = neverd::sdk::toSession(Session)->Img;
+  const auto Entry = Img.Entry;
+  ASSERT_EQ(Entry, 0x400078u);
+  Img.DynInfo.InitAddr = Entry + 0x10;
+  Img.DynInfo.FiniAddr = Entry + 0x30;
+  Img.DynInfo.PreinitArray = {Entry + 0x20, 0, Entry + 0x30};
+  Img.DynInfo.InitArray = {0, Entry + 0x10, Entry + 0x10};
+  Img.DynInfo.FiniArray = {Entry + 0x40, Entry + 0x20};
+  const auto AddSymbol = [&](const char *Name, neverd::va_t Addr, bool IsFunc,
+                             bool IsSection = false) {
+    neverd::Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.IsFunc = IsFunc;
+    Sym.IsSection = IsSection;
+    Img.Symbols.push_back(std::move(Sym));
+  };
+  const auto AddExport = [&](const char *Name, neverd::va_t Addr) {
+    neverd::Export Exp;
+    Exp.Name = Name;
+    Exp.Addr = Addr;
+    Img.Exports.push_back(std::move(Exp));
+  };
+  AddExport("init_export", Entry + 0x10);
+  AddSymbol("init_symbol", Entry + 0x10, true);
+  AddExport("", Entry + 0x20);
+  AddExport("later_export", Entry + 0x20);
+  AddSymbol("label", Entry + 0x20, false);
+  AddSymbol("initializer", Entry + 0x20, true);
+  AddSymbol(".text", Entry + 0x30, false, /*IsSection=*/true);
+  AddSymbol("first_label", Entry + 0x30, false);
+  AddSymbol("second_label", Entry + 0x30, false);
+
+  auto Parsed = llvm::json::parse(takeString(neverd_entrypoints_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << llvm::toString(Parsed.takeError());
+  auto Expected = llvm::json::parse(R"([
+    {"type":"entry","addr":"0x400078","name":"entry"},
+    {"type":"init","addr":"0x400088","name":"init_export"},
+    {"type":"fini","addr":"0x4000A8","name":"first_label"},
+    {"type":"preinit_array","addr":"0x400098","name":"initializer"},
+    {"type":"preinit_array","addr":"0x4000A8","name":"first_label"},
+    {"type":"init_array","addr":"0x400088","name":"init_export"},
+    {"type":"init_array","addr":"0x400088","name":"init_export"},
+    {"type":"fini_array","addr":"0x4000B8","name":"sub_4000B8"},
+    {"type":"fini_array","addr":"0x400098","name":"initializer"}
+  ])");
+  ASSERT_TRUE(static_cast<bool>(Expected))
+      << llvm::toString(Expected.takeError());
+  EXPECT_EQ(*Parsed, *Expected);
+}
+
+TEST_F(SessionCAPITest, EntryPointsReadCurrentImageNames) {
+  const auto Input = write("entry-names.elf", makeNamedNativeELF("entry"));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  auto &Img = neverd::sdk::toSession(Session)->Img;
+  Img.DynInfo.InitArray = {Img.Entry, Img.Entry};
+  // Start with symbol names; a new export below must take precedence.
+  Img.Exports.clear();
+  const auto CheckNames = [&](llvm::StringRef Expected) {
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_entrypoints_json(Session)));
+    ASSERT_TRUE(static_cast<bool>(Parsed))
+        << llvm::toString(Parsed.takeError());
+    const auto *Entries = Parsed->getAsArray();
+    ASSERT_NE(Entries, nullptr);
+    ASSERT_EQ(Entries->size(), 3u);
+    for (const auto &Entry : *Entries) {
+      const auto *Row = Entry.getAsObject();
+      ASSERT_NE(Row, nullptr);
+      EXPECT_EQ(Row->getString("name"), Expected);
+    }
+  };
+  CheckNames("entry");
+  for (auto &Sym : Img.Symbols)
+    if (Sym.Addr == Img.Entry && Sym.Name == "entry")
+      Sym.Name = "renamed_entry";
+  CheckNames("renamed_entry");
+  neverd::Export Exp;
+  Exp.Addr = Img.Entry;
+  Exp.Name = "exported_entry";
+  Img.Exports.push_back(std::move(Exp));
+  CheckNames("exported_entry");
+}
+
 TEST_F(SessionCAPITest, SidecarWritesRespectWorkerOwnership) {
   const std::string Input = write("owned.evm", "6001600055");
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);

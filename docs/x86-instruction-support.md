@@ -108,8 +108,8 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | --- | --- |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
-| GETSEC | Leaf-specific register/state results and control transfer, including measured-environment entry/exit. |
-| ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
+| GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
+| ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
@@ -120,7 +120,10 @@ retain WC protocol, concurrent write completion and device transactions, but
 these tests do not independently measure those properties. The concrete
 emulator models only the single-threaded ordinary-memory projection.
 
-VMRUN, SKINIT, GETSEC and ENCLU still fail strict lifting explicitly. Legacy
+VMRUN and SKINIT still fail strict lifting explicitly. ENCLU and GETSEC decode
+to pending state, which cannot enter MedIR or either emitter until the CFG
+proves a supported leaf. Dynamic, transferring and unknown leaves remain
+explicitly unsupported. Legacy
 AMX value-form intrinsics retain their LLVM guard: an arbitrary 64-byte config
 and 1024-byte tile SSA value cannot be treated as the ambient CPU bank. Decoded
 AMX instructions now use the separate architectural-bank contract below. An
@@ -183,10 +186,10 @@ incomplete intermediate batch.
    with separate expectations for decoding, strict lifting and each emitter.
    Include positive and negative forms for widths, register banks, masks,
    address sizes, segments and privilege-sensitive operations.
-2. Integrate the native bounded ENCLU and GETSEC APIs below into NeverD's
-   shared state contracts, including leaf proofs, exact register dependencies
-   and incoming flag preservation. Their transferring leaves remain part of
-   the complete-state continuation work below.
+2. Extend instruction coverage without weakening the bounded ENCLU/GETSEC
+   proof or inventing successful hardware execution. The native state
+   integration below is implemented; selectors with unknown natural-register
+   high bits and transferring leaves still require additional contracts.
 3. Introduce a versioned complete-machine-state boundary and explicit
    continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
@@ -583,7 +586,8 @@ installed-header probes pass; the overload audit has zero mismatches. Only
 ENCLU's implicit register uses/defs change in the plugin schema, retaining all
 18,495 opcode identities. This does not qualify successful enclave execution,
 incoming flag preservation, AEX or nonlocal continuations. NeverD's strict
-lifter still rejects ENCLU until those selected-leaf semantics are integrated.
+lifter rejected ENCLU at that stage. The later bounded state integration
+below now admits proven returning leaves.
 
 SGX qualification passes 1,344 full-LLVM checks and 784 each for NeverC and
 the bridge, covering every register/status output, dead/repeated operations,
@@ -672,8 +676,8 @@ Frontend and backend validation share `X86SmxIntrinsics.h`, reject code16 and
 wrong word sizes, and do not require the unrelated SGX feature. Native
 processor, CR4.SMXE, privilege, chipset and measured-environment checks remain
 inside GETSEC. This follows [SDM 093 Volume 2D](https://cdrdv2.intel.com/v1/dl/getContent/671143),
-chapter 7. NeverD still rejects GETSEC until its explicit state and leaf-proof
-contract is integrated.
+chapter 7. NeverD rejected GETSEC at that stage; the later bounded state
+integration below supplies its explicit state and CFG leaf proof.
 
 GETSEC qualification passes 608 full-LLVM checks and 304 checks on each NeverC
 route, plus 16 real CPL3 boundaries per C route. It covers all four leaves,
@@ -1375,3 +1379,161 @@ The AMX hardware test checks normal row data, saved first-row bytes and
 It is explicitly skipped when AMX-TILE is unavailable; this host cannot qualify
 native successful tile computation or fault restart. Concrete tests cover
 integer/floating arithmetic, row conversion, shape checks and partial progress.
+
+
+## Explicit REP completion
+
+The full LLVM fork adds `llvm.x86.rep.{movs,stos,lods,cmps,scas,ins,outs}.state`
+and corresponding `.state32` interfaces. NeverC exposes seven x64
+`__builtin_ia32_rep_<family>_state` builtins and the
+`__NEVERC_X86_REP_STATE__=1` capability macro. The macro selects an API; it does
+not enable a CPU feature. Long-mode comparison completion requires `sahf`.
+The older MOVS/STOS and port-string APIs retain their existing contracts.
+
+The new interfaces take the complete natural-width registers, explicit DF,
+comparison input flags where applicable, and constant element/address/segment
+controls. MOVS returns SI/DI/CX, STOS returns DI/CX, LODS returns SI/CX/AX,
+CMPS returns SI/DI/CX/flags, SCAS returns DI/CX/flags, and INS/OUTS return their
+index and CX. Comparison status packs LAHF's five arithmetic flags in AH and
+OF in bit zero, with mask `0xd501`. Source overrides retain all six segment
+prefixes; string destinations retain architectural ES ownership. LLVM MC may
+omit the redundant DS prefix. The DF window ends with CLD on normal return.
+
+NeverD appends seven intrinsic identities and shares their descriptor and
+operand/output validation across LowIR, MedIR, LLVM, HighC and LLVM-to-C.
+Its LowIR status word stores comparison flags in the low 16 bits and DF in bit
+16. The versioned descriptor owns element width, address width, source segment
+and REPE/REPNE selection. Register inputs are never narrowed in advance.
+In particular, zero-count address-size behavior differs between instruction
+families; deriving pointer and count updates in the lifter loses that state.
+The native instruction also owns memory accesses, partial progress, comparison
+fault flags and restart. Unsegmented 64-bit MOVS/STOS remain available to bounded
+analysis through checked sequential expansion with actual completion outputs.
+
+Qualified fork interfaces replace owned assembly automatically. Older SDKs use
+one shared fallback template; C selects NeverC builtins when the capability
+macro is available. LLVM-to-C validates complete signatures, effects, immediate
+controls and exact owned assembly before admitting either form. REP feature
+requirements merge with AMX and SGX in one function attribute.
+
+The LLVM/NeverC foundation was qualified at `ab93f1c4de34` and `854866585`.
+Each of three x64 routes (LLVM, NeverC and NeverC-to-LLVM) passed 45,152
+memory/flags comparisons, 112 real page-fault restarts and 192 controlled port
+completions. The 32-bit LLVM emulation matrix passed 8,928 memory cases and
+2,304 controlled port cases, including 16-bit addressing. Controlled port
+completion changes the saved context after CPL3 faults; it performs no physical
+port I/O. Emulation does not qualify hardware fault restart.
+
+`NeverDX86RepStateTests` checks decoded controls, natural-width inputs,
+auxiliary outputs, malformed interfaces, pipeline source/object routes and
+combined feature requirements. Its optional `NEVERD_REP_EXPORT_DIR` exports
+both C routes, LLVM IR and production codegen objects for all 296 long-mode
+and 234 i386 forms, plus complete pipeline C fixtures. The pinned SDK uses the
+owned assembly path; the fork SDK uses native intrinsics. Each x64 C or IR
+route passes 45,152 memory/flags comparisons, 112 real fault restarts and 192
+controlled port completions at O0/O2. The C matrix includes Clang, GCC and
+NeverC. Each i386 C or IR route passes 8,928 memory and 2,304 controlled port
+cases in emulation. Production objects pass the same matrix once per SDK
+(22,576/56/96 on x64 and 4,464/1,152 on i386). Wider direction conditions also
+check that normalization occurs before conversion to a builtin's byte input.
+Every owned LLVM assembly unit declares both EFLAGS and DF clobbers in MIR.
+
+Run
+`scripts/verify_x86_rep_state.py --exports <directory> --oracle
+<NeverC>/tests/verify-rep-state.py --route high --compiler <compiler>`
+(and `--route llvm`, `--route ir --llc <llc>`, or `--route object`) to compare
+those exports with the independent raw-byte and sequential oracles. Add
+`--neverc` for NeverC compilation, or `--bits 32` for i386 emulation.
+`--route pipeline` compiles complete HighC and LLVM-to-C functions for ELF,
+COFF and Mach-O at O0/O2, with both pipeline optimization settings, and checks
+that the REP family and address width survive. It needs no target CRT and
+does not execute the fixtures. Both SDK profiles passed all 1,008 pipeline
+object compilations across Clang (32/64-bit) and NeverC (64-bit).
+The script requires Capstone, LIEF and, for
+i386 execution, Unicorn. The LLVM release and production pin remain gated on
+completion of the remaining instruction work above.
+
+## Bounded ENCLU/GETSEC arithmetic-flag transport
+
+The LLVM fork now supplies `llvm.x86.enclu.bounded.state` and
+`llvm.x86.getsec.bounded.state`, together with their `state32` counterparts.
+They transport four natural-width registers and all six arithmetic flags on
+entry and completion. The full rAX selector is constant: its low EAX admits
+ENCLU leaves 0, 1, 5..11 or GETSEC leaves 0, 6..8. Code mode, SGX and long-mode
+LAHF/SAHF requirements are checked. Existing bounded APIs retain their contracts.
+
+NeverC exposes the matching x64 `__builtin_ia32_enclu_bounded_state` and
+`__builtin_ia32_getsec_bounded_state` builtins, advertised by
+`__NEVERC_X86_BOUNDED_LEAF_STATE__ == 1`. The shared arithmetic-flag word uses
+LAHF bits 8/10/12/14/15 and OF bit zero. One machine operation owns flag
+restoration, the native instruction and flag capture, including register
+clobbers and unknown memory effects. Neither compiler route uses inline asm.
+See the [LLVM contract](https://github.com/NeverSight/llvm-project/blob/0aa03c56ffe3/llvm/docs/X86BoundedLeafState.rst)
+and [NeverC builtins](https://github.com/NeverSight/NeverC/blob/874283e94/development.md#bounded-leaf-state-with-incoming-arithmetic-flags).
+
+The independent matrix passes 133,744 controlled encoding/completion checks
+through full LLVM and 66,872 through each NeverC route, including NeverC IR
+compiled by LLVM. Every route compares 9,984 real CPL3 boundaries against
+independent instruction bytes and POPFQ/PUSHFQ flag transport. All physical
+observations on this host were faults; successful enclave/SMX operation is
+unqualified. The compiler merge also retains identical machine code in all
+936 regenerated NeverC/bridge objects, with all 74 privileged-intrinsic tests
+passing. `--keep` records per-leaf physical outcomes in
+`native-observations.json`.
+
+The NeverD integration below supplies the incoming CFG leaf proof and
+leaf-specific register dependencies. These normal-completion APIs do not
+transport AEX, VM exits or nonlocal machine continuations. The final LLVM
+release, production pin and LLVM submodule update remain pending.
+
+
+## NeverD bounded SGX/SMX state integration
+
+NeverD now admits ENCLU leaves 0, 1 and 5..11, and GETSEC leaves 0 and 6..8,
+when the final CFG proves the complete natural-width AX value. The shared
+contract owns input dependencies, register writes, arithmetic flags and
+mode/shape validation. ENCLU's preserved registers and flags keep their
+original SSA values. GETSEC PARAMETERS retains the old BX/CX values needed
+by its conditional writes. EVERIFYREPORT2 captures actual native flags with
+the previous flags as input because SDM 093's pseudocode and Flags Affected
+paragraph disagree. A dead flag result does not create an otherwise unused
+entry flag dependency; this rule belongs to MedIR liveness.
+
+The decoder retains explicit pending state, including all potentially changed
+registers. A bounded byte-fact analysis meets every predecessor, resets
+instruction-local temporaries and refuses address-derived selectors. Calls,
+independent entries and exception entries supply unknown incoming state.
+Partial register writes retain their unaffected bytes. Rebuilding the CFG
+starts from the pending decoder records, so another discovered edge can revoke
+a proof. Only the final graph publishes unresolved leaves as unsupported;
+no-return screening also refuses to guess their control effects. Budget
+exhaustion leaves the operation pending. Knowing EAX alone is insufficient in
+x64 when the upper AX bytes remain unknown: the published native API requires
+the whole AX operand to be constant.
+
+LLVM output selects the real `llvm.x86.{enclu,getsec}.bounded.state{,32}`
+interface when available. An older SDK uses a strictly identified, indivisible
+assembly window with explicit EFLAGS and memory effects. HighC and LLVM-to-C
+share one renderer and validate complete types, selectors, effects and
+auxiliary results. NeverC's capability macro selects its native builtin;
+other C compilers use the owned assembly. SGX and SAHF requirements compose
+with the existing AMX/SGX/REP function attributes.
+
+Qualification covers both SDK configurations: 156 complete pipeline fixtures
+per configuration, plus 182 exported IR modules per configuration including
+complete-state wrappers. All 182 modules from the new SDK use native calls.
+The independent NeverC oracle and `scripts/verify_x86_bounded_leaf.py` pass
+678,912 controlled register/flag/ABI checks and 89,856 real Linux CPL3 boundary
+comparisons. These include i386, SysV x64 and Win64, reserved flag inputs,
+Clang/GCC/NeverC source output, LLVM IR and production objects. NeverC's source
+routes are additionally checked to contain the native intrinsic and no inline
+assembly. Another 1,872 C compilations cover complete ELF/COFF/Mach-O pipeline
+fixtures at O0/O2. The SDKs produce identical complete-state C wrappers; the
+60 differing pipeline C files are recompiled in the new SDK matrix.
+
+Every physical observation on this host was a fault. Controlled completions
+qualify transport, not successful enclave or SMX semantics. These ordinary
+completion values are not a complete guest exception context and do not
+implement AEX, VM exits, enclave entry/exit/resume, measured-environment
+transitions or other machine continuations. Release and production pinning
+remain deferred until the remaining instruction work is complete.

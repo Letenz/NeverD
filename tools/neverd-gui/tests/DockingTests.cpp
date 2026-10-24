@@ -393,7 +393,7 @@ private slots:
                   .arg(nativeWindow(*floating))));
     Pointer pointer;
     auto *handle = floating->findChild<QWidget *>(
-        QStringLiteral("floatingWindowMoveHandle"));
+        QStringLiteral("floatingWindowMoveArea"));
     QVERIFY(handle && handle->isVisible());
     const QPoint start = handle->mapTo(floating, handle->rect().center());
     QVERIFY(pointer.move(*floating, start, false));
