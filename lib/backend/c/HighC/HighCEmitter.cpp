@@ -1538,7 +1538,7 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesMsvcIntrinsicHeader(Ex.IntrinsicId))
         NeedsMsvcIntrinsics = true;
-      if (Opts.Format == BinaryFormat::COFF &&
+      if ((Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF) &&
           x86SystemRegisterName(Ex.IntrinsicId, 0))
         NeedsX86SystemRegisterDispatch = true;
       if (Opts.TheArch == Arch::X64 &&

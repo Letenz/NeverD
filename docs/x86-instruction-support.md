@@ -302,28 +302,33 @@ The new generic builtins are `__builtin_ia32_readcr`,
 `__builtin_ia32_writecr`, `__builtin_ia32_readdr` and
 `__builtin_ia32_writedr`. Five generator tests additionally protect the new
 write pseudo's stable opcode and synchronized metadata tables.
-NeverD's current CR/DR assembly bridge now declares the same arithmetic-flags
-clobber, preventing compiler condition codes from surviving the access. The
-source-route regression compiles 48 read/write cases across both word sizes,
-all three object formats and both pipeline optimization settings; it and the
-six existing virtualization source tests pass.
+NeverD uses the eight native CR/DR LLVM APIs when the linked SDK provides them;
+the `32` suffix selects i386 rather than truncating a long-mode access. Older
+SDKs retain the owned assembly contract with flags and memory clobbers. Both
+C projections select the four generic NeverC builtins through `__has_builtin`
+on every x64 object format. Stock C compilers use the same assembly effects;
+COFF can also use real MSVC's implemented Microsoft intrinsics. A declaration
+of a Microsoft intrinsic alone does not authorize an external function call.
 
-CR/DR access now has one native-width assembly plan shared by LLVM emission
-and both C projections. LLVM-to-C checks the complete call: exact operands,
-types, legal register/mode, ATT text, side effects and flags/memory clobbers.
-Missing write operands cannot become a write of zero, and malformed contracts
-cannot bypass validation through the string-only renderer. COFF selects the
-Microsoft intrinsic only for MSVC or NeverC; Clang uses native GNU assembly,
-as it declares several CR/DR names without implementing them as builtins.
-ELF and Mach-O use the same native assembly effects. DR4/5 retain their CR4.DE-dependent behavior; DR8..15 are rejected
-by strict lifting because REX.R does not extend the debug-register bank.
+`X86SystemRegisterAsm.h` owns the native-width plan, including the exact bank,
+index, LLVM API and C builtin. LLVM-to-C validates both native calls and legacy
+assembly: exact operands/types, legal register/mode, unknown memory effects,
+and, for assembly, ATT text and flags clobbers. Missing write operands cannot
+become a write of zero; wrong modes, dynamic indices, restricted effects and
+missing result identities are rejected. DR4/5 retain their CR4.DE-dependent
+behavior; DR8..15 are rejected by strict lifting because REX.R does not extend
+the debug-register bank.
 Regressions cover every legal CR/DR read/write, dead reads, all three object
 formats, both C routes, O0/O2 compilation, and original-byte CPL3 fault
 comparisons. The malformed-call matrix also covers missing effects, wrong
 widths, extra/missing operands, memory attributes, bundles and dialect changes.
-The 225 source fixtures check the native opcode in every generated object,
-including dead reads in all formats. All four source-contract tests, two
-coverage tests, six side-effect tests and 24 return-contract tests pass.
+Both the native SDK and pinned r6 SDK pass 225 source fixtures checking the
+native opcode in every generated object, including dead reads in all formats.
+Each SDK also passes 936 compilations of both C projections through NeverC,
+checking native IR with no assembly at O0/O2 on ELF, COFF and Mach-O. The native
+SDK passes all four source-contract tests and 117 LLVM-to-C value regressions;
+the old SDK skips only the new native-call contract test. NeverC's i386 cells
+are explicitly skipped because its frontend targets x64.
 
 The raw software-interrupt API requires a constant vector in 0..255 and
 preserves the continuation after an interrupt handler returns. NeverC's

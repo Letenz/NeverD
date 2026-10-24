@@ -171,7 +171,8 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   if (UsesForkNative)
     for (const auto &F : *Module)
       *UsesForkNative |= isX86VirtualizationNativeName(F.getName()) ||
-                         isX86SystemStateNativeName(F.getName());
+                         isX86SystemStateNativeName(F.getName()) ||
+                         isX86SystemRegisterNativeName(F.getName());
   if (NativeObject) {
     auto Copy = llvm::CloneModule(*Module);
     auto Object = Codegen().compile(*Copy, Image.Arch, Image.Format);
@@ -272,7 +273,17 @@ TEST(X86SystemRegisterSource, NativeMovesClobberUndefinedArithmeticFlags) {
           sourceRoutes(Image, NoOpt, Entry, {}, nullptr, nullptr, {}, {},
                        &Native, &Object);
           ASSERT_FALSE(Object.empty());
-          EXPECT_NE(Native.find("~{flags}"), std::string::npos) << Native;
+          const std::string Name =
+              "llvm.x86." + std::string(Instruction[1] & 2 ? "write" : "read") +
+              (Instruction[1] & 1 ? "dr" : "cr") + (A == Arch::X86 ? "32" : "");
+          if (llvm::Intrinsic::lookupIntrinsicID(Name)) {
+            EXPECT_NE(Native.find("@" + Name + "(i32 " +
+                                  (Instruction[1] & 1 ? "7" : "3")),
+                      std::string::npos)
+                << Native;
+            EXPECT_EQ(Native.find(" asm "), std::string::npos) << Native;
+          } else
+            EXPECT_NE(Native.find("~{flags}"), std::string::npos) << Native;
         }
 }
 
@@ -935,6 +946,53 @@ std::vector<uint8_t> fpEncodingFunction(Arch A) {
 } // namespace
 
 namespace {
+struct SystemRegisterEncoding {
+  bool Debug;
+  unsigned Index;
+  bool Write;
+  bool Dead;
+  size_t Offset;
+  std::vector<uint8_t> Bytes;
+
+  std::string nativeName(Arch A) const {
+    return "llvm.x86." + std::string(Write ? "write" : "read") +
+           (Debug ? "dr" : "cr") + (A == Arch::X86 ? "32" : "");
+  }
+};
+
+std::vector<SystemRegisterEncoding> systemRegisterEncodings(Arch A) {
+  std::vector<SystemRegisterEncoding> Result;
+  for (bool Debug : {false, true})
+    for (unsigned Index = 0; Index <= 8; ++Index) {
+      if (Debug ? Index == 8
+                : (Index != 0 && Index != 2 && Index != 3 && Index != 4 &&
+                   (Index != 8 || A != Arch::X64)))
+        continue;
+      for (bool Write : {false, true})
+        for (bool Dead : {false, true}) {
+          if (Dead && Write)
+            continue;
+          std::vector<uint8_t> Bytes;
+          if (Write)
+            Bytes = A == Arch::X64
+                        ? std::vector<uint8_t>{0x48, 0xb8, 0x55, 0xaa, 0x23,
+                                               0x81, 0x67, 0x45, 0xfe, 0xab}
+                        : std::vector<uint8_t>{0xb8, 0x55, 0xaa, 0x23, 0x81};
+          const auto Offset = Bytes.size();
+          if (Index == 8)
+            Bytes.push_back(0x44);
+          Bytes.insert(Bytes.end(), {0x0f, uint8_t(0x20 + Debug + 2 * Write),
+                                     uint8_t(0xc0 + 8 * (Index & 7))});
+          if (Dead)
+            Bytes.insert(Bytes.end(), {0x31, 0xc0});
+          Bytes.push_back(0xc3);
+          Result.push_back(
+              {Debug, Index, Write, Dead, Offset, std::move(Bytes)});
+        }
+    }
+  return Result;
+}
+
 struct SystemRegisterTarget {
   Arch TheArch;
   BinaryFormat Format;
@@ -954,51 +1012,27 @@ TEST_P(X86SystemRegisterAccess,
   const auto A = GetParam().TheArch;
   const auto Format = GetParam().Format;
   unsigned Fixtures = 0;
-  for (bool Debug : {false, true})
-    for (unsigned Index = 0; Index <= 8; ++Index) {
-      if (Debug ? Index == 8
-                : (Index != 0 && Index != 2 && Index != 3 && Index != 4 &&
-                   (Index != 8 || A != Arch::X64)))
-        continue;
-      for (bool Write : {false, true})
-        for (bool Dead : {false, true}) {
-          if (Dead && Write)
-            continue;
-          SCOPED_TRACE(static_cast<unsigned>(A));
-          SCOPED_TRACE(static_cast<unsigned>(Format));
-          SCOPED_TRACE(Debug);
-          SCOPED_TRACE(Index);
-          SCOPED_TRACE(Write);
-          SCOPED_TRACE(Dead);
-          std::vector<uint8_t> Bytes;
-          if (Write)
-            Bytes = A == Arch::X64
-                        ? std::vector<uint8_t>{0x48, 0xb8, 0x55, 0xaa, 0x23,
-                                               0x81, 0x67, 0x45, 0xfe, 0xab}
-                        : std::vector<uint8_t>{0xb8, 0x55, 0xaa, 0x23, 0x81};
-          const auto Offset = Bytes.size();
-          if (Index == 8)
-            Bytes.push_back(0x44);
-          Bytes.insert(Bytes.end(), {0x0f, uint8_t(0x20 + Debug + 2 * Write),
-                                     uint8_t(0xc0 + 8 * (Index & 7))});
-          if (Dead)
-            Bytes.insert(Bytes.end(), {0x31, 0xc0});
-          Bytes.push_back(0xc3);
-          auto Image = image(A, Format, std::move(Bytes));
-          // Allocation may change the GPR in ModRM. The opcode still
-          // distinguishes CR/DR reads/writes, including dead reads.
-          const std::vector<uint8_t> Opcode = {
-              0x0f, uint8_t(0x20 + Debug + 2 * Write)};
-          // Every CPL3 access must match the original instruction's
-          // fault, including DR4/5. Other targets are compiled only.
-          compileRoutes(Image, false, Entry + Offset, {}, std::nullopt, false,
-                        A == Arch::X64 && Format == BinaryFormat::ELF, {},
-                        Opcode, 0, true);
-          if (::testing::Test::HasFailure() || ::testing::Test::IsSkipped())
-            return;
-          ++Fixtures;
-        }
-    }
+  for (const auto &E : systemRegisterEncodings(A)) {
+    SCOPED_TRACE(static_cast<unsigned>(A));
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    SCOPED_TRACE(E.Debug);
+    SCOPED_TRACE(E.Index);
+    SCOPED_TRACE(E.Write);
+    SCOPED_TRACE(E.Dead);
+    auto Image = image(A, Format, E.Bytes);
+    // Allocation may change the GPR in ModRM. The opcode still
+    // distinguishes CR/DR reads/writes, including dead reads.
+    const std::vector<uint8_t> Opcode = {0x0f,
+                                         uint8_t(0x20 + E.Debug + 2 * E.Write)};
+    // Every CPL3 access must match the original instruction's
+    // fault, including DR4/5. Other targets are compiled only.
+    compileRoutes(Image, false, Entry + E.Offset, {}, std::nullopt, false,
+                  A == Arch::X64 && Format == BinaryFormat::ELF, {}, Opcode, 0,
+                  true);
+    if (::testing::Test::HasFailure() || ::testing::Test::IsSkipped())
+      return;
+    ++Fixtures;
+  }
   EXPECT_EQ(Fixtures, A == Arch::X64 ? 39U : 36U);
   RecordProperty("source_fixtures", Fixtures);
 }
@@ -1175,6 +1209,131 @@ void compileNativeC(const std::string &Compiler, llvm::StringRef Directory,
   }
 }
 } // namespace
+
+TEST_P(X86SystemRegisterAccess, NeverCCompilesBothRoutesToNativeIntrinsics) {
+  if (GetParam().TheArch != Arch::X64)
+    GTEST_SKIP() << "NeverC targets x64";
+  const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
+  if (!Compiler || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-native-sysreg-c",
+                                                    Directory));
+  const auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  unsigned Cases = 0;
+  for (bool NoOpt : {false, true})
+    for (const auto &E : systemRegisterEncodings(Arch::X64)) {
+      SCOPED_TRACE(E.nativeName(Arch::X64));
+      SCOPED_TRACE(E.Index);
+      SCOPED_TRACE(E.Dead);
+      SCOPED_TRACE(NoOpt);
+      auto Image = image(Arch::X64, GetParam().Format, E.Bytes);
+      std::string High, LLVM, Native;
+      sourceRoutes(Image, NoOpt, Entry + E.Offset, {}, &High, &LLVM, {}, {},
+                   &Native);
+      if (::testing::Test::HasFailure())
+        return;
+      const auto Name = E.nativeName(Arch::X64);
+      if (llvm::Intrinsic::lookupIntrinsicID(Name)) {
+        EXPECT_NE(Native.find("@" + Name + "(i32 " + std::to_string(E.Index)),
+                  std::string::npos)
+            << Native;
+        EXPECT_EQ(Native.find(" asm "), std::string::npos) << Native;
+      }
+      for (const auto &Source : {High, LLVM}) {
+        EXPECT_NE(Source.find("__builtin_ia32_" + Name.substr(9) + "(" +
+                              std::to_string(E.Index)),
+                  std::string::npos)
+            << Source;
+        compileNativeC(Compiler, Directory, GetParam().Format, Source, Name,
+                       Cases);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+    }
+  EXPECT_EQ(Cases, 312u);
+  RecordProperty("native_system_register_c_compilations", Cases);
+}
+
+TEST(X86SystemRegisterSource, NativeCallsRequireExactRegisterModeAndEffects) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.readcr"))
+    GTEST_SKIP() << "requires the native control/debug register SDK";
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const bool Debug : {false, true})
+      for (const bool Write : {false, true}) {
+        const std::string Name =
+            "llvm.x86." + std::string(Write ? "write" : "read") +
+            (Debug ? "dr" : "cr") + (A == Arch::X86 ? "32" : "");
+        SCOPED_TRACE(Name);
+        llvm::LLVMContext Context;
+        llvm::Module Module("system_register_contract", Context);
+        auto *Callee = llvm::Intrinsic::getOrInsertDeclaration(
+            &Module, llvm::Intrinsic::lookupIntrinsicID(Name));
+        auto *Function = llvm::Function::Create(Callee->getFunctionType(),
+                                                llvm::Function::ExternalLinkage,
+                                                "system_register", Module);
+        llvm::IRBuilder<> Builder(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        std::vector<llvm::Value *> Inputs = {Builder.getInt32(3)};
+        if (Write)
+          Inputs.push_back(Function->getArg(1));
+        auto *Call = Builder.CreateCall(Callee, Inputs);
+        if (Write)
+          Builder.CreateRetVoid();
+        else
+          Builder.CreateRet(Call);
+        ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+        const std::vector<std::string> Arguments(Inputs.size(), "input");
+        auto Render = [&](Arch Target, bool Live = true,
+                          const std::string &Result = "result") {
+          return renderX86SystemRegisterCall(Target, BinaryFormat::ELF, *Call,
+                                             Result, Live && !Write, Arguments);
+        };
+        for (unsigned Index = 0; Index <= 9; ++Index) {
+          SCOPED_TRACE(Index);
+          Call->setArgOperand(0, Builder.getInt32(Index));
+          const bool Valid = Debug ? Index < 8
+                                   : Index == 0 || Index == 2 || Index == 3 ||
+                                         Index == 4 ||
+                                         (Index == 8 && A == Arch::X64);
+          if (Valid) {
+            EXPECT_TRUE(Render(A));
+            EXPECT_TRUE(Render(A, false, ""));
+          } else
+            EXPECT_THROW((void)Render(A), std::invalid_argument);
+        }
+        Call->setArgOperand(0, Builder.getInt32(UINT32_MAX));
+        EXPECT_THROW((void)Render(A), std::invalid_argument);
+        Call->setArgOperand(0, Function->getArg(0));
+        EXPECT_THROW((void)Render(A), std::invalid_argument);
+        Call->setArgOperand(0, Inputs[0]);
+        EXPECT_THROW((void)Render(A == Arch::X86 ? Arch::X64 : Arch::X86),
+                     std::invalid_argument);
+        EXPECT_THROW((void)Render(Arch::AArch64), std::invalid_argument);
+        for (const auto Effects :
+             {llvm::MemoryEffects::none(), llvm::MemoryEffects::readOnly(),
+              llvm::MemoryEffects::writeOnly(),
+              llvm::MemoryEffects::argMemOnly(),
+              llvm::MemoryEffects::inaccessibleMemOnly(),
+              llvm::MemoryEffects::inaccessibleOrArgMemOnly()}) {
+          Call->setMemoryEffects(Effects);
+          EXPECT_THROW((void)Render(A), std::invalid_argument);
+        }
+        Call->setMemoryEffects(llvm::MemoryEffects::unknown());
+        Call->setDoesNotReturn();
+        EXPECT_THROW((void)Render(A), std::invalid_argument);
+        Call->removeFnAttr(llvm::Attribute::NoReturn);
+        Call->setCallingConv(llvm::CallingConv::Fast);
+        EXPECT_THROW((void)Render(A), std::invalid_argument);
+        Call->setCallingConv(llvm::CallingConv::C);
+        if (!Write)
+          EXPECT_THROW((void)Render(A, true, ""), std::invalid_argument);
+        EXPECT_THROW((void)renderX86SystemRegisterCall(
+                         A, BinaryFormat::ELF, *Call, "result", !Write, {}),
+                     std::invalid_argument);
+      }
+}
 
 TEST(X86VirtualizationSource, NeverCCompilesBothRoutesToNativeIntrinsics) {
   const char *Configured = std::getenv("NEVERD_TEST_NEVERC");

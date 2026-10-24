@@ -62,6 +62,7 @@
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <kddockwidgets/KDDockWidgets.h>
@@ -534,6 +535,49 @@ private slots:
         walk(action->menu());
     for (auto *action : registry.allActions())
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
+  }
+
+  void toolbarButtonsShowTheirActualShortcuts() {
+    QMainWindow window;
+    ActionRegistry registry;
+    const auto toolbars = registry.buildToolbars(&window);
+    int hinted = 0;
+    for (auto *toolbar : toolbars)
+      for (auto *action : toolbar->actions()) {
+        auto *button =
+            qobject_cast<QToolButton *>(toolbar->widgetForAction(action));
+        if (!button)
+          continue;
+        if (action->shortcut().isEmpty()) {
+          QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+          continue;
+        }
+        ++hinted;
+        QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
+        QCOMPARE(button->text(),
+                 action->shortcut().toString(QKeySequence::NativeText));
+        QVERIFY(!button->accessibleName().isEmpty());
+        QVERIFY(action->isShortcutVisibleInContextMenu());
+      }
+    QVERIFY(hinted > 10);
+    auto *action = registry.action(ActionId::JumpEntry);
+    QToolButton *entry = nullptr;
+    for (auto *toolbar : toolbars)
+      if (auto *button =
+              qobject_cast<QToolButton *>(toolbar->widgetForAction(action)))
+        entry = button;
+    QVERIFY(entry);
+    QCOMPARE(
+        entry->text(),
+        QKeySequence(Qt::CTRL | Qt::Key_E).toString(QKeySequence::NativeText));
+    // The label follows the binding and survives translation and disabling.
+    action->setShortcut(QKeySequence(Qt::Key_F12));
+    QCOMPARE(entry->text(), QStringLiteral("F12"));
+    registry.retranslate();
+    action->setEnabled(false);
+    QCOMPARE(entry->text(), QStringLiteral("F12"));
+    action->setShortcut({});
+    QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
   }
 
   void deepLinksTakeIdasFormAndRefuseWhatTheyCannotName() {

@@ -10,6 +10,7 @@
 #include "AddressSpace.h"
 #include "ChooserView.h"
 #include "CodeView.h"
+#include "DeclareTypesDialog.h"
 #include "DeepLink.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
@@ -55,6 +56,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
@@ -101,6 +103,7 @@
 #include <QTest>
 #include <QTextBlock>
 #include <QTimer>
+#include <QToolBar>
 #include <QToolButton>
 #include <QToolTip>
 #include <QTranslator>
@@ -301,6 +304,257 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void classicJumpChoosersSelectAndCancel_data() {
+    QTest::addColumn<int>("key");
+    QTest::addColumn<int>("kind");
+    QTest::addColumn<QString>("filter");
+    QTest::addColumn<quint64>("target");
+    QTest::addColumn<bool>("dark");
+    for (const bool dark : {true, false}) {
+      const QByteArray suffix = dark ? "-dark" : "-light";
+      QTest::newRow(QByteArray("entry" + suffix).constData())
+          << int(Qt::Key_E) << int(ChooserKind::Exports)
+          << QStringLiteral("start") << quint64(Base) << dark;
+      QTest::newRow(QByteArray("function" + suffix).constData())
+          << int(Qt::Key_P) << int(ChooserKind::Functions)
+          << QStringLiteral("function_18") << quint64(Base + 0x120) << dark;
+      QTest::newRow(QByteArray("name" + suffix).constData())
+          << int(Qt::Key_L) << int(ChooserKind::Names)
+          << QStringLiteral("function_0") << quint64(Base) << dark;
+      QTest::newRow(QByteArray("segment" + suffix).constData())
+          << int(Qt::Key_S) << int(ChooserKind::Segments) << QString()
+          << quint64(Base) << dark;
+    }
+  }
+
+  void classicJumpChoosersSelectAndCancel() {
+    QFETCH(int, key);
+    QFETCH(int, kind);
+    QFETCH(QString, filter);
+    QFETCH(quint64, target);
+    QFETCH(bool, dark);
+    auto &theme = Theme::instance();
+    const auto originalMode = theme.mode();
+    const auto restore = qScopeGuard([&] { theme.setMode(originalMode); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    theme.apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "classic-jumps.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address original = Base + 0x140;
+    QTRY_VERIFY(assembly->currentAddress().has_value());
+    assembly->navigate(original);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(original));
+    for (const bool accept : {false, true}) {
+      bench.window->activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+      assembly->focusContent();
+      bool sawDialog = false, typedFilter = false, timedOut = false;
+      QTimer answer, deadline;
+      deadline.setSingleShot(true);
+      connect(&deadline, &QTimer::timeout, this, [&] {
+        timedOut = true;
+        if (auto *dialog = QApplication::activeModalWidget())
+          dialog->close();
+      });
+      connect(&answer, &QTimer::timeout, this, [&] {
+        auto *dialog =
+            qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog || dialog->objectName() != "locationChooser")
+          return;
+        auto *view = dialog->findChild<ChooserView *>("locationChooserView");
+        if (!view || view->model().loading() || !view->model().total())
+          return;
+        if (accept && !filter.isEmpty() && !typedFilter) {
+          typedFilter = true;
+          QTest::keyClicks(view->table(), filter);
+          return;
+        }
+        if (accept && !filter.isEmpty() && view->model().filter() != filter)
+          return;
+        answer.stop();
+        auto closeOnFailure = qScopeGuard([dialog] { dialog->reject(); });
+        sawDialog = true;
+        QCOMPARE(int(view->model().kind()), kind);
+        QVERIFY(dialog->windowTitle().contains("Jump"));
+        QCOMPARE(assembly->currentAddress(), std::optional<Address>(original));
+        if (accept) {
+          view->table()->setCurrentIndex(view->model().index(0, 0));
+          QCOMPARE(view->currentAddress(), std::optional<Address>(target));
+          const QString captures =
+              qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+          if (!captures.isEmpty() && kind == int(ChooserKind::Exports)) {
+            QDir().mkpath(captures);
+            QVERIFY(
+                dialog->grab().save(captures + (dark ? "/entries-dark.png"
+                                                     : "/entries-light.png")));
+          }
+          QTest::keyClick(view->table(), Qt::Key_Return);
+        } else {
+          QTest::keyClick(view->table(), Qt::Key_Escape);
+        }
+        closeOnFailure.dismiss();
+      });
+      answer.start(10);
+      deadline.start(OpenTimeoutMs);
+      QTest::keyClick(assembly->listing(), Qt::Key(key), Qt::ControlModifier);
+      deadline.stop();
+      answer.stop();
+      QVERIFY(!timedOut);
+      QVERIFY(sawDialog);
+      QTRY_COMPARE(assembly->currentAddress(),
+                   std::optional<Address>(accept ? target : original));
+    }
+    // The chooser's jump participates in the usual Esc history.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    assembly->focusContent();
+    QTest::keyClick(assembly->listing(), Qt::Key_Escape);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(original));
+  }
+
+  void shortcutsCanBeFoundByKeyAndScope() {
+    Workbench bench;
+    bool inspected = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != "shortcutsDialog")
+        return;
+      answer.stop();
+      const auto close = qScopeGuard([dialog] { dialog->reject(); });
+      inspected = true;
+      auto *filter = dialog->findChild<QLineEdit *>("shortcutsFilter");
+      auto *tree = dialog->findChild<QTreeWidget *>("shortcutsList");
+      QVERIFY(filter && tree);
+      QVERIFY(tree->topLevelItemCount() > int(ActionId::Count));
+      const auto entryKey =
+          QKeySequence(Qt::CTRL | Qt::Key_E).toString(QKeySequence::NativeText);
+      filter->setText(entryKey);
+      QSet<QString> scopes;
+      for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+        auto *item = tree->topLevelItem(row);
+        if (!item->isHidden()) {
+          QCOMPARE(item->text(1), entryKey);
+          scopes.insert(item->text(2));
+        }
+      }
+      QCOMPARE(scopes,
+               QSet<QString>({"Workbench", "Functions", "Local Types"}));
+      filter->setText(QStringLiteral("Exports"));
+      bool foundUnassigned = false;
+      for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+        auto *item = tree->topLevelItem(row);
+        if (!item->isHidden() && item->text(0) == "Exports")
+          foundUnassigned = item->text(1) == "Unassigned";
+      }
+      QVERIFY(foundUnassigned);
+      filter->clear();
+      const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+      if (!captures.isEmpty()) {
+        QDir().mkpath(captures);
+        QVERIFY(dialog->grab().save(captures + "/shortcuts.png"));
+      }
+    });
+    answer.start(10);
+    bench.action(ActionId::OptionsShortcuts)->trigger();
+    QVERIFY(inspected);
+  }
+
+  void commandButtonsExposeTheirKeys_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("dark") << true;
+    QTest::newRow("light") << false;
+  }
+
+  void commandButtonsExposeTheirKeys() {
+    QFETCH(bool, dark);
+    auto &theme = Theme::instance();
+    const auto originalMode = theme.mode();
+    const auto restore = qScopeGuard([&] { theme.setMode(originalMode); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    theme.apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "local-types.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (!captures.isEmpty())
+      QDir().mkpath(captures);
+    const auto inspect = [&](ActionId action, const QStringList &names,
+                             const QList<QKeySequence> &keys,
+                             const QString &capture) {
+      bench.action(action)->trigger();
+      if (action == ActionId::ViewLocalTypes) {
+        auto *list = bench.window->findChild<QTreeView *>("localTypesList");
+        QVERIFY(list);
+        QTRY_COMPARE(list->model()->rowCount(), 3);
+      }
+      for (int i = 0; i < names.size(); ++i) {
+        auto *button = bench.window->findChild<QToolButton *>(names[i]);
+        QVERIFY2(button, qPrintable(names[i]));
+        QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
+        QCOMPARE(button->text(), keys[i].toString(QKeySequence::NativeText));
+        QVERIFY(!button->accessibleName().isEmpty());
+      }
+      if (!captures.isEmpty()) {
+        QTest::qWait(30);
+        QVERIFY(bench.window->grab().save(captures + '/' + capture +
+                                          (dark ? "-dark.png" : "-light.png")));
+      }
+    };
+    inspect(ActionId::ViewLocalTypes,
+            {"localTypesAdd", "localTypesEdit", "localTypesDelete",
+             "localTypesBack"},
+            {LocalTypesView::commandKey(TypesCommand::Add),
+             LocalTypesView::commandKey(TypesCommand::Edit),
+             LocalTypesView::commandKey(TypesCommand::Delete),
+             QKeySequence(Qt::Key_Escape)},
+            "local-types");
+    inspect(ActionId::ViewTypeLibraries,
+            {"typeLibrariesAdd", "typeLibrariesRemove"},
+            {QKeySequence(Qt::Key_Insert), QKeySequence(QKeySequence::Delete)},
+            "type-libraries");
+    inspect(ActionId::ViewPathfinder,
+            {"pathfinderAdd", "pathfinderExclude", "pathfinderRemove",
+             "pathfinderUp", "pathfinderDown"},
+            {QKeySequence(Qt::Key_Insert), QKeySequence(Qt::Key_Insert),
+             QKeySequence(QKeySequence::Delete),
+             QKeySequence(Qt::ALT | Qt::Key_Up),
+             QKeySequence(Qt::ALT | Qt::Key_Down)},
+            "pathfinder");
+    bench.window->disassembly()->focusContent();
+    bench.action(ActionId::SearchInView)->trigger();
+    auto *find = bench.window->findChild<FindInViewDialog *>();
+    QVERIFY(find);
+    for (const auto &[name, key] :
+         {std::pair{"findInViewPrevious", QKeySequence(Qt::SHIFT | Qt::Key_F3)},
+          std::pair{"findInViewNext", QKeySequence(Qt::Key_F3)}}) {
+      auto *button = find->findChild<QPushButton *>(QLatin1String(name));
+      QVERIFY(button);
+      QVERIFY(button->text().contains(key.toString(QKeySequence::NativeText)));
+    }
+    if (!captures.isEmpty())
+      QVERIFY(find->grab().save(captures +
+                                (dark ? "/find-dark.png" : "/find-light.png")));
+    find->reject();
+    DeclareTypesDialog declarations(
+        QStringLiteral("c"), QStringLiteral("struct Example { int Value; };"),
+        {}, bench.window.get());
+    declarations.show();
+    auto *declare = declarations.findChild<QPushButton *>("declare");
+    QVERIFY(declare);
+    QVERIFY(declare->text().contains(QKeySequence(Qt::CTRL | Qt::Key_Return)
+                                         .toString(QKeySequence::NativeText)));
+    if (!captures.isEmpty())
+      QVERIFY(declarations.grab().save(
+          captures + (dark ? "/declare-dark.png" : "/declare-light.png")));
+  }
+
   void viewSearchLiteralMatchingHasSharedCaseAndWordRules() {
     ViewSearchQuery query{QStringLiteral("v7")};
     QCOMPARE(query.matches(u"v7 + v7 + v70 + V7"),
@@ -6550,6 +6804,10 @@ private slots:
     bench.window->openFile(
         writeFixture(directory, QStringLiteral("local-types.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    // A local Esc must win even when the disassembly has a place to return to.
+    QTRY_VERIFY(bench.window->disassembly()->currentAddress().has_value());
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_VERIFY(bench.action(ActionId::JumpBack)->isEnabled());
     bench.action(ActionId::ViewLocalTypes)->trigger();
     auto *types = bench.window->findChild<LocalTypesView *>();
     QVERIFY(types);

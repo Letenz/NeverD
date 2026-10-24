@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>x87 支援(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>堆疊展開資訊…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>檢查所選指令處的堆疊展開中繼資料</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2955,6 +2963,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>另一個連結取代了此連結。</translation>
+    </message>
+    <message>
+        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
+        <translation>經典 IDA（legacy）。清單取得焦點時，優先使用該清單的快捷鍵。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>依操作、快捷鍵或作用範圍篩選</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>作用範圍</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未指派</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>分析檢視</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>工作區</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>快速篩選</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>清單</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>新增型別…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>編輯型別…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>刪除型別…</translation>
     </message>
 </context>
 <context>

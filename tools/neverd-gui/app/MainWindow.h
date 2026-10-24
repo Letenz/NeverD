@@ -276,6 +276,8 @@ private:
   void chooseFont();
   void chooseTheme();
   void showShortcuts();
+  /// Choose a jump target without changing the corresponding dock's state.
+  void chooseLocation(ChooserKind kind, ActionId command);
   QWidget *commandFocusWidget() const;
   /// Edit > Copy: the selection of the view holding the focus.
   void copySelection();

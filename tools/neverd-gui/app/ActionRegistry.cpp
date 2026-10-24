@@ -1,6 +1,7 @@
 #include "ActionRegistry.h"
 
 #include "Icons.h"
+#include "ShortcutHint.h"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -39,6 +40,7 @@ ActionRegistry::ActionRegistry(QObject *parent) : QObject(parent) {
     auto *action = new QAction(this);
     action->setObjectName(QString::fromLatin1(spec.id));
     action->setIcon(icon(QString::fromLatin1(spec.icon)));
+    action->setShortcutVisibleInContextMenu(true);
     if (*spec.shortcut)
       action->setShortcut(QKeySequence(QString::fromLatin1(spec.shortcut),
                                        QKeySequence::PortableText));
@@ -123,8 +125,17 @@ QList<QToolBar *> ActionRegistry::buildToolbars(QMainWindow *window) {
   };
   const auto addItem = [&](const char *toolbarId, const char *actionId) {
     if (auto *toolbar = byId.value(QString::fromLatin1(toolbarId)))
-      if (auto *action = actionByName(actionId))
+      if (auto *action = actionByName(actionId)) {
         toolbar->addAction(action);
+        if (auto *button =
+                qobject_cast<QToolButton *>(toolbar->widgetForAction(action))) {
+          const auto updateHint = [button, action] {
+            setShortcutHint(*button, action->shortcut());
+          };
+          connect(action, &QAction::changed, button, updateHint);
+          updateHint();
+        }
+      }
   };
   const auto addSeparator = [&](const char *toolbarId) {
     if (auto *toolbar = byId.value(QString::fromLatin1(toolbarId)))

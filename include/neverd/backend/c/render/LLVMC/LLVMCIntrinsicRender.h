@@ -19,6 +19,7 @@
 #define NEVERD_BACKEND_C_RENDER_LLVMC_LLVMCINTRINSICRENDER_H
 #include "neverd/Common.h"
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/AtomicOrdering.h"
 
 #include <functional>
@@ -28,6 +29,7 @@
 
 namespace llvm {
 class LoadInst;
+class CallBase;
 class CallInst;
 class Value;
 } // namespace llvm
@@ -67,9 +69,10 @@ std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
 
 //--- Arch-specific (LLVMCIntrinsicRenderX86.cpp) ---
 /// Recognize the complete owned CR/DR call, rejecting malformed candidates.
+bool isX86SystemRegisterNativeName(llvm::StringRef Name);
 std::optional<InlineAsmRender>
 renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
-                            const llvm::CallInst &Call,
+                            const llvm::CallBase &Call,
                             const std::string &ResultName, bool ResultLive,
                             const std::vector<std::string> &Args);
 const char *lookupX86AsmToC(const char *Mnem);

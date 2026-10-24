@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>دعم x87(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>معلومات فك المكدس…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>فحص بيانات فك المكدس الوصفية عند التعليمة المحددة</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2985,6 +2993,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>حلّ رابط آخر محل هذا الرابط.</translation>
+    </message>
+    <message>
+        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
+        <translation>IDA الكلاسيكي (legacy). تكون الأولوية لأوامر القائمة عندما يكون التركيز عليها.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>تصفية حسب الإجراء أو الاختصار أو النطاق</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>النطاق</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>غير معيّن</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>عروض التحليل</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>مساحة العمل</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>تصفية سريعة</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>القوائم</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>إضافة أنواع…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>تحرير النوع…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>حذف الأنواع…</translation>
     </message>
 </context>
 <context>

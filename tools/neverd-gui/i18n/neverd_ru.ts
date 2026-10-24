@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>&amp;Поддержка x87…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Сведения о раскрутке стека…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Просмотреть метаданные раскрутки стека для выбранной инструкции</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2967,6 +2975,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>Эту ссылку заменила другая.</translation>
+    </message>
+    <message>
+        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
+        <translation>Классическая схема IDA (legacy). Команды списка имеют приоритет, пока он в фокусе.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Фильтр по действию, сочетанию клавиш или области</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Область действия</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Не назначено</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Представления анализа</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Рабочая область</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Быстрый фильтр</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Списки</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Добавить типы…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Изменить тип…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Удалить типы…</translation>
     </message>
 </context>
 <context>
