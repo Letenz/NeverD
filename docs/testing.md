@@ -1939,7 +1939,10 @@ its dock button and the tab context menu in both themes.
 `NeverDGuiDocking` checks the floating caption with both native-caption settings.
 Its native `dragIntoWorkbench` cases press and drag the title bar or tab, verify
 the drop preview, and release into a tab group or horizontal/vertical split.
-They also release away from the indicators to verify cancellation. Run these
+They cover separate, overlapping and maximized floating windows, and release
+away from the indicators to verify cancellation and subsequent mouse input.
+`floatingWindowStates` checks maximizing, full screen and restoring on every
+native platform. Run these
 in both themes with a window manager and `xdotool` for native X11 input (Xvfb
 alone has no window stacking list):
 
@@ -1959,9 +1962,15 @@ python tools/neverd-gui/tests/run_wayland_docking.py --scale 1.5 \
 The Wayland runner requires GNOME Shell and creates a private headless desktop
 and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
 mouse events cannot authorize Wayland drag-and-drop. It also checks moving the
-floating window with its title icon and resizing its edges. No input is sent
+floating window through its system caption, resizing its edges and maximizing
+by double-clicking the system caption. Docking drags use the client caption or
+tab; the native caption retains the compositor's ordinary window operations.
+While a whole floating window is dragged, its native surface is minimized so
+it cannot obscure the target. Cancelled drags must restore its native position,
+size and window state, and accept another mouse click. No input is sent
 to the existing desktop. `NEVERD_SHORTCUT_CAPTURES` saves floating-window and
-drop-preview captures. The desktop CI runs native drag cases on X11, Windows
+drop-preview captures, including the actual compositor desktop on Wayland.
+The desktop CI runs native drag cases on X11, Windows
 and macOS; offscreen runs skip gestures requiring native windows.
 
 `closedFloatingDocksReopenInWorkbench` closes floating panes through their

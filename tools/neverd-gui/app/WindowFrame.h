@@ -23,8 +23,6 @@ namespace neverd::gui {
 /// frame elsewhere and when the setting ui/nativeTitleBar is on.
 class WindowFrame final : public QObject {
 public:
-  enum class Caption { UserPreference, Client };
-
   /// Before the application object exists: a window that takes its native
   /// window early, as a dialog polished before it first shows does in
   /// attach(), keeps it to itself.  Qt otherwise gives every other child of
@@ -40,10 +38,8 @@ public:
   /// its native window takes the frame when it is created.  A \p titleBar,
   /// which the frame then places across the window's top, is for a window
   /// whose layout leaves no room for one.  Returns null where windows keep
-  /// the window manager's frame. Caption::Client keeps an interactive client
-  /// title bar even when the user prefers native captions elsewhere.
-  static WindowFrame *attach(QWidget &window, QWidget *titleBar = nullptr,
-                             Caption caption = Caption::UserPreference);
+  /// the window manager's frame.
+  static WindowFrame *attach(QWidget &window, QWidget *titleBar = nullptr);
 
   /// Give every dialog its own frame and a TitleBar as it first shows,
   /// except popups and dialogs that are frameless already.
