@@ -1488,6 +1488,16 @@ rows while refreshing or navigating, then checks that the first-content signal
 waits for current rows and resets after clearing the input. Record a real
 workbench run after changing the report producer; worker replies and loaded
 prefetch rows do not independently establish painted instruction coverage.
+`initialNavigationOverviewDoesNotWaitForRefreshDebounce` checks that opening
+admits the initial address-map request in the same event turn, before the
+refresh debounce, and publishes the returned map for listing navigation.
+The query service's background-snapshot cases cover publication after open
+subscribers, cache reuse, correlation/context rejection, cancellation, and
+subscriber retirement/destruction. `replySnapshotsRejectOlderHeartbeatsInTheSameProject`
+checks publication ordering independently of opaque listing generations.
+`NeverDWorkerTransport` checks reply/heartbeat sequence agreement and the
+overview's generation against its executor snapshot. Keep real GUI startup
+comparisons separate from these protocol and controller checks.
 
 ## Configure a test build
 

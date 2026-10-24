@@ -110,7 +110,11 @@ ListingView::ListingView(Session &session, const AddressSpace &space,
     updateMetrics();
     viewport()->update();
   });
-  connect(&session_, &Session::generationChanged, this, &ListingView::refresh);
+  connect(&session_, &Session::generationChanged, this, [this] {
+    // A reply can publish the generation of the rows it just delivered.
+    if (generation_ != session_.generation())
+      refresh();
+  });
   connect(&session_, &Session::opened, this, &ListingView::clear);
   connect(&session_, &Session::unloaded, this, &ListingView::clear);
   connect(&session_, &Session::revisionChanged, this, [this] {

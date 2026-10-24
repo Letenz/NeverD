@@ -46,7 +46,11 @@ NavigationBand::NavigationBand(Session &session, AddressSpace &space,
   refresh_.setSingleShot(true);
   refresh_.setInterval(::neverd::limits::gui::kNavigationBandRefreshDebounceMs);
   connect(&refresh_, &QTimer::timeout, this, &NavigationBand::requestOverview);
-  connect(&session_, &Session::opened, this, [this] { refresh_.start(); });
+  connect(&session_, &Session::opened, this, [this] {
+    // The initial listing needs this address map before it can navigate.
+    refresh_.stop();
+    requestOverview();
+  });
   connect(&session_, &Session::generationChanged, this,
           [this] { refresh_.start(); });
   connect(&session_, &Session::revisionChanged, this,

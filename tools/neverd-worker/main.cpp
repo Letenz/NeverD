@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <deque>
 #include <iostream>
@@ -144,9 +145,15 @@ struct State {
   bool stopping = false;
   bool finished = false;
   std::string revision = "0", projectId;
-  // Engine background work state, published with heartbeats.
+  // Engine background work state, shared by replies and heartbeats.
   Json background = nullptr;
+  uint64_t BackgroundSequence = 0;
   std::string webRevision = "0", webProjectId;
+  /// Caller holds mutex; every executor publication has a monotonic sequence.
+  void publishBackground(Json Background) {
+    background = std::move(Background);
+    ++BackgroundSequence;
+  }
   const std::string &revisionFor(const Json &request) const {
     return isWeb(request) ? webRevision : revision;
   }
@@ -168,6 +175,7 @@ Json heartbeatMessage(const State &state) {
       {"active_request_id",
        state.active ? state.active->value["request_id"] : Json(nullptr)},
       {"cancellation_requested", state.active && state.active->cancelled},
+      {"background_sequence", std::to_string(state.BackgroundSequence)},
       {"background", state.background}};
 }
 
@@ -417,7 +425,7 @@ void executeLoop(State &state, Transport &transport) {
             // A failed step leaves its error in the published state.
           }
           lock.lock();
-          state.background = engine.backgroundState();
+          state.publishBackground(engine.backgroundState());
           if (!wasDiscovered && discoveryComplete(state.background)) {
             // Large-image clients wait for discovery publication before
             // starting a replica. Notify them now, then admit their request
@@ -525,7 +533,12 @@ void executeLoop(State &state, Transport &transport) {
         }
         state.revision = engine.revision();
         state.projectId = engine.projectId();
-        state.background = engine.backgroundState();
+        state.publishBackground(engine.backgroundState());
+        if (!webRequest) {
+          result["background"] = state.background;
+          result["background_sequence"] =
+              std::to_string(state.BackgroundSequence);
+        }
         state.webRevision = web.revision();
         state.webProjectId = web.projectId();
         state.pending.erase(value["request_id"].get<std::string>());
