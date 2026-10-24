@@ -7498,6 +7498,13 @@ imports through both IAT calls and jump veneers. Provider, name, delayed-import,
 conflicting-slot, addend, backing-byte, metadata, architecture and caller-cleanup
 mutations must refuse; every accepted stack fact still lacks an object or
 initializer memory contract.
+The portable `CRTImportQueriesKeepTheirStorageProofs` case covers nineteen
+CRT identity/provider combinations without optional corpus inputs. It requeries
+the same image after changing names, providers, delay flags, slot evidence,
+addends, backing bytes, conflicts, overlapping fixups, mapping or target traits.
+Both stack-cleanup facts and `_controlfp_s` recognition retain their complete
+current-storage checks. Run the registration-callee-stack, SEH-runtime-memory,
+read-only-bytes and pipeline-outcome owners after changing these queries.
 `NestedReturningStackProofIsBoundedAndNonCircular` checks multi-level callee
 cleanup, mismatched pops, recursive dependencies, the depth boundary and shared
 work exhaustion. It does not admit dispatcher-entered parent returns through

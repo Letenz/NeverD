@@ -19,18 +19,19 @@ namespace neverd::registration_state {
 
 bool isCheckedControlFPSlot(const BinaryImage &Image, va_t Slot) {
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
-      Image.Format != BinaryFormat::COFF ||
-      !isFileBackedPEImportSlot(Image, Slot))
+      Image.Format != BinaryFormat::COFF)
     return false;
+  // Reject unrelated identities before scanning current storage and fixups.
   const auto *Imported = Image.findImportAt(Slot);
   if (!Imported || Imported->IsDelayImport || Imported->Name != "_controlfp_s")
     return false;
   const llvm::StringRef Module = Imported->Module;
-  return Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
-         Module.equals_insensitive("api-ms-win-crt-runtime-l1-1-0.dll") ||
-         Module.equals_insensitive("ucrtbase.dll") ||
-         Module.equals_insensitive("ucrtbased.dll") ||
-         Module.equals_insensitive("msvcrt.dll");
+  return (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
+          Module.equals_insensitive("api-ms-win-crt-runtime-l1-1-0.dll") ||
+          Module.equals_insensitive("ucrtbase.dll") ||
+          Module.equals_insensitive("ucrtbased.dll") ||
+          Module.equals_insensitive("msvcrt.dll")) &&
+         isFileBackedPEImportSlot(Image, Slot);
 }
 
 bool isCheckedControlFPCall(const BinaryImage &Image, const LowOp &Op,

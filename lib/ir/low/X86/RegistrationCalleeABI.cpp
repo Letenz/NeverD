@@ -47,23 +47,24 @@ checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target) {
   // These authenticated C-runtime entries use caller cleanup on PE32.
   // This is a returning ESP fact only: allocation, deallocation, callbacks,
   // errno and floating-point effects need separate memory/runtime contracts.
-  if (Import && !Import->IsDelayImport &&
-      isFileBackedPEImportSlot(Image, Import->IATAddr)) {
+  if (Import && !Import->IsDelayImport) {
     const llvm::StringRef Module = Import->Module;
     const llvm::StringRef Name = Import->Name;
-    if ((Module.equals_insensitive("msvcrt.dll") ||
-         Module.equals_insensitive("msvcr100.dll")) &&
-        (Name == "malloc" || Name == "calloc" || Name == "realloc" ||
-         Name == "free" || Name == "memcpy" || Name == "memmove" ||
-         Name == "memset" || Name == "??2@YAPAXI@Z" ||
-         Name == "??_U@YAPAXI@Z" || Name == "??3@YAXPAX@Z" ||
-         Name == "??_V@YAXPAX@Z"))
-      return 0;
-    if ((Name == "log" || Name == "exp") &&
-        (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
-         Module.equals_insensitive("ucrtbase.dll") ||
-         Module.equals_insensitive("ucrtbased.dll") ||
-         Module.equals_insensitive("msvcrt.dll")))
+    const bool CallerCleanupCandidate =
+        ((Module.equals_insensitive("msvcrt.dll") ||
+          Module.equals_insensitive("msvcr100.dll")) &&
+         (Name == "malloc" || Name == "calloc" || Name == "realloc" ||
+          Name == "free" || Name == "memcpy" || Name == "memmove" ||
+          Name == "memset" || Name == "??2@YAPAXI@Z" ||
+          Name == "??_U@YAPAXI@Z" || Name == "??3@YAXPAX@Z" ||
+          Name == "??_V@YAXPAX@Z")) ||
+        ((Name == "log" || Name == "exp") &&
+         (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
+          Module.equals_insensitive("ucrtbase.dll") ||
+          Module.equals_insensitive("ucrtbased.dll") ||
+          Module.equals_insensitive("msvcrt.dll")));
+    if (CallerCleanupCandidate &&
+        isFileBackedPEImportSlot(Image, Import->IATAddr))
       return 0;
   }
   if (!Import || Import->Name != "RaiseException" ||
