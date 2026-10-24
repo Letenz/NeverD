@@ -270,3 +270,7 @@ SIDEEFFECT(Intrinsic::X86Lgdt16);
 SIDEEFFECT(Intrinsic::X86Lidt16);
 SIDEEFFECT(Intrinsic::X86Sgdt16);
 SIDEEFFECT(Intrinsic::X86Sidt16);
+
+#define NEVERD_X86_REP_STATE(Id, ...) SIDEEFFECT(Intrinsic::Id);
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE

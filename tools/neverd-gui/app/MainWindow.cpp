@@ -5222,6 +5222,7 @@ void MainWindow::toggleFocusMode() {
   codeDock->setAsCurrentTab();
   output->setAsCurrentTab();
   showPseudocode(code->representation());
+  floating->showMaximized();
   floating->raise();
   floating->activateWindow();
   disassembly_->focusContent();
@@ -5240,7 +5241,12 @@ void MainWindow::leaveFocusMode() {
   const auto layout = std::exchange(focusLayout_, {});
   const auto focus = std::exchange(focusReturn_, {});
   actions_.action(ActionId::ViewFocusMode)->setChecked(false);
-  if (!KDDockWidgets::LayoutSaver().restoreLayout(layout))
+  // Focus mode only moves panes. Restoring the untouched main-window geometry
+  // can lose its maximized state while the compositor processes the resize.
+  const KDDockWidgets::RestoreOptions options{
+      KDDockWidgets::RestoreOption_RelativeToMainWindow,
+      KDDockWidgets::RestoreOption_AbsoluteFloatingDockWindows};
+  if (!KDDockWidgets::LayoutSaver(options).restoreLayout(layout))
     output_->append(tr("Could not restore the layout before focus mode."), 1);
   if (focus && focus->isVisible()) {
     focus->window()->raise();

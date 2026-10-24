@@ -553,6 +553,7 @@ private slots:
     if (floating)
       assemblyDock->setFloating(true);
     QVERIFY(activateTestWindow(assembly->window()));
+    const bool wasMaximized = assembly->window()->isMaximized();
     assembly->focusContent();
     auto *mode = bench.action(ActionId::ViewFocusMode);
     QVERIFY(mode->isEnabled());
@@ -565,6 +566,7 @@ private slots:
     QTRY_VERIFY(mode->isChecked());
     auto *workspace = assembly->window();
     QVERIFY(workspace != bench.window.get());
+    QTRY_VERIFY(workspace->isMaximized());
     auto *code = workspace->findChild<CodeView *>();
     QVERIFY(code);
     QCOMPARE(output->window(), workspace);
@@ -602,6 +604,7 @@ private slots:
       QTest::keyClick(code->window()->windowHandle(), Qt::Key_F);
     QTRY_VERIFY(!mode->isChecked());
     QCOMPARE(assembly->window() != bench.window.get(), floating);
+    QTRY_COMPARE(assembly->window()->isMaximized(), wasMaximized);
     QCOMPARE(output->window(), bench.window.get());
     QVERIFY(output->isVisible() && assembly->isVisible());
     QVERIFY(!code->isVisible());

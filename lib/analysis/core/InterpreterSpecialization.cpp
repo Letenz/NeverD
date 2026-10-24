@@ -2772,9 +2772,14 @@ bool Specializer::evaluate(int Id) {
         if (!Count)
           return false;
         std::optional<uint64_t> Backward = 0;
-        if (*Count)
+        if (*Count) {
+          auto Direction = Exec.operandValue(Original.Inputs[4]);
+          if (Shape->CompleteState)
+            Direction = Ctx.mkAnd(Direction,
+                                  Ctx.mkConst(32, 1u << X86RepDirectionShift));
           Backward = Singleton(
-              Ctx.mkNe(Exec.operandValue(Original.Inputs[4]), Ctx.mkZero(8)));
+              Ctx.mkNe(Direction, Ctx.mkZero(Original.Inputs[4].Size * 8)));
+        }
         if (!Backward)
           return false;
         // The lowering scans the entire current instruction for disjoint
@@ -2789,7 +2794,9 @@ bool Specializer::evaluate(int Id) {
         uint64_t Remaining =
             Options.MaxOperations - Result.EvaluatedOperations + 1;
         const uint64_t PerElement = Shape->Fill ? 2 : 4;
-        if (*Count > (Remaining - 1) / PerElement)
+        const uint64_t Completion = Shape->completionOperations(*Count);
+        if (Remaining < Completion ||
+            *Count > (Remaining - Completion) / PerElement)
           return fail(SpecializationStatus::BudgetExceeded,
                       "repeated memory transfer exceeds operation budget");
         if (FrameRoot && !Shape->Fill && *Count &&
@@ -2819,7 +2826,8 @@ bool Specializer::evaluate(int Id) {
         Remaining = Options.MaxOperations - Result.EvaluatedOperations + 1;
         Remaining = std::min<uint64_t>(Remaining, Operations.max_size() -
                                                       (Operations.size() - 1));
-        if (*Count > (Remaining - 1) / PerElement)
+        if (Remaining < Completion ||
+            *Count > (Remaining - Completion) / PerElement)
           return fail(SpecializationStatus::BudgetExceeded,
                       "repeated memory transfer exceeds operation budget");
         auto Expanded =

@@ -27,6 +27,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
+#include "neverd/ir/intrinsics/X86/X86RepState.h"
 #include "neverd/ir/intrinsics/X86/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86/X86Virtualization.h"
@@ -687,6 +688,61 @@ inline X86AmxShape x86AmxMedShape(const MedOp &Op, Arch A = Arch::Unknown) {
   CheckArch(Op.Output);
   for (unsigned I = 1; I < Op.NumInputs && I < Op.Inputs.size(); ++I)
     CheckArch(Op.Inputs[I]);
+  return S;
+}
+
+inline X86RepShape x86RepMedShape(const MedOp &Op,
+                                  Arch TargetArch = Arch::Unknown) {
+  X86RepShape S;
+  S.TargetArch = TargetArch;
+  if (S.TargetArch == Arch::Unknown && Op.Output.Kind == MedVar::Reg)
+    S.TargetArch = Op.Output.TheArch;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+              Op.Inputs[0].ConstVal <= UINT16_MAX;
+  if (Op.Output.Kind == MedVar::Reg && Op.Output.TheArch != S.TargetArch)
+    S.ValidId = false;
+  S.WritableOutput =
+      (Op.Output.Kind == MedVar::Reg || Op.Output.Kind == MedVar::Temp) &&
+      Op.Output.Id >= 0;
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    S.InputSizes[I] = Input.Size;
+    S.ScalarInputs[I] =
+        isMedIntrinsicScalarInput(Input) || Input.Kind == MedVar::Param ||
+        Input.Kind == MedVar::Stack || Input.Kind == MedVar::RetVal;
+    if (Input.Kind == MedVar::Reg) {
+      if (S.TargetArch == Arch::Unknown)
+        S.TargetArch = Input.TheArch;
+      else if (Input.TheArch != S.TargetArch)
+        S.ValidId = false;
+    }
+  }
+  if (Op.NumInputs > 5 && Op.Inputs[5].isConst() &&
+      Op.Inputs[5].Size == X86RepDescriptorBytes &&
+      Op.Inputs[5].ConstVal <= UINT32_MAX)
+    S.Descriptor = static_cast<uint32_t>(Op.Inputs[5].ConstVal);
+  const auto C =
+      S.ValidId ? x86RepContract(static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
+                : std::nullopt;
+  if (!C || Op.IntrinsicOutputs.size() != C->auxiliaryOutputs())
+    S.ValidId = false;
+  else
+    for (unsigned I = 0; I < C->auxiliaryOutputs(); ++I) {
+      const auto &V = Op.IntrinsicOutputs[I];
+      if (V.Kind != MedVar::Temp || V.Id < 0 ||
+          V.Size != (I + 1 < C->WordResults ? S.OutputSize : X86RepFlagBytes))
+        S.ValidId = false;
+      for (unsigned J = 0; J < I; ++J)
+        if (Op.IntrinsicOutputs[J].Id == V.Id)
+          S.ValidId = false;
+      if (Op.Output.Kind == MedVar::Temp && V.Id == Op.Output.Id)
+        S.ValidId = false;
+    }
   return S;
 }
 

@@ -43,6 +43,10 @@ namespace neverd {
 /// Defined in X86LiftString.cpp.
 unsigned stringElemSize(unsigned InsnId);
 
+/// One native operation owns all REP register, flag and memory completion.
+void liftRepState(X86Lifter &L, X86Lifter::LiftState &S, const cs_x86 &X86,
+                  Intrinsic Id, unsigned Element, bool NotEqual = false);
+
 /// Address space selected for an implicit x86 string source.  Capstone exposes
 /// the source as a memory operand for MOVS/LODS/CMPS, but XLAT has no explicit
 /// operands, so the legacy-prefix bytes are the authoritative fallback.

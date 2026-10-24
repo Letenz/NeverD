@@ -2101,12 +2101,12 @@ dialog; it must terminate without the probe forcing successful process exit.
 
 `codeOpensBesideFloatingDisassembly` checks new, existing and reopened source
 and IR panes beside their floating disassembly. `focusModeGroupsViewsAndRestoresLayout`
-presses F three times to create one floating workspace with assembly on the
-left, code on the right and output across the bottom. It checks both themes,
-docked and floating origins, restoring the previous layout, unchanged data,
-data addresses outside functions, and ordinary command input. Keys enter
-through `QWindow` so forwarding to the focused widget cannot silently reset
-the sequence.
+presses F three times to create one maximized floating workspace with assembly
+on the left, code on the right and output across the bottom. It checks both
+themes, docked and floating origins, restoring the previous layout and window
+state, unchanged data, data addresses outside functions, and ordinary command
+input. Keys enter through `QWindow` so forwarding to the focused widget cannot
+silently reset the sequence.
 `focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
 one second apart, interruption by another key or focus change, timeout,
 auto-repeat, ordinary text input, reopening a closed assembly pane, and
@@ -4159,7 +4159,7 @@ GCC/Clang build, `NeverDX87OriginalReplay` executes original instructions. Its
 C-only source checks x87/FXSAVE availability, rejects out-of-profile inputs and
 reports the actual i386 or x64 process mode. It does not need C++ headers or
 LLVM. On Linux x64 with the i386 C runtime installed, build the reference with
-`clang -m32 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c -o
+`clang -m32 -std=c11 -O2 unittests/lift/x86/X87OriginalReplay.c -o
 build-release/X87OriginalReplay32` and pass that path as `--original-driver`.
 This adds i386 numerical observations, not an i386 owned-state executor.
 The recorder retains source/driver copies and checks their hashes before/after
@@ -4168,8 +4168,8 @@ Apple ARM64 with Rosetta already installed, the original driver can be compiled
 separately without LLVM; it reports Rosetta explicitly:
 
 ```sh
-clang -arch x86_64 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c -o build-release/X87OriginalReplay
-python3 scripts/check_x87_arithmetic_replay.py --portable-driver build-release/bin/NeverDX87ArithmeticReplay --original-driver build-release/X87OriginalReplay --output-dir build-release/x87-replay-run1 --portable-build 'configured Release build and pinned LLVM' --original-build 'clang -arch x86_64 -std=c11 -O2 unittests/lift/core/X87OriginalReplay.c'
+clang -arch x86_64 -std=c11 -O2 unittests/lift/x86/X87OriginalReplay.c -o build-release/X87OriginalReplay
+python3 scripts/check_x87_arithmetic_replay.py --portable-driver build-release/bin/NeverDX87ArithmeticReplay --original-driver build-release/X87OriginalReplay --output-dir build-release/x87-replay-run1 --portable-build 'configured Release build and pinned LLVM' --original-build 'clang -arch x86_64 -std=c11 -O2 unittests/lift/x86/X87OriginalReplay.c'
 ```
 
 Use a fresh output directory for every observation and record the actual build

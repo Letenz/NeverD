@@ -19,9 +19,13 @@ layout, including the public execution models.
 Binary-format implementation remains grouped by ELF, COFF and Mach-O, including
 format-owned architecture encodings and unwind records. Platform emulator
 backends and UI features retain their existing service boundaries. The stable C
-SDK and portable-runtime C header paths remain unchanged. Tests retain their existing
-semantic and format groupings. Directory moves do not change component targets,
-intrinsic identities, exported symbols or instruction semantics.
+SDK and portable-runtime C header paths remain unchanged. Tests keep their owning
+component and semantic suites, with architecture-specific sources beneath
+`x86/`, `x86_64/`, `x86_32/`, `arm32/` or `aarch64/`. Shared x86/x87 tests use
+`x86/`; mode-specific execution tests retain their existing mode names. Fixtures
+shared across architectures and format-owned tests stay with their consumers.
+Directory moves do not change component targets, intrinsic identities, exported
+symbols or instruction semantics.
 
 `X86DescriptorState.h` owns descriptor-state operand shapes; LowIR,
 Low-to-Med, Med verification and source output use that contract.
@@ -67,11 +71,22 @@ separate and guarded at native emission. See
 [x86 instruction support](x86-instruction-support.md#architectural-amx-bank-and-native-output)
 for feature distinctions, historical TF32 encoding and qualification limits.
 
+`X86RepState.h` owns the versioned REP input and completion contract. One
+natural-width register tuple, packed arithmetic flags/DF and a constant encoding
+descriptor fit the LowIR operand boundary. LLVM and both C routes retain actual
+hardware register results, including zero-count address-size behavior, instead
+of reconstructing them with pointer arithmetic. `X86RepStateAsm.h` owns the
+older-SDK fallback and native API names. The bounded x64 MOVS/STOS analysis
+accepts only unsegmented 64-bit addresses, proves count/direction, validates all
+auxiliary output bindings and charges the complete scalar expansion.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
-attributes for AMX and SGX. Instruction renderers report their required feature
+attributes for AMX, SGX and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
 use. Separate target attributes would discard one group's requirements in a
-mixed function. Assembly fallbacks do not acquire unavailable compiler features.
+mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP
+comparison completion in long mode requires LAHF/SAHF on both native and
+assembly routes, and its `sahf` attribute survives every capability combination.
 
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 

@@ -138,11 +138,15 @@ void expectMemory(NdOpEmulator &Emulator, uint64_t Base,
 TEST(X86NativeStateAudit, RepMovsqRetainsOrderedCopyAndCompleteState) {
   const auto Ops = lift({0xf3, 0x48, 0xa5});
   ASSERT_FALSE(Ops.empty());
-  ASSERT_TRUE(detail::stringTransferShape(Ops.front()));
-  EXPECT_EQ(Ops.front().Inputs[1], NdVar::reg(x86reg::RSI, 8));
-  EXPECT_EQ(Ops.front().Inputs[2], NdVar::reg(x86reg::RDI, 8));
-  EXPECT_EQ(Ops.front().Inputs[3], NdVar::reg(x86reg::RCX, 8));
-  EXPECT_EQ(Ops.front().Inputs[4], NdVar::reg(x86reg::DF, 1));
+  const auto It = std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+    return detail::stringTransferShape(Op).has_value();
+  });
+  ASSERT_NE(It, Ops.end());
+  EXPECT_EQ(It->Inputs[1], NdVar::reg(x86reg::RSI, 8));
+  EXPECT_EQ(It->Inputs[2], NdVar::reg(x86reg::RDI, 8));
+  EXPECT_EQ(It->Inputs[3], NdVar::reg(x86reg::RCX, 8));
+  EXPECT_EQ(It->Inputs[4].Size, X86RepStatusBytes);
+  EXPECT_EQ(detail::stringTransferShape(*It)->CompleteState, true);
   for (bool Backward : {false, true})
     for (unsigned Count : {0, 1, 3, 7})
       for (int Gap : {-32, -8, -1, 0, 1, 8, 32})
@@ -170,9 +174,10 @@ TEST(X86NativeStateAudit, RepMovsqRetainsOrderedCopyAndCompleteState) {
                       Memory.begin() + Destination + Delta);
           }
           auto Expanded = detail::lowerStringTransfer(
-              Ops.front(), Count, Backward, Ops, 0x70000000, Count * 4 + 1);
+              *It, Count, Backward, Ops, 0x70000000, Count * 4 + 3);
           ASSERT_TRUE(bool(Expanded)) << llvm::toString(Expanded.takeError());
-          Expanded->insert(Expanded->end(), Ops.begin() + 1, Ops.end());
+          Expanded->insert(Expanded->begin(), Ops.begin(), It);
+          Expanded->insert(Expanded->end(), It + 1, Ops.end());
           const uint64_t Delta = Backward ? uint64_t(0) - Count * 8 : Count * 8;
           Expected.Registers[x86reg::RSI / 8] += Delta;
           Expected.Registers[x86reg::RDI / 8] += Delta;
@@ -186,21 +191,25 @@ TEST(X86NativeStateAudit, RepMovsqRetainsOrderedCopyAndCompleteState) {
 TEST(X86NativeStateAudit, RepMovsqZeroCountAvoidsMemoryAndBudgetIsExact) {
   const auto Ops = lift({0xf3, 0x48, 0xa5});
   ASSERT_FALSE(Ops.empty());
-  auto Exact =
-      detail::lowerStringTransfer(Ops.front(), 7, true, Ops, 0x70000000, 29);
+  const auto It = std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+    return detail::stringTransferShape(Op).has_value();
+  });
+  ASSERT_NE(It, Ops.end());
+  auto Exact = detail::lowerStringTransfer(*It, 7, true, Ops, 0x70000000, 31);
   ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
   for (uint64_t Count : {uint64_t(7), UINT64_MAX}) {
-    auto Refused = detail::lowerStringTransfer(Ops.front(), Count, true, Ops,
-                                               0x70000000, 28);
+    auto Refused =
+        detail::lowerStringTransfer(*It, Count, true, Ops, 0x70000000, 30);
     EXPECT_FALSE(bool(Refused));
     if (!Refused)
       llvm::consumeError(Refused.takeError());
   }
   for (bool Backward : {false, true}) {
-    auto Zero = detail::lowerStringTransfer(Ops.front(), 0, Backward, Ops,
-                                            0x70000000, 1);
+    auto Zero =
+        detail::lowerStringTransfer(*It, 0, Backward, Ops, 0x70000000, 3);
     ASSERT_TRUE(bool(Zero)) << llvm::toString(Zero.takeError());
-    Zero->insert(Zero->end(), Ops.begin() + 1, Ops.end());
+    Zero->insert(Zero->begin(), Ops.begin(), It);
+    Zero->insert(Zero->end(), It + 1, Ops.end());
     for (const auto &Op : *Zero) {
       EXPECT_NE(Op.Opcode, NdOp::LOAD);
       EXPECT_NE(Op.Opcode, NdOp::STORE);

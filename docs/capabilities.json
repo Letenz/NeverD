@@ -2889,7 +2889,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersDifferentFullWidthRegistersAndAddImmediate",
           "platforms": [
             "darwin",
@@ -2900,7 +2900,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersSubtractAndSignedBorrowFlags",
           "platforms": [
             "darwin",
@@ -2911,7 +2911,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.MatchesIndependentLogicalOperationAndFlagTruthVectors",
           "platforms": [
             "darwin",
@@ -2922,7 +2922,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.HandlesLogicalIdiomAndSignExtendedImmediateForms",
           "platforms": [
             "darwin",
@@ -2933,7 +2933,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.PublishesCanonicalCompareAndTestRegisterForms",
           "platforms": [
             "darwin",
@@ -2944,7 +2944,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.PublishesCanonicalCompareAndTestImmediateForms",
           "platforms": [
             "darwin",
@@ -2955,7 +2955,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsReservedAndNonCanonicalCompareTestEncodings",
           "platforms": [
             "darwin",
@@ -2966,7 +2966,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.MatchesCompareFlagsWithoutWritingEitherOperand",
           "platforms": [
             "darwin",
@@ -2977,7 +2977,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.MatchesTestFlagsWithoutWritingOperandsOrAuxiliaryFlag",
           "platforms": [
             "darwin",
@@ -2988,7 +2988,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsCompareAndTestLowIRDataflowDriftBeforeLowering",
           "platforms": [
             "darwin",
@@ -2999,7 +2999,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsNonCanonicalWidthMemoryAndPrefixScalarForms",
           "platforms": [
             "darwin",
@@ -3010,7 +3010,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsSemanticallyRedundantREXExtensionBits",
           "platforms": [
             "darwin",
@@ -3021,7 +3021,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.AcceptsNecessaryREXExtensionBits",
           "platforms": [
             "darwin",
@@ -3032,7 +3032,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsUndeclaredGuestOpcodeEvenWhenItsLowIRIsLowerable",
           "platforms": [
             "darwin",
@@ -3043,7 +3043,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersReturnImmediateStackAdjustment",
           "platforms": [
             "darwin",
@@ -3054,7 +3054,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersCanonicalZeroFlagBranchesToASelectedGuestPC",
           "platforms": [
             "darwin",
@@ -3065,7 +3065,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersCanonicalSingleFlagBranchesToASelectedGuestPC",
           "platforms": [
             "darwin",
@@ -3076,7 +3076,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersCanonicalShortJBEFromCarryOrZero",
           "platforms": [
             "darwin",
@@ -3087,7 +3087,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersCanonicalShortJAFromClearCarryAndZero",
           "platforms": [
             "darwin",
@@ -3098,7 +3098,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersEveryCanonicalUnsignedMultiFlagBranchEncoding",
           "platforms": [
             "darwin",
@@ -3109,7 +3109,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.LowersCanonicalSignedMultiFlagBranchesToASelectedGuestPC",
           "platforms": [
             "darwin",
@@ -3120,7 +3120,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsMultiFlagPredicatesThatDisagreeWithGuestBytes",
           "platforms": [
             "darwin",
@@ -3131,7 +3131,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsPrefixedAndUnpublishedControlFormsWithoutExpandingTheSlice",
           "platforms": [
             "darwin",
@@ -3142,7 +3142,7 @@
         {
           "runner": "gtest",
           "target": "NeverDTranslationContractTests",
-          "source": "unittests/translate/X86TranslationBlockLowererTests.cpp",
+          "source": "unittests/translate/x86/X86TranslationBlockLowererTests.cpp",
           "filter": "X86TranslationBlockLowerer.RejectsCountedAndLoopConditionalBranchEncodings",
           "platforms": [
             "darwin",
@@ -5131,7 +5131,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.WideLayoutIgnoresAbsentComponentsAndAlignmentPadding",
           "platforms": [
             "darwin",
@@ -5187,7 +5187,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64MachineProbeTests.cpp",
+          "source": "unittests/emulation/x86_64/X64MachineProbeTests.cpp",
           "filter": "X64MachineProbe.DiagnosticIdentifiesStepFieldAndBothValues",
           "platforms": [
             "darwin",
@@ -5198,7 +5198,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.CompactedInitialExtensionsPreserveTheCompleteFPState",
           "platforms": [
             "darwin",
@@ -5209,7 +5209,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.CompactedOffsetsFollowLayoutRatherThanPresentBits",
           "platforms": [
             "darwin",
@@ -5220,7 +5220,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.EveryNonInitialExtensionByteRejectsWithoutPublication",
           "platforms": [
             "darwin",
@@ -5231,7 +5231,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.TruncatedAndUnknownExtensionsCannotPublishState",
           "platforms": [
             "darwin",
@@ -5242,7 +5242,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.AbsentExtensionsIgnoreStaleBytes",
           "platforms": [
             "darwin",
@@ -5262,7 +5262,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.StandardInitSSEStillLoadsMXCSR",
           "platforms": [
             "darwin",
@@ -5273,7 +5273,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "X64Xsave.StandardInitSSERejectsReservedMXCSRWithoutPublication",
           "platforms": [
             "darwin",
@@ -5284,7 +5284,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64XsaveTests.cpp",
+          "source": "unittests/emulation/x86_64/X64XsaveTests.cpp",
           "filter": "*/X64XsaveHost.ActualRestoreDistinguishesStandardAndCompactedMXCSR/*",
           "platforms": [
             "darwin",
@@ -5304,7 +5304,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64IntegerTests",
-          "source": "unittests/emulation/X64IntegerTests.cpp",
+          "source": "unittests/emulation/x86_64/X64IntegerTests.cpp",
           "filter": "*/X64Integer.MultiplyPreservesWidthsAndDefinedFlags/*",
           "platforms": [
             "darwin",
@@ -5315,7 +5315,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64IntegerTests",
-          "source": "unittests/emulation/X64IntegerTests.cpp",
+          "source": "unittests/emulation/x86_64/X64IntegerTests.cpp",
           "filter": "*/X64Integer.SignExtensionKeepsFlagsAndUntouchedRegisterBits/*",
           "platforms": [
             "darwin",
@@ -5326,7 +5326,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64IntegerTests",
-          "source": "unittests/emulation/X64IntegerTests.cpp",
+          "source": "unittests/emulation/x86_64/X64IntegerTests.cpp",
           "filter": "*/X64Integer.ReadObserverStopsBeforeImplicitRegisterEffects/*",
           "platforms": [
             "darwin",
@@ -5337,7 +5337,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64IntegerTests",
-          "source": "unittests/emulation/X64IntegerTests.cpp",
+          "source": "unittests/emulation/x86_64/X64IntegerTests.cpp",
           "filter": "*/X64Integer.MissingSourcePagePreservesBothProductHalves/*",
           "platforms": [
             "darwin",
@@ -5402,7 +5402,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64StateTests",
-          "source": "unittests/emulation/AArch64StateTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64StateTests.cpp",
           "filter": "*/AArch64CompleteState.EveryScalarAndVectorFailureRetainsCompleteInput/*",
           "platforms": [
             "darwin",
@@ -5413,7 +5413,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64FPTests",
-          "source": "unittests/emulation/AArch64FPStateTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64FPStateTests.cpp",
           "filter": "*/AArch64FPTransport.OriginalInstructionsConsumeAllVectorLanesAndHostChanges/*",
           "platforms": [
             "darwin",
@@ -5424,7 +5424,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64FPTests",
-          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64SIMDTests.cpp",
           "filter": "*/AArch64SIMD.ScalarFloatingResultsRoundingAndStatusMatchIEEEBits/*",
           "platforms": [
             "darwin",
@@ -5435,7 +5435,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64FPTests",
-          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64SIMDTests.cpp",
           "filter": "*/AArch64SIMD.UnsupportedFPStateCannotBeInstalledOrTruncated/*",
           "platforms": [
             "darwin",
@@ -5446,7 +5446,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64FPTests",
-          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64SIMDTests.cpp",
           "filter": "*/AArch64SIMD.ScalableVectorsCannotEnterTheFixedWidthProfile/*",
           "platforms": [
             "darwin",
@@ -5457,7 +5457,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64FPTests",
-          "source": "unittests/emulation/AArch64SIMDTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64SIMDTests.cpp",
           "filter": "*/AArch64SIMD.PairVectorAddressWrapCannotAliasLowerPages/*",
           "platforms": [
             "darwin",
@@ -5468,7 +5468,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64MemoryTests",
-          "source": "unittests/emulation/AArch64VectorMemoryTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64VectorMemoryTests.cpp",
           "filter": "*/AArch64VectorMemory.ExecutesEveryCrossingWithOrderedFullWidthObservers/*",
           "platforms": [
             "darwin",
@@ -5479,7 +5479,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64MemoryTests",
-          "source": "unittests/emulation/AArch64VectorMemoryTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64VectorMemoryTests.cpp",
           "filter": "*/AArch64VectorMemory.StopAtEveryObserverRetainsRAMVectorsAndWriteback/*",
           "platforms": [
             "darwin",
@@ -5499,7 +5499,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "source": "unittests/emulation/x86_64/X64FPStateTests.cpp",
           "filter": "*/X64FPTransport.PreservesAllPhysicalLanesAndControlAcrossEveryTOP/*",
           "platforms": [
             "darwin",
@@ -5510,7 +5510,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "source": "unittests/emulation/x86_64/X64FPStateTests.cpp",
           "filter": "*/X64FPContext.CapturesFullPhysicalStateAndRestoresAfterExecution/*",
           "platforms": [
             "darwin",
@@ -5521,7 +5521,7 @@
         {
           "runner": "gtest",
           "target": "NeverDRAMTransactionTests",
-          "source": "unittests/emulation/X64AtomicTests.cpp",
+          "source": "unittests/emulation/x86_64/X64AtomicTests.cpp",
           "filter": "*/X64Atomic.ObserverExceptionDiscardsTheCompletedNativeWrite/*",
           "platforms": [
             "darwin",
@@ -5532,7 +5532,7 @@
         {
           "runner": "gtest",
           "target": "NeverDRAMTransactionTests",
-          "source": "unittests/emulation/X64AtomicTests.cpp",
+          "source": "unittests/emulation/x86_64/X64AtomicTests.cpp",
           "filter": "*/X64Atomic.ExactRAMAndRegisterResultsMatchIndependentHostExecution/*",
           "platforms": [
             "darwin",
@@ -5565,7 +5565,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64ExceptionTests",
-          "source": "unittests/emulation/X64ExceptionTests.cpp",
+          "source": "unittests/emulation/x86_64/X64ExceptionTests.cpp",
           "filter": "*/X64ExceptionTransport.ReportsExactNativeFaultAndOriginalContext/*",
           "platforms": [
             "darwin",
@@ -5576,7 +5576,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64ExceptionTests",
-          "source": "unittests/emulation/X64DivisionTests.cpp",
+          "source": "unittests/emulation/x86_64/X64DivisionTests.cpp",
           "filter": "*/X64Division.RecoverableDivideRequiresConsumptionAndExplicitContinuation/*",
           "platforms": [
             "darwin",
@@ -5587,7 +5587,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64CrossPageTests.cpp",
+          "source": "unittests/emulation/x86_64/X64CrossPageTests.cpp",
           "filter": "*/X64CrossPage.ExecutesEveryCrossingWithoutAssumingContiguousBacking/*",
           "platforms": [
             "darwin",
@@ -5598,7 +5598,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64CrossPageTests.cpp",
+          "source": "unittests/emulation/x86_64/X64CrossPageTests.cpp",
           "filter": "*/X64CrossPage.RecoverableSecondPageFaultCanBeConsumedAndRetried/*",
           "platforms": [
             "darwin",
@@ -5609,7 +5609,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64CrossPageTests.cpp",
+          "source": "unittests/emulation/x86_64/X64CrossPageTests.cpp",
           "filter": "*/X64CrossPageCopy.FaultAfterOneElementPreservesRestartStateAndBacking/*",
           "platforms": [
             "darwin",
@@ -5620,7 +5620,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64CrossPageTests.cpp",
+          "source": "unittests/emulation/x86_64/X64CrossPageTests.cpp",
           "filter": "*/X64CrossPageDevice.MixedRAMAndDevicePagesRejectWithoutCallbacksOrEffects/*",
           "platforms": [
             "darwin",
@@ -5631,7 +5631,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64CrossPageTests.cpp",
+          "source": "unittests/emulation/x86_64/X64CrossPageTests.cpp",
           "filter": "X64CrossPageOracle.NativeFaultCannotCommitAnyPrefixStore",
           "platforms": [
             "linux"
@@ -5640,7 +5640,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64CrossPageTests.cpp",
+          "source": "unittests/emulation/x86_64/X64CrossPageTests.cpp",
           "filter": "X64CrossPageOracle.NativeRepeatFaultPreservesCompletedElements",
           "platforms": [
             "linux"
@@ -5797,7 +5797,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64DataTests.cpp",
+          "source": "unittests/emulation/x86_64/X64DataTests.cpp",
           "filter": "*/X64Data.EveryXmmRegisterSurvivesNativeExecutionAndContextRestore/*",
           "platforms": [
             "darwin",
@@ -5808,7 +5808,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64DataTests.cpp",
+          "source": "unittests/emulation/x86_64/X64DataTests.cpp",
           "filter": "*/X64Device.PreparedStringReadCommitsOnlyAfterWriteObserverAdmitsIt/*",
           "platforms": [
             "darwin",
@@ -5841,7 +5841,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64StateTests",
-          "source": "unittests/emulation/AArch64MachineProbeTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64MachineProbeTests.cpp",
           "filter": "AArch64MachineProbe.EveryScalarCorruptionRejectsNativeInitialization",
           "platforms": [
             "darwin",
@@ -5852,7 +5852,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64StateTests",
-          "source": "unittests/emulation/AArch64MachineProbeTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64MachineProbeTests.cpp",
           "filter": "AArch64MachineProbe.EveryVectorCorruptionRejectsNativeInitialization",
           "platforms": [
             "darwin",
@@ -5863,7 +5863,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64StateTests",
-          "source": "unittests/emulation/AArch64MachineProbeTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64MachineProbeTests.cpp",
           "filter": "AArch64MachineProbe.NopSupportDoesNotProveFloatingPointExecution",
           "platforms": [
             "darwin",
@@ -5874,7 +5874,7 @@
         {
           "runner": "gtest",
           "target": "NeverDAArch64FPTests",
-          "source": "unittests/emulation/AArch64ProbeExecutionTests.cpp",
+          "source": "unittests/emulation/aarch64/AArch64ProbeExecutionTests.cpp",
           "filter": "*/AArch64ProbeExecution.OriginalProgramChecksCompleteStateAndOneDeadline/*",
           "platforms": [
             "darwin",
@@ -5941,7 +5941,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64MachineProbeTests.cpp",
+          "source": "unittests/emulation/x86_64/X64MachineProbeTests.cpp",
           "filter": "X64MachineProbe.EveryScalarCorruptionRejectsNativeInitialization",
           "platforms": [
             "darwin",
@@ -5952,7 +5952,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64MachineProbeTests.cpp",
+          "source": "unittests/emulation/x86_64/X64MachineProbeTests.cpp",
           "filter": "X64MachineProbe.EveryPhysicalFPWordCorruptionRejectsInitialization",
           "platforms": [
             "darwin",
@@ -5963,7 +5963,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64ProbeExecutionTests.cpp",
+          "source": "unittests/emulation/x86_64/X64ProbeExecutionTests.cpp",
           "filter": "*/X64ProbeExecution.OriginalProgramChecksFullStateAndOneDeadline/*",
           "platforms": [
             "linux",
@@ -5973,7 +5973,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64ProbeExecutionTests.cpp",
+          "source": "unittests/emulation/x86_64/X64ProbeExecutionTests.cpp",
           "filter": "*/X64ProbeExecution.ExistingGuestMappingAndRAMSurviveInitialization/*",
           "platforms": [
             "linux",
@@ -6005,7 +6005,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "source": "unittests/emulation/x86_64/X64FPStateTests.cpp",
           "filter": "X64FPState.StandardAndCompactedXsavePreserveEveryPhysicalTOP",
           "platforms": [
             "darwin",
@@ -6016,7 +6016,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "source": "unittests/emulation/x86_64/X64FPStateTests.cpp",
           "filter": "X64FPState.MalformedXsaveHeadersCannotPublishPartialState",
           "platforms": [
             "darwin",
@@ -6152,7 +6152,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64FPTests",
-          "source": "unittests/emulation/X64FPStateTests.cpp",
+          "source": "unittests/emulation/x86_64/X64FPStateTests.cpp",
           "filter": "*/X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/*",
           "platforms": [
             "darwin",
@@ -6163,7 +6163,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.MemoryResultsAndEffectiveAddressesMatchHost/*",
           "platforms": [
             "darwin",
@@ -6174,7 +6174,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.RegisterResultsMatchHostAndPreserveUntouchedBits/*",
           "platforms": [
             "darwin",
@@ -6185,7 +6185,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.NarrowIndicesIgnoreUpperRegisterBits/*",
           "platforms": [
             "darwin",
@@ -6196,7 +6196,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.ReadAndResultStopsRetainOriginalRAMAndCPU/*",
           "platforms": [
             "darwin",
@@ -6207,7 +6207,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.ResultObserverExceptionDiscardsNativeEffects/*",
           "platforms": [
             "darwin",
@@ -6218,7 +6218,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.ProtectionChecksUseTheAdjustedWordRatherThanTheBitBase/*",
           "platforms": [
             "darwin",
@@ -6229,7 +6229,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.MissingNegativeOffsetWordRaisesAReadFault/*",
           "platforms": [
             "darwin",
@@ -6240,7 +6240,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.ReadOnlyWordCanPrecedeAnUnmappedBase/*",
           "platforms": [
             "darwin",
@@ -6251,7 +6251,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.CrossPageResultsAndStopsMatchHostWithIndependentBacking/*",
           "platforms": [
             "darwin",
@@ -6262,7 +6262,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.CrossPageFaultPreservesBothAllocationsAndCPU/*",
           "platforms": [
             "darwin",
@@ -6273,7 +6273,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.RejectedLockFormsHaveNoEffectsOrObservations/*",
           "platforms": [
             "darwin",
@@ -6284,7 +6284,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.DeviceOperandsRejectBeforeCallbacks/*",
           "platforms": [
             "darwin",
@@ -6295,7 +6295,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64BitStringTests.cpp",
+          "source": "unittests/emulation/x86_64/X64BitStringTests.cpp",
           "filter": "*/X64BitString.AddressSizeWrappingPrecedesFSAndGSBases/*",
           "platforms": [
             "darwin",
@@ -6306,7 +6306,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.TransfersMatchHostAcrossWidthsCountsAndDirection/*",
           "platforms": [
             "darwin",
@@ -6317,7 +6317,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.DirectionInstructionsPreserveOtherFlagsAndRegisters/*",
           "platforms": [
             "darwin",
@@ -6328,7 +6328,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.ZeroCountAddressSizeMatchesHostWithoutMemory/*",
           "platforms": [
             "darwin",
@@ -6339,7 +6339,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.AmbiguousZeroCountUpperHalvesRejectBeforeEffects/*",
           "platforms": [
             "darwin",
@@ -6350,7 +6350,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.NarrowAddressesNormalizeOnlyParticipatingRegisters/*",
           "platforms": [
             "darwin",
@@ -6361,7 +6361,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.SourceSegmentsFollowAddressTruncationAndNeverBiasDestination/*",
           "platforms": [
             "darwin",
@@ -6372,7 +6372,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.NarrowRepeatedAddressesWrapAtEachElementBoundary/*",
           "platforms": [
             "darwin",
@@ -6383,7 +6383,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.UnusedPointersAreNeverValidatedOrObserved/*",
           "platforms": [
             "darwin",
@@ -6394,7 +6394,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.CrossPageElementsAndCancellationMatchHost/*",
           "platforms": [
             "darwin",
@@ -6405,7 +6405,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.LaterPageFaultHasNoPartialElementAndCanResume/*",
           "platforms": [
             "darwin",
@@ -6416,7 +6416,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.RepeatedStopsRetainEarlierElementsAndResumeExactlyOnce/*",
           "platforms": [
             "darwin",
@@ -6427,7 +6427,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.RepeatedFaultRetainsCompletedElements/*",
           "platforms": [
             "darwin",
@@ -6438,7 +6438,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.ObserverExceptionsLeaveTheCurrentElementUntouched/*",
           "platforms": [
             "darwin",
@@ -6449,7 +6449,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.UnsupportedRepeatAndLockPrefixesFailBeforeEffects/*",
           "platforms": [
             "darwin",
@@ -6460,7 +6460,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringTransferTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringTransferTests.cpp",
           "filter": "*/X64StringTransfer.UnmodeledDeviceLoadsAndStoresRejectBeforeCallbacks/*",
           "platforms": [
             "darwin",
@@ -6471,7 +6471,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.AllArithmeticFlagsMatchIndependentHostInstructions/*",
           "platforms": [
             "darwin",
@@ -6482,7 +6482,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.ConditionalRepeatsMatchHostAndStopAtFirstResult/*",
           "platforms": [
             "darwin",
@@ -6493,7 +6493,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.ZeroCountDoesNotReadPointersOrChangeFlags/*",
           "platforms": [
             "darwin",
@@ -6504,7 +6504,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.NarrowSourceWrapsBeforeSegmentBaseAndScanIgnoresSI/*",
           "platforms": [
             "darwin",
@@ -6515,7 +6515,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.EarlyTerminationNeverTouchesTheNextUnmappedPage/*",
           "platforms": [
             "darwin",
@@ -6526,7 +6526,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.CompleteOperandsAreValidatedBeforeAnyReadObserver/*",
           "platforms": [
             "darwin",
@@ -6537,7 +6537,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.LaterFaultRestoresEntryFlagsAndKeepsCompletedElements/*",
           "platforms": [
             "darwin",
@@ -6548,7 +6548,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.StopsRetainLastComparisonAndResumeFromSavedContext/*",
           "platforms": [
             "darwin",
@@ -6559,7 +6559,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.ObserverFailureDoesNotPublishCurrentComparison/*",
           "platforms": [
             "darwin",
@@ -6570,7 +6570,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.LockedStringsRejectAndScalarSSEPreservesStringOperands/*",
           "platforms": [
             "darwin",
@@ -6581,7 +6581,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.CrossPageReadOnlyOperandsMatchHostThroughAliases/*",
           "platforms": [
             "darwin",
@@ -6592,7 +6592,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.AddressSizeWrappingRetainsConditionalRepeatProgress/*",
           "platforms": [
             "darwin",
@@ -6603,7 +6603,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.AResumedFaultUsesTheNewEntryFlags/*",
           "platforms": [
             "darwin",
@@ -6614,7 +6614,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.AmbiguousInactiveUpperHalvesRejectBeforeEffects/*",
           "platforms": [
             "darwin",
@@ -6625,7 +6625,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX64MemoryUpdateTests",
-          "source": "unittests/emulation/X64StringComparisonTests.cpp",
+          "source": "unittests/emulation/x86_64/X64StringComparisonTests.cpp",
           "filter": "*/X64StringComparison.DeviceOperandsRejectBeforeCallbacksOrObservations/*",
           "platforms": [
             "darwin",
@@ -13628,7 +13628,7 @@
         {
           "runner": "gtest",
           "target": "NeverDLiftTests",
-          "source": "unittests/lift/core/X64MemoryCallTargetTests.cpp",
+          "source": "unittests/lift/x86_64/X64MemoryCallTargetTests.cpp",
           "filter": "X64MemoryCallTarget.ExplicitModeLoadsRipSlotWithoutChangingDefaultLift",
           "platforms": [
             "darwin",
@@ -22962,7 +22962,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX87CapabilityTests",
-          "source": "unittests/lift/core/X87CapabilitiesTests.cpp",
+          "source": "unittests/lift/x86/X87CapabilitiesTests.cpp",
           "filter": "X87Capabilities.InventoryCoversEveryAdmittedEncodingExactlyOnce",
           "platforms": [
             "darwin",
@@ -22973,7 +22973,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX87CapabilitiesPublicTests",
-          "source": "unittests/lift/core/X87CapabilitiesPublicTests.cpp",
+          "source": "unittests/lift/x86/X87CapabilitiesPublicTests.cpp",
           "filter": "X87CapabilitiesPublic.CLIAndCUseIdenticalInventory",
           "platforms": [
             "darwin",
@@ -22984,7 +22984,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX87ArithmeticTests",
-          "source": "unittests/lift/core/X87ArithmeticTests.cpp",
+          "source": "unittests/lift/x86/X87ArithmeticTests.cpp",
           "filter": "X87Arithmetic.DirectRoundingDistinguishesBothSidesOfBinary80Midpoints",
           "platforms": [
             "darwin",
@@ -22995,7 +22995,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX87PortableContextTests",
-          "source": "unittests/lift/core/X87PortableContextTests.cpp",
+          "source": "unittests/lift/x86/X87PortableContextTests.cpp",
           "filter": "X87PortableContext.RefusalsLeaveAllStateOutputAndMemoryUntouched",
           "platforms": [
             "darwin",
@@ -23006,7 +23006,7 @@
         {
           "runner": "gtest",
           "target": "NeverDX87PortableEmulatorTests",
-          "source": "unittests/lift/core/X87PortableEmulatorTests.cpp",
+          "source": "unittests/lift/x86/X87PortableEmulatorTests.cpp",
           "filter": "X87PortableEmulator.LiftedInstructionsRetainBeyondBinary64Precision",
           "platforms": [
             "darwin",

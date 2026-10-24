@@ -235,10 +235,10 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
         "x87 forms, floating call ABI, MMX or general environment operations; "
         "legacy C/Python/CLI translation object interfaces remain scalar-only";
     Result.Evidence =
-        "unittests/translate/RuntimeX87HelpersTests.cpp; "
-        "unittests/translate/RuntimeX87GuestStateTests.cpp; "
-        "unittests/translate/X87TranslationTests.cpp; "
-        "unittests/translate/X87TranslationFrozenTests.cpp; "
+        "unittests/translate/x86/RuntimeX87HelpersTests.cpp; "
+        "unittests/translate/x86/RuntimeX87GuestStateTests.cpp; "
+        "unittests/translate/x86/X87TranslationTests.cpp; "
+        "unittests/translate/x86/X87TranslationFrozenTests.cpp; "
         "scripts/check_x87_translation.py; scripts/check_x87_cross_host.py";
     return Result;
   }
@@ -247,7 +247,7 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
     if (Q.Backend != X87Backend::None)
       return unavailable("analysis-requires-backend-none");
     Result.Reason = "complete-x87-formal-model-unqualified";
-    Result.Evidence = "unittests/symbolic/SymX87Tests.cpp";
+    Result.Evidence = "unittests/symbolic/x86/SymX87Tests.cpp";
     return Result;
   }
   if (Q.Consumer == X87Consumer::Lift ||
@@ -285,8 +285,8 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
           "comparisons/integer stores require canonical finite operands; "
           "raw m80/register moves retain "
           "encodings; undefined C0/C2/C3/FOP/register FDP are not CPU identity";
-      Result.Evidence = "unittests/lift/core/X87PortableContextTests.cpp; "
-                        "unittests/lift/core/X87PortableEmulatorTests.cpp; "
+      Result.Evidence = "unittests/lift/x86/X87PortableContextTests.cpp; "
+                        "unittests/lift/x86/X87PortableEmulatorTests.cpp; "
                         "scripts/check_x87_arithmetic_replay.py";
       return Result;
     }
@@ -341,11 +341,12 @@ X87Capability queryX87Capability(const X87CapabilityQuery &Q) {
         "floating/call ABI, ordinary guest "
         "memory operations, MMX or general environment handoffs; failure "
         "preserves completed prefix and leaves source result unpublished";
-    Result.Evidence = "unittests/translate/X87PortablePreparationTests.cpp; "
-                      "unittests/translate/X87PortableEmissionTests.cpp; "
-                      "unittests/translate/X87PortableGeneratedTests.cpp; "
-                      "scripts/check_x87_portable_generated.py; "
-                      "scripts/check_x87_cross_host.py";
+    Result.Evidence =
+        "unittests/translate/x86/X87PortablePreparationTests.cpp; "
+        "unittests/translate/x86/X87PortableEmissionTests.cpp; "
+        "unittests/translate/x86/X87PortableGeneratedTests.cpp; "
+        "scripts/check_x87_portable_generated.py; "
+        "scripts/check_x87_cross_host.py";
     return Result;
   }
   // These are generated-code capabilities, not the architecture of the host
