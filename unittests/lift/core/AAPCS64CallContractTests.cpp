@@ -828,4 +828,105 @@ TEST(AAPCS64CallContract, WindowsHeaderFloatsSurviveSelectionAndBothEmitters) {
   }
 }
 
+TEST(AAPCS64CallContract, FixedStackOperandsKeepNarrowWidthsAcrossBlocks) {
+  class Header : public NullDebugContext {
+  public:
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "fixture_stack")
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Name = Name.str();
+      Function.PrototypeFromHeader = true;
+      Function.PrototypeLibrary = "test-header";
+      Function.ReturnType = NdType::makeInt(8, true);
+      for (unsigned I = 0; I < 8; ++I)
+        Function.Params.emplace_back("a" + std::to_string(I),
+                                     NdType::makeInt(8, false));
+      Function.Params.emplace_back("value",
+                                   NdType::makePtr(NdType::makeInt(8, true)));
+      Function.Params.emplace_back("byte", NdType::makeInt(1, false));
+      Function.Params.emplace_back("half", NdType::makeInt(2, false));
+      return Function;
+    }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      auto Function =
+          Address == Got ? resolvePrototype("fixture_stack") : std::nullopt;
+      if (Function)
+        Function->Addr = Address;
+      return Function;
+    }
+  } Debug;
+  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF})
+    for (unsigned Split : {0, 1, 2}) {
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      SCOPED_TRACE(Split);
+      std::vector<uint32_t> Code{0xD10103FF, // sub sp,sp,64
+                                 0xA9037BFD, // stp x29,x30,[sp,48]
+                                 0x910003FD, // mov x29,sp
+                                 0x910083EA, // add x10,sp,32
+                                 0xD280054B, // mov x11,42
+                                 0xF900014B, // str x11,[x10]
+                                 0xF90003EA, // str x10,[sp]
+                                 0x5280156B, // mov w11,171
+                                 0x390023EB, // strb w11,[sp,8]
+                                 0x5282468B, // mov w11,4660
+                                 Format == BinaryFormat::MachO ? 0x790017EBu
+                                                               : 0x790023EBu};
+      if (Split == 1)
+        Code.push_back(0x14000001); // b next block
+      if (Split == 2)
+        Code.insert(Code.end(), {0x10000071, br(17), 0xFFFFFFFF});
+      for (unsigned I = 0; I < 8; ++I)
+        Code.push_back(0xD2800000 | ((I + 1) << 5) | I);
+      const va_t Call = Text + Code.size() * 4;
+      Code.insert(Code.end(), {adrp(16, Call, Got), ldrX(17, 16, Got), blr(17),
+                               0xA9437BFD, 0x910103FF, Ret});
+      auto Image = makeImage({{Text, Code}}, {{Text, "stack_wrapper"}},
+                             {"fixture_stack"});
+      Image.Format = Format;
+      Image.Imports.front().Module = "fixture.dll";
+      for (bool LLVM : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(NoOpt);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text};
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = true;
+          Options.NoOpt = NoOpt;
+          auto Result = Pipeline().run(Image, Context, Options, &Debug);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          ASSERT_TRUE(LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output,
+                                                 COptions, &Debug, &Image)
+                           : HighCEmitter().emit(Result.HighFuncs, Output,
+                                                 COptions, &Debug));
+          const std::string Provider = R"(
+int64_t fixture_stack(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
+                      uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7,
+                      int64_t *value, uint8_t byte, uint16_t half) {
+  if (a0 != 1 || a1 != 2 || a2 != 3 || a3 != 4 || a4 != 5 || a5 != 6 ||
+      a6 != 7 || a7 != 8 || !value || *value != 42 || byte != 171 ||
+      half != 4660) __builtin_trap();
+  *value = 71;
+  return -27;
+}
+int main(void) { return stack_wrapper() != -27; }
+)";
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Provider,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+    }
+}
+
 } // namespace

@@ -13,12 +13,100 @@
 
 #include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/IntegerCallArguments.h"
+#include "neverd/libc/LibCFixedIntegerArguments.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCVariadicArguments.h"
 
 using namespace neverd;
 
 namespace {
+
+TEST(FixedIntegerCallArguments, RetainsTargetStackOffsetsAndValueWidths) {
+  struct Target {
+    Arch Architecture;
+    BinaryFormat Format;
+    unsigned Registers;
+    int64_t ByteOffset;
+    int64_t HalfOffset;
+    int64_t PointerOffset;
+  };
+  for (const auto &Target :
+       {Target{Arch::X64, BinaryFormat::COFF, 4, 40, 48, 56},
+        Target{Arch::X64, BinaryFormat::ELF, 6, 8, 16, 24},
+        Target{Arch::X64, BinaryFormat::MachO, 6, 8, 16, 24},
+        Target{Arch::AArch64, BinaryFormat::COFF, 8, 0, 8, 16},
+        Target{Arch::AArch64, BinaryFormat::ELF, 8, 0, 8, 16}}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target.Architecture));
+    SCOPED_TRACE(static_cast<unsigned>(Target.Format));
+    std::vector<TypeRef> Parameters(Target.Registers, NdType::makeInt(8));
+    EXPECT_FALSE(fixedIntegerCallArguments(Target.Architecture, Target.Format,
+                                           NdType::makeInt(4), Parameters));
+    Parameters.insert(Parameters.end(), {NdType::makeInt(1), NdType::makeInt(2),
+                                         NdType::makePtr()});
+    for (const auto &Return : {NdType::makeInt(4), NdType::makeInt(8),
+                               NdType::makePtr(), NdType::makeVoid()}) {
+      const auto Layout = fixedIntegerCallArguments(
+          Target.Architecture, Target.Format, Return, Parameters);
+      ASSERT_TRUE(Layout);
+      ASSERT_EQ(Layout->Parameters.size(), Parameters.size());
+      const auto &Byte = Layout->Parameters[Target.Registers];
+      const auto &Half = Layout->Parameters[Target.Registers + 1];
+      const auto &Pointer = Layout->Parameters[Target.Registers + 2];
+      EXPECT_EQ(Byte.Kind, SourceABICarrierKind::Stack);
+      EXPECT_EQ(Byte.StackOffset, Target.ByteOffset);
+      EXPECT_EQ(Byte.Bytes, 1u);
+      EXPECT_EQ(Half.StackOffset, Target.HalfOffset);
+      EXPECT_EQ(Half.Bytes, 2u);
+      EXPECT_EQ(Pointer.StackOffset, Target.PointerOffset);
+      EXPECT_EQ(Pointer.Bytes, 8u);
+    }
+  }
+}
+
+TEST(FixedIntegerCallArguments, RequiresCompleteOrdinaryDeclarations) {
+  FunctionSym Function;
+  Function.ReturnType = NdType::makeInt(4);
+  Function.Params.assign(5, {"value", NdType::makeInt(8)});
+  const auto Supported = [&] {
+    return libc::fixedIntegerCallArguments(Function, Arch::X64,
+                                           BinaryFormat::COFF)
+        .has_value();
+  };
+  EXPECT_FALSE(Supported());
+  Function.PrototypeFromHeader = true;
+  EXPECT_TRUE(Supported());
+  Function.IsVariadic = true;
+  EXPECT_FALSE(Supported());
+  Function.IsVariadic = false;
+  Function.PlatformConvention = false;
+  EXPECT_FALSE(Supported());
+  Function.PlatformConvention = true;
+  Function.CallConv = DebugCallConv::Fastcall;
+  EXPECT_FALSE(Supported());
+  Function.CallConv = DebugCallConv::Thiscall;
+  EXPECT_FALSE(Supported());
+  Function.CallConv = DebugCallConv::Cdecl;
+  Function.ParamEntryLocations.emplace_back();
+  EXPECT_FALSE(Supported());
+  Function.ParamEntryLocations.clear();
+  for (const auto &Unsupported : {NdType::makeInt(16), NdType::makeFloat(8),
+                                  NdType::makeVoid(), TypeRef()}) {
+    Function.Params.back().second = Unsupported;
+    EXPECT_FALSE(Supported());
+  }
+  Function.Params.back().second = NdType::makeInt(8);
+  Function.ReturnType = NdType::makeInt(16);
+  EXPECT_FALSE(Supported());
+  Function.ReturnType = NdType::makeInt(4);
+  // The shared placement authority does not yet describe Apple's packed
+  // overflow stack values. Never substitute AAPCS64 eight-byte slots.
+  Function.Params.assign(9, {"value", NdType::makeInt(1)});
+  EXPECT_FALSE(libc::fixedIntegerCallArguments(Function, Arch::AArch64,
+                                               BinaryFormat::MachO));
+  for (Arch Architecture : {Arch::X86, Arch::ARM})
+    EXPECT_FALSE(libc::fixedIntegerCallArguments(Function, Architecture,
+                                                 BinaryFormat::COFF));
+}
 
 TEST(FloatingCallArguments, HFAPlacementKeepsCompleteRecordsAndResultFields) {
   for (uint16_t Bytes : {4u, 8u})

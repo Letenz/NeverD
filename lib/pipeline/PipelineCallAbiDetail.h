@@ -15,6 +15,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
@@ -58,6 +59,7 @@ struct OmittedCalleeMemo {
     bool StackSlot = false;
     std::optional<int> ArgumentCount;
     std::optional<FloatingCallArguments> FloatingArguments;
+    std::optional<FixedIntegerCallArguments> IntegerArguments;
     std::optional<std::vector<uint16_t>> VariadicArguments;
     bool operator==(const SummaryRead &) const = default;
   };

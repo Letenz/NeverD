@@ -6,7 +6,9 @@
 
 #include "neverd/ir/med/MedPrologueSaves.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -197,6 +199,143 @@ void markReturnAddressReads(unsigned PointerSize,
       Read.Op->ReturnAddressRead = true;
 }
 
+/// An exact declared call operand observes every loaded value byte. A source
+/// frame has no initial contents below its entry SP. Prove absence
+/// of a write, rather than mistaking absence of a known producer for that
+/// proof. Unioning writes from every predecessor is deliberately conservative:
+/// one path writing a byte prevents this proof from calling it unwritten.
+void replaceUnwrittenCallFrameReads(MedFunc &Func, Arch Architecture,
+                                    llvm::ArrayRef<FrameAccess> Loads,
+                                    llvm::ArrayRef<FrameAccess> Stores) {
+  if (Func.Blocks.empty() || Func.FrameSize <= 0 || Func.SkippedSSA ||
+      Func.AnalystStackFrame)
+    return;
+  size_t Remaining = limits::ir::kUnwrittenSourceFrameReadWork;
+  std::set<std::pair<ValueKey, uint16_t>> Required;
+  for (const auto &Block : Func.Blocks) {
+    if (Remaining < Block.Ops.size())
+      return;
+    Remaining -= Block.Ops.size();
+    for (const auto &Op : Block.Ops) {
+      if (!hasBoundIntegerCallArguments(Op))
+        continue;
+      if (Remaining < Op.NumInputs)
+        return;
+      Remaining -= Op.NumInputs;
+      for (size_t I = 0; I < Op.IntegerCallSignature->Parameters.size(); ++I) {
+        const auto &Parameter = Op.IntegerCallSignature->Parameters[I];
+        const auto &Value = Op.Inputs[I + 1];
+        if (Parameter.Kind == SourceABICarrierKind::Stack && !Value.isConst() &&
+            Value.Id >= 0 && Value.Size == Parameter.Bytes)
+          Required.emplace(keyOf(Value), Value.Size);
+      }
+    }
+  }
+  // General loads may have only their initialized bits observed later. Their
+  // partial-byte source model is separate from a full declared argument read.
+  if (Required.empty() || Remaining < Stores.size())
+    return;
+  Remaining -= Stores.size();
+  std::map<int, const MedBlock *> Blocks;
+  std::map<const MedOp *, std::pair<int, size_t>> Positions;
+  std::map<const MedOp *, const FrameAccess *> Writes;
+  std::set<std::pair<int, int>> IncomingEdges, OutgoingEdges;
+  for (const auto &Write : Stores)
+    Writes.emplace(Write.Op, &Write);
+  for (const auto &Block : Func.Blocks) {
+    if (Remaining <
+            1 + Block.Ops.size() + Block.Preds.size() + Block.Succs.size() ||
+        !Blocks.emplace(Block.Id, &Block).second)
+      return;
+    Remaining -= 1 + Block.Ops.size() + Block.Preds.size() + Block.Succs.size();
+    for (size_t I = 0; I < Block.Ops.size(); ++I)
+      Positions.emplace(&Block.Ops[I], std::pair{Block.Id, I});
+    for (int Pred : Block.Preds)
+      IncomingEdges.emplace(Pred, Block.Id);
+    for (int Succ : Block.Succs)
+      OutgoingEdges.emplace(Block.Id, Succ);
+  }
+  // Exceptional or incomplete graph roots cannot inherit the ordinary frame.
+  if (IncomingEdges != OutgoingEdges)
+    return;
+  for (const auto &[From, To] : IncomingEdges)
+    if (!Blocks.count(From) || !Blocks.count(To))
+      return;
+  for (const auto &Block : Func.Blocks)
+    if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+      return;
+  for (const auto &Read : Loads) {
+    if (!Required.count({keyOf(Read.Op->Output), Read.Size}) || Read.Op->Dead ||
+        Read.Op->ReturnAddressRead || !Read.Size ||
+        Read.Offset < -Func.FrameSize || Read.Offset > -int64_t(Read.Size))
+      continue;
+    if (Remaining < Read.Size)
+      return;
+    Remaining -= Read.Size;
+    std::vector<bool> Written(Read.Size);
+    const auto Position = Positions.at(Read.Op);
+    std::vector<std::pair<int, size_t>> Pending{Position};
+    std::set<int> Visited;
+    bool Complete = true, ReachedEntry = false;
+    while (Complete && !Pending.empty()) {
+      const auto [Id, End] = Pending.back();
+      Pending.pop_back();
+      if (!Remaining)
+        return;
+      --Remaining;
+      const auto &Block = *Blocks.at(Id);
+      if (!Visited.insert(Id).second) {
+        // A backedge to the query also executes its suffix before another
+        // observation. Do not publish a first-iteration-only conclusion.
+        if (Id == Position.first)
+          Complete = false;
+        continue;
+      }
+      ReachedEntry |= Id == Func.Blocks.front().Id;
+      if (Block.Preds.empty() && Id != Func.Blocks.front().Id) {
+        Complete = false;
+        break;
+      }
+      if (Remaining < End + Block.Preds.size())
+        return;
+      Remaining -= End + Block.Preds.size();
+      for (size_t I = 0; I < End; ++I) {
+        const auto &Op = Block.Ops[I];
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::ATOMIC_XCHG ||
+            Op.Opcode == NdOp::ATOMIC_ADD ||
+            Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+          Complete = false;
+          break;
+        }
+        if (Op.Opcode != NdOp::STORE)
+          continue;
+        const auto Write = Writes.find(&Op);
+        if (Write == Writes.end()) {
+          Complete = false; // An unresolved address might alias this frame.
+          break;
+        }
+        if (Remaining < Read.Size)
+          return;
+        Remaining -= Read.Size;
+        for (size_t Byte = 0; Byte < Read.Size; ++Byte)
+          Written[Byte] = Written[Byte] || Write->second->overlaps(
+                                               Read.Offset + int64_t(Byte),
+                                               Read.Offset + int64_t(Byte) + 1);
+      }
+      for (int Pred : Block.Preds)
+        Pending.emplace_back(Pred, Blocks.at(Pred)->Ops.size());
+    }
+    if (Complete && ReachedEntry && llvm::is_contained(Written, false)) {
+      // Keep the same definition and operation position: call records name
+      // both. Native lifting never invokes this source-only preparation.
+      Read.Op->Opcode = NdOp::COPY;
+      Read.Op->NumInputs = 1;
+      Read.Op->Inputs[0] = MedVar::makeUnspecified(Read.Size, Architecture);
+    }
+  }
+}
+
 } // namespace
 
 void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
@@ -219,11 +358,12 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format, StackEntryKind Entry) {
   std::vector<FrameAccess> Loads, Stores;
   markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores);
-  // Both annotations only set flags, so the addresses and access ranges stay
-  // valid until both consumers finish. No proof survives an IR mutation.
+  // Annotate before source-only replacement. No access proof survives the
+  // replacements at the end of this preparation.
   if (hasStackReturnAddress(Architecture, Entry))
     markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
                            Stores);
+  replaceUnwrittenCallFrameReads(Func, Architecture, Loads, Stores);
 }
 
 } // namespace neverd

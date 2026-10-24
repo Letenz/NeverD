@@ -21,6 +21,48 @@
 
 using namespace neverd;
 
+std::optional<FixedIntegerCallArguments>
+neverd::fixedIntegerCallArguments(Arch A, BinaryFormat F,
+                                  const TypeRef &ReturnType,
+                                  llvm::ArrayRef<TypeRef> Parameters) {
+  if ((A != Arch::X64 && A != Arch::AArch64) || !ReturnType ||
+      Parameters.size() > static_cast<size_t>(limits::kMaxBoundSourceCallArgs))
+    return std::nullopt;
+  const auto Scalar = [&](const TypeRef &Type) {
+    return Type &&
+           (Type->Size == 1 || Type->Size == 2 || Type->Size == 4 ||
+            Type->Size == 8) &&
+           (Type->Kind == NdTypeKind::Int ||
+            (Type->Kind == NdTypeKind::Ptr &&
+             Type->Size == getTargetRegInfo(A).PointerSize) ||
+            (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
+  };
+  if ((ReturnType->Kind != NdTypeKind::Void && !Scalar(ReturnType)) ||
+      !llvm::all_of(Parameters, Scalar))
+    return std::nullopt;
+  const auto Placement = placeSourceParameters(A, F, ReturnType, Parameters);
+  if (!Placement || Placement->ResultPointer ||
+      Placement->Parameters.size() != Parameters.size())
+    return std::nullopt;
+  FixedIntegerCallArguments Result;
+  bool HasStack = false;
+  for (size_t I = 0; I < Parameters.size(); ++I) {
+    const auto &Pieces = Placement->Parameters[I];
+    if (Pieces.size() != 1 || Pieces[0].Indirect || Pieces[0].Offset ||
+        Pieces[0].Location.ValueBytes != Parameters[I]->Size)
+      return std::nullopt;
+    const auto &Location = Pieces[0].Location;
+    if (Location.Kind != SourceABICarrierKind::IntegerRegister &&
+        Location.Kind != SourceABICarrierKind::Stack)
+      return std::nullopt;
+    HasStack |= Location.Kind == SourceABICarrierKind::Stack;
+    Result.Parameters.push_back({Location.Kind, Location.RegisterOffset,
+                                 Location.EntryStackOffset,
+                                 Location.ValueBytes});
+  }
+  return HasStack ? std::optional(std::move(Result)) : std::nullopt;
+}
+
 std::optional<IntegerCallArguments>
 neverd::integerCallArguments(Arch A, BinaryFormat F, const TypeRef &ReturnType,
                              llvm::ArrayRef<TypeRef> Parameters) {

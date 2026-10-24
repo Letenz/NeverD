@@ -18,6 +18,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/evm/EVMIR.h"
 #include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceMap.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
@@ -347,6 +348,10 @@ struct PipelineResult {
   /// Complete fixed scalar FP import signatures, with no integer or stack
   /// parameters. Their register uses must reach SSA before call setup scans.
   std::map<va_t, FloatingCallArguments> CallEntryFloatingArguments;
+  /// Complete fixed scalar integer operands with exact stack locations.
+  std::map<va_t, FixedIntegerCallArguments> CallEntryIntegerArguments;
+  std::shared_ptr<const std::map<va_t, FixedIntegerCallArguments>>
+      OmittedCalleeIntegerArguments;
   /// Fixed scalar widths of header variadic imports; the tail stays open.
   std::map<va_t, std::vector<uint16_t>> CallEntryVariadicArguments;
   std::shared_ptr<const std::map<va_t, std::vector<uint16_t>>>

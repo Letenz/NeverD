@@ -47,6 +47,28 @@ struct IntegerCallArguments {
   unsigned Positions = 0;
 };
 
+/// Complete scalar integer/pointer operands, including at least one stack
+/// value. Locations are in source order; widths exclude ABI slot padding.
+/// This argument contract makes no additional claim about result registers.
+struct FixedIntegerCallArguments {
+  struct Parameter {
+    SourceABICarrierKind Kind = SourceABICarrierKind::None;
+    uint64_t Register = 0;
+    int64_t StackOffset = 0;
+    uint16_t Bytes = 0;
+    bool operator==(const Parameter &) const = default;
+  };
+  std::vector<Parameter> Parameters;
+  bool operator==(const FixedIntegerCallArguments &) const = default;
+};
+
+/// Fixed scalar x64/AArch64 calls whose arguments need explicit stack loads
+/// before SSA. Records, floating values, hidden results and other conventions
+/// retain their separate adapters. The caller authenticates the declaration.
+std::optional<FixedIntegerCallArguments>
+fixedIntegerCallArguments(Arch A, BinaryFormat F, const TypeRef &ReturnType,
+                          llvm::ArrayRef<TypeRef> Parameters);
+
 /// Describe every parameter or return none. Floating carriers, hidden result
 /// pointers outside Windows x86/x64, over-aligned stack values, and incomplete
 /// placements are rejected.

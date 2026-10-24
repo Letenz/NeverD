@@ -248,4 +248,105 @@ TEST_P(MedPrologueSaves, AArch64KeepsItsReturnAddressInTheLinkRegister) {
   EXPECT_FALSE(read(Func).ReturnAddressRead);
 }
 
+void consumeFrameRead(MedBlock &Block) {
+  MedOp Call = op(NdOp::CALL, temp(20), {MedVar::makeConst(0x2000, 8)});
+  auto Signature = std::make_shared<FixedIntegerCallArguments>();
+  const auto Registers =
+      getTargetRegInfo(Arch::X64).integerArgumentLayout(true);
+  for (auto Register : Registers.Registers) {
+    Signature->Parameters.push_back(
+        {SourceABICarrierKind::IntegerRegister, Register, 0, 8});
+    Call.addInput(MedVar::makeConst(0, 8));
+  }
+  Signature->Parameters.push_back({SourceABICarrierKind::Stack, 0, 40, 8});
+  Call.addInput(temp(10));
+  Call.IntegerCallSignature = std::move(Signature);
+  Block.Ops.insert(Block.Ops.end() - 1, std::move(Call));
+}
+
+TEST(SourceFrameReads, MissingAndPartialPrivateBytesRemainUnavailable) {
+  for (unsigned WrittenBytes : {0, 4, 8}) {
+    SCOPED_TRACE(WrittenBytes);
+    auto Func = pushedRbx();
+    auto &Store = Func.Blocks[0].Ops[4];
+    if (WrittenBytes)
+      Store.Inputs[1].Size = WrittenBytes;
+    else
+      Store = op(NdOp::NOP, none(), {});
+    consumeFrameRead(Func.Blocks.back());
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    const auto &Read = Func.Blocks[0].Ops[6];
+    if (WrittenBytes == 8)
+      EXPECT_EQ(Read.Opcode, NdOp::LOAD);
+    else {
+      ASSERT_EQ(Read.Opcode, NdOp::COPY);
+      ASSERT_EQ(Read.NumInputs, 1);
+      EXPECT_EQ(Read.Inputs[0].Kind, MedVar::Unspecified);
+      EXPECT_EQ(Read.Inputs[0].Size, 8);
+    }
+  }
+}
+
+TEST(SourceFrameReads, PossibleWritersPreventAnUnavailableClaim) {
+  for (auto Barrier :
+       {NdOp::CALL, NdOp::INDIR_CALL, NdOp::INTRINSIC, NdOp::ATOMIC_XCHG,
+        NdOp::ATOMIC_ADD, NdOp::ATOMIC_CMPXCHG, NdOp::STORE}) {
+    SCOPED_TRACE(ndOpName(Barrier));
+    auto Func = pushedRbx();
+    Func.Blocks[0].Ops[4] =
+        op(Barrier, none(), {rcx(0), MedVar::makeConst(0, 8)});
+    consumeFrameRead(Func.Blocks.back());
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    EXPECT_EQ(Func.Blocks[0].Ops[6].Opcode, NdOp::LOAD);
+  }
+}
+
+TEST(SourceFrameReads, AllPredecessorWritesAndQueryBackedgesAreConsidered) {
+  for (unsigned Shape : {0, 1, 2, 3}) {
+    SCOPED_TRACE(Shape);
+    auto Func = pushedRbx();
+    auto &Entry = Func.Blocks[0];
+    MedBlock Query;
+    Query.Id = 3;
+    Query.Ops.assign(Entry.Ops.begin() + 6, Entry.Ops.end());
+    Query.Preds = {1, 2};
+    Entry.Ops.resize(4);
+    Entry.Succs = {1, 2};
+    MedBlock Left, Right;
+    Left.Id = 1;
+    Right.Id = 2;
+    Left.Preds = Right.Preds = {0};
+    Left.Succs = Right.Succs = {3};
+    if (Shape == 1)
+      Left.Ops.push_back(op(NdOp::STORE, none(), {sp(1), rbx(0)}));
+    if (Shape == 2) {
+      Query.Preds.push_back(3);
+      Query.Succs = {3};
+    }
+    if (Shape == 3) // A stale/incomplete edge cannot establish an entry path.
+      Query.Preds.clear();
+    Func.Blocks.push_back(std::move(Left));
+    Func.Blocks.push_back(std::move(Right));
+    Func.Blocks.push_back(std::move(Query));
+    consumeFrameRead(Func.Blocks.back());
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    EXPECT_EQ(Func.Blocks.back().Ops[0].Opcode,
+              Shape ? NdOp::LOAD : NdOp::COPY);
+  }
+}
+
+TEST(SourceFrameReads, GeneralPartialLoadsKeepTheirInitializedBits) {
+  auto Func = pushedRbx();
+  Func.Blocks[0].Ops[4].Inputs[1].Size = 4;
+  // Only the low written word is returned. A source-only proof must not
+  // replace the whole load with unavailable state merely for its upper word.
+  auto LowWord =
+      op(NdOp::SUBBYTES, temp(30), {temp(10), MedVar::makeConst(0, 4)});
+  LowWord.Output.Size = 4;
+  Func.Blocks[0].Ops.back().Inputs[0] = LowWord.Output;
+  Func.Blocks[0].Ops.insert(Func.Blocks[0].Ops.end() - 1, LowWord);
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+  EXPECT_EQ(Func.Blocks[0].Ops[6].Opcode, NdOp::LOAD);
+}
+
 } // namespace
