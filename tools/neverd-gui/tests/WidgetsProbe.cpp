@@ -1,3 +1,12 @@
+//===- WidgetsProbe.cpp - End-to-end workbench interaction probe ----------===//
+//
+//                         NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Exercise workbench actions through visible widgets and keyboard input.
+//===----------------------------------------------------------------------===//
+
 #include "WidgetsProbe.h"
 
 #include "ChooserView.h"
@@ -22,6 +31,7 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTest>
@@ -178,9 +188,14 @@ private:
          [this] { QTimer::singleShot(0, this, [this] { press(Qt::Key_G); }); },
          [this] {
            auto *dialog =
-               qobject_cast<JumpDialog *>(QApplication::activeModalWidget());
+               qobject_cast<JumpDialog *>(QApplication::activeWindow());
            if (!dialog)
              return false;
+           if (dialog->isModal()) {
+             fail(QStringLiteral("Jump anywhere blocks the workbench"));
+             return false;
+           }
+           jumpDialog_ = dialog;
            auto *edit = dialog->findChild<QLineEdit *>();
            edit->setText(hexAddress(*jumpTarget_));
            QTimer::singleShot(
@@ -188,7 +203,7 @@ private:
            return true;
          }});
     stages_.push_back({"jumped", nullptr, [this] {
-                         return !QApplication::activeModalWidget() &&
+                         return (!jumpDialog_ || !jumpDialog_->isVisible()) &&
                                 disassembly()->currentItem() == jumpTarget_;
                        }});
     // Esc returns to the previous position.
@@ -410,6 +425,7 @@ private:
   QString binary_, captureDirectory_, englishFileMenu_;
   QTemporaryDir fixtureDirectory_;
   QTimer timer_;
+  QPointer<JumpDialog> jumpDialog_;
   QElapsedTimer clock_;
   std::vector<Stage> stages_;
   std::size_t stage_ = 0;

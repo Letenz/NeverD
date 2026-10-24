@@ -46,6 +46,7 @@
 #include "Theme.h"
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
+#include "WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -353,6 +354,10 @@ void clearClipboard() {
 class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
+
+public:
+  static void initMain() { WindowFrame::prepareNativeWindows(); }
+
 private slots:
   void floatingDocksReturnToWorkbench_data() {
     QTest::addColumn<bool>("dark");
