@@ -1533,6 +1533,11 @@ must select `NEVERD_ENABLE_TBB=OFF`.
 Its task arena limits each batch, while nested batches drain on a fresh native
 worker stack. It never links `tbbmalloc` or `tbbmalloc_proxy`.
 
+`SessionCAPITest.EntryPoints*` checks runtime entry kinds and order, repeated
+addresses, absent native entries and the EVM entry at zero. Batched name queries
+must retain export/symbol precedence and equal-rank order, and reread image
+names after symbol edits or new exports.
+
 Performance measurements belong in ignored build directories. Measure Release
 with matching inputs, process allocator and thread count; separate primitive
 throughput from whole-request latency and compare all non-timing output.
