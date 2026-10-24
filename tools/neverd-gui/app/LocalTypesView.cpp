@@ -383,7 +383,7 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   back_->setObjectName(QStringLiteral("localTypesBack"));
   back_->setIcon(icon(QStringLiteral("back")));
   back_->setToolTip(tr("Back to the type shown before (Esc)"));
-  setShortcutHint(*back_, QKeySequence(Qt::Key_Escape));
+  back_->setAccessibleName(back_->toolTip());
   back_->setAutoRaise(true);
   heading_ = new QLabel(headingRow);
   heading_->setObjectName(QStringLiteral("localTypesHeading"));
@@ -1303,7 +1303,9 @@ void LocalTypesView::addMembers(QTreeWidgetItem *parent,
       item->setForeground(TypeColumn,
                           theme.color(ColorRole::ListingLibraryName));
       item->setToolTip(TypeColumn,
-                       tr("Double-click or Ctrl+click to open %1").arg(refers));
+                       tr("Double-click or %2click to open %1")
+                           .arg(refers, QKeySequence(Qt::CTRL).toString(
+                                            QKeySequence::NativeText)));
     }
   }
 }
@@ -1581,7 +1583,10 @@ bool LocalTypesView::eventFilter(QObject *object, QEvent *event) {
       QToolTip::showText(help->globalPos(),
                          cards_.value(type) +
                              QStringLiteral("<br><i>%1</i>")
-                                 .arg(tr("Ctrl+click to open").toHtmlEscaped()),
+                                 .arg(tr("%1click to open")
+                                          .arg(QKeySequence(Qt::CTRL).toString(
+                                              QKeySequence::NativeText))
+                                          .toHtmlEscaped()),
                          source_->viewport());
       return true;
     }

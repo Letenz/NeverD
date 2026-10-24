@@ -1810,12 +1810,12 @@ Double-click to go to the declaration.</source>
         <translation>保存された変数名は別のソース表示のものです</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>ブロックを展開 (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>ブロックを展開 (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>ブロックを折りたたむ (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>ブロックを折りたたむ (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -3812,12 +3812,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>次へ</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>前の一致（Shift+Enter または Shift+F3）</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>前の一致（%1 または %2）</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>次の一致（Enter または F3）</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>次の一致（%1 または %2）</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4638,12 +4638,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+クリックで開く</translation>
+        <source>%1click to open</source>
+        <translation>%1クリックで開く</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>ダブルクリックまたは Ctrl+クリックで %1 を開く</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>ダブルクリックまたは %2クリックで %1 を開く</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4687,8 +4687,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>宣言</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>宣言を読み込む（Ctrl+Enter）</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>宣言を読み込む（%1）</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4823,8 +4823,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>オペランドは数値のままです。</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>プログラムには構造体も共用体もありません。ローカル型（Shift+F1）で宣言してください。</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>プログラムには構造体も共用体もありません。ローカル型（%1）で宣言してください。</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6266,8 +6266,8 @@ Coverage: %7</source>
         <translation>関数を選択して対応する関数を調べてください。</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>ブロックを選択して対応先を追跡します。Ctrl+ホイールで拡大縮小できます。</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>ブロックを選択して対応先を追跡します。%1ホイールで拡大縮小できます。</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>

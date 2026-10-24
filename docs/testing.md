@@ -1784,8 +1784,10 @@ and shortcut tooltips through action changes, translation and disabled actions.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
 Ctrl+E/P/L/S keys, filtering, Enter, cancellation and navigation history with
 the fixture worker. `shortcutsCanBeFoundByKeyAndScope` checks the shortcut
-browser's scoped Ctrl+E commands and unassigned actions;
-`commandButtonsExposeTheirKeys` checks local action buttons in both themes.
+browser's scoped Ctrl+E commands and unassigned actions using native and
+portable key spellings. `commandButtonsExposeTheirKeys` checks local action
+buttons in both themes, including compact Close and Back buttons whose Escape
+binding stays functional without visible key text.
 Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
 repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
 and function-edit controller cases check that their scoped Ctrl+E still wins.
@@ -1794,6 +1796,12 @@ and function-edit controller cases check that their scoped Ctrl+E still wins.
 its dock button and the tab context menu in both themes.
 `floatingAnalysisMenusStayWithTheirView` checks popup ownership and native
 transient parenting for floating text, graph, pseudocode and IR views.
+`floatingCommandDialogsStayWithTheirView` checks search, calculator input and
+results, options and other command dialogs against their floating owner.
+`floatingWindowsKeepMouseHistory` checks mouse Back and Forward in a floating
+listing. The Desktop GUI workflow runs these interactions with the native Qt
+platform on Windows and macOS, retaining separate logs beside the offscreen
+results.
 The jump-chooser matrix also runs from floating views.
 `selectedBytesExportWithIdasKey` presses Shift+E in docked and floating listing
 and hex selections, checks every text format and compares saved raw bytes.
@@ -1807,6 +1815,9 @@ offscreen checks alone do not exercise native dragging or window stacking.
 LLVM C and every IR view, restarts from the saved desktop, reopens the binary
 and a packed database, and switches projects. Generated windows must stay
 closed until explicitly requested again, then display the selected function.
+It also checks closing a project and explicitly restoring a desktop, preserving
+generated content when it is still available. `searchResultsStayClosedAfterReopening`
+applies the same lifecycle checks to temporary search results, docked and floating.
 
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
 unwind coverage, cached and uncached selections, actual split-chunk ownership,

@@ -1815,12 +1815,12 @@ Double-click to go to the declaration.</translation>
         <translation>Saved variable names belong to a different source rendering</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Expand block (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Expand block (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Collapse block (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Collapse block (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -3819,12 +3819,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <translation>Next</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Previous match (Shift+Enter or Shift+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Previous match (%1 or %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Next match (Enter or F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Next match (%1 or %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4655,12 +4655,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+click to open</translation>
+        <source>%1click to open</source>
+        <translation>%1click to open</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Double-click or Ctrl+click to open %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Double-click or %2click to open %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4705,8 +4705,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <translation>Declare</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Read the declarations (Ctrl+Enter)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Read the declarations (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4846,8 +4846,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <translation>The operand keeps its number.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>The program has no structures or unions. Declare them in Local types (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>The program has no structures or unions. Declare them in Local types (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6302,8 +6302,8 @@ Coverage: %7</translation>
         <translation>Select a function to inspect its counterpart.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Select blocks to follow their counterparts. Ctrl+wheel zooms.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Select blocks to follow their counterparts. %1wheel zooms.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>

@@ -1835,12 +1835,12 @@ Double-click to go to the declaration.</source>
         <translation>أسماء المتغيرات المحفوظة تخص عرضًا مختلفًا للمصدر</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>توسيع الكتلة (Ctrl+Shift+]‎)</translation>
+        <source>Expand block (%1)</source>
+        <translation>توسيع الكتلة (%1‎)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>طيّ الكتلة (Ctrl+Shift+[‎)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>طيّ الكتلة (%1‎)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -3847,12 +3847,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>التالي</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>التطابق السابق (Shift+Enter أو Shift+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>التطابق السابق (%1 أو %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>التطابق التالي (Enter أو F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>التطابق التالي (%1 أو %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4723,12 +4723,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+نقرة للفتح</translation>
+        <source>%1click to open</source>
+        <translation>%1نقرة للفتح</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>انقر نقرًا مزدوجًا أو Ctrl+نقرة لفتح %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>انقر نقرًا مزدوجًا أو %2نقرة لفتح %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4777,8 +4777,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>تصريح</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>قراءة التصريحات ‎(Ctrl+Enter)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>قراءة التصريحات ‎(%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4938,8 +4938,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>يحتفظ المعامل برقمه.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>لا يحتوي البرنامج على بنى أو اتحادات. صرّح عنها في الأنواع المحلية (Shift+F1‎).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>لا يحتوي البرنامج على بنى أو اتحادات. صرّح عنها في الأنواع المحلية (%1‎).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6446,8 +6446,8 @@ Coverage: %7</source>
         <translation>حدد دالة لفحص نظيرتها.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>حدد الكتل لتتبع نظائرها. استخدم Ctrl+عجلة الفأرة للتكبير والتصغير.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>حدد الكتل لتتبع نظائرها. استخدم %1عجلة الفأرة للتكبير والتصغير.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
