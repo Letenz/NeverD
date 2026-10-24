@@ -8,18 +8,19 @@
 #define NEVERD_IR_LOW_X87IMPORTCALL_H
 
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
+
+#include "llvm/ADT/StringSwitch.h"
 
 namespace neverd {
 
 /// These CRT entry points take their arguments on the x87 stack, independently
 /// of the ordinary C ABI. Their names must never produce zero-argument calls.
 inline bool isX87CRTImportName(llvm::StringRef Name) {
-  return Name == "_CIacos" || Name == "_CIasin" || Name == "_CIatan" ||
-         Name == "_CIatan2" || Name == "_CIcos" || Name == "_CIcosh" ||
-         Name == "_CIexp" || Name == "_CIfmod" || Name == "_CIlog" ||
-         Name == "_CIlog10" || Name == "_CIpow" || Name == "_CIsin" ||
-         Name == "_CIsinh" || Name == "_CIsqrt" || Name == "_CItan" ||
-         Name == "_CItanh";
+  return llvm::StringSwitch<bool>(Name)
+#define NEVERD_X87_CRT_IMPORT(Name, Arguments) .Case(Name, true)
+#include "neverd/ir/low/X87CRTImports.def"
+      .Default(false);
 }
 
 /// Supported PE32 CRT contracts, in logical ST0, ST1 order. The result replaces
@@ -45,24 +46,21 @@ inline unsigned x87CRTImportArguments(const BinaryImage &Image, va_t Target) {
                       return Other.IATAddr == Imported->IATAddr;
                     }) != 1)
     return 0;
-  const std::string Module = llvm::StringRef(Imported->Module).lower();
-  if (Module != "msvcrt.dll" && Module != "msvcr100.dll")
+  const llvm::StringRef Module = Imported->Module;
+  if (!coff_loader::isX86LegacyCRTProvider(Module))
     return 0;
   // The LLVM external symbol has one provider. Different DLLs exporting the
   // same spelling require provider-qualified linkage before they can share it.
-  if (std::any_of(Image.Imports.begin(), Image.Imports.end(),
-                  [&](const Import &Other) {
-                    return Other.Name == Imported->Name &&
-                           llvm::StringRef(Other.Module).lower() != Module;
-                  }))
+  if (std::any_of(
+          Image.Imports.begin(), Image.Imports.end(), [&](const Import &Other) {
+            return Other.Name == Imported->Name &&
+                   !llvm::StringRef(Other.Module).equals_insensitive(Module);
+          }))
     return 0;
-  const llvm::StringRef Name = Imported->Name;
-  if (Name == "_CIpow")
-    return 2;
-  return Name == "_CIsqrt" || Name == "_CIsin" || Name == "_CIcos" ||
-                 Name == "_CIatan" || Name == "_CIacos"
-             ? 1
-             : 0;
+  return llvm::StringSwitch<unsigned>(Imported->Name)
+#define NEVERD_X87_CRT_IMPORT(Name, Arguments) .Case(Name, Arguments)
+#include "neverd/ir/low/X87CRTImports.def"
+      .Default(0);
 }
 
 } // namespace neverd

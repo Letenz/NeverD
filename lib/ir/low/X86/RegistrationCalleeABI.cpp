@@ -10,13 +10,32 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
+
+#include "llvm/ADT/StringSwitch.h"
 
 #include <deque>
 #include <set>
 
 namespace neverd::registration_abi {
+namespace {
+
+bool isCallerCleanupCRTImport(const Import &Imported) {
+  enum class Family { Unknown, Legacy, Math };
+  const auto Provider = llvm::StringSwitch<Family>(Imported.Name)
+#define NEVERD_REGISTRATION_CRT_CLEANUP(Name, Kind) .Case(Name, Family::Kind)
+#include "RegistrationRuntimeImports.def"
+                            .Default(Family::Unknown);
+  if (Provider == Family::Legacy)
+    return coff_loader::isX86LegacyCRTProvider(Imported.Module);
+  if (Provider == Family::Math)
+    return coff_loader::isX86MathCleanupProvider(Imported.Module);
+  return false;
+}
+
+} // namespace
 
 const Import *checkedImportSlot(const BinaryImage &Image, va_t Target) {
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
@@ -47,28 +66,11 @@ checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target) {
   // These authenticated C-runtime entries use caller cleanup on PE32.
   // This is a returning ESP fact only: allocation, deallocation, callbacks,
   // errno and floating-point effects need separate memory/runtime contracts.
-  if (Import && !Import->IsDelayImport &&
-      isFileBackedPEImportSlot(Image, Import->IATAddr)) {
-    const llvm::StringRef Module = Import->Module;
-    const llvm::StringRef Name = Import->Name;
-    if ((Module.equals_insensitive("msvcrt.dll") ||
-         Module.equals_insensitive("msvcr100.dll")) &&
-        (Name == "malloc" || Name == "calloc" || Name == "realloc" ||
-         Name == "free" || Name == "memcpy" || Name == "memmove" ||
-         Name == "memset" || Name == "??2@YAPAXI@Z" ||
-         Name == "??_U@YAPAXI@Z" || Name == "??3@YAXPAX@Z" ||
-         Name == "??_V@YAXPAX@Z"))
-      return 0;
-    if ((Name == "log" || Name == "exp") &&
-        (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
-         Module.equals_insensitive("ucrtbase.dll") ||
-         Module.equals_insensitive("ucrtbased.dll") ||
-         Module.equals_insensitive("msvcrt.dll")))
-      return 0;
-  }
+  if (Import && !Import->IsDelayImport && isCallerCleanupCRTImport(*Import) &&
+      isFileBackedPEImportSlot(Image, Import->IATAddr))
+    return 0;
   if (!Import || Import->Name != "RaiseException" ||
-      (!llvm::StringRef(Import->Module).equals_insensitive("kernel32.dll") &&
-       !llvm::StringRef(Import->Module).equals_insensitive("kernelbase.dll")))
+      !coff_loader::isRaiseExceptionProvider(Import->Module))
     return std::nullopt;
   return 16;
 }

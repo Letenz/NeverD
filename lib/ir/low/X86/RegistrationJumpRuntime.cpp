@@ -12,10 +12,12 @@
 
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 
 namespace neverd::registration_state {
 
@@ -42,24 +44,19 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
   const auto *Imported = Image.findImportAt(Slot);
   if (!Imported || Imported->IATAddr != Slot || Imported->IsDelayImport)
     return std::nullopt;
-  const llvm::StringRef Module = Imported->Module;
-  if (!Module.equals_insensitive("msvcrt.dll") &&
-      !Module.equals_insensitive("vcruntime140.dll") &&
-      !Module.equals_insensitive("vcruntime140d.dll"))
+  if (!coff_loader::isX86RegistrationRuntimeProvider(Imported->Module))
     return std::nullopt;
-  JumpRuntimeBinding Binding;
-  if (Imported->Name == "_setjmp3")
-    Binding.Routine = JumpRuntimeBinding::Kind::Capture;
-  else if (Imported->Name == "_longjmpex")
-    Binding.Routine = JumpRuntimeBinding::Kind::Resume;
-  else if (Imported->Name == "_seh_longjmp_unwind")
-    Binding.Routine = JumpRuntimeBinding::Kind::EH3Unwind;
-  else if (Imported->Name == "_seh_longjmp_unwind4")
-    Binding.Routine = JumpRuntimeBinding::Kind::EH4Unwind;
-  else
+  using Kind = JumpRuntimeBinding::Kind;
+  const auto Routine = llvm::StringSwitch<std::optional<Kind>>(Imported->Name)
+#define NEVERD_REGISTRATION_JUMP(Name, Routine) .Case(Name, Kind::Routine)
+#include "RegistrationRuntimeImports.def"
+                           .Default(std::nullopt);
+  if (!Routine)
     return std::nullopt;
   if (!isFileBackedPEImportSlot(Image, Slot))
     return std::nullopt;
+  JumpRuntimeBinding Binding;
+  Binding.Routine = *Routine;
   Binding.Target = Target;
   Binding.ImportSlot = Slot;
   Binding.Indirect = Indirect;
