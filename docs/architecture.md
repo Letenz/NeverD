@@ -7094,8 +7094,14 @@ should orchestrate those components rather than absorb their algorithms.
 ## LLVM C object storage
 
 Finite direct native memory accesses into pointer-bearing data use a canonical
-relocation-free byte interval in `MedLLVMEmitter`. They do not recursively
-materialize unrelated pointer slots. An address-valued, indexed or pointer-slot
+relocation-free byte interval in `MedLLVMEmitter`. A gap larger than the single
+embedding limit retains only demanded finite bytes, merging and rebinding
+overlapping intervals as demand grows. Unobserved alignment padding preserves
+atomic alignment during backwards growth; the encoded global base includes
+that padding so source and patch projections retain the original addresses.
+These bounded intervals require a mapping aligned to the shared maximum
+embedded-data alignment. They do not recursively materialize unrelated pointer
+slots. An address-valued, indexed or pointer-slot
 access still demands the complete relocation mirror; its creation rebinds all
 earlier direct accesses to that same storage. Required unresolved pointers keep
 failing emission. Mergeable shards retain whole-run storage so masked bodies

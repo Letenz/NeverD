@@ -2378,7 +2378,14 @@ private:
   std::map<va_t, const Symbol *> ImageFunctionEndSymbols;
   // Relocation-free intervals used only by finite direct loads/stores. They
   // never enter GlobalDataCache, whose address-valued uses need a whole run.
-  std::map<uint64_t, llvm::GlobalVariable *> DirectDataByteGlobals;
+  struct DirectDataBytes {
+    llvm::GlobalVariable *Global = nullptr;
+    uint64_t Size = 0;
+    // Unobserved leading bytes preserve the original address residue when a
+    // demanded interval grows backwards past an already emitted atomic load.
+    uint64_t Prefix = 0;
+  };
+  std::map<uint64_t, DirectDataBytes> DirectDataByteGlobals;
   // External data declarations used while an imported pointer slot has proven
   // symbolic identity but no call has yet proven function type.  A later
   // direct call or native exception lowering promotes the placeholder to its

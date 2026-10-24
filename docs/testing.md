@@ -12224,3 +12224,22 @@ at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams
 remain explicitly unsupported; their presence cannot silently discard fixups.
 The public-loader fixture checks that weak-bind offsets survive load-command
 parsing and trigger this admission rule before pointer publication.
+
+## Finite image storage regressions
+
+`NeverDMedLLVMDirectDataTests` checks finite loads and stores independently of
+unrelated unresolved pointer slots across x86, x64, ARM and AArch64 and
+PE/COFF, ELF and Mach-O image models. Large relocation-free gaps must remain
+bounded by demand, retain aliases in both access orders, merge bridging
+accesses, and promote earlier byte objects when an address escapes. Backwards
+growth must preserve atomic alignment and the symbolized original address.
+Required unresolved pointers and shared-shard storage keep their rejection or
+whole-run contracts. Run the owning pointer and memory suites together:
+
+```bash
+ctest --test-dir build-release --build-config Release --output-on-failure \
+  -L '^(NeverDMedLLVMDirectDataTests|NeverDRelocatedFunctionEntryTests|NeverDMachOPointerRelocationBoundaryTests|NeverDNativePointerRelocationBoundaryTests|NeverDLLVMMemoryAlignmentTests)$'
+```
+
+The format/architecture matrix uses shared image models; it is not native
+execution qualification for every listed architecture or host platform.
