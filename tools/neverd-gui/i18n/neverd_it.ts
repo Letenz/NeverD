@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Attiva o disattiva uno spazio mobile con disassemblato, pseudocodice e output</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>Modalità &amp;focus</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Apri...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Impossibile ripristinare la disposizione precedente alla modalità focus.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Ricarica il file di input</translation>

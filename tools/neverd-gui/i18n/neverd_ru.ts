@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Переключить плавающее рабочее пространство с дизассемблированием, псевдокодом и выводом</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>Режим &amp;фокусировки</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Открыть...</translation>
     </message>
@@ -2186,6 +2194,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Не удалось восстановить расположение до режима фокусировки.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Перезагрузить входной файл</translation>

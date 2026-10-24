@@ -157,6 +157,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
     : QDialog(Parent), Session(Worker, this) {
   setObjectName("binaryComparison");
   setWindowTitle(tr("Binary comparison"));
+  setWindowFlags((windowFlags() | Qt::WindowMinMaxButtonsHint) &
+                 ~Qt::WindowContextHelpButtonHint);
   setWindowIcon(icon("compare"));
   setAttribute(Qt::WA_DeleteOnClose);
   setSizeGripEnabled(true);

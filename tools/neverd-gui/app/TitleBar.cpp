@@ -36,7 +36,8 @@ Controls controlsFor(Qt::WindowFlags flags) {
   if (!(flags & Qt::CustomizeWindowHint)) {
     const Qt::WindowFlags type = flags & Qt::WindowType_Mask;
     const bool window = type != Qt::Dialog && type != Qt::Tool;
-    return {window, window, true};
+    return {window || bool(flags & Qt::WindowMinimizeButtonHint),
+            window || bool(flags & Qt::WindowMaximizeButtonHint), true};
   }
   return {bool(flags & Qt::WindowMinimizeButtonHint),
           bool(flags & Qt::WindowMaximizeButtonHint),

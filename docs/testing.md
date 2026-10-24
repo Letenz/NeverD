@@ -1978,10 +1978,15 @@ reference selection. These cases also run in the native Windows/macOS checks;
 `NEVERD_SHORTCUT_CAPTURES` captures the source selection and list in both themes.
 
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
-its dock button and the tab context menu in both themes.
+its dock button and the tab context menu in both themes. Direct dock actions
+work with the floating lock enabled; title-bar docking first unlocks it.
 `NeverDGuiDocking` checks the drawn floating caption with both native-caption
 preferences for the other windows, including visible minimize and maximize
-controls.
+controls and full-size close targets. `doubleClickDetachStartsLocked` and
+`lockedDragsStayFloating` check the default lock, caption movement and rejected
+tab docking. `explicitDockIgnoresLock` clicks the dock button while locked.
+`floatingEdgesResizeWithoutDocking` resizes all four edges and all four corners
+with the lock both enabled and disabled, without opening a docking preview.
 Its native `dragIntoWorkbench` cases press and drag the title bar or tab, verify
 the drop preview, and release into a tab group or horizontal/vertical split.
 They cover separate, overlapping and maximized floating windows, and release
@@ -2008,8 +2013,9 @@ The Wayland runner requires GNOME Shell and creates a private headless desktop
 and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
 mouse events cannot authorize Wayland drag-and-drop. `customFloatingMoveAndResize`
 checks moving the floating window through its caption icon and resizing its
-drawn edges. The caption text and tab start docking drags; on Wayland the icon
-starts the compositor's desktop move. No system caption is added.
+drawn edges. Unlocking enables caption and tab docking drags; a locked caption
+moves the window on the desktop. On Wayland the icon also starts a compositor
+move while unlocked. No system caption is added.
 While a whole floating window is dragged, its native surface is minimized so
 it cannot obscure the target. Cancelled drags must restore its native position,
 size and window state, and accept another mouse click. No input is sent
@@ -2017,6 +2023,24 @@ to the existing desktop. `NEVERD_SHORTCUT_CAPTURES` saves floating-window and
 drop-preview captures, including the actual compositor desktop on Wayland.
 The desktop CI runs native drag cases on X11, Windows
 and macOS; offscreen runs skip gestures requiring native windows.
+
+`closingWorkbenchClosesDetachedWindows` checks clean exit and cancelling then
+discarding unsaved changes, including dialogs owned by floating panes and the
+workbench. Unrelated top-level windows remain open. `NeverDGuiWidgets` ends
+through the real application close path with detached panes and an auxiliary
+dialog; it must terminate without the probe forcing successful process exit.
+
+`codeOpensBesideFloatingDisassembly` checks new, existing and reopened source
+and IR panes beside their floating disassembly. `focusModeGroupsViewsAndRestoresLayout`
+presses Q three times to create one floating workspace with assembly on the
+left, code on the right and output across the bottom. It checks both themes,
+docked and floating origins, restoring the previous layout, unchanged data,
+and ordinary command input. `focusSequenceKeepsSingleQAndIgnoresAutoRepeat`
+checks that the Q sequence has a 400 ms interval, a single Q retains the
+hexadecimal-format action, and holding Q does not enter focus mode.
+`fileReviewWindowsOfferWindowControls` checks the offline
+package and binary-comparison dialogs; the title-bar unit cases exercise
+minimize, maximize and restore with default and customized dialog flags.
 
 `closedFloatingDocksReopenInWorkbench` closes floating panes through their
 native window and dock action, then reopens them in the main window. It covers

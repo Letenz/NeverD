@@ -23,12 +23,14 @@
 #include <QAction>
 #include <QApplication>
 #include <QDebug>
+#include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLineEdit>
+#include <QList>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPointer>
@@ -37,6 +39,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QTreeView>
+#include <algorithm>
 #include <functional>
 #include <kddockwidgets/LayoutSaver.h>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
@@ -301,6 +304,23 @@ private:
                          return window_.menuBar()->actions().value(0)->text() ==
                                 englishFileMenu_;
                        }});
+    stages_.push_back({"detach-before-exit",
+                       [this] {
+                         auto *assembly = dock(tr("NeverD View-A"));
+                         auto *hex = dock(tr("Hex View-1"));
+                         if (!assembly || !hex) {
+                           fail(QStringLiteral("Missing panes for exit check"));
+                           return;
+                         }
+                         for (auto *pane : {assembly, hex}) {
+                           pane->setFloating(true);
+                           floating_.append(pane->QWidget::window());
+                         }
+                         auxiliary_ = new QDialog(disassembly());
+                         auxiliary_->setAttribute(Qt::WA_DeleteOnClose);
+                         auxiliary_->show();
+                       },
+                       [this] { return detachedWindowsVisible(); }});
     // Unsaved edits ask before quitting; Cancel keeps the window open.
     stages_.push_back({"unsaved-edit",
                        [this] {
@@ -322,8 +342,51 @@ private:
          }});
     stages_.push_back({"quit-cancelled", nullptr, [this] {
                          return !QApplication::activeModalWidget() &&
-                                window_.isVisible() && session_.dirty();
+                                window_.isVisible() && session_.dirty() &&
+                                detachedWindowsVisible();
                        }});
+  }
+
+  bool detachedWindowsVisible() const {
+    return floating_.size() == 2 &&
+           std::all_of(floating_.begin(), floating_.end(),
+                       [](const auto &window) {
+                         return window && window->isVisible();
+                       }) &&
+           auxiliary_ && auxiliary_->isVisible();
+  }
+
+  void closeWorkbench() {
+    // A successful probe must exit through the application's real close path.
+    // Forcing exit(0) here would hide orphaned floating windows and processes.
+    connect(&window_, &MainWindow::shutdownAccepted, this, [this] {
+      const bool leftOpen = std::any_of(floating_.begin(), floating_.end(),
+                                        [](const auto &window) {
+                                          return window && window->isVisible();
+                                        }) ||
+                            (auxiliary_ && auxiliary_->isVisible());
+      if (leftOpen) {
+        qCritical("Widgets probe: detached windows survived accepted exit");
+        QCoreApplication::exit(1);
+      } else {
+        qInfo("Widgets probe passed %zu stages and closed detached windows",
+              stages_.size());
+      }
+    });
+    auto *answer = new QTimer(this);
+    connect(answer, &QTimer::timeout, this, [answer] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        answer->stop();
+        box->button(QMessageBox::Discard)->click();
+      }
+    });
+    answer->start(TickMs);
+    QTimer::singleShot(StageTimeoutMs, this, [] {
+      qCritical("Widgets probe: process did not exit after closing workbench");
+      QCoreApplication::exit(1);
+    });
+    window_.close();
   }
 
   bool capture(const QString &name) {
@@ -385,10 +448,7 @@ private:
       return;
     if (stage_ >= stages_.size()) {
       timer_.stop();
-      qInfo("Widgets probe passed %zu stages", stages_.size());
-      // The probe's own edit must not prompt again on exit.
-      session_.resolveTransition(QStringLiteral("discard"));
-      QTimer::singleShot(0, qApp, [] { QCoreApplication::exit(0); });
+      closeWorkbench();
       return;
     }
     auto &stage = stages_[stage_];
@@ -426,6 +486,8 @@ private:
   QTemporaryDir fixtureDirectory_;
   QTimer timer_;
   QPointer<JumpDialog> jumpDialog_;
+  QList<QPointer<QWidget>> floating_;
+  QPointer<QDialog> auxiliary_;
   QElapsedTimer clock_;
   std::vector<Stage> stages_;
   std::size_t stage_ = 0;

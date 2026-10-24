@@ -394,6 +394,12 @@ NEVERD_VIEW_ACTION(
                       "Find text among the loaded lines of the current view"))
 
 // View.
+NEVERD_VIEW_ACTION(
+    ViewFocusMode, QT_TRANSLATE_NOOP("Actions", "&Focus mode"), "Q, Q, Q",
+    "window_list",
+    QT_TRANSLATE_NOOP(
+        "Actions",
+        "Toggle a floating workspace with disassembly, pseudocode and output"))
 NEVERD_ACTION(ViewQuickView, QT_TRANSLATE_NOOP("Actions", "&Quick view..."),
               "Ctrl+1", "window_list",
               QT_TRANSLATE_NOOP("Actions", "Choose a view to open"))

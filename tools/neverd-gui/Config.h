@@ -44,6 +44,9 @@ inline constexpr int kCopiedLinkHashDigits = 16;
 inline constexpr int kMainWindowMaximumFunctionsWidth = 420;
 inline constexpr int kMainWindowMinimumOutputHeight = 120;
 inline constexpr int kMainWindowMaximumOutputHeight = 260;
+// Q remains the operand-format command; a short Q sequence opens focus mode.
+inline constexpr int kFocusModeSequenceTimeoutMs = 400;
+inline constexpr int kFocusModeSequenceLength = 3;
 
 // tools/neverd-gui/app/QuickStartDialog.cpp
 /// The widest the side grows for a translation's longer actions.
