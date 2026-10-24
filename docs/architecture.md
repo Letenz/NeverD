@@ -115,11 +115,24 @@ substitute for a rejected parent. Failures retain the entry's audit disposition
 and first decode or unsupported-instruction address; source views can still
 return their partial analysis.
 
+LLVM function-symbol lookup builds its eligible entry/end indexes lazily for
+each emission. It retains the last eligible symbol in image order and prefers
+an independent entry to an adjacent function's exclusive end. Reusing an
+emitter clears the indexes and entry proofs. A fatal pointer proof prevents
+further mirror retries in that module without weakening the original refusal.
+
 PE32 discovery rejects heuristic entries inside the operand bytes of reachable,
 complete instructions. The owning entry's control-flow walk supplies this
 evidence; overlapping paths, data and section boundaries invalidate it.
 Independent symbols, exports, direct calls and relocated pointers retain their
 separate authority.
+
+Parallel x86 call sweeps retain contiguous instruction ends and sparse direct
+call targets. A piece's start is implicit in its first boundary, and later
+starts are the preceding ends. Joining still redecodes a misaligned prefix
+until it reaches the canonical sweep; nested ranges retain their independent
+end-boundary checks. Joined pieces release their storage immediately instead
+of retaining two complete instruction logs through discovery.
 
 The COFF CFG reader also requires unique, complete file-backed storage for the
 target's minimum instruction unit. The table must be immutable, while target
@@ -2025,7 +2038,11 @@ are cleared and the x87 state reset before every instruction, including after
 an unsupported lift. Returned references and transfer facts own their values.
 Disassembly pages own a workspace for that call; parallel access-width,
 reference and string-reference scans retire theirs with each worker. No TLS,
-session cache, new semantic shortcut or cross-instruction state is involved.
+session cache or cross-instruction state is involved. Width-only inventories
+omit LowIR for audited scalar x86 register/immediate forms with no memory
+operand. Memory, implicit-stack, string, system and other instruction families
+retain full lifting. Full flow/reference queries remain unchanged; the
+stateless full-lift width collector supplies an independent comparison oracle.
 
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
@@ -4523,6 +4540,14 @@ records, fragments, explicit entries and malformed but identifiable FDE starts
 are checked even when the final annotation is absent. A contiguous per-slot
 storage inventory must partition the freshly proved runtime envelope exactly.
 Other architectures and complex tables retain their existing conservative rules.
+
+ELF and COFF extent discovery reads DWARF frame headers through the same
+bounded decoder as full exception recovery, without constructing the unused
+CFI instruction programs. These private header records supply only code
+extents, never unwind rules or language metadata. Runtime-index extension
+records retain the complete decode their admission requires. Full recovery
+still reads the current bytes after symbol/import discovery and validates all
+CFI programs, personalities and LSDAs before publishing exception metadata.
 
 DWARF frame-section decoding failures remain structural failures on every
 FDE-backed function from that section in Itanium and Darwin. A later language
@@ -7080,8 +7105,14 @@ should orchestrate those components rather than absorb their algorithms.
 ## LLVM C object storage
 
 Finite direct native memory accesses into pointer-bearing data use a canonical
-relocation-free byte interval in `MedLLVMEmitter`. They do not recursively
-materialize unrelated pointer slots. An address-valued, indexed or pointer-slot
+relocation-free byte interval in `MedLLVMEmitter`. A gap larger than the single
+embedding limit retains only demanded finite bytes, merging and rebinding
+overlapping intervals as demand grows. Unobserved alignment padding preserves
+atomic alignment during backwards growth; the encoded global base includes
+that padding so source and patch projections retain the original addresses.
+These bounded intervals require a mapping aligned to the shared maximum
+embedded-data alignment. They do not recursively materialize unrelated pointer
+slots. An address-valued, indexed or pointer-slot
 access still demands the complete relocation mirror; its creation rebinds all
 earlier direct accesses to that same storage. Required unresolved pointers keep
 failing emission. Mergeable shards retain whole-run storage so masked bodies

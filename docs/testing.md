@@ -708,6 +708,10 @@ stack names, chunk headers/footers, bytecode ownership, and reference overlays
 that preserve an intervening independent call. Rename invalidation and paging
 from either direction must retain the cursor's recovered instruction even when
 an independent decode stream overlaps it.
+Saved x64 and ARM64 code items retain this recovery on the first literal jump,
+including after a manually created fragment entry is deleted. Explicit
+independent entries, data and undefined item overrides keep their identities;
+read-only queries must not rewrite either sidecar.
 Direct decompilation of a fragment, before navigation or after visiting its
 owner, must return the owner's C, LLVMC, source and IR pages. Paged source and
 graph snapshots use the same entry, including viewport requests through the
@@ -5584,6 +5588,15 @@ augmentation/indirect-LSDA refusals. Metadata negatives cover outer records,
 fragments, explicit entries, malformed identifiable starts, reversed order and
 cleared final annotations. Per-slot inventories must completely partition the
 fresh runtime extent; gaps, duplicates, extra slots and changed strides refuse.
+
+`ItaniumEHDriver` exercises recovery with and without prior extent discovery.
+It checks personality names added after extent publication, complete CIE/FDE
+recovery, malformed/partial section diagnostics across x86/x64/AArch64, and
+AArch64 entries preceding their frames. Truncated CIE and FDE instruction
+programs retain their header's code extent but fail full recovery. Relocatable
+extents must not decode unlinked bytes; recovery must observe edited frame
+bytes. Runtime-index extensions admit complete CIE/FDE programs and reject
+truncated ones before publishing their extents.
 
 `ItaniumEHDriver` and `DarwinUnwindSymbols` check section-wide structural failure
 propagation across x86/x64/AArch64, mixed good/bad record orders, unknown CIE
@@ -12200,9 +12213,33 @@ the complete pre-SSA argument prefix and the positions of stack arguments.
 `NeverDSessionLLVMTests`'s `OmittedDebugNamedRuntimeUsesItsDeclaredArity` check
 that PDB public names reach argument recovery before either the module or
 single-function source route emits a call to an omitted runtime routine.
+`OverwrittenEntrySpillsAreNotValueReads` executes whole and split overwrites
+of incoming-register home slots through both routes. The companion
+`EntrySpillProofKeepsObservedBytesAndEscapes` retains partial observations,
+reads or calls before overwrite, returned frame addresses and branches where
+only one arm overwrites the saved bytes.
 
 The threaded arm64e loader validates unique segment ownership and rejects roots
 at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams
 remain explicitly unsupported; their presence cannot silently discard fixups.
 The public-loader fixture checks that weak-bind offsets survive load-command
 parsing and trigger this admission rule before pointer publication.
+
+## Finite image storage regressions
+
+`NeverDMedLLVMDirectDataTests` checks finite loads and stores independently of
+unrelated unresolved pointer slots across x86, x64, ARM and AArch64 and
+PE/COFF, ELF and Mach-O image models. Large relocation-free gaps must remain
+bounded by demand, retain aliases in both access orders, merge bridging
+accesses, and promote earlier byte objects when an address escapes. Backwards
+growth must preserve atomic alignment and the symbolized original address.
+Required unresolved pointers and shared-shard storage keep their rejection or
+whole-run contracts. Run the owning pointer and memory suites together:
+
+```bash
+ctest --test-dir build-release --build-config Release --output-on-failure \
+  -L '^(NeverDMedLLVMDirectDataTests|NeverDRelocatedFunctionEntryTests|NeverDMachOPointerRelocationBoundaryTests|NeverDNativePointerRelocationBoundaryTests|NeverDLLVMMemoryAlignmentTests)$'
+```
+
+The format/architecture matrix uses shared image models; it is not native
+execution qualification for every listed architecture or host platform.

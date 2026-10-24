@@ -1633,6 +1633,10 @@ private:
   /// The function entry at \p Address: a lifted function, or a declaration
   /// of the image function symbol that starts there.
   llvm::Function *resolveImageFunctionEntry(va_t Address);
+  /// Last eligible symbol at each entry/end, in original symbol order. Built
+  /// lazily once per emission; declarations and pointer mirrors share it.
+  std::pair<const Symbol *, const Symbol *>
+  imageFunctionSymbolsAt(va_t Address);
 
   llvm::Function *materializeImageFunctionDeclaration(va_t Entry,
                                                       llvm::StringRef Name);
@@ -2371,9 +2375,19 @@ private:
   // buildCodePtrSegmentGlobal); reused across every access into that segment.
   std::map<uint64_t, llvm::Constant *> CodePtrTableGlobals;
   std::shared_ptr<RelocatedFunctionEntryVerifier> RelocatedEntryProofs;
+  bool ImageFunctionSymbolsIndexed = false;
+  std::map<va_t, const Symbol *> ImageFunctionEntrySymbols;
+  std::map<va_t, const Symbol *> ImageFunctionEndSymbols;
   // Relocation-free intervals used only by finite direct loads/stores. They
   // never enter GlobalDataCache, whose address-valued uses need a whole run.
-  std::map<uint64_t, llvm::GlobalVariable *> DirectDataByteGlobals;
+  struct DirectDataBytes {
+    llvm::GlobalVariable *Global = nullptr;
+    uint64_t Size = 0;
+    // Unobserved leading bytes preserve the original address residue when a
+    // demanded interval grows backwards past an already emitted atomic load.
+    uint64_t Prefix = 0;
+  };
+  std::map<uint64_t, DirectDataBytes> DirectDataByteGlobals;
   // External data declarations used while an imported pointer slot has proven
   // symbolic identity but no call has yet proven function type.  A later
   // direct call or native exception lowering promotes the placeholder to its

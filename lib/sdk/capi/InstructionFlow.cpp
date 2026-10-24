@@ -116,6 +116,65 @@ StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
 
 } // namespace
 
+llvm::SmallVector<InstructionRef, 2>
+InstructionFlowScratch::dataAccesses(const BinaryImage &Img, Decoder &Dec,
+                                     const DecodedInsn &DI) {
+  if ((Img.Arch == Arch::X86 || Img.Arch == Arch::X64) && Dec.detailEnabled() &&
+      Dec.textEnabled() && DI.Raw && DI.Raw->detail) {
+    // These scalar families have no implicit memory operand. Their ordinary
+    // register/immediate forms may materialize addresses, but cannot read or
+    // write one. Do not generalize this to string, stack or system families.
+    bool ExplicitMemoryOnly = false;
+    switch (DI.Id) {
+    case X86_INS_MOV:
+    case X86_INS_MOVABS:
+    case X86_INS_MOVSX:
+    case X86_INS_MOVSXD:
+    case X86_INS_MOVZX:
+    case X86_INS_ADD:
+    case X86_INS_ADC:
+    case X86_INS_SUB:
+    case X86_INS_SBB:
+    case X86_INS_AND:
+    case X86_INS_OR:
+    case X86_INS_XOR:
+    case X86_INS_CMP:
+    case X86_INS_TEST:
+    case X86_INS_INC:
+    case X86_INS_DEC:
+    case X86_INS_NEG:
+    case X86_INS_NOT:
+    case X86_INS_IMUL:
+    case X86_INS_MUL:
+    case X86_INS_IDIV:
+    case X86_INS_DIV:
+    case X86_INS_SHL:
+    case X86_INS_SHR:
+    case X86_INS_SAR:
+    case X86_INS_ROL:
+    case X86_INS_ROR:
+    case X86_INS_RCL:
+    case X86_INS_RCR:
+    case X86_INS_SHLD:
+    case X86_INS_SHRD:
+    case X86_INS_BSWAP:
+      ExplicitMemoryOnly = true;
+      break;
+    default:
+      break;
+    }
+    const auto &X86 = DI.Raw->detail->x86;
+    if (ExplicitMemoryOnly && X86.op_count &&
+        X86.op_count <= std::size(X86.operands) &&
+        llvm::all_of(llvm::ArrayRef(X86.operands, X86.op_count),
+                     [](const cs_x86_op &Op) {
+                       return Op.type == X86_OP_REG || Op.type == X86_OP_IMM;
+                     }))
+      return {};
+  }
+  return summarize(Img, Dec, DI).Refs;
+}
+
 /// The flow of \p DI, with its stack pointer move when \p StackRegisters is
 /// given.
 InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
@@ -554,7 +613,7 @@ DataAccessScan::update(const BinaryImage &Img,
                      [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
                          InstructionFlowScratch &Scratch) {
                        for (const InstructionRef &Ref :
-                            Scratch.summarize(Img, Dec, DI).Refs)
+                            Scratch.dataAccesses(Img, Dec, DI))
                          if (isDataAccess(Ref))
                            Slots[Index].emplace_back(Ref.To, Ref.Bytes);
                      })) {

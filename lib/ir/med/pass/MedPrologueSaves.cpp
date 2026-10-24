@@ -16,6 +16,7 @@
 
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -199,6 +200,189 @@ void markReturnAddressReads(unsigned PointerSize,
       Read.Op->ReturnAddressRead = true;
 }
 
+/// Saving an incoming register into scratch storage does not read its value
+/// when every path overwrites the bytes before observing them. Keep the proof
+/// in source preparation so HighC and LLVMC discard the same transport. Calls,
+/// opaque memory accesses and exceptional edges stop the proof; a partial
+/// overwrite kills only its own bytes. Operation positions remain unchanged.
+void markUnobservedEntrySpills(MedFunc &Func, Arch Architecture,
+                               BinaryFormat Format,
+                               llvm::ArrayRef<FrameAccess> Loads,
+                               llvm::ArrayRef<FrameAccess> Stores) {
+  if (Func.Blocks.empty() || Func.SkippedSSA || Func.AnalystStackFrame)
+    return;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  const auto Layout = TRI.integerArgumentLayout(Format);
+  const int64_t HomeBegin = Layout.EntryStackBase - Layout.CallStackBase;
+  const auto Private = [&](int64_t At, uint16_t Bytes) {
+    return Bytes && ((Func.FrameSize > 0 && At >= -Func.FrameSize && At < 0 &&
+                      At + Bytes <= 0) ||
+                     (Layout.CallStackBase && At >= HomeBegin &&
+                      At < Layout.EntryStackBase &&
+                      Bytes <= Layout.EntryStackBase - At));
+  };
+  std::map<const MedOp *, const FrameAccess *> Accesses;
+  for (const FrameAccess &Access : Loads)
+    Accesses.emplace(Access.Op, &Access);
+  for (const FrameAccess &Access : Stores)
+    Accesses.emplace(Access.Op, &Access);
+  std::map<int, size_t> Blocks;
+  std::set<va_t> BlockEntries;
+  std::map<const MedOp *, std::pair<size_t, size_t>> Positions;
+  for (size_t B = 0; B < Func.Blocks.size(); ++B) {
+    Blocks.emplace(Func.Blocks[B].Id, B);
+    BlockEntries.insert(Func.Blocks[B].StartAddr);
+    for (size_t I = 0; I < Func.Blocks[B].Ops.size(); ++I) {
+      const MedOp &Op = Func.Blocks[B].Ops[I];
+      Positions.emplace(&Op, std::pair{B, I});
+    }
+  }
+  size_t Budget = limits::ir::kSourceEntrySpillWork;
+  for (const FrameAccess &Save : Stores) {
+    const MedVar &Value = Save.Op->Inputs[1];
+    if (Save.Op->PrologueSave || Value.Kind != MedVar::Reg ||
+        Value.Size > sizeof(uint64_t) || !Private(Save.Offset, Value.Size) ||
+        !isEntryLiveInValue(Func, Value, Value.RegOff))
+      continue;
+    const auto [FirstBlock, FirstOp] = Positions.at(Save.Op);
+    const uint64_t All = (uint64_t{1} << Value.Size) - 1;
+    using State = std::tuple<size_t, size_t, uint64_t>;
+    std::vector<State> Work{{FirstBlock, FirstOp + 1, All}};
+    std::map<std::pair<size_t, size_t>, uint64_t> Seen;
+    bool Safe = true;
+    while (Safe && !Work.empty()) {
+      auto [B, Begin, Pending] = Work.back();
+      Work.pop_back();
+      auto &Visited = Seen[{B, Begin}];
+      Pending &= ~Visited;
+      if (!Pending)
+        continue;
+      Visited |= Pending;
+      const MedBlock &Block = Func.Blocks[B];
+      if (!Block.ExceptionalSuccs.empty()) {
+        Safe = false;
+        break;
+      }
+      bool Returned = false;
+      for (size_t I = Begin; Pending && I < Block.Ops.size(); ++I) {
+        if (!Budget) {
+          Safe = false;
+          break;
+        }
+        --Budget;
+        const MedOp &Op = Block.Ops[I];
+        if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+            Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
+          Safe = false;
+          break;
+        }
+        if (Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::LOAD) {
+          const auto At = Accesses.find(&Op);
+          if (At == Accesses.end() ||
+              !Private(At->second->Offset, At->second->Size)) {
+            Safe = false;
+            break;
+          }
+          uint64_t Overlap = 0;
+          for (unsigned Byte = 0; Byte < Value.Size; ++Byte)
+            if (At->second->overlaps(Save.Offset + Byte,
+                                     Save.Offset + Byte + 1))
+              Overlap |= uint64_t{1} << Byte;
+          if (Op.Opcode == NdOp::LOAD && (Pending & Overlap)) {
+            Safe = false;
+            break;
+          }
+          if (Op.Opcode == NdOp::STORE)
+            Pending &= ~Overlap;
+        } else if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+                   Op.Opcode == NdOp::INTRINSIC ||
+                   Op.Opcode == NdOp::INDIR_BR ||
+                   Op.Opcode == NdOp::ATOMIC_XCHG ||
+                   Op.Opcode == NdOp::ATOMIC_ADD ||
+                   Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+          Safe = false;
+          break;
+        } else if (Op.Opcode == NdOp::RETURN) {
+          // An unresolved result may return a frame pointer, including a PHI
+          // of different offsets. Only a scalar constant or void return proves
+          // the remaining bytes cannot escape through the result.
+          for (unsigned K = 0; K < Op.NumInputs; ++K)
+            Safe &= Op.Inputs[K].isConst();
+          Returned = true;
+          break;
+        } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
+          if (!Op.NumInputs || !Op.Inputs[0].isConst() ||
+              !BlockEntries.count(Op.Inputs[0].ConstVal)) {
+            Safe = false;
+            break;
+          }
+        } else {
+          // These are scalar moves, address calculations and flag updates,
+          // without an implicit memory observer or a trapping operation.
+          switch (Op.Opcode) {
+          case NdOp::NOP:
+          case NdOp::COPY:
+          case NdOp::INT_ADD:
+          case NdOp::INT_SUB:
+          case NdOp::INT_MULT:
+          case NdOp::INT_AND:
+          case NdOp::INT_OR:
+          case NdOp::INT_XOR:
+          case NdOp::INT_LEFT:
+          case NdOp::INT_RIGHT:
+          case NdOp::INT_ASHR:
+          case NdOp::INT_EQUAL:
+          case NdOp::INT_NOTEQUAL:
+          case NdOp::INT_LESS:
+          case NdOp::INT_LESSEQUAL:
+          case NdOp::INT_SLESS:
+          case NdOp::INT_SLESSEQUAL:
+          case NdOp::INT_ZEXT:
+          case NdOp::INT_SEXT:
+          case NdOp::INT_NEGATE:
+          case NdOp::INT_NEG2:
+          case NdOp::INT_NOT:
+          case NdOp::INT_CARRY:
+          case NdOp::INT_SOVF:
+          case NdOp::INT_SBOR:
+          case NdOp::BOOL_AND:
+          case NdOp::BOOL_OR:
+          case NdOp::BOOL_XOR:
+          case NdOp::BOOL_NOT:
+          case NdOp::CONCAT:
+          case NdOp::SUBBYTES:
+          case NdOp::SELECT:
+            break;
+          default:
+            Safe = false;
+            break;
+          }
+          if (!Safe)
+            break;
+        }
+      }
+      if (!Safe || !Pending || Returned)
+        continue;
+      if (Block.Succs.empty()) {
+        Safe = false;
+        break;
+      }
+      for (int Successor : Block.Succs) {
+        const auto Next = Blocks.find(Successor);
+        if (Next == Blocks.end()) {
+          Safe = false;
+          break;
+        }
+        Work.emplace_back(Next->second, 0, Pending);
+      }
+    }
+    if (Safe)
+      Save.Op->PrologueSave = true;
+    if (!Budget)
+      return;
+  }
+}
+
 /// An exact declared call operand observes every loaded value byte. A source
 /// frame has no initial contents below its entry SP. Prove absence
 /// of a write, rather than mistaking absence of a known producer for that
@@ -363,6 +547,7 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
   if (hasStackReturnAddress(Architecture, Entry))
     markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
                            Stores);
+  markUnobservedEntrySpills(Func, Architecture, Format, Loads, Stores);
   replaceUnwrittenCallFrameReads(Func, Architecture, Loads, Stores);
 }
 

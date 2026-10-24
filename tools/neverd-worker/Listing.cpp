@@ -1673,16 +1673,22 @@ struct Listing::Impl {
     --it;
     return address < it->end ? static_cast<int>(it - functions.begin()) : -1;
   }
+  /// The declared or recovered owner, and whether recovery supplied it.
+  std::pair<int, bool> functionOwnerIndex(std::uint64_t address) const {
+    const int index = declaredFunctionIndex(address);
+    // Independent entries and explicit parts retain their identity, including
+    // when another decode stream covers their entry's bytes.
+    if (index < 0 ||
+        (!functions[index].chunkOf && functions[index].entry != address))
+      if (const auto recovered = recoveredFunctionIndex(address))
+        return {*recovered, true};
+    return {index, false};
+  }
   /// Index of the function whose decoded extent contains \p address.
   int functionIndex(std::uint64_t address) {
-    const int index = declaredFunctionIndex(address);
-    // Explicit parts retain their own presentation extent. Their recovered
-    // instructions still carry the parent's semantic ownership.
-    if (index < 0 || !functions[index].chunkOf)
-      if (const auto recovered = recoveredFunctionIndex(address))
-        return *recovered;
-    if (index < 0)
-      return -1;
+    const auto [index, recovered] = functionOwnerIndex(address);
+    if (recovered || index < 0)
+      return index;
     const auto &function = functions[index];
     // Decoding sets where an unsized body ends, and moves a sized one's end
     // before its padding.
@@ -1696,11 +1702,7 @@ struct Listing::Impl {
   }
   /// Function extent without decoding, for coarse classification.
   int functionIndexCoarse(std::uint64_t address) const {
-    const int index = declaredFunctionIndex(address);
-    if (index < 0 || !functions[index].chunkOf)
-      if (const auto recovered = recoveredFunctionIndex(address))
-        return *recovered;
-    return index;
+    return functionOwnerIndex(address).first;
   }
   const StringItem *stringAt(std::uint64_t address) const {
     auto it = std::upper_bound(strings.begin(), strings.end(), address,
@@ -4269,9 +4271,13 @@ Json Listing::page(const Json &payload) {
   if (payload.contains("recover_address") && d.native && d.functionDisasm) {
     const auto target = parseAddress(stringField(payload, "recover_address"));
     const auto item = target == address ? anchor : d.itemAt(target);
+    // A saved code item fixes its instruction bytes, not its function owner.
+    // Navigation still needs the same bounded recovery as a source request;
+    // explicit entries and non-code item overrides retain their identity.
     if (item && d.regions[item->region].exec &&
-        !d.userItemOverlapping(target, 1) &&
-        (item->kind != ItemKind::Instruction || item->start != target)) {
+        (item->userCode || !d.userItemOverlapping(target, 1)) &&
+        ((item->userCode && !d.functionAtEntry(target)) ||
+         item->kind != ItemKind::Instruction || item->start != target)) {
       (void)chunkOwner(target);
       // Discovery can rebuild the function and item indexes even if this
       // address still has no proven owner.
