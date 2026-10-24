@@ -347,7 +347,7 @@ class Projection {
   void projectProgress() {
     auto P = proveFlowProgress(
         G, FunctionContract, Options, [&](uint64_t N) { charge(N); },
-        ProgressProfile == LLVMMultiBlockProgressDataFlowProfile);
+        flowProgressMode(ProgressProfile));
     if (P.Kind != FlowProgressKind::Unproven) {
       // Add enum attributes to a copy; strings may contain arbitrary attribute
       // names or delimiters. Source LLVM and all other contracts stay exact.
@@ -511,6 +511,14 @@ DataFlowGraph buildLLVMMultiBlockProgressDataFlow(
     const DataFlowOptions &Options, const ComparisonControl &Control) {
   return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
                     Control, true, LLVMMultiBlockProgressDataFlowProfile)
+      .run();
+}
+DataFlowGraph buildLLVMNestedProgressDataFlow(
+    const llvm::Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
+    llvm::StringRef Revision, llvm::StringRef ABI, bool NativeComplete,
+    const DataFlowOptions &Options, const ComparisonControl &Control) {
+  return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
+                    Control, true, LLVMNestedProgressDataFlowProfile)
       .run();
 }
 } // namespace neverd::diff

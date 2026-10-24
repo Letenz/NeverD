@@ -4,8 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Linear, interruptible proof for acyclic bodies, published counter self
-/// loops and versioned single-entry multi-block counter components.
+/// Interruptible proof for acyclic bodies and versioned counter components.
+/// v1/v2 use one linear pass; v3 repeats SCC analysis for nested loops under
+/// the same work and cancellation allowance.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_DIFF_FLOWPROGRESS_H
@@ -21,12 +22,20 @@
 #include <string>
 
 namespace neverd::diff {
+enum class FlowProgressMode : uint8_t { SelfLoop, MultiBlock, Nested };
+inline FlowProgressMode flowProgressMode(llvm::StringRef Profile) {
+  if (Profile == LLVMNestedProgressDataFlowProfile)
+    return FlowProgressMode::Nested;
+  return Profile == LLVMMultiBlockProgressDataFlowProfile
+             ? FlowProgressMode::MultiBlock
+             : FlowProgressMode::SelfLoop;
+}
 /// All graph references must already have passed structural validation.
-FlowProgress proveFlowProgress(const DataFlowGraph &Graph,
-                               llvm::StringRef Contract,
-                               const DataFlowOptions &Options,
-                               llvm::function_ref<void(uint64_t)> Charge,
-                               bool MultiBlock = false);
+FlowProgress
+proveFlowProgress(const DataFlowGraph &Graph, llvm::StringRef Contract,
+                  const DataFlowOptions &Options,
+                  llvm::function_ref<void(uint64_t)> Charge,
+                  FlowProgressMode Mode = FlowProgressMode::SelfLoop);
 std::optional<std::string>
 validateFlowProgress(const DataFlowGraph &Graph, const DataFlowOptions &Options,
                      llvm::function_ref<void(uint64_t)> Charge);

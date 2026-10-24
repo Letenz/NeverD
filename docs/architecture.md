@@ -633,6 +633,17 @@ or latch; the direct latch comparison/branch consumes its poison.
 The residual whole CFG must be a DAG. Schema 6 names header and latch separately;
 v1 keeps its original scanner, accounting and four-field schema 5 witnesses.
 No loader, optimizer, ABI or transport adapter acquires a second proof owner.
+`llvm-progress-ssa-v3` extends this owner to nested components. Each round cuts
+only newly proved latch-to-header edges before recomputing residual SCCs; entry
+inventory still uses every original CFG edge. An outer cut proves only finitely
+many traversals of that edge, not that an inner cycle terminates. Applying the
+same argument to residual components, followed by whole-graph acyclicity,
+establishes progress. Failed final acyclicity discards all tentative witnesses.
+Schema 7 keeps explicit header/latch records, canonically ordered by latch;
+validation derives all rounds from an empty cut set. Deep nesting can require
+quadratic work, charged to existing limits with graph-sized live storage and no
+recursion or separate depth limit. Published v1/v2 paths retain their exact
+single-pass accounting and encodings.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.

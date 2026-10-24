@@ -216,13 +216,15 @@ neverd_comparison_flow_regions_json(neverd_comparison_t Comparison,
 /// Settings profile: med-ssa-v2 (default), llvm-ssa-v1 (optimized integer
 /// SSA), llvm-parameter-ssa-v1 (eligible native low-bit parameter views), or
 /// llvm-progress-ssa-v1 (parameter views and independently proved progress),
-/// llvm-progress-ssa-v2 (also single-entry multi-block counter components).
+/// llvm-progress-ssa-v2 (also single-entry multi-block counter components),
+/// llvm-progress-ssa-v3 (also nested single-entry counter components).
 /// Schema 6 witnesses add header to block (latch)/counter/update/compare.
-/// Only latch-node pages carry these witnesses; v1/schema5 remain unchanged.
-/// Schema 4 retains parameter source/view widths, optional native site and
-/// elision counts; paged nodes expose only their referenced parameter records.
-/// Parameter rows consume the same retained-item allowances as nodes; node
-/// counts/coverage still count operations. LLVM schema 3 retains exact
+/// Schema 7 retains those fields for every proved nesting layer. Only
+/// latch-node pages carry witnesses; v1/schema5 and v2/schema6 remain
+/// unchanged. Schema 4 retains parameter source/view widths, optional native
+/// site and elision counts; paged nodes expose only their referenced parameter
+/// records. Parameter rows consume the same retained-item allowances as nodes;
+/// node counts/coverage still count operations. LLVM schema 3 retains exact
 /// semantics and plural {address,sequence} origins; unsupported effects/types
 /// remain unavailable with reasons. Region nodes return plural originals rather
 /// than inventing a singular native origin. Query: side, kind
