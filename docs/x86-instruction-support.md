@@ -1448,3 +1448,36 @@ object compilations across Clang (32/64-bit) and NeverC (64-bit).
 The script requires Capstone, LIEF and, for
 i386 execution, Unicorn. The LLVM release and production pin remain gated on
 completion of the remaining instruction work above.
+
+## Bounded ENCLU/GETSEC arithmetic-flag transport
+
+The LLVM fork now supplies `llvm.x86.enclu.bounded.state` and
+`llvm.x86.getsec.bounded.state`, together with their `state32` counterparts.
+They transport four natural-width registers and all six arithmetic flags on
+entry and completion. The full rAX selector is constant: its low EAX admits
+ENCLU leaves 0, 1, 5..11 or GETSEC leaves 0, 6..8. Code mode, SGX and long-mode
+LAHF/SAHF requirements are checked. Existing bounded APIs retain their contracts.
+
+NeverC exposes the matching x64 `__builtin_ia32_enclu_bounded_state` and
+`__builtin_ia32_getsec_bounded_state` builtins, advertised by
+`__NEVERC_X86_BOUNDED_LEAF_STATE__ == 1`. The shared arithmetic-flag word uses
+LAHF bits 8/10/12/14/15 and OF bit zero. One machine operation owns flag
+restoration, the native instruction and flag capture, including register
+clobbers and unknown memory effects. Neither compiler route uses inline asm.
+See the [LLVM contract](https://github.com/NeverSight/llvm-project/blob/0aa03c56ffe3/llvm/docs/X86BoundedLeafState.rst)
+and [NeverC builtins](https://github.com/NeverSight/NeverC/blob/874283e94/development.md#bounded-leaf-state-with-incoming-arithmetic-flags).
+
+The independent matrix passes 133,744 controlled encoding/completion checks
+through full LLVM and 66,872 through each NeverC route, including NeverC IR
+compiled by LLVM. Every route compares 9,984 real CPL3 boundaries against
+independent instruction bytes and POPFQ/PUSHFQ flag transport. All physical
+observations on this host were faults; successful enclave/SMX operation is
+unqualified. The compiler merge also retains identical machine code in all
+936 regenerated NeverC/bridge objects, with all 74 privileged-intrinsic tests
+passing. `--keep` records per-leaf physical outcomes in
+`native-observations.json`.
+
+NeverD's incoming CFG leaf proof and leaf-specific register dependencies are
+still required before admitting ENCLU or GETSEC. These normal-completion APIs
+do not transport AEX, VM exits or nonlocal machine continuations. The final
+LLVM release, production pin and LLVM submodule update remain pending.
