@@ -12,7 +12,7 @@
 
 #include "X86LiftAPXValidation.h"
 
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include "llvm/Support/Debug.h"
 

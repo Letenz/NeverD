@@ -27,9 +27,9 @@
 #include "neverd/ir/low/RegistrationCxxState.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
-#include "neverd/ir/med/X86RegistrationFrame.h"
-#include "neverd/ir/med/X86RegistrationPhysicalFrame.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/X86/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationPhysicalFrame.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/COFF/COFFCxxEpilogue.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFLoader.h"
@@ -4265,7 +4265,8 @@ TEST(RegistrationTryLevel,
       Text.Flags = Text.Flags | SegmentFlags::Writable;
       break;
     case 6:
-      Image.Sections[0].Flags = Image.Sections[0].Flags | SegmentFlags::Writable;
+      Image.Sections[0].Flags =
+          Image.Sections[0].Flags | SegmentFlags::Writable;
       break;
     case 7:
       Text.Data.pop_back();

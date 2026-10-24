@@ -13,9 +13,9 @@
 
 #include "AArch64LiftDetail.h"
 
-#include "neverd/decode/AArch64NativeDecode.h"
-#include "neverd/ir/intrinsics/AArch64PAuthLoad.h"
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/decode/AArch64/AArch64NativeDecode.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <cstring>

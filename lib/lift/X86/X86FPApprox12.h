@@ -10,8 +10,8 @@
 #include "X86FPEncoding.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/X86FPState.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/X86/X86FPState.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 namespace neverd {
 inline bool liftFPApprox12(X86Lifter &L, X86Lifter::LiftState &S,

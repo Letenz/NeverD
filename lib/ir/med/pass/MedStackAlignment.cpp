@@ -16,7 +16,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationFrame.h"
 
 #include "llvm/ADT/DenseMap.h"
 

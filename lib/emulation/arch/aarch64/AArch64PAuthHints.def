@@ -11,5 +11,5 @@
 #ifdef NEVERD_AARCH64_PAUTH_HINT
 #define NEVERD_A64_PAUTH_HINT(Insn, Word, Id, Pointer, Modifier)               \
   NEVERD_AARCH64_PAUTH_HINT(Insn, Word)
-#include "neverd/ir/intrinsics/AArch64PAuth.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.def"
 #endif

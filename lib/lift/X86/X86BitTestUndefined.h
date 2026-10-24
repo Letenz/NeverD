@@ -7,7 +7,7 @@
 #ifndef NEVERD_LIB_LIFT_X86_X86BITTESTUNDEFINED_H
 #define NEVERD_LIB_LIFT_X86_X86BITTESTUNDEFINED_H
 
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include <array>
 

@@ -11,7 +11,7 @@
 #include "X87TranslationTestSupport.h"
 
 #include "neverd/translate/NativeTranslationSession.h"
-#include "neverd/translate/X87PortableExecution.h"
+#include "neverd/translate/X86/X87PortableExecution.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/DynamicLibrary.h"

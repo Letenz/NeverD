@@ -11,7 +11,7 @@
 
 Inspected the current x86 system-extension production patches, then traced:
 - [X86LiftSystemState.cpp](lib/lift/X86/X86LiftSystemState.cpp): encoding/detail consistency, mandatory prefixes, mode restrictions, operand counts and widths, implicit registers, and emission after admission. TESTUI obtains CF from the intrinsic and clears the other five arithmetic flags without changing DF; SENDUIPI retains an eight-byte input; LKGS memory uses effective-address transport rather than a selector preload.
-- Shared [X86SystemState.h](include/neverd/ir/intrinsics/X86SystemState.h), [inventory](include/neverd/ir/intrinsics/X86SystemState.def) and [X86SystemStateAsm.h](include/neverd/backend/llvm/X86SystemStateAsm.h), plus [MedLLVMX86SystemState.cpp](lib/backend/llvm/X86/MedLLVMX86SystemState.cpp) and [C renderer](lib/backend/c/render/X86SystemState.cpp). HRESET retains EAX while canonicalizing its ignored immediate; INVLPGB retains address-width-specific scalar input and addr32 assembly. Native calls remain side-effecting with memory clobbers. Known but malformed owned assembly is rejected.
+- Shared [X86SystemState.h](include/neverd/ir/intrinsics/X86/X86SystemState.h), [inventory](include/neverd/ir/intrinsics/X86/X86SystemState.def) and [X86SystemStateAsm.h](include/neverd/backend/llvm/X86/X86SystemStateAsm.h), plus [MedLLVMX86SystemState.cpp](lib/backend/llvm/X86/MedLLVMX86SystemState.cpp) and [C renderer](lib/backend/c/render/X86/X86SystemState.cpp). HRESET retains EAX while canonicalizing its ignored immediate; INVLPGB retains address-width-specific scalar input and addr32 assembly. Native calls remain side-effecting with memory clobbers. Known but malformed owned assembly is rejected.
 - [X86LiftControl.cpp](lib/lift/X86/X86LiftControl.cpp) now refuses far/interrupt returns instead of emitting an ordinary ABI return. Read the related strict-refusal, malformed-detail, input-width and arithmetic-flag test patches. Source-route signal-oracle and object-format test additions were inspected as tests, not executed or treated as successful privileged execution.
 - Rotated into [Program.cpp](lib/diff/Program.cpp), its [declarations](include/neverd/diff/Program.h), [limits](include/neverd/diff/Limits.h), and selected [BinaryDiffTests.cpp](unittests/BinaryDiffTests.cpp) cases. Traced sorted function lookup, discontiguous-block lookup, widened index-range checks, builder reference deduplication and final call-target indexing. Read index-validation and cancellation/timeout assertions. This does not qualify all input producers, persisted data, SDK ownership, comparison scores or cancellation behavior.
 - Reread the prior fixture repair in [mock_engine.cpp](tools/neverd-worker/tests/mock_engine.cpp): the call-graph helper namespace remains outside C linkage and C linkage resumes for the SDK entry points.
@@ -2143,7 +2143,7 @@ The source/test audit covers **38 distinct artifacts** in total, including the n
 - `lib/emulation/backends/hvf/{HvfExecutor.cpp,HvfExecutor.h,HvfX64Machine.cpp,HvfX64Registers.def}`
 - `lib/emulation/backends/RunDeadline.h` and `lib/emulation/core/MachineRunControl.h`
 - `lib/emulation/arch/x86_64/{X64Machine.cpp,X64Machine.h,X64MachineProbe.cpp,X64MachineProbe.def,X64OperandRegisters.def,CheckedX64Instructions.def}`
-- `lib/emulation/os/windows/driver/WindowsX64ExecutionPolicy.cpp` and `include/neverd/emulation/X64Registers.def`
+- `lib/emulation/os/windows/driver/WindowsX64ExecutionPolicy.cpp` and `include/neverd/emulation/arch/x86_64/X64Registers.def`
 - `unittests/emulation/{HvfExecutorTests.cpp,HvfTests.cpp,HvfTestPolicy.h,X64StateTransitionTests.cpp,MachineRunControlTests.cpp,RunControlTests.cpp,NativeEntryTests.cpp}`
 - `scripts/NativeHVFTests.def`, also included in the evidence inventory review below
 
@@ -2324,7 +2324,7 @@ The following 31 artifacts were inspected at `d87f27d2`. Whole-file reads are di
 - [X86LiftSIMDMove.cpp](lib/lift/X86/X86LiftSIMDMove.cpp): masked memory-operand validation and full-vector move caller, including address construction and mask handling
 - [X86Regs.cpp](lib/lift/X86/X86Regs.cpp): general-register mapping and invalid-register fallback
 - [Decoder.cpp](lib/decode/Decoder.cpp): `liftToLow` dispatch and undefined-effects initialization
-- [X86Lifter.h](include/neverd/lift/X86Lifter.h): shared memory-intrinsic/address helpers
+- [X86Lifter.h](include/neverd/lift/X86/X86Lifter.h): shared memory-intrinsic/address helpers
 - [X86_64_NoIndexAddressTests.cpp](unittests/lift/x86_64/X86_64_NoIndexAddressTests.cpp): all nine regression cases
 - [X86_64_EVEXMemoryBroadcastTests.cpp](unittests/lift/x86_64/X86_64_EVEXMemoryBroadcastTests.cpp): absent-index masked-broadcast/move and contradictory-metadata cases, plus their helpers
 - [unittests/lift/CMakeLists.txt](unittests/lift/CMakeLists.txt): dedicated no-index test-target registration

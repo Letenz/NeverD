@@ -9,9 +9,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/decode/AArch64NativeDecode.h"
+#include "neverd/decode/AArch64/AArch64NativeDecode.h"
 #include "neverd/decode/Decoder.h"
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 
 #include <cstdint>
 

@@ -12,7 +12,7 @@
 #include "../DecoderDetail.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/lift/ARMLifter.h"
+#include "neverd/lift/ARM/ARMLifter.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/Support/raw_ostream.h"

@@ -22,7 +22,7 @@
 enum nvd_x87_status_v1 {
 #define NEVERD_X87_PORTABLE_STATUS(CxxName, CName, Value, Diagnostic)          \
   NVD_X87_STATUS_##CName = Value,
-#include "neverd/ir/X87PortableStatus.def"
+#include "neverd/ir/X86/X87PortableStatus.def"
 #undef NEVERD_X87_PORTABLE_STATUS
 };
 
@@ -43,7 +43,7 @@ extern "C" {
 
 #define NEVERD_X87_PORTABLE_HELPER(Role, Name, Result, Parameters)             \
   NEVERD_X87_RUNTIME_API Result Name Parameters NEVERD_X87_RUNTIME_NOEXCEPT;
-#include "neverd/ir/X87PortableABI.def"
+#include "neverd/ir/X86/X87PortableABI.def"
 #undef NEVERD_X87_PORTABLE_HELPER
 
 #ifdef __cplusplus

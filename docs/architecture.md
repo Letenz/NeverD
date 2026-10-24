@@ -4,6 +4,25 @@
 
 # NeverD Architecture
 
+Compiler and IR architecture-specific implementation belongs beneath its owning
+component and phase in an `X86/`, `ARM/`, or `AArch64/` directory. X86 includes i386, x64 and
+x87. ARM includes ARM32 and shared Arm-family code; AArch64-specific code uses
+`AArch64/`. Shared dispatchers, IR interfaces and target-independent helpers stay at
+the component level. The C renderer groups its architecture helpers, intrinsic
+spelling tables and HighC/LLVMC adapters together under `render/<architecture>/`;
+its route-independent interfaces retain `render/HighC/` and `render/LLVMC/`.
+LLVM architecture headers mirror the existing backend implementation directories.
+Decoder, lifter, IR state, ABI and translation files follow the same ownership.
+Execution models and unpacking adapters extend their existing `arch/<target>/`
+layout, including the public execution models.
+
+Binary-format implementation remains grouped by ELF, COFF and Mach-O, including
+format-owned architecture encodings and unwind records. Platform emulator
+backends and UI features retain their existing service boundaries. The stable C
+SDK and portable-runtime C header paths remain unchanged. Tests retain their existing
+semantic and format groupings. Directory moves do not change component targets,
+intrinsic identities, exported symbols or instruction semantics.
+
 `X86DescriptorState.h` owns descriptor-state operand shapes; LowIR,
 Low-to-Med, Med verification and source output use that contract.
 `X86DescriptorStateNative.h` owns register widths, native API names, memory
@@ -491,6 +510,10 @@ under the same context check; other addresses still resolve through the worker.
 The worker recovers distant function chunks through their owner's entry while
 keeping the decode cursor and cached projection inside the chunk. Reading a
 chunk must not register it as another function and churn the listing generation.
+Source, IR and graph requests share that bounded owner lookup before preparing
+analysis or choosing a document or layout cache key. Explicit function entries
+retain their identities; an unresolved address retains the ordinary entry
+request. Navigation keeps the requested byte address separately from its owner.
 GUI refreshes retain loaded context within the per-side query budget and keep a
 prefetch margin, so replacing unchanged rows does not shrink and regrow the
 window used to route branch arrows. Revision and navigation fences still apply.
@@ -4747,6 +4770,12 @@ Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
 
+`prepareMedStackAccesses` owns the post-conversion entry-kind, alignment and
+annotation sequence. Register-pair return recovery calls it again after
+reconverting a caller from LowIR: old operation flags cannot describe that new
+sequence. HighC and LLVM C request the source projection; machine lift,
+patching and analysis keep the original stack operations.
+
 The entry-stack proof keeps definitions, joins, ambiguity and transient active
 flags in one ordered index. Each visit still consumes its ordinary work and
 depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
@@ -6694,6 +6723,8 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
 
 `PEHeaderMapping` owns the optional file-backed `<PE headers>` mapping in linked PE images. It appends a normalized segment and region after real COFF sections, preserving their indexes, and copies original file bytes even when LLVM needs a zero-VirtualSize reader projection. Complete headers, target-width bounds, ordinary page alignment, and disjoint raw and virtual section ownership are required. Padding beyond SizeOfHeaders is not admitted. Unsupported layouts retain `pe.headers_unmapped` and grant no header read authority.
+
+Windows process and driver admission share `COFFLoader::hasExpectedPEMappingInventory` to validate the real-section count and the optional header's exact bytes, position and read-only identity; each retains its independent execution preflight and creates exactly one guest header region.
 
 `PEHeaderInitialization` bounds the loader write footprint before publishing this read-only mapping. Ordinary import lookup/IAT extents, scalar base relocations and legacy load-configuration cookie destinations must exclude header pages. `PELoaderWriteRanges` shares the metadata-overlap rule with the fixed-image reader, so one write cannot change a later descriptor, terminator or configuration field. A rebased cookie destination requires its own complete scalar fixup. TLS, delay/bound imports, extended load configurations and other unmodeled writer protocols retain the refusal. The four-million-unit budget charges visited metadata bytes and section/record queries; fixed-image validation also charges that work to its caller's limits. This proves storage initialization, not a callee's effects or an unreachable control branch.
 
@@ -9808,7 +9839,7 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 Execution-watch handoffs expose `ProcessView::watchedMemoryUnchanged()` only when RAM covered by the preceding write watches could not have changed. OS services and exception or invocation continuations conservatively withdraw that guarantee. The transfer observer reuses validated snapshots at clean handoffs, but a newly visited page still refreshes its possible fetch tail. WHP retains captured sticky debug status across acknowledged single steps and resets it before free execution, avoiding a redundant register installation for each checked instruction without weakening private-stop authentication.
 
-`arch/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
+`arch/x86_64/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
 
 Export addresses belong to one process. Helper evidence carries the module and export name or ordinal resolved in the proving run; the PE writer compares these identities by value. A discovery address may become bound after entry, but only its current export identity authorizes repair.
 

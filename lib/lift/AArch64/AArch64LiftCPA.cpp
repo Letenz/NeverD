@@ -12,8 +12,8 @@
 #include "AArch64LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/AArch64CPA.h"
-#include "neverd/ir/intrinsics/AArch64SVEVector.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
 #include "neverd/support/BinaryEncoding.h"
 
 namespace neverd {
@@ -29,7 +29,7 @@ bool liftCPA(AArch64Lifter &L, AArch64Lifter::LiftState &S, const cs_insn *Insn,
                                      ...)                                      \
   if (Insn->id == AARCH64_INS_##InsnId && (Word & Mask) == Encoding)           \
     Scalable = aarch64_sve::cpaOperation(Intrinsic::Id);
-#include "neverd/ir/intrinsics/AArch64SVECPA.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"
   if (Scalable) {
     using namespace aarch64_sve;
     if (A.op_count != cpaRoles(Scalable->Form).RawCount)
@@ -70,7 +70,7 @@ bool liftCPA(AArch64Lifter &L, AArch64Lifter::LiftState &S, const cs_insn *Insn,
   case AARCH64_INS_##Insn:                                                     \
     Id = Intrinsic::IdValue;                                                   \
     break;
-#include "neverd/ir/intrinsics/AArch64CPA.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.def"
   case AARCH64_INS_MADPT:
   case AARCH64_INS_MLAPT:
     // No other multiply form has a defined checked-pointer contract.

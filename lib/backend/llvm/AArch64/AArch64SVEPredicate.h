@@ -11,7 +11,7 @@
 #ifndef NEVERD_BACKEND_LLVM_AARCH64_SVEPREDICATE_H
 #define NEVERD_BACKEND_LLVM_AARCH64_SVEPREDICATE_H
 
-#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEPredicate.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"

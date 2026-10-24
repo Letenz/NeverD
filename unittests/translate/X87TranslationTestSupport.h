@@ -11,7 +11,7 @@
 #ifndef NEVERD_TEST_X87TRANSLATIONTESTSUPPORT_H
 #define NEVERD_TEST_X87TRANSLATIONTESTSUPPORT_H
 
-#include "neverd/translate/RuntimeX87Helpers.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"

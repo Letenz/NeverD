@@ -292,6 +292,10 @@ private:
   /// A comment changed.  The listing reads comments as it formats lines, so
   /// only views that keep formatted text drop it.
   void commentsChanged();
+  /// A known entry's index, or the index of its bounded recovered owner.
+  int functionIndex(std::uint64_t address);
+  /// A known entry, its recovered owner, or the still-unowned address.
+  std::uint64_t functionEntry(std::uint64_t address);
   /// The control flow graph of the function at \p address, in the engine's
   /// cfg JSON shape.
   Json functionGraph(std::uint64_t address);

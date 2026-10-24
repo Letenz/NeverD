@@ -283,11 +283,11 @@ inline constexpr int kSwiftValueWitnessCallsAtBudget = 4096;
 inline constexpr size_t kSwiftVirtualCallsBudget = 16384;
 inline constexpr size_t kSwiftVirtualCallsNativeSelfCallsBudget = 1U << 18;
 
-// lib/loader/discovery/FunctionDiscoveryARM.cpp
+// lib/loader/discovery/ARM/FunctionDiscoveryARM.cpp
 inline constexpr size_t kFunctionDiscoveryARMMaxDiscoveredInstructions =
     4'000'000;
 
-// lib/loader/discovery/FunctionDiscoveryX86.cpp
+// lib/loader/discovery/X86/FunctionDiscoveryX86.cpp
 /// The most bytes of literals and padding the check reads, and the most
 /// instructions it follows through them.
 inline constexpr size_t kFunctionDiscoveryX86MaxLiteralRegion = 64 * 1024;

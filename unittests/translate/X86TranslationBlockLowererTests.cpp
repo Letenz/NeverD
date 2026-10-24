@@ -2,14 +2,14 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/translate/GuestMemoryRuntime.h"
 #include "neverd/translate/RuntimeABI.h"
 #include "neverd/translate/RuntimeGuestState.h"
 #include "neverd/translate/RuntimeHelpers.h"
 #include "neverd/translate/TranslationBlockLowerer.h"
 #include "neverd/translate/TranslationTargetMachine.h"
-#include "neverd/translate/X86TranslationBlockBuilder.h"
+#include "neverd/translate/X86/X86TranslationBlockBuilder.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"

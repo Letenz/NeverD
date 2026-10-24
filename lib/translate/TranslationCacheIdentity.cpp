@@ -2,7 +2,7 @@
 
 #include "TranslationCacheIdentity.h"
 
-#include "X87TranslationBoundary.h"
+#include "X86/X87TranslationBoundary.h"
 
 #include "llvm/ADT/StringExtras.h"
 

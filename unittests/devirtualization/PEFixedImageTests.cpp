@@ -10,7 +10,7 @@
 #include "neverd/analysis/InterpreterLLVMRefinement.h"
 #include "neverd/analysis/InterpreterMachineState.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/COFF/PEFixedImage.h"

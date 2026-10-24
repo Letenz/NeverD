@@ -283,7 +283,8 @@ TEST(BinaryDiffDataFlowPipeline, LLVMAncestryKeepsItsDistinctOriginKind) {
   // A real replacement keeps the original observation kind. Derived ancestry
   // does not become direct evidence merely because a clone changes pointers.
   Add->replaceAllUsesWith(Function->getArg(0));
-  EXPECT_EQ(Sources.Observations[0].Value, Function->getArg(0));
+  EXPECT_EQ(static_cast<llvm::Value *>(Sources.Observations[0].Value),
+            Function->getArg(0));
   EXPECT_FALSE(Sources.Observations[0].ExpressionDerived);
   Sources.remap([](llvm::Value *V) { return V; });
   for (size_t N = 0; N < Sources.Observations.size(); ++N)

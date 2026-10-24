@@ -8227,10 +8227,6 @@ Sekundäre SHA-256: %3
         <source>Dock back into main window</source>
         <translation>Wieder im Hauptfenster andocken</translation>
     </message>
-    <message>
-        <source>Move window</source>
-        <translation>Fenster verschieben</translation>
-    </message>
 </context>
 <context>
     <name>neverd::gui::ExportDataDialog</name>

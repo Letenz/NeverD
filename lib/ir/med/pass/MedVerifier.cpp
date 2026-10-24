@@ -16,14 +16,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
-#include "neverd/ir/med/X86RegistrationCallback.h"
-#include "neverd/ir/med/X86RegistrationFrame.h"
-#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
+#include "neverd/ir/med/X86/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHRegisters.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"

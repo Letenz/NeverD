@@ -11,7 +11,7 @@
 #include "AArch64LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BranchEncoding.h"
 
@@ -66,7 +66,7 @@ bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     S.emit(NdOp::RETURN, {}, {Target});                                        \
     return true;                                                               \
   }
-#include "neverd/ir/intrinsics/AArch64PAuthLR.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLR.def"
   switch (Word) {
 #define NEVERD_A64_PAUTH_HINT(Insn, Word, Id, Pointer, Mod)                    \
   case Word: {                                                                 \
@@ -86,7 +86,7 @@ bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   case Word:                                                                   \
     reject();                                                                  \
     return false;
-#include "neverd/ir/intrinsics/AArch64PAuth.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.def"
   default:
     break;
   }
@@ -105,7 +105,7 @@ bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     Id = Intrinsic::Intr;                                                      \
     Zero = true;                                                               \
     break;
-#include "neverd/ir/intrinsics/AArch64PAuth.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.def"
   default: {
     NdOp Transfer;
     unsigned Key;
@@ -117,7 +117,7 @@ bool liftPAuth(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     Zero = IsZero;                                                             \
     break;
 #define NEVERD_A64_PAUTH_UNSUPPORTED(Insn) case AARCH64_INS_##Insn:
-#include "neverd/ir/intrinsics/AArch64PAuth.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.def"
       reject();
       return false;
     default:

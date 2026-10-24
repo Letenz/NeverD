@@ -491,7 +491,7 @@ private:
 #define NEVERD_X64_REGISTER(Name, Decoder, Backend)                            \
   case X64Register::Name:                                                      \
     return Backend;
-#include "neverd/emulation/X64Registers.def"
+#include "neverd/emulation/arch/x86_64/X64Registers.def"
 #undef NEVERD_X64_REGISTER
     default:
       return UC_X86_REG_INVALID;

@@ -11,7 +11,7 @@
 #ifndef NEVERD_UNITTESTS_TRANSLATE_X87PORTABLEORIGINAL_H
 #define NEVERD_UNITTESTS_TRANSLATE_X87PORTABLEORIGINAL_H
 
-#include "neverd/translate/X87PortableRuntime.h"
+#include "neverd/translate/X86/X87PortableRuntime.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Errc.h"

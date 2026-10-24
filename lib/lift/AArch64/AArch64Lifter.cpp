@@ -9,13 +9,13 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 
 #include "AArch64LiftDetail.h"
 
-#include "neverd/decode/AArch64FastClassify.h"
+#include "neverd/decode/AArch64/AArch64FastClassify.h"
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
@@ -418,7 +418,7 @@ bool AArch64Lifter::isFunctionTerminator(const cs_insn *I) {
 #define NEVERD_A64_PAUTH_BRANCH(Insn, Mask, Word, Key, Zero, Kind)             \
   case AARCH64_INS_##Insn:                                                     \
     return NdOp::Kind != NdOp::INDIR_CALL;
-#include "neverd/ir/intrinsics/AArch64PAuth.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.def"
 
   case AARCH64_INS_RET:
   case AARCH64_INS_B:

@@ -13,8 +13,8 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/NdOpEmulator.h"
-#include "neverd/lift/X86Lifter.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <array>
 #include <cstdint>

@@ -11,7 +11,7 @@
 
 #include "SessionImpl.h"
 
-#include "neverd/ir/X87Capabilities.h"
+#include "neverd/ir/X86/X87Capabilities.h"
 
 #include <exception>
 #include <string>

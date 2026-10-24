@@ -10,7 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include "X86BitTestUndefined.h"
 #include "X86DoubleShiftUndefined.h"
@@ -22,7 +22,7 @@
 #include "X86XaddAudit.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/X86Interrupts.h"
+#include "neverd/ir/intrinsics/X86/X86Interrupts.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"

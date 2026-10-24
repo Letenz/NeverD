@@ -23,7 +23,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCRecordArguments.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/Loader.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/types/TypeParse.h"

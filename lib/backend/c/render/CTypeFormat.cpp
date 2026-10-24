@@ -18,7 +18,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/SourceFrameBytes.h"
-#include "neverd/ir/intrinsics/AArch64SVEVector.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/RelocationProvenance.h"

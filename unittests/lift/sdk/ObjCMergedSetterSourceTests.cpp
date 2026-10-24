@@ -3,7 +3,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"

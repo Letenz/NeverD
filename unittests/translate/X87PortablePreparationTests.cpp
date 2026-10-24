@@ -13,7 +13,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
-#include "neverd/ir/med/PortableX87Function.h"
+#include "neverd/ir/med/X86/PortableX87Function.h"
 
 #include "llvm/Support/raw_ostream.h"
 

@@ -16,7 +16,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #define DEBUG_TYPE "neverd-lift-x86"
 
@@ -226,8 +226,7 @@ bool liftStringMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       const uint16_t AccumulatorSize = L.targetArch() == Arch::X86 ? 4 : 8;
       S.emitIntrinsic(lodsIntrinsic(ElemSz),
                       NdVar::reg(x86reg::RAX, AccumulatorSize),
-                      {Rsi, Rcx,
-                       NdVar::reg(x86reg::RAX, AccumulatorSize), Df},
+                      {Rsi, Rcx, NdVar::reg(x86reg::RAX, AccumulatorSize), Df},
                       NdMemoryOrdering::None, stringSourceAddressSpace(X86));
       NdVar Bytes = S.makeTemp(AddrSz);
       S.emit(NdOp::INT_MULT, Bytes, {Rcx, NdVar::scalar(ElemSz, AddrSz)});

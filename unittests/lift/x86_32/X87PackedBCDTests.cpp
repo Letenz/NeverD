@@ -12,13 +12,13 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
-#include "neverd/backend/llvm/LLVMX87GuardedValueAsm.h"
-#include "neverd/ir/X87GuardedValue.h"
-#include "neverd/ir/high/X87GuardedValueShape.h"
+#include "neverd/backend/llvm/X86/LLVMX87GuardedValueAsm.h"
+#include "neverd/ir/X86/X87GuardedValue.h"
+#include "neverd/ir/high/X86/X87GuardedValueShape.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/IRBuilder.h"

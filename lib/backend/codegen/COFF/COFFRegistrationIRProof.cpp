@@ -12,9 +12,9 @@
 #include "COFFRegistrationSEHStateDispatch.h"
 
 #include "neverd/Limits.h"
-#include "neverd/backend/llvm/X86RegistrationSEHControl.h"
-#include "neverd/ir/med/X86RegistrationSEHRegisters.h"
-#include "neverd/ir/med/X86RegistrationSEHStateStore.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHControl.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHRegisters.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHStateStore.h"
 
 #include "llvm/IR/CFG.h"
 namespace neverd::coff_registration {

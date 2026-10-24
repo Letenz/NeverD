@@ -10,8 +10,8 @@
 
 #include "X86LiftDetail.h"
 
-#include "neverd/ir/intrinsics/X86SystemState.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/intrinsics/X86/X86SystemState.h"
+#include "neverd/lift/X86/X86Lifter.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include <array>

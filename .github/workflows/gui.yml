@@ -48,7 +48,7 @@ jobs:
           echo "$RUNNER_TEMP/Qt/6.8.3/${{ matrix.qt_dir }}/bin" >> "$GITHUB_PATH"
           if [ '${{ runner.os }}' = Linux ]; then
             sudo apt-get update
-            sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 xvfb xauth openbox xdotool
+            sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 xvfb xauth openbox xdotool
           fi
       - name: Configure Windows offscreen fonts
         if: runner.os == 'Windows'

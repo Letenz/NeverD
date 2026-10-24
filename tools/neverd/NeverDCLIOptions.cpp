@@ -25,7 +25,7 @@
 #include "neverd/emulation/ExecutionReportFields.h"
 #include "neverd/emulation/ProcessCLIStrings.h"
 #include "neverd/emulation/ProcessReportFields.h"
-#include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/loader/ARM/ARMModeCLIStrings.h"
 #include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/pass/Limits.h"
 #include "neverd/sdk/Limits.h"

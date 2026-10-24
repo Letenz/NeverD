@@ -15,7 +15,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #define DEBUG_TYPE "neverd-lift-x86"
 
@@ -167,9 +167,9 @@ bool liftLegacyBCD(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       uint16_t Sz = static_cast<uint16_t>(X86.operands[0].size);
       if (Sz != 2 && Sz != 4)
         Sz = 4;
-      S.emitIntrinsic(Intrinsic::Bound, NdVar(),
-                      {NdVar::reg(Idx.Offset, Sz),
-                       S.computeEA(X86.operands[1])});
+      S.emitIntrinsic(
+          Intrinsic::Bound, NdVar(),
+          {NdVar::reg(Idx.Offset, Sz), S.computeEA(X86.operands[1])});
     } else {
       S.emitIntrinsic(Intrinsic::Bound);
     }

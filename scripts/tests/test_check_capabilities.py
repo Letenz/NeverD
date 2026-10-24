@@ -686,11 +686,11 @@ class CapabilitySchemaTests(unittest.TestCase):
     def test_cli_inventory_resolves_option_names_from_def_tables(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            include = root / "include" / "neverd" / "loader"
+            include = root / "include" / "neverd" / "loader" / "ARM"
             include.mkdir(parents=True)
             (include / "ARMModeCLIStrings.h").write_text(
                 "namespace neverd::arm_mode_cli {\n"
-                '#include "neverd/loader/ARMModeCLIStrings.def"\n'
+                '#include "neverd/loader/ARM/ARMModeCLIStrings.def"\n'
                 "}\n",
                 encoding="utf-8",
             )

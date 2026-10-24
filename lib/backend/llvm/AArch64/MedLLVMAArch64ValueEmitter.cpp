@@ -14,11 +14,11 @@
 #include "AArch64SVEPredicate.h"
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-value"
-#include "neverd/ir/intrinsics/AArch64CPA.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/IntrinsicShapes.h"

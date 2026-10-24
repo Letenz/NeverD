@@ -15,6 +15,40 @@ def ok(client, operation, payload=None):
     return result["payload"]
 
 
+def verify_function_views(client, address, entry):
+    """A fragment selects the same source, IR and graph as its proven owner."""
+    address, entry = hex(address), hex(entry)
+    for representation in ("c", "llvmc", "low", "med", "high", "llvm", "source"):
+        request = {"address": address, "representation": representation, "limit": 2048}
+        source = ok(client, "decompile", request)
+        assert source["address"] == entry and source["text"], source
+        if representation in ("c", "llvmc", "source"):
+            assert "unknown register" not in source["text"], source
+            assert "unknown value" not in source["text"], source
+        owner = ok(client, "decompile", {**request, "address": entry})
+        assert source["text"] == owner["text"], (source, owner)
+        for selected in (address, entry):
+            page = ok(client, "decompile", {**request, "address": selected, "offset": 1, "limit": 3})
+            assert page["address"] == entry, page
+            assert page["text"].splitlines() == source["text"].splitlines()[1:4], page
+    graph = ok(client, "cfg", {"address": address})
+    assert any(node["start"] == entry for node in graph["nodes"]), graph
+    summary = ok(client, "cfg_summary", {"address": address})
+    assert summary["address"] == entry, summary
+    owner = ok(client, "cfg_summary", {"address": entry})
+    assert owner["layout_revision"] == summary["layout_revision"], (summary, owner)
+    viewport = ok(client, "cfg_viewport", {"address": address,
+                  "layout_revision": summary["layout_revision"], "scale": 1,
+                  **summary["bounds"]})
+    assert viewport["snapshot_complete"] and viewport["complete"], viewport
+    resolved = ok(client, "resolve", {"query": address})
+    assert resolved["function_address"] == entry, resolved
+    inventory = ok(client, "functions", {"limit": 64})
+    assert inventory["complete"], inventory
+    entries = {row["address"] for row in inventory["items"]}
+    assert entry in entries and (address == entry or address not in entries), inventory
+
+
 def run(executable):
     with tempfile.TemporaryDirectory(prefix="neverd-constant-branch-") as directory:
         binary = Path(directory) / "branches.elf"
@@ -112,9 +146,13 @@ def run(executable):
         for first, navigation in ((entry + 0x71, "resolve"),
                                   (entry + 0x51, "resolve"),
                                   (entry + 0x71, "listing"),
-                                  (entry + 0x51, "listing")):
+                                  (entry + 0x51, "listing"),
+                                  (entry + 0x71, "decompile"),
+                                  (entry + 0x51, "decompile")):
             with Client(executable) as client:
-                ok(client, "open", {"path": str(scattered)})
+                ok(client, "open", {"path": str(scattered), "analysis": False, "warm": False})
+                if navigation == "decompile":
+                    verify_function_views(client, first, entry)
                 if navigation == "listing":
                     # A literal GUI jump bypasses the expression resolver.
                     initial = ok(client, "listing", {"address": hex(first),
@@ -137,10 +175,10 @@ def run(executable):
                     assert sum("END OF FUNCTION CHUNK" in row["text"]
                                for row in fragment) == 1, fragment
                     assert not any(row["text"].endswith("endp") for row in fragment), fragment
-                for representation in ("c", "llvmc"):
-                    source = ok(client, "decompile", {"address": hex(entry),
-                                                       "representation": representation})
-                    assert source["text"] and "unknown register" not in source["text"], source
+                if navigation != "decompile":
+                    verify_function_views(client, first, entry)
+                independent_source = ok(client, "decompile", {"address": hex(entry + 0x30)})
+                assert independent_source["address"] == hex(entry + 0x30), independent_source
                 assert ok(client, "resolve", {"query": hex(entry + 0x30)})[
                     "function_address"] == hex(entry + 0x30)
                 outgoing = ok(client, "xrefs", {"address": hex(entry + 0x76),
@@ -184,6 +222,8 @@ def run(executable):
                        for row in lines), lines
             assert sum("START OF FUNCTION CHUNK" in row["text"] for row in lines) == 1, lines
             assert sum("END OF FUNCTION CHUNK" in row["text"] for row in lines) == 1, lines
+            verify_function_views(client, entry + 1, entry + 0x30)
+            verify_function_views(client, entry + 3, entry + 0x30)
 
         # A rejected lift must leave the native bytes inspectable, with an
         # explicit linear-view warning rather than a fabricated recovered CFG.

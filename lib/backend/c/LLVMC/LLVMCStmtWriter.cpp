@@ -14,11 +14,11 @@
 #include "../CRecordCall.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
-#include "../render/X86AmxState.h"
-#include "../render/X86FPStateHelpers.h"
-#include "../render/X86Sgx.h"
-#include "../render/X86SystemState.h"
-#include "../render/X86Virtualization.h"
+#include "../render/X86/X86AmxState.h"
+#include "../render/X86/X86FPStateHelpers.h"
+#include "../render/X86/X86Sgx.h"
+#include "../render/X86/X86SystemState.h"
+#include "../render/X86/X86Virtualization.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
 #include "LLVMCScalarUnary.h"
@@ -30,20 +30,20 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/MachineInstructionText.h"
-#include "neverd/backend/c/render/AArch64PAuthC.h"
-#include "neverd/backend/c/render/X87ContextRender.h"
-#include "neverd/backend/c/render/X87GuardedValueRender.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
+#include "neverd/backend/c/render/X86/X87ContextRender.h"
+#include "neverd/backend/c/render/X86/X87GuardedValueRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
-#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
-#include "neverd/backend/llvm/LLVMX86DivRemAsm.h"
-#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
-#include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
-#include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
-#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
-#include "neverd/backend/llvm/LLVMX87ValueAsm.h"
-#include "neverd/backend/llvm/X86AmxNative.h"
-#include "neverd/backend/llvm/X86SgxNative.h"
+#include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87ConstantAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87ValueAsm.h"
+#include "neverd/backend/llvm/X86/X86AmxNative.h"
+#include "neverd/backend/llvm/X86/X86SgxNative.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCRecordArguments.h"
@@ -4757,7 +4757,7 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     StatusOperands = Operands;                                                 \
     StatusPopsST1 = PopsST1;                                                   \
   }
-#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+#include "neverd/ir/intrinsics/X86/X87ValueInstructions.def"
     const bool BinaryStatus = StatusOperands == 2;
     const auto *PairType = llvm::dyn_cast<llvm::StructType>(Call.getType());
     if (StatusOperands && PairType && PairType->getNumElements() == 2 &&
@@ -4836,7 +4836,7 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     KnownBinaryValue = true;                                                   \
     PopsSecondInput = PopsST1;                                                 \
   }
-#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+#include "neverd/ir/intrinsics/X86/X87ValueInstructions.def"
     const std::string BinaryConstraints =
         PopsSecondInput
             ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"

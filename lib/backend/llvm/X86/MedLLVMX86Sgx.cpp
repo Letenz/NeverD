@@ -8,8 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/backend/llvm/X86SgxAsm.h"
-#include "neverd/backend/llvm/X86SgxNative.h"
+#include "neverd/backend/llvm/X86/X86SgxAsm.h"
+#include "neverd/backend/llvm/X86/X86SgxNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/InlineAsm.h"

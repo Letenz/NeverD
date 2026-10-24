@@ -18,8 +18,8 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X86StringCompare.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/intrinsics/X86/X86StringCompare.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include <algorithm>
 
@@ -439,7 +439,7 @@ bool liftSIMDCompare(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     } StatusFlags[] = {
 #define X86_STRING_COMPARE_FLAG(SELECTOR, FLAG, SUFFIX)                        \
   {SELECTOR, x86reg::FLAG},
-#include "neverd/ir/intrinsics/X86StringCompareFlags.def"
+#include "neverd/ir/intrinsics/X86/X86StringCompareFlags.def"
     };
     uint64_t ImmVal = X86.operands[2].imm & 0xFF;
     for (const auto &F : StatusFlags) {

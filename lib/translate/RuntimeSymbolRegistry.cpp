@@ -6,7 +6,7 @@
 
 #include "neverd/translate/RuntimeSymbolRegistry.h"
 
-#include "neverd/translate/RuntimeX87Helpers.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

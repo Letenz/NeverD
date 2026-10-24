@@ -7,7 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/translate/RuntimeSymbolRegistry.h"
-#include "neverd/translate/RuntimeX87Helpers.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/LLVMContext.h"
