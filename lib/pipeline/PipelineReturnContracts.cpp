@@ -632,6 +632,13 @@ private:
                             : ReturnedValue::Undefined);
         return;
       }
+      if (isX86DescriptorStateIntrinsic(Id)) {
+        Paths.push_back(Op.Output.Size &&
+                                x86DescriptorStateMedShapeIsValid(Op, Img.Arch)
+                            ? ReturnedValue::Other
+                            : ReturnedValue::Undefined);
+        return;
+      }
       // A real system-instruction completion remains a value even when the
       // instruction also owns memory or processor effects. Use the same
       // shape contracts as lowering; an invented output on a void effect

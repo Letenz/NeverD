@@ -377,6 +377,17 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
         return P;
     return nullptr;
   }
+  // Integer call carriers do not themselves prove pointer intent. Match
+  // getVar's low-address policy before entering the address-context resolvers:
+  // section-less images may map small literals into readable header bytes.
+  // A declared pointer parameter, an exact address producer, or the existing
+  // loader-backed constant policy still permits genuine low-address pointers.
+  if (!FailClosed && !Occurrence.hasExplicitProvenance())
+    if (auto Constant = traceSSAConst(AddrVar);
+        Constant && *Constant < limits::kMinGlobalDataAddr &&
+        !getVarHasDirectDataSymbolizationIntent(*Constant, AddrVar.Size) &&
+        !symbolizesWritableRelocPtr(*Constant, AddrVar.Size))
+      return nullptr;
   // A flat pointer-valued SELECT must be validated as one unit before creating
   // any globals: every non-null leaf has to be a mapped data address.  This
   // two-pass shape prevents a rejected code/scalar arm from leaving behind a

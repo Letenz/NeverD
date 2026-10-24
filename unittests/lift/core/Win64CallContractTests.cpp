@@ -24,6 +24,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/med/MedABIPass.h"
@@ -1820,5 +1821,281 @@ TEST(Win64CallContract, HeaderOnlyFloatingImportRetainsItsTypedABI) {
       }
     }
   }
+}
+
+class FixedStackHeader : public NullDebugContext {
+public:
+  uint16_t ReturnBytes = 8;
+  unsigned Registers = 4;
+  bool Local = false;
+  std::optional<FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const override {
+    if (Name != "fixture_stack")
+      return std::nullopt;
+    FunctionSym Function;
+    Function.Name = Name.str();
+    Function.PrototypeFromHeader = !Local;
+    Function.PrototypeLibrary = Local ? UserPrototypeLibrary : "test-header";
+    Function.CallConv = DebugCallConv::Cdecl;
+    Function.ReturnType =
+        ReturnBytes ? NdType::makeInt(ReturnBytes, true) : NdType::makeVoid();
+    Function.Params = {{"a", NdType::makeInt(1, false)},
+                       {"b", NdType::makeInt(2, false)},
+                       {"c", NdType::makeInt(4, false)},
+                       {"d", NdType::makeInt(8, false)},
+                       {"value", NdType::makePtr(NdType::makeInt(8, true))}};
+    if (Registers == 6) {
+      Function.Params.insert(
+          Function.Params.end() - 1,
+          {{"e", NdType::makeInt(8, false)}, {"f", NdType::makeInt(8, false)}});
+    }
+    Function.PortablePrototypeDeclaration =
+        std::string(ReturnBytes == 0   ? "void"
+                    : ReturnBytes == 4 ? "int32_t"
+                                       : "int64_t") +
+        " fixture_stack(uint8_t a, uint16_t b, uint32_t c, uint64_t d, " +
+        (Registers == 6 ? "uint64_t e, uint64_t f, " : "") + "int64_t *value)";
+    return Function;
+  }
+  std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+    auto Function =
+        Address == Iat ? resolvePrototype("fixture_stack") : std::nullopt;
+    if (Function)
+      Function->Addr = Address;
+    return Function;
+  }
+};
+
+TEST(Win64CallContract, HeaderStackOperandSurvivesRecoveredBlockBoundaries) {
+  FixedStackHeader Debug;
+  for (uint16_t ReturnBytes : {0, 4, 8})
+    for (unsigned Split : {0, 1, 2}) {
+      SCOPED_TRACE(ReturnBytes);
+      SCOPED_TRACE(Split);
+      Debug.ReturnBytes = ReturnBytes;
+      std::vector<uint8_t> Code = {
+          0x56,                                     // push rsi
+          0x48, 0x83, 0xEC, 0x40,                   // sub rsp,40h
+          0x48, 0x8D, 0x44, 0x24, 0x30,             // lea rax,[rsp+30h]
+          0x48, 0xC7, 0x00, 0x2A, 0x00, 0x00, 0x00, // mov [rax],42
+          0x48, 0x89, 0x44, 0x24, 0x20};            // mov [rsp+20h],rax
+      if (Split == 1)
+        Code.insert(Code.end(), {0xEB, 0x00}); // jmp next block
+      if (Split == 2)
+        Code.insert(Code.end(), {0x45, 0x31, 0xC9, // initialize saved scratch
+                                 0x41, 0x51,       // push r9
+                                 0x4C, 0x8D, 0x0D, 4, 0, 0, 0, // lea r9,[rip+4]
+                                 0x41, 0xFF, 0xE1, 0xE9, // jmp r9; junk byte
+                                 0x41, 0x59});           // pop r9
+      Code.insert(Code.end(), {0xB9, 7, 0, 0, 0,         // mov ecx,7
+                               0x31, 0xD2,               // xor edx,edx
+                               0x45, 0x31, 0xC0,         // xor r8d,r8d
+                               0x45, 0x31, 0xC9});       // xor r9d,r9d
+      const auto Call = throughSlot(Text + Code.size(), Iat);
+      Code.insert(Code.end(), Call.begin(), Call.end());
+      if (!ReturnBytes)
+        Code.insert(Code.end(), {0x48, 0x8B, 0x44, 0x24, 0x30});
+      if (ReturnBytes == 4)
+        Code.insert(Code.end(), {0x48, 0x63, 0xC0}); // movsxd rax,eax
+      Code.insert(Code.end(), {0x48, 0x83, 0xC4, 0x40, 0x5E, 0xC3});
+      auto Image =
+          makeImage(Code, {{Text, "stack_wrapper"}}, {"fixture_stack"});
+      Image.Imports.front().Module = "fixture.dll";
+      ASSERT_TRUE(Image.recordImportStorageSlot(
+          Iat, "fixture_stack", 0, ImportStorageEvidence::LoaderBind));
+      for (bool LLVM : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(NoOpt);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text};
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = true;
+          Options.NoOpt = NoOpt;
+          auto Result = Pipeline().run(Image, Context, Options, &Debug);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          ASSERT_TRUE(LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output,
+                                                 COptions, &Debug, &Image)
+                           : HighCEmitter().emit(Result.HighFuncs, Output,
+                                                 COptions, &Debug));
+          const std::string Provider =
+              Debug.resolvePrototype("fixture_stack")
+                  ->PortablePrototypeDeclaration +
+              R"( {
+  if (a != 7 || b || c || d || !value || *value != 42) __builtin_trap();
+ )" + std::string(ReturnBytes ? "return -27;" : "*value = -27;") +
+              "\n}\nint main(void) { return stack_wrapper() != -27; }\n";
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Provider,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+    }
+}
+
+TEST(Win64CallContract, UnwrittenFixedStackArgumentRemainsUnavailable) {
+  for (bool Partial : {false, true}) {
+    SCOPED_TRACE(Partial);
+    FixedStackHeader Debug;
+    std::vector<uint8_t> Code{0x48, 0x83, 0xEC, 0x28,    // sub rsp,40
+                              0xB9, 7,    0,    0,    0, // mov ecx,7
+                              0x31, 0xD2,                // xor edx,edx
+                              0x45, 0x31, 0xC0,          // xor r8d,r8d
+                              0x45, 0x31, 0xC9};         // xor r9d,r9d
+    if (Partial)
+      Code.insert(Code.end(), {0xC7, 0x44, 0x24, 0x20, 0, 0, 0, 0});
+    const auto Call = throughSlot(Text + Code.size(), Iat);
+    Code.insert(Code.end(), Call.begin(), Call.end());
+    Code.insert(Code.end(), {0x48, 0x83, 0xC4, 0x28, 0xC3});
+    auto Image = makeImage(Code, {{Text, "stack_wrapper"}}, {"fixture_stack"});
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        Iat, "fixture_stack", 0, ImportStorageEvidence::LoaderBind));
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options, &Debug);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        ASSERT_TRUE(LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output,
+                                               COptions, &Debug, &Image)
+                         : HighCEmitter().emit(Result.HighFuncs, Output,
+                                               COptions, &Debug));
+        EXPECT_NE(Source.find("__builtin_trap"), std::string::npos) << Source;
+        // Observe the unavailable-value path without invoking host trap signal
+        // handling. Returning normally (including an invented zero) fails.
+        const std::string Provider =
+            Debug.resolvePrototype("fixture_stack")
+                ->PortablePrototypeDeclaration +
+            " { return 0; }\nint main(void) { stack_wrapper(); return 1; }\n";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              "#include <stdlib.h>\n#define __builtin_trap() _Exit(0)\n" +
+                  Source + Provider,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+  }
+}
+TEST(FixedIntegerStackCalls, SysVAndTailOperandsUseTheirDeclaredLocations) {
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Tail : {false, true})
+      for (bool Local : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(Tail);
+        SCOPED_TRACE(Local);
+        const bool Windows = Format == BinaryFormat::COFF;
+        FixedStackHeader Debug;
+        Debug.Local = Local;
+        Debug.Registers = Windows ? 4 : 6;
+        const uint8_t Frame = Windows ? 56 : 24;
+        const uint8_t Slot = Windows ? 32 : 0;
+        std::vector<uint8_t> Code;
+        if (Tail) {
+          // The first incoming pointer becomes the callee's stack argument.
+          // A tail jump's SP already includes its caller's return address.
+          Code = {0x48, 0x89, uint8_t(Windows ? 0x4C : 0x7C), 0x24,
+                  uint8_t(Slot + 8)};
+        } else {
+          Code = {0x48,  0x83, 0xEC,
+                  Frame, 0x48, 0x8D,
+                  0x44,  0x24, uint8_t(Slot + 16),
+                  0x48,  0xC7, 0x00,
+                  42,    0,    0,
+                  0,     0x48, 0x89,
+                  0x44,  0x24, Slot,
+                  0xEB,  0x00}; // A real predecessor owns the complete store.
+        }
+        if (Windows)
+          Code.insert(Code.end(), {0xB9, 7, 0, 0, 0, 0x31, 0xD2});
+        else
+          Code.insert(Code.end(),
+                      {0xBF, 7, 0, 0, 0, 0x31, 0xF6, 0x31, 0xD2, 0x31, 0xC9});
+        Code.insert(Code.end(), {0x45, 0x31, 0xC0, 0x45, 0x31, 0xC9});
+        auto Call = throughSlot(Text + Code.size(), Iat);
+        if (Tail)
+          Call[1] = 0x25; // jmp [rip+slot], not call [rip+slot]
+        Code.insert(Code.end(), Call.begin(), Call.end());
+        if (!Tail)
+          Code.insert(Code.end(), {0x48, 0x83, 0xC4, Frame, 0xC3});
+        auto Image =
+            makeImage(Code, {{Text, "stack_wrapper"}}, {"fixture_stack"});
+        Image.Format = Format;
+        Image.Imports.front().Module = "fixture";
+        ASSERT_TRUE(Image.recordImportStorageSlot(
+            Iat, "fixture_stack", 0, ImportStorageEvidence::LoaderBind));
+        for (bool LLVM : {false, true})
+          for (bool NoOpt : {false, true}) {
+            SCOPED_TRACE(LLVM);
+            SCOPED_TRACE(NoOpt);
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.OnlyFunctionEntries = {Text};
+            Options.LiftMode = LLVM;
+            Options.SourceProjection = true;
+            Options.NoOpt = NoOpt;
+            auto Result = Pipeline().run(Image, Context, Options, &Debug);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            std::string Source;
+            llvm::raw_string_ostream Output(Source);
+            CEmitterOptions COptions;
+            COptions.TheArch = Image.Arch;
+            COptions.Format = Image.Format;
+            COptions.Image = &Image;
+            ASSERT_TRUE(LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output,
+                                                   COptions, &Debug, &Image)
+                             : HighCEmitter().emit(Result.HighFuncs, Output,
+                                                   COptions, &Debug));
+            std::string Actuals;
+            if (Tail) {
+              // This test checks the callee's physical stack location. The
+              // source wrapper may retain unused incoming stack-home inputs.
+              const auto Begin = Source.find("stack_wrapper(");
+              ASSERT_NE(Begin, std::string::npos);
+              const auto End = Source.find(')', Begin);
+              ASSERT_NE(End, std::string::npos);
+              const auto Parameters =
+                  Source.substr(Begin + 14, End - Begin - 14);
+              ASSERT_FALSE(Parameters.empty());
+              Actuals = "(uintptr_t)&value";
+              for (char C : Parameters)
+                if (C == ',')
+                  Actuals += ", 0xBAD";
+            }
+            const std::string Provider =
+                Debug.resolvePrototype("fixture_stack")
+                    ->PortablePrototypeDeclaration +
+                " { if (a != 7 || b || c || d || " +
+                (Windows ? std::string() : "e || f || ") +
+                "!value || *value != 42) __builtin_trap(); return -27; }\n" +
+                "int main(void) { int64_t value = 42; return stack_wrapper(" +
+                Actuals + ") != -27; }\n";
+            for (llvm::StringRef Level : {"-O0", "-O2"})
+              source_call_execution_test::compileAndRun(
+                  Source + Provider,
+                  {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+          }
+      }
 }
 } // namespace

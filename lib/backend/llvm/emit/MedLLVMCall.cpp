@@ -602,6 +602,15 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   const MedCallInfo *CI =
       CurMedFunc ? CurMedFunc->findCall(BlockId, OpIdx) : nullptr;
+  if (Op.IntegerCallSignature &&
+      (!hasBoundIntegerCallArguments(Op) || !CI ||
+       CI->Args.size() + 1 != Op.NumInputs ||
+       !std::equal(CI->Args.begin(), CI->Args.end(), Op.Inputs.begin() + 1))) {
+    syncError() << "med_llvm_emitter: integer header call lost its bound "
+                   "operands\n";
+    FatalCodePointerResolution = true;
+    return;
+  }
   if (Op.ScalarCallSignature &&
       (!CI ||
        !recoveredFloatingCallArguments(Op, *CI, TargetArch, TargetFormat))) {

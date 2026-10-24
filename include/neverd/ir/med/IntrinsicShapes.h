@@ -26,6 +26,7 @@
 #include "neverd/ir/intrinsics/AArch64SVEVector.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86AmxState.h"
+#include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86Sgx.h"
 #include "neverd/ir/intrinsics/X86SystemState.h"
 #include "neverd/ir/intrinsics/X86Virtualization.h"
@@ -83,6 +84,40 @@ inline bool aarch64PAuthLoadMedShapeIsValid(const MedOp &Op) {
       Op.Output.Size, Op.Inputs[1].Size, Op.Inputs[2].Size,
       Op.Inputs[2].isConst() ? std::optional<uint64_t>(Op.Inputs[2].ConstVal)
                              : std::nullopt);
+}
+
+inline bool x86DescriptorStateMedShapeIsValid(const MedOp &Op,
+                                              Arch TargetArch = Arch::Unknown) {
+  if (!hasValidMedIntrinsicId(Op) || Op.Inputs[0].Size != 2 ||
+      Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      !Op.IntrinsicOutputs.empty() ||
+      !x86DescriptorStateShapeIsValid(
+          static_cast<Intrinsic>(Op.Inputs[0].ConstVal), TargetArch,
+          Op.NumInputs, Op.Output.Size,
+          Op.NumInputs > 1 ? Op.Inputs[1].Size : 0, Op.MemoryAddressSpace,
+          Op.MemoryOrdering))
+    return false;
+  auto OwnedRegister = [&](const MedVar &V) {
+    return (V.Kind != MedVar::Reg && V.Kind != MedVar::Flag) ||
+           V.TheArch == Arch::Unknown ||
+           (V.TheArch == Arch::X86 || V.TheArch == Arch::X64) &&
+               (TargetArch == Arch::Unknown || V.TheArch == TargetArch);
+  };
+  const bool VerifyFlag =
+      isX86DescriptorVerify(static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
+      Op.Output.Kind == MedVar::Flag;
+  if (Op.Output.Size && ((Op.Output.Kind != MedVar::Reg &&
+                          Op.Output.Kind != MedVar::Temp && !VerifyFlag) ||
+                         !OwnedRegister(Op.Output)))
+    return false;
+  for (unsigned I = 1; I < Op.NumInputs; ++I) {
+    const auto &V = Op.Inputs[I];
+    if ((!V.isConst() && V.Kind != MedVar::Reg && V.Kind != MedVar::Temp &&
+         V.Kind != MedVar::Param) ||
+        !OwnedRegister(V))
+      return false;
+  }
+  return true;
 }
 
 inline bool aarch64PtrueMedShapeIsValid(const MedOp &Op) {

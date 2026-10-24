@@ -435,9 +435,8 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
 
   // ========================================================================
   // Descriptor-table loads/stores + INVLPG — capture the memory-address
-  // operand (best-effort: base register, as CLFLUSH does) so codegen can
-  // re-emit `mnemonic (addr)`.  A bare mnemonic would be rejected by the
-  // assembler (too few operands).
+  // operand as an instruction-owned access. Retain the legacy 16-bit
+  // descriptor-table operand size independently of effective-address size.
   // ========================================================================
   case X86_INS_LGDT:
   case X86_INS_LIDT:
@@ -462,6 +461,24 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
       Id = Intrinsic::Invlpg;
       break;
     }
+    if (TargetArch == Arch::X86 && X86.prefix[2] == 0x66) {
+      switch (Id) {
+      case Intrinsic::Lgdt:
+        Id = Intrinsic::X86Lgdt16;
+        break;
+      case Intrinsic::Lidt:
+        Id = Intrinsic::X86Lidt16;
+        break;
+      case Intrinsic::Sgdt:
+        Id = Intrinsic::X86Sgdt16;
+        break;
+      case Intrinsic::Sidt:
+        Id = Intrinsic::X86Sidt16;
+        break;
+      default:
+        break;
+      }
+    }
     if (X86.op_count < 1 || !S.emitMemoryIntrinsic(Id, X86.operands[0]))
       return false;
     break;
@@ -470,10 +487,10 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   // ========================================================================
   // r/m16 system-register loads/stores: LLDT/LTR/LMSW read r/m16, while the
   // memory forms of SLDT/STR/SMSW write 16 bits.  Their register-destination
-  // forms retain the decoded register width so r32/r64 receive the selector or
-  // machine-status word zero-extended to the full destination.  A memory base
-  // is captured as an 8-byte pointer input; a register destination becomes the
-  // INTRINSIC output.
+  // forms retain the decoded width, including native undefined upper SMSW
+  // result bits; a narrow read followed by zero extension is not equivalent.  A
+  // memory base is captured as an 8-byte pointer input; a register destination
+  // becomes the INTRINSIC output.
   // ========================================================================
   case X86_INS_LLDT:
   case X86_INS_LTR:

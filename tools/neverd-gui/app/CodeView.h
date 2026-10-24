@@ -103,8 +103,9 @@ public:
   /// Reveal and select an occurrence, expanding any fold that contains it.
   bool selectLocalReference(const QJsonObject &target,
                             const LocalReference &reference);
-  /// Changes when a load, cancellation or clear retires this source document.
-  quint64 documentVersion() const { return serial_; }
+  /// Changes when a load or clear replaces this source document. Hiding a
+  /// complete document cancels requests without replacing its contents.
+  quint64 documentVersion() const { return DocumentVersion; }
   /// All pages of this document arrived successfully. Error text and a
   /// cancelled or partially loaded document are not exportable source.
   bool complete() const { return complete_ && !loading_ && !interrupted_; }
@@ -313,6 +314,7 @@ private:
   QString statusNote_;
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
+  quint64 DocumentVersion = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
   bool complete_ = false;
   int pageLines_ = 0;

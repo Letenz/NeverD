@@ -9,6 +9,7 @@
 #include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 
@@ -112,6 +113,16 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
             Id, x86VirtualizationLowShape(Op, Arch::Unknown)))
       return invalid("x86 virtualization intrinsic has an invalid "
                      "operand/output contract");
+    return llvm::Error::success();
+  }
+  if (isX86DescriptorStateIntrinsic(Id)) {
+    if (Op.Inputs[0].Size != 2 ||
+        Op.Inputs[0].Offset != static_cast<uint64_t>(Id) ||
+        !x86DescriptorStateShapeIsValid(
+            Id, Arch::Unknown, Op.NumInputs, Op.Output.Size,
+            Op.NumInputs > 1 ? Op.Inputs[1].Size : 0, Op.MemoryAddressSpace,
+            Op.MemoryOrdering))
+      return invalid("x86 descriptor state intrinsic has an invalid shape");
     return llvm::Error::success();
   }
   if (Id == Intrinsic::X86AMXState && !x86AmxShapeIsValid(x86AmxLowShape(Op)))

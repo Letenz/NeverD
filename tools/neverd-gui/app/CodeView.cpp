@@ -557,6 +557,7 @@ void CodeText::cancel() {
 }
 
 void CodeText::clear() {
+  ++DocumentVersion;
   complete_ = false;
   cancel();
   placeAfterLoad_.reset();
@@ -601,6 +602,7 @@ void CodeText::clear() {
 
 void CodeText::load(Address function, const QString &representation,
                     std::optional<QJsonObject> options) {
+  ++DocumentVersion;
   const bool same = function_ == function && representation_ == representation;
   const auto nextOptions = options.value_or(
       same ? sourceOptions_ : SourceDefaults::options(representation));

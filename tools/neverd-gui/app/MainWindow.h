@@ -371,6 +371,7 @@ private:
   QJsonArray bookmarks_;
   QPointer<QDialog> quickStart_;
   QPointer<FindInViewDialog> FindDialog;
+  QPointer<QDialog> LocalReferencesDialog;
   QPointer<web::PackageReviewDialog> packageReview_;
   QPointer<ComparisonDialog> comparison_;
   bool startupQuickStartPending_ = false;

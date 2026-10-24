@@ -1456,39 +1456,6 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Builder.CreateZExtOrTrunc(Status, sizeToType(Op.Output.Size));
   }
 
-  // VERR/VERW with a live ZF; a memory selector keeps its FS/GS override.
-  if ((IC == I::Verr || IC == I::Verw) && Op.Output.Size > 0) {
-    if (Op.NumInputs != 2)
-      llvm::report_fatal_error("x86 VERR/VERW has an invalid operand shape");
-    auto *I8Ty = llvm::Type::getInt8Ty(*Ctx);
-    std::string Text = IC == I::Verr ? "verr " : "verw ";
-    llvm::Value *Operand = nullptr;
-    if (Op.Inputs[1].Size == 8) {
-      Operand = Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
-                    ? getVar(Op.Inputs[1], Builder)
-                    : getRawSegmentOffset(Op.Inputs[1], Builder);
-      if (Operand->getType()->isPointerTy())
-        Operand = Builder.CreatePtrToInt(Operand, llvm::Type::getInt64Ty(*Ctx));
-      Operand =
-          Builder.CreateZExtOrTrunc(Operand, llvm::Type::getInt64Ty(*Ctx));
-      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
-        Text += "%fs:";
-      else if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86GS)
-        Text += "%gs:";
-      Text += "($1)";
-    } else {
-      Operand = Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder),
-                                          llvm::Type::getInt16Ty(*Ctx));
-      Text += "$1";
-    }
-    auto *FnTy = llvm::FunctionType::get(I8Ty, {Operand->getType()}, false);
-    auto *IA =
-        llvm::InlineAsm::get(FnTy, Text + "\n\tsetz $0", "=q,r,~{cc},~{memory}",
-                             /*hasSideEffects=*/true);
-    llvm::Value *Zf = Builder.CreateCall(IA, {Operand}, "segment_ok");
-    return Builder.CreateZExtOrTrunc(Zf, sizeToType(Op.Output.Size));
-  }
-
   // LSL: the segment limit, or its selector check (ZF).
   if ((IC == I::SegmentLimit || IC == I::SegmentLimitValid) &&
       Op.Output.Size > 0) {
@@ -1626,8 +1593,6 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
   }
 
   // SLDT/STR/SMSW with a register destination (no memory operand captured).
-  if ((IC == I::Sldt || IC == I::Str || IC == I::Smsw) && Op.NumInputs <= 1)
-    return emitX86SysRegStore(Op, IC, Builder);
 
   if (IC == I::Cpuid)
     return emitCpuidValue(Op, Builder);

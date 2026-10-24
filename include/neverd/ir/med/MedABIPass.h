@@ -14,6 +14,7 @@
 #define NEVERD_IR_MED_MEDABIPASS_H
 
 #include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
@@ -28,6 +29,9 @@
 namespace neverd {
 
 int regToArgIdx(uint64_t RegOff, Arch TheArch);
+
+/// Validate the complete integer operand sequence retained from before SSA.
+bool hasBoundIntegerCallArguments(const MedOp &Op);
 
 /// A complete source-ordered scalar call bound before SSA. Recheck its stored
 /// placement and the surviving operands/result; HighC does not need a second

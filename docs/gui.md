@@ -546,9 +546,15 @@ In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
 lists its occurrences in the current function, with source line, column and
 code. The list uses the variable's identity from the complete loaded document,
 so similarly spelled names, member names, strings and comments are excluded.
-Selecting an occurrence stays in the originating code window, expands any fold
-that hides the row and selects the identifier. Renamed locals keep their
-original identity. A source reload or project close retires the old list.
+Single-clicking an occurrence or selecting it with the arrow keys immediately
+reveals it in the originating code window, expands any fold that hides the row
+and selects the identifier while the reference list stays open. Enter,
+double-click or **OK** closes the list; Escape closes it with the last selected
+occurrence still visible. The list is modeless: the code and disassembly remain
+usable, and the source pane can float, dock or switch tabs while the list is
+open. Selecting a reference reveals its source tab. Renamed locals keep their
+original identity. Reopening local references replaces the previous list; a
+source reload, source-pane close or project close retires it.
 
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
