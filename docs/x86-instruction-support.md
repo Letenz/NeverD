@@ -114,6 +114,17 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation; legacy standalone placeholder intrinsics cannot become NOPs. |
+| EVEX compress stores and expand loads | LowIR has masked contiguous-memory semantics, but `EVEXCompressStore` and `EVEXExpandLoad` still stop at the LLVM backend guard. Native memory/fault behavior and both executable C routes remain to be completed. |
+| V4FMADDPS/SS, V4FNMADDPS/SS | The exact four-iteration floating-point contract exists in LowIR; `X86FourFMA` still has no LLVM lowering. Native source groups, rounding/flags and memory completion need qualification. |
+| VP4DPWSSD, VP4DPWSSDS | LowIR owns the four-source word dot product; the LLVM backend still rejects both IDs. Native register grouping, saturation and memory/mask behavior remain open. |
+| APX AADD/AAND/AOR/AXOR and CMPccXADD | LowIR/concrete atomic contracts exist, but LLVM rejects the five `Apx*` IDs. The existing LLVM RAO-INT/CMPCCXADD APIs must be checked for APX encoding, segment/address, synchronization and completion requirements before integration. |
+| VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
+
+This list includes backend guards as well as strict-lifter refusals. A decoded
+instruction and passing LowIR/concrete tests do not establish native LLVM or C
+support. The additional vector/atomic rows were found by inspecting explicit
+refusals in `lib/backend/llvm/emit/MedLLVMIntrinsic.cpp`; they were absent from
+the earlier strict-lifter census.
 
 The direct-store execution checks cover ordinary memory. Native instructions
 retain WC protocol, concurrent write completion and device transactions, but
