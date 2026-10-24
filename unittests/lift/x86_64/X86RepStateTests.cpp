@@ -30,6 +30,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ModRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -256,6 +257,7 @@ TEST(X86RepState, LowAndMedRejectPartialOrAmbiguousState) {
       const unsigned Word = A == Arch::X64 ? 8 : 4;
       LowOp Low;
       Low.Opcode = NdOp::INTRINSIC;
+      Low.Addr = Entry;
       Low.Output = NdVar::tmp(256, Word);
       Low.addInput(NdVar::scalar(static_cast<unsigned>(Id), 2));
       for (unsigned I = 0; I < 3; ++I)
@@ -264,6 +266,15 @@ TEST(X86RepState, LowAndMedRejectPartialOrAmbiguousState) {
       Low.addInput(
           NdVar::scalar(*x86RepDescriptor(Id, A, 1, Word, 0, false), 4));
       ASSERT_TRUE(x86RepShapeIsValid(Id, x86RepLowShape(Low, A)));
+      auto BoundaryError = [](const LowOp &Op) {
+        LowBlock Block;
+        Block.StartAddr = Entry;
+        Block.EndAddr = Entry + 2;
+        Block.Ops.push_back(Op);
+        Block.InstructionBoundaries.push_back({Entry, 2, 0, 1});
+        return llvm::toString(validateLowInstructionBoundaries(Block));
+      };
+      EXPECT_TRUE(BoundaryError(Low).empty());
       for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
         auto Bad = Low;
         switch (Mutation) {
@@ -290,6 +301,8 @@ TEST(X86RepState, LowAndMedRejectPartialOrAmbiguousState) {
           break;
         }
         EXPECT_FALSE(x86RepShapeIsValid(Id, x86RepLowShape(Bad, A)));
+        EXPECT_NE(BoundaryError(Bad).find("invalid operand/output shape"),
+                  std::string::npos);
       }
       MedOp Med;
       Med.Opcode = NdOp::INTRINSIC;
