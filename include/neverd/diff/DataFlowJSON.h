@@ -21,7 +21,10 @@ inline constexpr unsigned LLVMDataFlowSchemaVersion = 3;
 inline constexpr unsigned LLVMParameterDataFlowSchemaVersion = 4;
 inline constexpr unsigned LLVMProgressDataFlowSchemaVersion = 5;
 inline constexpr unsigned LLVMMultiBlockProgressDataFlowSchemaVersion = 6;
+inline constexpr unsigned LLVMNestedProgressDataFlowSchemaVersion = 7;
 inline unsigned dataFlowSchemaVersion(llvm::StringRef Profile) {
+  if (Profile == LLVMNestedProgressDataFlowProfile)
+    return LLVMNestedProgressDataFlowSchemaVersion;
   if (Profile == LLVMMultiBlockProgressDataFlowProfile)
     return LLVMMultiBlockProgressDataFlowSchemaVersion;
   if (Profile == LLVMProgressDataFlowProfile)

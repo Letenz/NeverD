@@ -400,6 +400,27 @@ The SCC traversal is iterative and linear in graph size, with the existing
 work, storage and cancellation allowances. Both proof versions retain the
 same finite-operation admission and source-binding requirements.
 
+**Optimized SSA with nested loop analysis**
+(`--dataflow-profile=llvm-progress-ssa-v3`) also proves eligible loops nested
+inside other counter loops. The inner counter may receive a fresh seed on each
+outer iteration. Each layer retains the unique-entry, single-backedge, fixed
+nowrap update and direct consuming guard requirements. Header updates, early
+exits and multiple sequential inner loops are supported. An unproved inner or
+outer cycle leaves the whole function unproven; no partial proof changes its
+source contract. Multiple backedges and irreducible entries remain outside this
+proof family.
+
+The analysis repeatedly checks residual components while retaining original
+entry edges, then requires an acyclic residual graph. It uses the existing work
+and cancellation allowance, without a fixed nesting-depth limit. Deep nesting
+can consume quadratic work and may therefore report resource exhaustion.
+Schema 7 exposes every layer's header, latch, counter, update and guard on its
+latch-node rows; witnesses are ordered by latch rather than proof round. Saved
+validation derives the proof again from the graph and authenticates it against
+fresh source evidence. The recipes are `llvm-progress-neighborhoods-v3` and
+`llvm-progress-fragments-v3`. All v1 and v2 profiles remain available with their
+published contracts and saved encodings.
+
 Native-to-SSA change associations and call-effect contracts currently require
 the original MedIR profile. Change review explicitly reports an unsupported
 association profile for LLVM evidence while retaining native changes. Local
