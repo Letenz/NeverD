@@ -533,6 +533,7 @@ QString MainWindow::layoutPath() const {
 
 void MainWindow::buildMenusAndToolbars() {
   menuBar_ = new QMenuBar(this);
+  menuBar_->setNativeMenuBar(false);
   if (frame_) {
     titleBar_ = new TitleBar(*this, menuBar_);
     titleBar_->setCommandCenterAction(

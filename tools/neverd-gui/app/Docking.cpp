@@ -14,7 +14,6 @@
 #include "Theme.h"
 #include "TitleBar.h"
 #include "WindowFrame.h"
-#include "WindowFramePlatform.h"
 
 #include <QContextMenuEvent>
 #include <QCoreApplication>
@@ -338,7 +337,7 @@ public:
 
   QSize sizeHint() const override {
     return {::neverd::limits::gui_config::kTitleBarButtonWidth,
-            platform::titleBarHeight()};
+            ::neverd::limits::gui_config::kTitleBarHeight};
   }
 
 protected:
@@ -402,7 +401,8 @@ protected:
     lock_->setCheckable(true);
     lock_->setAutoRaise(true);
     lock_->setIcon(neverd::gui::icon("lock"));
-    lock_->setFixedSize(platform::titleBarHeight(), platform::titleBarHeight());
+    lock_->setFixedSize(::neverd::limits::gui_config::kTitleBarHeight,
+                        ::neverd::limits::gui_config::kTitleBarHeight);
     m_layout->insertWidget(m_layout->indexOf(m_minimizeButton), lock_);
     moveArea_ = new QWidget(this);
     moveArea_->setObjectName(QStringLiteral("floatingWindowMoveArea"));
@@ -458,7 +458,7 @@ protected:
   QSize sizeHint() const override {
     QSize size = TitleBar::sizeHint();
     if (titleBar()->floatingWindow())
-      size.setHeight(platform::titleBarHeight());
+      size.setHeight(::neverd::limits::gui_config::kTitleBarHeight);
     return size;
   }
 
@@ -517,8 +517,7 @@ private:
   QWidget *moveArea_ = nullptr;
 };
 
-/// Linux uses our resize hit area ahead of the library's docking handlers.
-/// Windows and macOS retain their existing platform resizing.
+/// Floating panes share the application frame and its resize hit area.
 class DockFloatingWindow final
     : public KDDockWidgets::QtWidgets::FloatingWindow {
 public:
@@ -526,15 +525,13 @@ public:
 
 protected:
   bool event(QEvent *event) override {
-    if (event->type() == QEvent::Polish &&
-        platform::frameKind() == platform::FrameKind::Frameless && !frame_)
-      frame_ =
-          WindowFrame::attach(*this, nullptr, WindowFrame::Caption::Client);
+    if (event->type() == QEvent::Polish && !frame_)
+      frame_ = WindowFrame::attach(*this);
     return FloatingWindow::event(event);
   }
 
   void paintEvent(QPaintEvent *) override {
-    if (frame_ && onWayland())
+    if (frame_)
       return;
     QPainter painter(this);
     painter.setPen(
@@ -607,6 +604,9 @@ void configureDocking() {
                   KDDockWidgets::Config::Flag_AllowReorderTabs |
                   KDDockWidgets::Config::Flag_TitleBarHasMinimizeButton |
                   KDDockWidgets::Config::Flag_TitleBarIsFocusable);
+  config.setInternalFlags(
+      config.internalFlags() |
+      KDDockWidgets::Config::InternalFlag_UseTransparentFloatingWindow);
   // Setting the thickness resets the spacing too, so it comes first.
   config.setSeparatorThickness(
       ::neverd::limits::gui_config::kDockingSeparatorGrabWidth);
