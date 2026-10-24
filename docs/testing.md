@@ -1724,6 +1724,8 @@ classification never publishes stale operands. Tests cover failed attempts,
 reset/reinitialization, reconstructed decoder objects, altered records, direct
 missing-detail calls and copied MOVPRFX records with a changed follower.
 Deep snapshots remain usable across decoder replacement; shallow copies expire.
+Refused attempts clear prior undefined-output and preserved-state evidence,
+including real x64 certificates retained across an architecture change.
 Raw classifiers and BL targets still work without detail, while operand queries
 and expired records remain conservative. These are decode/lift lifecycle checks,
 not qualification of native PAC/CPA execution or additional ISA families.

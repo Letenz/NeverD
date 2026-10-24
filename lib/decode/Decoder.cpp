@@ -280,9 +280,6 @@ void Decoder::liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
                         llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs,
                         LowInstructionUndefinedEffects *UndefinedEffects,
                         LowInstructionPreservedState *PreservedState) {
-  if ((AArch64 || Insn.AArch64Occurrence) && !hasAArch64OperandDetail(Insn))
-    throw UnliftedInstruction(Insn.Addr, aarch64_decode::kInvalidOccurrence,
-                              nullptr);
   const size_t OpsStart = Ops.size();
   if (PreservedState)
     *PreservedState = {};
@@ -291,6 +288,9 @@ void Decoder::liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
     UndefinedEffects->Diagnostic =
         "architecture has no audited undefined-output contract";
   }
+  if ((AArch64 || Insn.AArch64Occurrence) && !hasAArch64OperandDetail(Insn))
+    throw UnliftedInstruction(Insn.Addr, aarch64_decode::kInvalidOccurrence,
+                              nullptr);
   if (X86) {
     X86->lift(Insn.Raw, Ops, Relocs, ScalarRelocs, UndefinedEffects,
               PreservedState);

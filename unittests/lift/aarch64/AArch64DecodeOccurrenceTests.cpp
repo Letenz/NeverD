@@ -461,3 +461,75 @@ TEST(AArch64DecodeOccurrence, MissingDetailNeverDropsAnInstruction) {
       EXPECT_EQ(Ops.front().Opcode, NdOp::RETURN);
     }
 }
+
+TEST(AArch64DecodeOccurrence, RefusalClearsPriorArchitectureEvidence) {
+  // Seed real evidence from an earlier x64 lift. A failed AArch64 attempt
+  // must not leave that unrelated complete certificate available to callers.
+  Decoder SeedDecoder;
+  ASSERT_TRUE(SeedDecoder.init(Arch::X64));
+  std::array<uint8_t, sizeof(kX64And)> SeedBytes;
+  writeLE<uint16_t>(SeedBytes.data(), kX64And);
+  DecodedInsn Seed;
+  ASSERT_EQ(
+      SeedDecoder.decodeOne(SeedBytes.data(), SeedBytes.size(), kEntry, Seed),
+      SeedBytes.size());
+  LowInstructionUndefinedEffects SeedUndefined;
+  LowInstructionPreservedState SeedPreserved;
+  std::vector<LowOp> SeedOps;
+  ASSERT_NO_THROW(SeedDecoder.liftToLow(Seed, SeedOps, {}, {}, &SeedUndefined,
+                                        &SeedPreserved));
+  ASSERT_EQ(SeedUndefined.Coverage, LowUndefinedCoverage::Complete);
+  ASSERT_FALSE(SeedUndefined.Effects.empty());
+  ASSERT_NE(SeedPreserved.Audit, LowPreservedStateAudit::Missing);
+
+  enum class Failure { Classification, Expired, Reset, WrongArchitecture };
+  for (Route Path : Routes)
+    for (bool Strict : {false, true})
+      for (Failure Kind : {Failure::Classification, Failure::Expired,
+                           Failure::Reset, Failure::WrongArchitecture}) {
+        SCOPED_TRACE(static_cast<unsigned>(Path));
+        SCOPED_TRACE(Strict);
+        SCOPED_TRACE(static_cast<unsigned>(Kind));
+        Decoder D;
+        ASSERT_TRUE(D.init(Arch::AArch64));
+        D.setStrict(Strict);
+        DecodedInsn I;
+        ASSERT_EQ(decode(D, Path, Cases[0].Word, I), kWordBytes);
+        switch (Kind) {
+        case Failure::Classification:
+          D.setDetail(false);
+          ASSERT_EQ(decode(D, Path, Cases[0].Word, I), kWordBytes);
+          break;
+        case Failure::Expired: {
+          DecodedInsn Next;
+          ASSERT_EQ(decode(D, Path, Cases[0].Replacement, Next), kWordBytes);
+          break;
+        }
+        case Failure::Reset:
+          D.reset();
+          break;
+        case Failure::WrongArchitecture:
+          ASSERT_TRUE(D.init(Arch::X64));
+          break;
+        }
+        for (bool WithUndefined : {false, true})
+          for (bool WithPreserved : {false, true}) {
+            auto Undefined = SeedUndefined;
+            auto Preserved = SeedPreserved;
+            auto Ops = SeedOps;
+            EXPECT_THROW(D.liftToLow(I, Ops, {}, {},
+                                     WithUndefined ? &Undefined : nullptr,
+                                     WithPreserved ? &Preserved : nullptr),
+                         UnliftedInstruction);
+            expectSameOps(Ops, SeedOps);
+            if (WithUndefined) {
+              EXPECT_EQ(Undefined.Coverage, LowUndefinedCoverage::Missing);
+              EXPECT_EQ(Undefined.OpCount, 0u);
+              EXPECT_TRUE(Undefined.OperationDigest.empty());
+              EXPECT_TRUE(Undefined.Effects.empty());
+            }
+            if (WithPreserved)
+              EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+          }
+      }
+}
