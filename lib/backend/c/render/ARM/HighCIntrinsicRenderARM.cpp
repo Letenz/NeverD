@@ -273,7 +273,7 @@ std::string renderNeonFloatOperation(Intrinsic Id,
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_FLOAT_OPERATION(ID, Base, Operands)                        \
   {Intrinsic::ID, Base, Operands},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   struct Shape {
     uint16_t ResultBytes;
@@ -286,7 +286,7 @@ std::string renderNeonFloatOperation(Intrinsic Id,
 #define NEVERD_NEON_FLOAT_SHAPE(ResultBytes, ElementBytes, RawType, ValueType, \
                                 Suffix)                                        \
   {ResultBytes, #ElementBytes, RawType, ValueType, Suffix},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -314,7 +314,7 @@ std::string renderNeonU32Estimate(Intrinsic Id,
   };
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_U32_OPERATION(ID, Base) {Intrinsic::ID, Base},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   struct Shape {
     uint16_t ResultBytes;
@@ -325,7 +325,7 @@ std::string renderNeonU32Estimate(Intrinsic Id,
   static constexpr Shape Shapes[] = {
 #define NEVERD_NEON_U32_SHAPE(ResultBytes, RawType, ValueType, Suffix)         \
   {ResultBytes, RawType, ValueType, Suffix},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -348,7 +348,7 @@ const char *neonElementTypePrefix(llvm::StringRef Letter) {
   };
   static constexpr Kind Kinds[] = {
 #define NEVERD_NEON_ELEMENT_KIND(Letter, TypePrefix) {Letter, TypePrefix},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *K = llvm::find_if(
       Kinds, [&](const Kind &Entry) { return Letter == Entry.Letter; });
@@ -368,7 +368,7 @@ std::string renderNeonSaturating(Intrinsic Id,
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_SATURATING_OPERATION(ID, Base, Signed)                     \
   {Intrinsic::ID, Base, Signed},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   struct Width {
     uint16_t Bytes;
@@ -377,7 +377,7 @@ std::string renderNeonSaturating(Intrinsic Id,
   };
   static constexpr Width Widths[] = {
 #define NEVERD_NEON_SATURATING_WIDTH(Bytes, Letter, Bits) {Bytes, Letter, Bits},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -410,7 +410,7 @@ std::string renderNeonFcvtxn(const std::vector<std::string> &Ops,
 #define NEVERD_NEON_FCVTXN(ResultBytes, Name, SourceRawType, SourceType,       \
                            ResultRawType)                                      \
   {ResultBytes, Name, SourceRawType, SourceType, ResultRawType},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *F = llvm::find_if(Forms, [&](const Form &Entry) {
     return Entry.ResultBytes == ResultBytes;
@@ -435,7 +435,7 @@ std::string renderNeonShift(Intrinsic Id, const std::vector<std::string> &Ops,
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_SHIFT_OPERATION(ID, Base, Element)                         \
   {Intrinsic::ID, Base, Element},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   struct Width {
     uint16_t Bytes;
@@ -444,7 +444,7 @@ std::string renderNeonShift(Intrinsic Id, const std::vector<std::string> &Ops,
   };
   static constexpr Width Widths[] = {
 #define NEVERD_NEON_SATURATING_WIDTH(Bytes, Letter, Bits) {Bytes, Letter, Bits},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -497,7 +497,7 @@ std::string renderNeonShiftLeftUnsigned(Intrinsic Id,
   };
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_SHIFT_LEFT_UNSIGNED(ID, Base) {Intrinsic::ID, Base},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   struct Width {
     uint16_t Bytes;
@@ -506,7 +506,7 @@ std::string renderNeonShiftLeftUnsigned(Intrinsic Id,
   };
   static constexpr Width Widths[] = {
 #define NEVERD_NEON_SATURATING_WIDTH(Bytes, Letter, Bits) {Bytes, Letter, Bits},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -551,7 +551,7 @@ std::string renderNeonPolyMultiply(Intrinsic Id,
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_POLY_MULTIPLY(ID, Base, Long, ElementWidthOperand)         \
   {Intrinsic::ID, Base, Long, ElementWidthOperand},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -598,7 +598,7 @@ std::string renderNeonDoublingMultiply(Intrinsic Id,
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_DOUBLING_MULTIPLY(ID, Base, Widening)                      \
   {Intrinsic::ID, Base, Widening},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -641,7 +641,7 @@ std::string renderNeonNarrowShift(Intrinsic Id,
   static constexpr Operation Operations[] = {
 #define NEVERD_NEON_NARROW_SHIFT(ID, Base, SourceElement)                      \
   {Intrinsic::ID, Base, SourceElement},
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   };
   const auto *Op = llvm::find_if(
       Operations, [&](const Operation &Entry) { return Entry.Id == Id; });
@@ -671,19 +671,19 @@ bool armIntrinsicUsesCHeader(Intrinsic Id) {
   using I = Intrinsic;
   switch (Id) {
 #define NEVERD_NEON_FLOAT_OPERATION(ID, Base, Operands) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
 #define NEVERD_NEON_U32_OPERATION(ID, Base) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
 #define NEVERD_NEON_SATURATING_OPERATION(ID, Base, Signed) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
 #define NEVERD_NEON_SHIFT_OPERATION(ID, Base, Element) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
 #define NEVERD_NEON_NARROW_SHIFT(ID, Base, SourceElement) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
 #define NEVERD_NEON_SHIFT_LEFT_UNSIGNED(ID, Base) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
 #define NEVERD_NEON_DOUBLING_MULTIPLY(ID, Base, Widening) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
   case I::A64_Fcvtxn:
   // An MRS or MSR of a register is ACLE's __arm_rsr64 or __arm_wsr64, and
   // a coprocessor transfer its __arm_mrc and kin.
@@ -1253,31 +1253,31 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     HasCIntrinsics = true;
     return "__builtin_arm_clrex()";
 #define NEVERD_NEON_FLOAT_OPERATION(ID, Base, Operands) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonFloatOperation(Id, Ops, ResultBytes, HasCIntrinsics);
 #define NEVERD_NEON_U32_OPERATION(ID, Base) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonU32Estimate(Id, Ops, ResultBytes, HasCIntrinsics);
 #define NEVERD_NEON_SATURATING_OPERATION(ID, Base, Signed) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonSaturating(Id, Ops, ResultBytes, HasCIntrinsics);
   case I::A64_Fcvtxn:
     return renderNeonFcvtxn(Ops, ResultBytes, HasCIntrinsics);
 #define NEVERD_NEON_SHIFT_OPERATION(ID, Base, Element) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonShift(Id, Ops, ResultBytes, HasCIntrinsics);
 #define NEVERD_NEON_NARROW_SHIFT(ID, Base, SourceElement) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonNarrowShift(Id, Ops, ResultBytes, HasCIntrinsics);
 #define NEVERD_NEON_SHIFT_LEFT_UNSIGNED(ID, Base) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonShiftLeftUnsigned(Id, Ops, ResultBytes, HasCIntrinsics);
 #define NEVERD_NEON_DOUBLING_MULTIPLY(ID, Base, Widening) case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonDoublingMultiply(Id, Ops, ResultBytes, HasCIntrinsics);
 #define NEVERD_NEON_POLY_MULTIPLY(ID, Base, Long, ElementWidthOperand)         \
   case I::ID:
-#include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
+#include "neverd/backend/c/render/ARM/NeonIntrinsicSpellings.def"
     return renderNeonPolyMultiply(Id, Ops, ResultBytes, HasCIntrinsics);
   default:
     return {};
@@ -1350,7 +1350,7 @@ struct ScalarLSEFallback {
 constexpr ScalarLSEFallback ScalarLSEFallbacks[] = {
 #define NEVERD_SCALAR_LSE(ID, Operation, Signed, Complement)                   \
   {Intrinsic::ID, Operation, Signed, Complement},
-#include "neverd/backend/c/render/HighC/ScalarLSEFallbacks.def"
+#include "neverd/backend/c/render/AArch64/ScalarLSEFallbacks.def"
 };
 
 const ScalarLSEFallback *scalarLSEFallback(Intrinsic Id) {

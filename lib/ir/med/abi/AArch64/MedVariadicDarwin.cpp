@@ -12,7 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "MedVariadicDetail.h"
+#include "../MedVariadicDetail.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/Limits.h"

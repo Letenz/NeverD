@@ -13,7 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MedCallConventionItanium.h"
+#include "../MedCallConventionItanium.h"
 
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/loader/BinaryImage.h"

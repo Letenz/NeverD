@@ -23,7 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MedCallConventionItanium.h"
+#include "../MedCallConventionItanium.h"
 
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/lift/X86/X86Regs.h"

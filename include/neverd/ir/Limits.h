@@ -754,7 +754,7 @@ inline constexpr int
 // lib/ir/med/abi/MedVariadic.cpp
 inline constexpr int kMedVariadicEntrySpDeltaDepth0Default = 64;
 
-// lib/ir/med/abi/MedVariadicDarwin.cpp
+// lib/ir/med/abi/AArch64/MedVariadicDarwin.cpp
 inline constexpr int
     kMedVariadicDarwinHasDarwinVariadicPrologueThruCopyDepthLimit = 32;
 inline constexpr int
