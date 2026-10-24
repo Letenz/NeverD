@@ -5526,6 +5526,12 @@ fragments, explicit entries, malformed identifiable starts, reversed order and
 cleared final annotations. Per-slot inventories must completely partition the
 fresh runtime extent; gaps, duplicates, extra slots and changed strides refuse.
 
+`ItaniumEHDriver` exercises both standalone and retained frame reads. It
+checks personality names added after extent publication, complete CIE/FDE
+recovery, malformed/partial section diagnostics across x86/x64/AArch64, and
+AArch64 entries preceding their frames. Relocatable extents must not decode
+unlinked bytes; independent calls must observe edited frame bytes.
+
 `ItaniumEHDriver` and `DarwinUnwindSymbols` check section-wide structural failure
 propagation across x86/x64/AArch64, mixed good/bad record orders, unknown CIE
 augmentation, unresolved indirect LSDA, malformed tails and language refresh.

@@ -376,7 +376,8 @@ ELFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // Frame extents are function boundaries the discovery heuristics must not
   // guess inside, as PE .pdata ranges already are when they run.
   Progress.check();
-  dwarf_eh::recordFrameExtents(Img);
+  dwarf_eh::ItaniumFrameReader Frames(Img);
+  Frames.recordFrameExtents();
   runPostLoadDiscovery(
       Img,
       "elf: loaded " +
@@ -391,7 +392,7 @@ ELFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // Personality routines are usually reached through a dynamically bound slot,
   // so language-table decoding waits until imports and veneers are known.
   Progress.check();
-  dwarf_eh::parseItaniumExceptions(Img);
+  Frames.parseItaniumExceptions();
   // ARM32 keeps its unwinding in an index of its own rather than in DWARF, and
   // a C++ frame's language data inside that index's table rather than in a
   // section.  Runs after the DWARF reader because an image built with

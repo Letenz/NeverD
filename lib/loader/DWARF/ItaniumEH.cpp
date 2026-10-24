@@ -344,13 +344,37 @@ va_t functionEntry(const BinaryImage &Img, va_t FrameBegin,
 
 } // namespace
 
-void recordFrameExtents(BinaryImage &Img) {
-  FrameSection Sec;
-  if (Img.IsRelocatable || !findFrameSection(Img, Sec) || Sec.Size == 0)
+struct ItaniumFrameReader::FrameData {
+  va_t SectionVA = 0;
+  PointerBases Bases;
+  ParseResult Frames;
+};
+
+ItaniumFrameReader::ItaniumFrameReader(BinaryImage &Image) : Img(Image) {}
+
+ItaniumFrameReader::~ItaniumFrameReader() = default;
+
+void ItaniumFrameReader::prepareFrames() {
+  if (Prepared)
     return;
-  const auto Bases = computeBases(Img);
-  ParseResult Frames = parseEHFrame(Img, Sec, Bases);
-  appendIndexedELFFrames(Img, Sec, Bases, Frames);
+  Prepared = true;
+  FrameSection Sec;
+  if (!findFrameSection(Img, Sec) || Sec.Size == 0)
+    return;
+  Data = std::make_unique<FrameData>();
+  Data->SectionVA = Sec.VA;
+  Data->Bases = computeBases(Img);
+  Data->Frames = parseEHFrame(Img, Sec, Data->Bases);
+  appendIndexedELFFrames(Img, Sec, Data->Bases, Data->Frames);
+}
+
+void ItaniumFrameReader::recordFrameExtents() {
+  if (Img.IsRelocatable)
+    return;
+  prepareFrames();
+  if (!Data)
+    return;
+  const ParseResult &Frames = Data->Frames;
   std::vector<std::pair<va_t, va_t>> Ranges;
   Ranges.reserve(Frames.FDEs.size());
   for (const DwarfFDE &FDE : Frames.FDEs) {
@@ -396,14 +420,15 @@ void recordFrameExtents(BinaryImage &Img) {
       Img.KnownCodeRanges.end());
 }
 
-void parseItaniumExceptions(BinaryImage &Img) {
-  FrameSection Sec;
-  if (!findFrameSection(Img, Sec) || Sec.Size == 0)
+void ItaniumFrameReader::parseItaniumExceptions() {
+  prepareFrames();
+  std::unique_ptr<FrameData> Decoded = std::move(Data);
+  if (!Decoded)
     return;
 
-  const PointerBases Bases = computeBases(Img);
-  ParseResult Frames = parseEHFrame(Img, Sec, Bases);
-  appendIndexedELFFrames(Img, Sec, Bases, Frames);
+  const va_t SectionVA = Decoded->SectionVA;
+  const PointerBases &Bases = Decoded->Bases;
+  ParseResult &Frames = Decoded->Frames;
   if (Frames.FDEs.empty() && Frames.CIEs.empty())
     return;
 
@@ -439,7 +464,7 @@ void parseItaniumExceptions(BinaryImage &Img) {
   if (Img.IsRelocatable) {
     llvm::StringRef FrameName;
     for (const Section &S : Img.Sections)
-      if (S.VA == Sec.VA && !S.Name.empty())
+      if (S.VA == SectionVA && !S.Name.empty())
         FrameName = S.Name;
     if (!FrameName.empty())
       for (const RelocationEntry &Rel : Img.Relocations)
@@ -476,7 +501,7 @@ void parseItaniumExceptions(BinaryImage &Img) {
     ExceptionFunction F;
     F.Encoding = ExceptionEncoding::DwarfFDE;
     F.Kind = RuntimeFunctionKind::Primary;
-    F.UnwindInfoVA = Sec.VA + FDE.SectionOffset;
+    F.UnwindInfoVA = SectionVA + FDE.SectionOffset;
     ExceptionFunctionDecodeProvenance &Decode = F.establishDecodeProvenance();
 
     if (RelocatedOffsets.contains(FDE.InitialLocationOffset)) {
@@ -596,6 +621,14 @@ void parseItaniumExceptions(BinaryImage &Img) {
 
   LLVM_DEBUG(llvm::dbgs() << "dwarf-eh: normalized " << Frames.FDEs.size()
                           << " FDEs (" << Added << " new funcs)\n");
+}
+
+void recordFrameExtents(BinaryImage &Img) {
+  ItaniumFrameReader(Img).recordFrameExtents();
+}
+
+void parseItaniumExceptions(BinaryImage &Img) {
+  ItaniumFrameReader(Img).parseItaniumExceptions();
 }
 
 bool refreshItaniumLanguageData(const BinaryImage &Img,

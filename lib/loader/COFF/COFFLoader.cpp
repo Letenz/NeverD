@@ -1078,7 +1078,8 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // where no .pdata directory exists. Publish those ranges before a padding
   // or data-pointer heuristic can turn an interior instruction into a symbol.
   // Personality resolution still follows import-veneer discovery below.
-  dwarf_eh::recordFrameExtents(Img);
+  dwarf_eh::ItaniumFrameReader Frames(Img);
+  Frames.recordFrameExtents();
   runPostLoadDiscovery(
       Img,
       "coff: loaded " +
@@ -1119,7 +1120,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // the Itanium LSDAs GCC's personality reads.  Decoding only the first would
   // report every C++ frame in such an image as having no handler at all.
   Progress.check();
-  dwarf_eh::parseItaniumExceptions(Img);
+  Frames.parseItaniumExceptions();
   // Rust and Objective-C share whichever of those two table families their
   // target uses, so their readings of them run last, over records that are
   // already normalized.
