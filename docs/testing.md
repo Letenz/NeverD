@@ -1864,7 +1864,13 @@ x86-discovery, library-recognition and session suites for this shared decision.
 `NativeLoadCancellation.*` and controlled `InputDigest.*` cases in
 `NeverDNativeBufferTests` check ELF/x64, ELF/AArch64, PE and Mach-O cancellation,
 retry byte/digest parity with LLVM, chunk/padding edges, and loader callback
-lifetime. `SessionCAPITest.Cancelled*Load*`/`CancelledPDBPublics*` check stopped
+lifetime. `NativeFileBuffer.*` in that target compares file and buffer loading
+around host page boundaries, including nonzero trailing overlay bytes and
+release/retry after a stopped file read. `RawFileBuffer.*` checks empty-input
+refusal, complete byte/digest identity and a window containing the last byte
+across small-file and page-size boundaries. These checks retain the bounded
+binary-input contract independently of LLVM's choice to map or copy a file.
+`SessionCAPITest.Cancelled*Load*`/`CancelledPDBPublics*` check stopped
 hash/copy/parse/debug/final-preparation stages, preserved image/analysis/edits,
 first-load retry, cross-architecture replacement and real PDB publics. Worker
 comparison checks stop during both inputs' hashing and retain the old comparison
