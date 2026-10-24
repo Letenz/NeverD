@@ -8,10 +8,10 @@
 #include "gtest/gtest.h"
 
 #include "neverd/translate/NativeTranslationSession.h"
-#include "neverd/translate/X86/RuntimeX87Helpers.h"
 #include "neverd/translate/TranslationJITLinker.h"
 #include "neverd/translate/TranslationLinkGraphVerifier.h"
 #include "neverd/translate/TranslationObjectRequest.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Endian.h"

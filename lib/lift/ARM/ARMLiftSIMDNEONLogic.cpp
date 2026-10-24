@@ -24,8 +24,8 @@
 
 namespace neverd {
 
-bool liftSIMDNEONLogic(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
-                       const cs_arm &ARM) {
+bool liftSIMDNEONLogic(ARMLifter &L, ARMLifter::LiftState &S,
+                       const cs_insn *Insn, const cs_arm &ARM) {
   switch (Insn->id) {
   // NEON data processing — binary ops
   case ARM_INS_VAND:

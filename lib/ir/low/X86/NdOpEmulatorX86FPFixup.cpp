@@ -24,11 +24,9 @@ struct FloatFormat {
 
 FloatFormat formatForSize(uint16_t Size) {
   if (Size == 4)
-    return {UINT64_C(0x80000000), UINT64_C(0x7f800000),
-            UINT64_C(0x007fffff), UINT64_C(0x00400000),
-            UINT64_C(0x3f800000), UINT64_C(0x3f000000),
-            UINT64_C(0x42b40000), UINT64_C(0x3fc90fdb),
-            UINT64_C(0x7f7fffff)};
+    return {UINT64_C(0x80000000), UINT64_C(0x7f800000), UINT64_C(0x007fffff),
+            UINT64_C(0x00400000), UINT64_C(0x3f800000), UINT64_C(0x3f000000),
+            UINT64_C(0x42b40000), UINT64_C(0x3fc90fdb), UINT64_C(0x7f7fffff)};
   return {UINT64_C(0x8000000000000000), UINT64_C(0x7ff0000000000000),
           UINT64_C(0x000fffffffffffff), UINT64_C(0x0008000000000000),
           UINT64_C(0x3ff0000000000000), UINT64_C(0x3fe0000000000000),
@@ -36,8 +34,7 @@ FloatFormat formatForSize(uint16_t Size) {
           UINT64_C(0x7fefffffffffffff)};
 }
 
-uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset,
-                  uint16_t Size) {
+uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset, uint16_t Size) {
   uint64_t Value = 0;
   std::memcpy(&Value, Bytes.data() + Offset, Size);
   return Value;
@@ -178,8 +175,7 @@ bool NdOpEmulator::executeX86FPFixup(const LowOp &Op) {
 
   const uint8_t Immediate = static_cast<uint8_t>(PackedControl >> 8);
   const uint64_t ActiveMask = readOperand(Op.Inputs[5]);
-  const std::vector<uint8_t> OldDestination =
-      readOperandBytes(Op.Inputs[2]);
+  const std::vector<uint8_t> OldDestination = readOperandBytes(Op.Inputs[2]);
   const std::vector<uint8_t> Source = readOperandBytes(Op.Inputs[3]);
   const std::vector<uint8_t> Table = readOperandBytes(Op.Inputs[4]);
   if (OldDestination.size() != Op.Output.Size ||

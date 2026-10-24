@@ -12,8 +12,8 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
-#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/AArch64/AArch64SVEVectorState.h"
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"

@@ -30,9 +30,8 @@ bool isSelfLowSliceOf(const MedOp &Op, const MedVar &Base) {
   return Op.Opcode == NdOp::SUBBYTES && Op.NumInputs >= 2 &&
          Op.Output.Kind == MedVar::Reg && Base.Kind == MedVar::Reg &&
          Op.Inputs[0] == Base && Op.Inputs[0].Size == Base.Size &&
-         Op.Output.RegOff == Base.RegOff &&
-         Op.Output.Size < Base.Size && Op.Inputs[1].isConst() &&
-         Op.Inputs[1].ConstVal == 0;
+         Op.Output.RegOff == Base.RegOff && Op.Output.Size < Base.Size &&
+         Op.Inputs[1].isConst() && Op.Inputs[1].ConstVal == 0;
 }
 
 std::optional<int> selfLowSliceDef(const std::vector<MedOp> &Ops,
@@ -52,14 +51,14 @@ std::optional<int> selfLowSliceDef(const std::vector<MedOp> &Ops,
 bool sameSignedCmpSliceWindow(const std::vector<MedOp> &Ops, int ConsumerIdx,
                               int OverflowIdx, const CmpSource &Cmp,
                               CondCode CC, const TargetRegInfo &TRI) {
-  if ((CC != CondCode::SLT && CC != CondCode::SGE &&
-      CC != CondCode::SLE && CC != CondCode::SGT) ||
+  if ((CC != CondCode::SLT && CC != CondCode::SGE && CC != CondCode::SLE &&
+       CC != CondCode::SGT) ||
       !Cmp.Valid || !Cmp.FromSub || Cmp.SourceOpIndex < 0 ||
       Cmp.SourceOpIndex >= OverflowIdx || OverflowIdx < 0 ||
       ConsumerIdx < OverflowIdx ||
       static_cast<std::vector<MedOp>::size_type>(ConsumerIdx) >= Ops.size() ||
-      Cmp.A.Kind != MedVar::Reg || Cmp.A.Size != 4 ||
-      Cmp.B.Size != 4 || Cmp.Result.Size != 4)
+      Cmp.A.Kind != MedVar::Reg || Cmp.A.Size != 4 || Cmp.B.Size != 4 ||
+      Cmp.Result.Size != 4)
     return false;
 
   const MedOp &Sub = Ops[Cmp.SourceOpIndex];
@@ -67,23 +66,18 @@ bool sameSignedCmpSliceWindow(const std::vector<MedOp> &Ops, int ConsumerIdx,
   if (Sub.Opcode != NdOp::INT_SUB || Sub.NumInputs < 2 ||
       Sub.Output != Cmp.Result || Sub.Output.Size != Cmp.Result.Size ||
       Sub.Inputs[0] != Cmp.A || Sub.Inputs[1] != Cmp.B ||
-      Sub.Inputs[0].Size != Cmp.A.Size ||
-      Sub.Inputs[1].Size != Cmp.B.Size ||
+      Sub.Inputs[0].Size != Cmp.A.Size || Sub.Inputs[1].Size != Cmp.B.Size ||
       Sub.Inputs[0].RegOff != Cmp.A.RegOff ||
       Overflow.Opcode != NdOp::INT_SBOR || Overflow.NumInputs < 2 ||
-      Overflow.Inputs[1] != Cmp.B ||
-      Overflow.Inputs[1].Size != Cmp.B.Size ||
-      Overflow.Inputs[0].Size != Cmp.A.Size ||
-      Sub.Addr != Overflow.Addr)
+      Overflow.Inputs[1] != Cmp.B || Overflow.Inputs[1].Size != Cmp.B.Size ||
+      Overflow.Inputs[0].Size != Cmp.A.Size || Sub.Addr != Overflow.Addr)
     return false;
-  if (Cmp.B.Kind == MedVar::Reg &&
-      (Sub.Inputs[1].RegOff != Cmp.B.RegOff ||
-       Overflow.Inputs[1].RegOff != Cmp.B.RegOff))
+  if (Cmp.B.Kind == MedVar::Reg && (Sub.Inputs[1].RegOff != Cmp.B.RegOff ||
+                                    Overflow.Inputs[1].RegOff != Cmp.B.RegOff))
     return false;
 
   const auto First = selfLowSliceDef(Ops, Cmp.A, Cmp.SourceOpIndex);
-  const auto Second =
-      selfLowSliceDef(Ops, Overflow.Inputs[0], OverflowIdx);
+  const auto Second = selfLowSliceDef(Ops, Overflow.Inputs[0], OverflowIdx);
   if (!First || !Second || *Second <= Cmp.SourceOpIndex ||
       Ops[*First].Addr != Sub.Addr || Ops[*Second].Addr != Sub.Addr)
     return false;
@@ -103,13 +97,11 @@ bool sameSignedCmpSliceWindow(const std::vector<MedOp> &Ops, int ConsumerIdx,
       return false;
     if (Op.Output.Kind != MedVar::Reg || Op.Output.Size == 0)
       continue;
-    const bool OverlapsBase =
-        Op.Output.RegOff < Base.RegOff + Base.Size &&
-        Base.RegOff < Op.Output.RegOff + Op.Output.Size;
-    const bool OverlapsRight =
-        Cmp.B.Kind == MedVar::Reg &&
-        Op.Output.RegOff < Cmp.B.RegOff + Cmp.B.Size &&
-        Cmp.B.RegOff < Op.Output.RegOff + Op.Output.Size;
+    const bool OverlapsBase = Op.Output.RegOff < Base.RegOff + Base.Size &&
+                              Base.RegOff < Op.Output.RegOff + Op.Output.Size;
+    const bool OverlapsRight = Cmp.B.Kind == MedVar::Reg &&
+                               Op.Output.RegOff < Cmp.B.RegOff + Cmp.B.Size &&
+                               Cmp.B.RegOff < Op.Output.RegOff + Op.Output.Size;
     if (OverlapsRight || (OverlapsBase && !isSelfLowSliceOf(Op, Base)))
       return false;
   }
@@ -119,12 +111,10 @@ bool sameSignedCmpSliceWindow(const std::vector<MedOp> &Ops, int ConsumerIdx,
       const MedOp &Op = Ops[I];
       if (Op.Output.Kind != MedVar::Flag || Op.Output.RegOff != Offset)
         continue;
-      return Op.Opcode == Opcode && Op.Addr == Sub.Addr &&
-             Op.NumInputs >= 2 && Op.Inputs[0] == Cmp.Result &&
-             Op.Inputs[0].Size == Cmp.Result.Size &&
-             Op.Inputs[1].isConst() &&
-             Op.Inputs[1].Size == Cmp.Result.Size &&
-             Op.Inputs[1].ConstVal == 0;
+      return Op.Opcode == Opcode && Op.Addr == Sub.Addr && Op.NumInputs >= 2 &&
+             Op.Inputs[0] == Cmp.Result &&
+             Op.Inputs[0].Size == Cmp.Result.Size && Op.Inputs[1].isConst() &&
+             Op.Inputs[1].Size == Cmp.Result.Size && Op.Inputs[1].ConstVal == 0;
     }
     return false;
   };

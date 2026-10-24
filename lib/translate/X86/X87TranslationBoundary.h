@@ -9,8 +9,8 @@
 
 #include "neverd/ir/X86/X87Context.h"
 #include "neverd/lift/X86/X86Regs.h"
-#include "neverd/translate/X86/RuntimeX87Helpers.h"
 #include "neverd/translate/TranslationBlock.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Errc.h"

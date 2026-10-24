@@ -8,11 +8,11 @@
 /// Operand decode of the AArch64 flag-consuming classes: conditional compare
 /// (CCMP/CCMN, register and immediate) and conditional select (CSEL/CSINC/
 /// CSINV/CSNEG) with the cset/csetm/cinc/cinv/cneg aliases.  Every entry point
-/// here is reached from tryDecode in neverd/decode/AArch64/AArch64DecodeDispatch.h,
-/// which owns the class masks; each function assumes its class mask has
-/// already matched and returns true when \p Insn is fully populated, false to
-/// decline to Capstone.
-/// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
+/// here is reached from tryDecode in
+/// neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the class masks;
+/// each function assumes its class mask has already matched and returns true
+/// when \p Insn is fully populated, false to decline to Capstone. Include
+/// neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
 ///
 //===----------------------------------------------------------------------===//
 

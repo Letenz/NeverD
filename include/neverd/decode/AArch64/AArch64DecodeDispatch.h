@@ -15,8 +15,8 @@
 /// — true when it populated \p Insn, false to decline that encoding to
 /// Capstone — so control never falls from one class into the next.
 ///
-/// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header; it
-/// documents the strict-subset and lift-parity contract every class obeys.
+/// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header;
+/// it documents the strict-subset and lift-parity contract every class obeys.
 ///
 //===----------------------------------------------------------------------===//
 

@@ -34,7 +34,7 @@ bool liftCoreShift(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
       break;
     NdVar Dst = L.operandWrite(ARM.operands[0]);
     NdVar A = (ARM.op_count >= 3) ? L.operandRead(S, ARM.operands[1])
-                                    : NdVar::reg(Dst.Offset, 4);
+                                  : NdVar::reg(Dst.Offset, 4);
     int BIdx = (ARM.op_count >= 3) ? 2 : 1;
     NdVar B = L.operandRead(S, ARM.operands[BIdx]);
     // Set C (shifter carry-out) before the shift writes the possibly aliased
@@ -60,7 +60,7 @@ bool liftCoreShift(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
       break;
     NdVar Dst = L.operandWrite(ARM.operands[0]);
     NdVar A = (ARM.op_count >= 3) ? L.operandRead(S, ARM.operands[1])
-                                    : NdVar::reg(Dst.Offset, 4);
+                                  : NdVar::reg(Dst.Offset, 4);
     int BIdx = (ARM.op_count >= 3) ? 2 : 1;
     NdVar B = L.operandRead(S, ARM.operands[BIdx]);
     if (ARM.update_flags)
@@ -82,7 +82,7 @@ bool liftCoreShift(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
       break;
     NdVar Dst = L.operandWrite(ARM.operands[0]);
     NdVar A = (ARM.op_count >= 3) ? L.operandRead(S, ARM.operands[1])
-                                    : NdVar::reg(Dst.Offset, 4);
+                                  : NdVar::reg(Dst.Offset, 4);
     int BIdx = (ARM.op_count >= 3) ? 2 : 1;
     NdVar B = L.operandRead(S, ARM.operands[BIdx]);
     if (ARM.update_flags)
@@ -105,7 +105,7 @@ bool liftCoreShift(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
       break;
     NdVar Dst = L.operandWrite(ARM.operands[0]);
     NdVar A = (ARM.op_count >= 3) ? L.operandRead(S, ARM.operands[1])
-                                    : NdVar::reg(Dst.Offset, 4);
+                                  : NdVar::reg(Dst.Offset, 4);
     int BIdx = (ARM.op_count >= 3) ? 2 : 1;
     NdVar B = L.operandRead(S, ARM.operands[BIdx]);
     if (ARM.update_flags)

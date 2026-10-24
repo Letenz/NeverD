@@ -1,4 +1,5 @@
-//===- ARMLiftCoreExtPack.cpp - ARM32 halfword pack and byte select lifter ---===//
+//===- ARMLiftCoreExtPack.cpp - ARM32 halfword pack and byte select lifter
+//---===//
 //
 // NeverD Decompiler
 //

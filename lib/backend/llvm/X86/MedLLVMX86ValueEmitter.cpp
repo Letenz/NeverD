@@ -16,6 +16,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
@@ -24,7 +25,6 @@
 #include "neverd/backend/llvm/X86/LLVMX87ContextAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX87GuardedValueAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX87ValueAsm.h"
-#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/X86/X86SystemRegisterAsm.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"

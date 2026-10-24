@@ -23,144 +23,152 @@
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 /*
-    ****************************************************************************
-    ****************************************************************************
-    ** THIS FILE CONTAINS EMULATION ROUTINES FOR THE UNDERLYING ALGORITHMS OF:**
-    **   VRCP28PD Approximation to the Reciprocal of Packed Double Precision  **
-    **       Floating-Point Values with Less Than 2^-28 Relative Error        **
-    **   VRCP28SD Approximation to the Reciprocal of Scalar Double Precision  **
-    **       Floating-Point Value with Less Than 2^-28 Relative Error         **
-    **   VRCP28PS Approximation to the Reciprocal of Packed Single Precision  **
-    **       Floating-Point Values with Less Than 2^-28 Relative Error        **
-    **   VRCP28SS Approximation to the Reciprocal of Scalar Single Precision  **
-    **       Floating-Point Value with Less Than 2^-28 Relative Error         **
-    **   VRSQRT28PD Approximation to the Reciprocal Square Root of Packed     **
-    **       Double Precision Floating-Point Values with Less Than 2^-28      **
-    **       Relative Error                                                   **
-    **   VRSQRT28SD Approximation to the Reciprocal Square Root of Scalar     **
-    **       Double Precision Floating-Point Value with Less Than 2^-28       **
-    **       Relative Error                                                   **
-    **   VRSQRT28PS Approximation to the Reciprocal Square Root of Packed     **
-    **       Single Precision Floating-Point Values with Less Than 2^-28      **
-    **       Relative Error                                                   **
-    **   VRSQRT28SS Approximation to the Reciprocal Square Root of Scalar     **
-    **       Single Precision Floating-Point Value with Less Than 2^-28       **
-    **       Relative Error                                                   **
-    **   VEXP2PD Approximation to the Exponential 2^x of Packed               **
-    **       Double Precision Floating-Point Values with Less Than 2^-23      **
-    **       Relative Error                                                   **
-    **   VEXP2PS Approximation to the Exponential 2^x of Packed               **
-    **       Single Precision Floating-Point Values with Less Than 2^-23      **
-    **       Relative Error                                                   **
-    **                                                                        **
-    ** THE CORRESPONDING EMULATION ROUTINES (ONLY SCALAR VERSIONS) ARE:       **
-    **   RCP28S - RECIPROCAL APPROXIMATION FOR Float32                        **
-    **   RCP28D - RECIPROCAL APPROXIMATION FOR Float64                        **
-    **   RSQRT28S - RECIPROCAL SQUARE ROOT APPROXIMATION FOR Float32          **
-    **   RSQRT28D - RECIPROCAL SQUARE ROOT APPROXIMATION FOR Float64          **
-    **   EXP2S - BASE-2 EXPONENTIAL APPROXIMATION FOR Float32                 **
-    **   EXP2D - BASE-2 EXPONENTIAL APPROXIMATION FOR Float64                 **
-    ****************************************************************************
-    ****************************************************************************
-*/
+ ****************************************************************************
+ ****************************************************************************
+ ** THIS FILE CONTAINS EMULATION ROUTINES FOR THE UNDERLYING ALGORITHMS OF:**
+ **   VRCP28PD Approximation to the Reciprocal of Packed Double Precision  **
+ **       Floating-Point Values with Less Than 2^-28 Relative Error        **
+ **   VRCP28SD Approximation to the Reciprocal of Scalar Double Precision  **
+ **       Floating-Point Value with Less Than 2^-28 Relative Error         **
+ **   VRCP28PS Approximation to the Reciprocal of Packed Single Precision  **
+ **       Floating-Point Values with Less Than 2^-28 Relative Error        **
+ **   VRCP28SS Approximation to the Reciprocal of Scalar Single Precision  **
+ **       Floating-Point Value with Less Than 2^-28 Relative Error         **
+ **   VRSQRT28PD Approximation to the Reciprocal Square Root of Packed     **
+ **       Double Precision Floating-Point Values with Less Than 2^-28      **
+ **       Relative Error                                                   **
+ **   VRSQRT28SD Approximation to the Reciprocal Square Root of Scalar     **
+ **       Double Precision Floating-Point Value with Less Than 2^-28       **
+ **       Relative Error                                                   **
+ **   VRSQRT28PS Approximation to the Reciprocal Square Root of Packed     **
+ **       Single Precision Floating-Point Values with Less Than 2^-28      **
+ **       Relative Error                                                   **
+ **   VRSQRT28SS Approximation to the Reciprocal Square Root of Scalar     **
+ **       Single Precision Floating-Point Value with Less Than 2^-28       **
+ **       Relative Error                                                   **
+ **   VEXP2PD Approximation to the Exponential 2^x of Packed               **
+ **       Double Precision Floating-Point Values with Less Than 2^-23      **
+ **       Relative Error                                                   **
+ **   VEXP2PS Approximation to the Exponential 2^x of Packed               **
+ **       Single Precision Floating-Point Values with Less Than 2^-23      **
+ **       Relative Error                                                   **
+ **                                                                        **
+ ** THE CORRESPONDING EMULATION ROUTINES (ONLY SCALAR VERSIONS) ARE:       **
+ **   RCP28S - RECIPROCAL APPROXIMATION FOR Float32                        **
+ **   RCP28D - RECIPROCAL APPROXIMATION FOR Float64                        **
+ **   RSQRT28S - RECIPROCAL SQUARE ROOT APPROXIMATION FOR Float32          **
+ **   RSQRT28D - RECIPROCAL SQUARE ROOT APPROXIMATION FOR Float64          **
+ **   EXP2S - BASE-2 EXPONENTIAL APPROXIMATION FOR Float32                 **
+ **   EXP2D - BASE-2 EXPONENTIAL APPROXIMATION FOR Float64                 **
+ ****************************************************************************
+ ****************************************************************************
+ */
 
 #include <math.h>
 #include <stdint.h>
 
 typedef union {
-    unsigned int u;
-    float f;
+  unsigned int u;
+  float f;
 } type32;
 
 typedef union {
-    unsigned long long u;
-    double f;
+  unsigned long long u;
+  double f;
 } type64;
 
-#define FP32_EXP_POS                      23
-#define FP32_SIGN_POS                     31
-#define FP32_QNAN_BIT_POS                 22
-#define FP32_EXP_BIAS                     127
-#define FP32_NON_NORMAL_MASK              0xfe
-#define FP32_SIGN_BIT                     0x80000000
-#define FP32_EXP_MASK                     0x7f800000
-#define FP32_MANT_MASK                    0x007fffff
-#define FP32_HIDDEN_BIT                   0x00800000
-#define FP32_QNAN_BIT                     0x00400000
+#define FP32_EXP_POS 23
+#define FP32_SIGN_POS 31
+#define FP32_QNAN_BIT_POS 22
+#define FP32_EXP_BIAS 127
+#define FP32_NON_NORMAL_MASK 0xfe
+#define FP32_SIGN_BIT 0x80000000
+#define FP32_EXP_MASK 0x7f800000
+#define FP32_MANT_MASK 0x007fffff
+#define FP32_HIDDEN_BIT 0x00800000
+#define FP32_QNAN_BIT 0x00400000
 
-#define FP32_MINUS_ZERO_AS_UINT32         0x80000000
-#define FP32_PLUS_ZERO_AS_UINT32          0x00000000
-#define FP32_PLUS_ONE_AS_UINT32           0x3f800000
-#define FP32_MINUS_INF_AS_UINT32          0xff800000
-#define FP32_PLUS_INF_AS_UINT32           0x7f800000
-#define FP32_DEFAULT_NAN_AS_UINT32        0xffc00000
+#define FP32_MINUS_ZERO_AS_UINT32 0x80000000
+#define FP32_PLUS_ZERO_AS_UINT32 0x00000000
+#define FP32_PLUS_ONE_AS_UINT32 0x3f800000
+#define FP32_MINUS_INF_AS_UINT32 0xff800000
+#define FP32_PLUS_INF_AS_UINT32 0x7f800000
+#define FP32_DEFAULT_NAN_AS_UINT32 0xffc00000
 
-#define FP32_MAX_EXP                      0xff
-#define FP32_UNBIASED_EXP(u)              ((int)(((u) & FP32_EXP_MASK) >> FP32_EXP_POS) - FP32_EXP_BIAS)
-#define FP32_QUIETIZE_NAN(u)              ((u) |= FP32_QNAN_BIT)
+#define FP32_MAX_EXP 0xff
+#define FP32_UNBIASED_EXP(u)                                                   \
+  ((int)(((u) & FP32_EXP_MASK) >> FP32_EXP_POS) - FP32_EXP_BIAS)
+#define FP32_QUIETIZE_NAN(u) ((u) |= FP32_QNAN_BIT)
 
-#define FP64_EXP_POS                      52
-#define FP64_SIGN_POS                     63
-#define FP64_QNAN_BIT_POS                 51
-#define FP64_EXP_BIAS                     1023
-#define FP64_NON_NORMAL_MASK              0x7fe
-#define FP64_SIGN_BIT                     0x8000000000000000ull
-#define FP64_EXP_MASK                     0x7ff0000000000000ull
-#define FP64_MANT_MASK                    0x000fffffffffffffull
-#define FP64_HIDDEN_BIT                   0x0010000000000000ull
-#define FP64_QNAN_BIT                     0x0008000000000000ull
+#define FP64_EXP_POS 52
+#define FP64_SIGN_POS 63
+#define FP64_QNAN_BIT_POS 51
+#define FP64_EXP_BIAS 1023
+#define FP64_NON_NORMAL_MASK 0x7fe
+#define FP64_SIGN_BIT 0x8000000000000000ull
+#define FP64_EXP_MASK 0x7ff0000000000000ull
+#define FP64_MANT_MASK 0x000fffffffffffffull
+#define FP64_HIDDEN_BIT 0x0010000000000000ull
+#define FP64_QNAN_BIT 0x0008000000000000ull
 
-#define FP64_MINUS_ZERO_AS_UINT64         0x8000000000000000ull
-#define FP64_PLUS_ZERO_AS_UINT64          0x0000000000000000ull
-#define FP64_PLUS_ONE_AS_UINT64           0x3ff0000000000000ull
-#define FP64_PLUS_INF_AS_UINT64           0x7ff0000000000000ull
-#define FP64_MINUS_INF_AS_UINT64          0xfff0000000000000ull
-#define FP64_DEFAULT_NAN_AS_UINT64        0xfff8000000000000ull
+#define FP64_MINUS_ZERO_AS_UINT64 0x8000000000000000ull
+#define FP64_PLUS_ZERO_AS_UINT64 0x0000000000000000ull
+#define FP64_PLUS_ONE_AS_UINT64 0x3ff0000000000000ull
+#define FP64_PLUS_INF_AS_UINT64 0x7ff0000000000000ull
+#define FP64_MINUS_INF_AS_UINT64 0xfff0000000000000ull
+#define FP64_DEFAULT_NAN_AS_UINT64 0xfff8000000000000ull
 
-#define FP64_MAX_EXP                      0x7ff
-#define FP64_UNBIASED_EXP(u)              ((int)(((u) & FP64_EXP_MASK) >> FP64_EXP_POS) - FP64_EXP_BIAS)
-#define FP64_QUIETIZE_NAN(u)              ((u) |= FP64_QNAN_BIT)
+#define FP64_MAX_EXP 0x7ff
+#define FP64_UNBIASED_EXP(u)                                                   \
+  ((int)(((u) & FP64_EXP_MASK) >> FP64_EXP_POS) - FP64_EXP_BIAS)
+#define FP64_QUIETIZE_NAN(u) ((u) |= FP64_QNAN_BIT)
 
-#define POS_CLASS(__c)                (0 + 2*(__c))
-#define NEG_CLASS(__c)                (1 + 2*(__c))
+#define POS_CLASS(__c) (0 + 2 * (__c))
+#define NEG_CLASS(__c) (1 + 2 * (__c))
 
 typedef enum {
-    inexactFlag   = 0x20,
-    underflowFlag = 0x10,
-    overflowFlag  =  0x8,
-    divByZeroFlag =  0x4,
-    denormalFlag  =  0x2,
-    invalidFlag   =  0x1,
+  inexactFlag = 0x20,
+  underflowFlag = 0x10,
+  overflowFlag = 0x8,
+  divByZeroFlag = 0x4,
+  denormalFlag = 0x2,
+  invalidFlag = 0x1,
 } statusFlags_t;
 
 typedef enum {
-        // base classes
-        avx3Zero        = 0,
-        avx3Denorm      = 1,
-        avx3Normal      = 2,
-        avx3Infinity    = 3,
-        avx3Nan         = 4,
-        // "signed" classes
-        avx3PosZero     = POS_CLASS(avx3Zero),
-        avx3NegZero     = NEG_CLASS(avx3Zero),
-        avx3PosDenorm   = POS_CLASS(avx3Denorm),
-        avx3NegDenorm   = NEG_CLASS(avx3Denorm),
-        avx3PosNormal   = POS_CLASS(avx3Normal),
-        avx3NegNormal   = NEG_CLASS(avx3Normal),
-        avx3PosInfinity = POS_CLASS(avx3Infinity),
-        avx3NegInfinity = NEG_CLASS(avx3Infinity),
-        avx3SNan        = POS_CLASS(avx3Nan),
-        avx3QNan        = NEG_CLASS(avx3Nan),
+  // base classes
+  avx3Zero = 0,
+  avx3Denorm = 1,
+  avx3Normal = 2,
+  avx3Infinity = 3,
+  avx3Nan = 4,
+  // "signed" classes
+  avx3PosZero = POS_CLASS(avx3Zero),
+  avx3NegZero = NEG_CLASS(avx3Zero),
+  avx3PosDenorm = POS_CLASS(avx3Denorm),
+  avx3NegDenorm = NEG_CLASS(avx3Denorm),
+  avx3PosNormal = POS_CLASS(avx3Normal),
+  avx3NegNormal = NEG_CLASS(avx3Normal),
+  avx3PosInfinity = POS_CLASS(avx3Infinity),
+  avx3NegInfinity = NEG_CLASS(avx3Infinity),
+  avx3SNan = POS_CLASS(avx3Nan),
+  avx3QNan = NEG_CLASS(avx3Nan),
 } classType_e;
 
-#define RET_DST(_val_)       dst->u = (_val_); return flags
-#define SET_Z_RET_DST(_val_) dst->u = (_val_); return (flags |= divByZeroFlag)
-#define SET_V_RET_DST(_val_) dst->u = (_val_); return (flags |= invalidFlag)
+#define RET_DST(_val_)                                                         \
+  dst->u = (_val_);                                                            \
+  return flags
+#define SET_Z_RET_DST(_val_)                                                   \
+  dst->u = (_val_);                                                            \
+  return (flags |= divByZeroFlag)
+#define SET_V_RET_DST(_val_)                                                   \
+  dst->u = (_val_);                                                            \
+  return (flags |= invalidFlag)
 
 // ============================================================================
-// The next three tables are used by the Emulation() routine. A detailed description
-// of the relationship between the coefficients and Emulation() can be found in the
-// code preceding the routine.
+// The next three tables are used by the Emulation() routine. A detailed
+// description of the relationship between the coefficients and Emulation() can
+// be found in the code preceding the routine.
 //
 // The following two macros are used to initialize the EMU constant tables.
 // UINIT assumes that all of the entries are positive and SINIT assumes that
@@ -168,39 +176,42 @@ typedef enum {
 // descibed in the comments preceding the Emulation() routine
 // ============================================================================
 
-typedef const struct { long long int  a; int  b; int  c; } EmulationCoefficients_t;
+typedef const struct {
+  long long int a;
+  int b;
+  int c;
+} EmulationCoefficients_t;
 
-#define UINIT(a,b,c) {  (0x ## a ## LL)       << (_N - _Na + _S),   \
-                        (0x ## b)             << (_N - _Nb + _S),   \
-                        (0x ## c)             << (_N - _Nc + _S) },
+#define UINIT(a, b, c)                                                         \
+  {(0x##a##LL) << (_N - _Na + _S), (0x##b) << (_N - _Nb + _S),                 \
+   (0x##c) << (_N - _Nc + _S)},
 
-#define SINIT(a,b,c) {  (0x ## a ## LL)       << (_N - _Na + _S),   \
-                      -((0x400000 - (0x ## b)) << (_N - _Nb + _S)), \
-                        (0x ## c)             << (_N - _Nc + _S) },
+#define SINIT(a, b, c)                                                         \
+  {(0x##a##LL) << (_N - _Na + _S), -((0x400000 - (0x##b)) << (_N - _Nb + _S)), \
+   (0x##c) << (_N - _Nc + _S)},
 #define _SA 33
 #define _SB 20
 #define _SC 14
 
 #define _Na (_SA)
 #define _Nb (_SB + _K + _M)
-#define _Nc (_SC + 2*_K + _T)
-
+#define _Nc (_SC + 2 * _K + _T)
 
 // ============================================================================
 
-#define _S	 3
-#define _M	22
-#define _K	 8
-#define _T	20
+#define _S 3
+#define _M 22
+#define _K 8
+#define _T 20
 
 #define _N _Na
 #if (_Nb > _Na)
-#   undef  _N
-#   define _N _Nb
+#undef _N
+#define _N _Nb
 #endif
 #if (_Nc > _N)
-#   undef  _N
-#   define _N _Nb
+#undef _N
+#define _N _Nb
 #endif
 
 EmulationCoefficients_t _rcp28Table[] = {
@@ -470,19 +481,19 @@ EmulationCoefficients_t _rcp28Table[] = {
 
 // =============================================================================
 
-#define _S	 3
-#define _M	22
-#define _K	 8
-#define _T	20
+#define _S 3
+#define _M 22
+#define _K 8
+#define _T 20
 
 #define _N _Na
 #if (_Nb > _Na)
-#   undef  _N
-#   define _N _Nb
+#undef _N
+#define _N _Nb
 #endif
 #if (_Nc > _N)
-#   undef  _N
-#   define _N _Nb
+#undef _N
+#define _N _Nb
 #endif
 
 EmulationCoefficients_t _rsqrt28Table[] = {
@@ -1008,95 +1019,95 @@ EmulationCoefficients_t _rsqrt28Table[] = {
 
 // ============================================================================
 
-#undef  _SA
-#undef  _SB
-#undef  _SC
+#undef _SA
+#undef _SB
+#undef _SC
 
-#define _SA	29
-#define _SB	16
-#define _SC	12
+#define _SA 29
+#define _SB 16
+#define _SC 12
 
-#define _S	 9
-#define _M	22
-#define _K	 6
-#define _T	20
+#define _S 9
+#define _M 22
+#define _K 6
+#define _T 20
 
 #define _N _Na
 #if (_Nb > _Na)
-#   undef  _N
-#   define _N _Nb
+#undef _N
+#define _N _Nb
 #endif
 #if (_Nc > _N)
-#   undef  _N
-#   define _N _Nb
+#undef _N
+#define _N _Nb
 #endif
 
 EmulationCoefficients_t _exp223Table[] = {
-        // 2^29        2^16      2^12
-        UINIT(1ffffff8, 0b172, 03dc) // index = 0
-        UINIT(20593484, 0b360, 03e9) // index = 1
-        UINIT(20b361ae, 0b554, 03f4) // index = 2
-        UINIT(210e8a33, 0b74e, 03fd) // index = 3
-        UINIT(216ab0de, 0b94d, 0408) // index = 4
-        UINIT(21c7d86a, 0bb51, 0416) // index = 5
-        UINIT(222603a9, 0bd5b, 0422) // index = 6
-        UINIT(22853563, 0bf6b, 042d) // index = 7
-        UINIT(22e57079, 0c181, 0437) // index = 8
-        UINIT(2346b7e0, 0c39c, 0444) // index = 9
-        UINIT(23a90e67, 0c5be, 044d) // index = 10
-        UINIT(240c7717, 0c7e5, 045a) // index = 11
-        UINIT(2470f4e4, 0ca12, 0467) // index = 12
-        UINIT(24d68ad5, 0cc45, 0475) // index = 13
-        UINIT(253d3bea, 0ce7f, 047f) // index = 14
-        UINIT(25a50b4a, 0d0bf, 048a) // index = 15
-        UINIT(260dfc1f, 0d304, 049a) // index = 16
-        UINIT(26781166, 0d551, 04a4) // index = 17
-        UINIT(26e34e74, 0d7a3, 04b4) // index = 18
-        UINIT(274fb675, 0d9fc, 04c1) // index = 19
-        UINIT(27bd4c9e, 0dc5c, 04cd) // index = 20
-        UINIT(282c144c, 0dec2, 04dc) // index = 21
-        UINIT(289c10cb, 0e12f, 04e9) // index = 22
-        UINIT(290d456f, 0e3a3, 04f6) // index = 23
-        UINIT(297fb5a6, 0e61e, 0502) // index = 24
-        UINIT(29f364f3, 0e89f, 0512) // index = 25
-        UINIT(2a6856a8, 0eb28, 051e) // index = 26
-        UINIT(2ade8e75, 0edb7, 052e) // index = 27
-        UINIT(2b560fc3, 0f04e, 053b) // index = 28
-        UINIT(2bcede35, 0f2ec, 0549) // index = 29
-        UINIT(2c48fd62, 0f591, 0559) // index = 30
-        UINIT(2cc47110, 0f83d, 056a) // index = 31
-        UINIT(2d413cd9, 0faf1, 0579) // index = 32
-        UINIT(2dbf6485, 0fdad, 0586) // index = 33
-        UINIT(2e3eebd5, 10070, 0597) // index = 34
-        UINIT(2ebfd6ae, 1033b, 05a6) // index = 35
-        UINIT(2f4228e6, 1060e, 05b4) // index = 36
-        UINIT(2fc5e675, 108e8, 05c6) // index = 37
-        UINIT(304b132f, 10bcb, 05d4) // index = 38
-        UINIT(30d1b33f, 10eb5, 05e6) // index = 39
-        UINIT(3159ca8a, 111a8, 05f5) // index = 40
-        UINIT(31e35d37, 114a3, 0605) // index = 41
-        UINIT(326e6f60, 117a6, 0617) // index = 42
-        UINIT(32fb054b, 11ab1, 062a) // index = 43
-        UINIT(33892312, 11dc5, 063b) // index = 44
-        UINIT(3418ccfe, 120e2, 064b) // index = 45
-        UINIT(34aa0770, 12407, 065e) // index = 46
-        UINIT(353cd6b7, 12735, 0670) // index = 47
-        UINIT(35d13f3c, 12a6c, 0682) // index = 48
-        UINIT(3667457c, 12dac, 0693) // index = 49
-        UINIT(36feedf3, 130f5, 06a5) // index = 50
-        UINIT(37983d2e, 13447, 06b8) // index = 51
-        UINIT(383337b9, 137a3, 06c9) // index = 52
-        UINIT(38cfe254, 13b08, 06db) // index = 53
-        UINIT(396e41c6, 13e76, 06ee) // index = 54
-        UINIT(3a0e5aa1, 141ed, 0705) // index = 55
-        UINIT(3ab031c0, 1456f, 0716) // index = 56
-        UINIT(3b53cc0c, 148fa, 072b) // index = 57
-        UINIT(3bf92e70, 14c8f, 073f) // index = 58
-        UINIT(3ca05dda, 1502e, 0753) // index = 59
-        UINIT(3d495f52, 153d7, 0768) // index = 60
-        UINIT(3df437ea, 1578b, 077a) // index = 61
-        UINIT(3ea0ecc3, 15b48, 0792) // index = 62
-        UINIT(3f4f830f, 15f11, 07a3) // index = 63
+    // 2^29        2^16      2^12
+    UINIT(1ffffff8, 0b172, 03dc) // index = 0
+    UINIT(20593484, 0b360, 03e9) // index = 1
+    UINIT(20b361ae, 0b554, 03f4) // index = 2
+    UINIT(210e8a33, 0b74e, 03fd) // index = 3
+    UINIT(216ab0de, 0b94d, 0408) // index = 4
+    UINIT(21c7d86a, 0bb51, 0416) // index = 5
+    UINIT(222603a9, 0bd5b, 0422) // index = 6
+    UINIT(22853563, 0bf6b, 042d) // index = 7
+    UINIT(22e57079, 0c181, 0437) // index = 8
+    UINIT(2346b7e0, 0c39c, 0444) // index = 9
+    UINIT(23a90e67, 0c5be, 044d) // index = 10
+    UINIT(240c7717, 0c7e5, 045a) // index = 11
+    UINIT(2470f4e4, 0ca12, 0467) // index = 12
+    UINIT(24d68ad5, 0cc45, 0475) // index = 13
+    UINIT(253d3bea, 0ce7f, 047f) // index = 14
+    UINIT(25a50b4a, 0d0bf, 048a) // index = 15
+    UINIT(260dfc1f, 0d304, 049a) // index = 16
+    UINIT(26781166, 0d551, 04a4) // index = 17
+    UINIT(26e34e74, 0d7a3, 04b4) // index = 18
+    UINIT(274fb675, 0d9fc, 04c1) // index = 19
+    UINIT(27bd4c9e, 0dc5c, 04cd) // index = 20
+    UINIT(282c144c, 0dec2, 04dc) // index = 21
+    UINIT(289c10cb, 0e12f, 04e9) // index = 22
+    UINIT(290d456f, 0e3a3, 04f6) // index = 23
+    UINIT(297fb5a6, 0e61e, 0502) // index = 24
+    UINIT(29f364f3, 0e89f, 0512) // index = 25
+    UINIT(2a6856a8, 0eb28, 051e) // index = 26
+    UINIT(2ade8e75, 0edb7, 052e) // index = 27
+    UINIT(2b560fc3, 0f04e, 053b) // index = 28
+    UINIT(2bcede35, 0f2ec, 0549) // index = 29
+    UINIT(2c48fd62, 0f591, 0559) // index = 30
+    UINIT(2cc47110, 0f83d, 056a) // index = 31
+    UINIT(2d413cd9, 0faf1, 0579) // index = 32
+    UINIT(2dbf6485, 0fdad, 0586) // index = 33
+    UINIT(2e3eebd5, 10070, 0597) // index = 34
+    UINIT(2ebfd6ae, 1033b, 05a6) // index = 35
+    UINIT(2f4228e6, 1060e, 05b4) // index = 36
+    UINIT(2fc5e675, 108e8, 05c6) // index = 37
+    UINIT(304b132f, 10bcb, 05d4) // index = 38
+    UINIT(30d1b33f, 10eb5, 05e6) // index = 39
+    UINIT(3159ca8a, 111a8, 05f5) // index = 40
+    UINIT(31e35d37, 114a3, 0605) // index = 41
+    UINIT(326e6f60, 117a6, 0617) // index = 42
+    UINIT(32fb054b, 11ab1, 062a) // index = 43
+    UINIT(33892312, 11dc5, 063b) // index = 44
+    UINIT(3418ccfe, 120e2, 064b) // index = 45
+    UINIT(34aa0770, 12407, 065e) // index = 46
+    UINIT(353cd6b7, 12735, 0670) // index = 47
+    UINIT(35d13f3c, 12a6c, 0682) // index = 48
+    UINIT(3667457c, 12dac, 0693) // index = 49
+    UINIT(36feedf3, 130f5, 06a5) // index = 50
+    UINIT(37983d2e, 13447, 06b8) // index = 51
+    UINIT(383337b9, 137a3, 06c9) // index = 52
+    UINIT(38cfe254, 13b08, 06db) // index = 53
+    UINIT(396e41c6, 13e76, 06ee) // index = 54
+    UINIT(3a0e5aa1, 141ed, 0705) // index = 55
+    UINIT(3ab031c0, 1456f, 0716) // index = 56
+    UINIT(3b53cc0c, 148fa, 072b) // index = 57
+    UINIT(3bf92e70, 14c8f, 073f) // index = 58
+    UINIT(3ca05dda, 1502e, 0753) // index = 59
+    UINIT(3d495f52, 153d7, 0768) // index = 60
+    UINIT(3df437ea, 1578b, 077a) // index = 61
+    UINIT(3ea0ecc3, 15b48, 0792) // index = 62
+    UINIT(3f4f830f, 15f11, 07a3) // index = 63
 };
 
 #undef _K
@@ -1104,102 +1115,102 @@ EmulationCoefficients_t _exp223Table[] = {
 #undef _O
 
 static unsigned int ClassifyType32(type32 val) {
-    int  exp, sig, sign;
-    unsigned int class;
+  int exp, sig, sign;
+  unsigned int class;
 
-    exp  = (val.u & FP32_EXP_MASK) >> FP32_EXP_POS;
-    sign = val.u >> FP32_SIGN_POS;
-    // Assume is a normal argument and then check if the exponent field
-    // is either all zeros or all ones
-    class = avx3PosNormal;
-    if (((exp + 1) & FP32_NON_NORMAL_MASK) == 0) {
-         // This is a non-normal argument. Set the base class to zero or
-         // Infinity depending on the low bit of the exponent.
-         class = (exp & 1) ? avx3PosInfinity : avx3PosZero;
-        // If the signifcand field is non-zero, then map zero and Infinity
-        // classes to denormal and NaN respectively by Incrementing the base
-        // class by 2.
-        sig = val.u & FP32_MANT_MASK;
-        if (sig) {
-            class += 2;
-        }
-        // For NaNs, the sign is irrelevant. However, we need to distinguish
-        // between sNaN and qNaN. So for a NaN base class, use the NaN "quiet"
-        // bit, rather than the sign bit for the next adjustment
-        if (class == avx3SNan) {
-            sign = (sig >> FP32_QNAN_BIT_POS);
-        }
+  exp = (val.u & FP32_EXP_MASK) >> FP32_EXP_POS;
+  sign = val.u >> FP32_SIGN_POS;
+  // Assume is a normal argument and then check if the exponent field
+  // is either all zeros or all ones
+  class = avx3PosNormal;
+  if (((exp + 1) & FP32_NON_NORMAL_MASK) == 0) {
+    // This is a non-normal argument. Set the base class to zero or
+    // Infinity depending on the low bit of the exponent.
+    class = (exp & 1) ? avx3PosInfinity : avx3PosZero;
+    // If the signifcand field is non-zero, then map zero and Infinity
+    // classes to denormal and NaN respectively by Incrementing the base
+    // class by 2.
+    sig = val.u & FP32_MANT_MASK;
+    if (sig) {
+      class += 2;
     }
-    // Add the sign information to the platform dependent classes
-    class += (unsigned int)sign;
-    return class;
+    // For NaNs, the sign is irrelevant. However, we need to distinguish
+    // between sNaN and qNaN. So for a NaN base class, use the NaN "quiet"
+    // bit, rather than the sign bit for the next adjustment
+    if (class == avx3SNan) {
+      sign = (sig >> FP32_QNAN_BIT_POS);
+    }
+  }
+  // Add the sign information to the platform dependent classes
+  class += (unsigned int)sign;
+  return class;
 }
 
 static unsigned int ClassifyType64(type64 val) {
-    long long int sig, exp, sign;
-    unsigned int class;
+  long long int sig, exp, sign;
+  unsigned int class;
 
-    // See comments in ClassifyType32 for algorithm description
-    exp  = (val.u & FP64_EXP_MASK) >> FP64_EXP_POS;
-    sign = val.u >> FP64_SIGN_POS;
-    class = avx3PosNormal;
-    if (((exp + 1) & FP64_NON_NORMAL_MASK) == 0) {
-         class = (exp & 1) ? avx3PosInfinity : avx3PosZero;
-         sig  = val.u & FP64_MANT_MASK;
-         if (sig) {
-             class += 2;
-         }
-         if (class == avx3SNan) {
-             sign = (sig >> FP64_QNAN_BIT_POS);
-         }
+  // See comments in ClassifyType32 for algorithm description
+  exp = (val.u & FP64_EXP_MASK) >> FP64_EXP_POS;
+  sign = val.u >> FP64_SIGN_POS;
+  class = avx3PosNormal;
+  if (((exp + 1) & FP64_NON_NORMAL_MASK) == 0) {
+    class = (exp & 1) ? avx3PosInfinity : avx3PosZero;
+    sig = val.u & FP64_MANT_MASK;
+    if (sig) {
+      class += 2;
     }
-    class += sign;
-    return class;
+    if (class == avx3SNan) {
+      sign = (sig >> FP64_QNAN_BIT_POS);
+    }
+  }
+  class += sign;
+  return class;
 }
 
 static unsigned int _sCvtdl(int64_t *dst, type64 src) {
-    double tmp;
-    int64_t tmpDst;
-    double diff;
-    unsigned int flags = inexactFlag;
+  double tmp;
+  int64_t tmpDst;
+  double diff;
+  unsigned int flags = inexactFlag;
 
-    tmp    = floor(src.f);
-    diff   = src.f - tmp;
-    tmpDst = (int64_t)tmp;
-    if (diff > .5) {
-        tmpDst += 1;
-    } else if (diff < .5) {
-        if (diff == 0) {
-            flags = 0;
-        }
-    } else {
-        tmpDst += (tmpDst & 1);
+  tmp = floor(src.f);
+  diff = src.f - tmp;
+  tmpDst = (int64_t)tmp;
+  if (diff > .5) {
+    tmpDst += 1;
+  } else if (diff < .5) {
+    if (diff == 0) {
+      flags = 0;
     }
-    *dst = tmpDst;
-    return flags;
+  } else {
+    tmpDst += (tmpDst & 1);
+  }
+  *dst = tmpDst;
+  return flags;
 }
 
 static unsigned int _sCvtfl(int64_t *dst, type32 src) {
-    type64 tmp;
-    tmp.f = (double) src.f;
-    return _sCvtdl(dst, tmp);
+  type64 tmp;
+  tmp.f = (double)src.f;
+  return _sCvtdl(dst, tmp);
 }
 
 static unsigned long long int EmulSquare(unsigned int x) {
-    unsigned long long int xx = (unsigned long long int) x;
-    xx = xx * xx;
-    return xx >> 24;
+  unsigned long long int xx = (unsigned long long int)x;
+  xx = xx * xx;
+  return xx >> 24;
 }
 
 static int64_t SignedBitsShiftRight(uint64_t bits, unsigned int shift) {
-    if ((bits & UINT64_C(0x8000000000000000)) == 0) {
-        return (int64_t)(bits >> shift);
-    }
-    return -INT64_C(1) - (int64_t)((~bits) >> shift);
+  if ((bits & UINT64_C(0x8000000000000000)) == 0) {
+    return (int64_t)(bits >> shift);
+  }
+  return -INT64_C(1) - (int64_t)((~bits) >> shift);
 }
 
 static int FloorDivideByTwo(int value) {
-    return value >= 0 ? value / 2 : -((-value + 1) / 2);
+  return value >= 0 ? value / 2 : -((-value + 1) / 2);
 }
 
 // =============================================================================
@@ -1271,40 +1282,40 @@ static int FloorDivideByTwo(int value) {
 
 static uint64_t Emulation(type64 *dst, uint64_t x, uint64_t addend,
                           EmulationCoefficients_t *table) {
-    int            index, scale;
-    int64_t         a, b, c;
-    uint64_t        emuRes, dstVal;
-    unsigned int         xl;
-    EmulationCoefficients_t * coefPtr;
+  int index, scale;
+  int64_t a, b, c;
+  uint64_t emuRes, dstVal;
+  unsigned int xl;
+  EmulationCoefficients_t *coefPtr;
 
-    index   = (int) (x >> 22);
-    xl      = (unsigned int)(x & 0x3fffff);
-    coefPtr = &table[index];
-    a = (long long int) coefPtr->a;
-    b = (long long int) coefPtr->b;
-    c = (long long int) coefPtr->c;
-    // The published reference relies on two's-complement signed overflow while
-    // normalizing this fixed-point polynomial. Express the same modular
-    // arithmetic with unsigned integers so optimizing compilers cannot treat
-    // the overflow path as unreachable.
-    emuRes = addend + (uint64_t)a + (uint64_t)b * xl +
-             (uint64_t)c * EmulSquare(xl);
-    // Detemine the sign of the result and normalize it. Record the sign and
-    // scale factor in the sign and expoent fields of dst.
-    dstVal = dst->u;
-    if ((emuRes & UINT64_C(0x8000000000000000)) != 0) {
-        dstVal ^= FP64_SIGN_BIT;
-        emuRes = UINT64_C(0) - emuRes;
-    }
-    scale = 10 + FP64_EXP_BIAS;
-    while (emuRes != 0 &&
-           (emuRes & UINT64_C(0x8000000000000000)) == 0) {
-        scale--;
-        emuRes <<= 1;
-    }
-    dstVal = (dstVal & ~FP64_EXP_MASK) | (((unsigned long long int) scale) << FP64_EXP_POS);
-    dst->u = dstVal;
-    return emuRes;
+  index = (int)(x >> 22);
+  xl = (unsigned int)(x & 0x3fffff);
+  coefPtr = &table[index];
+  a = (long long int)coefPtr->a;
+  b = (long long int)coefPtr->b;
+  c = (long long int)coefPtr->c;
+  // The published reference relies on two's-complement signed overflow while
+  // normalizing this fixed-point polynomial. Express the same modular
+  // arithmetic with unsigned integers so optimizing compilers cannot treat
+  // the overflow path as unreachable.
+  emuRes =
+      addend + (uint64_t)a + (uint64_t)b * xl + (uint64_t)c * EmulSquare(xl);
+  // Detemine the sign of the result and normalize it. Record the sign and
+  // scale factor in the sign and expoent fields of dst.
+  dstVal = dst->u;
+  if ((emuRes & UINT64_C(0x8000000000000000)) != 0) {
+    dstVal ^= FP64_SIGN_BIT;
+    emuRes = UINT64_C(0) - emuRes;
+  }
+  scale = 10 + FP64_EXP_BIAS;
+  while (emuRes != 0 && (emuRes & UINT64_C(0x8000000000000000)) == 0) {
+    scale--;
+    emuRes <<= 1;
+  }
+  dstVal = (dstVal & ~FP64_EXP_MASK) |
+           (((unsigned long long int)scale) << FP64_EXP_POS);
+  dst->u = dstVal;
+  return emuRes;
 }
 
 // ============================================================================
@@ -1312,88 +1323,90 @@ static uint64_t Emulation(type64 *dst, uint64_t x, uint64_t addend,
 // the result and packs it into a single or double precision floating-point
 // result. These routines also handle overflow and underflow conditions.
 // ============================================================================
-static unsigned int EmulationFinishd (type64 * dst,
-        uint64_t emuRes, int scale, unsigned int flags) {
+static unsigned int EmulationFinishd(type64 *dst, uint64_t emuRes, int scale,
+                                     unsigned int flags) {
 
-    unsigned long long int  res, sign;
-    // Take care of "extreme"  underflows
-    scale += (int)((dst->u & FP64_EXP_MASK) >> FP64_EXP_POS);
-    if (scale < -54) scale = -54;
-    while (scale <= 0) {
-        scale++;
-        emuRes = (emuRes >> 1) | (emuRes & 1);
-    }
-    // Convert to double precision floating-point with no rounding
-    res = emuRes >> 11;
-    // Check for final overflow or underflow.
-    sign = dst->u & FP64_SIGN_BIT;
-    if (res < FP64_HIDDEN_BIT) {
-        res = sign;
-    } else if (scale > (FP64_MAX_EXP - 1)) {
-        flags |= overflowFlag;
-        res = sign | FP64_PLUS_INF_AS_UINT64;
-    } else {
-        res = sign | ((unsigned long long int) scale << FP64_EXP_POS)
-                   | (res & FP64_MANT_MASK);
-    }
-    dst->u = res;
-    return flags;
+  unsigned long long int res, sign;
+  // Take care of "extreme"  underflows
+  scale += (int)((dst->u & FP64_EXP_MASK) >> FP64_EXP_POS);
+  if (scale < -54)
+    scale = -54;
+  while (scale <= 0) {
+    scale++;
+    emuRes = (emuRes >> 1) | (emuRes & 1);
+  }
+  // Convert to double precision floating-point with no rounding
+  res = emuRes >> 11;
+  // Check for final overflow or underflow.
+  sign = dst->u & FP64_SIGN_BIT;
+  if (res < FP64_HIDDEN_BIT) {
+    res = sign;
+  } else if (scale > (FP64_MAX_EXP - 1)) {
+    flags |= overflowFlag;
+    res = sign | FP64_PLUS_INF_AS_UINT64;
+  } else {
+    res = sign | ((unsigned long long int)scale << FP64_EXP_POS) |
+          (res & FP64_MANT_MASK);
+  }
+  dst->u = res;
+  return flags;
 }
 
-static unsigned int EmulationFinishf (type32 * dst,
-        type64 tmp, uint64_t emuRes, int scale, unsigned int flags) {
+static unsigned int EmulationFinishf(type32 *dst, type64 tmp, uint64_t emuRes,
+                                     int scale, unsigned int flags) {
 
-    unsigned long long int  res, sign, incr, rndIt;
+  unsigned long long int res, sign, incr, rndIt;
 
-    // Take care of "extreme"  underflows.
-    scale += (int)((tmp.u & FP64_EXP_MASK) >> FP64_EXP_POS) +
-             FP32_EXP_BIAS - FP64_EXP_BIAS;
-    if (scale < -25) scale = -25;
-    while (scale <= 0) {
-        scale++;
-        emuRes = (emuRes >> 1) | (emuRes & 1);
-    }
-    // Convert to single precision floating-point with rounding-to-nearest
-    incr    = 0x1ull << 39;
-    rndIt   = (emuRes >> 39) & 3;		// lowBit:rndBit
-    if (emuRes & (incr - 1)) {
-        rndIt |= 2;			// 'OR' sticky bit with lowBit
-    }
-    if (3 == rndIt) {
-        emuRes += incr;
-    }
-    if (emuRes < incr) {
-        // Carry-out from rounding; adjust exponent
-        scale++;
-        emuRes = (emuRes >> 1) | 0x8000000000000000ull;
-    }
-    res = emuRes >> 40;
-    // Check for final overflow or underflow.
-    sign = (tmp.u & FP64_SIGN_BIT) >> 32;
-    if (res < FP32_HIDDEN_BIT) {
-        res = sign;
-    } else if (scale > (FP32_MAX_EXP - 1)) {
-        flags |= overflowFlag;
-        res = sign | FP32_PLUS_INF_AS_UINT32;
-    } else {
-        res = sign | ((unsigned long long int) scale << FP32_EXP_POS)
-                   | (res & FP32_MANT_MASK);
-    }
-    dst->u = (unsigned int) res;
-    return flags;
+  // Take care of "extreme"  underflows.
+  scale += (int)((tmp.u & FP64_EXP_MASK) >> FP64_EXP_POS) + FP32_EXP_BIAS -
+           FP64_EXP_BIAS;
+  if (scale < -25)
+    scale = -25;
+  while (scale <= 0) {
+    scale++;
+    emuRes = (emuRes >> 1) | (emuRes & 1);
+  }
+  // Convert to single precision floating-point with rounding-to-nearest
+  incr = 0x1ull << 39;
+  rndIt = (emuRes >> 39) & 3; // lowBit:rndBit
+  if (emuRes & (incr - 1)) {
+    rndIt |= 2; // 'OR' sticky bit with lowBit
+  }
+  if (3 == rndIt) {
+    emuRes += incr;
+  }
+  if (emuRes < incr) {
+    // Carry-out from rounding; adjust exponent
+    scale++;
+    emuRes = (emuRes >> 1) | 0x8000000000000000ull;
+  }
+  res = emuRes >> 40;
+  // Check for final overflow or underflow.
+  sign = (tmp.u & FP64_SIGN_BIT) >> 32;
+  if (res < FP32_HIDDEN_BIT) {
+    res = sign;
+  } else if (scale > (FP32_MAX_EXP - 1)) {
+    flags |= overflowFlag;
+    res = sign | FP32_PLUS_INF_AS_UINT32;
+  } else {
+    res = sign | ((unsigned long long int)scale << FP32_EXP_POS) |
+          (res & FP32_MANT_MASK);
+  }
+  dst->u = (unsigned int)res;
+  return flags;
 }
 
 /*
-    ****************************************************************************
-    ****************************************************************************
-    ********************** EMULATION ROUTINES FOR RCP28 ************************
-    ****************************************************************************
-    ****************************************************************************
-*/
+ ****************************************************************************
+ ****************************************************************************
+ ********************** EMULATION ROUTINES FOR RCP28 ************************
+ ****************************************************************************
+ ****************************************************************************
+ */
 
 // These reference functions have to be compiled in Linux with DAZ and FTZ
-// off (e.g. with the Intel compiler: icc -c -no-ftz RECIP28EXP2.c). They have to
-// be run with the rounding mode set to round-to-nearest, and with
+// off (e.g. with the Intel compiler: icc -c -no-ftz RECIP28EXP2.c). They have
+// to be run with the rounding mode set to round-to-nearest, and with
 // floating-point exceptions masked.
 
 /* EXAMPLE: icc -no-ftz main.c RECIP28EXP2.c, where main.c is shown below
@@ -1429,101 +1442,111 @@ main () {
 
 */
 // ============================================================================
-// Single precision reciprocal approximation with less than 2^-28 relative error.
-// Uses Emulation() to produce (at least) a 28-bit approximation to 1/x and then
-// rounds the result to 24 bits.
+// Single precision reciprocal approximation with less than 2^-28 relative
+// error. Uses Emulation() to produce (at least) a 28-bit approximation to 1/x
+// and then rounds the result to 24 bits.
 // ============================================================================
-unsigned int RCP28S (type32 *dst, type32 src) {
-    int      scale;
-    unsigned int   class;
-    unsigned long long int   emuRes;
-    unsigned int  flags = 0;
-    type64   tmp;
-    unsigned int   iSrc = src.u;
+unsigned int RCP28S(type32 *dst, type32 src) {
+  int scale;
+  unsigned int class;
+  unsigned long long int emuRes;
+  unsigned int flags = 0;
+  type64 tmp;
+  unsigned int iSrc = src.u;
 
-    // Classify the input and process "special" values
-    scale = (int) FP32_UNBIASED_EXP(iSrc);
-    class = ClassifyType32(src);
-    switch(class) {
-        case avx3NegInfinity:  RET_DST      (FP32_MINUS_ZERO_AS_UINT32);
-        case avx3NegZero:      SET_Z_RET_DST(FP32_MINUS_INF_AS_UINT32 );
-        case avx3PosZero:      SET_Z_RET_DST(FP32_PLUS_INF_AS_UINT32  );
-        case avx3PosInfinity:  RET_DST      (FP32_PLUS_ZERO_AS_UINT32 );
-        case avx3QNan:         RET_DST      (iSrc                     );
-        case avx3SNan:         SET_V_RET_DST(FP32_QUIETIZE_NAN(iSrc)  );
-        case avx3NegDenorm:
-        case avx3PosDenorm:    // Treat denormals as zero
-                               SET_Z_RET_DST(class & 1 ?
-                                       FP32_MINUS_INF_AS_UINT32 :
-                                       FP32_PLUS_INF_AS_UINT32);
-    }
-    // For x = s*2^n*f, where s is +/- 1 and f is in [1,2), compute
-    // recip(x) = s*(2^-n)*recip(f). Also ensure that recip(1) = 1
-    tmp.u = ((unsigned long long int) (iSrc & FP32_SIGN_BIT)) << 32;
-    if ((iSrc & FP32_MANT_MASK) == 0) {
-        // src is an exact power of 2. Force result mantissa to 1.
-        emuRes     = 0x1ull << 63;
-        tmp.u |= FP64_PLUS_ONE_AS_UINT64;
-    } else {
-        // index = bits(22:15) fraction = bits(14:0):00000000, total = 30 bits
-        emuRes = Emulation(&tmp, (iSrc << 7) & 0x3fffffff, 0, _rcp28Table);
-    }
-    return EmulationFinishf (dst, tmp, emuRes, -scale, flags);
+  // Classify the input and process "special" values
+  scale = (int)FP32_UNBIASED_EXP(iSrc);
+  class = ClassifyType32(src);
+  switch (class) {
+  case avx3NegInfinity:
+    RET_DST(FP32_MINUS_ZERO_AS_UINT32);
+  case avx3NegZero:
+    SET_Z_RET_DST(FP32_MINUS_INF_AS_UINT32);
+  case avx3PosZero:
+    SET_Z_RET_DST(FP32_PLUS_INF_AS_UINT32);
+  case avx3PosInfinity:
+    RET_DST(FP32_PLUS_ZERO_AS_UINT32);
+  case avx3QNan:
+    RET_DST(iSrc);
+  case avx3SNan:
+    SET_V_RET_DST(FP32_QUIETIZE_NAN(iSrc));
+  case avx3NegDenorm:
+  case avx3PosDenorm: // Treat denormals as zero
+    SET_Z_RET_DST(class & 1 ? FP32_MINUS_INF_AS_UINT32
+                            : FP32_PLUS_INF_AS_UINT32);
+  }
+  // For x = s*2^n*f, where s is +/- 1 and f is in [1,2), compute
+  // recip(x) = s*(2^-n)*recip(f). Also ensure that recip(1) = 1
+  tmp.u = ((unsigned long long int)(iSrc & FP32_SIGN_BIT)) << 32;
+  if ((iSrc & FP32_MANT_MASK) == 0) {
+    // src is an exact power of 2. Force result mantissa to 1.
+    emuRes = 0x1ull << 63;
+    tmp.u |= FP64_PLUS_ONE_AS_UINT64;
+  } else {
+    // index = bits(22:15) fraction = bits(14:0):00000000, total = 30 bits
+    emuRes = Emulation(&tmp, (iSrc << 7) & 0x3fffffff, 0, _rcp28Table);
+  }
+  return EmulationFinishf(dst, tmp, emuRes, -scale, flags);
 }
 
 // ============================================================================
-// Double precision reciprocal approximation with less than 2^-28 relative error.
-// Uses Emulation() to produce (at least) a 28-bit approximation to 1/x
+// Double precision reciprocal approximation with less than 2^-28 relative
+// error. Uses Emulation() to produce (at least) a 28-bit approximation to 1/x
 // ============================================================================
-unsigned int RCP28D (type64 *dst, type64 src) {
-    int     scale;
-    unsigned int  class;
-    unsigned long long int  emuRes;
-    unsigned int flags = 0;
-    unsigned long long int  iSrc  = src.u;
+unsigned int RCP28D(type64 *dst, type64 src) {
+  int scale;
+  unsigned int class;
+  unsigned long long int emuRes;
+  unsigned int flags = 0;
+  unsigned long long int iSrc = src.u;
 
-    // Classify the input and process "special" values
-    class = ClassifyType64(src);
-    scale = (int) FP64_UNBIASED_EXP(iSrc);
-    switch(class) {
-        case avx3NegInfinity:  RET_DST      (FP64_MINUS_ZERO_AS_UINT64);
-        case avx3NegZero:      SET_Z_RET_DST(FP64_MINUS_INF_AS_UINT64 );
-        case avx3PosZero:      SET_Z_RET_DST(FP64_PLUS_INF_AS_UINT64  );
-        case avx3PosInfinity:  RET_DST      (FP64_PLUS_ZERO_AS_UINT64 );
-        case avx3QNan:         RET_DST      (iSrc                     );
-        case avx3SNan:         SET_V_RET_DST(FP64_QUIETIZE_NAN(iSrc)  );
-        case avx3NegDenorm:
-        case avx3PosDenorm:    // Treat denormals as zero
-                               SET_Z_RET_DST(class & 1 ?
-                                       FP64_MINUS_INF_AS_UINT64 :
-                                       FP64_PLUS_INF_AS_UINT64);
-    }
-    // For x = s*2^n*f, where s is +/- 1 and f is in [1,2), compute
-    // recip(x) = s*(2^-n)*recip(f). Also ensure that recip(1) = 1
-    dst->u = iSrc & FP64_SIGN_BIT;
-    if ((iSrc & FP64_MANT_MASK) == 0) {
-        // src is an exact power of 2. Force result mantissa to 1.
-        emuRes     = 0x1ull << 63;
-        dst->u |= FP64_PLUS_ONE_AS_UINT64;
-    } else {
-        // index = bits(51:44) fract = bits(43:22):0, tolal = 30 bits
-        // emuRes = Emulation(dst, (iSrc >> 22) & 0x3ffffffe, 0, _rcp28Table);
-        emuRes = Emulation(dst, (iSrc >> 22) & 0x3fffffff, 0, _rcp28Table);
-    }
-    return EmulationFinishd (dst, emuRes, -scale, flags);
+  // Classify the input and process "special" values
+  class = ClassifyType64(src);
+  scale = (int)FP64_UNBIASED_EXP(iSrc);
+  switch (class) {
+  case avx3NegInfinity:
+    RET_DST(FP64_MINUS_ZERO_AS_UINT64);
+  case avx3NegZero:
+    SET_Z_RET_DST(FP64_MINUS_INF_AS_UINT64);
+  case avx3PosZero:
+    SET_Z_RET_DST(FP64_PLUS_INF_AS_UINT64);
+  case avx3PosInfinity:
+    RET_DST(FP64_PLUS_ZERO_AS_UINT64);
+  case avx3QNan:
+    RET_DST(iSrc);
+  case avx3SNan:
+    SET_V_RET_DST(FP64_QUIETIZE_NAN(iSrc));
+  case avx3NegDenorm:
+  case avx3PosDenorm: // Treat denormals as zero
+    SET_Z_RET_DST(class & 1 ? FP64_MINUS_INF_AS_UINT64
+                            : FP64_PLUS_INF_AS_UINT64);
+  }
+  // For x = s*2^n*f, where s is +/- 1 and f is in [1,2), compute
+  // recip(x) = s*(2^-n)*recip(f). Also ensure that recip(1) = 1
+  dst->u = iSrc & FP64_SIGN_BIT;
+  if ((iSrc & FP64_MANT_MASK) == 0) {
+    // src is an exact power of 2. Force result mantissa to 1.
+    emuRes = 0x1ull << 63;
+    dst->u |= FP64_PLUS_ONE_AS_UINT64;
+  } else {
+    // index = bits(51:44) fract = bits(43:22):0, tolal = 30 bits
+    // emuRes = Emulation(dst, (iSrc >> 22) & 0x3ffffffe, 0, _rcp28Table);
+    emuRes = Emulation(dst, (iSrc >> 22) & 0x3fffffff, 0, _rcp28Table);
+  }
+  return EmulationFinishd(dst, emuRes, -scale, flags);
 }
 
 /*
-    ****************************************************************************
-    ****************************************************************************
-    ********************** EMULATION ROUTINES FOR RSQRT28 **********************
-    ****************************************************************************
-    ****************************************************************************
-*/
+ ****************************************************************************
+ ****************************************************************************
+ ********************** EMULATION ROUTINES FOR RSQRT28 **********************
+ ****************************************************************************
+ ****************************************************************************
+ */
 
 // These reference functions have to be compiled in Linux with DAZ and FTZ
-// off (e.g. with the Intel compiler: icc -c -no-ftz RECIP28EXP2.c). They have to
-// be run with the rounding mode set to round-to-nearest, and with
+// off (e.g. with the Intel compiler: icc -c -no-ftz RECIP28EXP2.c). They have
+// to be run with the rounding mode set to round-to-nearest, and with
 // floating-point exceptions masked.
 
 /* EXAMPLE: icc -no-ftz main.c RECIP28EXP2.c, where main.c is shown below
@@ -1561,43 +1584,48 @@ main () {
 // ============================================================================
 // Single precision reciprocal square root approximation with less than 2^-28
 // relative error.
-// Uses Emulation() to produce (at least) a 28-bit approximation to 1/sqrt(x) and
-// then rounds the result to 24 bits.
+// Uses Emulation() to produce (at least) a 28-bit approximation to 1/sqrt(x)
+// and then rounds the result to 24 bits.
 // ============================================================================
 unsigned int RSQRT28S(type32 *dst, type32 src) {
-    int      scale;
-    unsigned long long int   emuRes;
-    type64 tmp;
-    unsigned int   class;
-    unsigned int  flags = 0;
-    unsigned int   iSrc = src.u;
+  int scale;
+  unsigned long long int emuRes;
+  type64 tmp;
+  unsigned int class;
+  unsigned int flags = 0;
+  unsigned int iSrc = src.u;
 
-    // Classify the input and process "special" values
-    scale =  (int) FP32_UNBIASED_EXP(iSrc);
-    class = ClassifyType32(src);
-    switch(class) {
-        case avx3QNan:         RET_DST      (iSrc                      );
-        case avx3SNan:         SET_V_RET_DST(FP32_QUIETIZE_NAN(iSrc)   );
-        case avx3NegNormal:
-        case avx3NegInfinity:  SET_V_RET_DST(FP32_DEFAULT_NAN_AS_UINT32);
-        case avx3PosDenorm:
-        case avx3PosZero:      SET_Z_RET_DST(FP32_PLUS_INF_AS_UINT32   );
-        case avx3NegDenorm:
-        case avx3NegZero:      SET_Z_RET_DST(FP32_MINUS_INF_AS_UINT32  );
-        case avx3PosInfinity:  RET_DST(      FP32_PLUS_ZERO_AS_UINT32  );
-    }
+  // Classify the input and process "special" values
+  scale = (int)FP32_UNBIASED_EXP(iSrc);
+  class = ClassifyType32(src);
+  switch (class) {
+  case avx3QNan:
+    RET_DST(iSrc);
+  case avx3SNan:
+    SET_V_RET_DST(FP32_QUIETIZE_NAN(iSrc));
+  case avx3NegNormal:
+  case avx3NegInfinity:
+    SET_V_RET_DST(FP32_DEFAULT_NAN_AS_UINT32);
+  case avx3PosDenorm:
+  case avx3PosZero:
+    SET_Z_RET_DST(FP32_PLUS_INF_AS_UINT32);
+  case avx3NegDenorm:
+  case avx3NegZero:
+    SET_Z_RET_DST(FP32_MINUS_INF_AS_UINT32);
+  case avx3PosInfinity:
+    RET_DST(FP32_PLUS_ZERO_AS_UINT32);
+  }
 
-    tmp.u = 0;
-    if ((iSrc & (FP32_MANT_MASK | FP32_HIDDEN_BIT)) == FP32_HIDDEN_BIT){
-        // src is exactly 2^(2k), force result mantissa to 1.
-        emuRes     = 0x1ull << 63;
-        tmp.u |= FP64_PLUS_ONE_AS_UINT64;
-    } else {
-        // index = bits(23:15), fract = bits(14:0):0000000, total = 31
-        emuRes = Emulation(&tmp, (iSrc << 7) & 0x7fffffff, 0, _rsqrt28Table);
-    }
-    return EmulationFinishf(dst, tmp, emuRes, -FloorDivideByTwo(scale),
-                            flags);
+  tmp.u = 0;
+  if ((iSrc & (FP32_MANT_MASK | FP32_HIDDEN_BIT)) == FP32_HIDDEN_BIT) {
+    // src is exactly 2^(2k), force result mantissa to 1.
+    emuRes = 0x1ull << 63;
+    tmp.u |= FP64_PLUS_ONE_AS_UINT64;
+  } else {
+    // index = bits(23:15), fract = bits(14:0):0000000, total = 31
+    emuRes = Emulation(&tmp, (iSrc << 7) & 0x7fffffff, 0, _rsqrt28Table);
+  }
+  return EmulationFinishf(dst, tmp, emuRes, -FloorDivideByTwo(scale), flags);
 }
 
 // ============================================================================
@@ -1606,49 +1634,55 @@ unsigned int RSQRT28S(type32 *dst, type32 src) {
 // Uses Emulation() to produce (at least) a 28-bit approximation to 1/sqrt(x)
 // ============================================================================
 unsigned int RSQRT28D(type64 *dst, type64 src) {
-    int     scale;
-    unsigned long long int  emuRes;
-    unsigned int  class;
-    unsigned int flags = 0;
-    unsigned long long int  iSrc  = src.u;
+  int scale;
+  unsigned long long int emuRes;
+  unsigned int class;
+  unsigned int flags = 0;
+  unsigned long long int iSrc = src.u;
 
-    // Classify the input and process "special" values
-    scale =  (int) FP64_UNBIASED_EXP(iSrc);
-    class = ClassifyType64(src);
-    switch(class) {
-        case avx3QNan:         RET_DST      (iSrc                     );
-        case avx3SNan:         SET_V_RET_DST(FP64_QUIETIZE_NAN(iSrc)  );
-        case avx3NegNormal:
-        case avx3NegInfinity:  SET_V_RET_DST(FP64_DEFAULT_NAN_AS_UINT64);
-        case avx3PosDenorm:
-        case avx3PosZero:      SET_Z_RET_DST(FP64_PLUS_INF_AS_UINT64   );
-        case avx3NegDenorm:
-        case avx3NegZero:      SET_Z_RET_DST(FP64_MINUS_INF_AS_UINT64  );
-        case avx3PosInfinity:  RET_DST(      FP64_PLUS_ZERO_AS_UINT64  );
-    }
-    dst->u = 0;
-    if ((iSrc & (FP64_MANT_MASK | FP64_HIDDEN_BIT)) == FP64_HIDDEN_BIT){
-        // src is exactly 2^(2k), force result mantissa to 1.
-        emuRes     = 0x1ull << 63;
-        dst->u |= FP64_PLUS_ONE_AS_UINT64;
-    } else {
-        // index = bits(52:44), fract = bits(43:22), total = 31
-        emuRes = Emulation(dst, (iSrc >> 22) & 0x7fffffff, 0, _rsqrt28Table);
-    }
-    return EmulationFinishd(dst, emuRes, -FloorDivideByTwo(scale), flags);
+  // Classify the input and process "special" values
+  scale = (int)FP64_UNBIASED_EXP(iSrc);
+  class = ClassifyType64(src);
+  switch (class) {
+  case avx3QNan:
+    RET_DST(iSrc);
+  case avx3SNan:
+    SET_V_RET_DST(FP64_QUIETIZE_NAN(iSrc));
+  case avx3NegNormal:
+  case avx3NegInfinity:
+    SET_V_RET_DST(FP64_DEFAULT_NAN_AS_UINT64);
+  case avx3PosDenorm:
+  case avx3PosZero:
+    SET_Z_RET_DST(FP64_PLUS_INF_AS_UINT64);
+  case avx3NegDenorm:
+  case avx3NegZero:
+    SET_Z_RET_DST(FP64_MINUS_INF_AS_UINT64);
+  case avx3PosInfinity:
+    RET_DST(FP64_PLUS_ZERO_AS_UINT64);
+  }
+  dst->u = 0;
+  if ((iSrc & (FP64_MANT_MASK | FP64_HIDDEN_BIT)) == FP64_HIDDEN_BIT) {
+    // src is exactly 2^(2k), force result mantissa to 1.
+    emuRes = 0x1ull << 63;
+    dst->u |= FP64_PLUS_ONE_AS_UINT64;
+  } else {
+    // index = bits(52:44), fract = bits(43:22), total = 31
+    emuRes = Emulation(dst, (iSrc >> 22) & 0x7fffffff, 0, _rsqrt28Table);
+  }
+  return EmulationFinishd(dst, emuRes, -FloorDivideByTwo(scale), flags);
 }
 
 /*
-    ****************************************************************************
-    ****************************************************************************
-    ************************ EMULATION ROUTINES FOR EXP2 ***********************
-    ****************************************************************************
-    ****************************************************************************
-*/
+ ****************************************************************************
+ ****************************************************************************
+ ************************ EMULATION ROUTINES FOR EXP2 ***********************
+ ****************************************************************************
+ ****************************************************************************
+ */
 
 // These reference functions have to be compiled in Linux with DAZ and FTZ
-// off (e.g. with the Intel compiler: icc -c -no-ftz RECIP28EXP2.c). They have to
-// be run with the rounding mode set to round-to-nearest, and with
+// off (e.g. with the Intel compiler: icc -c -no-ftz RECIP28EXP2.c). They have
+// to be run with the rounding mode set to round-to-nearest, and with
 // floating-point exceptions masked.
 
 /* EXAMPLE: icc -no-ftz main.c RECIP28EXP2.c, where main.c is shown below
@@ -1689,50 +1723,55 @@ main () {
 // Uses Emulation() to produce (at least) a 23-bit approximation to 1/sqrt(x)
 // ============================================================================
 unsigned int EXP2S(type32 *dst, type32 src) {
-    type64  tmp;
-    int64_t iTmp;
-    uint64_t fixed, emuRes;
-    int  scale;
-    unsigned int flags = 0;
-    unsigned int  iSrc = src.u;
+  type64 tmp;
+  int64_t iTmp;
+  uint64_t fixed, emuRes;
+  int scale;
+  unsigned int flags = 0;
+  unsigned int iSrc = src.u;
 
-    switch (ClassifyType32(src)) {
-        case avx3NegDenorm:
-        case avx3PosDenorm:
-        case avx3NegZero:
-        case avx3PosZero:      RET_DST      (FP32_PLUS_ONE_AS_UINT32 );
-        case avx3NegInfinity:  RET_DST      (FP32_PLUS_ZERO_AS_UINT32);
-        case avx3PosInfinity:  RET_DST      (FP32_PLUS_INF_AS_UINT32 );
-        case avx3QNan:         RET_DST      (iSrc                    );
-        case avx3SNan:         SET_V_RET_DST(FP32_QUIETIZE_NAN(iSrc) );
-        case avx3PosNormal:    if (iSrc > 0x42ffffff) {
-                                   flags |= overflowFlag;
-                                   RET_DST  (FP32_PLUS_INF_AS_UINT32 );
-                               }
-                               break;
-        case avx3NegNormal:    // NOTE: denormal results not supported
-                               if (iSrc > 0xc2fc0000) {
-                                   RET_DST  (0 );
-                               }
-                               break;
+  switch (ClassifyType32(src)) {
+  case avx3NegDenorm:
+  case avx3PosDenorm:
+  case avx3NegZero:
+  case avx3PosZero:
+    RET_DST(FP32_PLUS_ONE_AS_UINT32);
+  case avx3NegInfinity:
+    RET_DST(FP32_PLUS_ZERO_AS_UINT32);
+  case avx3PosInfinity:
+    RET_DST(FP32_PLUS_INF_AS_UINT32);
+  case avx3QNan:
+    RET_DST(iSrc);
+  case avx3SNan:
+    SET_V_RET_DST(FP32_QUIETIZE_NAN(iSrc));
+  case avx3PosNormal:
+    if (iSrc > 0x42ffffff) {
+      flags |= overflowFlag;
+      RET_DST(FP32_PLUS_INF_AS_UINT32);
     }
-    // Convert 2^24*src to an integer in round-to-nearest mode
-    src.u = iSrc + (24 << FP32_EXP_POS);	// src <-- 2^24*src
-    flags = _sCvtfl(&iTmp, src);
-    fixed = (uint64_t)iTmp;
-    scale = (int)SignedBitsShiftRight(fixed, 24);
-    tmp.u = 0;
-    if ((fixed << 11) == 0 && !(flags & inexactFlag)) {
-        // Input was an exact integer, set mantissa result to 1
-        emuRes    = 0x1ull << 63;
-        tmp.u |= FP64_PLUS_ONE_AS_UINT64;
-    } else {
-        flags &= ~(unsigned int)inexactFlag;
-        // index = bits(23:18) fract = bits(17:0):0000, total of 28 bits
-        emuRes = Emulation(&tmp, (fixed << 4) & 0xfffffff,
-                            0, _exp223Table);
+    break;
+  case avx3NegNormal: // NOTE: denormal results not supported
+    if (iSrc > 0xc2fc0000) {
+      RET_DST(0);
     }
-    return EmulationFinishf (dst, tmp, emuRes, scale, flags);
+    break;
+  }
+  // Convert 2^24*src to an integer in round-to-nearest mode
+  src.u = iSrc + (24 << FP32_EXP_POS); // src <-- 2^24*src
+  flags = _sCvtfl(&iTmp, src);
+  fixed = (uint64_t)iTmp;
+  scale = (int)SignedBitsShiftRight(fixed, 24);
+  tmp.u = 0;
+  if ((fixed << 11) == 0 && !(flags & inexactFlag)) {
+    // Input was an exact integer, set mantissa result to 1
+    emuRes = 0x1ull << 63;
+    tmp.u |= FP64_PLUS_ONE_AS_UINT64;
+  } else {
+    flags &= ~(unsigned int)inexactFlag;
+    // index = bits(23:18) fract = bits(17:0):0000, total of 28 bits
+    emuRes = Emulation(&tmp, (fixed << 4) & 0xfffffff, 0, _exp223Table);
+  }
+  return EmulationFinishf(dst, tmp, emuRes, scale, flags);
 }
 
 // ============================================================================
@@ -1741,63 +1780,69 @@ unsigned int EXP2S(type32 *dst, type32 src) {
 // Uses Emulation() to produce (at least) a 23-bit approximation to 1/sqrt(x)
 // ============================================================================
 unsigned int EXP2D(type64 *dst, type64 src) {
-    int64_t rounded;
-    uint64_t fixed, emuRes, roundingIncrement;
-    int   scale;
-    unsigned int  flags = 0;
-    unsigned long long int   iSrc  = src.u;
-    int   bExp  = (iSrc & FP64_EXP_MASK) >> FP64_EXP_POS;
+  int64_t rounded;
+  uint64_t fixed, emuRes, roundingIncrement;
+  int scale;
+  unsigned int flags = 0;
+  unsigned long long int iSrc = src.u;
+  int bExp = (iSrc & FP64_EXP_MASK) >> FP64_EXP_POS;
 
-    switch (ClassifyType64(src)) {
-        case avx3NegDenorm:
-        case avx3PosDenorm:
-        case avx3NegZero:
-        case avx3PosZero:      RET_DST      (FP64_PLUS_ONE_AS_UINT64 );
-        case avx3NegInfinity:  RET_DST      (FP64_PLUS_ZERO_AS_UINT64);
-        case avx3PosInfinity:  RET_DST      (FP64_PLUS_INF_AS_UINT64 );
-        case avx3QNan:         RET_DST      (iSrc                    );
-        case avx3SNan:         SET_V_RET_DST(FP64_QUIETIZE_NAN(iSrc) );
-        case avx3PosNormal:    if (bExp >= (FP64_EXP_BIAS + 10)) {
-                                   flags |= overflowFlag;
-                                   RET_DST  (FP64_PLUS_INF_AS_UINT64 );
-                               }
-                               break;
-        case avx3NegNormal:    // NOTE: denormal results not supported
-                               if (bExp >= (FP64_EXP_BIAS + 10)) {
-                                   RET_DST  (0 );
-                               }
-                               break;
+  switch (ClassifyType64(src)) {
+  case avx3NegDenorm:
+  case avx3PosDenorm:
+  case avx3NegZero:
+  case avx3PosZero:
+    RET_DST(FP64_PLUS_ONE_AS_UINT64);
+  case avx3NegInfinity:
+    RET_DST(FP64_PLUS_ZERO_AS_UINT64);
+  case avx3PosInfinity:
+    RET_DST(FP64_PLUS_INF_AS_UINT64);
+  case avx3QNan:
+    RET_DST(iSrc);
+  case avx3SNan:
+    SET_V_RET_DST(FP64_QUIETIZE_NAN(iSrc));
+  case avx3PosNormal:
+    if (bExp >= (FP64_EXP_BIAS + 10)) {
+      flags |= overflowFlag;
+      RET_DST(FP64_PLUS_INF_AS_UINT64);
     }
-    // Convert 2^24*src to an integer in round-to-nearest mode
-    src.u = iSrc + (((unsigned long long int) 24) << FP64_EXP_POS);	// src <-- 2^24*src
-    flags = _sCvtdl(&rounded, src);
-    fixed = (uint64_t)rounded << 29;
-    dst->u = 0;
-    scale = (int)SignedBitsShiftRight(fixed, 53);
-    if ((fixed << 11) == 0 && !(flags & inexactFlag)) {
-        // Input was an exact integer, set mantissa result to 1
-        emuRes     = 0x1ull << 63;
-        dst->u |= FP64_PLUS_ONE_AS_UINT64;
-    } else {
-        flags &= ~(unsigned int)inexactFlag;
-        // index = bits(52:47) fract = bits(46:25), total of 28 bits
-        emuRes = Emulation(dst, (fixed >> 25) & 0xfffffff, 0,
-                            _exp223Table);
+    break;
+  case avx3NegNormal: // NOTE: denormal results not supported
+    if (bExp >= (FP64_EXP_BIAS + 10)) {
+      RET_DST(0);
     }
-    // Round the mantissa to single precision
-    roundingIncrement = UINT64_C(1) << 39;
-    if ((emuRes & (roundingIncrement - 1)) == 0) {
-        // 00 --> 0 01 --> 0 10 --> 0 11 --> 1
-        if (((emuRes >> 39) & 0x3) != 3) {
-            roundingIncrement = 0;
-        }
+    break;
+  }
+  // Convert 2^24*src to an integer in round-to-nearest mode
+  src.u =
+      iSrc + (((unsigned long long int)24) << FP64_EXP_POS); // src <-- 2^24*src
+  flags = _sCvtdl(&rounded, src);
+  fixed = (uint64_t)rounded << 29;
+  dst->u = 0;
+  scale = (int)SignedBitsShiftRight(fixed, 53);
+  if ((fixed << 11) == 0 && !(flags & inexactFlag)) {
+    // Input was an exact integer, set mantissa result to 1
+    emuRes = 0x1ull << 63;
+    dst->u |= FP64_PLUS_ONE_AS_UINT64;
+  } else {
+    flags &= ~(unsigned int)inexactFlag;
+    // index = bits(52:47) fract = bits(46:25), total of 28 bits
+    emuRes = Emulation(dst, (fixed >> 25) & 0xfffffff, 0, _exp223Table);
+  }
+  // Round the mantissa to single precision
+  roundingIncrement = UINT64_C(1) << 39;
+  if ((emuRes & (roundingIncrement - 1)) == 0) {
+    // 00 --> 0 01 --> 0 10 --> 0 11 --> 1
+    if (((emuRes >> 39) & 0x3) != 3) {
+      roundingIncrement = 0;
     }
-    emuRes = (emuRes + roundingIncrement) & ~UINT64_C(0xffffffffff);
-    if (emuRes == 0) {
-        emuRes = 0x1ull << 63;
-        scale++;
-    }
-    return EmulationFinishd (dst, emuRes, scale, flags);
+  }
+  emuRes = (emuRes + roundingIncrement) & ~UINT64_C(0xffffffffff);
+  if (emuRes == 0) {
+    emuRes = 0x1ull << 63;
+    scale++;
+  }
+  return EmulationFinishd(dst, emuRes, scale, flags);
 }
 
 uint32_t neverd_x86_rcp28_f32(uint32_t source, uint32_t *flags) {

@@ -7,8 +7,8 @@
 /// \file
 /// Register-id mapping and `cs_insn` / `cs_aarch64_op` population helpers
 /// shared by every instruction class of the Capstone-free AArch64 operand
-/// decoder.  Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this
-/// header; it documents the correctness contract these helpers implement.
+/// decoder.  Include neverd/decode/AArch64/AArch64NativeDecode.h instead of
+/// this header; it documents the correctness contract these helpers implement.
 ///
 //===----------------------------------------------------------------------===//
 

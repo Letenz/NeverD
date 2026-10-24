@@ -24,16 +24,14 @@ struct FloatFormat {
 
 FloatFormat formatForSize(uint16_t Size) {
   if (Size == 4)
-    return {UINT64_C(0x80000000), UINT64_C(0x7f800000),
-            UINT64_C(0x007fffff), UINT64_C(0x00400000),
-            UINT64_C(0xffc00000)};
+    return {UINT64_C(0x80000000), UINT64_C(0x7f800000), UINT64_C(0x007fffff),
+            UINT64_C(0x00400000), UINT64_C(0xffc00000)};
   return {UINT64_C(0x8000000000000000), UINT64_C(0x7ff0000000000000),
           UINT64_C(0x000fffffffffffff), UINT64_C(0x0008000000000000),
           UINT64_C(0xfff8000000000000)};
 }
 
-uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset,
-                  uint16_t Size) {
+uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset, uint16_t Size) {
   uint64_t Value = 0;
   std::memcpy(&Value, Bytes.data() + Offset, Size);
   return Value;
@@ -89,12 +87,11 @@ bool hasUnmaskedException(uint32_t MXCSR, uint32_t Raised) {
 int floorScaleExponent(uint64_t Bits, uint16_t ElementSize,
                        const llvm::fltSemantics &Semantics,
                        const FloatFormat &Format) {
-  const llvm::APFloat Value(Semantics,
-                            llvm::APInt(ElementSize * 8, Bits));
+  const llvm::APFloat Value(Semantics, llvm::APInt(ElementSize * 8, Bits));
   llvm::APSInt Integer(32, false);
   bool Exact = false;
-  const llvm::APFloat::opStatus Status = Value.convertToInteger(
-      Integer, llvm::APFloat::rmTowardNegative, &Exact);
+  const llvm::APFloat::opStatus Status =
+      Value.convertToInteger(Integer, llvm::APFloat::rmTowardNegative, &Exact);
   if ((static_cast<unsigned>(Status) & llvm::APFloat::opInvalidOp) != 0)
     return (Bits & Format.Sign) != 0 ? -32768 : 32768;
   return static_cast<int>(Integer.getSExtValue());
@@ -128,8 +125,7 @@ bool NdOpEmulator::executeX86FPScale(const LowOp &Op) {
   const uint64_t ActiveMask = readOperand(Op.Inputs[4]);
   const std::vector<uint8_t> LeftBytes = readOperandBytes(Op.Inputs[2]);
   const std::vector<uint8_t> RightBytes = readOperandBytes(Op.Inputs[3]);
-  if (LeftBytes.size() != Op.Output.Size ||
-      RightBytes.size() != Op.Output.Size)
+  if (LeftBytes.size() != Op.Output.Size || RightBytes.size() != Op.Output.Size)
     return false;
 
   constexpr uint32_t Invalid = 1U << 0;
@@ -142,8 +138,7 @@ bool NdOpEmulator::executeX86FPScale(const LowOp &Op) {
       IsF64 ? llvm::APFloat::IEEEdouble() : llvm::APFloat::IEEEsingle();
   const llvm::APFloat::roundingMode APFRounding = roundingMode(Rounding, MXCSR);
   const bool DAZ = (MXCSR & (1U << 6)) != 0;
-  const bool UnderflowMasked =
-      SuppressExceptions || (MXCSR & (1U << 11)) != 0;
+  const bool UnderflowMasked = SuppressExceptions || (MXCSR & (1U << 11)) != 0;
   const bool FTZ = (MXCSR & (1U << 15)) != 0;
 
   std::vector<uint8_t> Result(Op.Output.Size, 0);
@@ -197,8 +192,7 @@ bool NdOpEmulator::executeX86FPScale(const LowOp &Op) {
     const bool LeftZero = isZero(Left, Format);
     if (isInfinity(Right, Format)) {
       const bool NegativeScale = (Right & Format.Sign) != 0;
-      if ((!NegativeScale && LeftZero) ||
-          (NegativeScale && LeftInfinity)) {
+      if ((!NegativeScale && LeftZero) || (NegativeScale && LeftInfinity)) {
         PreRaised |= Invalid;
         writeLane(Result, Offset, ElementSize, Format.Indefinite);
       } else if (NegativeScale) {
@@ -206,8 +200,7 @@ bool NdOpEmulator::executeX86FPScale(const LowOp &Op) {
                   LeftZero ? Left : Left & Format.Sign);
       } else {
         writeLane(Result, Offset, ElementSize,
-                  LeftInfinity ? Left
-                               : (Left & Format.Sign) | Format.Exponent);
+                  LeftInfinity ? Left : (Left & Format.Sign) | Format.Exponent);
       }
       continue;
     }
@@ -230,8 +223,8 @@ bool NdOpEmulator::executeX86FPScale(const LowOp &Op) {
   for (unsigned Lane = 0; Lane < LaneCount; ++Lane) {
     if (!NeedsScale[Lane])
       continue;
-    const int Scale = floorScaleExponent(RightValues[Lane], ElementSize,
-                                         Semantics, Format);
+    const int Scale =
+        floorScaleExponent(RightValues[Lane], ElementSize, Semantics, Format);
     const llvm::APFloat Original(
         Semantics, llvm::APInt(ElementSize * 8, LeftValues[Lane]));
     llvm::APFloat Scaled = llvm::scalbn(Original, Scale, APFRounding);
@@ -239,8 +232,8 @@ bool NdOpEmulator::executeX86FPScale(const LowOp &Op) {
     uint32_t Raised = 0;
     bool Exact = false;
     if (!isInfinity(Bits, Format)) {
-      const llvm::APFloat Reversed = llvm::scalbn(
-          Scaled, -Scale, llvm::APFloat::rmNearestTiesToEven);
+      const llvm::APFloat Reversed =
+          llvm::scalbn(Scaled, -Scale, llvm::APFloat::rmNearestTiesToEven);
       Exact = Reversed.bitcastToAPInt().getZExtValue() == LeftValues[Lane];
     }
     if (!Exact) {

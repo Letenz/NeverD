@@ -8,9 +8,9 @@
 /// Operand decode of the AArch64 add/subtract classes (immediate, shifted
 /// register and extended register) together with the CMP/CMN/NEG/MOV aliases
 /// Capstone renders for them.  Every entry point here is reached from
-/// tryDecode in neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the class
-/// masks; each function assumes its class mask has already matched and returns
-/// true when \p Insn is fully populated, false to decline to Capstone.
+/// tryDecode in neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the
+/// class masks; each function assumes its class mask has already matched and
+/// returns true when \p Insn is fully populated, false to decline to Capstone.
 /// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
 ///
 //===----------------------------------------------------------------------===//

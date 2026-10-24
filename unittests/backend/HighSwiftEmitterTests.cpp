@@ -304,8 +304,8 @@ TEST(HighSwiftEmitter, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper) {
       ASSERT_TRUE(E.Recovered) << E.Reason;
       const std::string Definition =
           "static func " + x86FPScalarConvertMnemonic(Control & ~8u) +
-          "_source" + std::to_string(x86FPScalarConvertSourceBytes(Control) * 8) +
-          "(";
+          "_source" +
+          std::to_string(x86FPScalarConvertSourceBytes(Control) * 8) + "(";
       const auto First = E.MemberSource.find(Definition);
       ASSERT_NE(First, std::string::npos);
       EXPECT_EQ(E.MemberSource.find(Definition, First + 1), std::string::npos);

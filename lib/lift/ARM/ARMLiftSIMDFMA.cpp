@@ -52,7 +52,7 @@ bool liftSIMDFMA(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
       for (unsigned I = 0; I < NLanes; ++I) {
         unsigned Off = I * LaneSz;
         NdVar La = S.makeTemp(LaneSz), Lb = S.makeTemp(LaneSz),
-                Ld = S.makeTemp(LaneSz);
+              Ld = S.makeTemp(LaneSz);
         S.emit(NdOp::SUBBYTES, La, {A, NdVar::cst(Off, 4)});
         S.emit(NdOp::SUBBYTES, Lb, {B, NdVar::cst(Off, 4)});
         S.emit(NdOp::SUBBYTES, Ld, {Old, NdVar::cst(Off, 4)});

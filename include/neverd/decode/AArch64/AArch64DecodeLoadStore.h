@@ -9,10 +9,11 @@
 /// the scaled unsigned-offset form, the register-offset and unscaled /
 /// pre-index / post-index imm9 forms, and load/store pair — each in both the
 /// integer and the FP/SIMD (V==1) flavour.  Every entry point here is reached
-/// from tryDecode in neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the
-/// class masks; each function assumes its class mask has already matched and
-/// returns true when \p Insn is fully populated, false to decline to Capstone.
-/// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
+/// from tryDecode in neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns
+/// the class masks; each function assumes its class mask has already matched
+/// and returns true when \p Insn is fully populated, false to decline to
+/// Capstone. Include neverd/decode/AArch64/AArch64NativeDecode.h instead of
+/// this header.
 ///
 //===----------------------------------------------------------------------===//
 

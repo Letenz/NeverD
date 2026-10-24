@@ -21,7 +21,7 @@
 namespace llvm {
 class CallBase;
 class CallInst;
-}
+} // namespace llvm
 
 namespace neverd {
 struct HighExpr;

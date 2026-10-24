@@ -7,8 +7,8 @@
 /// Emit a private prepared leaf with an exact host C interface and helper ABI.
 //===----------------------------------------------------------------------===//
 
-#include "neverd/backend/X86/PortableX87EmissionTarget.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/X86/PortableX87EmissionTarget.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/X86/X87PortableABI.h"
 #include "neverd/ir/med/IntrinsicShapes.h"

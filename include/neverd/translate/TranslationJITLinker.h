@@ -17,8 +17,8 @@
 #include "neverd/translate/RuntimeGuestState.h"
 #include "neverd/translate/RuntimeHelpers.h"
 #include "neverd/translate/RuntimeSymbolRegistry.h"
-#include "neverd/translate/X86/RuntimeX87GuestState.h"
 #include "neverd/translate/TranslationObjectCompiler.h"
+#include "neverd/translate/X86/RuntimeX87GuestState.h"
 
 #include "llvm/Support/Error.h"
 

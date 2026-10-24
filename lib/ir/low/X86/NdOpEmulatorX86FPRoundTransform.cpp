@@ -21,14 +21,12 @@ struct FloatFormat {
 
 FloatFormat formatForSize(uint16_t Size) {
   if (Size == 4)
-    return {UINT64_C(0x80000000), UINT64_C(0x7f800000),
-            UINT64_C(0x007fffff)};
+    return {UINT64_C(0x80000000), UINT64_C(0x7f800000), UINT64_C(0x007fffff)};
   return {UINT64_C(0x8000000000000000), UINT64_C(0x7ff0000000000000),
           UINT64_C(0x000fffffffffffff)};
 }
 
-uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset,
-                  uint16_t Size) {
+uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset, uint16_t Size) {
   uint64_t Value = 0;
   std::memcpy(&Value, Bytes.data() + Offset, Size);
   return Value;
@@ -45,8 +43,8 @@ bool isDenormal(uint64_t Bits, const FloatFormat &Format) {
 
 llvm::APFloat::roundingMode immediateRoundingMode(uint8_t Immediate,
                                                   uint32_t MXCSR) {
-  const unsigned Mode = (Immediate & 4U) ? ((MXCSR >> 13) & 3U)
-                                         : (Immediate & 3U);
+  const unsigned Mode =
+      (Immediate & 4U) ? ((MXCSR >> 13) & 3U) : (Immediate & 3U);
   switch (Mode) {
   case 1:
     return llvm::APFloat::rmTowardNegative;
@@ -61,8 +59,8 @@ llvm::APFloat::roundingMode immediateRoundingMode(uint8_t Immediate,
 
 bool collectStatus(llvm::APFloat::opStatus Status, uint32_t &Raised) {
   const unsigned Raw = static_cast<unsigned>(Status);
-  const unsigned Supported = llvm::APFloat::opInvalidOp |
-                             llvm::APFloat::opInexact;
+  const unsigned Supported =
+      llvm::APFloat::opInvalidOp | llvm::APFloat::opInexact;
   if ((Raw & ~Supported) != 0)
     return false;
   if ((Raw & llvm::APFloat::opInvalidOp) != 0)
@@ -82,8 +80,8 @@ bool hasUnmaskedException(uint32_t MXCSR, uint32_t Raised) {
 /// point is therefore returned directly; every remaining value can safely be
 /// scaled in its native APFloat format without artificial overflow.
 bool roundAtScale(const llvm::APFloat &Input, unsigned Scale,
-                  llvm::APFloat::roundingMode Rounding,
-                  llvm::APFloat &Rounded, uint32_t &Raised) {
+                  llvm::APFloat::roundingMode Rounding, llvm::APFloat &Rounded,
+                  uint32_t &Raised) {
   Rounded = Input;
   if (Input.isFiniteNonZero() &&
       llvm::ilogb(Input) + static_cast<int>(Scale) + 1 >=
@@ -160,8 +158,7 @@ bool NdOpEmulator::executeX86FPRoundTransform(const LowOp &Op) {
     if (DAZ && isDenormal(Bits, Format))
       Bits &= Format.Sign;
 
-    const llvm::APFloat Input(Semantics,
-                              llvm::APInt(ElementSize * 8, Bits));
+    const llvm::APFloat Input(Semantics, llvm::APInt(ElementSize * 8, Bits));
     llvm::APFloat Rounded = Input;
     if (!roundAtScale(Input, Scale, Rounding, Rounded, Raised))
       return false;

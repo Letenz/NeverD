@@ -9,10 +9,10 @@
 /// bits[30:24]==0b0011110 / bit21==1 encoding space: FMOV (register, general
 /// GPR<->FP, 8-bit immediate), the 1-source FABS/FNEG/FSQRT and FCVT, the
 /// 2-source arithmetic forms, and FCMP/FCMPE.  Reached from tryDecode in
-/// neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the class mask; the
-/// function assumes the mask has already matched and returns true when \p Insn
-/// is fully populated, false to decline to Capstone.
-/// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
+/// neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the class mask;
+/// the function assumes the mask has already matched and returns true when \p
+/// Insn is fully populated, false to decline to Capstone. Include
+/// neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
 ///
 //===----------------------------------------------------------------------===//
 

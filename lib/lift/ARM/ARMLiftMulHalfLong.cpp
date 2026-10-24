@@ -1,4 +1,5 @@
-//===- ARMLiftMulHalfLong.cpp - ARM32 long halfword multiply-accumulate lifter ---===//
+//===- ARMLiftMulHalfLong.cpp - ARM32 long halfword multiply-accumulate lifter
+//---===//
 //
 // NeverD Decompiler
 //

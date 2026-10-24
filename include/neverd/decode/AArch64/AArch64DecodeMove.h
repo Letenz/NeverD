@@ -8,8 +8,9 @@
 /// Operand decode of the AArch64 constant-materialization classes: the
 /// PC-relative address forms (ADR/ADRP) and the 16-bit wide-immediate moves
 /// (MOVZ/MOVN/MOVK).  Every entry point here is reached from tryDecode in
-/// neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the class masks; each
-/// function assumes its class mask has already matched and returns true when
+/// neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns the class masks;
+/// each function assumes its class mask has already matched and returns true
+/// when
 /// \p Insn is fully populated, false to decline to Capstone.
 /// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
 ///

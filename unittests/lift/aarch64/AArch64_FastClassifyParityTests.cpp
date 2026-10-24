@@ -6,8 +6,8 @@
 ///
 /// \file
 /// Differential test: the Capstone-free fixed-width classifiers in
-/// neverd/decode/AArch64/AArch64FastClassify.h must agree, bit-for-bit, with a full
-/// Capstone decode of the same 32-bit word.  Capstone is the oracle.
+/// neverd/decode/AArch64/AArch64FastClassify.h must agree, bit-for-bit, with a
+/// full Capstone decode of the same 32-bit word.  Capstone is the oracle.
 ///
 /// This is a *correctness* test, so its result is independent of machine load
 /// (unlike the throughput numbers the decode benchmark reports).  It exercises

@@ -21,7 +21,7 @@
 namespace llvm {
 class CallInst;
 class Function;
-}
+} // namespace llvm
 namespace neverd {
 std::string renderX86AmxExpression(Arch A, const HighExpr &E,
                                    const std::vector<std::string> &Arguments,

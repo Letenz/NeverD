@@ -28,8 +28,7 @@ bool ARMLifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_arm &ARM) {
   return liftCoreMove(*this, S, Insn, ARM) ||
          liftCoreArith(*this, S, Insn, ARM) ||
          liftCoreLogic(*this, S, Insn, ARM) ||
-         liftCoreShift(*this, S, Insn, ARM) ||
-         liftCoreBit(*this, S, Insn, ARM);
+         liftCoreShift(*this, S, Insn, ARM) || liftCoreBit(*this, S, Insn, ARM);
 }
 
 } // namespace neverd

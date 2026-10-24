@@ -4265,7 +4265,8 @@ TEST(RegistrationTryLevel,
       Text.Flags = Text.Flags | SegmentFlags::Writable;
       break;
     case 6:
-      Image.Sections[0].Flags = Image.Sections[0].Flags | SegmentFlags::Writable;
+      Image.Sections[0].Flags =
+          Image.Sections[0].Flags | SegmentFlags::Writable;
       break;
     case 7:
       Text.Data.pop_back();

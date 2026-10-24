@@ -8,11 +8,11 @@
 /// Operand decode of the AArch64 control-flow and system classes: the
 /// canonical HINT #0 (NOP), the PC-relative and register branches
 /// (B/BL/B.cond/CBZ/CBNZ/TBZ/TBNZ/RET/BR/BLR) and BRK.  Reached from tryDecode
-/// in neverd/decode/AArch64/AArch64DecodeDispatch.h; decodeHintNop assumes its class
-/// mask has already matched, while decodeControlFlow is the final dispatch
-/// step and carries its own per-form masks, returning false when the word
-/// belongs to no covered class at all.
-/// Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
+/// in neverd/decode/AArch64/AArch64DecodeDispatch.h; decodeHintNop assumes its
+/// class mask has already matched, while decodeControlFlow is the final
+/// dispatch step and carries its own per-form masks, returning false when the
+/// word belongs to no covered class at all. Include
+/// neverd/decode/AArch64/AArch64NativeDecode.h instead of this header.
 ///
 //===----------------------------------------------------------------------===//
 

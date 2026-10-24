@@ -71,8 +71,8 @@ MedVar LowToMedConverter::spliceX86Subregister(const MedVar &Wide,
 
   uint16_t HighOffset = static_cast<uint16_t>(ByteOffset + Narrow.Size);
   if (HighOffset < Wide.Size) {
-    MedVar High = slice(HighOffset,
-                        static_cast<uint16_t>(Wide.Size - HighOffset));
+    MedVar High =
+        slice(HighOffset, static_cast<uint16_t>(Wide.Size - HighOffset));
     MedVar Combined;
     Combined.Kind = MedVar::Temp;
     Combined.Id = allocVarId();

@@ -22,14 +22,13 @@ struct FloatFormat {
 
 FloatFormat formatForSize(uint16_t Size) {
   if (Size == 4)
-    return {UINT64_C(0x80000000), UINT64_C(0x7f800000),
-            UINT64_C(0x007fffff), UINT64_C(0x00400000)};
+    return {UINT64_C(0x80000000), UINT64_C(0x7f800000), UINT64_C(0x007fffff),
+            UINT64_C(0x00400000)};
   return {UINT64_C(0x8000000000000000), UINT64_C(0x7ff0000000000000),
           UINT64_C(0x000fffffffffffff), UINT64_C(0x0008000000000000)};
 }
 
-uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset,
-                  uint16_t Size) {
+uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset, uint16_t Size) {
   uint64_t Value = 0;
   std::memcpy(&Value, Bytes.data() + Offset, Size);
   return Value;
@@ -115,21 +114,19 @@ uint64_t rangeLane(uint64_t LeftBits, uint64_t RightBits, uint8_t Immediate,
                      ? ((Left & Format.Sign) != 0 ? Left : Right)
                      : ((Left & Format.Sign) == 0 ? Left : Right);
     } else if (CompareControl < 2) {
-      const llvm::APFloat LeftValue(
-          Semantics, llvm::APInt(ElementSize * 8, Left));
-      const llvm::APFloat RightValue(
-          Semantics, llvm::APInt(ElementSize * 8, Right));
-      const llvm::APFloat::cmpResult Comparison =
-          LeftValue.compare(RightValue);
+      const llvm::APFloat LeftValue(Semantics,
+                                    llvm::APInt(ElementSize * 8, Left));
+      const llvm::APFloat RightValue(Semantics,
+                                     llvm::APInt(ElementSize * 8, Right));
+      const llvm::APFloat::cmpResult Comparison = LeftValue.compare(RightValue);
       const bool LessOrEqual = Comparison == llvm::APFloat::cmpLessThan ||
                                Comparison == llvm::APFloat::cmpEqual;
       Selected = CompareControl == 0 ? (LessOrEqual ? Left : Right)
                                      : (LessOrEqual ? Right : Left);
     } else {
       const bool MagnitudeLessOrEqual = LeftMagnitude <= RightMagnitude;
-      Selected = CompareControl == 2
-                     ? (MagnitudeLessOrEqual ? Left : Right)
-                     : (MagnitudeLessOrEqual ? Right : Left);
+      Selected = CompareControl == 2 ? (MagnitudeLessOrEqual ? Left : Right)
+                                     : (MagnitudeLessOrEqual ? Right : Left);
     }
   }
 
@@ -187,10 +184,10 @@ bool NdOpEmulator::executeX86FPRange(const LowOp &Op) {
     if (((ActiveMask >> Lane) & 1U) == 0)
       continue;
     const size_t Offset = static_cast<size_t>(Lane) * ElementSize;
-    const uint64_t LaneResult = rangeLane(
-        readLane(Left, Offset, ElementSize),
-        readLane(Right, Offset, ElementSize), Immediate, ElementSize, Format,
-        Semantics, DAZ, Raised);
+    const uint64_t LaneResult =
+        rangeLane(readLane(Left, Offset, ElementSize),
+                  readLane(Right, Offset, ElementSize), Immediate, ElementSize,
+                  Format, Semantics, DAZ, Raised);
     writeLane(Result, Offset, ElementSize, LaneResult);
   }
 

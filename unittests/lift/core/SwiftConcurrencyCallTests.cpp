@@ -82,11 +82,9 @@ TEST(ObjCCallHints, SwiftMainActorSharedKeepsObjectAndMetatypeContext) {
     for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
       auto Wrong = Image;
       if (Mutation == 0)
-        Wrong.DyldBindSlots[Slot].Module =
-            "/tmp/libswift_Concurrency.dylib";
+        Wrong.DyldBindSlots[Slot].Module = "/tmp/libswift_Concurrency.dylib";
       if (Mutation == 1)
-        Wrong.DyldBindSlots[Slot].Module =
-            "/usr/lib/swift/libswiftCore.dylib";
+        Wrong.DyldBindSlots[Slot].Module = "/usr/lib/swift/libswiftCore.dylib";
       if (Mutation == 2)
         Wrong.DyldBindSlots[Slot].WeakImport = true;
       if (Mutation == 3)

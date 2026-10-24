@@ -384,8 +384,8 @@ MedFunc makeMedDivPreconditionWithParameterDivisor() {
   Divisor.Size = 4;
   Divisor.RegOff = kNoParamReg;
   Op.addInput(Divisor);
-  Op.addInput(MedVar::makeConst(
-      static_cast<uint64_t>(X86DivKind::Unsigned), 1));
+  Op.addInput(
+      MedVar::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned), 1));
 
   MedBlock Block;
   Block.Id = 0;
@@ -790,17 +790,15 @@ TEST(X86APXAtomic, IRBoundariesRejectMalformedAtomicContracts) {
 }
 
 TEST(X86APXAtomic, LowToMedRejectsMalformedOrNonX64AtomicContracts) {
-  const LowFunc Valid = makeSingleInstructionFunction(
-      makeCmpIntrinsic(8, 0x4800, 3, 7, 5));
-  EXPECT_NO_FATAL_FAILURE(
-      (void)LowToMedConverter().convert(Valid, Arch::X64));
+  const LowFunc Valid =
+      makeSingleInstructionFunction(makeCmpIntrinsic(8, 0x4800, 3, 7, 5));
+  EXPECT_NO_FATAL_FAILURE((void)LowToMedConverter().convert(Valid, Arch::X64));
 
   LowFunc BadCondition = Valid;
   BadCondition.Blocks.front().Ops.front().Inputs[4] = NdVar::cst(16, 1);
   const LowOp &BadConditionOp = BadCondition.Blocks.front().Ops.front();
   EXPECT_FALSE(intrinsicApxAtomicShapeIsValid(
-      Intrinsic::ApxCmpccXadd,
-      apxAtomicLowShape(BadConditionOp, Arch::X64)));
+      Intrinsic::ApxCmpccXadd, apxAtomicLowShape(BadConditionOp, Arch::X64)));
   const LowOp &ValidOp = Valid.Blocks.front().Ops.front();
   EXPECT_FALSE(intrinsicApxAtomicShapeIsValid(
       Intrinsic::ApxCmpccXadd, apxAtomicLowShape(ValidOp, Arch::X86)));
@@ -811,8 +809,7 @@ TEST(X86APXAtomic, MedVerifierRejectsMalformedAtomicContracts) {
   EXPECT_TRUE(verifyMedFunc(Valid, "valid-apx-atomic"));
 
   MedFunc BadCondition = Valid;
-  BadCondition.Blocks.front().Ops.front().Inputs[4] =
-      MedVar::makeConst(16, 1);
+  BadCondition.Blocks.front().Ops.front().Inputs[4] = MedVar::makeConst(16, 1);
   EXPECT_FALSE(verifyMedFunc(BadCondition, "bad-apx-condition"));
 
   MedFunc BadOrdering = Valid;
@@ -821,8 +818,7 @@ TEST(X86APXAtomic, MedVerifierRejectsMalformedAtomicContracts) {
   EXPECT_FALSE(verifyMedFunc(BadOrdering, "bad-apx-ordering"));
 
   MedFunc ConstantOutput = Valid;
-  ConstantOutput.Blocks.front().Ops.front().Output =
-      MedVar::makeConst(0, 8);
+  ConstantOutput.Blocks.front().Ops.front().Output = MedVar::makeConst(0, 8);
   EXPECT_FALSE(verifyMedFunc(ConstantOutput, "bad-apx-output-kind"));
 
   MedFunc NonX64 = Valid;

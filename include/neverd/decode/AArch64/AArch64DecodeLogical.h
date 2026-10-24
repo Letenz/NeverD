@@ -9,11 +9,11 @@
 /// shifted-register and logical immediate (with the MOV/MVN/TST aliases),
 /// EXTR/ROR, and the bitfield moves SBFM/BFM/UBFM with the full set of
 /// preferred aliases Capstone renders for them.  Every entry point here is
-/// reached from tryDecode in neverd/decode/AArch64/AArch64DecodeDispatch.h, which owns
-/// the class masks; each function assumes its class mask has already matched
-/// and returns true when \p Insn is fully populated, false to decline to
-/// Capstone.  Include neverd/decode/AArch64/AArch64NativeDecode.h instead of this
-/// header.
+/// reached from tryDecode in neverd/decode/AArch64/AArch64DecodeDispatch.h,
+/// which owns the class masks; each function assumes its class mask has already
+/// matched and returns true when \p Insn is fully populated, false to decline
+/// to Capstone.  Include neverd/decode/AArch64/AArch64NativeDecode.h instead of
+/// this header.
 ///
 //===----------------------------------------------------------------------===//
 

@@ -25,8 +25,8 @@
 
 namespace neverd {
 
-bool liftCoreExtExtend(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
-                       const cs_arm &ARM) {
+bool liftCoreExtExtend(ARMLifter &L, ARMLifter::LiftState &S,
+                       const cs_insn *Insn, const cs_arm &ARM) {
   switch (Insn->id) {
   // SXTAB: Rd = Rn + SignExtend(Byte(Rm)); SXTAH: Rd = Rn +
   // SignExtend(Half(Rm))

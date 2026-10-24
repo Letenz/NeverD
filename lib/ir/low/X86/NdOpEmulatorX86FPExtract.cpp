@@ -27,16 +27,25 @@ struct FloatFormat {
 
 FloatFormat formatForSize(uint16_t Size) {
   if (Size == 4)
-    return {UINT64_C(0x80000000), UINT64_C(0x7f800000),
-            UINT64_C(0x007fffff), UINT64_C(0x00400000),
-            UINT64_C(0xffc00000), 23, 127, 0xff};
-  return {UINT64_C(0x8000000000000000), UINT64_C(0x7ff0000000000000),
-          UINT64_C(0x000fffffffffffff), UINT64_C(0x0008000000000000),
-          UINT64_C(0xfff8000000000000), 52, 1023, 0x7ff};
+    return {UINT64_C(0x80000000),
+            UINT64_C(0x7f800000),
+            UINT64_C(0x007fffff),
+            UINT64_C(0x00400000),
+            UINT64_C(0xffc00000),
+            23,
+            127,
+            0xff};
+  return {UINT64_C(0x8000000000000000),
+          UINT64_C(0x7ff0000000000000),
+          UINT64_C(0x000fffffffffffff),
+          UINT64_C(0x0008000000000000),
+          UINT64_C(0xfff8000000000000),
+          52,
+          1023,
+          0x7ff};
 }
 
-uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset,
-                  uint16_t Size) {
+uint64_t readLane(llvm::ArrayRef<uint8_t> Bytes, size_t Offset, uint16_t Size) {
   uint64_t Value = 0;
   std::memcpy(&Value, Bytes.data() + Offset, Size);
   return Value;
@@ -82,8 +91,7 @@ uint64_t extractExponent(uint64_t Bits, uint16_t ElementSize,
     if (Fraction == 0 || DAZ)
       return Format.Sign | Format.Exponent;
     Raised |= 1U << 1;
-    const int HighestBit =
-        static_cast<int>(std::bit_width(Fraction)) - 1;
+    const int HighestBit = static_cast<int>(std::bit_width(Fraction)) - 1;
     const int Unbiased = HighestBit + 1 -
                          static_cast<int>(Format.ExponentBias) -
                          static_cast<int>(Format.FractionBits);
@@ -113,16 +121,14 @@ uint64_t extractMantissa(uint64_t Bits, uint8_t Immediate,
   }
   if (RawExponent == 0 && Fraction == 0)
     return DestinationSign |
-           (static_cast<uint64_t>(Format.ExponentBias)
-            << Format.FractionBits);
+           (static_cast<uint64_t>(Format.ExponentBias) << Format.FractionBits);
   if (RawExponent == Format.MaximumRawExponent) {
     if (Negative && (SignControl & 2U) != 0) {
       Raised |= 1U << 0;
       return Format.Indefinite;
     }
     return DestinationSign |
-           (static_cast<uint64_t>(Format.ExponentBias)
-            << Format.FractionBits);
+           (static_cast<uint64_t>(Format.ExponentBias) << Format.FractionBits);
   }
   if (Negative && (SignControl & 2U) != 0) {
     Raised |= 1U << 0;
@@ -213,8 +219,7 @@ bool NdOpEmulator::executeX86FPExtract(const LowOp &Op) {
     const uint64_t Bits = readLane(Source, Offset, ElementSize);
     const uint64_t Extracted =
         Kind == X86FPExtractKind::Exponent
-            ? extractExponent(Bits, ElementSize, Format, Semantics, DAZ,
-                              Raised)
+            ? extractExponent(Bits, ElementSize, Format, Semantics, DAZ, Raised)
             : extractMantissa(Bits, Immediate, Format, DAZ, Raised);
     writeLane(Result, Offset, ElementSize, Extracted);
   }
