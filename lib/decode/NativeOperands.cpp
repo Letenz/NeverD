@@ -36,6 +36,8 @@ void addImmediate(NativeOperands &Result, unsigned Index, int64_t Value,
 NativeOperands describeNativeOperands(const Decoder &D, const DecodedInsn &I,
                                       Arch A, bool IncludeRegisters) {
   NativeOperands Result;
+  if (A == Arch::AArch64 && !D.hasAArch64OperandDetail(I))
+    return Result;
   if (!I.Raw || !I.Raw->detail)
     return Result;
   switch (A) {

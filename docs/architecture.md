@@ -151,7 +151,20 @@ The Mach-O loader retains the CPU subtype, including its ABI capability bits,
 and identifies arm64e and arm64e.x1 separately from ordinary arm64. The shared
 subtype table also gates source replacement and plain Objective-C object
 reconstruction; x1 cannot bypass authenticated-ABI requirements. All use
-the AArch64 decoder. `AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
+the AArch64 decoder.
+
+`AArch64DecodeContract` separates raw occurrence identity from operand detail.
+The decoder records the original word, producer identity and buffer generation;
+classification-only results cannot reuse old operands. Native fast decoding
+can supply complete detail with text disabled, while the Capstone fallback
+cannot. Every decode attempt, reset and successful reinitialization expires
+borrowed records, including copies at the same PC and word. An owned snapshot
+must copy both the instruction and its detail and retain the occurrence fields.
+Lifting and operand queries share that admission contract. Raw classification
+remains available without detail; direct BL targets use the shared encoding
+decoder. MOVPRFX follower evidence belongs to the same occurrence.
+
+`AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
 implicit LR/SP and X17/X16 HINT aliases, and authenticated branch/call/return
 semantics. Authenticated calls read the old operands before overwriting LR.
 `AArch64PAuth.def` owns the instruction inventory, implicit HINT operands,

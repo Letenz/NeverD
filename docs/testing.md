@@ -1716,6 +1716,17 @@ illegal-to-valid transition through full, light and native-fast routes, includin
 direct permissive lifter calls. It also runs the existing independent Capstone
 parity sweeps with poisoned reused-buffer validity state. The SDK case requires
 incomplete DIFF evidence and no invented flow/reference facts for the same bytes.
+`AArch64DecodeOccurrence` in that target covers PAC, authenticated loads and
+transfers, scalar/vector CPA, ordinary arithmetic, calls and NOP. It crosses
+all three decode routes with detail/text settings, cold/reused buffers and both
+strictness settings. Complete native detail without text remains usable;
+classification never publishes stale operands. Tests cover failed attempts,
+reset/reinitialization, reconstructed decoder objects, altered records, direct
+missing-detail calls and copied MOVPRFX records with a changed follower.
+Deep snapshots remain usable across decoder replacement; shallow copies expire.
+Raw classifiers and BL targets still work without detail, while operand queries
+and expired records remain conservative. These are decode/lift lifecycle checks,
+not qualification of native PAC/CPA execution or additional ISA families.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw
