@@ -439,6 +439,11 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.def"
 
+// Append-only: natural-register REP completion.
+#define NEVERD_X86_REP_STATE(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE
+
   _Count = 16000
 };
 

@@ -67,11 +67,22 @@ separate and guarded at native emission. See
 [x86 instruction support](x86-instruction-support.md#architectural-amx-bank-and-native-output)
 for feature distinctions, historical TF32 encoding and qualification limits.
 
+`X86RepState.h` owns the versioned REP input and completion contract. One
+natural-width register tuple, packed arithmetic flags/DF and a constant encoding
+descriptor fit the LowIR operand boundary. LLVM and both C routes retain actual
+hardware register results, including zero-count address-size behavior, instead
+of reconstructing them with pointer arithmetic. `X86RepStateAsm.h` owns the
+older-SDK fallback and native API names. The bounded x64 MOVS/STOS analysis
+accepts only unsegmented 64-bit addresses, proves count/direction, validates all
+auxiliary output bindings and charges the complete scalar expansion.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
-attributes for AMX and SGX. Instruction renderers report their required feature
+attributes for AMX, SGX and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
 use. Separate target attributes would discard one group's requirements in a
-mixed function. Assembly fallbacks do not acquire unavailable compiler features.
+mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP
+comparison completion in long mode requires LAHF/SAHF on both native and
+assembly routes, and its `sahf` attribute survives every capability combination.
 
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 

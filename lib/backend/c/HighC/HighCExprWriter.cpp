@@ -16,6 +16,7 @@
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../render/X86/X86AmxState.h"
+#include "../render/X86/X86RepState.h"
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
 #include "../render/X86/X86Virtualization.h"
@@ -1994,6 +1995,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     return renderX86AmxExpression(Opts.TheArch, E, Arguments, typeToC(E.Type));
   }
+  if (isX86RepStateIntrinsic(E.IntrinsicId))
+    return renderX86RepExpression(
+        Opts.TheArch, E, typeToC(E.Type),
+        [this](const HighExpr &V) { return intrinsicOperandStr(V); },
+        [this](const MedVar &V) { return varName(V); },
+        [this](const MedVar &V) {
+          return !Analysis.DeadVars.count(varName(V));
+        });
   if (isX86SgxIntrinsic(E.IntrinsicId))
     return renderX86SgxExpression(
         Opts.TheArch, E,

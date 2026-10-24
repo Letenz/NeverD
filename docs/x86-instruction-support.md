@@ -1375,3 +1375,76 @@ The AMX hardware test checks normal row data, saved first-row bytes and
 It is explicitly skipped when AMX-TILE is unavailable; this host cannot qualify
 native successful tile computation or fault restart. Concrete tests cover
 integer/floating arithmetic, row conversion, shape checks and partial progress.
+
+
+## Explicit REP completion
+
+The full LLVM fork adds `llvm.x86.rep.{movs,stos,lods,cmps,scas,ins,outs}.state`
+and corresponding `.state32` interfaces. NeverC exposes seven x64
+`__builtin_ia32_rep_<family>_state` builtins and the
+`__NEVERC_X86_REP_STATE__=1` capability macro. The macro selects an API; it does
+not enable a CPU feature. Long-mode comparison completion requires `sahf`.
+The older MOVS/STOS and port-string APIs retain their existing contracts.
+
+The new interfaces take the complete natural-width registers, explicit DF,
+comparison input flags where applicable, and constant element/address/segment
+controls. MOVS returns SI/DI/CX, STOS returns DI/CX, LODS returns SI/CX/AX,
+CMPS returns SI/DI/CX/flags, SCAS returns DI/CX/flags, and INS/OUTS return their
+index and CX. Comparison status packs LAHF's five arithmetic flags in AH and
+OF in bit zero, with mask `0xd501`. Source overrides retain all six segment
+prefixes; string destinations retain architectural ES ownership. LLVM MC may
+omit the redundant DS prefix. The DF window ends with CLD on normal return.
+
+NeverD appends seven intrinsic identities and shares their descriptor and
+operand/output validation across LowIR, MedIR, LLVM, HighC and LLVM-to-C.
+Its LowIR status word stores comparison flags in the low 16 bits and DF in bit
+16. The versioned descriptor owns element width, address width, source segment
+and REPE/REPNE selection. Register inputs are never narrowed in advance.
+In particular, zero-count address-size behavior differs between instruction
+families; deriving pointer and count updates in the lifter loses that state.
+The native instruction also owns memory accesses, partial progress, comparison
+fault flags and restart. Unsegmented 64-bit MOVS/STOS remain available to bounded
+analysis through checked sequential expansion with actual completion outputs.
+
+Qualified fork interfaces replace owned assembly automatically. Older SDKs use
+one shared fallback template; C selects NeverC builtins when the capability
+macro is available. LLVM-to-C validates complete signatures, effects, immediate
+controls and exact owned assembly before admitting either form. REP feature
+requirements merge with AMX and SGX in one function attribute.
+
+The LLVM/NeverC foundation was qualified at `ab93f1c4de34` and `854866585`.
+Each of three x64 routes (LLVM, NeverC and NeverC-to-LLVM) passed 45,152
+memory/flags comparisons, 112 real page-fault restarts and 192 controlled port
+completions. The 32-bit LLVM emulation matrix passed 8,928 memory cases and
+2,304 controlled port cases, including 16-bit addressing. Controlled port
+completion changes the saved context after CPL3 faults; it performs no physical
+port I/O. Emulation does not qualify hardware fault restart.
+
+`NeverDX86RepStateTests` checks decoded controls, natural-width inputs,
+auxiliary outputs, malformed interfaces, pipeline source/object routes and
+combined feature requirements. Its optional `NEVERD_REP_EXPORT_DIR` exports
+both C routes, LLVM IR and production codegen objects for all 296 long-mode
+and 234 i386 forms, plus complete pipeline C fixtures. The pinned SDK uses the
+owned assembly path; the fork SDK uses native intrinsics. Each x64 C or IR
+route passes 45,152 memory/flags comparisons, 112 real fault restarts and 192
+controlled port completions at O0/O2. The C matrix includes Clang, GCC and
+NeverC. Each i386 C or IR route passes 8,928 memory and 2,304 controlled port
+cases in emulation. Production objects pass the same matrix once per SDK
+(22,576/56/96 on x64 and 4,464/1,152 on i386). Wider direction conditions also
+check that normalization occurs before conversion to a builtin's byte input.
+Every owned LLVM assembly unit declares both EFLAGS and DF clobbers in MIR.
+
+Run
+`scripts/verify_x86_rep_state.py --exports <directory> --oracle
+<NeverC>/tests/verify-rep-state.py --route high --compiler <compiler>`
+(and `--route llvm`, `--route ir --llc <llc>`, or `--route object`) to compare
+those exports with the independent raw-byte and sequential oracles. Add
+`--neverc` for NeverC compilation, or `--bits 32` for i386 emulation.
+`--route pipeline` compiles complete HighC and LLVM-to-C functions for ELF,
+COFF and Mach-O at O0/O2, with both pipeline optimization settings, and checks
+that the REP family and address width survive. It needs no target CRT and
+does not execute the fixtures. Both SDK profiles passed all 1,008 pipeline
+object compilations across Clang (32/64-bit) and NeverC (64-bit).
+The script requires Capstone, LIEF and, for
+i386 execution, Unicorn. The LLVM release and production pin remain gated on
+completion of the remaining instruction work above.

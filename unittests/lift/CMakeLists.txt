@@ -685,6 +685,10 @@ add_neverd_unittest(NeverDX86VirtualizationSourceTests
 target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
+add_neverd_unittest(NeverDX86RepStateTests
+  x86_64/X86RepStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
 add_neverd_unittest(NeverDX86SystemSideeffectTests
   x86_64/X86_64_SystemSideeffectTests.cpp
 

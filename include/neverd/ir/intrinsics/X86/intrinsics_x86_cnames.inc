@@ -269,3 +269,8 @@ C(Intrinsic::X86FPMaskCompareMemoryState,
 #include "neverd/ir/intrinsics/X86/X86SystemState.def"
 #undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
+
+#define NEVERD_X86_REP_STATE(Id, Name, ...)                                    \
+  C(Intrinsic::Id, "__builtin_ia32_rep_" Name "_state");
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE
