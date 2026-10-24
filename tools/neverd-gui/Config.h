@@ -52,7 +52,6 @@ inline constexpr int kFocusModeSequenceLength = 3;
 inline constexpr int kFocusSidebarPreferredWidth = 360;
 inline constexpr int kFocusSidebarToggleWidth = 20;
 inline constexpr int kFocusSidebarToggleHeight = 36;
-inline constexpr int kFocusSidebarHeadingMargin = 8;
 inline constexpr int kFocusSidebarBorderWidth = 1;
 
 // tools/neverd-gui/app/QuickStartDialog.cpp

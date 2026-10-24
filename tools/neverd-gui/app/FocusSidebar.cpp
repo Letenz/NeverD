@@ -14,7 +14,6 @@
 
 #include <QApplication>
 #include <QEvent>
-#include <QLabel>
 #include <QPainter>
 #include <QSignalBlocker>
 #include <QToolButton>
@@ -37,9 +36,6 @@ FocusSidebar::FocusSidebar(QWidget &host, QWidget &area, QWidget &content,
   layout->setContentsMargins(config::kFocusSidebarToggleWidth + border, border,
                              border, border);
   layout->setSpacing(0);
-  auto *heading = new QLabel(title, this);
-  heading->setMargin(config::kFocusSidebarHeadingMargin);
-  layout->addWidget(heading);
   layout->addWidget(&content, 1);
   toggle_->setObjectName(QStringLiteral("focusSidebarToggle"));
   toggle_->setAccessibleName(title);

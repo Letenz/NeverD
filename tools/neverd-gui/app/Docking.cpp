@@ -488,16 +488,8 @@ protected:
     QPainter painter(this);
     const auto &theme = Theme::instance();
     painter.fillRect(rect(), theme.chrome("TitleBar"));
-    painter.setPen(theme.chrome(QWidget::window()->isActiveWindow()
-                                    ? "TitleBarText"
-                                    : "TitleBarInactiveText"));
-    const int left = m_dockWidgetIcon->geometry().right() +
-                     ::neverd::limits::gui_config::kTitleBarTitlePadding;
-    const QRect text(left, 0, std::max(0, lock_->x() - left), height());
+    // The tabs identify each pane; keep the floating caption free of text.
     moveArea_->setGeometry(0, 0, lock_->x(), height());
-    painter.drawText(text, Qt::AlignLeft | Qt::AlignVCenter,
-                     fontMetrics().elidedText(titleBar()->title(),
-                                              Qt::ElideRight, text.width()));
   }
 
   void mouseDoubleClickEvent(QMouseEvent *event) override {
