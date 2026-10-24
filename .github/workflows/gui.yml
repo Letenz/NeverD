@@ -138,6 +138,7 @@ jobs:
             closingWorkbenchClosesDetachedWindows \
             codeOpensBesideFloatingDisassembly \
             focusModeGroupsViewsAndRestoresLayout \
+            focusFunctionsSidebarTogglesAndNavigates \
             focusSequenceUsesNativeKeysAndIgnoresTyping \
             fileReviewWindowsOfferWindowControls \
             closedFloatingDocksReopenInWorkbench \

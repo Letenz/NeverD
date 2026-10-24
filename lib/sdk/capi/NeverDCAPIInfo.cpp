@@ -21,6 +21,7 @@
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/InputDigest.h"
 #include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/loader/StringLiteralSymbols.h"
@@ -32,6 +33,7 @@
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/CRC.h"
@@ -44,6 +46,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <utility>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -860,31 +863,38 @@ const char *neverd_entrypoints_json(neverd_session_t Sess) {
   const auto &Img = S->Img;
   const auto &DI = Img.DynInfo;
 
-  llvm::json::Array Arr;
-
-  auto addEntry = [&](const char *Type, neverd::va_t Addr,
-                      const std::string &Name, bool AllowZero = false) {
+  llvm::SmallVector<std::pair<const char *, va_t>> Entries;
+  std::set<va_t> Addrs;
+  const auto AddEntry = [&](const char *Type, va_t Addr,
+                            bool AllowZero = false) {
     if (!Addr && !AllowZero)
       return;
+    Entries.emplace_back(Type, Addr);
+    Addrs.insert(Addr);
+  };
+
+  AddEntry("entry", Img.Entry, hasMainEntryPoint(Img));
+  AddEntry("init", DI.InitAddr);
+  AddEntry("fini", DI.FiniAddr);
+  for (va_t Addr : DI.PreinitArray)
+    AddEntry("preinit_array", Addr);
+  for (va_t Addr : DI.InitArray)
+    AddEntry("init_array", Addr);
+  for (va_t Addr : DI.FiniArray)
+    AddEntry("fini_array", Addr);
+  if (Entries.empty())
+    return dupStr("[]");
+
+  // Resolve names together, while retaining entry kinds, order and repeats.
+  const auto Names = functionNamesAt(Img, Addrs);
+  llvm::json::Array Arr;
+  for (const auto &[Type, Addr] : Entries) {
     llvm::json::Object O;
     O["type"] = Type;
     O["addr"] = vaHex(Addr);
-    O["name"] = jsonSafeText(Name);
+    O["name"] = jsonSafeText(Names.at(Addr));
     Arr.push_back(std::move(O));
-  };
-
-  addEntry("entry", Img.Entry, Img.getFunctionNameAt(Img.Entry),
-           hasMainEntryPoint(Img));
-  addEntry("init", DI.InitAddr, Img.getFunctionNameAt(DI.InitAddr));
-  addEntry("fini", DI.FiniAddr, Img.getFunctionNameAt(DI.FiniAddr));
-
-  for (va_t Addr : DI.PreinitArray)
-    addEntry("preinit_array", Addr, Img.getFunctionNameAt(Addr));
-  for (va_t Addr : DI.InitArray)
-    addEntry("init_array", Addr, Img.getFunctionNameAt(Addr));
-  for (va_t Addr : DI.FiniArray)
-    addEntry("fini_array", Addr, Img.getFunctionNameAt(Addr));
-
+  }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
