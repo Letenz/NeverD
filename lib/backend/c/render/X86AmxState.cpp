@@ -145,36 +145,6 @@ std::string builtin(uint32_t D, unsigned Prefix,
 std::string dispatch(const std::string &Native, const std::string &Fallback) {
   return "NEVERD_X86_AMX(" + Native + ", ({ " + Fallback + " }))";
 }
-std::string preamble(const std::set<std::string> &Features) {
-  if (Features.empty())
-    return {};
-  std::string Text = "#ifndef NEVERD_X86_AMX\n"
-                     "#if defined(__NEVERC_X86_AMX_CONTROLS__) && "
-                     "__NEVERC_X86_AMX_CONTROLS__ >= 1\n"
-                     "#define NEVERD_X86_AMX(native, ...) native\n"
-                     "#define NEVERD_X86_AMX_TARGET(features) "
-                     "__attribute__((target(features)))\n"
-                     "#endif\n"
-                     "#if !defined(NEVERD_X86_AMX) && defined(__has_builtin)\n"
-                     "#if __has_builtin(__builtin_ia32_ldtilecfg_address) && "
-                     "__has_builtin(__builtin_ia32_tilemovrow_reg)\n"
-                     "#define NEVERD_X86_AMX(native, ...) native\n"
-                     "#define NEVERD_X86_AMX_TARGET(features) "
-                     "__attribute__((target(features)))\n"
-                     "#endif\n#endif\n"
-                     "#ifndef NEVERD_X86_AMX\n"
-                     "#define NEVERD_X86_AMX(native, ...) __VA_ARGS__\n"
-                     "#define NEVERD_X86_AMX_TARGET(features)\n"
-                     "#endif\n#endif\nNEVERD_X86_AMX_TARGET(\"";
-  bool First = true;
-  for (const auto &Feature : Features) {
-    if (!First)
-      Text += ',';
-    First = false;
-    Text += Feature;
-  }
-  return Text + "\")\n";
-}
 void addFeatures(std::set<std::string> &Features, uint32_t D) {
   const auto Names = x86AmxNativeFeatures(D);
   llvm::SmallVector<llvm::StringRef, 8> Parts;
@@ -404,7 +374,7 @@ bool isX86AmxNativeRowCall(const llvm::CallInst &Call, Arch A) {
   return A == Arch::X64 && Plan &&
          x86AmxIsRow(x86AmxOperation(Plan->Descriptor));
 }
-std::string x86AmxFunctionPreamble(const HighFunc &Function) {
+std::set<std::string> x86AmxFunctionFeatures(const HighFunc &Function) {
   std::set<std::string> Features;
   std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
     if (!E)
@@ -418,9 +388,9 @@ std::string x86AmxFunctionPreamble(const HighFunc &Function) {
       Visit(Operand);
   };
   walkStmts(Function.Body, [&](const HighStmt &S) { forEachExpr(S, Visit); });
-  return preamble(Features);
+  return Features;
 }
-std::string x86AmxFunctionPreamble(const llvm::Function &Function) {
+std::set<std::string> x86AmxFunctionFeatures(const llvm::Function &Function) {
   std::set<std::string> Features;
   for (const auto &Block : Function)
     for (const auto &Instruction : Block) {
@@ -444,6 +414,6 @@ std::string x86AmxFunctionPreamble(const llvm::Function &Function) {
           x86AmxDescriptorIsValid(D))
         addFeatures(Features, D);
     }
-  return preamble(Features);
+  return Features;
 }
 } // namespace neverd

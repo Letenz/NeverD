@@ -1208,6 +1208,23 @@ far-return encodings; it remains a subset of the 1,662-ID decoder inventory.
 
 ## SGX supervisor and VMM completion
 
+The qualified fork now lowers this shared contract through native
+`llvm.x86.encls{,32}` and `llvm.x86.enclv{,32}`. The full-register intrinsic
+status byte is projected into NeverD's CF/ZF transport without changing the
+lifter's leaf-specific preservation rules. HighC and LLVM-to-C use NeverC's
+matching builtins on x64; old SDKs and other C compilers retain the validated
+assembly path. Native declarations with altered types, code mode, memory
+effects or completion behavior are rejected. Function feature requirements
+are merged with AMX so mixed functions retain both sets of instructions.
+
+Both SDK profiles pass 192 generated-C native IR compilations and 192 object
+compilations for this integration, including mixed SGX/AMX functions, both C
+routes, dead results, three object formats and O0/O2. Controlled sigreturn
+completions compare generated NeverC code against original bytes for full-width
+registers, native CF/ZF and leaf-preserved flags; separate runs retain the
+Clang assembly fallback and linked LLVM object checks. These are compiler
+transport and CPL3-fault checks, not successful privileged enclave execution.
+
 `X86Sgx.h` owns ENCLS/ENCLV's four natural-width GPR inputs, primary rAX
 result and two auxiliary outputs (rBX and a two-byte CF/ZF snapshot).
 `X86SgxLeaves.h` defines which implicit registers each leaf consumes. Unused

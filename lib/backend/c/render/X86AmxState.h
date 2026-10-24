@@ -15,6 +15,7 @@
 #include "neverd/ir/high/HighIR.h"
 
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 namespace llvm {
@@ -31,7 +32,7 @@ renderX86AmxCall(Arch A, const llvm::CallInst &Call,
                  const std::string &Result = {}, bool ResultLive = false,
                  const std::string &Type = "unsigned _BitInt(512)");
 bool isX86AmxNativeRowCall(const llvm::CallInst &Call, Arch A);
-std::string x86AmxFunctionPreamble(const HighFunc &Function);
-std::string x86AmxFunctionPreamble(const llvm::Function &Function);
+std::set<std::string> x86AmxFunctionFeatures(const HighFunc &Function);
+std::set<std::string> x86AmxFunctionFeatures(const llvm::Function &Function);
 } // namespace neverd
 #endif // NEVERD_LIB_BACKEND_C_RENDER_X86AMXSTATE_H

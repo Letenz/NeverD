@@ -48,6 +48,12 @@ separate and guarded at native emission. See
 [x86 instruction support](x86-instruction-support.md#architectural-amx-bank-and-native-output)
 for feature distinctions, historical TF32 encoding and qualification limits.
 
+`X86NativeFeatures` owns C compiler capability selection and function target
+attributes for AMX and SGX. Instruction renderers report their required feature
+sets; the function writer emits one combined attribute for the native APIs in
+use. Separate target attributes would discard one group's requirements in a
+mixed function. Assembly fallbacks do not acquire unavailable compiler features.
+
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
@@ -5765,9 +5771,12 @@ GPR inputs, primary rAX and auxiliary rBX/CF-ZF outputs.
 not create source arguments or unknown-register traps; only EDBGRD publishes
 a changed rBX value. Call-graph register summaries evaluate
 constant selections with the shared LowIR scalar evaluator; MedIR folds the
-same chosen value before inferring SGX parameters, preserving its provenance. `X86SgxAsm.h` keeps
-LLVM and both C routes on the same volatile assembly and early-clobber
-constraints. The lifter projects native CF/ZF for flag-writing leaves, preserves
+same chosen value before inferring SGX parameters, preserving its provenance.
+`X86SgxNative.h` selects the fork's natural-width register/status intrinsics;
+the C renderer validates their complete signature, code mode and unknown-memory
+effects, then selects NeverC builtins through its API capability marker.
+`X86SgxAsm.h` retains the owned assembly and early-clobber constraints for older
+SDKs and compilers. The lifter projects native CF/ZF for flag-writing leaves, preserves
 all arithmetic flags for ECREATE/EADD/EEXTEND/EPA/EAUG, and never changes DF.
 Implicit DS accesses and all enclave checks remain inside the instruction;
 address/segment/REX overrides do not change the operands. Native outputs use
