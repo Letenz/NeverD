@@ -12,6 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CDeferredValue.h"
 #include "../VariadicImportStub.h"
 #include "../X86/X86GetPcThunk.h"
 #include "../render/X86/X86NativeFeatures.h"
@@ -2397,7 +2398,61 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
   }
 }
 
+bool LLVMCWriter::isDeferredUnknownInput(const llvm::Value *Value) {
+  // LLVM undef/freeze retains its own refinement contract. Only the source
+  // marker denotes missing machine state that must fail when observed.
+  while (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(Value)) {
+    if (!llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst,
+                   llvm::FreezeInst>(Inst))
+      break;
+    Value = Inst->getOperand(0);
+  }
+  return llvm_source_unknown::isValue(Value);
+}
+
+void LLVMCWriter::collectDeferredUnknowns(llvm::Function &Fn) {
+  std::vector<CValueTransfer<const llvm::Value *>> Transfers;
+  for (auto &Block : Fn)
+    for (auto &Inst : Block) {
+      if (!Inst.getType()->isIntegerTy())
+        continue;
+      if (const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst)) {
+        for (const llvm::Value *Incoming : Phi->incoming_values())
+          Transfers.push_back(
+              {Phi, Incoming, isDeferredUnknownInput(Incoming)});
+      } else if (llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(
+                     &Inst))
+        Transfers.push_back({&Inst, Inst.getOperand(0), false});
+    }
+  const auto Deferred = deferredCValues(Transfers);
+  for (auto &Block : Fn)
+    for (auto &Inst : Block) {
+      if (!Deferred.count(&Inst) || Inst.use_empty())
+        continue;
+      DeferredUnknownFlags.emplace(&Inst, freshVar(getName(&Inst) + "_known"));
+      Analysis.Inlinable.erase(&Inst);
+      OmittedInlined.erase(&Inst);
+      OmittedUnknowns.erase(&Inst);
+    }
+  // Copy-only cycles have no observation and need no payload declaration.
+  // Decide after materializing the closure so an inlined live copy cannot
+  // hide its users during the liveness query.
+  std::erase_if(DeferredUnknownFlags, [&](const auto &Entry) {
+    const auto *Inst = llvm::cast<llvm::Instruction>(Entry.first);
+    const auto *Phi = llvm::dyn_cast<llvm::PHINode>(Inst);
+    return Analysis.DeadFrameStores.count(Inst) ||
+           (usersAreDeadCopies(Inst) &&
+            (!Phi || !phiPrintedAsJoinCallArg(Phi)));
+  });
+  // Earlier display analysis can have cached expressions before availability
+  // was known. Their observations must be rendered with the new guards.
+  if (!DeferredUnknownFlags.empty())
+    InlineCache.clear();
+}
+
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
+  DeferredUnknownFlags.clear();
+  ReadingDeferredPayload = false;
   PointerParams.clear();
   PointerReturnType.clear();
   UseScalarExpressionTypes = false;
@@ -2737,6 +2792,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   InlinedFallthroughBlocks.clear();
   DuplicatedAssignBlocks.clear();
   ConditionChainBodies.clear();
+  collectDeferredUnknowns(Fn);
 }
 
 void LLVMCWriter::bindDebugArguments(const llvm::Function &Fn) {
@@ -8654,6 +8710,13 @@ bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
 }
 
 void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
+  for (auto &Block : Fn)
+    for (auto &Inst : Block)
+      if (auto Flag = DeferredUnknownFlags.find(&Inst);
+          Flag != DeferredUnknownFlags.end()) {
+        emitIndent(1);
+        OS << "uint8_t " << Flag->second << " = 0;\n";
+      }
   // A query in a nested region can feed an extract in a later block. Declare
   // its array at function scope rather than at the effect's execution point.
   for (auto &BB : Fn)
@@ -9960,8 +10023,9 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       InlinedFallthroughBlocks.insert(&BB);
   }
 
-  const bool WroteScalarRegions =
-      EHWraps.empty() && !UseRanges && tryWriteScalarRegions(Fn, 1);
+  const bool WroteScalarRegions = DeferredUnknownFlags.empty() &&
+                                  EHWraps.empty() && !UseRanges &&
+                                  tryWriteScalarRegions(Fn, 1);
   if (WroteScalarRegions) {
     // The complete region plan owns all blocks and PHI edges.
   } else if (!UseRanges) {

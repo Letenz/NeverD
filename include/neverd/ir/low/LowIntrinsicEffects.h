@@ -44,6 +44,12 @@ inline bool lowAArch64VectorShapeIsValid(const LowOp &Op) {
   return isValidVectorShape(static_cast<Intrinsic>(Op.Inputs[0].Offset), Shape);
 }
 
+inline bool lowAArch64SVECPAShapeIsValid(const LowOp &Op) {
+  return lowAArch64VectorShapeIsValid(Op) &&
+         aarch64_sve::cpaOperation(static_cast<Intrinsic>(Op.Inputs[0].Offset))
+             .has_value();
+}
+
 inline bool lowAArch64PAuthLoadShapeIsValid(const LowOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC ||
       Op.NumInputs != kPAuthLoadOperandCount + 1 ||

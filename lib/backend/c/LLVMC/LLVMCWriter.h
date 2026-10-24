@@ -614,6 +614,9 @@ public:
   bool usersOnlySeeImmediate(const llvm::Value *V) const;
   bool usersAreDeadCopies(const llvm::Value *V) const;
   void collectOmittedUnknowns(llvm::Function &Fn);
+  void collectDeferredUnknowns(llvm::Function &Fn);
+  static bool isDeferredUnknownInput(const llvm::Value *Value);
+  bool writeDeferredUnknownCopy(llvm::Instruction &Inst, int Indent);
   void collectOmittedInlinedImmediates(llvm::Function &Fn);
 
   /// Omit ABI clobber placeholders and unused copies of them. Uses print
@@ -1108,6 +1111,9 @@ public:
   /// fallthrough. Other printed references are checked after rendering.
   std::set<const llvm::BasicBlock *> EHFallthroughLabelCandidates;
   std::set<const llvm::Value *> OmittedUnknowns;
+  /// Availability of mixed known/unknown integer PHIs and their copies.
+  std::map<const llvm::Value *, std::string> DeferredUnknownFlags;
+  bool ReadingDeferredPayload = false;
   std::set<const llvm::Value *> OmittedInlined;
   std::set<const llvm::StoreInst *> OmittedLeftoverNarrow;
   std::map<const llvm::StoreInst *, const llvm::CallBase *> LeftoverSiblingFill;

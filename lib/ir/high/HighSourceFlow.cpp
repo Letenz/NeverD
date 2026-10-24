@@ -181,12 +181,16 @@ class SourceFlow {
       if (!Fresh && It->second >= Depth)
         continue;
       It->second = Depth;
-      if ((Expression->Kind == ExprKind::Var ||
-           Expression->Kind == ExprKind::Phi) &&
-          !entryValue(Expression->Var)) {
+      if (Expression->Kind == ExprKind::Var ||
+          Expression->Kind == ExprKind::Phi) {
+        // Refinement also queries entry values, including switch selectors.
+        // Register their identities before allocating per-local tables, but
+        // do not require a source definition for an entry value.
         const size_t Local = local(Expression->Var);
-        Nodes[Index].Uses.push_back(Local);
-        Nodes[Index].UseExpressions.emplace(Local, Expression);
+        if (!entryValue(Expression->Var)) {
+          Nodes[Index].Uses.push_back(Local);
+          Nodes[Index].UseExpressions.emplace(Local, Expression);
+        }
       }
       // Only a direct address-of-local can expose an emitted C local to a
       // memory write. Its identity must never carry a stable branch fact.

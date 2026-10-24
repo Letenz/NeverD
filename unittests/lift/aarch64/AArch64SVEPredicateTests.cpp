@@ -153,7 +153,7 @@ TEST(AArch64SVEPredicate, RawPtruePreservesPatternWidthAndRegister) {
     }
 }
 
-TEST(AArch64SVEPredicate, IncompletePrefixFlagAndCPASemanticsRemainRefused) {
+TEST(AArch64SVEPredicate, IncompletePrefixAndFlagSemanticsRemainRefused) {
   const uint32_t Words[] = {
 #define NEVERD_SVE_FIXTURE_REJECT(Word) Word,
 #include "AArch64SVEPredicateFixtures.def"

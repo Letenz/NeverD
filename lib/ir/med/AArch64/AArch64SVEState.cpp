@@ -243,8 +243,7 @@ const char *validateAArch64SVEState(const MedFunc &Func, Arch Architecture) {
           ++Info->Definitions;
       for (unsigned I = 0; I != Op.NumInputs; ++I)
         if (auto *Info = touch(Op.Inputs[I]);
-            Info && Vector && Vector->ConsumesVector &&
-            (I == 1 || I == kVectorInputIndex + 1))
+            Info && Vector && I && Vector->consumesState(I - 1))
           Info->Seed = true;
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
         connect(Op.Output, Op.Inputs[0]);
@@ -504,8 +503,7 @@ const char *validateAArch64SVEState(const MedFunc &Func, Arch Architecture) {
         if (!Input)
           continue;
         const bool Copy = Output && Op.Opcode == NdOp::COPY && I == 0;
-        const bool Consume = Vector && Vector->ConsumesVector &&
-                             (I == 1 || I == kVectorInputIndex + 1);
+        const bool Consume = Vector && I && Vector->consumesState(I - 1);
         if (!Copy && !Consume)
           return Op.Opcode == NdOp::RETURN ? kStateABI : kStateTransport;
         if (!Available.test(Input->Index))

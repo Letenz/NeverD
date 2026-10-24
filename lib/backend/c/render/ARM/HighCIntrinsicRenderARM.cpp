@@ -13,6 +13,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
+#include "neverd/backend/c/render/AArch64/AArch64SVECPAC.h"
 #include "neverd/backend/c/render/ARM/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
@@ -888,7 +889,10 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::A64_SveIndex:
   case I::A64_SveLastb:
   case I::A64_SveSt1:
-  case I::A64_SveStnt1: {
+  case I::A64_SveStnt1:
+#define NEVERD_A64_SVE_CPA_OPERATION(Id, ...) case I::Id:
+#include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"
+  {
     const auto Operation = aarch64_sve::vectorOperation(Id);
     if (!Operation || Ops.size() != Operation->OperandCount ||
         OperandBytes.size() != Ops.size())
@@ -900,6 +904,10 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
       Shape.Operands[I] = {OperandBytes[I], constantOperand(Ops[I])};
     if (!aarch64_sve::isValidVectorShape(Id, Shape))
       return {};
+    if (const auto CPA = aarch64_sve::cpaOperation(Id)) {
+      HasCIntrinsics = true;
+      return aarch64SVECPAC(*CPA, llvm::ArrayRef<std::string>(Ops).drop_back());
+    }
     const auto Element = constantOperand(Ops[Operation->ElementIndex]);
     const auto *Width = Element ? sveVectorCWidth(*Element) : nullptr;
     if (!Width)

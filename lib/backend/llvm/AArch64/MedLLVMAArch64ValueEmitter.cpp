@@ -216,6 +216,29 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     return Builder.CreateLoad(ScalableTy, Slot, Name);
   };
 
+  if (const auto CPA = aarch64_sve::cpaOperation(IC)) {
+    const auto Roles = aarch64_sve::cpaRoles(CPA->Form);
+    auto *VectorTy = llvm::ScalableVectorType::get(
+        Builder.getInt64Ty(), aarch64_sve::kCPAMinimumLanes);
+    std::vector<llvm::Type *> Types;
+    std::vector<llvm::Value *> Args;
+    const auto Operation = *aarch64_sve::vectorOperation(IC);
+    for (unsigned I = 0; I != Roles.Count; ++I) {
+      llvm::Type *Ty = Operation.consumesPredicate(I)
+                           ? aarch64_sve::svboolType(*Ctx)
+                           : VectorTy;
+      Types.push_back(Ty);
+      Args.push_back(stateToScalable(getVar(Op.Inputs[I + 1], Builder), Ty,
+                                     aarch64_sve::kCPAInputName));
+    }
+    auto *Type = llvm::FunctionType::get(VectorTy, Types, false);
+    auto *Asm =
+        llvm::InlineAsm::get(Type, CPA->MachineAsm, CPA->Constraints, true);
+    auto *Result = Builder.CreateCall(Asm, Args, aarch64_sve::kCPAValueName);
+    return scalableToState(Result, aarch64_sve::kVectorStorageBytes,
+                           aarch64_sve::kCPAValueName);
+  }
+
   if (IC == I::A64_SvePtrue) {
     if (!aarch64PtrueMedShapeIsValid(Op))
       llvm::report_fatal_error(aarch64_sve::kMalformedPtrue);

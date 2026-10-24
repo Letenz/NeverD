@@ -4,14 +4,16 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Scalar CPA reads runtime checking controls. Preserve an instruction-level
-/// operation instead of replacing it with wrapping integer arithmetic.
+/// Scalar and scalable CPA read runtime checking controls. Preserve an
+/// instruction-level operation instead of replacing it with wrapping integer
+/// arithmetic.
 //===----------------------------------------------------------------------===//
 
 #include "AArch64LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
 #include "neverd/support/BinaryEncoding.h"
 
 namespace neverd {
@@ -21,6 +23,47 @@ bool liftCPA(AArch64Lifter &L, AArch64Lifter::LiftState &S, const cs_insn *Insn,
   const auto reject = [&]() {
     throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
   };
+  const uint32_t Word = readLE<uint32_t>(Insn->bytes);
+  std::optional<aarch64_sve::CPAOperation> Scalable;
+#define NEVERD_A64_SVE_CPA_OPERATION(Id, InsnId, Name, Form, Mask, Encoding,   \
+                                     ...)                                      \
+  if (Insn->id == AARCH64_INS_##InsnId && (Word & Mask) == Encoding)           \
+    Scalable = aarch64_sve::cpaOperation(Intrinsic::Id);
+#include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"
+  if (Scalable) {
+    using namespace aarch64_sve;
+    if (A.op_count != cpaRoles(Scalable->Form).RawCount)
+      reject();
+    // The original word owns register roles, including the implicit old
+    // destination of MADPT/MLAPT and the tied merging ADDPT/SUBPT operand.
+    const auto vector = [&](unsigned Shift) {
+      return NdVar::reg(a64reg::Z((Word >> Shift) & kCPARegisterMask),
+                        kVectorStorageBytes);
+    };
+    const auto Dst = vector(0);
+    const auto Second = vector(kCPASecondShift);
+    const auto Third = vector(kCPAThirdShift);
+    const auto Element = NdVar::cst(kCPAElementBytes, kElementOperandBytes);
+    switch (Scalable->Form) {
+    case CPAForm::Binary:
+      S.emitIntrinsic(Scalable->Id, Dst, {Second, Third, Element});
+      break;
+    case CPAForm::Merging: {
+      const auto Pred = NdVar::reg(
+          a64reg::P((Word >> kCPAPredicateShift) & kCPAPredicateMask),
+          kPredicateStorageBytes);
+      S.emitIntrinsic(Scalable->Id, Dst, {Pred, Dst, Second, Element});
+      break;
+    }
+    case CPAForm::Multiply:
+      if (Scalable->Id == Intrinsic::A64_SveMadpt)
+        S.emitIntrinsic(Scalable->Id, Dst, {Dst, Third, Second, Element});
+      else
+        S.emitIntrinsic(Scalable->Id, Dst, {Dst, Second, Third, Element});
+      break;
+    }
+    return true;
+  }
   Intrinsic Id;
   switch (Insn->id) {
 #define NEVERD_A64_CPA(IdValue, Insn, ...)                                     \
@@ -30,7 +73,7 @@ bool liftCPA(AArch64Lifter &L, AArch64Lifter::LiftState &S, const cs_insn *Insn,
 #include "neverd/ir/intrinsics/AArch64/AArch64CPA.def"
   case AARCH64_INS_MADPT:
   case AARCH64_INS_MLAPT:
-    // SVE forms require runtime-vector-width state.
+    // No other multiply form has a defined checked-pointer contract.
     reject();
     return false;
   default:
