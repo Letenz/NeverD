@@ -59,7 +59,10 @@ optimized LLVM output. Its ordinary arm64 process must produce a nonzero
 generic signature. PAC/AUT can be disabled in that process despite hardware
 feature discovery, so it cannot qualify pointer authentication.
 `NativeKeysAgreeWithBothCProjections` instead compiles an arm64e execution
-probe and explicitly skips if the host refuses it. On an eligible host it
+probe and explicitly skips unless all four signing keys change pointers and
+PACGA produces a nonzero signature in that process. A requested target triple
+or a runnable empty main cannot establish this: a linker may produce ordinary
+arm64 with inactive keys. On an eligible host it
 compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
 modifiers; each key must change at least one pointer, excluding a NOP profile.
 Other architectures skip the native checks.

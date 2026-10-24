@@ -1609,17 +1609,19 @@ TEST(AArch64PAuthSemantics, NativeGenericSignaturesAgreeWithBothCProjections) {
 }
 
 TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
+#define NEVERD_PAUTH_NATIVE_TEXT(Name, Value) constexpr char Name[] = Value;
+#include "AArch64PAuthNative.def"
   if (!hasNativePAuth())
     GTEST_SKIP() << "native key comparison requires a PAuth Apple Silicon host";
-  // macOS can execute ordinary arm64 with PAC/AUT disabled, even though the
-  // CPU advertises PAuth. Only an arm64e process qualifies these operations.
+  // A requested target alone is not evidence: a linker may emit ordinary
+  // arm64. Require each signing key to change a pointer in the actual process.
   bool ExecutionAvailable = false;
-  compileArm64eC("int main(void) { return 0; }\n", {}, /*EmitLLVM=*/false,
-                 "arm64e-apple-macos", &ExecutionAvailable);
+  compileArm64eC(kSigningKeyProbe, {}, /*EmitLLVM=*/false, kSigningKeyTarget,
+                 &ExecutionAvailable);
   if (HasFatalFailure())
     return;
   if (!ExecutionAvailable)
-    GTEST_SKIP() << "this host cannot execute the arm64e signing-key oracle";
+    GTEST_SKIP() << kSigningKeysUnavailable;
   const auto Oracle = llvm::MemoryBuffer::getFile(
       std::string(NEVERD_ARM64E_TEST_HEADERS) + "/pauth_oracle.c");
   ASSERT_TRUE(Oracle);
@@ -1637,7 +1639,7 @@ TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
     F.Blocks.front().StartAddr = F.Entry;
     Functions.push_back(std::move(F));
   }
-  executeCProjections(Functions, (*Oracle)->getBuffer(), "arm64e-apple-macos");
+  executeCProjections(Functions, (*Oracle)->getBuffer(), kSigningKeyTarget);
 }
 
 TEST(AArch64PAuthLRSemantics, NativeTwoModifierKeysAgreeWithBothCProjections) {
