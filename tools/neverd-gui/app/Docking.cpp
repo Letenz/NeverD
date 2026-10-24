@@ -12,7 +12,9 @@
 #include "../Config.h"
 #include "Icons.h"
 #include "Theme.h"
+#include "TitleBar.h"
 #include "WindowFrame.h"
+#include "WindowFramePlatform.h"
 
 #include <QContextMenuEvent>
 #include <QCoreApplication>
@@ -29,8 +31,10 @@
 #include <QPointer>
 #include <QStyle>
 #include <QTimer>
+#include <QToolButton>
 #include <QVariantAnimation>
 #include <QWindow>
+#include <algorithm>
 #include <cmath>
 #include <kddockwidgets/Config.h>
 #include <kddockwidgets/KDDockWidgets.h>
@@ -51,6 +55,8 @@
 
 namespace neverd::gui {
 namespace {
+constexpr char FloatingLocked[] = "neverdFloatingLocked";
+
 bool onWayland() {
   return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
 }
@@ -67,12 +73,13 @@ QPointer<KDDockWidgets::QtWidgets::FloatingWindow> DockDragSource;
 Qt::WindowStates DockDragWindowState;
 
 bool beginDockDrag(KDDockWidgets::Core::Draggable *draggable) {
-  if (!onWayland())
-    return true;
   auto *view = KDDockWidgets::QtCommon::View_qt::asQWidget(draggable->asView());
   auto *floating = qobject_cast<KDDockWidgets::QtWidgets::FloatingWindow *>(
       view ? view->window() : nullptr);
-  if (!floating || !draggable->isWindow())
+  // Locking prevents accidental drag docking; explicit Dock actions still work.
+  if (floating && floating->property(FloatingLocked).toBool())
+    return false;
+  if (!onWayland() || !floating || !draggable->isWindow())
     return true;
   DockDragSource = floating;
   DockDragWindowState = floating->windowHandle()->windowStates();
@@ -319,6 +326,56 @@ private:
   int hovered_ = -1;
 };
 
+/// Floating panes use the same window-control size and drawing as TitleBar.
+/// Keep the docking library's button base for its safe close-event lifetime.
+class DockWindowButton final : public KDDockWidgets::QtWidgets::Button {
+public:
+  DockWindowButton(KDDockWidgets::TitleBarButtonType type, QWidget *parent)
+      : Button(parent), type_(type) {
+    setFocusPolicy(Qt::NoFocus);
+    setAttribute(Qt::WA_Hover);
+  }
+
+  QSize sizeHint() const override {
+    return {::neverd::limits::gui_config::kTitleBarButtonWidth,
+            platform::titleBarHeight()};
+  }
+
+protected:
+  void paintEvent(QPaintEvent *) override {
+    using Kind = neverd::gui::TitleBar::WindowControl;
+    using Type = KDDockWidgets::TitleBarButtonType;
+    QPainter painter(this);
+    switch (type_) {
+    case Type::Close:
+      neverd::gui::TitleBar::paintWindowControl(painter, *this, *window(),
+                                                Kind::Close);
+      break;
+    case Type::Minimize:
+      neverd::gui::TitleBar::paintWindowControl(painter, *this, *window(),
+                                                Kind::Minimize);
+      break;
+    case Type::Maximize:
+      neverd::gui::TitleBar::paintWindowControl(painter, *this, *window(),
+                                                Kind::Maximize);
+      break;
+    default:
+      if (isDown() || underMouse())
+        painter.fillRect(
+            rect(), Theme::instance().chrome(isDown() ? "WindowControlPressed"
+                                                      : "WindowControlHover"));
+      constexpr int size = ::neverd::limits::gui_config::kTitleBarIconSize;
+      neverd::gui::icon("restore").paint(
+          &painter,
+          QRect((width() - size) / 2, (height() - size) / 2, size, size));
+      break;
+    }
+  }
+
+private:
+  KDDockWidgets::TitleBarButtonType type_;
+};
+
 /// One drawn caption provides docking and window controls. Keep the dock
 /// button alongside Maximize: the library's optional maximize button replaces
 /// the dock button, making the existing return action disappear.
@@ -331,18 +388,47 @@ protected:
     TitleBar::init();
     if (!titleBar()->floatingWindow())
       return;
-    maximize_ = new KDDockWidgets::QtWidgets::Button(this);
+    maximize_ =
+        new DockWindowButton(KDDockWidgets::TitleBarButtonType::Maximize, this);
     maximize_->setObjectName(QStringLiteral("floatingMaximizeButton"));
     m_minimizeButton->setObjectName(QStringLiteral("floatingMinimizeButton"));
+    m_closeButton->setObjectName(QStringLiteral("floatingCloseButton"));
     m_layout->insertWidget(m_layout->indexOf(m_floatButton), maximize_);
+    m_layout->setContentsMargins(
+        ::neverd::limits::gui_config::kTitleBarTitlePadding, 0, 0, 0);
+    m_layout->setSpacing(0);
+    lock_ = new QToolButton(this);
+    lock_->setObjectName(QStringLiteral("floatingLockButton"));
+    lock_->setCheckable(true);
+    lock_->setAutoRaise(true);
+    lock_->setIcon(neverd::gui::icon("lock"));
+    lock_->setFixedSize(platform::titleBarHeight(), platform::titleBarHeight());
+    m_layout->insertWidget(m_layout->indexOf(m_minimizeButton), lock_);
+    moveArea_ = new QWidget(this);
+    moveArea_->setObjectName(QStringLiteral("floatingWindowMoveArea"));
+    moveArea_->installEventFilter(this);
+    connect(lock_, &QToolButton::toggled, this, [this](bool locked) {
+      QWidget::window()->setProperty(FloatingLocked, locked);
+      updateLock();
+    });
+    lock_->setChecked(true);
+    updateLock();
     connect(maximize_, &QAbstractButton::clicked, this, [this] {
       titleBar()->onMaximizeClicked();
       updateMaximize();
     });
     QWidget::window()->installEventFilter(this);
-    connect(&Theme::instance(), &Theme::changed, this,
-            [this] { updateMaximize(); });
+    connect(&Theme::instance(), &Theme::changed, this, [this] {
+      updateMaximize();
+      lock_->setIcon(neverd::gui::icon("lock"));
+      update();
+    });
     updateMaximize();
+    if (m_dockWidgetIcon) {
+      constexpr int size = ::neverd::limits::gui_config::kTitleBarIconSize;
+      m_dockWidgetIcon->setFixedSize(size, size);
+      m_dockWidgetIcon->setScaledContents(true);
+    }
     if (onWayland() && m_dockWidgetIcon) {
       // Wayland's compositor move and QDrag docking are separate operations.
       // The caption and tab dock; the icon moves the window on the desktop.
@@ -356,10 +442,29 @@ protected:
   }
 
   bool eventFilter(QObject *object, QEvent *event) override {
+    if (object == moveArea_) {
+      if (event->type() == QEvent::MouseButtonDblClick &&
+          static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+        titleBar()->onMaximizeClicked();
+        return true;
+      }
+      if (event->type() == QEvent::MouseButtonPress &&
+          static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+        if (auto *handle = QWidget::window()->windowHandle())
+          handle->startSystemMove();
+        return true;
+      }
+    }
     if (object == QWidget::window() &&
         (event->type() == QEvent::WindowStateChange ||
-         event->type() == QEvent::LanguageChange))
+         event->type() == QEvent::LanguageChange ||
+         event->type() == QEvent::ActivationChange)) {
       updateMaximize();
+      updateLock();
+      update();
+      for (auto *button : findChildren<QAbstractButton *>())
+        button->update();
+    }
     if (object == m_dockWidgetIcon &&
         event->type() == QEvent::MouseButtonPress &&
         static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
@@ -368,7 +473,56 @@ protected:
     return TitleBar::eventFilter(object, event);
   }
 
+  QSize sizeHint() const override {
+    QSize size = TitleBar::sizeHint();
+    if (titleBar()->floatingWindow())
+      size.setHeight(platform::titleBarHeight());
+    return size;
+  }
+
+  void paintEvent(QPaintEvent *event) override {
+    if (!lock_) {
+      TitleBar::paintEvent(event);
+      return;
+    }
+    QPainter painter(this);
+    const auto &theme = Theme::instance();
+    painter.fillRect(rect(), theme.chrome("TitleBar"));
+    painter.setPen(theme.chrome(QWidget::window()->isActiveWindow()
+                                    ? "TitleBarText"
+                                    : "TitleBarInactiveText"));
+    const int left = m_dockWidgetIcon->geometry().right() +
+                     ::neverd::limits::gui_config::kTitleBarTitlePadding;
+    const QRect text(left, 0, std::max(0, lock_->x() - left), height());
+    moveArea_->setGeometry(0, 0, lock_->x(), height());
+    painter.drawText(text, Qt::AlignLeft | Qt::AlignVCenter,
+                     fontMetrics().elidedText(titleBar()->title(),
+                                              Qt::ElideRight, text.width()));
+  }
+
+  void mouseDoubleClickEvent(QMouseEvent *event) override {
+    if (lock_ && lock_->isChecked() && event->button() == Qt::LeftButton) {
+      titleBar()->onMaximizeClicked();
+      return;
+    }
+    TitleBar::mouseDoubleClickEvent(event);
+  }
+
 private:
+  void updateLock() {
+    if (!lock_)
+      return;
+    const bool locked = lock_->isChecked();
+    const auto text =
+        locked
+            ? QCoreApplication::translate("Docking", "Unlock floating window")
+            : QCoreApplication::translate("Docking", "Lock floating window");
+    lock_->setToolTip(text);
+    lock_->setAccessibleName(text);
+    moveArea_->setVisible(locked);
+    moveArea_->raise();
+  }
+
   void updateMaximize() {
     if (!maximize_)
       return;
@@ -383,10 +537,12 @@ private:
   }
 
   QAbstractButton *maximize_ = nullptr;
+  QToolButton *lock_ = nullptr;
+  QWidget *moveArea_ = nullptr;
 };
 
-/// Wayland needs our resizable frame around the library's docking caption.
-/// The other desktops already use the library's client caption and resizing.
+/// Linux uses our resize hit area ahead of the library's docking handlers.
+/// Windows and macOS retain their existing platform resizing.
 class DockFloatingWindow final
     : public KDDockWidgets::QtWidgets::FloatingWindow {
 public:
@@ -394,14 +550,15 @@ public:
 
 protected:
   bool event(QEvent *event) override {
-    if (event->type() == QEvent::Polish && onWayland() && !frame_)
+    if (event->type() == QEvent::Polish &&
+        platform::frameKind() == platform::FrameKind::Frameless && !frame_)
       frame_ =
           WindowFrame::attach(*this, nullptr, WindowFrame::Caption::Client);
     return FloatingWindow::event(event);
   }
 
   void paintEvent(QPaintEvent *) override {
-    if (frame_)
+    if (frame_ && onWayland())
       return;
     QPainter painter(this);
     painter.setPen(
@@ -415,6 +572,15 @@ private:
 
 class DockViewFactory final : public KDDockWidgets::QtWidgets::ViewFactory {
 public:
+  QAbstractButton *
+  createTitleBarButton(QWidget *parent,
+                       KDDockWidgets::TitleBarButtonType type) const override {
+    auto *bar = qobject_cast<KDDockWidgets::QtWidgets::TitleBar *>(parent);
+    if (bar && bar->titleBar()->floatingWindow())
+      return new DockWindowButton(type, parent);
+    return ViewFactory::createTitleBarButton(parent, type);
+  }
+
   KDDockWidgets::Core::View *
   createTitleBar(KDDockWidgets::Core::TitleBar *controller,
                  KDDockWidgets::Core::View *parent) const override {

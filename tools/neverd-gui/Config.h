@@ -205,6 +205,8 @@ inline constexpr int kTitleBarTitlePadding = 12;
 // tools/neverd-gui/app/WindowFrame.cpp
 /// The band outside the visible window that holds its shadow.
 inline constexpr int kWindowFrameShadowExtent = 10;
+/// Resize presses take precedence over content and docking inside this band.
+inline constexpr int kWindowFrameResizeInset = 8;
 
 // tools/neverd-gui/app/WorkbenchStyle.cpp
 /// The size of icons drawn on the 16 pixel grid of IconSet.def.

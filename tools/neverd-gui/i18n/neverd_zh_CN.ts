@@ -8195,6 +8195,14 @@ Secondary SHA-256: %3
         <source>Move window</source>
         <translation>移动窗口</translation>
     </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>锁定浮窗</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>解锁浮窗</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ExportDataDialog</name>
