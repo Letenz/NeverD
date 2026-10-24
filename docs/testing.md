@@ -2172,6 +2172,18 @@ compares fault signal/code with original bytes, then injects controlled
 completions through sigreturn to check all result transports. This is not a
 successful privileged SGX or enclave-memory concurrency qualification.
 
+With `NEVERD_TEST_NEVERC` pointing to the qualified compiler,
+`X86SgxSource.NeverCCompletionMatchesOriginalRegistersAndFlags` executes both C
+routes against the same original-byte/sigreturn oracle.
+`NeverCCompilesNativeCompletionAndCombinedAmxFeatures` builds 192 native IR
+modules and 192 objects per SDK, including functions with both SGX and AMX;
+this catches lost features when separate target attributes would override one
+another. Native declaration validation rejects lost memory effects, wrong word
+sizes, mismatched operands and nonreturning/defined intrinsic impostors. The
+pinned SDK skips only the new native-declaration check; generated C still
+selects the current NeverC APIs. The separate PUSHF fixture snapshot retains
+its own LLVM implementation and is not an SGX assembly fallback.
+
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and
 strict scalar-emulator refusal. `NeverDX86VirtualizationSourceTests` covers both

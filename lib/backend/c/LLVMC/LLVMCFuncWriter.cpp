@@ -14,6 +14,7 @@
 
 #include "../VariadicImportStub.h"
 #include "../X86GetPcThunk.h"
+#include "../render/X86NativeFeatures.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
 #include "LLVMCVariableEdits.h"
@@ -9099,6 +9100,8 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
     writeAnalysisOnlyFunction(Fn);
     return;
   }
+  if (EmitFunctionWrapper)
+    OS << x86NativeFunctionPreamble(Fn);
   writeFunctionProjection(Fn);
 }
 
