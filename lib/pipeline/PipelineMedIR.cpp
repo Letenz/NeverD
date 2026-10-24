@@ -12,6 +12,7 @@
 #include "PipelineLowIRDetail.h"
 #include "PipelineMedAudit.h"
 #include "PipelineSEHRuntimeMemory.h"
+#include "PipelineSourceStackAccesses.h"
 #include "PipelineTrimStorage.h"
 
 #include "neverd/Common.h"
@@ -41,6 +42,23 @@
 #define DEBUG_TYPE "neverd-pipeline"
 
 namespace neverd {
+
+MedStackProjection medStackProjection(const PipelineOptions &Options) {
+  return !Options.MedAnalysisOnly && !Options.PatchMode &&
+                 (!Options.LiftMode || Options.SourceProjection)
+             ? MedStackProjection::Source
+             : MedStackProjection::Machine;
+}
+
+void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
+                             MedStackProjection Projection) {
+  Func.EntryKind = functionEntryKind(Func, Image.stackEntryKindAt(Func.Entry));
+  if (Projection != MedStackProjection::Source)
+    return;
+  simplifyProvenStackAlignment(Func, Image.Arch, Image.abiFormat(),
+                               Func.EntryKind);
+  markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
+}
 
 //===----------------------------------------------------------------------===//
 // buildMedIR — Phase 2
@@ -186,14 +204,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         auto &MF = Result.MedFuncs[I];
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
-        MF.EntryKind = functionEntryKind(MF, Img.stackEntryKindAt(MF.Entry));
-        if (!Opts.MedAnalysisOnly && !Opts.PatchMode &&
-            (!Opts.LiftMode || Opts.SourceProjection)) {
-          simplifyProvenStackAlignment(MF, Img.Arch, Img.abiFormat(),
-                                       MF.EntryKind);
-          // Source views keep no prologue storage of the caller's registers.
-          markSourceStackAccesses(MF, Img.Arch, Img.abiFormat(), MF.EntryKind);
-        }
+        prepareMedStackAccesses(MF, Img, medStackProjection(Opts));
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
         MF.SourceFile = LF.SourceFile;

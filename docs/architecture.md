@@ -4631,6 +4631,12 @@ Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
 
+`prepareMedStackAccesses` owns the post-conversion entry-kind, alignment and
+annotation sequence. Register-pair return recovery calls it again after
+reconverting a caller from LowIR: old operation flags cannot describe that new
+sequence. HighC and LLVM C request the source projection; machine lift,
+patching and analysis keep the original stack operations.
+
 The entry-stack proof keeps definitions, joins, ambiguity and transient active
 flags in one ordered index. Each visit still consumes its ordinary work and
 depth allowance. Loop assumptions keep their existing scoped lifetime; offsets

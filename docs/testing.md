@@ -6025,6 +6025,11 @@ annotations. It also checks a function that has both a saved register and a
 return-address read. Run it with `NeverDMedStackAlignmentTests`,
 `NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
 `NeverDPipelineOutcomeTests` after changing source stack-access analysis.
+`PipelineSourceStackAccesses` checks source, LLVM source projection, machine
+lift, patch and analysis requests on ARM32 and x64, including a restore the
+body consumes. The Mach-O ARM/Thumb five-input MBA source tests execute both
+C routes at O0/O2 after wide-return recovery reconverts the caller; its saved
+R8 must not become an unknown-register trap.
 
 `MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
 checks four architectures and three formats in both query orders. Accepted and
