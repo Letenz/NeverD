@@ -72,7 +72,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymSynthTests.cpp
   SymSynthAffineTests.cpp
   SymSynthQuadraticTests.cpp
-  SymX87Tests.cpp
+  x86/SymX87Tests.cpp
 
   LINK_COMPONENTS Symbolic Solver
 )
@@ -131,7 +131,7 @@ add_neverd_unittest(NeverDSymbolicIntegerIntrinsicTests
   SymIntegerIntrinsicTests.cpp
   SymExecTests.cpp
   SymStorePreservationTests.cpp
-  SymX87Tests.cpp
+  x86/SymX87Tests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
 

@@ -18,6 +18,7 @@
 #include "neverd/symbolic/Limits.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -51,7 +52,8 @@ struct DecisionInfo {
   static Decision getTombstoneKey() { return {UINT64_MAX - 1, 0, 0}; }
   static bool isEqual(const Decision &A, const Decision &B) { return A == B; }
   static unsigned getHashValue(const Decision &D) {
-    return unsigned(llvm::hash_combine(D.Variable, D.Low, D.High));
+    return llvm::DenseMapInfo<std::pair<uint64_t, uint64_t>>::
+        getHashValuePiecewise(D.Variable, (uint64_t(D.Low) << 32) | D.High);
   }
 };
 
@@ -90,7 +92,8 @@ class LowWordDecisions {
     static CarryKey getTombstoneKey() { return {UINT32_MAX - 1, 0, 0}; }
     static bool isEqual(const CarryKey &A, const CarryKey &B) { return A == B; }
     static unsigned getHashValue(const CarryKey &K) {
-      return unsigned(llvm::hash_combine(K.A, K.B, K.C));
+      return llvm::DenseMapInfo<std::pair<uint32_t, uint64_t>>::
+          getHashValuePiecewise(K.A, (uint64_t(K.B) << 32) | K.C);
     }
   };
   llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;
@@ -1267,8 +1270,10 @@ class LowWordDecisions {
       return {0, 0};
     if (!B[0] && !B[1])
       return A;
+    if (A[0] == B[0])
+      return {0, apply(Xor, A[1], B[1])};
     return {apply(Xor, A[0], B[0]),
-            apply(Xor, apply(Xor, A[1], B[1]), apply(And, A[0] ^ 1, B[0]))};
+            parity(A[1], B[1], apply(And, A[0] ^ 1, B[0]))};
   }
 
   Bits sumCorrection(const Bits &A, const Bits &B) {
@@ -1280,8 +1285,9 @@ class LowWordDecisions {
       return A;
     if (A == B)
       return {0, A[0]};
-    return {apply(Xor, A[0], B[0]),
-            apply(Xor, apply(Xor, A[1], B[1]), apply(And, A[0], B[0]))};
+    if (A[0] == B[0])
+      return {0, parity(A[1], B[1], A[0])};
+    return {apply(Xor, A[0], B[0]), parity(A[1], B[1], apply(And, A[0], B[0]))};
   }
 
   Bits multiplyCorrection(const Bits &A, const Bits &B) {
@@ -1293,6 +1299,10 @@ class LowWordDecisions {
       return B;
     if (B[0] == 1 && !B[1])
       return A;
+    if (!A[0])
+      return {0, apply(And, A[1], B[0])};
+    if (!B[0])
+      return {0, apply(And, A[0], B[1])};
     if (A[0] == 1 && B[0] == 1)
       return {1, apply(Xor, A[1], B[1])};
     return {apply(And, A[0], B[0]),
@@ -1521,8 +1531,12 @@ class LowWordDecisions {
         const auto &D = It->second.second.Delta;
         auto Change = difference(Bits(S.Delta.begin(), S.Delta.end()),
                                  Bits(D.begin(), D.end()));
-        Correction =
-            sumCorrection(Correction, multiplyCorrection(Change, word(A, 2)));
+        // Both factors were proved odd. Their low word is only needed for
+        // the upper cross term when the correction's low bit is nonzero.
+        if (Change[0])
+          Change[1] =
+              apply(Xor, Change[1], apply(And, Change[0], word(A, 2)[1]));
+        Correction = sumCorrection(Correction, Change);
         Pairs.push_back(A);
         Unpaired.erase(It);
       }
@@ -1864,10 +1878,11 @@ public:
         Position = Atoms.size();
         const auto Input = SymRef(uint32_t(Key));
         const auto Bit = variableBit(Key);
+        // The recipe is purely bitwise, so projection commutes with every
+        // operation. Keep shifted inputs intact and mask once at the result;
+        // per-input masks otherwise obscure shorter shared Boolean readings.
         Atoms.push_back(Ctx.mkZExtOrTrunc(
-            Ctx.mkAnd(Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)),
-                      Ctx.mkConst(Ctx.width(Input), 1)),
-            Width));
+            Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)), Width));
       }
       auto Table = TruthTable::zero(Arity);
       for (size_t Pattern = 0; Pattern < Count; ++Pattern) {
@@ -2412,6 +2427,16 @@ public:
                     sizeof(SymNode) + Args.size() * sizeof(SymRef)))
           return {};
         V = Ctx.mkAnd(Args);
+      }
+      // C = 2^(Width-1) is its own modular negation, so C*~V = C+C*V.
+      // Finish this normalization here instead of sending the completed
+      // Boolean reading through another scalar proof search.
+      if (C.countr_zero() == Width - 1 && Ctx.op(V) == SymOp::Not) {
+        if (!charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+          return {};
+        auto Other = Ctx.operand(V, 0);
+        auto Coefficient = Ctx.mkConst(C);
+        return Ctx.mkAdd(Coefficient, Ctx.mkMul(Coefficient, Other));
       }
       return Ctx.mkMul(Ctx.mkConst(C), V);
     };

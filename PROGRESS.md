@@ -2334,9 +2334,9 @@ The following 31 artifacts were inspected at `d87f27d2`. Whole-file reads are di
 - [X64FPState.cpp](lib/emulation/arch/x86_64/X64FPState.cpp), [.h](lib/emulation/arch/x86_64/X64FPState.h), and [.def](lib/emulation/arch/x86_64/X64FPState.def)
 - [X64Machine.h](lib/emulation/arch/x86_64/X64Machine.h), [X64MachineProbe.cpp](lib/emulation/arch/x86_64/X64MachineProbe.cpp), and [X64MachineProbe.def](lib/emulation/arch/x86_64/X64MachineProbe.def)
 - [WhpXsaveState.h](lib/emulation/backends/whp/WhpXsaveState.h), [WhpXsaveRegisters.def](lib/emulation/backends/whp/WhpXsaveRegisters.def), [WhpProtocol.def](lib/emulation/backends/whp/WhpProtocol.def), and [WhpMachine.cpp](lib/emulation/backends/whp/WhpMachine.cpp)
-- [X64XsaveTests.cpp](unittests/emulation/X64XsaveTests.cpp), [X64XsaveCases.def](unittests/emulation/X64XsaveCases.def), [WhpXsaveTests.cpp](unittests/emulation/WhpXsaveTests.cpp), and [WhpHostFailureCases.def](unittests/emulation/WhpHostFailureCases.def)
-- [X64FPStateTests.cpp](unittests/emulation/X64FPStateTests.cpp), [X64FPCases.def](unittests/emulation/X64FPCases.def), and [X64MachineProbeTests.cpp](unittests/emulation/X64MachineProbeTests.cpp)
-- [X64StateTransitionTests.cpp](unittests/emulation/X64StateTransitionTests.cpp) and [X64StateTransitionCases.def](unittests/emulation/X64StateTransitionCases.def)
+- [X64XsaveTests.cpp](unittests/emulation/x86_64/X64XsaveTests.cpp), [X64XsaveCases.def](unittests/emulation/x86_64/X64XsaveCases.def), [WhpXsaveTests.cpp](unittests/emulation/WhpXsaveTests.cpp), and [WhpHostFailureCases.def](unittests/emulation/WhpHostFailureCases.def)
+- [X64FPStateTests.cpp](unittests/emulation/x86_64/X64FPStateTests.cpp), [X64FPCases.def](unittests/emulation/x86_64/X64FPCases.def), and [X64MachineProbeTests.cpp](unittests/emulation/x86_64/X64MachineProbeTests.cpp)
+- [X64StateTransitionTests.cpp](unittests/emulation/x86_64/X64StateTransitionTests.cpp) and [X64StateTransitionCases.def](unittests/emulation/x86_64/X64StateTransitionCases.def)
 
 **WDK assertion and producer: 2 artifacts, read in full**
 

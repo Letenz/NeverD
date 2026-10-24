@@ -83,7 +83,7 @@ using namespace neverd;
 namespace descriptor_source {
 #define NEVERD_DESCRIPTOR_SOURCE_TEXT(Name, Value)                             \
   constexpr char Name[] = Value;
-#include "X86DescriptorSourceExpectations.def"
+#include "../x86/X86DescriptorSourceExpectations.def"
 } // namespace descriptor_source
 
 ExprPtr parameter(unsigned Id, TypeRef ExprType = NdType::makeInt(8)) {

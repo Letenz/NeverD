@@ -817,6 +817,12 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                 "invalid AMX architectural bank operation");
           continue;
         }
+        if (isX86RepStateIntrinsic(Id)) {
+          if (!x86RepShapeIsValid(Id, x86RepLowShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "invalid x86 REP completion LowIR contract");
+          continue;
+        }
         if (isX86SgxIntrinsic(Id)) {
           if (!x86SgxShapeIsValid(Id, x86SgxLowShape(Op, TheArch)))
             llvm::report_fatal_error(

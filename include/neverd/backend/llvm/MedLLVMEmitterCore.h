@@ -276,6 +276,8 @@ private:
 
   llvm::Value *emitIntrinsic(const MedOp &Op, llvm::IRBuilder<> &Builder);
   llvm::Value *emitX86AmxState(const MedOp &Op, llvm::IRBuilder<> &Builder);
+  llvm::Value *emitX86RepState(const MedOp &Op, Intrinsic Id,
+                               llvm::IRBuilder<> &Builder);
   llvm::Value *emitX86Sgx(const MedOp &Op, Intrinsic Id,
                           llvm::IRBuilder<> &Builder);
   llvm::Value *emitX86SystemState(const MedOp &Op, Intrinsic Id,

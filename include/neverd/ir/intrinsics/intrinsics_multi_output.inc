@@ -44,3 +44,7 @@ MULTI_OUT(Intrinsic::A64_MopsCpyFP, 4);
 // SGX: rBX and the two-byte CF/ZF completion; rAX is the primary result.
 MULTI_OUT(Intrinsic::X86Encls, 2);
 MULTI_OUT(Intrinsic::X86Enclv, 2);
+
+#define NEVERD_X86_REP_STATE(Id, Name, Words, Compare, ...) MULTI_OUT(Intrinsic::Id, Words - 1 + Compare);
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE

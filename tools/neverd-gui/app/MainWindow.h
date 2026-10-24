@@ -39,6 +39,7 @@ class CodeView;
 class DisassemblyView;
 class ExtensionsView;
 class FindInViewDialog;
+class FocusSidebar;
 class LocalTypesView;
 class PathfinderView;
 class TypeLibrariesView;
@@ -158,6 +159,7 @@ private:
   void toggleFocusMode();
   void leaveFocusMode();
   void resetFocusSequence();
+  void connectFunctions(ChooserView *view);
   /// Title the pseudocode and IR windows by what they show, lettered apart.
   void retitleCodeDocks();
 
@@ -261,7 +263,7 @@ private:
   /// would read, at the top of its context menu.
   void addNumberActions(QMenu &menu, CodeView *code);
   /// The Functions window's context menu for the row at \p position.
-  void functionsMenu(const QPoint &position);
+  void functionsMenu(ChooserView *view, const QPoint &position);
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
@@ -391,6 +393,8 @@ private:
   QString layoutPath_;
   QByteArray focusLayout_;
   QPointer<QWidget> focusReturn_;
+  QPointer<FocusSidebar> focusSidebar_;
+  QPointer<ChooserView> focusFunctions_;
   QPointer<QWidget> focusSequenceView_;
   QTimer focusSequenceTimer_;
   int focusSequenceCount_ = 0;

@@ -228,7 +228,8 @@ static ExprPtr foldWordIdentity(const ExprPtr &E) {
   if (E->Op == NdOp::INT_OR || E->Op == NdOp::INT_AND) {
     const NdOp Inner = E->Op == NdOp::INT_OR ? NdOp::INT_AND : NdOp::INT_OR;
     for (unsigned I = 0; I < 2; ++I) {
-      const auto &Nested = E->Operands[I], &Value = E->Operands[1 - I];
+      const auto Nested = Bits(E->Operands[I]);
+      const auto &Value = E->Operands[1 - I];
       if (Nested->Kind == ExprKind::BinOp && Nested->Op == Inner &&
           Nested->Operands.size() == 2 &&
           (Same(Nested->Operands[0], Value) ||
@@ -248,6 +249,50 @@ static ExprPtr foldWordIdentity(const ExprPtr &E) {
            (Same(L->Operands[0], R->Operands[1]) &&
             Same(L->Operands[1], R->Operands[0]));
   };
+  // Fold scalar offsets in the word domain before reconstructing a source
+  // address. Address-bearing constants keep their identity and are not numeric
+  // offsets; changing widths between the two operations also stops this rule.
+  if (E->Op == NdOp::INT_ADD || E->Op == NdOp::INT_SUB) {
+    const auto ScalarConstant = [&](const ExprPtr &V) {
+      return Word(V) && V->Kind == ExprKind::Const && V->Operands.empty() &&
+             V->ConstProvenance == ConstantAddressProvenance::Scalar;
+    };
+    for (unsigned I = 0; I < 2; ++I) {
+      if (E->Op == NdOp::INT_SUB && I != 0)
+        continue;
+      const auto Nested = Bits(E->Operands[I]);
+      const auto Offset = Bits(E->Operands[1 - I]);
+      if (!ScalarConstant(Offset) ||
+          (!Pair(Nested, NdOp::INT_ADD) && !Pair(Nested, NdOp::INT_SUB)))
+        continue;
+      for (unsigned J = 0; J < 2; ++J) {
+        if (Nested->Op == NdOp::INT_SUB && J != 1)
+          continue;
+        const auto Earlier = Bits(Nested->Operands[J]);
+        if (!ScalarConstant(Earlier))
+          continue;
+        const auto Base = Bits(Nested->Operands[1 - J]);
+        const uint64_t Mask = E->Type->Size == 8
+                                  ? ~uint64_t(0)
+                                  : (uint64_t(1) << (E->Type->Size * 8)) - 1;
+        const uint64_t Delta =
+            ((Nested->Op == NdOp::INT_SUB ? uint64_t(0) - Earlier->ConstVal
+                                          : Earlier->ConstVal) +
+             (E->Op == NdOp::INT_SUB ? uint64_t(0) - Offset->ConstVal
+                                     : Offset->ConstVal)) &
+            Mask;
+        auto Value = asIntegerType(Base, E->Type);
+        if (!Delta)
+          return Value;
+        auto Constant = HighExpr::makeConst(Delta, E->Type->Size,
+                                            ConstantAddressProvenance::Scalar);
+        Constant->Type = E->Type;
+        auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, Value, Constant);
+        Sum->Type = E->Type;
+        return Sum;
+      }
+    }
+  }
   for (unsigned I = 0; I < 2; ++I) {
     const auto L = Bits(E->Operands[I]), R = Bits(E->Operands[1 - I]);
     // (a | b) + (a & b) = a + b, modulo the word width.
@@ -1126,14 +1171,25 @@ static void simplifyExprNode(ExprPtr &E, const HighExprSet &OrderedMemory,
     }
   }
 
-  if (E->Op == NdOp::INT_ADD && E->Operands[1]->Kind == ExprKind::Const) {
+  // Changing the spelling of a negative integer must preserve its scalar
+  // evidence. An explicit address, including a high kernel address, is not a
+  // negative offset and must keep its original identity. A low-64-bit constant
+  // is positive in a wider word; mixed-width additions need their original
+  // extension before interpreting its sign.
+  if (E->Op == NdOp::INT_ADD && E->Operands[1]->Kind == ExprKind::Const &&
+      E->Type && E->Type->Size && E->Type->Size <= sizeof(uint64_t) &&
+      E->Operands[1]->Type && E->Operands[1]->Type->Kind == NdTypeKind::Int &&
+      E->Operands[1]->Type->Size == E->Type->Size &&
+      (E->Operands[1]->ConstProvenance == ConstantAddressProvenance::Scalar ||
+       E->Operands[1]->ConstProvenance == ConstantAddressProvenance::Unknown)) {
     int64_t SignedVal = static_cast<int64_t>(E->Operands[1]->ConstVal);
     if (SignedVal < 0) {
       E->Op = NdOp::INT_SUB;
       Changed = true;
       E->Operands[1] = HighExpr::makeConst(
           uint64_t(0) - static_cast<uint64_t>(SignedVal),
-          E->Operands[1]->Type ? E->Operands[1]->Type->Size : 8);
+          E->Operands[1]->Type ? E->Operands[1]->Type->Size : 8,
+          E->Operands[1]->ConstProvenance);
     }
   }
 

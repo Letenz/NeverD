@@ -466,6 +466,11 @@ void parseItaniumExceptions(BinaryImage &Img) {
       FrameRanges.emplace_back(Range->Begin, Range->End);
   }
   std::sort(FrameRanges.begin(), FrameRanges.end());
+  // These attributable ranges already prove how many ordinary records will
+  // be materialized. Avoid repeatedly growing and moving the much larger
+  // normalized records. Identifiable malformed ranges still get records below
+  // and can grow the vector beyond this reservation.
+  Out.Functions.reserve(Out.Functions.size() + FrameRanges.size());
   // Frames whose function starts at the landing pad before them.
   llvm::DenseSet<va_t> PaddedFrameStarts;
   // Most frames share a few CIEs, and naming a personality scans the image's

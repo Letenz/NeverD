@@ -195,6 +195,11 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
       return invalid("x86 VP4DP intrinsic has an invalid operand/output shape");
     return llvm::Error::success();
   }
+  if (isX86RepStateIntrinsic(Id)) {
+    if (!x86RepShapeIsValid(Id, x86RepLowShape(Op)))
+      return invalid("x86 REP intrinsic has an invalid operand/output shape");
+    return llvm::Error::success();
+  }
   if (!HasExplicitAddressSpace && isX86StringIntrinsic(Id)) {
     if (!intrinsicStringShapeIsValid(Id, Op.NumInputs, Op.Output.Size,
                                      Op.NumInputs > 1 ? Op.Inputs[1].Size : 0))

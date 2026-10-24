@@ -1393,6 +1393,234 @@ TEST(HighControlFlowSemantics, WordIdentitiesKeepObservationsAndWidths) {
   }
 }
 
+TEST(HighControlFlowSemantics, WordAbsorptionSeesThroughSameWidthCasts) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (NdOp Outer : {NdOp::INT_AND, NdOp::INT_OR})
+        for (bool ReverseOuter : {false, true})
+          for (bool ReverseInner : {false, true}) {
+            SCOPED_TRACE(testing::Message()
+                         << Bytes << ':' << Signed << ':' << int(Outer) << ':'
+                         << ReverseOuter << ':' << ReverseInner);
+            auto X = local(0);
+            X->Var.Size = Bytes;
+            X->Type = NdType::makeInt(Bytes, Signed);
+            const auto Cast = [&](ExprPtr Value, bool ToSigned) {
+              auto View = std::make_shared<HighExpr>();
+              View->Kind = ExprKind::Cast;
+              View->Type = View->CastTo = NdType::makeInt(Bytes, ToSigned);
+              View->Operands = {std::move(Value)};
+              return View;
+            };
+            auto Y = HighExpr::makeBinop(NdOp::INT_ADD, X, X);
+            Y->Type = X->Type;
+            auto Inner = HighExpr::makeBinop(
+                Outer == NdOp::INT_AND ? NdOp::INT_OR : NdOp::INT_AND,
+                ReverseInner ? Y : Cast(X, !Signed),
+                ReverseInner ? Cast(X, !Signed) : Y);
+            Inner->Type = X->Type;
+            auto Nested = Cast(Cast(Inner, !Signed), Signed);
+            auto Root = HighExpr::makeBinop(Outer, ReverseOuter ? X : Nested,
+                                            ReverseOuter ? Nested : X);
+            Root->Type = X->Type;
+            HighFunc F;
+            F.Body = {result(0, Root)};
+            EXPECT_TRUE(simplifyAllExprs(F.Body));
+            auto Value = F.Body[0].RetVal;
+            while (Value->Kind == ExprKind::Cast)
+              Value = Value->Operands.at(0);
+            EXPECT_EQ(Value->Kind, ExprKind::Var) << F.Body[0].RetVal->str();
+            EXPECT_EQ(F.Body[0].RetVal->Type->Size, Bytes);
+            EXPECT_EQ(F.Body[0].RetVal->Type->IsSigned, Signed);
+            const uint64_t Mask =
+                Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+            for (uint64_t Input : {uint64_t(0), uint64_t(1), Mask, Mask >> 1,
+                                   UINT64_C(0xABCD0123EF457689) & Mask})
+              EXPECT_EQ(execute(F, Input), Input);
+          }
+}
+
+TEST(HighControlFlowSemantics, CastAbsorptionKeepsWidthChangesAndObservations) {
+  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto X = local(0);
+    X->Type = NdType::makeInt(8, false);
+    ExprPtr Observed = X;
+    if (Mode == 1)
+      Observed = HighExpr::makeLoad(X, X->Type);
+    if (Mode == 2) {
+      Observed = HighExpr::makeCall("observe", 0x4000, {X});
+      Observed->Type = X->Type;
+    }
+    if (Mode == 3)
+      Observed = HighExpr::makeUndef(8);
+    auto Inner = HighExpr::makeBinop(NdOp::INT_AND, Observed, X);
+    Inner->Type = X->Type;
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(Mode == 0 ? 4 : 8, true);
+    View->Operands = {Inner};
+    if (Mode == 4)
+      View->MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 5)
+      View->CastTo = NdType::makePtr(X->Type);
+    auto Root = HighExpr::makeBinop(NdOp::INT_OR, View, X);
+    Root->Type = X->Type;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    EXPECT_EQ(F.Body[0].RetVal->Kind, ExprKind::BinOp);
+    EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::INT_OR);
+  }
+}
+
+TEST(HighControlFlowSemantics, WordOffsetsCombineAtTheirDeclaredWidth) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (bool SubtractInner : {false, true})
+        for (bool SubtractOuter : {false, true})
+          for (bool ReverseAddends : {false, true}) {
+            SCOPED_TRACE(testing::Message()
+                         << Bytes << ':' << Signed << ':' << SubtractInner
+                         << ':' << SubtractOuter << ':' << ReverseAddends);
+            const uint64_t Mask =
+                Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+            auto X = local(0);
+            X->Var.Size = Bytes;
+            X->Type = NdType::makeInt(Bytes, Signed);
+            const auto Constant = [&](uint64_t Value) {
+              auto C = HighExpr::makeConst(Value & Mask, Bytes,
+                                           ConstantAddressProvenance::Scalar);
+              C->Type = X->Type;
+              return C;
+            };
+            const uint64_t A = Mask - 7, B = 19;
+            auto Inner = HighExpr::makeBinop(
+                SubtractInner ? NdOp::INT_SUB : NdOp::INT_ADD,
+                ReverseAddends && !SubtractInner ? Constant(A) : X,
+                ReverseAddends && !SubtractInner ? X : Constant(A));
+            Inner->Type = X->Type;
+            auto View = std::make_shared<HighExpr>();
+            View->Kind = ExprKind::Cast;
+            View->Type = View->CastTo = NdType::makeInt(Bytes, !Signed);
+            View->Operands = {Inner};
+            auto Root = HighExpr::makeBinop(
+                SubtractOuter ? NdOp::INT_SUB : NdOp::INT_ADD,
+                ReverseAddends && !SubtractOuter ? Constant(B) : View,
+                ReverseAddends && !SubtractOuter ? View : Constant(B));
+            Root->Type = X->Type;
+            HighFunc F;
+            F.Body = {result(0, Root)};
+            EXPECT_TRUE(simplifyAllExprs(F.Body));
+            auto Value = F.Body[0].RetVal;
+            ASSERT_EQ(Value->Kind, ExprKind::BinOp) << Value->str();
+            ASSERT_EQ(Value->Operands.size(), 2u);
+            EXPECT_EQ(Value->Operands[0]->Kind, ExprKind::Var) << Value->str();
+            EXPECT_EQ(Value->Operands[1]->Kind, ExprKind::Const)
+                << Value->str();
+            EXPECT_EQ(Value->Type->Size, Bytes);
+            EXPECT_EQ(Value->Type->IsSigned, Signed);
+            const uint64_t Offset = (SubtractInner ? uint64_t(0) - A : A) +
+                                    (SubtractOuter ? uint64_t(0) - B : B);
+            for (uint64_t Input : {uint64_t(0), uint64_t(1), Mask, Mask >> 1}) {
+              const auto Actual = execute(F, Input);
+              ASSERT_TRUE(Actual.has_value());
+              EXPECT_EQ(*Actual & Mask, (Input + Offset) & Mask);
+            }
+          }
+}
+
+TEST(HighControlFlowSemantics, WordOffsetsKeepAddressIdentityAndWidths) {
+  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto X = local(0);
+    X->Type = NdType::makeInt(8, false);
+    auto A = HighExpr::makeConst(19, 8, ConstantAddressProvenance::Scalar);
+    auto B = HighExpr::makeConst(7, 8, ConstantAddressProvenance::Scalar);
+    if (Mode == 0 || Mode == 4)
+      A->ConstProvenance = ConstantAddressProvenance::Address;
+    if (Mode == 1 || Mode == 5)
+      B->ConstProvenance = ConstantAddressProvenance::Address;
+    if (Mode == 4)
+      A->ConstVal = UINT64_C(0xFFFFF80012345000);
+    if (Mode == 5)
+      B->ConstVal = UINT64_C(0xFFFFF80012345000);
+    auto Inner = HighExpr::makeBinop(Mode == 3 ? NdOp::INT_SUB : NdOp::INT_ADD,
+                                     Mode == 3 ? A : X, Mode == 3 ? X : A);
+    Inner->Type = X->Type;
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(Mode == 2 ? 4 : 8, false);
+    View->Operands = {Inner};
+    auto Root = HighExpr::makeBinop(NdOp::INT_ADD, View, B);
+    Root->Type = X->Type;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    EXPECT_EQ(F.Body[0].RetVal, Root);
+    EXPECT_EQ(Root->Op, NdOp::INT_ADD);
+    EXPECT_EQ(F.Body[0].RetVal->Operands[0]->Kind, ExprKind::Cast);
+    if (Mode == 4)
+      EXPECT_EQ(Inner->Operands[1], A);
+    if (Mode == 5)
+      EXPECT_EQ(Root->Operands[1], B);
+  }
+}
+
+TEST(HighControlFlowSemantics, WordOffsetsCancelWithoutChangingSignedness) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (bool SubtractFirst : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << Bytes << ':' << Signed << ':' << SubtractFirst);
+        auto X = local(0);
+        X->Var.Size = Bytes;
+        X->Type = NdType::makeInt(Bytes, Signed);
+        auto C =
+            HighExpr::makeConst(0xA5, Bytes, ConstantAddressProvenance::Scalar);
+        C->Type = X->Type;
+        auto Inner = HighExpr::makeBinop(
+            SubtractFirst ? NdOp::INT_SUB : NdOp::INT_ADD, X, C);
+        Inner->Type = X->Type;
+        auto Root = HighExpr::makeBinop(
+            SubtractFirst ? NdOp::INT_ADD : NdOp::INT_SUB, Inner, C);
+        Root->Type = X->Type;
+        HighFunc F;
+        F.Body = {result(0, Root)};
+        EXPECT_TRUE(simplifyAllExprs(F.Body));
+        EXPECT_EQ(F.Body[0].RetVal, X);
+      }
+}
+
+TEST(HighControlFlowSemantics, NegativeOffsetSpellingKeepsTheOperationWidth) {
+  for (const auto &[Bytes, ConstantBytes] :
+       {std::pair{4u, 4u}, std::pair{8u, 8u}, std::pair{8u, 4u},
+        std::pair{16u, 8u}, std::pair{16u, 16u}}) {
+    SCOPED_TRACE(testing::Message() << Bytes << ':' << ConstantBytes);
+    auto X = local(0);
+    X->Var.Size = Bytes;
+    X->Type = NdType::makeInt(Bytes, false);
+    auto C = HighExpr::makeConst(UINT64_MAX, ConstantBytes,
+                                 ConstantAddressProvenance::Scalar);
+    auto Root = HighExpr::makeBinop(NdOp::INT_ADD, X, C);
+    Root->Type = X->Type;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    if (Bytes == ConstantBytes && Bytes <= sizeof(uint64_t)) {
+      EXPECT_EQ(Root->Op, NdOp::INT_SUB);
+      EXPECT_EQ(Root->Operands[1]->ConstVal, 1u);
+      EXPECT_EQ(Root->Operands[1]->ConstProvenance,
+                ConstantAddressProvenance::Scalar);
+    } else {
+      // UINT64_MAX is positive when evaluated in a 128-bit word. A narrow
+      // constant also needs its original extension before a wider addition.
+      EXPECT_EQ(Root->Op, NdOp::INT_ADD);
+      EXPECT_EQ(Root->Operands[1], C);
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, WordIdentitiesBoundSharedExpressionExpansion) {
   ExprPtr X = local(0);
   X->Type = NdType::makeInt(8, false);

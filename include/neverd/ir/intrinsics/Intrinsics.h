@@ -447,6 +447,11 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_SVE_PREFIX_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEPrefix.def"
 
+// Append-only: natural-register REP completion.
+#define NEVERD_X86_REP_STATE(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE
+
   _Count = 16000
 };
 
