@@ -73,6 +73,8 @@ private:
 class X86TranslationBlockBuilder final {
 public:
   static llvm::Expected<std::unique_ptr<X86TranslationBlockBuilder>> create();
+  static llvm::Expected<std::unique_ptr<X86TranslationBlockBuilder>>
+  create(TranslationRuntimeProfileV1 Profile);
 
   X86TranslationBlockBuilder(const X86TranslationBlockBuilder &) = delete;
   X86TranslationBlockBuilder &
@@ -84,9 +86,11 @@ public:
         uint64_t InstructionBudget = 0);
 
 private:
-  explicit X86TranslationBlockBuilder(std::unique_ptr<Decoder> Decoder);
+  explicit X86TranslationBlockBuilder(std::unique_ptr<Decoder> Decoder,
+                                      TranslationRuntimeProfileV1 Profile);
 
   std::unique_ptr<Decoder> TheDecoder;
+  TranslationRuntimeProfileV1 RuntimeProfile;
 };
 
 } // namespace neverd::translate

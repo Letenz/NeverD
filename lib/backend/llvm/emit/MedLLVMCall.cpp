@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -547,8 +548,11 @@ void MedLLVMEmitter::defineCallClobbers(const MedOp &Op,
     auto *ClobberTy =
         llvm::cast<llvm::IntegerType>(sizeToType(Clobber.Value.Size));
     auto *Unknown = llvm::UndefValue::get(ClobberTy);
-    llvm::Value *Frozen = Builder.CreateFreeze(
-        Unknown, Clobber.Value.display() + "_call_clobber_unknown");
+    llvm::Value *Frozen =
+        PreserveUnknownSourceValues && Clobber.PreservedPrefixSize == 0
+            ? llvm_source_unknown::create(Builder, ClobberTy)
+            : Builder.CreateFreeze(Unknown, Clobber.Value.display() +
+                                                "_call_clobber_unknown");
     if (Clobber.PreservedPrefixSize > 0) {
       llvm::Value *Preserved = getVar(Clobber.PreservedInput, Builder);
       if (Preserved->getType()->isPointerTy())

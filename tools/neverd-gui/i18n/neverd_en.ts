@@ -1119,6 +1119,22 @@
         <source>x87 &amp;support…</source>
         <translation>x87 &amp;support…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Unwind information…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Inspect unwind metadata at the selected instruction</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copy or save the selected bytes</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Export data...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2961,6 +2977,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Another link took this one's place.</source>
         <translation>Another link took this one's place.</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>List commands take priority while their list has focus.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filter by action, shortcut or scope</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Scope</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Unassigned</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Analysis views</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Workbench</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Quick filter</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Lists</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Add types…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Edit type…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Delete types…</translation>
     </message>
 </context>
 <context>
@@ -8089,6 +8149,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>unsupported</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Dock back into main window</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 bytes ready.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C byte array (decimal)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C byte array (hex)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C string literal</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Cannot read the complete range at %1. Nothing was exported.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copy</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Could not save %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>End address (inclusive):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Enter a valid address range.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Export data</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>Export takes at most %1 bytes; select a smaller range.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Format:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Hex string</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Raw bytes (file only)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Reading bytes...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Reading bytes: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Save as...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>Saved %1 bytes to %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Spaced hex string</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Start address:</translation>
     </message>
 </context>
 </TS>

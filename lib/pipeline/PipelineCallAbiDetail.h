@@ -52,6 +52,7 @@ struct OmittedCalleeMemo {
   struct SummaryRead {
     va_t Key = 0;
     std::optional<uint32_t> MayWrite;
+    std::optional<GPRExitConstants> ExitConstants;
     std::optional<GPRReadWidths> EntryReads;
     std::optional<int> StackArgs;
     bool StackSlot = false;

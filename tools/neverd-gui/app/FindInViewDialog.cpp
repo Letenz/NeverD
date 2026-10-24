@@ -12,6 +12,7 @@
 #include "../ResourceLimits.h"
 #include "CodeView.h"
 #include "ListingView.h"
+#include "ShortcutHint.h"
 
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -50,6 +51,8 @@ FindInViewDialog::FindInViewDialog(QWidget *parent)
   Next->setDefault(true);
   Previous->setToolTip(tr("Previous match (Shift+Enter or Shift+F3)"));
   Next->setToolTip(tr("Next match (Enter or F3)"));
+  setShortcutHint(*Previous, QKeySequence(Qt::SHIFT | Qt::Key_F3));
+  setShortcutHint(*Next, QKeySequence(Qt::Key_F3));
   auto *layout = new QVBoxLayout(this);
   layout->addWidget(Scope);
   auto *row = new QHBoxLayout;
@@ -68,6 +71,7 @@ FindInViewDialog::FindInViewDialog(QWidget *parent)
   buttons->addWidget(Previous);
   buttons->addWidget(Next);
   auto *close = new QPushButton(tr("Close"), this);
+  setShortcutHint(*close, QKeySequence(Qt::Key_Escape));
   buttons->addWidget(close);
   layout->addLayout(buttons);
   Delay.setSingleShot(true);

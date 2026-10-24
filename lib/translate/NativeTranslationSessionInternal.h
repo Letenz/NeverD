@@ -4,6 +4,7 @@
 #define NEVERD_LIB_TRANSLATE_NATIVETRANSLATIONSESSIONINTERNAL_H
 
 #include "neverd/translate/RuntimeGuestState.h"
+#include "neverd/translate/RuntimeX87GuestState.h"
 #include "neverd/translate/TranslationObjectRequest.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -91,6 +92,11 @@ llvm::Expected<BlockExitV1>
 translateNativeBlockExitV1(uint32_t Status,
                            const TranslationBlockDescriptorV1 &Descriptor,
                            const RuntimeGuestStateX86_64V1 &RuntimeState);
+
+llvm::Expected<BlockExitV1>
+translateNativeX87BlockExitV1(uint32_t Status,
+                              const TranslationBlockDescriptorV1 &Descriptor,
+                              const RuntimeGuestStateX86_64X87V1 &RuntimeState);
 
 /// Form a validated cancellation result whose run identity remains StartPC
 /// while its resumable exit identifies the last committed CurrentPC.

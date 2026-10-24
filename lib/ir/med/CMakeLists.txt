@@ -1,5 +1,7 @@
 add_neverd_component_library(NeverDIRMed
   AArch64SVEState.cpp
+  PortableX87Function.cpp
+  PortableX87Validation.cpp
   MedLibraryRecognition.cpp
   MedComLibraryRecognition.cpp
   MedDispatchSlots.cpp

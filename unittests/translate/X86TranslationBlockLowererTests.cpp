@@ -45,7 +45,7 @@ namespace {
 
 constexpr llvm::StringLiteral HostTriple("aarch64-unknown-linux-gnu");
 constexpr uint64_t EntryPC = 0x401000;
-static_assert(kX86TranslationBlockLoweringSchemaV1 == 9);
+static_assert(kX86TranslationBlockLoweringSchemaV1 == 10);
 
 TranslationOptions aarch64AOTOptions() {
   TranslationOptions Options;

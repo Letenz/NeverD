@@ -144,8 +144,13 @@ workbench. The workbench opens with the default desktop:
   windows' surface below a hairline, as in Visual Studio Code's Modern themes.
 
 Every window is a dock: drag tabs to split, stack or float them. A tab shows
-its close button while it is current or under the pointer. Docked windows
-are one hairline apart; drag the line to resize its neighbors, or double-click
+its close button while it is current or under the pointer. Floating windows
+keep an inner title bar: drag it onto a docking target, double-click it or
+click its dock button to return. A floating tab also offers **Dock back into
+main window** in its context menu. On Wayland the outer system title bar moves
+the window; use the inner bar to dock it. Menus and view dialogs belong to the
+floating window that opened them, and workbench shortcuts remain available.
+Docked windows are one hairline apart; drag the line to resize its neighbors, or double-click
 it to share their space evenly. A window narrows to about the width of its tab:
 a status line or a row of buttons that no longer fits is cut at the window's
 edge. **Windows → Save desktop** remembers an
@@ -181,8 +186,9 @@ conditional (green/red) and unconditional edges routed around blocks; panning
 and zooming are local, and text is dropped at low zoom. The graph overview
 shows the whole function and the visible area.
 
-Opening a file or database starts with disassembly and does not generate
-pseudocode, including when a saved desktop had it open. **F5** or **Tab** opens
+Opening a file or database starts with disassembly and keeps pseudocode and
+IR windows closed, including when a saved desktop had them open. Generate the
+desired representation to reopen its window. **F5** or **Tab** opens
 Pseudocode on the right of disassembly. The cursors follow each other, as
 Hex-Rays' synchronized views do: a click or arrow key on a code row mapped to
 an instruction moves the disassembly cursor there, keeping the focus in the
@@ -657,6 +663,30 @@ the workbench's own takes a key IDA gives another command. **File → Open**
 therefore has no key: IDA's Ctrl+O makes an operand an offset into the current
 segment. One difference is deliberate: in a disassembly, pseudocode or IR
 window Ctrl+F finds text, where IDA's disassembly goes to the next error.
+
+Buttons in Local Types, Type Libraries, Pathfinder, Declare and Find show
+shortcut hints. The main toolbars use icons only, with shortcuts in their tooltips.
+The title-bar command center shows only the filename; Ctrl+Shift+P still opens
+the command palette. Context menus show the same keys. **Options → Shortcuts**
+searches by action, key or scope, includes commands with no assigned key, and distinguishes
+workbench commands from analysis-view and list commands. In the Functions
+list Ctrl+E edits the selected function; in Local Types it edits the selected
+type. These list commands take priority over the workbench's Ctrl+E.
+
+**Jump → Jump to entry point** (Ctrl+E) opens an entry-point chooser, including
+exported entries and the program's start, without switching to the Exports
+dock. Enter or OK jumps to the selected entry; Escape or Cancel leaves the
+current position unchanged. Ctrl+P, Ctrl+L and Ctrl+S likewise choose a function,
+name or segment in a separate dialog. Typing filters a filterable list, and
+accepted jumps participate in the usual Escape / Ctrl+Enter navigation history.
+
+**Edit → Export data** (Shift+E) exports the selected items in the text listing
+or selected Hex View bytes; without a selection it uses the current item.
+The dialog shows editable inclusive address bounds, hexadecimal text, a C string
+literal or C byte arrays, with Copy and Save actions. Raw bytes save directly
+to a binary file. Export reads the whole range at one project revision before
+enabling either action; unreadable bytes reject the export. A range is limited
+to 1 MiB and the preview to 4 KiB; copying and saving use the complete range.
 
 `scripts/compare_gui_with_ida.py --ida <installation>` checks the table against
 an IDA installation and reports, menu by menu, which of IDA's commands the

@@ -420,12 +420,32 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64PAuthM.def"
 
+// Compiler-private portable runtime calls. Append to preserve serialized IDs.
+#define NEVERD_X87_PORTABLE_HELPER(Role, ...) PortableX87##Role,
+#include "neverd/ir/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
+
+  // Append-only: one descriptor query owns the value, ZF and selector access.
+  X86LoadSegmentLimit,
+  X86LoadSegmentLimitMemory,
+
 // Append-only: combined authentication, memory access and base writeback.
 #define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64PAuthLoad.def"
 
   _Count = 16000
 };
+
+constexpr bool isPortableX87Intrinsic(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X87_PORTABLE_HELPER(Role, ...) case Intrinsic::PortableX87##Role:
+#include "neverd/ir/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
+    return true;
+  default:
+    return false;
+  }
+}
 
 enum class X86SystemStateKind : uint8_t {
   ReadPid,
@@ -463,7 +483,9 @@ constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
   case Intrinsic::Id:                                                          \
     return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
 #define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
+#define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_EXISTING_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
   default:

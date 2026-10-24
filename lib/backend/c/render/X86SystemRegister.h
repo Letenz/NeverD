@@ -23,10 +23,23 @@ namespace neverd {
 // external call loses the architectural access. Select at C compilation time.
 inline constexpr const char X86SystemRegisterCompilerDispatch[] =
     "#ifndef NEVERD_X86_SYSTEM_REGISTER\n"
-    "#if defined(__neverc__) || (defined(_MSC_VER) && !defined(__clang__))\n"
+    "#if defined(_MSC_VER) && !defined(__clang__)\n"
     "#define NEVERD_X86_SYSTEM_REGISTER(msvc, ...) msvc\n"
     "#else\n"
     "#define NEVERD_X86_SYSTEM_REGISTER(msvc, ...) __VA_ARGS__\n"
+    "#endif\n"
+    "#endif\n"
+    "#ifndef NEVERD_X86_SYSTEM_REGISTER_NATIVE\n"
+    "#if defined(__has_builtin)\n"
+    "#if __has_builtin(__builtin_ia32_readcr) && "
+    "__has_builtin(__builtin_ia32_writecr) && "
+    "__has_builtin(__builtin_ia32_readdr) && "
+    "__has_builtin(__builtin_ia32_writedr)\n"
+    "#define NEVERD_X86_SYSTEM_REGISTER_NATIVE(native, ...) native\n"
+    "#endif\n"
+    "#endif\n"
+    "#ifndef NEVERD_X86_SYSTEM_REGISTER_NATIVE\n"
+    "#define NEVERD_X86_SYSTEM_REGISTER_NATIVE(native, ...) __VA_ARGS__\n"
     "#endif\n"
     "#endif\n\n";
 
@@ -45,14 +58,20 @@ renderX86SystemRegisterExpression(const X86SystemRegisterAsm &P, bool Microsoft,
              " neverd_system_register; __asm__ volatile(\"mov %" + P.Register +
              ", %0\" : \"=r\"(neverd_system_register) : : \"cc\", "
              "\"memory\"); neverd_system_register; })";
-  if (!Microsoft)
+  if (Microsoft) {
+    std::string Builtin = std::string(intrinsicCName(P.Id)) + "(";
+    if (P.Debug)
+      Builtin += std::to_string(P.Index) + (P.Write ? ", " : "");
+    if (P.Write)
+      Builtin += Arguments[0];
+    Native = "NEVERD_X86_SYSTEM_REGISTER(" + Builtin + "), " + Native + ")";
+  }
+  if (P.Bytes != 8)
     return Native;
-  std::string Builtin = std::string(intrinsicCName(P.Id)) + "(";
-  if (P.Debug)
-    Builtin += std::to_string(P.Index) + (P.Write ? ", " : "");
-  if (P.Write)
-    Builtin += Arguments[0];
-  return "NEVERD_X86_SYSTEM_REGISTER(" + Builtin + "), " + Native + ")";
+  const std::string Builtin =
+      P.Builtin + "(" + std::to_string(P.Index) +
+      (P.Write ? ", (" + Type + ")(" + Arguments[0] + ")" : "") + ")";
+  return "NEVERD_X86_SYSTEM_REGISTER_NATIVE(" + Builtin + ", " + Native + ")";
 }
 
 } // namespace neverd

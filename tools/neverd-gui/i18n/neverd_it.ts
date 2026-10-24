@@ -1119,6 +1119,22 @@
         <source>x87 &amp;support…</source>
         <translation>&amp;Supporto x87…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Informazioni di unwinding…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Esamina i metadati di unwinding dell’istruzione selezionata</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copia o salva i byte selezionati</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Esporta dati...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2961,6 +2977,50 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Another link took this one's place.</source>
         <translation>Un altro link ha preso il posto di questo.</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>I comandi dell’elenco hanno priorità quando l’elenco ha il focus.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filtra per azione, scorciatoia o ambito</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Ambito</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Non assegnata</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Viste di analisi</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Area di lavoro</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Filtro rapido</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Elenchi</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Aggiungi tipi…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Modifica tipo…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Elimina tipi…</translation>
     </message>
 </context>
 <context>
@@ -8089,6 +8149,100 @@ SHA-256 secondario: %3
     <message>
         <source>unsupported</source>
         <translation>non supportato</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Riaggancia alla finestra principale</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 byte pronti.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 byte pronti. L’anteprima mostra i primi %2; copia e salvataggio usano l’intero intervallo.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Array di byte C (decimale)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Array di byte C (esadecimale)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Letterale stringa C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Impossibile leggere l’intero intervallo a %1. Nessun dato esportato.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copia</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Impossibile salvare %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Indirizzo finale (incluso):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Inserisci un intervallo di indirizzi valido.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Esporta dati</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>È possibile esportare al massimo %1 byte; seleziona un intervallo più piccolo.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Formato:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Stringa esadecimale</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Byte grezzi (solo file)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Lettura dei byte...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Lettura dei byte: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Salva con nome...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 byte salvati in %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Stringa esadecimale con spazi</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Indirizzo iniziale:</translation>
     </message>
 </context>
 </TS>

@@ -572,6 +572,9 @@ inline constexpr int
 
 // lib/ir/low/SourceFrameAnalysis.cpp
 inline constexpr size_t kSourceFrameAnalysisRemaining = 262144;
+inline constexpr size_t kSourceFrameStorageObservationPointers = 8;
+inline constexpr size_t kSourceFrameTextBytes = 1024;
+inline constexpr size_t kSourceFrameTextObservations = 32;
 inline constexpr int kSourceFrameAnalysisTransferWriteOutputBytesLimit = 256;
 inline constexpr int kSourceFrameAnalysisFrameGraphCountLimit = 16384;
 inline constexpr int

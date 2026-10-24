@@ -1119,6 +1119,22 @@
         <source>x87 &amp;support…</source>
         <translation>دعم x87(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>معلومات فك المكدس…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>فحص بيانات فك المكدس الوصفية عند التعليمة المحددة</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>نسخ البايتات المحددة أو حفظها</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>تصدير البيانات...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2985,6 +3001,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>حلّ رابط آخر محل هذا الرابط.</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>تكون الأولوية لأوامر القائمة عندما يكون التركيز عليها.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>تصفية حسب الإجراء أو الاختصار أو النطاق</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>النطاق</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>غير معيّن</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>عروض التحليل</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>مساحة العمل</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>تصفية سريعة</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>القوائم</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>إضافة أنواع…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>تحرير النوع…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>حذف الأنواع…</translation>
     </message>
 </context>
 <context>
@@ -8233,6 +8293,100 @@ SHA-256 الثانوي: %3
     <message>
         <source>unsupported</source>
         <translation>غير مدعوم</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>إعادة الإرساء في النافذة الرئيسية</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 بايت جاهزة.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 بايت جاهزة. تعرض المعاينة أول %2؛ يستخدم النسخ والحفظ النطاق الكامل.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>مصفوفة بايتات C (عشري)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>مصفوفة بايتات C (سداسي عشري)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>قيمة نصية حرفية بلغة C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>تعذرت قراءة النطاق الكامل عند %1. لم يتم تصدير شيء.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>نسخ</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>تعذر حفظ %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>عنوان النهاية (شامل):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>أدخل نطاق عناوين صالحًا.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>تصدير البيانات</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>يمكن تصدير %1 بايت كحد أقصى؛ حدد نطاقًا أصغر.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>التنسيق:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>سلسلة سداسية عشرية</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>بايتات خام (ملف فقط)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>جارٍ قراءة البايتات...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>جارٍ قراءة البايتات: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>حفظ باسم...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>تم حفظ %1 بايت في %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>سلسلة سداسية عشرية بمسافات</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>عنوان البداية:</translation>
     </message>
 </context>
 </TS>

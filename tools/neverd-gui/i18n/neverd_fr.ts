@@ -1119,6 +1119,22 @@
         <source>x87 &amp;support…</source>
         <translation>Prise en &amp;charge de x87…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Informations de déroulement de pile…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Examiner les métadonnées de déroulement de pile à l’instruction sélectionnée</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copier ou enregistrer les octets sélectionnés</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Exporter les données...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2961,6 +2977,50 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>Another link took this one's place.</source>
         <translation>Un autre lien a pris la place de celui-ci.</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>Les commandes de la liste sont prioritaires lorsqu’elle a le focus.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filtrer par action, raccourci ou portée</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Portée</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Non attribué</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Vues d’analyse</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Espace de travail</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Filtre rapide</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Listes</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Ajouter des types…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Modifier le type…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Supprimer des types…</translation>
     </message>
 </context>
 <context>
@@ -8089,6 +8149,100 @@ SHA-256 secondaire : %3
     <message>
         <source>unsupported</source>
         <translation>non pris en charge</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Rattacher à la fenêtre principale</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 octets prêts.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 octets prêts. L’aperçu montre les %2 premiers ; la copie et l’enregistrement utilisent toute la plage.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Tableau d’octets C (décimal)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Tableau d’octets C (hexadécimal)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Littéral de chaîne C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Impossible de lire toute la plage à %1. Rien n’a été exporté.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copier</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Impossible d’enregistrer %1 : %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Adresse de fin (incluse) :</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Saisissez une plage d’adresses valide.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Exporter les données</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>L’exportation est limitée à %1 octets ; sélectionnez une plage plus petite.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Format :</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Chaîne hexadécimale</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Octets bruts (fichier uniquement)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Lecture des octets...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Lecture des octets : %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Enregistrer sous...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 octets enregistrés dans %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Chaîne hexadécimale avec espaces</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Adresse de début :</translation>
     </message>
 </context>
 </TS>

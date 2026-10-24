@@ -32,6 +32,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -68,6 +69,10 @@ constexpr GPRFamilyMask vectorArgumentFamilies(unsigned Count) {
 /// CL, 2 for CX or CH, 4 for ECX, 8 for RCX; up to 16 for an XMM register).
 using GPRReadWidths =
     std::array<uint8_t, kX64VectorFamilyBase + kX64VectorArgumentFamilies>;
+
+/// Extra full-width scalar words left on every ordinary return, ordered by
+/// register byte offset. ABI result registers and address identities stay out.
+using GPRExitConstants = std::vector<std::pair<uint64_t, uint64_t>>;
 
 /// The GPR family of a register slice, or nullopt when \p RegOff is not one
 /// of the sixteen x86-64 GPRs this summary tracks.
@@ -137,6 +142,7 @@ struct RegisterBlock {
 /// \p F has an effect this summary cannot describe.
 struct LocalRegisterEffect {
   GPRFamilyMask Writes = 0;
+  GPRExitConstants ExitConstants;
   std::set<va_t> Callees;
   /// Direct targets of calls that never return, but for those the name list
   /// knows: proved ones, and the code the user states never returns.  Their
@@ -212,6 +218,9 @@ struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is
   /// known.
   std::map<va_t, GPRFamilyMask> MayWrite;
+  /// Constants established locally on every return of a bounded call-free
+  /// body. Unknown paths, exceptional roots and addresses supply no fact.
+  std::map<va_t, GPRExitConstants> ExitConstants;
   /// Bytes of each family read before being written on some path from
   /// entry, including through callees.  A pass-through argument counts; a
   /// register a nested call merely receives does not.

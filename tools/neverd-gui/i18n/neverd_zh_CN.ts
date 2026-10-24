@@ -1119,6 +1119,22 @@
         <source>x87 &amp;support…</source>
         <translation>x87 支持(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>栈展开信息…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>检查所选指令处的栈展开元数据</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>复制或保存所选字节</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>导出数据...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2955,6 +2971,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>另一个链接取代了此链接。</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>列表获得焦点时，优先执行列表命令。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>按操作、快捷键或作用范围筛选</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>作用范围</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未分配</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>分析视图</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>工作台</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>快速筛选</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>列表</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>添加类型…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>编辑类型…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>删除类型…</translation>
     </message>
 </context>
 <context>
@@ -8053,6 +8113,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>不支持</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>停靠回主窗口</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 字节已就绪。</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 字节已就绪。预览显示前 %2 字节；复制和保存会使用完整范围。</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C 字节数组（十进制）</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C 字节数组（十六进制）</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C 字符串字面量</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>无法读取 %1 处的完整范围。未导出任何内容。</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>复制</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>无法保存 %1：%2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>结束地址（含）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>请输入有效的地址范围。</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>导出数据</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>最多可导出 %1 字节；请选择较小的范围。</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>格式：</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>十六进制字符串</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>原始字节（仅保存到文件）</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>正在读取字节...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>正在读取字节：%1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>另存为...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>已将 %1 字节保存到 %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>带空格的十六进制字符串</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>起始地址：</translation>
     </message>
 </context>
 </TS>

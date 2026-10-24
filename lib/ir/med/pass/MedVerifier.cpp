@@ -80,6 +80,9 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
             Err(aarch64_sve::kMalformedVector, Blk.Id, Op.Addr);
           if (Id == Intrinsic::A64_SvePtrue && !aarch64PtrueMedShapeIsValid(Op))
             Err(aarch64_sve::kMalformedPtrue, Blk.Id, Op.Addr);
+          if (isPortableX87Intrinsic(Id) && !portableX87MedShapeIsValid(Op))
+            Err("portable x87 helper has an invalid exact ABI shape", Blk.Id,
+                Op.Addr);
           if (isX87ContextIntrinsic(Id) &&
               !x87ContextMedShapeIsValid(Op, Arch::Unknown))
             Err("x87 context intrinsic has an invalid state/operand contract",

@@ -1401,27 +1401,8 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
   }
 
-  // RDMSR reads the MSR selected by ECX into EDX:EAX; the lifter hands the
-  // selector in and splits the 64-bit result itself.  The asm returns the
-  // combined value so it reads as one `__readmsr(ecx)`.
-  if (IC == I::Rdmsr && Op.Output.Size > 0) {
-    if (Op.NumInputs != 2)
-      llvm::report_fatal_error("x86 RDMSR has no MSR selector");
-    auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
-    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
-    llvm::Value *Selector =
-        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty);
-    auto *FnTy = llvm::FunctionType::get(I64Ty, {I32Ty}, false);
-    auto *IA = TargetArch == Arch::X64
-                   ? llvm::InlineAsm::get(
-                         FnTy, "rdmsr\n\tshlq $$32, %rdx\n\torq %rdx, %rax",
-                         "={rax},{ecx},~{rdx},~{memory}",
-                         /*hasSideEffects=*/true)
-                   : llvm::InlineAsm::get(FnTy, "rdmsr", "=A,{ecx},~{memory}",
-                                          /*hasSideEffects=*/true);
-    llvm::Value *Value = Builder.CreateCall(IA, {Selector}, "msr");
-    return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
-  }
+  if (IC == I::Rdmsr)
+    return emitX86ScalarSystem(Op, IC, Builder);
 
   // A segment selector read.
   if (IC == I::ReadSegment && Op.Output.Size > 0) {
@@ -1623,7 +1604,7 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
                : nullptr;
 
   if (IC == I::In)
-    return emitX86PortIn(Op, Builder);
+    return emitX86ScalarSystem(Op, IC, Builder);
 
   if (x86SystemRegisterName(IC, 0)) {
     const auto P = x86SystemRegisterAsm(
@@ -1634,6 +1615,10 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
         Op.NumInputs != (P->Debug ? 2 : 1) ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       llvm::report_fatal_error("invalid x86 system register read contract");
+    if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P->LLVMName))
+      return Builder.CreateCall(
+          llvm::Intrinsic::getOrInsertDeclaration(Mod, IID),
+          {Builder.getInt32(P->Index)}, "sysreg");
     auto *FnTy = llvm::FunctionType::get(sizeToType(Op.Output.Size), false);
     auto *IA = llvm::InlineAsm::get(FnTy, P->Text, P->Constraints,
                                     /*hasSideEffects=*/true);

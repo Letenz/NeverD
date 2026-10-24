@@ -53,6 +53,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
 
 #include <array>
 #include <cstdint>
@@ -75,10 +76,16 @@ class MedLLVMEmitterTestPeer;
 class RelocatedFunctionEntryVerifier;
 class MedLLVMProvenanceTestPeer;
 class LLVMSourceMap;
+class PreparedPortableX87Function;
 
 class MedLLVMEmitter {
 public:
   void setSourceMap(LLVMSourceMap *Map) { SourceMap = Map; }
+  /// Retain unrecovered machine values through source optimization. The
+  /// opaque markers are for analysis output, not executable reconstruction.
+  void setPreserveUnknownSourceValues(bool Enabled) {
+    PreserveUnknownSourceValues = Enabled;
+  }
   void setAnalystSourceProjection(bool Enabled) {
     AnalystSourceProjection = Enabled;
   }
@@ -131,12 +138,25 @@ public:
        bool MergeableGlobals = false,
        const std::vector<char> *BodyMask = nullptr);
 
+  /// Emit only a privately prepared portable leaf with its exact alternate C
+  /// ABI. Source image/debug settings on this emitter are not inherited.
+  llvm::Expected<std::unique_ptr<llvm::Module>>
+  emitPortableX87(const PreparedPortableX87Function &Prepared,
+                  llvm::LLVMContext &Context, llvm::StringRef OutputTriple);
+
   uint64_t unhandledValueIntrinsicCount() const {
     return UnhandledValueIntrinsicCount;
   }
 
 private:
+  const MedFunc *PortableBody = nullptr;
+  const PreparedPortableX87Function *PortableInterface = nullptr;
+  std::string PortableOutputTriple;
+  llvm::Function *declarePortableX87Function(const MedFunc &Function);
+  llvm::Value *emitPortableX87Intrinsic(const MedOp &Op,
+                                        llvm::IRBuilder<> &Builder);
   bool AnalystSourceProjection = false;
+  bool PreserveUnknownSourceValues = false;
   const SourceTargetSignatures *AnalystTargets = nullptr;
   friend class MedLLVMEmitterTestPeer;
   friend class MedLLVMProvenanceTestPeer;
@@ -324,10 +344,9 @@ private:
                             llvm::IRBuilder<> &Builder);
   void emitX86MemPtrAsm(const char *Mn, const MedOp &Op,
                         llvm::IRBuilder<> &Builder);
-  /// IN acc, port — read an I/O port into the accumulator (value-producing).
-  llvm::Value *emitX86PortIn(const MedOp &Op, llvm::IRBuilder<> &Builder);
-  /// OUT port, acc — write the accumulator to an I/O port (side-effect).
-  void emitX86PortOut(const MedOp &Op, llvm::IRBuilder<> &Builder);
+  /// Ordered RDMSR/WRMSR and scalar port I/O through the shared native plan.
+  llvm::Value *emitX86ScalarSystem(const MedOp &Op, Intrinsic IC,
+                                   llvm::IRBuilder<> &Builder);
   /// SLDT/STR/SMSW with a register destination — store a system register into
   /// a GPR (value-producing).
   llvm::Value *emitX86SysRegStore(const MedOp &Op, Intrinsic IC,

@@ -695,37 +695,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
   }
 
-  // LSL loads the limit of the segment a selector names, as MSVC's
-  // __segmentlimit does, and sets ZF when the selector is valid.
-  case X86_INS_LSL: {
-    if (X86.op_count < 2 || X86.operands[0].type != X86_OP_REG)
-      return false;
-    NdVar Selector;
-    if (X86.operands[1].type == X86_OP_REG) {
-      const RegInfo Source =
-          mapCapstoneReg(static_cast<x86_reg>(X86.operands[1].reg));
-      Selector = NdVar::reg(Source.Offset, 2);
-    } else if (X86.operands[1].type == X86_OP_MEM) {
-      Selector = operandRead(S, X86.operands[1]);
-      if (Selector.Size != 2)
-        return false;
-    } else {
-      return false;
-    }
-    const NdVar Limit = S.makeTemp(4);
-    S.emitIntrinsic(Intrinsic::SegmentLimit, Limit, {Selector});
-    const NdVar Dst = operandWrite(X86.operands[0]);
-    if (Dst.Size == 4)
-      S.emit(NdOp::COPY, Dst, {Limit});
-    else if (Dst.Size > 4)
-      S.emit(NdOp::INT_ZEXT, Dst, {Limit});
-    else
-      S.emit(NdOp::SUBBYTES, Dst, {Limit, NdVar::cst(0, 4)});
-    S.emitIntrinsic(Intrinsic::SegmentLimitValid, NdVar::reg(x86reg::ZF, 1),
-                    {Selector});
-    break;
-  }
-
   // MONITOR arms address monitoring at RAX with the extensions in ECX and
   // the hints in EDX; MWAIT waits with the hints in EAX and the extensions
   // in ECX.  The AMD X forms add an EBX timer to MWAITX.
@@ -800,6 +769,7 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_WRFSBASE:
   case X86_INS_WRGSBASE:
   case X86_INS_LAR:
+  case X86_INS_LSL:
   case X86_INS_ARPL:
   case X86_INS_CLTS:
   case X86_INS_TPAUSE:
