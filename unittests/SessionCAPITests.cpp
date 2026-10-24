@@ -3,13 +3,17 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Verify session C ABI failures, analysis results and source contracts.
+///
+//===----------------------------------------------------------------------===//
 
 #include "InstructionFlow.h"
 #include "LLVMFunctionView.h"
 #include "NativeMobileSession.h"
 #include "SessionImpl.h"
 #include "SessionTestAccess.h"
-#include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFException.h"
@@ -45,6 +49,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <gtest/gtest.h>
 #include <iterator>
 #include <limits>
 #include <map>

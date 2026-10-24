@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 ///
+/// \file
 /// Forward exact private frame reads before semantic expression simplification.
 /// Facts describe source locals after renaming, and only remain valid while
 /// their inputs and every byte of the stored value remain unchanged.

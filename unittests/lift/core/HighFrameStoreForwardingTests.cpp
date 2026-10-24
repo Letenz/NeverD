@@ -1,11 +1,13 @@
-//===- HighFrameStoreForwardingTests.cpp - Frame value semantics
-//-----------===//
+//===- HighFrameStoreForwardingTests.cpp - Frame value semantics ---------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-
-#include "gtest/gtest.h"
+///
+/// \file
+/// Check frame load forwarding across widths, effects and source boundaries.
+///
+//===----------------------------------------------------------------------===//
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/ir/SourceABI.h"
@@ -18,6 +20,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+#include <gtest/gtest.h>
 #include <limits>
 #include <unordered_set>
 
