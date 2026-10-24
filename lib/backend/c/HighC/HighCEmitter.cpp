@@ -1714,6 +1714,11 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       forEachExpr(Statement, CheckExpr);
     });
   }
+  // Compiler helpers belong to the emitted unit even when its caller
+  // supplies the headers. Collect dependencies before the header-only exit.
+  std::set<std::string> CallTargets;
+  for (const auto &Function : Funcs)
+    collectCallTargets(Function.Body, CallTargets);
   // Every spelling of a 16-byte integer, in types and in the intrinsics'
   // casts alike, takes the C23 type a 32-bit target has.
   auto WriteInt128Spelling = [&] {
@@ -1755,11 +1760,6 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     if (Backing.Header)
       Headers.insert(ImageObjects.at(Backing.Base).Header);
 
-  std::set<std::string> CallTargets;
-  // An analysis-only function prints as ordinary C too, so its callees need
-  // the same headers and prototypes.
-  for (auto &F : Funcs)
-    collectCallTargets(F.Body, CallTargets);
   writeSourceRecordDeclarations(Funcs, CallTargets);
   // A function whose address the code takes is declared as a callee is.
   CallTargets.insert(AddressTakenFunctions.begin(),
