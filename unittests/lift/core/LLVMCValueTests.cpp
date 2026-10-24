@@ -3558,6 +3558,7 @@ TEST(LLVMCValues, LocalRegisterPrototypesRejectIncompatibleCarriers) {
     NarrowArgument,
     FloatingArgument,
     FloatingResult,
+    NarrowSourceResult,
     LiveVoidResult,
     ExplicitEntry,
     NonPlatform,
@@ -3575,9 +3576,9 @@ TEST(LLVMCValues, LocalRegisterPrototypesRejectIncompatibleCarriers) {
              {Mutation::MissingArgument, Mutation::ExtraArgument,
               Mutation::NarrowArgument, Mutation::FloatingArgument,
               Mutation::FloatingResult, Mutation::LiveVoidResult,
-              Mutation::ExplicitEntry, Mutation::NonPlatform,
-              Mutation::Fastcall, Mutation::Thiscall, Mutation::Variadic,
-              Mutation::PreserveLLVM}) {
+              Mutation::NarrowSourceResult, Mutation::ExplicitEntry,
+              Mutation::NonPlatform, Mutation::Fastcall, Mutation::Thiscall,
+              Mutation::Variadic, Mutation::PreserveLLVM}) {
           SCOPED_TRACE(static_cast<unsigned>(Arch));
           SCOPED_TRACE(static_cast<unsigned>(Format));
           SCOPED_TRACE(Indirect);
@@ -3588,6 +3589,12 @@ TEST(LLVMCValues, LocalRegisterPrototypesRejectIncompatibleCarriers) {
           LocalScalarPrototype Debug;
           Debug.Function = *Header.resolvePrototype("fixture_qualified");
           auto &Function = Debug.Function;
+          if (Change == Mutation::NarrowSourceResult) {
+            Function.ReturnType = neverd::NdType::makeInt(4, true);
+            Function.PortablePrototypeDeclaration =
+                "int32_t fixture_qualified(const uint16_t *input, "
+                "volatile uint32_t *output)";
+          }
           if (Change == Mutation::ExplicitEntry)
             Function.ParamEntryLocations.resize(Function.Params.size());
           Function.PlatformConvention = Change != Mutation::NonPlatform;
@@ -3608,7 +3615,11 @@ TEST(LLVMCValues, LocalRegisterPrototypesRejectIncompatibleCarriers) {
             FirstType = Builder.getInt32Ty();
           if (Change == Mutation::FloatingArgument)
             FirstType = Builder.getDoubleTy();
-          auto *Type = llvm::FunctionType::get(ResultType, {FirstType}, true);
+          auto *Type =
+              Change == Mutation::NarrowSourceResult
+                  ? llvm::FunctionType::get(
+                        ResultType, {FirstType, Builder.getInt64Ty()}, false)
+                  : llvm::FunctionType::get(ResultType, {FirstType}, true);
           llvm::Value *Callee;
           if (Indirect) {
             auto *Symbol =
@@ -3654,6 +3665,22 @@ TEST(LLVMCValues, LocalRegisterPrototypesRejectIncompatibleCarriers) {
           EXPECT_NE(Source.find("fixture_qualified("), std::string::npos)
               << Source;
           EXPECT_EQ(Source.find("return 0;"), std::string::npos) << Source;
+          if (Change == Mutation::NarrowSourceResult) {
+            // A supplied narrow source result cannot discard the upper
+            // machine bits the caller still observes.
+            Source += R"c(
+uint64_t fixture_qualified(uint64_t input, uint64_t output) {
+  if (input != 7 || output != 9) __builtin_trap();
+  return UINT64_C(0x1234567800000007);
+}
+int main(void) { return use_local() != UINT64_C(0x1234567800000007); }
+)c";
+            for (const auto Optimization : {"-O0", "-O2"}) {
+              compileAndRun(Source, Optimization, {}, true);
+              if (::testing::Test::HasFailure())
+                return;
+            }
+          }
         }
 }
 

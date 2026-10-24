@@ -1888,6 +1888,15 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           Fits =
               Scalar(Source->ReturnType) && (Call->getType()->isIntegerTy() ||
                                              Call->getType()->isPointerTy());
+        // A local declaration does not prove the upper bits of a wider
+        // machine result. Keep that result's carrier when it remains live.
+        if (Fits && Source->PrototypeLibrary == UserPrototypeLibrary &&
+            (Source->ReturnType->Kind == NdTypeKind::Int ||
+             (Source->ReturnType->Kind == NdTypeKind::Struct &&
+              Source->ReturnType->IsEnum)) &&
+            Mod.getDataLayout().getTypeStoreSize(Call->getType()) >
+                Source->ReturnType->Size)
+          Fits = !valueFeedsPrintedUse(Call);
         if (Fits)
           SourceImportPrototypes.insert_or_assign(Name, *Source);
         else {
