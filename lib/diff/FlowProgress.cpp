@@ -22,6 +22,7 @@
 #include "llvm/IR/Operator.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
@@ -41,15 +42,30 @@ llvm::StringRef flowProgressName(FlowProgressKind Kind) {
   return "invalid";
 }
 namespace {
-std::optional<FlowLoopProgress>
+enum CounterDomain : unsigned {
+  SignedIncreasing = 1,
+  SignedDecreasing = 2,
+  UnsignedIncreasing = 4,
+  UnsignedDecreasing = 8,
+  AllCounterDomains = SignedIncreasing | SignedDecreasing | UnsignedIncreasing |
+                      UnsignedDecreasing
+};
+struct CounterStep {
+  FlowLoopProgress Loop;
+  unsigned Domains = 0;
+};
+
+std::optional<CounterStep>
 counterUpdate(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
               uint32_t Update, uint32_t Compare, llvm::StringRef Contract,
-              llvm::function_ref<void(uint64_t)> Charge) {
+              llvm::function_ref<void(uint64_t)> Charge,
+              bool CheckIncoming = true) {
   const auto &U = G.Nodes[Update];
   Charge(1 + U.Semantics.size());
-  // A component's sole entry header executes on every continued iteration.
-  // Its update dominates the latch; early exits can return without consuming
-  // poison, but the exact latch comparison must consume it before a backedge.
+  // The update is local to the header or its represented continuation block.
+  // Legacy guards consume it before the backedge. A v4 guard may consume the
+  // current counter first: new poison then crosses one backedge through the
+  // exact header PHI and prevents another defined guarded continuation.
   if ((U.Block != Block && U.Block != Header) ||
       (U.Opcode != "add" && U.Opcode != "sub") || U.Inputs.size() != 2)
     return {};
@@ -81,6 +97,19 @@ counterUpdate(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
   if (P.Block != Header || !P.Phi || P.Opcode != "phi" || P.Inputs.size() < 2 ||
       P.Semantics != Contract.str() + ";result=" + Step->Semantics + ";flags=0")
     return {};
+  unsigned Domains = 0;
+  if (Flags & NSW) {
+    const bool Negative = (Step->Value >> (Width - 1)) & 1;
+    Domains |=
+        (U.Opcode == "sub") == Negative ? SignedIncreasing : SignedDecreasing;
+  }
+  if (Flags & NUW)
+    Domains |= U.Opcode == "sub" ? UnsignedDecreasing : UnsignedIncreasing;
+  CounterStep Result{{Block, Counter, Update, Compare}, Domains};
+  // v4 checks the complete header PHI once for a whole group, including
+  // every physical backedge. Published modes retain their original scan.
+  if (!CheckIncoming)
+    return Result;
   unsigned SelfInputs = 0;
   for (const auto &Input : P.Inputs) {
     Charge(1);
@@ -94,16 +123,16 @@ counterUpdate(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
   }
   if (SelfInputs != 1)
     return {};
-  return FlowLoopProgress{Block, Counter, Update, Compare};
+  return Result;
 }
 
-std::optional<FlowLoopProgress>
-counterLoop(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
-            llvm::StringRef Contract,
-            llvm::function_ref<void(uint64_t)> Charge) {
+std::optional<uint32_t>
+guardCompare(const DataFlowGraph &G, uint32_t Block, uint32_t Target,
+             llvm::StringRef Contract,
+             llvm::function_ref<void(uint64_t)> Charge) {
   const auto &B = G.Blocks[Block];
   if (B.Successors.size() != 2 ||
-      (B.Successors[0] == Header) == (B.Successors[1] == Header))
+      (B.Successors[0] == Target) == (B.Successors[1] == Target))
     return {};
   const auto &Branch = G.Nodes[B.Terminator];
   Charge(1 + Branch.Semantics.size());
@@ -124,14 +153,25 @@ counterLoop(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
       Predicate < llvm::CmpInst::FIRST_ICMP_PREDICATE ||
       Predicate > llvm::CmpInst::LAST_ICMP_PREDICATE)
     return {};
+  return Compare;
+}
+
+std::optional<FlowLoopProgress>
+counterLoop(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
+            llvm::StringRef Contract,
+            llvm::function_ref<void(uint64_t)> Charge) {
+  const auto Compare = guardCompare(G, Block, Header, Contract, Charge);
+  if (!Compare)
+    return {};
+  const auto &Cmp = G.Nodes[*Compare];
   // Any direct scalar comparison propagates poison from either operand to
   // the branch. Progress does not depend on its predicate or exit polarity.
   for (const auto &Input : Cmp.Inputs) {
     Charge(1);
     if (Input.Type == FlowOperand::Kind::Node)
-      if (auto L = counterUpdate(G, Block, Header, Input.Node, Compare,
+      if (auto L = counterUpdate(G, Block, Header, Input.Node, *Compare,
                                  Contract, Charge))
-        return L;
+        return L->Loop;
   }
   return {};
 }
@@ -239,6 +279,229 @@ FlowComponents components(const DataFlowGraph &G,
   }
   return C;
 }
+
+/// v4 groups all paths that advance one header counter. Original predecessor
+/// inventories and scratch are shared across candidates/components. A funnel
+/// has one unconditional physical backedge and several consuming guards; its
+/// witnesses belong to those guards, not duplicate rows for the same latch.
+class BranchProof {
+  struct Guard {
+    uint32_t Block, Compare;
+  };
+  struct Backedge {
+    uint32_t Latch;
+    size_t Begin, End;
+    bool Funnel;
+  };
+  const DataFlowGraph &G;
+  llvm::StringRef Contract;
+  llvm::function_ref<void(uint64_t)> Charge;
+  std::vector<std::vector<uint32_t>> Predecessors;
+  std::vector<uint32_t> HeaderValues, ArmValues, Owners;
+  std::vector<uint8_t> Seen;
+  std::vector<Backedge> Backedges;
+  std::vector<Guard> Guards;
+  std::vector<FlowLoopProgress> Trial;
+
+  bool indexPhi(uint32_t Node, uint32_t Block, llvm::StringRef Semantics,
+                std::vector<uint32_t> &Values) {
+    const auto &P = G.Nodes[Node];
+    Charge(1 + P.Semantics.size());
+    if (P.Block != Block || !P.Phi || P.Opcode != "phi" ||
+        P.Semantics != Semantics ||
+        P.Inputs.size() != Predecessors[Block].size())
+      return false;
+    for (const auto From : Predecessors[Block]) {
+      Charge(1);
+      Owners[From] = Node;
+      Seen[From] = false;
+    }
+    for (const auto &Input : P.Inputs) {
+      Charge(1);
+      if (Input.Predecessor >= G.Blocks.size() ||
+          Owners[Input.Predecessor] != Node || Seen[Input.Predecessor])
+        return false;
+      Seen[Input.Predecessor] = true;
+      Values[Input.Predecessor] =
+          Input.Type == FlowOperand::Kind::Node ? Input.Node : NoIndex;
+    }
+    // Structural graph validation alone does not require complete PHI arms.
+    // Check every original edge, including duplicates and already cut edges.
+    for (const auto From : Predecessors[Block]) {
+      Charge(1);
+      if (!Seen[From])
+        return false;
+    }
+    return true;
+  }
+
+  bool addGuard(uint32_t Block, uint32_t Target, const FlowComponents &C,
+                uint32_t Id) {
+    Charge(1 + G.Blocks[Block].Successors.size());
+    if (C.Id[Block] != Id)
+      return false;
+    for (const auto To : G.Blocks[Block].Successors)
+      if (To != Target && C.Id[To] == Id)
+        return false;
+    const auto Compare = guardCompare(G, Block, Target, Contract, Charge);
+    if (!Compare)
+      return false;
+    Guards.push_back({Block, *Compare});
+    return true;
+  }
+
+  bool inventory(uint32_t Header, const FlowComponents &C,
+                 llvm::ArrayRef<uint32_t> Cut) {
+    Backedges.clear();
+    Guards.clear();
+    const auto Id = C.Id[Header];
+    for (const auto Latch : Predecessors[Header]) {
+      Charge(1);
+      if (C.Id[Latch] != Id || Cut[Latch] == Header)
+        continue;
+      const auto &B = G.Blocks[Latch];
+      const auto Begin = Guards.size();
+      const bool Funnel = B.Successors.size() == 1;
+      if (Funnel) {
+        const auto &Branch = G.Nodes[B.Terminator];
+        Charge(1 + Branch.Semantics.size());
+        if (Branch.Opcode != "br" || !Branch.Inputs.empty() ||
+            Branch.Semantics != Contract.str() + ";result=i0;flags=0" ||
+            Predecessors[Latch].empty())
+          return false;
+        for (const auto From : Predecessors[Latch])
+          if (!addGuard(From, Latch, C, Id))
+            return false;
+      } else if (!addGuard(Latch, Header, C, Id)) {
+        return false;
+      }
+      Backedges.push_back({Latch, Begin, Guards.size(), Funnel});
+    }
+    return !Backedges.empty() && Backedges.size() == C.Backedges[Id];
+  }
+
+  bool consumes(const Guard &Guard, uint32_t Counter, uint32_t Update) {
+    for (const auto &Input : G.Nodes[Guard.Compare].Inputs) {
+      Charge(1);
+      if (Input.Type == FlowOperand::Kind::Node &&
+          (Input.Node == Counter ||
+           (Input.Node == Update &&
+            (G.Nodes[Update].Block == Guard.Block ||
+             G.Nodes[Update].Block == G.Nodes[Counter].Block))))
+        return true;
+    }
+    return false;
+  }
+
+  bool candidate(uint32_t Counter, uint32_t Header) {
+    Trial.clear();
+    if (!indexPhi(Counter, Header, G.Nodes[Counter].Semantics, HeaderValues))
+      return false;
+    unsigned Domains = AllCounterDomains;
+    for (const auto &Edge : Backedges) {
+      Charge(1);
+      const auto Incoming = HeaderValues[Edge.Latch];
+      if (Incoming == NoIndex)
+        return false;
+      const bool Selected = Edge.Funnel && G.Nodes[Incoming].Phi &&
+                            G.Nodes[Incoming].Block == Edge.Latch;
+      if (Selected && !indexPhi(Incoming, Edge.Latch,
+                                G.Nodes[Counter].Semantics, ArmValues))
+        return false;
+      std::optional<CounterStep> Common;
+      if (!Selected) {
+        Common = counterUpdate(G, Edge.Latch, Header, Incoming, NoIndex,
+                               Contract, Charge, false);
+        if (!Common || Common->Loop.Counter != Counter)
+          return false;
+        Domains &= Common->Domains;
+      }
+      for (size_t I = Edge.Begin; I < Edge.End; ++I) {
+        const auto &Guard = Guards[I];
+        Charge(1);
+        const auto Update = Selected ? ArmValues[Guard.Block] : Incoming;
+        if (Update == NoIndex)
+          return false;
+        if (Selected) {
+          const auto Step =
+              counterUpdate(G, Guard.Block, Header, Update, Guard.Compare,
+                            Contract, Charge, false);
+          if (!Step || Step->Loop.Counter != Counter)
+            return false;
+          Domains &= Step->Domains;
+        }
+        if (!Domains || !consumes(Guard, Counter, Update))
+          return false;
+        Trial.push_back(
+            {Guard.Block, Counter, Update, Guard.Compare, Header, Edge.Latch});
+      }
+    }
+    return true;
+  }
+
+public:
+  BranchProof(const DataFlowGraph &Graph, llvm::StringRef Contract,
+              llvm::function_ref<void(uint64_t)> Charge)
+      : G(Graph), Contract(Contract), Charge(Charge) {
+    Charge(5 * uint64_t(G.Blocks.size()));
+    Predecessors.resize(G.Blocks.size());
+    HeaderValues.resize(G.Blocks.size(), NoIndex);
+    ArmValues.resize(G.Blocks.size(), NoIndex);
+    Owners.resize(G.Blocks.size(), NoIndex);
+    Seen.resize(G.Blocks.size());
+    for (uint32_t From = 0; From < G.Blocks.size(); ++From) {
+      Charge(1);
+      for (const auto To : G.Blocks[From].Successors) {
+        Charge(1);
+        Predecessors[To].push_back(From);
+      }
+    }
+  }
+
+  void proveRound(const FlowComponents &C, std::vector<uint32_t> &Cut,
+                  FlowProgress &P, uint64_t Allowance) {
+    for (uint32_t Header = 0; Header < G.Blocks.size(); ++Header) {
+      Charge(1);
+      const auto Id = C.Id[Header];
+      if (C.Header[Id] != Header || C.MultipleEntries[Id] || !C.Backedges[Id] ||
+          !inventory(Header, C, Cut))
+        continue;
+      const auto &First = Guards.front();
+      std::array<uint32_t, 2> Candidates{NoIndex, NoIndex};
+      size_t Count = 0;
+      for (const auto &Input : G.Nodes[First.Compare].Inputs) {
+        Charge(1);
+        if (Input.Type != FlowOperand::Kind::Node)
+          continue;
+        auto Counter = NoIndex;
+        if (G.Nodes[Input.Node].Phi && G.Nodes[Input.Node].Block == Header)
+          Counter = Input.Node;
+        else if (const auto Step =
+                     counterUpdate(G, First.Block, Header, Input.Node,
+                                   First.Compare, Contract, Charge, false))
+          Counter = Step->Loop.Counter;
+        if (Counter != NoIndex && (!Count || Candidates[0] != Counter))
+          Candidates[Count++] = Counter;
+      }
+      for (size_t I = 0; I < Count; ++I) {
+        Charge(1);
+        if (!candidate(Candidates[I], Header))
+          continue;
+        if (Trial.size() > Allowance - P.Loops.size())
+          throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+        Charge(1 + Trial.size());
+        P.Loops.insert(P.Loops.end(), Trial.begin(), Trial.end());
+        ++P.LoopCount;
+        P.BackedgeCount += uint32_t(Backedges.size());
+        for (const auto &Edge : Backedges) {
+          Charge(1);
+          Cut[Edge.Latch] = Header;
+        }
+        break;
+      }
+    }
+  }
+};
 } // namespace
 
 FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
@@ -255,7 +518,11 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
   const uint64_t Retained = G.Nodes.size() + G.ParameterViews.size() + 1;
   if (Retained > Options.MaxNodes)
     throw DataFlowInterrupted(ComparisonState::ResourceLimited);
-  const bool Nested = Mode == FlowProgressMode::Nested;
+  const bool Branched = Mode == FlowProgressMode::Branched;
+  const bool Nested = Mode == FlowProgressMode::Nested || Branched;
+  std::optional<BranchProof> Branches;
+  if (Branched)
+    Branches.emplace(G, Contract, Charge);
   do {
     const auto Previous = P.Loops.size();
     std::optional<FlowComponents> C;
@@ -263,41 +530,46 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
       C = components(G, Charge,
                      Nested ? llvm::ArrayRef<uint32_t>(Cut)
                             : llvm::ArrayRef<uint32_t>());
-    for (uint32_t I = 0; I < G.Blocks.size(); ++I) {
-      Charge(1 + G.Blocks[I].Successors.size());
-      if (Nested && Cut[I] != NoIndex)
-        continue;
-      auto Header = I;
-      if (C) {
-        const auto Id = C->Id[I];
-        Header = C->Header[Id];
-        if (Header == NoIndex || C->MultipleEntries[Id] ||
-            C->Backedges[Id] != 1 || C->Latch[Id] != I)
+    if (Branches)
+      Branches->proveRound(*C, Cut, P, Options.MaxNodes - Retained);
+    else
+      for (uint32_t I = 0; I < G.Blocks.size(); ++I) {
+        Charge(1 + G.Blocks[I].Successors.size());
+        if (Nested && Cut[I] != NoIndex)
           continue;
-        bool InternalExit = false;
-        for (const auto To : G.Blocks[I].Successors)
-          InternalExit |= To != Header && C->Id[To] == Id;
-        if (InternalExit)
-          continue;
-      }
-      if (auto L = counterLoop(G, I, Header, Contract, Charge)) {
+        auto Header = I;
         if (C) {
-          bool Reset = false;
-          for (const auto &Input : G.Nodes[L->Counter].Inputs) {
-            Charge(1);
-            Reset |=
-                Input.Predecessor != I && C->Id[Input.Predecessor] == C->Id[I];
-          }
-          if (Reset)
+          const auto Id = C->Id[I];
+          Header = C->Header[Id];
+          if (Header == NoIndex || C->MultipleEntries[Id] ||
+              C->Backedges[Id] != 1 || C->Latch[Id] != I)
             continue;
-          L->Header = Header;
+          bool InternalExit = false;
+          for (const auto To : G.Blocks[I].Successors)
+            InternalExit |= To != Header && C->Id[To] == Id;
+          if (InternalExit)
+            continue;
         }
-        if (P.Loops.size() == Options.MaxNodes - Retained)
-          throw DataFlowInterrupted(ComparisonState::ResourceLimited);
-        P.Loops.push_back(*L);
-        Cut[I] = Header;
+        if (auto L = counterLoop(G, I, Header, Contract, Charge)) {
+          if (C) {
+            bool Reset = false;
+            for (const auto &Input : G.Nodes[L->Counter].Inputs) {
+              Charge(1);
+              Reset |= Input.Predecessor != I &&
+                       C->Id[Input.Predecessor] == C->Id[I];
+            }
+            if (Reset)
+              continue;
+            L->Header = Header;
+          }
+          if (P.Loops.size() == Options.MaxNodes - Retained)
+            throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+          P.Loops.push_back(*L);
+          ++P.LoopCount;
+          ++P.BackedgeCount;
+          Cut[I] = Header;
+        }
       }
-    }
     // A round only proves finite traversal of these backedges. An inner
     // cycle may still run forever; publish no progress until every residual
     // cycle is discharged. Each productive round cuts a new, distinct latch.
@@ -328,6 +600,7 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
   }
   if (Ready.size() != G.Blocks.size()) {
     P.Loops.clear();
+    P.LoopCount = P.BackedgeCount = 0;
     return P;
   }
   if (Nested)
@@ -365,7 +638,9 @@ validateFlowProgress(const DataFlowGraph &G, const DataFlowOptions &Options,
   try {
     const auto Derived = proveFlowProgress(G, P.ObservedContract, Options,
                                            Charge, flowProgressMode(G.Profile));
-    if (Derived.Kind != P.Kind || Derived.Loops != P.Loops)
+    if (Derived.Kind != P.Kind || Derived.Loops != P.Loops ||
+        Derived.LoopCount != P.LoopCount ||
+        Derived.BackedgeCount != P.BackedgeCount)
       return "progress witnesses do not prove the represented control flow";
   } catch (const std::invalid_argument &Error) {
     return Error.what();

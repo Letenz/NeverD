@@ -212,6 +212,21 @@ paged node rows expose only their own latch witness. Recipes use
 analysis and witness ordering share the existing work/cancellation limits;
 there is no separate depth cap. v1/v2 contracts and encodings are unchanged.
 
+`profile:"llvm-progress-ssa-v4"` proves groups of guarded continuations of a
+common counter, including several direct backedges and compiler-merged latches.
+Every update must advance in a common signed/unsigned nowrap direction; every
+recurrence arm and guard must qualify before the group is admitted. An
+unconditional latch can carry one common update or one PHI selecting the exact
+guarded updates. Residual cycles still leave all progress unproven.
+Schema 8 publishes distinct `loop_count`, `backedge_count`, and `guard_count`.
+Witness `block` is the guard's block; new `latch` is the physical backedge source.
+Node rows expose their own guard witness, sorted by guard block. Totals are
+complete even on page size one and are independently recomputed on restore.
+Recipes use `llvm-progress-neighborhoods-v4` / `llvm-progress-fragments-v4`.
+The shared proof owner retains existing resource/cancellation allowances and
+all published v1/v2/v3 contracts. Complex, irreducible, duplicate-edge or
+missing-nowrap recurrences remain explicit unproven cases.
+
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
 allowance; public node counts and coverage still count operations. Metadata

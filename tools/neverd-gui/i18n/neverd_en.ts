@@ -6441,6 +6441,10 @@ Coverage: %7</translation>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>Optimized SSA with nested loop analysis</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>Optimized SSA with branching loop analysis</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6583,6 +6587,18 @@ Progress does not establish equal loop counts or function results.</translation>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>Optimized SSA with branching loop analysis</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</translation>
     </message>
 </context>
 <context>

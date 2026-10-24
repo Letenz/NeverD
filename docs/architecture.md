@@ -646,6 +646,24 @@ validation derives all rounds from an empty cut set. Deep nesting can require
 quadratic work, charged to existing limits with graph-sized live storage and no
 recursion or separate depth limit. Published v1/v2 paths retain their exact
 single-pass accounting and encodings.
+`llvm-progress-ssa-v4` extends the same owner to groups of paths sharing one
+header counter. Precomputed original predecessors and per-candidate PHI maps
+require complete, unique incoming coverage. At most two counter candidates
+come from the first direct comparison; each header PHI and selected latch PHI
+is scanned once per candidate. The intersection of signed-increasing,
+signed-decreasing, unsigned-increasing and unsigned-decreasing domains must be
+nonempty across every exact update. All header backedges are cut atomically.
+An unconditional latch may carry one common update or one PHI of guarded
+updates; every predecessor must directly consume that counter or its own exact
+update and have its other successor outside the component. Current-counter
+guards permit one poison-carrying backedge before the next guard consumes it.
+Other residual cycles still invalidate all tentative witnesses and counts.
+Schema 8 observes each guard block and names its physical latch separately.
+`FlowProgress` owns distinct header/backedge counts; the witness-vector size is
+the guard count. Production and replay derive them independently. Metadata
+paging uses these totals in constant time; guard-sorted witnesses retain the
+existing logarithmic node lookup. Legacy scanners, charge order and wire
+fields remain exact, and frontend adapters introduce no new proof rules.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.

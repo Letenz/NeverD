@@ -48,10 +48,13 @@ inline constexpr llvm::StringLiteral LLVMMultiBlockProgressDataFlowProfile(
     limits::diff::kLLVMMultiBlockProgressSSAProfile);
 inline constexpr llvm::StringLiteral LLVMNestedProgressDataFlowProfile(
     limits::diff::kLLVMNestedProgressSSAProfile);
+inline constexpr llvm::StringLiteral LLVMBranchProgressDataFlowProfile(
+    limits::diff::kLLVMBranchProgressSSAProfile);
 inline bool hasProgressProof(llvm::StringRef Profile) {
   return Profile == LLVMProgressDataFlowProfile ||
          Profile == LLVMMultiBlockProgressDataFlowProfile ||
-         Profile == LLVMNestedProgressDataFlowProfile;
+         Profile == LLVMNestedProgressDataFlowProfile ||
+         Profile == LLVMBranchProgressDataFlowProfile;
 }
 inline bool hasParameterViews(llvm::StringRef Profile) {
   return Profile == LLVMParameterDataFlowProfile || hasProgressProof(Profile);
@@ -174,6 +177,10 @@ struct FlowLoopProgress {
   /// v2/v3 name the header separately from Block (the backedge latch). The
   /// published v1 self-loop record retains NoIndex and its four wire fields.
   uint32_t Header = NoIndex;
+  /// v4 observes each consuming guard in Block and names its physical latch
+  /// separately. Several guards can justify one latch; earlier versions keep
+  /// NoIndex and their original wire fields.
+  uint32_t Latch = NoIndex;
   bool operator==(const FlowLoopProgress &) const = default;
 };
 struct FlowProgress {
@@ -181,6 +188,9 @@ struct FlowProgress {
   /// Full prefixes prevent source string attributes from being mistaken for
   /// operation flags. Fresh source binding authenticates the transformation.
   std::string SourceContract, ObservedContract;
+  /// Independently derived totals, never inferred from a partial node page.
+  uint32_t LoopCount = 0, BackedgeCount = 0;
+  /// One consuming guard per record. Before v4 every guard is its own latch.
   std::vector<FlowLoopProgress> Loops;
   bool operator==(const FlowProgress &) const = default;
 };

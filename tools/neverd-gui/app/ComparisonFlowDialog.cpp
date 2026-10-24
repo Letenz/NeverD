@@ -200,6 +200,12 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
           const auto Status =
               Kind == "acyclic"
                   ? tr("Return progress proved: acyclic control flow.")
+              : Kind == "counter_loops" && Progress.contains("guard_count")
+                  ? tr("Return progress proved · Counter loops: %1 · "
+                       "Backedges: %2 · Guards: %3")
+                        .arg(Progress["loop_count"].toInt())
+                        .arg(Progress["backedge_count"].toInt())
+                        .arg(Progress["guard_count"].toInt())
               : Kind == "counter_loops"
                   ? tr("Return progress proved · Counter loops: %1")
                         .arg(Progress["loop_count"].toInt())
@@ -250,14 +256,23 @@ void ComparisonFlowDialog::controls() {
   LoopStatus->setVisible(!Loop.isEmpty());
   LoopStatus->setText(
       Loop.isEmpty() ? QString()
-                     : tr("Proved loop: header block %1 → latch block %2 · "
-                          "counter #%3 → update #%4 · guard #%5")
-                           .arg(Loop.contains("header") ? Loop["header"].toInt()
-                                                        : Loop["block"].toInt())
-                           .arg(Loop["block"].toInt())
-                           .arg(Loop["counter"].toInt())
-                           .arg(Loop["update"].toInt())
-                           .arg(Loop["compare"].toInt()));
+      : Loop.contains("latch")
+          ? tr("Proved loop: header block %1 → latch block %2 · "
+               "counter #%3 → update #%4 · guard #%5 in block %6")
+                .arg(Loop["header"].toInt())
+                .arg(Loop["latch"].toInt())
+                .arg(Loop["counter"].toInt())
+                .arg(Loop["update"].toInt())
+                .arg(Loop["compare"].toInt())
+                .arg(Loop["block"].toInt())
+          : tr("Proved loop: header block %1 → latch block %2 · "
+               "counter #%3 → update #%4 · guard #%5")
+                .arg(Loop.contains("header") ? Loop["header"].toInt()
+                                             : Loop["block"].toInt())
+                .arg(Loop["block"].toInt())
+                .arg(Loop["counter"].toInt())
+                .arg(Loop["update"].toInt())
+                .arg(Loop["compare"].toInt()));
 
   const bool Node = !Nodes->row(NodeTable->currentIndex().row()).isEmpty();
   const bool Idle =
@@ -315,6 +330,9 @@ void ComparisonFlowDialog::selectSide() {
         Summary->text() + '\n' +
         tr("SSA representation: %1")
             .arg(Profile ==
+                         ::neverd::limits::diff::kLLVMBranchProgressSSAProfile
+                     ? tr("Optimized SSA with branching loop analysis")
+                 : Profile ==
                          ::neverd::limits::diff::kLLVMNestedProgressSSAProfile
                      ? tr("Optimized SSA with nested loop analysis")
                  : Profile == ::neverd::limits::diff::

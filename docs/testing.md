@@ -1877,6 +1877,33 @@ DPI checks. Frozen v2 self, branched and unproved nested reports supplement the
 older byte-exact compatibility fixtures. These are owned functional fixtures,
 not held-out accuracy or general behavioral-equivalence qualification.
 
+`BinaryDiffBranchProgress` exercises multiple guarded backedges, common-update
+and selected-update compiler latches, unequal steps in one common nowrap
+domain, compatible mixed flags, i1/i64 extremes, two counter candidates and
+scratch reuse after a failed candidate. Defined alternating signed and mixed
+signed/unsigned cycles are negative controls. Missing/duplicate PHI arms,
+foreign updates, resets, freezes, bypasses and unproved inner cycles retain the
+original contract. Multiple funnels and direct paths share one atomic group;
+proofs, all three counts, latch identity and versioning are revalidated on
+restore. Wide groups verify that outside seeds are not rescanned per guard,
+and exact retained/work limits and cooperative cancellation remain bounded.
+
+Owned `branch_progress_fixture.c` families 5 and 6 qualify selected updates at
+O0 and a common update at O2 through x64/AArch64 ELF/COFF/Mach-O. The opposite
+optimization level remains unproven when nowrap or unique-entry evidence is
+absent; cross-level checks require the resulting contract mismatch to abstain
+from anchors. Within each qualified level, changed final constants, bounds and
+body arithmetic retain partial anchors and keep the changed nodes visible.
+Tests preserve those limitations and do not alter the optimizer. SDK tests
+`SelectedUpdatesPagesEveryGuardAndRechecksFreshSource` and
+`CommonUpdatePagesEveryGuardAndRechecksFreshSource` cover page size one,
+every guard, slices, count/latch/header tampering and fresh source binding.
+Worker, Python and Qt cover the same schema, and Qt checks truthful
+loop/backedge/guard totals plus each selected guard's physical latch in both
+themes and at fractional DPI. Frozen v3 complete/limited/cancelled reports join
+the previous compatibility corpus. These fixtures establish supported behavior,
+not general behavioral equivalence or held-out accuracy.
+
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
 missing/stack/overlapping sites, detached and foreign users, raw and retained

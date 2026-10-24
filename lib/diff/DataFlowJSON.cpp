@@ -150,13 +150,20 @@ Object loopProgress(const FlowLoopProgress &L) {
              {"compare", L.Compare}};
   if (L.Header != NoIndex)
     Out["header"] = L.Header;
+  if (L.Latch != NoIndex)
+    Out["latch"] = L.Latch;
   return Out;
 }
-Object progress(const FlowProgress &P) {
-  return Object{{"kind", flowProgressName(P.Kind)},
-                {"source_contract", P.SourceContract},
-                {"observed_contract", P.ObservedContract},
-                {"loop_count", P.Loops.size()}};
+Object progress(const FlowProgress &P, llvm::StringRef Profile) {
+  Object Out{{"kind", flowProgressName(P.Kind)},
+             {"source_contract", P.SourceContract},
+             {"observed_contract", P.ObservedContract},
+             {"loop_count", P.LoopCount}};
+  if (Profile == LLVMBranchProgressDataFlowProfile) {
+    Out["backedge_count"] = P.BackedgeCount;
+    Out["guard_count"] = P.Loops.size();
+  }
+  return Out;
 }
 uint64_t projectedParameters(const DataFlowGraph &G) {
   return llvm::count_if(G.ParameterViews,
@@ -178,7 +185,7 @@ Object metadata(const DataFlowGraph &G) {
     Out["projected_parameter_count"] = projectedParameters(G);
   }
   if (G.Progress)
-    Out["progress"] = progress(*G.Progress);
+    Out["progress"] = progress(*G.Progress, G.Profile);
   return Out;
 }
 void page(unsigned Limit) {
@@ -439,8 +446,13 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   uint64_t Edges = 0, ProgressRows = 0;
   if (Progress) {
     const auto &P = object(field(O, "progress"));
-    fields(P, {"kind", "source_contract", "observed_contract", "loop_count",
-               "loops"});
+    const bool Branched = G.Profile == LLVMBranchProgressDataFlowProfile;
+    if (Branched)
+      fields(P, {"kind", "source_contract", "observed_contract", "loop_count",
+                 "backedge_count", "guard_count", "loops"});
+    else
+      fields(P, {"kind", "source_contract", "observed_contract", "loop_count",
+                 "loops"});
     FlowProgress Record;
     const auto Kind = text(field(P, "kind"), limits::kMaxFlowIdentityBytes);
     if (Kind == "unproven")
@@ -462,8 +474,10 @@ DataFlowGraph readDataFlowGraph(const Value &V,
       const auto &L = object(Row);
       const bool MultiBlock =
           G.Profile == LLVMMultiBlockProgressDataFlowProfile ||
-          G.Profile == LLVMNestedProgressDataFlowProfile;
-      if (MultiBlock)
+          G.Profile == LLVMNestedProgressDataFlowProfile || Branched;
+      if (Branched)
+        fields(L, {"block", "counter", "update", "compare", "header", "latch"});
+      else if (MultiBlock)
         fields(L, {"block", "counter", "update", "compare", "header"});
       else
         fields(L, {"block", "counter", "update", "compare"});
@@ -472,10 +486,15 @@ DataFlowGraph readDataFlowGraph(const Value &V,
            uint32_t(count(field(L, "counter"))),
            uint32_t(count(field(L, "update"))),
            uint32_t(count(field(L, "compare"))),
-           MultiBlock ? uint32_t(count(field(L, "header"))) : NoIndex});
+           MultiBlock ? uint32_t(count(field(L, "header"))) : NoIndex,
+           Branched ? uint32_t(count(field(L, "latch"))) : NoIndex});
     }
-    require(count(field(P, "loop_count")) == Record.Loops.size(),
-            "progress loop count disagrees with witnesses");
+    Record.LoopCount = count(field(P, "loop_count"));
+    Record.BackedgeCount =
+        Branched ? count(field(P, "backedge_count")) : Record.LoopCount;
+    require((Branched ? count(field(P, "guard_count")) : Record.LoopCount) ==
+                Record.Loops.size(),
+            "progress count disagrees with witnesses");
     ProgressRows = 1 + Record.Loops.size();
     G.Progress = std::move(Record);
   }

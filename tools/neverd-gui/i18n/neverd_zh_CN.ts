@@ -6405,6 +6405,10 @@ Coverage: %7</source>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>带嵌套循环分析的优化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>带分支循环分析的优化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6547,6 +6551,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>已证明的循环：入口块 %1 → 回边块 %2 · 计数器 #%3 → 更新 #%4 · 条件 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>带分支循环分析的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>已证明返回进展 · 计数循环：%1 · 回边：%2 · 守卫：%3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>已证明的循环：头块 %1 → 回边块 %2 · 计数器 #%3 → 更新 #%4 · 块 %6 中的守卫 #%5</translation>
     </message>
 </context>
 <context>
