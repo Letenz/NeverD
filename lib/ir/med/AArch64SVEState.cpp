@@ -223,8 +223,12 @@ const char *validateAArch64SVEState(const MedFunc &Func, Arch Architecture) {
       const auto Id = intrinsic(Op);
       const auto Vector = Id ? vectorOperation(*Id) : std::nullopt;
       const bool Predicate = Id && *Id == Intrinsic::A64_SvePtrue;
+      // Valid PAuth operations only write their explicit scalar result. Reuse
+      // that contract without admitting opaque calls or unresolved PACM.
+      const bool PAuth = aarch64PAuthMedShapeIsValid(Op);
       if (Op.Opcode == NdOp::INTRINSIC &&
-          (!Id || (!Vector && !Predicate && !scalarStateIntrinsic(*Id))))
+          (!Id ||
+           (!Vector && !Predicate && !PAuth && !scalarStateIntrinsic(*Id))))
         return kStateCall;
       if ((Vector && !aarch64VectorMedShapeIsValid(Op)) ||
           (Predicate && !aarch64PtrueMedShapeIsValid(Op)))

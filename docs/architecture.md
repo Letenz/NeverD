@@ -248,15 +248,23 @@ boundaries; LLVM retains its integer backing with scalable typed views.
 IRMed's `validateAArch64SVEState` owns bounded, complete local Z/P definition
 and COPY/PHI closure for both Med-to-High and LLVM emission. It checks the
 executed CFG and every incoming definition before a consumer can use state.
+Validated PAuth operations reuse their explicit scalar output contract and
+preserve local Z/P state; unresolved PACM operations remain inadmissible.
 Unknown inputs, opaque calls, scalable ABI escape and overlapping V/Z use
 remain rejected. Standalone HighIR retains its own representation checks;
 LLVM-to-C rejects scalable carriers explicitly. These local value proofs do
 not establish a scalable calling convention or physical register aliasing.
+Serial and sharded LLVM pipelines both return semantic refusals through the
+pipeline result without publishing a partial module or source map.
 
 Plain ERET retains its legacy intrinsic identity for stored IR compatibility,
 but all lifting and emission entry points reject it until an ELR/SPSR/PSTATE
 contract is available. It cannot become an ordinary return or a zero-valued
 unimplemented intrinsic. Authenticated exception returns remain unsupported.
+
+Validated combined authenticated loads read memory and update only their
+explicit result pair. ABI recovery preserves earlier arguments in other
+registers across them; malformed load shapes remain recovery barriers.
 
 `macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
 placement validation, sorted disjoint mappings, and the cache image catalogue.

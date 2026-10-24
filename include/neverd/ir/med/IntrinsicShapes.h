@@ -481,7 +481,9 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
   if (static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal)
     return true;
   return !preservesCallSetup(Id) && !onlyChecksForAFault(Id) &&
-         !aarch64PAuthMedShapeIsValid(Op) && !aarch64CPAMedShapeIsValid(Op) &&
+         !aarch64PAuthMedShapeIsValid(Op) &&
+         !aarch64PAuthLoadMedShapeIsValid(Op) &&
+         !aarch64CPAMedShapeIsValid(Op) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
 }
 

@@ -11,6 +11,11 @@
 
 #include "neverd/lift/AArch64Regs.h"
 
+#include "llvm/Support/FormatVariadic.h"
+
+#include <fstream>
+#include <string>
+
 namespace {
 #define NEVERD_SVE_VECTOR_FIXTURE(Type, Name, Value)                           \
   constexpr Type Name = Value;
@@ -147,4 +152,61 @@ TEST_F(AArch64_SVEState, HighCIndexUsesStandardSVEACLEAndCompiles) {
   EXPECT_NE(DWords.find(kImmediateWideStepC), std::string::npos) << DWords;
 
   expectPairedClangSyntax(cFile, source);
+}
+
+TEST_F(AArch64_SVEState, SemanticRefusalsReturnErrorsInSerialAndShardedLift) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << kMissingCompiler;
+  for (unsigned Count : {kSerialFunctionCount, kShardedFunctionCount}) {
+    SCOPED_TRACE(Count);
+    const auto Source = tmpFile(kUnknownStateSource);
+    const auto Object = tmpFile(kUnknownStateObject);
+    {
+      std::ofstream Out(Source);
+      ASSERT_TRUE(Out.good());
+      for (unsigned I = 0; I != Count; ++I)
+        Out << llvm::formatv(kUnknownStateAssembly, I).str();
+    }
+    const auto Compiled = exec(
+        NEVERD_TEST_CLANG, {kTargetOption, kCTarget, kCompileOption,
+                            Source.string(), kOutputOption, Object.string()});
+    ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+    for (bool NoOptimization : {false, true}) {
+      SCOPED_TRACE(NoOptimization);
+      const auto Result = liftToLLVMIR(Object, {}, NoOptimization);
+      EXPECT_EQ(Result.exitCode, kSemanticErrorExit) << Result.err;
+      EXPECT_NE(Result.err.find(kUnknownStateText), std::string::npos)
+          << Result.err;
+      EXPECT_EQ(Result.out.find(kLLVMDefinition), std::string::npos)
+          << Result.out;
+    }
+  }
+}
+
+TEST_F(AArch64_SVEState, SignedLeafPreservesLocalScalableOperations) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << kMissingCompiler;
+  const auto Source = tmpFile(kSignedStateSource);
+  const auto Object = tmpFile(kSignedStateObject);
+  {
+    std::ofstream Out(Source);
+    ASSERT_TRUE(Out.good());
+    Out << kSignedStateAssembly;
+  }
+  const auto Compiled = exec(NEVERD_TEST_CLANG,
+                             {kTargetOption, kCTarget, kCompileOption,
+                              Source.string(), kOutputOption, Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  for (bool NoOptimization : {false, true}) {
+    SCOPED_TRACE(NoOptimization);
+    const auto Result = liftToLLVMIR(Object, {}, NoOptimization);
+    ASSERT_EQ(Result.exitCode, 0) << Result.err;
+    EXPECT_NE(Result.out.find(kSignedStatePacia), std::string::npos)
+        << Result.out;
+    EXPECT_NE(Result.out.find(kSignedStateAuthenticate), std::string::npos)
+        << Result.out;
+    EXPECT_NE(Result.out.find(kByteLastIR), std::string::npos) << Result.out;
+    EXPECT_NE(Result.out.find(kSignedStateTargetUse), std::string::npos)
+        << Result.out;
+  }
 }

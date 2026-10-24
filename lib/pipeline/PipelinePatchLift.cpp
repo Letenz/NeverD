@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <map>
 #include <set>
 #include <string>
@@ -323,9 +324,18 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     // route has one call-free function, with its source ABI already bound.
     const BinaryImage *EmissionImage =
         Result.InterpreterMachineSourceABI ? nullptr : &Img;
-    Result.LlvmModule =
-        MedEmitter.emit(Result.MedFuncs, Ctx, "neverd_output", Img.Arch,
-                        ImportMap, EmissionImage, Img.abiFormat());
+    try {
+      Result.LlvmModule =
+          MedEmitter.emit(Result.MedFuncs, Ctx, "neverd_output", Img.Arch,
+                          ImportMap, EmissionImage, Img.abiFormat());
+    } catch (const std::exception &Error) {
+      // Keep semantic refusals inside the pipeline result, as the sharded
+      // path does. No partially observed module may escape through the SDK.
+      Result.LlvmModule.reset();
+      Result.LLVMSources.reset();
+      Result.Error = Error.what();
+      return false;
+    }
     Result.BackendUnhandledValueIntrinsics =
         MedEmitter.unhandledValueIntrinsicCount();
     if (Result.LLVMSources)

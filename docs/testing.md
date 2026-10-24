@@ -187,11 +187,19 @@ budgets, scalable ABI escape, opaque calls and unmodelled V/Z overlap through
 both Med-to-High and masked/unmasked LLVM emission. Run the existing
 `AArch64_SVEState`, `AArch64_SVEStore`, `AArch64_SVELength` and ordinary NEON/FP
 cases in `NeverDLiftTests` after changing these shared boundaries.
+The local-state suite also checks scalar PAuth, explicit PAuth_LR and resolved
+PACM operations, rejecting malformed shapes and unresolved PACM. A raw
+PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
+state must return a normal error for both one-function serial and eight-function
+sharded LLVM emission, with and without optimization.
 `AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
 writeback and dead-result retention through a single combined authenticated
 load, with independent emitted-word checks at O0/O2 through LLVM and both C
 routes. Malformed IR and unavailable SP execution contracts fail explicitly.
 These object checks do not qualify FPAC/FPACCOMBINE trap behavior on hardware.
+`AArch64_PAuth.CombinedLoadsRetainEarlierCallArguments` checks real LDRAA/LDRAB
+sequences with and without writeback before an imported call, at both LLVM
+optimization settings. The argument set before the load must remain intact.
 `MachONativeInplace.*` and the public-entry cases in `MachOPatchTransaction`
 check raw arm64e/x1 subtype capabilities, absent caller annotations and output
 rollback, with genuine ordinary arm64 writes as positive controls.

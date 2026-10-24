@@ -726,6 +726,59 @@ TEST(AArch64SVEVector, SharedStateAdmissionRejectsCallsAndScalableABI) {
   expectStateRejected(ResultType);
 }
 
+TEST(AArch64SVEVector, LocalStateSurvivesValidatedPointerAuthentication) {
+  const auto Result = temporary(kPAuthResultId, kScalarBytes);
+  const auto Pointer = constant(kEntry);
+  const auto Modifier = constant(kBlockStride);
+  const std::vector<MedOp> Operations = {
+      intrinsic(Intrinsic::Pacia, Result, {Pointer, Modifier}),
+      intrinsic(Intrinsic::Autia, Result, {Pointer, Modifier}),
+      intrinsic(Intrinsic::Xpaci, Result, {Pointer}),
+      intrinsic(Intrinsic::A64_Pacga, Result, {Pointer, Modifier}),
+      intrinsic(Intrinsic::A64_AuthBranch, Result,
+                {Pointer, constant(kAArch64PAuthKeyIA, kAArch64PAuthKeyBytes),
+                 Modifier}),
+      intrinsic(Intrinsic::A64_Pacia2, Result, {Pointer, Modifier, Modifier}),
+      intrinsic(Intrinsic::A64_AuthReturnIA2, Result,
+                {Pointer, Modifier, Modifier}),
+      intrinsic(Intrinsic::A64_PaciaM, Result,
+                {Pointer, Modifier, Modifier, constant(kPAuthModeEnabled)}),
+      intrinsic(Intrinsic::A64_AuthReturnIAM, Result,
+                {Pointer, Modifier, Modifier, constant(kPAuthModeEnabled)})};
+  for (const MedOp &Auth : Operations) {
+    SCOPED_TRACE(Auth.Inputs.front().ConstVal);
+    ASSERT_TRUE(aarch64PAuthMedShapeIsValid(Auth));
+    auto Function = vectorFunction(kWideElement, kByteElement, Transport::Copy);
+    Function.Blocks.front().Ops.insert(
+        Function.Blocks.front().Ops.begin() + kCopyOperation, Auth);
+    EXPECT_EQ(validateAArch64SVEState(Function, Arch::AArch64), nullptr);
+    EXPECT_FALSE(highSource(Function).empty());
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Function}, Context, kFunction, Arch::AArch64);
+    ASSERT_NE(Module, nullptr);
+    EXPECT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+
+    auto Malformed = Function;
+    Malformed.Blocks.front().Ops[kCopyOperation].Output.Size = kPatternBytes;
+    expectStateRejected(Malformed);
+    auto ExtraOutput = Function;
+    ExtraOutput.Blocks.front().Ops[kCopyOperation].IntrinsicOutputs.push_back(
+        temporary(kNeonId, kScalarBytes));
+    expectStateRejected(ExtraOutput);
+  }
+}
+
+TEST(AArch64SVEVector, UnresolvedPACMCannotPreserveLocalState) {
+  auto Function = vectorFunction(kWideElement, kByteElement, Transport::Copy);
+  Function.Blocks.front().Ops.insert(
+      Function.Blocks.front().Ops.begin() + kCopyOperation,
+      intrinsic(Intrinsic::A64_PACMPending,
+                temporary(kPAuthResultId, kScalarBytes),
+                {constant(kEntry), constant(kBlockStride)}));
+  expectStateRejected(Function);
+}
+
 TEST(AArch64SVEVector, SharedStateAdmissionRejectsUntypedTransport) {
   auto Loaded = vectorFunction(kWideElement, kByteElement, Transport::Copy);
   Loaded.Blocks.front().Ops[kVectorOperation] =

@@ -995,6 +995,17 @@ TEST(AArch64PAuthLoadSemantics, LLVMAndCEmitOneCombinedInstruction) {
       checkProjections(Case.Word, Case.Scratch, false);
 }
 
+TEST(AArch64PAuthLoadSemantics, ValidLoadsPreserveUnwrittenCallArguments) {
+  using namespace pauth_load_fixture;
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    const auto Function = function(Case.Word);
+    const auto &Load = Function.Blocks.front().Ops.front();
+    ASSERT_TRUE(aarch64PAuthLoadMedShapeIsValid(Load));
+    EXPECT_FALSE(endsCallArgumentSetup(Load));
+  }
+}
+
 TEST(AArch64PAuthLoadSemantics, DiscardedResultsRetainMemoryAndPACFailure) {
   using namespace pauth_load_fixture;
   checkProjections(kDeadA, kDeadScratchA, true);
@@ -1089,6 +1100,7 @@ TEST(AArch64PAuthLoadSemantics, MalformedContractsFailBeforeEmission) {
     if (Change != Mutation::ExtraOutput)
       EXPECT_FALSE(lowAArch64PAuthLoadShapeIsValid(Low));
     EXPECT_FALSE(aarch64PAuthLoadMedShapeIsValid(Med));
+    EXPECT_TRUE(endsCallArgumentSetup(Med));
     EXPECT_FALSE(verifyMedFunc(Bad, kName));
     llvm::LLVMContext Context;
     EXPECT_THROW(MedLLVMEmitter().emit({Bad}, Context, kName, Arch::AArch64),

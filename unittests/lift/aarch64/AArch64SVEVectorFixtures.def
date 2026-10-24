@@ -118,6 +118,36 @@ NEVERD_SVE_VECTOR_FIXTURE(unsigned, kExcessiveBlocks, 4097)
 NEVERD_SVE_VECTOR_FIXTURE(const char *, kStateLimitText,
                           "SVE state proof exceeded its resource limit")
 NEVERD_SVE_VECTOR_FIXTURE(uint64_t, kUnlistedTarget, 0xdeadbeef)
+NEVERD_SVE_VECTOR_FIXTURE(unsigned, kSerialFunctionCount, 1)
+NEVERD_SVE_VECTOR_FIXTURE(unsigned, kShardedFunctionCount, 8)
+NEVERD_SVE_VECTOR_FIXTURE(int, kSemanticErrorExit, 1)
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kUnknownStateSource, "unknown.s")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kUnknownStateObject, "unknown.o")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kUnknownStateText,
+                          "SVE state requires a complete local definition")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kLLVMDefinition, "define ")
+// Independent raw PTRUE.B/LASTB.B/RET sequence with no Z0 producer.
+NEVERD_SVE_VECTOR_FIXTURE(
+    const char *, kUnknownStateAssembly,
+    ".text\n.globl unknown_{0}\n.type unknown_{0},%function\nunknown_{0}:\n"
+    ".inst 0x2518e3e0\n.inst 0x0521a000\n.inst 0xd65f03c0\n"
+    ".size unknown_{0},.-unknown_{0}\n")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kSignedStateSource, "signed-sve.s")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kSignedStateObject, "signed-sve.o")
+// PACIASP; PTRUE.B ALL; DUP Z0.B,#1; LASTB W0,P0,Z0.B; RETAA.
+NEVERD_SVE_VECTOR_FIXTURE(
+    const char *, kSignedStateAssembly,
+    ".text\n.globl signed_sve_leaf\n.type signed_sve_leaf,%function\n"
+    "signed_sve_leaf:\n.inst 0xd503233f\n.inst 0x2518e3e0\n"
+    ".inst 0x2538c020\n.inst 0x0521a000\n.inst 0xd65f0bff\n"
+    ".size signed_sve_leaf,.-signed_sve_leaf\n")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kSignedStatePacia, "pacia ")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kSignedStateAuthenticate,
+                          "@llvm.ptrauth.auth(")
+NEVERD_SVE_VECTOR_FIXTURE(const char *, kSignedStateTargetUse,
+                          "neverd authenticated target")
+NEVERD_SVE_VECTOR_FIXTURE(unsigned, kPAuthResultId, 13)
+NEVERD_SVE_VECTOR_FIXTURE(uint64_t, kPAuthModeEnabled, 1)
 NEVERD_SVE_VECTOR_WIDTH(1)
 NEVERD_SVE_VECTOR_WIDTH(2)
 NEVERD_SVE_VECTOR_WIDTH(4)
