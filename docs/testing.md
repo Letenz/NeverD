@@ -2071,12 +2071,16 @@ dialog; it must terminate without the probe forcing successful process exit.
 
 `codeOpensBesideFloatingDisassembly` checks new, existing and reopened source
 and IR panes beside their floating disassembly. `focusModeGroupsViewsAndRestoresLayout`
-presses Q three times to create one floating workspace with assembly on the
+presses F three times to create one floating workspace with assembly on the
 left, code on the right and output across the bottom. It checks both themes,
 docked and floating origins, restoring the previous layout, unchanged data,
-and ordinary command input. `focusSequenceKeepsSingleQAndIgnoresAutoRepeat`
-checks that the Q sequence has a 400 ms interval, a single Q retains the
-hexadecimal-format action, and holding Q does not enter focus mode.
+data addresses outside functions, and ordinary command input. Keys enter
+through `QWindow` so forwarding to the focused widget cannot silently reset
+the sequence.
+`focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
+one second apart, interruption by another key or focus change, timeout,
+auto-repeat, ordinary text input, reopening a closed assembly pane, and
+immediate single-Q operand formatting.
 `fileReviewWindowsOfferWindowControls` checks the offline
 package and binary-comparison dialogs; the title-bar unit cases exercise
 minimize, maximize and restore with default and customized dialog flags.

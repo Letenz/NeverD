@@ -138,7 +138,7 @@ jobs:
             closingWorkbenchClosesDetachedWindows \
             codeOpensBesideFloatingDisassembly \
             focusModeGroupsViewsAndRestoresLayout \
-            focusSequenceKeepsSingleQAndIgnoresAutoRepeat \
+            focusSequenceUsesNativeKeysAndIgnoresTyping \
             fileReviewWindowsOfferWindowControls \
             closedFloatingDocksReopenInWorkbench \
             reopeningPaneDoesNotFollowFloatingAssembly \

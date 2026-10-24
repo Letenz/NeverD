@@ -305,7 +305,9 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   focusSequenceTimer_.setInterval(
       ::neverd::limits::gui_config::kFocusModeSequenceTimeoutMs);
   connect(&focusSequenceTimer_, &QTimer::timeout, this,
-          [this] { finishFocusSequence(true); });
+          &MainWindow::resetFocusSequence);
+  connect(qApp, &QApplication::focusChanged, this,
+          [this] { resetFocusSequence(); });
   // Other programs find this window and open links in it, as in IDA 9.4.
   instances_.setInfo([this] { return instanceInfo(); });
   instances_.setLinkHandler(
@@ -359,32 +361,35 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
         }
       }
     const bool sequenceKey =
-        analysis && key->key() == Qt::Key_Q &&
+        analysis && key->key() == Qt::Key_F &&
         key->modifiers() == Qt::NoModifier &&
         actions_.action(ActionId::ViewFocusMode)->isEnabled();
     if (sequenceKey) {
-      // Override both Q and Q,Q,Q in Qt's shortcut map: an exact single-key
-      // match otherwise wins before the three-key sequence can complete.
+      // Handle deliberate taps here so native auto-repeat cannot complete
+      // the multi-key shortcut, and text inputs keep their ordinary typing.
       key->accept();
       if (event->type() == QEvent::ShortcutOverride || key->isAutoRepeat())
         return true;
       if (focusSequenceView_ != QApplication::focusWidget())
-        finishFocusSequence(false);
+        resetFocusSequence();
       focusSequenceView_ = QApplication::focusWidget();
       if (++focusSequenceCount_ ==
           ::neverd::limits::gui_config::kFocusModeSequenceLength) {
-        finishFocusSequence(false);
+        resetFocusSequence();
         actions_.action(ActionId::ViewFocusMode)->trigger();
       } else {
         focusSequenceTimer_.start();
       }
       return true;
     }
-    if (event->type() == QEvent::KeyPress && focusSequenceCount_)
-      finishFocusSequence(analysis && key->key() != Qt::Key_Escape);
+    // Native keyboard input first reaches a QWindow, then its focus widget.
+    // Only the final widget delivery may break a sequence; clearing on the
+    // QWindow delivery made each real tap start over at one.
+    if (widget && focusSequenceCount_)
+      resetFocusSequence();
   }
   if (event->type() == QEvent::MouseButtonPress && focusSequenceCount_)
-    finishFocusSequence(true);
+    resetFocusSequence();
   // The quick start shows what a drop would do while a file is over it.
   if (event->type() == QEvent::DragLeave || event->type() == QEvent::Drop)
     if (auto *start = qobject_cast<QuickStartDialog *>(quickStart_.data())) {
@@ -2159,8 +2164,7 @@ void MainWindow::updateActions() {
     action->setEnabled(always || loaded);
   }
   actions_.action(ActionId::ViewFocusMode)
-      ->setEnabled(!focusLayout_.isEmpty() ||
-                   (loaded && currentFunction().has_value()));
+      ->setEnabled(!focusLayout_.isEmpty() || loaded);
   actions_.action(ActionId::ViewUnwindInfo)
       ->setEnabled(location && !focusedCodeView() &&
                    session_.reportsUnwindFrames());
@@ -5175,7 +5179,7 @@ void MainWindow::toggleFocusMode() {
     return;
   }
   auto *action = actions_.action(ActionId::ViewFocusMode);
-  if (!session_.loaded() || !currentFunction()) {
+  if (!session_.loaded()) {
     action->setChecked(false);
     return;
   }
@@ -5196,6 +5200,7 @@ void MainWindow::toggleFocusMode() {
     focusReturn_ = disassembly_;
   action->setChecked(true);
 
+  assembly->open();
   assembly->setFloating(true);
   auto *floating = assembly->QWidget::window();
   if (!floating->isMaximized())
@@ -5222,20 +5227,14 @@ void MainWindow::toggleFocusMode() {
   disassembly_->focusContent();
 }
 
-void MainWindow::finishFocusSequence(bool applySingleKey) {
+void MainWindow::resetFocusSequence() {
   focusSequenceTimer_.stop();
-  const bool pending = std::exchange(focusSequenceCount_, 0) != 0;
-  const auto origin = std::exchange(focusSequenceView_, {});
-  if (applySingleKey && pending && origin &&
-      origin == QApplication::focusWidget() && origin->isVisible()) {
-    auto *hex = actions_.action(ActionId::EditOperandHex);
-    if (hex->isEnabled())
-      hex->trigger();
-  }
+  focusSequenceCount_ = 0;
+  focusSequenceView_.clear();
 }
 
 void MainWindow::leaveFocusMode() {
-  finishFocusSequence(false);
+  resetFocusSequence();
   if (focusLayout_.isEmpty())
     return;
   const auto layout = std::exchange(focusLayout_, {});

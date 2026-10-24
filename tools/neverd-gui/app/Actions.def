@@ -395,7 +395,7 @@ NEVERD_VIEW_ACTION(
 
 // View.
 NEVERD_VIEW_ACTION(
-    ViewFocusMode, QT_TRANSLATE_NOOP("Actions", "&Focus mode"), "Q, Q, Q",
+    ViewFocusMode, QT_TRANSLATE_NOOP("Actions", "&Focus mode"), "F, F, F",
     "window_list",
     QT_TRANSLATE_NOOP(
         "Actions",
