@@ -667,6 +667,11 @@ stack names, chunk headers/footers, bytecode ownership, and reference overlays
 that preserve an intervening independent call. Rename invalidation and paging
 from either direction must retain the cursor's recovered instruction even when
 an independent decode stream overlaps it.
+Direct decompilation of a fragment, before navigation or after visiting its
+owner, must return the owner's C, LLVMC, source and IR pages. Paged source and
+graph snapshots use the same entry, including viewport requests through the
+fragment address. These queries must not create a new function for the fragment
+or absorb an intervening independent entry.
 Run it with `NeverDWorkerPEFunctionParts` to retain explicit unwind-metadata
 chunks and their parent identity alongside recovered fragments.
 

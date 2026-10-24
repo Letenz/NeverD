@@ -826,6 +826,20 @@ void Engine::namesChanged() {
   functionOrderKey_.clear();
   functionOrder_.clear();
 }
+int Engine::functionIndex(std::uint64_t address) {
+  // Explicit entries keep their identity. Otherwise use the same bounded
+  // recovered ownership as navigation before preparing a function view.
+  const int index = neverd_func_find_by_addr(session_, address);
+  if (index >= 0)
+    return index;
+  if (const auto owner = listing().chunkOwner(address))
+    return neverd_func_find_by_addr(session_, *owner);
+  return -1;
+}
+std::uint64_t Engine::functionEntry(std::uint64_t address) {
+  const int index = functionIndex(address);
+  return index >= 0 ? neverd_func_entry(session_, index) : address;
+}
 Json Engine::functionGraph(std::uint64_t address) {
   // A graph reads the function's LowIR alone; a source or IR view of the
   // same function then continues its analysis.
@@ -3127,10 +3141,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     std::uint64_t address = 0;
     if (query.starts_with("0x") || query.starts_with("0X")) {
       address = parseAddress(query);
-      index = neverd_func_find_by_addr(session_, address);
-      if (index < 0)
-        if (const auto owner = listing().chunkOwner(address))
-          index = neverd_func_find_by_addr(session_, *owner);
+      index = functionIndex(address);
     } else if (const auto named = resolvedName(query)) {
       std::tie(index, address) = *named;
     } else {
@@ -4792,6 +4803,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         ::neverd::limits::worker::kEngineExecuteImplDecompileLimitSizeFieldMax);
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
+    const auto entry = functionEntry(address);
     std::string mappingStatus = "unsupported_representation";
     // Why the engine offers no page, such as Rust asked of a C program.
     std::string reason;
@@ -4800,17 +4812,16 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (representation == "low" || representation == "med" ||
         representation == "high" || representation == "llvm" ||
         representation == "c" || representation == "llvmc" || spelled) {
-      if (auto named = namedViewPage(address, representation, offset, limit,
+      if (auto named = namedViewPage(entry, representation, offset, limit,
                                      options, encoded))
         return std::move(*named);
       if (!options.empty())
         throw Error("unavailable",
                     error().empty() ? "Source transformation failed" : error());
-      prepareFunction(address, representation);
+      prepareFunction(entry, representation);
       if (const auto view = irViewFunction()) {
         auto result = backendJson(
-            view(session_, address, representation.c_str(), offset, limit),
-            true);
+            view(session_, entry, representation.c_str(), offset, limit), true);
         mappingStatus =
             result.value("mapping_status", std::string("unavailable"));
         if (result.contains("reason") && result["reason"].is_string())
@@ -4835,17 +4846,17 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                                  : error().empty()
                                      ? "This representation is unavailable"
                                      : error());
-    prepareFunction(address, representation);
-    const auto key = hexAddress(address) + ":" + representation;
+    prepareFunction(entry, representation);
+    const auto key = hexAddress(entry) + ":" + representation;
     if (textKey_ != key) {
       textKey_.clear();
       const char *result =
-          representation == "c"       ? neverd_decompile(session_, address)
-          : representation == "llvmc" ? neverd_decompile_llvm(session_, address)
-          : representation == "low"   ? neverd_ir_low(session_, address)
-          : representation == "med"   ? neverd_ir_med(session_, address)
-          : representation == "high"  ? neverd_ir_high(session_, address)
-                                      : neverd_ir_llvm(session_, address);
+          representation == "c"       ? neverd_decompile(session_, entry)
+          : representation == "llvmc" ? neverd_decompile_llvm(session_, entry)
+          : representation == "low"   ? neverd_ir_low(session_, entry)
+          : representation == "med"   ? neverd_ir_med(session_, entry)
+          : representation == "high"  ? neverd_ir_high(session_, entry)
+                                      : neverd_ir_llvm(session_, entry);
       textCache_ = ownedString(result);
       if (textCache_.empty())
         throw Error("unavailable", error().empty()
@@ -4880,7 +4891,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     end = fits;
     const auto endByte = byteAt(end);
     return {
-        {"address", hexAddress(address)},
+        {"address", hexAddress(entry)},
         {"representation", representation},
         {"text", textCache_.substr(startByte, endByte - startByte)},
         {"offset", offset},
@@ -4894,10 +4905,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         {"revision", revision()}};
   }
   if (operation == "cfg_summary") {
-    const auto key = hexAddress(address);
     // Client text metrics size each node to its formatted listing rows.
     const auto metrics = GraphMetrics::fromRequest(p);
     const auto metricsKey = metrics.key();
+    const auto entry = functionEntry(address);
+    const auto key = hexAddress(entry);
     for (auto it = graphs_.begin(); it != graphs_.end(); ++it)
       if (it->address == key && it->metrics == metricsKey) {
         graphs_.splice(graphs_.begin(), graphs_, it);
@@ -4906,7 +4918,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto layout =
         projectId_ + ":" + revision() + ":" + key + ":" + metricsKey;
     auto snapshot = std::make_unique<GraphSnapshot>(
-        functionGraph(address), key, layout, metrics,
+        functionGraph(entry), key, layout, metrics,
         metrics.valid()
             ? GraphRows([this](std::uint64_t start, std::uint64_t end) {
                 return listing().blockLines(start, end);
@@ -4919,7 +4931,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
   }
   if (operation == "cfg_viewport") {
     // The layout the client names, else the function's newest.
-    const auto key = hexAddress(address);
+    const auto key = hexAddress(functionEntry(address));
     const auto layout = stringField(
         p, "layout_revision", {},
         ::neverd::limits::worker::
@@ -4931,7 +4943,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                 "No matching graph snapshot; request cfg_summary first");
   }
   if (operation == "cfg") {
-    auto result = functionGraph(address);
+    auto result = functionGraph(functionEntry(address));
     if (result.value("nodes", Json::array()).size() >
             ::neverd::limits::worker::
                 kEngineExecuteImplCfgResultValueNodesJsonArraySizeLimit ||
