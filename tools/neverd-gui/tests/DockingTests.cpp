@@ -153,14 +153,39 @@ public:
               .arg(qRound(local.x() * scale))
               .arg(qRound(local.y() * scale)));
     }
+#ifdef Q_OS_WIN
+    Q_UNUSED(held);
+    // Send motion through the same native input queue as the buttons. A
+    // cursor warp can change position without advancing a system move loop.
+    QWidget *window = widget.window();
+    const QPoint local = widget.mapTo(window, point);
+    const qreal scale = window->devicePixelRatioF();
+    POINT native{qRound(local.x() * scale), qRound(local.y() * scale)};
+    if (!ClientToScreen(reinterpret_cast<HWND>(window->winId()), &native))
+      return false;
+    const int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    const int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (width <= 1 || height <= 1)
+      return false;
+    // Win32 absolute mouse coordinates span the inclusive 16-bit range.
+    constexpr qint64 absoluteMaximum = 65535;
+    INPUT input{};
+    input.type = INPUT_MOUSE;
+    input.mi.dx =
+        static_cast<LONG>((native.x - GetSystemMetrics(SM_XVIRTUALSCREEN)) *
+                          absoluteMaximum / (width - 1));
+    input.mi.dy =
+        static_cast<LONG>((native.y - GetSystemMetrics(SM_YVIRTUALSCREEN)) *
+                          absoluteMaximum / (height - 1));
+    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE |
+                       MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE_NOCOALESCE;
+    return SendInput(1, &input, sizeof(input)) == 1;
+#else
     const QPoint global = widget.mapToGlobal(point);
     QCursor::setPos(global);
     if (QGuiApplication::platformName() == QLatin1String("xcb"))
       return true;
-#ifdef Q_OS_WIN
-    Q_UNUSED(held);
-    return true; // Native buttons also drive the system move loop.
-#elif defined(Q_OS_MACOS)
+#ifdef Q_OS_MACOS
     return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
                        global);
 #else
@@ -170,6 +195,7 @@ public:
                       held ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(receiver, &event);
     return true;
+#endif
 #endif
   }
 

@@ -2062,6 +2062,10 @@ independently of the GUI thread so AppKit's tracking loop cannot starve the
 release timer. The resize still must change the requested dimensions and
 must never transition into docking. Failed drag assertions retain pointer,
 window and drop-target state at each movement boundary.
+Windows motion and buttons share the native input queue, including system move
+loops; coordinates are converted from the widget's scaled client area to the
+virtual desktop. The Linux CI installs `libxcb-shape0` as well as cursor and
+keyboard dependencies so Qt's XCB plugin can load before the native tests.
 Its native `dragIntoWorkbench` cases press and drag the title bar or tab, verify
 the drop preview, and release into a tab group or horizontal/vertical split.
 They cover separate, overlapping and maximized floating windows, and release

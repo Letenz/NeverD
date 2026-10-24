@@ -48,7 +48,7 @@ jobs:
           echo "$RUNNER_TEMP/Qt/6.8.3/${{ matrix.qt_dir }}/bin" >> "$GITHUB_PATH"
           if [ '${{ runner.os }}' = Linux ]; then
             sudo apt-get update
-            sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 xvfb xauth openbox xdotool
+            sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 xvfb xauth openbox xdotool
           fi
       - name: Configure Windows offscreen fonts
         if: runner.os == 'Windows'
@@ -104,12 +104,11 @@ jobs:
           mkdir -p build-gui/ci-diagnostics
           set +e
           if [ '${{ runner.os }}' = Linux ]; then
-            ldd "$RUNNER_TEMP/Qt/6.8.3/gcc_64/plugins/platforms/libqxcb.so"
             xvfb-run -a -s '-screen 0 1920x1080x24' sh -c '
               openbox > build-gui/ci-diagnostics/window-manager.txt 2>&1 &
               manager=$!
               trap "kill $manager 2>/dev/null || true" EXIT
-              QT_QPA_PLATFORM=xcb QT_DEBUG_PLUGINS=1 build-gui/bin/neverd-gui-docking-tests \
+              QT_QPA_PLATFORM=xcb build-gui/bin/neverd-gui-docking-tests \
                 -o build-gui/ci-diagnostics/native-docking.txt,txt
             '
           else
