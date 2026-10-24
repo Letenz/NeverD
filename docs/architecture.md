@@ -104,6 +104,12 @@ substitute for a rejected parent. Failures retain the entry's audit disposition
 and first decode or unsupported-instruction address; source views can still
 return their partial analysis.
 
+LLVM function-symbol lookup builds its eligible entry/end indexes lazily for
+each emission. It retains the last eligible symbol in image order and prefers
+an independent entry to an adjacent function's exclusive end. Reusing an
+emitter clears the indexes and entry proofs. A fatal pointer proof prevents
+further mirror retries in that module without weakening the original refusal.
+
 PE32 discovery rejects heuristic entries inside the operand bytes of reachable,
 complete instructions. The owning entry's control-flow walk supplies this
 evidence; overlapping paths, data and section boundaries invalidate it.
