@@ -310,6 +310,18 @@ private slots:
     // The full window controls remain usable, unlike tiny dock-tool buttons.
     QVERIFY(close->width() >= 40);
     QVERIFY(close->height() >= 28);
+    // A shrink can be followed by input before the next paint. A stale drag
+    // region must not cover any controls in that interval.
+    floating->setUpdatesEnabled(false);
+    for (const int width : {900, 450}) {
+      floating->resize(width, 350);
+      QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+      for (auto *button : {maximize, minimize, close, desktop.lockButton()})
+        QCOMPARE(
+            floating->childAt(button->mapTo(floating, button->rect().center())),
+            button);
+    }
+    floating->setUpdatesEnabled(true);
     if (onWayland()) {
       QVERIFY(floating->windowFlags() & Qt::FramelessWindowHint);
       QCOMPARE(floating->windowHandle()->frameMargins(), QMargins());

@@ -1630,15 +1630,17 @@ private slots:
       QVERIFY(palette);
       QCOMPARE(QApplication::activePopupWidget(), palette.data());
       QVERIFY(!QApplication::activeModalWidget());
-      QVERIFY(activateTestWindow(palette));
-      QTRY_COMPARE(QGuiApplication::focusWindow(), palette->windowHandle());
       auto *input = palette->findChild<QLineEdit *>();
       QVERIFY(input);
       QTRY_VERIFY(input->hasFocus());
       input->setText(bench.action(ActionId::JumpAnywhere)->text().remove('&'));
       QSignalSpy operand(bench.action(ActionId::JumpOperand),
                          &QAction::triggered);
-      QTest::keyClick(input, accept ? Qt::Key_Return : Qt::Key_Escape);
+      // Cocoa popups can receive keys through their owner's native key
+      // window. Exercise that routing instead of requiring a separate one.
+      QVERIFY(QGuiApplication::focusWindow());
+      QTest::keyClick(QGuiApplication::focusWindow(),
+                      accept ? Qt::Key_Return : Qt::Key_Escape);
       QVERIFY(operand.isEmpty());
       QTRY_VERIFY(!palette);
       if (accept) {
