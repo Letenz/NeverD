@@ -139,6 +139,18 @@ Qualification covers 192 strict MPX form/register/mode/decode-route cases,
 60 legacy emitter refusals, the pinned decoder corpus, and all 86 instruction
 boundary tests. The related source and system-sideeffect suites pass too.
 
+The LLVM fork now provides 26 native MPX APIs, and NeverC exposes 14 portable
+builtins for the same architectural bounds bank. `llvm.x86.bnd.branch` retains
+an original near transfer's conditional BNDINIT effect independently of CFG
+folding; compiler-created transfers preserve the bank. Its initializing form
+uses unprefixed E9 with forced disp32, including assembly roundtrips. These
+compiler surfaces do not yet supply NeverD's shared MPX state and original
+branch/fault-order contract, so the strict lifting boundary above remains.
+The compiler qualification is recorded in LLVM's `X86MPXIntrinsics.rst` and
+NeverC's `development.md`. QEMU 10.2.2's explicit limitation mode skips 180/520
+instruction cases and one of six branch-state cases; skipped behavior and
+physical MPX hardware execution are not qualified as passing.
+
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and
 testing the remaining instruction forms. The bounded system contract added
@@ -329,6 +341,25 @@ checking native IR with no assembly at O0/O2 on ELF, COFF and Mach-O. The native
 SDK passes all four source-contract tests and 117 LLVM-to-C value regressions;
 the old SDK skips only the new native-call contract test. NeverC's i386 cells
 are explicitly skipped because its frontend targets x64.
+
+NeverD also maps scalar RDMSR/WRMSR and all six IN/OUT widths to the fork's
+eight native LLVM APIs. `X86ScalarSystemNative.h` owns their names and operand
+widths. Both C projections select the portable NeverC builtins without relying
+on Microsoft declarations on ELF or Mach-O; other C compilers retain the owned
+assembly or real MSVC implementation. LLVM-to-C admits only complete calls
+with exact widths, ordered unknown memory effects and valid result identities.
+Dead reads remain observable. A propagated 16-bit DX constant above 255 stays
+16-bit; the older SDK assembly path no longer silently truncates it to imm8.
+
+The scalar-source matrix covers 126 machine-code fixtures across x86/x64 and
+ELF/COFF/Mach-O, both pipeline modes, both C routes and O0/O2 compilation.
+Long-mode ELF probes compare CPL3 faults with the original bytes. Both the
+native SDK and pinned r6 SDK pass this matrix and 504 NeverC compilations each,
+requiring native IR with no assembly and the exact constant port argument
+after optimization. The native SDK passes 117 LLVM-to-C value regressions;
+both SDKs pass six system-side-effect tests. NeverC's i386 cells are explicit
+skips, as is r6's unavailable native-call contract test. These checks qualify encoding, operand
+transport and native fault retention, not successful privileged hardware I/O.
 
 The raw software-interrupt API requires a constant vector in 0..255 and
 preserves the continuation after an interrupt handler returns. NeverC's

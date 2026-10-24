@@ -344,10 +344,9 @@ private:
                             llvm::IRBuilder<> &Builder);
   void emitX86MemPtrAsm(const char *Mn, const MedOp &Op,
                         llvm::IRBuilder<> &Builder);
-  /// IN acc, port — read an I/O port into the accumulator (value-producing).
-  llvm::Value *emitX86PortIn(const MedOp &Op, llvm::IRBuilder<> &Builder);
-  /// OUT port, acc — write the accumulator to an I/O port (side-effect).
-  void emitX86PortOut(const MedOp &Op, llvm::IRBuilder<> &Builder);
+  /// Ordered RDMSR/WRMSR and scalar port I/O through the shared native plan.
+  llvm::Value *emitX86ScalarSystem(const MedOp &Op, Intrinsic IC,
+                                   llvm::IRBuilder<> &Builder);
   /// SLDT/STR/SMSW with a register destination — store a system register into
   /// a GPR (value-producing).
   llvm::Value *emitX86SysRegStore(const MedOp &Op, Intrinsic IC,

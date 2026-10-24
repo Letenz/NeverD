@@ -13,6 +13,7 @@
 
 #include "../../UnalignedMemory.h"
 #include "../X86FPStateHelpers.h"
+#include "../X86ScalarSystem.h"
 #include "../X86SystemRegister.h"
 
 #include "neverd/Limits.h"
@@ -1810,6 +1811,36 @@ std::string renderX86TypedIntrinsicCall(
   if (Call.IntrinsicId == I::CetRdSsp)
     llvm::report_fatal_error(
         "RDSSP C projection requires a caller-scoped full-GPR expression");
+  if (isX86ScalarSystemIntrinsic(Call.IntrinsicId)) {
+    const bool Write =
+        Call.IntrinsicId == I::Wrmsr || Call.IntrinsicId == I::Out;
+    const auto *Value =
+        Write && Call.Operands.size() == 2 ? Call.Operands[1].get() : nullptr;
+    const auto P = x86ScalarSystemNative(
+        Call.IntrinsicId, TheArch,
+        Write       ? Value && Value->Type ? Value->Type->Size : 0
+        : Call.Type ? Call.Type->Size
+                    : 0);
+    if (!P || Call.Operands.size() != P->arguments() ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Call.MemoryOrdering != NdMemoryOrdering::None ||
+        (!Write && Call.Type->Kind != NdTypeKind::Int))
+      throw std::invalid_argument("invalid scalar x86 system C contract");
+    std::vector<std::string> Arguments;
+    for (unsigned Index = 0; Index < P->arguments(); ++Index) {
+      const auto *Argument = Call.Operands[Index].get();
+      if (!Argument || !Argument->Type ||
+          Argument->Type->Kind != NdTypeKind::Int ||
+          (Argument->Type->Size != P->argumentBytes(Index) &&
+           !(P->Port && Index == 0 && Argument->Type->Size == 1 &&
+             Argument->Kind == ExprKind::Const &&
+             Argument->ConstVal <= UINT8_MAX)))
+        throw std::invalid_argument("invalid scalar x86 system C operand");
+      Arguments.push_back(ExprFn(*Argument));
+    }
+    HasCIntrinsics |= !GnuToolchain;
+    return renderX86ScalarSystemExpression(*P, Arguments);
+  }
   if (x86SystemRegisterName(Call.IntrinsicId, 0)) {
     const bool Debug =
         Call.IntrinsicId == I::ReadDr || Call.IntrinsicId == I::WriteDr;
