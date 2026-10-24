@@ -7496,6 +7496,13 @@ words. Capture failure has `registers: null` and a separate diagnostic, preservi
 the original workload stop. This is an observation of modeled architectural
 registers, not suspended-thread state or a resumable VM checkpoint.
 
+Android's separate `observe_memory_on_failure` option uses the existing
+`ExecutionBackend::snapshotBacking` owner for requested terminal RAM ranges.
+It never retries guest/model reads after a fault or accesses device callbacks.
+Each failed range retains its own bounded diagnostic and publishes no partial
+bytes, without changing the execution failure or preventing later captures.
+The default report and resumable-stop memory contract remain unchanged.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage: partial failures, cancellation and deadline expiry cannot publish a
@@ -7948,6 +7955,13 @@ uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
 C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
+
+`AndroidDlfcn` owns explicit positive `dladdr` observations. Typed and JSON
+inputs share one validator and the limits in `emulation/Limits.h`. An exact
+address selects an authored LP64 `Dl_info`; absent or unmatched observations
+stop explicitly. Names are interned in read-only guest memory, shared across
+threads and revalidated before output publication. Static imports and dynamic
+provider traps share this owner without inferring ELF membership or host state.
 
 `AndroidStrings` owns Bionic's mutating token scan over guest memory. Imported
 and dynamically named `strtok_r` calls use the same bounded byte reads and

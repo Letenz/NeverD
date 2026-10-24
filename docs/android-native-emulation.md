@@ -113,6 +113,18 @@ threads, guest memory, or backend-private state and is not a resumable
 checkpoint. The captured `PC` is the actual CPU register; a service report may
 separately identify a call site or continuation.
 
+`android.observe_memory_on_failure: true` also captures the requested
+`read_memory` ranges after CPU or runtime failures. It reads stopped RAM backing
+without executing guest instructions, switching threads, changing permissions
+or invoking devices. This forensic read ignores guest read permissions; it does
+not make an unmapped or device-backed range readable. A failed region has empty
+`bytes_hex` and its own `diagnostic`; later regions are still attempted and the
+original stop and diagnostic remain intact. The default is false. Every requested
+range reserves an additional diagnostic allowance from `output_limit`, owned by
+`kAndroidFailureMemoryDiagnosticBytes` in `emulation/Limits.h`; long diagnostics
+end with an explicit truncation marker. Entry-time mapping requirements still
+apply. This is selected RAM evidence, not a resumable process checkpoint.
+
 `android.observe_execution` records state immediately before explicit absolute
 guest PCs, without patching code or supplying call results:
 
@@ -728,6 +740,29 @@ Missing libraries/symbols, closed or invalid handles, and a null symbol name
 return a lookup error. `dlerror()` consumes the pending guest error pointer in
 API 28 TLS slot 6 once; successful lookups do not clear an earlier error, and
 `errno` is independent. Error message wording belongs to the model.
+
+An optional `dladdr_observations` array supplies successful LP64 `dladdr`
+queries. Each record requires `address`, `image_base`, `image_name`,
+`symbol_name` and `symbol_address`. Addresses accept unsigned integers or hex
+strings; a missing symbol is expressed by `symbol_name: null` and
+`symbol_address: 0`. Query addresses must be unique and match exactly.
+
+```json
+{"android":{"entry_symbol":"inspect_buffer","dladdr_observations":[
+  {"address":"0x40001004","image_base":"0x40000000",
+   "image_name":"/guest/fixture.so","symbol_name":"symbol",
+   "symbol_address":"0x40001000"}
+]}}
+```
+
+A matching query writes the four LP64 fields and returns 1 while preserving
+`errno` and pending `dlerror` state. Names are borrowed, stable, read-only guest
+strings. Invalid output spans publish no partial `Dl_info`; changing or
+unmapping retained strings makes subsequent queries fail explicitly. Missing,
+empty and unmatched observations remain unsupported. These records neither
+populate the library catalogue nor infer negative results, symbol membership
+or host files. Record, string and aggregate byte limits have one authority in
+`include/neverd/emulation/Limits.h`.
 
 An optional `default_scope` supplies the complete ordered provider list for
 `dlsym(RTLD_DEFAULT, name)` (handle 0 on LP64):

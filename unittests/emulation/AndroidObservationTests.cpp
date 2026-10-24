@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/ProcessReport.h"
 
 #include "llvm/Support/Endian.h"
@@ -113,6 +114,94 @@ TEST_P(AndroidObservation, TerminalRegistersPreserveOriginalStopsAndEffects) {
     EXPECT_EQ(After.CPUState->ThreadID, 1000u);
     ASSERT_TRUE(After.CPUState->Registers) << After.CPUState->Diagnostic;
     EXPECT_EQ(After.CPUState->Registers->size(), 71u);
+  }
+}
+TEST_P(AndroidObservation, FailureMemoryPreservesOriginalStopsAndRegisters) {
+  auto &A = *Options.Android;
+  A.ObserveCPUState = true;
+  for (const char *Entry : {"stdio_content", "bad_free"}) {
+    SCOPED_TRACE(Entry);
+    A.EntrySymbol = Entry;
+    A.ObserveMemoryOnFailure = false;
+    const auto Before = run();
+    ASSERT_TRUE(Before.Stop == ProcessStopReason::CPUFailure ||
+                Before.Stop == ProcessStopReason::RuntimeFailure);
+    EXPECT_TRUE(Before.MemorySnapshots.empty());
+    A.ObserveMemoryOnFailure = true;
+    auto After = run();
+    ASSERT_EQ(After.MemorySnapshots.size(), 2u);
+    for (unsigned I = 0; I != 2; ++I) {
+      EXPECT_EQ(After.MemorySnapshots[I].Address, A.ReadMemory[I].Address);
+      EXPECT_EQ(After.MemorySnapshots[I].Bytes, A.Memory[I].Bytes);
+      EXPECT_TRUE(After.MemorySnapshots[I].Diagnostic.empty());
+    }
+    After.MemorySnapshots.clear();
+    EXPECT_EQ(processResultJSON(After), processResultJSON(Before));
+  }
+}
+TEST_P(AndroidObservation,
+       FailureMemoryErrorsRemainSeparateAndDoNotEndCapture) {
+  auto &A = *Options.Android;
+  A.EntrySymbol = "bad_free";
+  A.ObserveCPUState = true;
+  A.ReadMemory.insert(A.ReadMemory.begin(), {0x23000000, 16, false});
+  const auto Before = run();
+  ASSERT_EQ(Before.Stop, ProcessStopReason::RuntimeFailure);
+  A.ObserveMemoryOnFailure = true;
+  auto After = run();
+  ASSERT_EQ(After.MemorySnapshots.size(), 3u);
+  const auto &Missing = After.MemorySnapshots.front();
+  EXPECT_EQ(Missing.Address, 0x23000000u);
+  EXPECT_TRUE(Missing.Bytes.empty());
+  EXPECT_FALSE(Missing.Diagnostic.empty());
+  EXPECT_LE(Missing.Diagnostic.size(),
+            ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes);
+  for (unsigned I = 1; I != 3; ++I) {
+    EXPECT_EQ(After.MemorySnapshots[I].Bytes, A.Memory[I - 1].Bytes);
+    EXPECT_TRUE(After.MemorySnapshots[I].Diagnostic.empty());
+  }
+  After.MemorySnapshots.clear();
+  EXPECT_EQ(processResultJSON(After), processResultJSON(Before));
+}
+TEST_P(AndroidObservation,
+       FailureMemoryReservesItsDiagnosticBudgetBeforeEntry) {
+  auto &A = *Options.Android;
+  A.EntrySymbol = "bad_free";
+  A.TraceLimit = 0;
+  A.ObserveMemoryOnFailure = true;
+  A.ReadMemory = {{Buffer, 64}};
+  Options.OutputLimit =
+      64 + ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes -
+      1;
+  auto Invalid =
+      emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  EXPECT_FALSE(bool(Invalid));
+  EXPECT_NE(llvm::toString(Invalid.takeError()).find("snapshot"),
+            std::string::npos);
+  ++Options.OutputLimit;
+  const auto Valid = run();
+  EXPECT_EQ(Valid.Stop, ProcessStopReason::RuntimeFailure) << Valid.Diagnostic;
+  ASSERT_EQ(Valid.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(Valid.MemorySnapshots.front().Bytes, A.Memory.front().Bytes);
+}
+TEST(AndroidObservationOptions, FailureMemoryFlagIsStrictAndOptional) {
+  auto Default = processOptionsFromJSON(R"({"android":{}})");
+  ASSERT_TRUE(bool(Default)) << llvm::toString(Default.takeError());
+  EXPECT_FALSE(Default->Android->ObserveMemoryOnFailure);
+  for (const char *Text : {"true", "false"}) {
+    auto O = processOptionsFromJSON(
+        std::string("{\"android\":{\"observe_memory_on_failure\":") + Text +
+        "}}");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    EXPECT_EQ(O->Android->ObserveMemoryOnFailure,
+              llvm::StringRef(Text) == "true");
+  }
+  for (const char *Text : {"null", "0", "\"true\"", "{}", "[]"}) {
+    auto O = processOptionsFromJSON(
+        std::string("{\"android\":{\"observe_memory_on_failure\":") + Text +
+        "}}");
+    EXPECT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
   }
 }
 TEST_P(AndroidObservation, TerminalRegistersRetainEveryIntegerAndVectorLane) {

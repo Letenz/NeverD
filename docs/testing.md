@@ -9948,6 +9948,22 @@ cmake -S . -B build-native -G Ninja \
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+`AndroidObservation.FailureMemory*` compares complete fault reports with and
+without RAM capture, including all observed registers, original diagnostics,
+and execution counts. Unmapped ranges publish separate errors while later
+ranges remain available. Diagnostic budgets are checked before CPU entry.
+The public SDK/CLI regression compares complete CPU/runtime-failure reports
+and the new memory records. The flag is strictly boolean and defaults to false.
+
+`AndroidDladdrTests.cpp` runs independent LP64 callers at O0/O2 with ordinary,
+APS2 and RELR relocation packing on every available checked ARM64 transport.
+It checks the complete output buffer, image-only and named-symbol records,
+static/dynamic calls, provider closure and residency, errno/dlerror retention,
+thread-shared string identities, unknown queries and atomic output validation.
+Read-only, modified and unmapped metadata remain visible to guest accesses.
+Typed/JSON validation shares count, string and aggregate limits. Run the
+Android and process-public owners after changes to this model.
+
 `AArch64SIMD.SignedZeroComparison*` checks all eight baseline `CMLT #0`
 forms against an integer sign-bit oracle, including source/destination aliasing,
 zero, signed extrema and unused upper lanes. Every accepted execution compares

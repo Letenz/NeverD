@@ -2301,6 +2301,129 @@ TEST_F(ProcessPublic, AndroidTerminalCPUStateMatchesSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidDladdrObservationsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Opt : {"O0", "O2"})
+    for (const char *Packing : {"none", "android", "relr"}) {
+      Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+              (std::string("dladdr-") + Opt + "-" + Packing + ".so"))
+                 .string();
+      SCOPED_TRACE(Path);
+      for (bool Known : {false, true}) {
+        SCOPED_TRACE(Known);
+        llvm::json::Object Request{
+            {"backend", "unicorn"},
+            {"android",
+             llvm::json::Object{
+                 {"entry_symbol", "dladdr_call"},
+                 {"initialize", false},
+                 {"arguments",
+                  llvm::json::Array{Known ? "0x40001004" : "0x40001005",
+                                    "0x20000000"}},
+                 {"memory", llvm::json::Array{llvm::json::Object{
+                                {"address", "0x20000000"}, {"size", 4096}}}},
+                 {"read_memory", llvm::json::Array{llvm::json::Object{
+                                     {"address", "0x20000000"}, {"size", 64}}}},
+                 {"dladdr_observations",
+                  llvm::json::Array{
+                      llvm::json::Object{{"address", "0x40001004"},
+                                         {"image_base", "0x40000000"},
+                                         {"image_name", "/guest/fixture.so"},
+                                         {"symbol_name", "symbol"},
+                                         {"symbol_address", "0x40001000"}}}}}}};
+        const auto Options = jsonText(std::move(Request));
+        auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::cantFail(llvm::json::parse(Text));
+        EXPECT_EQ(Report.getAsObject()->getString(field::Stop),
+                  Known ? "returned" : "unsupported_service");
+        if (Known)
+          EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "1");
+        EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                  Known ? process_cli::Success : process_cli::Incomplete);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+      }
+    }
+#endif
+}
+
+TEST_F(ProcessPublic, AndroidFailureMemoryMatchesSDKAndCLIWithoutChangingStop) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "android.so")
+             .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Entry : {"stdio_content", "bad_free"}) {
+    SCOPED_TRACE(Entry);
+    llvm::json::Value Baseline = nullptr;
+    for (bool Observe : {false, true}) {
+      llvm::json::Object Request{
+          {"backend", "unicorn"},
+          {"android",
+           llvm::json::Object{
+               {"entry_symbol", Entry},
+               {"initialize", false},
+               {"observe_cpu_state", true},
+               {"observe_memory_on_failure", Observe},
+               {"memory", llvm::json::Array{llvm::json::Object{
+                              {"address", "0x20000000"}, {"size", 4096}}}},
+               {"read_memory",
+                llvm::json::Array{
+                    llvm::json::Object{{"address", "0x23000000"},
+                                       {"size", 16},
+                                       {"require_mapped_at_entry", false}},
+                    llvm::json::Object{{"address", "0x20000000"},
+                                       {"size", 64}}}}}}};
+      const auto Options = jsonText(std::move(Request));
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      EXPECT_EQ(Report.getAsObject()->getString(field::Stop),
+                llvm::StringRef(Entry) == "stdio_content" ? "cpu_failure"
+                                                          : "runtime_failure");
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+      auto *Android = Report.getAsObject()->getObject(field::Android);
+      ASSERT_NE(Android, nullptr);
+      auto *Memory = Android->getArray(field::Memory);
+      ASSERT_NE(Memory, nullptr);
+      if (!Observe) {
+        EXPECT_TRUE(Memory->empty());
+        Baseline = std::move(Report);
+        continue;
+      }
+      ASSERT_EQ(Memory->size(), 2u);
+      const auto *Missing = (*Memory)[0].getAsObject();
+      ASSERT_NE(Missing, nullptr);
+      EXPECT_EQ(Missing->getString(field::Bytes), "");
+      ASSERT_TRUE(Missing->getString(field::Diagnostic));
+      EXPECT_FALSE(Missing->getString(field::Diagnostic)->empty());
+      const auto *Valid = (*Memory)[1].getAsObject();
+      ASSERT_NE(Valid, nullptr);
+      EXPECT_EQ(Valid->getString(field::Bytes), std::string(128, '0'));
+      EXPECT_FALSE(Valid->get(field::Diagnostic));
+      (*Android)[field::Memory] = llvm::json::Array{};
+      EXPECT_EQ(Report, Baseline);
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidFinalizersKeepGuestEffectsAcrossSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";
