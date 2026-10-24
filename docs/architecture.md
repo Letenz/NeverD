@@ -619,6 +619,11 @@ and its sources; destruction/close releases them. Other immutable snapshot
 queries retain their session-independent contract.
 `LoadProgress` in support owns borrowed loading progress and stop checkpoints.
 It carries no session state and is never retained in a `BinaryImage`.
+`Loader::readFileBuffer` supplies length-bounded binary bytes without requiring
+a trailing NUL. This lets LLVM map page-aligned inputs instead of copying the
+whole file solely to append a terminator. LLVM retains its small-file and
+failed-mapping read fallbacks. The image still owns its parsed bytes, and input
+hashing covers every file byte, including any unmapped overlay.
 Controlled loader calls restore the previous control on every exit and translate
 stops to `operation_canceled`; legacy calls retain their existing contracts.
 Hashing keeps the shared hardware-accelerated SHA-256 implementation and polls
