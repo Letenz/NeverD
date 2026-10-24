@@ -333,13 +333,14 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, ValTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={di},={cx},0,1,{ax},r,~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={di},={cx},0,1,{ax},r,~{memory},~{dirflag},~{flags}",
+          true);
       Builder.CreateCall(IA, {RDI, RCX, Val, Df});
     } else {
       auto *FnTy =
           llvm::FunctionType::get(RetTy, {AddrRegTy, AddrRegTy, ValTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={di},={cx},0,1,{ax},~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={di},={cx},0,1,{ax},~{memory},~{dirflag},~{flags}", true);
       Builder.CreateCall(IA, {RDI, RCX, Val});
     }
     return Handled();
@@ -376,14 +377,14 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
         auto *FnTy = llvm::FunctionType::get(
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn, "={di},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{cc}",
+            FnTy, Mn, "={di},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{flags}",
             true);
         Call = Builder.CreateCall(IA, {RDI, RCX, Val, Df}, "rep_scas");
       } else {
         auto *FnTy = llvm::FunctionType::get(
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn, "={di},={cx},={ax},0,1,2,~{memory},~{dirflag},~{cc}",
+            FnTy, Mn, "={di},={cx},={ax},0,1,2,~{memory},~{dirflag},~{flags}",
             true);
         Call = Builder.CreateCall(IA, {RDI, RCX, Val}, "rep_scas");
       }
@@ -408,7 +409,7 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(FnTy, Mn,
                                         "={si},={di},={cx},={ax},0,1,2,r,"
-                                        "~{memory},~{dirflag},~{cc}",
+                                        "~{memory},~{dirflag},~{flags}",
                                         true);
         Call = Builder.CreateCall(IA, {RSI, RDI, RCX, Df}, "rep_cmps");
       } else {
@@ -416,7 +417,7 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(FnTy, Mn,
                                         "={si},={di},={cx},={ax},0,1,2,"
-                                        "~{memory},~{dirflag},~{cc}",
+                                        "~{memory},~{dirflag},~{flags}",
                                         true);
         Call = Builder.CreateCall(IA, {RSI, RDI, RCX}, "rep_cmps");
       }
@@ -449,14 +450,15 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{cc}",
+          FnTy, Mn, "={si},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{flags}",
           true);
       Call = Builder.CreateCall(IA, {RSI, RCX, RAX, Df}, "rep_lods");
     } else {
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={cx},={ax},0,1,2,~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={si},={cx},={ax},0,1,2,~{memory},~{dirflag},~{flags}",
+          true);
       Call = Builder.CreateCall(IA, {RSI, RCX, RAX}, "rep_lods");
     }
     auto *Accumulator = Builder.CreateExtractValue(Call, {2}, "lods_ax");
@@ -479,14 +481,15 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={di},={cx},0,1,2,r,~{memory},~{dirflag},~{cc}",
+          FnTy, Mn, "={si},={di},={cx},0,1,2,r,~{memory},~{dirflag},~{flags}",
           true);
       Builder.CreateCall(IA, {RSI, RDI, RCX, Df});
     } else {
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={di},={cx},0,1,2,~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={si},={di},={cx},0,1,2,~{memory},~{dirflag},~{flags}",
+          true);
       Builder.CreateCall(IA, {RSI, RDI, RCX});
     }
     return Handled();
@@ -1468,14 +1471,14 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     llvm::Value *Result = nullptr;
     if (IC == I::SegmentLimit) {
       auto *FnTy = llvm::FunctionType::get(I32Ty, {I32Ty}, false);
-      auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${1:w}, $0", "=r,r,~{cc}",
+      auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${1:w}, $0", "=r,r,~{flags}",
                                       /*hasSideEffects=*/false);
       Result = Builder.CreateCall(IA, {Selector}, "segment_limit");
     } else {
       auto *RetTy = llvm::StructType::get(*Ctx, {I32Ty, I8Ty});
       auto *FnTy = llvm::FunctionType::get(RetTy, {I32Ty}, false);
       auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${2:w}, $0\n\tsetz $1",
-                                      "=&r,=q,r,~{cc}",
+                                      "=&r,=q,r,~{flags}",
                                       /*hasSideEffects=*/false);
       Result = Builder.CreateExtractValue(Builder.CreateCall(IA, {Selector}), 1,
                                           "segment_valid");
@@ -1496,7 +1499,7 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     auto *IA = llvm::InlineAsm::get(
         FnTy,
         std::string(IC == I::Rdrand ? "rdrand" : "rdseed") + " $0\n\tsetc $1",
-        "=r,=q,~{cc}", /*hasSideEffects=*/true);
+        "=r,=q,~{flags}", /*hasSideEffects=*/true);
     llvm::Value *Pair = Builder.CreateCall(IA, {}, "random");
     llvm::Value *Value =
         Builder.CreateZExt(Builder.CreateExtractValue(Pair, 0), PairTy);

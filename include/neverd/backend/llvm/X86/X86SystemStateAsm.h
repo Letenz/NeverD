@@ -169,7 +169,7 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   for (const auto &I : P.InputConstraints)
     Constraint(I);
   if (P.ChangesFlags)
-    Constraint("~{cc}");
+    Constraint("~{flags}");
   Constraint("~{memory}");
   return P;
 }
@@ -231,7 +231,7 @@ x86SystemStateAddressAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
     A.Constraints += Constraint + ",";
   A.Constraints += "{bx},";
   if (A.ChangesFlags)
-    A.Constraints += "~{cc},";
+    A.Constraints += "~{flags},";
   A.Constraints += "~{memory}";
   return Plan;
 }

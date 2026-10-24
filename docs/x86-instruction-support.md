@@ -1487,6 +1487,32 @@ transport AEX, VM exits or nonlocal machine continuations. The final LLVM
 release, production pin and LLVM submodule update remain pending.
 
 
+## LLVM assembly arithmetic-flag effects
+
+A native VERR counterexample exposed an independent lowering gap: LLVM's x86
+assembly constraint parser ignores `~{cc}`, so a comparison used before and
+after VERR could reuse VERR's ZF. Four equal-input cases returned -1 instead
+of 0. Replacing that constraint with `~{flags}` restores the original comparison
+and all four cases return 0. This is distinct from GNU C assembly's valid
+`"cc"` clobber and does not change AArch64's constraint vocabulary.
+
+The corrected shared contracts cover SGX supervisor/VMM completion, VMX status,
+system/descriptor checks, legacy REP paths, segment-limit and random-number
+results. LLVM-to-C recognizes the corrected exact contracts and rejects old
+windows with the ignored condition-code spelling. Native LLVM intrinsics keep
+their separate machine-instruction effects.
+
+`NeverDX86AsmFlagsTests` independently executes VERR/VERW/LAR/LSL register and
+memory probes across i386/x64 production objects, O0/O2 LLVM IR and emitted C,
+plus NeverC x64 source. Production objects use the normal Codegen profile;
+their independent driver runs at both levels. Each SDK profile runs 7,168 comparisons. Both
+profiles also compile 99 i386 and 95 x64 owned flag-writing forms across three
+object formats. An external machine-IR audit checks 420 instruction boundaries
+across both profiles, including the native execution probes; each declares
+EFLAGS. Privileged forms are compilation/effect coverage, not hardware-success
+qualification. These checks do not close the remaining state/continuation gaps
+or authorize an intermediate LLVM release.
+
 ## NeverD bounded SGX/SMX state integration
 
 NeverD now admits ENCLU leaves 0, 1 and 5..11, and GETSEC leaves 0 and 6..8,

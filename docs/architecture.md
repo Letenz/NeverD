@@ -99,6 +99,13 @@ mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler f
 comparison completion in long mode requires LAHF/SAHF on both native and
 assembly routes, and its `sahf` attribute survives every capability combination.
 
+X86 LLVM assembly that modifies arithmetic flags declares `~{flags}`. LLVM's
+x86 register constraint parser does not map `~{cc}` to EFLAGS; an apparently
+correct instruction window can otherwise reuse a stale comparison after a
+native flag write. GNU C assembly still spells this clobber `"cc"`. Owned
+assembly producers and LLVM-to-C recognizers share the exact LLVM contract;
+the recognizer rejects older windows that omitted the actual EFLAGS effect.
+
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.

@@ -438,7 +438,7 @@ std::optional<X86RepStos> classifyX86RepStos(Arch TheArch,
               : "test $5,$5\n\tje 1f\n\tstd\n\t1:\n\t" + Rep + "\n\tcld";
       const std::string Constraints = std::string("={di},={cx},0,1,{ax},") +
                                       (Dynamic ? "r," : "") +
-                                      "~{memory},~{dirflag},~{cc}";
+                                      "~{memory},~{dirflag},~{flags}";
       if (IA->getAsmString() != Asm ||
           IA->getConstraintString() != Constraints ||
           Call.arg_size() != (Dynamic ? 4u : 3u) ||
@@ -484,7 +484,7 @@ std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
               : "test $6,$6\n\tje 1f\n\tstd\n\t1:\n\t" + Rep + "\n\tcld";
       const std::string Constraints = std::string("={si},={di},={cx},0,1,2,") +
                                       (Dynamic ? "r," : "") +
-                                      "~{memory},~{dirflag},~{cc}";
+                                      "~{memory},~{dirflag},~{flags}";
       if (IA->getAsmString() != Asm ||
           IA->getConstraintString() != Constraints ||
           Call.arg_size() != (Dynamic ? 4u : 3u) ||

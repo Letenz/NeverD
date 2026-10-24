@@ -69,7 +69,7 @@ struct StosFixture {
     const bool Dynamic = Dir == X86RepStos::Dynamic;
     std::string Constraints = std::string("={di},={cx},0,1,{ax},") +
                               (Dynamic ? "r," : "") +
-                              "~{memory},~{dirflag},~{cc}";
+                              "~{memory},~{dirflag},~{flags}";
     if (BadConstraints)
       Constraints += ",~{flags}";
     auto *Ret =
@@ -122,7 +122,7 @@ struct MovsFixture {
     const bool Dynamic = Dir == X86RepMovs::Dynamic;
     std::string Constraints = std::string("={si},={di},={cx},0,1,2,") +
                               (Dynamic ? "r," : "") +
-                              "~{memory},~{dirflag},~{cc}";
+                              "~{memory},~{dirflag},~{flags}";
     if (BadConstraints)
       Constraints += ",~{flags}";
     auto *Ret = llvm::StructType::get(
@@ -1030,7 +1030,7 @@ TEST(LLVMCIntrinsicSemantics, RepStosFrameBufferSharesBackingWithIndexedLoads) {
         RetTy, {B.getInt64Ty(), B.getInt64Ty(), B.getInt8Ty()}, false);
     auto *IA = llvm::InlineAsm::get(
         AsmTy, Backward ? "std\n\trep stosb\n\tcld" : "rep stosb",
-        "={di},={cx},0,1,{ax},~{memory},~{dirflag},~{cc}", true);
+        "={di},={cx},0,1,{ax},~{memory},~{dirflag},~{flags}", true);
     B.CreateCall(IA,
                  {B.CreatePtrToInt(Addr(Backward ? 143 : 80), B.getInt64Ty()),
                   F->getArg(1), B.getInt8(0x5A)});
