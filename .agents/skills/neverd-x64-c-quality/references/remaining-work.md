@@ -106,6 +106,9 @@ Exact scalar branches now reconnect discontiguous and backward code while
 preserving independently known tail calls. Worker navigation uses complete
 recovered instruction ownership to select the original function when a user
 lands on a fragment; it does not invent a new callable entry or its live-ins.
+Saved code items retain this bounded owner lookup on literal GUI navigation.
+Manual independent function definitions still take precedence; correcting one
+does not erase its saved instruction boundaries or invent missing VM state.
 The public constant-branch and worker chunk regressions cover these boundaries.
 
 | Gap | Next check |
