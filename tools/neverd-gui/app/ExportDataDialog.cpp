@@ -12,7 +12,6 @@
 #include "../Config.h"
 #include "../ResourceLimits.h"
 #include "Session.h"
-#include "ShortcutHint.h"
 #include "Theme.h"
 
 #include <QApplication>
@@ -70,8 +69,6 @@ ExportDataDialog::ExportDataDialog(Session &session, Address first,
   Copy->setObjectName(QStringLiteral("exportCopy"));
   Save = buttons->addButton(tr("Save as..."), QDialogButtonBox::ActionRole);
   Save->setObjectName(QStringLiteral("exportSave"));
-  setShortcutHint(*buttons->button(QDialogButtonBox::Close),
-                  QKeySequence(Qt::Key_Escape));
   layout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   connect(Copy, &QPushButton::clicked, this, [this] {

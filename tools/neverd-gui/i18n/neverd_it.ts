@@ -1815,12 +1815,12 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation>I nomi delle variabili salvati appartengono a un&apos;altra versione del sorgente generato</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Espandi blocco (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Espandi blocco (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Comprimi blocco (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Comprimi blocco (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -3819,12 +3819,12 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>Successivo</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Corrispondenza precedente (Maiusc+Invio o Maiusc+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Corrispondenza precedente (%1 o %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Corrispondenza successiva (Invio o F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Corrispondenza successiva (%1 o %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4655,12 +4655,12 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+clic per aprire</translation>
+        <source>%1click to open</source>
+        <translation>%1clic per aprire</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Fai doppio clic o Ctrl+clic per aprire %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Fai doppio clic o %2clic per aprire %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4705,8 +4705,8 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>Dichiara</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Leggi le dichiarazioni (Ctrl+Invio)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Leggi le dichiarazioni (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4846,8 +4846,8 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>L&apos;operando mantiene il suo numero.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>Il programma non ha strutture né unioni. Dichiarale in Tipi locali (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>Il programma non ha strutture né unioni. Dichiarale in Tipi locali (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6302,8 +6302,8 @@ Copertura: %7</translation>
         <translation>Seleziona una funzione per esaminarne la controparte.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Seleziona blocchi per seguirne le controparti. Ctrl+rotellina regola lo zoom.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Seleziona blocchi per seguirne le controparti. %1rotellina regola lo zoom.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>

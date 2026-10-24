@@ -1820,12 +1820,12 @@ Double-click to go to the declaration.</source>
         <translation>Сохранённые имена переменных относятся к другому варианту исходного кода</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Развернуть блок (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Развернуть блок (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Свернуть блок (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Свернуть блок (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -3826,12 +3826,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Далее</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Предыдущее совпадение (Shift+Enter или Shift+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Предыдущее совпадение (%1 или %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Следующее совпадение (Enter или F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Следующее совпадение (%1 или %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4672,12 +4672,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+щелчок — открыть</translation>
+        <source>%1click to open</source>
+        <translation>%1щелчок — открыть</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Дважды щёлкните или Ctrl+щелчок, чтобы открыть %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Дважды щёлкните или %2щелчок, чтобы открыть %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4723,8 +4723,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Объявить</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Прочитать объявления (Ctrl+Enter)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Прочитать объявления (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4869,8 +4869,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Операнд сохраняет своё число.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>В программе нет структур и объединений. Объявите их в окне «Локальные типы» (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>В программе нет структур и объединений. Объявите их в окне «Локальные типы» (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6338,8 +6338,8 @@ Coverage: %7</source>
         <translation>Выберите функцию для изучения её соответствия.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Выбирайте блоки, чтобы следить за соответствиями. Ctrl+колесо меняет масштаб.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Выбирайте блоки, чтобы следить за соответствиями. %1колесо меняет масштаб.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
