@@ -98,7 +98,15 @@ class LowWordDecisions {
   };
   llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;
   llvm::DenseMap<CarryKey, uint32_t, CarryInfo> Parities;
-  std::unordered_map<uint64_t, Bits> Words;
+  struct WordKeyInfo : llvm::DenseMapInfo<uint64_t> {
+    static unsigned getHashValue(uint64_t Key) {
+      return llvm::DenseMapInfo<std::pair<uint32_t, uint32_t>>::
+          getHashValuePiecewise(uint32_t(Key >> 8), uint32_t(Key & 255));
+    }
+  };
+  // Recursive word construction retains references across cache insertions.
+  // Keep the values stable when the contiguous lookup table grows.
+  llvm::DenseMap<uint64_t, std::unique_ptr<Bits>, WordKeyInfo> Words;
   std::unordered_map<uint32_t, unsigned> Zeros;
   struct WordOperation {
     SymOp Op;
@@ -570,7 +578,7 @@ class LowWordDecisions {
     return Result;
   }
 
-  // References into unordered_map elements survive recursive insertions.
+  // Heap-owned words stay stable when recursive insertions grow the table.
   // Cached words are immutable until the parity assumption changes; no view
   // escapes that phase. Cache hits pay for lookup, without copying each bit.
   const Bits &word(SymRef R, unsigned Count, unsigned Depth = 0) {
@@ -609,7 +617,7 @@ class LowWordDecisions {
     }
     const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
     if (auto It = Words.find(Key); It != Words.end())
-      return It->second;
+      return *It->second;
     if (!charge(Count) || Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
       return Empty;
@@ -793,9 +801,11 @@ class LowWordDecisions {
                  0, 1);
     }
     if (!charge(Count, sizeof(uint64_t) + sizeof(Bits) +
-                           2 * Count * sizeof(uint32_t) + 4 * sizeof(void *)))
+                           2 * Count * sizeof(uint32_t) + 4 * sizeof(void *)) ||
+        !reserveEntry(Words))
       return Empty;
-    return Words.emplace(Key, std::move(Result)).first->second;
+    return *Words.try_emplace(Key, std::make_unique<Bits>(std::move(Result)))
+                .first->second;
   }
 
   // Count equal and complementary bits before carry propagation. A pair of
@@ -1242,7 +1252,7 @@ class LowWordDecisions {
     }
     const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
     if (auto It = Words.find(Key); It != Words.end())
-      return It->second.back();
+      return It->second->back();
     if (Ctx.numOperands(R) == 2 && Ctx.isConst(Ctx.operand(R, 0))) {
       if (Ctx.op(R) == SymOp::And || Ctx.op(R) == SymOp::Add) {
         const auto Literal = literal(Ctx.operand(R, 0));

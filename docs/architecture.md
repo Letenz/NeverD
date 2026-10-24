@@ -2396,9 +2396,11 @@ not assume that an even value has a modular inverse. Batched sums cancel exact
 complementary bits and combine multiplicities before carrying; full-adder
 carries share a direct majority decision. A proved parity input orders its
 low prefix before the remaining interleaved bits. Dense decision and carry
-caches prepay their bucket growth. Immutable word views avoid repeated copies
-and are discarded when the assumption changes; polynomial views remain valid
-throughout reconstruction.
+caches prepay their bucket growth. Word lookups also use a dense table with
+prepaid buckets, while separately owned values keep recursive references valid
+when that table grows. Immutable word views avoid repeated copies and are
+discarded when the assumption changes; polynomial views remain valid throughout
+reconstruction.
 Ordinary HighIR expression cleanup also uses an iterative operand walk, keeping
 its large local-rewrite frame off nested worker stacks. Operand order, shared
 node visitation and ordered-memory guards remain unchanged.

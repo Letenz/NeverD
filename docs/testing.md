@@ -1020,6 +1020,10 @@ The real worker and both CLI source projections execute that product at C O0/O2.
 The degree-47 mixed product also exercises operand-pool growth during recursive
 signature construction; run its regression with AddressSanitizer to detect stale
 operand views, and retain the independent full-width value oracle.
+Run the residue-cache, wide-pair, lazy-polynomial, residual-budget and Boolean
+residual suites with the expression, MBA, synthesis and solver components
+consistently instrumented when checking word-cache growth. Mixing instrumented
+container operations with old component archives does not qualify that check.
 Interleaved degree-128 products must retain their reductions at 8/16/32/64
 bits within the same 65,536-work budget. The existing degree-16 mixed product
 must also retain its reduction with only 15,500 units of cumulative work.
