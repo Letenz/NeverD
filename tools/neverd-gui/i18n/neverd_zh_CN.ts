@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>x87 支持(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>栈展开信息…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>检查所选指令处的栈展开元数据</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2955,6 +2963,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>另一个链接取代了此链接。</translation>
+    </message>
+    <message>
+        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
+        <translation>经典 IDA（legacy）。列表获得焦点时，优先使用该列表的快捷键。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>按操作、快捷键或作用范围筛选</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>作用范围</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未分配</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>分析视图</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>工作台</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>快速筛选</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>列表</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>添加类型…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>编辑类型…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>删除类型…</translation>
     </message>
 </context>
 <context>

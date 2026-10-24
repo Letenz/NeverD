@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>x87 の対応状況(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>アンワインド情報…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>選択した命令位置のアンワインドメタデータを調べる</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2955,6 +2963,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>別のリンクがこのリンクに代わりました。</translation>
+    </message>
+    <message>
+        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
+        <translation>IDA Classic（legacy）。リストにフォーカスがある間は、そのリストのコマンドが優先されます。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>操作、ショートカット、適用範囲で絞り込み</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>適用範囲</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未割り当て</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>解析ビュー</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>ワークベンチ</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>クイックフィルター</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>リスト</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>型を追加…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>型を編集…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>型を削除…</translation>
     </message>
 </context>
 <context>

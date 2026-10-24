@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>x87 지원(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>스택 해제 정보…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>선택한 명령의 스택 해제 메타데이터 검사</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2955,6 +2963,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>다른 링크가 이 링크를 대신했습니다.</translation>
+    </message>
+    <message>
+        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
+        <translation>IDA Classic(legacy). 목록에 포커스가 있으면 해당 목록의 명령이 우선합니다.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>동작, 단축키 또는 적용 범위로 필터링</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>적용 범위</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>미지정</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>분석 뷰</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>작업 공간</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>빠른 필터</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>목록</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>형식 추가…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>형식 편집…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>형식 삭제…</translation>
     </message>
 </context>
 <context>

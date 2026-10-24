@@ -1758,6 +1758,17 @@ missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
 
+`NeverDGuiUnits::toolbarButtonsShowTheirActualShortcuts` checks visible toolbar
+key labels, action changes, translation and disabled actions.
+`NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
+Ctrl+E/P/L/S keys, filtering, Enter, cancellation and navigation history with
+the fixture worker. `shortcutsCanBeFoundByKeyAndScope` checks the shortcut
+browser's scoped Ctrl+E commands and unassigned actions;
+`commandButtonsExposeTheirKeys` checks local action buttons in both themes.
+Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
+repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
+and function-edit controller cases check that their scoped Ctrl+E still wins.
+
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
 unwind coverage, cached and uncached selections, actual split-chunk ownership,
 and rejection of truncated instructions. `SafetyReport.PipelineCoverageRejectsPartialFunctionLifts`

@@ -6,6 +6,7 @@
 #include "Session.h"
 #include "Theme.h"
 
+#include <QAction>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -100,12 +101,14 @@ QMenu *OutputWindow::createLogMenu() {
   QAction *copy = menu->addAction(icon(QStringLiteral("copy")), tr("&Copy"));
   copy->setObjectName(QStringLiteral("outputCopy"));
   copy->setShortcut(QKeySequence::Copy);
+  copy->setShortcutVisibleInContextMenu(true);
   copy->setEnabled(log_->textCursor().hasSelection());
   connect(copy, &QAction::triggered, log_, &QPlainTextEdit::copy);
   QAction *all =
       menu->addAction(icon(QStringLiteral("select_all")), tr("Select &all"));
   all->setObjectName(QStringLiteral("outputSelectAll"));
   all->setShortcut(QKeySequence::SelectAll);
+  all->setShortcutVisibleInContextMenu(true);
   connect(all, &QAction::triggered, log_, &QPlainTextEdit::selectAll);
   menu->addSeparator();
   // The same as the command line's clear.

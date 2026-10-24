@@ -658,6 +658,21 @@ therefore has no key: IDA's Ctrl+O makes an operand an offset into the current
 segment. One difference is deliberate: in a disassembly, pseudocode or IR
 window Ctrl+F finds text, where IDA's disassembly goes to the next error.
 
+Buttons with shortcuts show the keys beside their icons or labels, including
+the main toolbars, Local Types, Type Libraries, Pathfinder, Declare and Find.
+Context menus show the same keys. **Options → Shortcuts** searches by action,
+key or scope, includes commands with no assigned key, and distinguishes
+workbench commands from analysis-view and list commands. In the Functions
+list Ctrl+E edits the selected function; in Local Types it edits the selected
+type. These list commands take priority over the workbench's Ctrl+E.
+
+**Jump → Jump to entry point** (Ctrl+E) opens an entry-point chooser, including
+exported entries and the program's start, without switching to the Exports
+dock. Enter or OK jumps to the selected entry; Escape or Cancel leaves the
+current position unchanged. Ctrl+P, Ctrl+L and Ctrl+S likewise choose a function,
+name or segment in a separate dialog. Typing filters a filterable list, and
+accepted jumps participate in the usual Escape / Ctrl+Enter navigation history.
+
 `scripts/compare_gui_with_ida.py --ida <installation>` checks the table against
 an IDA installation and reports, menu by menu, which of IDA's commands the
 workbench has, plans and lacks. Against IDA 9.5 on 2026-10-21, all 117 rows

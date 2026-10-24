@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>&amp;Supporto x87…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Informazioni di unwinding…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Esamina i metadati di unwinding dell’istruzione selezionata</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2961,6 +2969,50 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Another link took this one's place.</source>
         <translation>Un altro link ha preso il posto di questo.</translation>
+    </message>
+    <message>
+        <source>IDA Classic (legacy). List commands take priority while their list has focus.</source>
+        <translation>IDA classico (legacy). I comandi di un elenco hanno la precedenza quando ha il focus.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filtra per azione, scorciatoia o ambito</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Ambito</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Non assegnata</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Viste di analisi</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Area di lavoro</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Filtro rapido</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Elenchi</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Aggiungi tipi…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Modifica tipo…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Elimina tipi…</translation>
     </message>
 </context>
 <context>

@@ -71,6 +71,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1831,31 +1832,15 @@ void MainWindow::connectActions() {
     }
   });
   on(ActionId::JumpAnywhere, [this] { jumpAnywhere(); });
-  on(ActionId::JumpByName, [this] {
-    auto *dock = chooserDock(ChooserKind::Names);
-    if (!dock->isOpen())
-      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
-    dock->open();
-    dock->raise();
-    choosers_.value(int(ChooserKind::Names))->focusFilter();
-  });
+  on(ActionId::JumpByName,
+     [this] { chooseLocation(ChooserKind::Names, ActionId::JumpByName); });
   on(ActionId::JumpFunction, [this] {
-    docks_.value(FunctionsDock)->open();
-    docks_.value(FunctionsDock)->raise();
-    functions_->focusFilter();
+    chooseLocation(ChooserKind::Functions, ActionId::JumpFunction);
   });
-  on(ActionId::JumpSegment, [this] {
-    auto *dock = chooserDock(ChooserKind::Segments);
-    if (!dock->isOpen())
-      docks_.value(DisassemblyDock)->addDockWidgetAsTab(dock);
-    dock->open();
-    dock->raise();
-  });
-  on(ActionId::JumpEntry, [this] {
-    auto *dock = docks_.value(chooserDockId(ChooserKind::Exports));
-    dock->open();
-    dock->raise();
-  });
+  on(ActionId::JumpSegment,
+     [this] { chooseLocation(ChooserKind::Segments, ActionId::JumpSegment); });
+  on(ActionId::JumpEntry,
+     [this] { chooseLocation(ChooserKind::Exports, ActionId::JumpEntry); });
   // In a list window the current row is the item, as in the classic lists:
   // cross references to a string are those of the selected string.
   on(ActionId::JumpXrefsTo, [this] {
@@ -3625,28 +3610,122 @@ void MainWindow::copySelection() {
   QApplication::clipboard()->setText(disassembly_->selectedText());
 }
 
+void MainWindow::chooseLocation(ChooserKind kind, ActionId command) {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("locationChooser"));
+  dialog.setWindowTitle(
+      actions_.action(command)->text().remove(QLatin1Char('&')));
+  dialog.resize(::neverd::limits::gui_config::kLocationChooserDialogSize);
+  dialog.setSizeGripEnabled(true);
+  auto *layout = new QVBoxLayout(&dialog);
+  auto *view = new ChooserView(session_, space_, kind, &dialog);
+  view->setObjectName(QStringLiteral("locationChooserView"));
+  view->table()->setSelectionMode(QAbstractItemView::SingleSelection);
+  layout->addWidget(view);
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  auto *ok = buttons->button(QDialogButtonBox::Ok);
+  ok->setEnabled(false);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+    if (view->currentAddress())
+      dialog.accept();
+  });
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(view, &ChooserView::activated, &dialog, &QDialog::accept);
+  connect(view->table()->selectionModel(), &QItemSelectionModel::currentChanged,
+          &dialog,
+          [view, ok] { ok->setEnabled(view->currentAddress().has_value()); });
+  connect(&view->model(), &ChooserModel::totalChanged, &dialog,
+          [view, ok](int total) {
+            if (total && !view->table()->currentIndex().isValid())
+              view->table()->setCurrentIndex(view->model().index(0, 0));
+            ok->setEnabled(view->currentAddress().has_value());
+          });
+  connect(&session_, &Session::unloaded, &dialog, &QDialog::reject);
+  view->model().reload();
+  view->table()->setFocus();
+  if (dialog.exec() == QDialog::Accepted)
+    if (const auto target = view->currentAddress()) {
+      if (kind == ChooserKind::Functions)
+        activateFunction(*target);
+      else
+        jump(*target);
+    }
+}
+
 void MainWindow::showShortcuts() {
   QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("shortcutsDialog"));
   dialog.setWindowTitle(tr("Shortcuts"));
-  dialog.resize(560, 520);
+  dialog.resize(::neverd::limits::gui_config::kShortcutsDialogSize);
+  dialog.setSizeGripEnabled(true);
   auto *layout = new QVBoxLayout(&dialog);
+  auto *note =
+      new QLabel(tr("IDA Classic (legacy). List commands take priority "
+                    "while their list has focus."),
+                 &dialog);
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto *filter = new QLineEdit(&dialog);
+  filter->setObjectName(QStringLiteral("shortcutsFilter"));
+  filter->setPlaceholderText(tr("Filter by action, shortcut or scope"));
+  filter->setClearButtonEnabled(true);
+  layout->addWidget(filter);
   auto *tree = new QTreeWidget(&dialog);
-  tree->setHeaderLabels({tr("Action"), tr("Shortcut")});
+  tree->setObjectName(QStringLiteral("shortcutsList"));
+  tree->setHeaderLabels({tr("Action"), tr("Shortcut"), tr("Scope")});
   tree->setRootIsDecorated(false);
-  for (auto *action : actions_.allActions()) {
-    if (action->shortcut().isEmpty())
-      continue;
+  tree->setUniformRowHeights(true);
+  const auto add = [&](const QString &text, const QKeySequence &key,
+                       const QString &scope, const QIcon &icon = {}) {
     auto *item = new QTreeWidgetItem(tree);
-    item->setIcon(0, action->icon());
-    item->setText(0, action->text().remove(QLatin1Char('&')));
-    item->setText(1, action->shortcut().toString(QKeySequence::NativeText));
+    item->setIcon(0, icon);
+    item->setText(0, QString(text).remove(QLatin1Char('&')));
+    item->setText(1, key.isEmpty() ? tr("Unassigned")
+                                   : key.toString(QKeySequence::NativeText));
+    item->setText(2, scope);
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    return item;
+  };
+  for (auto *action : actions_.allActions()) {
+    auto *item =
+        add(action->text(), action->shortcut(),
+            actions_.viewActions().contains(action) ? tr("Analysis views")
+                                                    : tr("Workbench"),
+            action->icon());
+    item->setData(0, Qt::UserRole, action->objectName());
+    item->setToolTip(0, action->statusTip());
   }
+  add(actions_.action(ActionId::EditFunction)->text(),
+      ChooserView::commandKey(ChooserCommand::Edit), tr("Functions"));
+  add(tr("Quick filter"), QKeySequence(QKeySequence::Find), tr("Lists"));
+  add(tr("Add types…"), LocalTypesView::commandKey(TypesCommand::Add),
+      tr("Local Types"));
+  add(tr("Edit type…"), LocalTypesView::commandKey(TypesCommand::Edit),
+      tr("Local Types"));
+  add(tr("Delete types…"), LocalTypesView::commandKey(TypesCommand::Delete),
+      tr("Local Types"));
   tree->sortItems(0, Qt::AscendingOrder);
-  tree->header()->resizeSection(0, 360);
+  tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+  tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+  tree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+  connect(
+      filter, &QLineEdit::textChanged, &dialog, [tree](const QString &text) {
+        const QString query = text.trimmed();
+        for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+          auto *item = tree->topLevelItem(row);
+          bool matches = false;
+          for (int column = 0; column < tree->columnCount(); ++column)
+            matches |= item->text(column).contains(query, Qt::CaseInsensitive);
+          item->setHidden(!matches);
+        }
+      });
   layout->addWidget(tree);
   auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   layout->addWidget(buttons);
+  filter->setFocus();
   dialog.exec();
 }
 
@@ -4002,6 +4081,7 @@ void MainWindow::functionsMenu(const QPoint &position) {
   auto *rowEdit = menu.addAction(edit->icon(), edit->text());
   rowEdit->setShortcut(ChooserView::commandKey(ChooserCommand::Edit));
   rowEdit->setShortcutContext(Qt::WidgetShortcut);
+  rowEdit->setShortcutVisibleInContextMenu(true);
   rowEdit->setEnabled(!session_.readOnly() && session_.keepsFunctionEdits() &&
                       session_.statesFunctionAttributes());
   connect(rowEdit, &QAction::triggered, this,
