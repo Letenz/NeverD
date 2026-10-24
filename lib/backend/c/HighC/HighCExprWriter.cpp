@@ -5575,6 +5575,11 @@ std::string HighCWriter::unknownValueText(const HighExpr &E,
 std::string HighCWriter::unknownVarUse(const HighExpr &E,
                                        const std::string &Name,
                                        const std::string &RawName) {
+  if (!ReadingDeferredPayload)
+    if (auto Flag = DeferredUnknownFlags.find(Name);
+        Flag != DeferredUnknownFlags.end())
+      return "(" + Flag->second + " ? " + Name + " : " +
+             unknownValueText(E, "value") + ")";
   // Definitions consisting only of unknown values are omitted from C.
   // Their observable uses must still fail, including renamed SSA temps.
   if (UnknownOnlyNames.count(Name))

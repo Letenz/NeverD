@@ -38,6 +38,10 @@ recover an opaque callee's observable exit-register state. Native reconstruction
 still models unproved call clobbers with `freeze undef`.
 C source paths retain wholly unknown clobbers and MedIR `Unspecified` values
 through a shared opaque marker, so source optimization cannot choose zero.
+Mixed integer PHIs carry availability separately in HighC and LLVMC. Copying
+an unknown incoming value, including across a loop edge or integer-width view,
+does not trap until it is read. `CallExitRegisters` executes guarded reads,
+parallel PHI swaps and native BSF/BSR loops with known and clobbered destinations.
 HighC store/assignment printing no longer overrides unknown expressions with
 zero. This exposes missing state; recovering its actual dynamic contract and
 partially preserved vector suffixes remains open. Generic FP/vector summary
