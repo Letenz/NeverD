@@ -5221,6 +5221,18 @@ code-pointer, direct-branch and code-generation boundaries.
 relocations, including Thumb BL, B.W and BLX across sections, halfword-aligned
 call sites, backward calls, malformed encodings and jumps that need a veneer.
 
+`HighControlFlowSemantics.Word*` and
+`HighControlFlowSemantics.CastAbsorption*` in `NeverDHighControlFlowTests`
+check default word identities through same-width integer casts and modular
+scalar offset combination at 8/16/32/64 bits. Signedness, reversed operands,
+exact cancellation and wrap boundaries agree with an independent evaluator.
+Width changes, memory observations, calls, unknown values and explicit code
+addresses retain their meaning. High kernel addresses must not become negative
+scalar offsets. The existing expression-expansion bound remains enforced.
+`NegativeOffsetSpellingKeepsTheOperationWidth` additionally retains the
+original extension in mixed-width additions and positive low-64-bit constants
+in a 128-bit operation.
+
 `HighControlFlowDAG.*` in `NeverDHighControlFlowTests` checks single-use
 condition folding on large shared expression graphs. Shared reads retain
 their multiplicity without expanding every path, and substitution reaches a
