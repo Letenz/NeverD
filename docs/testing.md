@@ -1028,6 +1028,10 @@ full-width arithmetic oracles check all these outputs. The
 `permuted-carry-product` benchmark family (`--count 48`) reproduces reverse,
 rotated, interleaved and fixed-seed shuffled factor orders at each native width.
 Its original `carry-product` inputs remain byte-for-byte unchanged.
+The real worker and CLI also execute both interleaved degree-128 masked
+products through all six source routes at O0/O2 against a natural-order
+product oracle. Disabling the source switch must still restore the original
+ordinary page.
 `SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
 normalized products, nested additions, multi-input XOR carries and changed
 parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor
