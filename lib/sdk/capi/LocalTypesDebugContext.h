@@ -56,10 +56,12 @@ TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
 
 /// \p Function's signature, named \p Name, as the decompiler's types
 /// describe it. Variadic declarations retain their fixed prefix and ellipsis.
-/// None for a type the decompiler cannot describe.
-std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
-                                       const types::FunctionDef &Function,
-                                       llvm::StringRef Name);
+/// A prototype speller keeps scalar C conversions consistent with its
+/// declaration. None for a type the decompiler cannot describe.
+std::optional<FunctionSym>
+signatureOf(const types::TypeLibrary &Library,
+            const types::FunctionDef &Function, llvm::StringRef Name,
+            const types::TypeSpeller *PrototypeSpeller = nullptr);
 
 /// Whether \p A and \p B take and return alike: as many parameters, each
 /// of the same class and size, and returns of the same class and size, as
