@@ -6405,6 +6405,10 @@ Coverage: %7</source>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>중첩 루프 분석을 포함한 최적화 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>분기 루프 분석이 포함된 최적화 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6547,6 +6551,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>증명된 루프: 헤더 블록 %1 → 래치 블록 %2 · 카운터 #%3 → 갱신 #%4 · 조건 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>분기 루프 분석이 포함된 최적화 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>반환 진행 증명됨 · 카운터 루프: %1 · 역방향 간선: %2 · 가드: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>증명된 루프: 헤더 블록 %1 → 래치 블록 %2 · 카운터 #%3 → 갱신 #%4 · 블록 %6의 가드 #%5</translation>
     </message>
 </context>
 <context>

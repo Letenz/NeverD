@@ -6441,6 +6441,10 @@ Abdeckung: %7</translation>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>Optimierte SSA mit Analyse verschachtelter Schleifen</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>Optimierte SSA mit Analyse verzweigter Schleifen</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6583,6 +6587,18 @@ Terminierung belegt keine gleichen Schleifenzahlen oder Funktionsergebnisse.</tr
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>Bewiesene Schleife: Kopfblock %1 → Rücksprungblock %2 · Zähler #%3 → Aktualisierung #%4 · Bedingung #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>Optimierte SSA mit Analyse verzweigter Schleifen</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>Rückkehrfortschritt bewiesen · Zählschleifen: %1 · Rückkanten: %2 · Wächter: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>Bewiesene Schleife: Kopfblock %1 → Rücksprungblock %2 · Zähler #%3 → Aktualisierung #%4 · Wächter #%5 in Block %6</translation>
     </message>
 </context>
 <context>

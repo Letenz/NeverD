@@ -361,12 +361,16 @@ private slots:
   }
   void loopProgressExplainsProofAndRestoresSelection_data() {
     QTest::addColumn<int>("Version");
-    QTest::newRow("self-loop-v1") << 1;
-    QTest::newRow("multi-block-v2") << 2;
-    QTest::newRow("nested-v3") << 3;
+    QTest::addColumn<int>("Family");
+    QTest::newRow("self-loop-v1") << 1 << 2;
+    QTest::newRow("multi-block-v2") << 2 << 3;
+    QTest::newRow("nested-v3") << 3 << 4;
+    QTest::newRow("selected-updates-v4") << 4 << 5;
+    QTest::newRow("common-update-v4") << 4 << 6;
   }
   void loopProgressExplainsProofAndRestoresSelection() {
     QFETCH(int, Version);
+    QFETCH(int, Family);
     const auto RequestedProfile = QString("llvm-progress-ssa-v%1").arg(Version);
     const auto A = Directory.filePath("progress-before.bin");
     const auto B = Directory.filePath("progress-after.bin");
@@ -408,6 +412,32 @@ private slots:
           "c00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fc8b45fc0345f43345f8"
           "89"
           "45fcebc28b45fcc1e0070345f43345fc8945fceb958b45fc3345f883c0035dc3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
+    if (Family == 5) {
+      // Owned family5 x64 bytes, compiled at O0; never executed.
+      const auto Bytes =
+          QByteArray::fromHex("554889e5897dfc8975f88b45f883e00783c0018945f48b45"
+                              "fc83e00183f80074328b45"
+                              "fc83f0176bc00783c0098945fc8b45fcc1e8058b4dfcc1e1"
+                              "1b09c88945fc8b45f483c0"
+                              "ff8945f483f8007402ebc5eb308b45fc83c0116b4df80d31"
+                              "c88945fc8b45fcc1e00703"
+                              "45f83345fc8945fc8b45f483c0ff8945f483f8007402eb95"
+                              "eb008b45fc3345f883c003"
+                              "5dc3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
+    if (Family == 6) {
+      // Owned family6 x64 bytes, compiled at O2; never executed.
+      const auto Bytes =
+          QByteArray::fromHex("89f183e1078d04768d1486eb1e0f1f0083f7178d04fd0000"
+                              "000029f883c009c1c01b83"
+                              "f9027c1dffc989c740f6c70175df83c71131d789f8c1e007"
+                              "01f031f883f9017fe331f0"
+                              "83c003c3");
       QVERIFY(write(A, Bytes));
       QVERIFY(write(B, Bytes));
     }
@@ -489,6 +519,29 @@ private slots:
       QCOMPARE(Latches.size(), 2);
       Table->selectRow(Proved);
     }
+    if (Version == 4) {
+      QVERIFY(Status->text().contains("Counter loops: 1"));
+      QVERIFY(Status->text().contains("Backedges: 1"));
+      QVERIFY(Status->text().contains("Guards: 2"));
+      QSet<int> Guards, Latches;
+      for (int N = 0; N < Rows->rowCount(); ++N) {
+        const auto Witness = Rows->row(N)["progress_loop"].toObject();
+        if (Witness.isEmpty())
+          continue;
+        Guards.insert(Witness["block"].toInt());
+        Latches.insert(Witness["latch"].toInt());
+        Table->selectRow(N);
+        QVERIFY(LoopStatus->text().contains(
+            QString("latch block %1").arg(Witness["latch"].toInt())));
+        QVERIFY(
+            LoopStatus->text().contains(QString("guard #%1 in block %2")
+                                            .arg(Witness["compare"].toInt())
+                                            .arg(Witness["block"].toInt())));
+      }
+      QCOMPARE(Guards.size(), 2);
+      QCOMPARE(Latches.size(), 1);
+      Table->selectRow(Proved);
+    }
     QTest::mouseClick(Dialog->findChild<QPushButton *>("flowBackward"),
                       Qt::LeftButton);
     auto *Slice = Dialog->findChild<QTableView *>("flowSlice");
@@ -501,7 +554,9 @@ private slots:
         Dialog->resize(1280, 800);
         QTest::qWait(40);
         QVERIFY(Dialog->grab().save(Captures +
-                                    (Version == 3   ? "/nested"
+                                    (Family == 6    ? "/common-update"
+                                     : Family == 5  ? "/selected-updates"
+                                     : Version == 3 ? "/nested"
                                      : Version == 2 ? "/multiblock"
                                                     : "/singleblock") +
                                     (Mode == Theme::Mode::Dark
