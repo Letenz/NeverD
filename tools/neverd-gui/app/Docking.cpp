@@ -407,6 +407,16 @@ protected:
     moveArea_ = new QWidget(this);
     moveArea_->setObjectName(QStringLiteral("floatingWindowMoveArea"));
     moveArea_->installEventFilter(this);
+    // Keep the drag region in the same layout as the controls. Updating an
+    // overlay only while painting lets its old bounds cover buttons after
+    // a resize, before the next paint arrives.
+    for (int i = 0; i < m_layout->count(); ++i)
+      if (m_layout->itemAt(i)->spacerItem()) {
+        delete m_layout->takeAt(i);
+        m_layout->insertWidget(i, moveArea_, 1);
+        break;
+      }
+    moveArea_->show();
     connect(lock_, &QToolButton::toggled, this, [this](bool locked) {
       QWidget::window()->setProperty(FloatingLocked, locked);
       updateLock();
@@ -469,9 +479,8 @@ protected:
     }
     QPainter painter(this);
     const auto &theme = Theme::instance();
-    painter.fillRect(rect(), theme.chrome("TitleBar"));
     // The tabs identify each pane; leave its floating caption blank.
-    moveArea_->setGeometry(0, 0, lock_->x(), height());
+    painter.fillRect(rect(), theme.chrome("TitleBar"));
   }
 
   void mouseDoubleClickEvent(QMouseEvent *event) override {
@@ -495,8 +504,7 @@ private:
     lock_->setAccessibleName(text);
     moveArea_->setAccessibleName(
         QCoreApplication::translate("Docking", "Move window"));
-    moveArea_->setVisible(locked);
-    moveArea_->raise();
+    moveArea_->setAttribute(Qt::WA_TransparentForMouseEvents, !locked);
   }
 
   void updateMaximize() {
