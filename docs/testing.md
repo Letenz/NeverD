@@ -9956,6 +9956,15 @@ Each reserved or scalable encoding gets a fresh fixture and must leave state
 unchanged. Run the complete AArch64 FP/SIMD, state and register-snapshot owners
 across available transports when changing this catalogue entry.
 
+`AArch64SIMD.ExtractBytes*` covers every legal `EXT` offset in both vector
+widths using `AArch64ExtractCases.def` and an independent byte-window oracle.
+`AArch64SIMD.Reverse64*` checks all six baseline byte, halfword and word forms
+against independently specified results. Both families compare all registers
+and guard memory, including aliased operands and narrow upper-lane clearing,
+at both privilege levels. Reserved and scalable encodings fail in fresh
+fixtures without changing register state. Run the complete FP/SIMD, state,
+register-snapshot and execution-session owners after admission changes.
+
 `AArch64WidenCases.def` records 36 independently assembled SSHLL/USHLL and
 SSHLL2/USHLL2 forms, including zero-shift SXTL/UXTL aliases. Independent integer
 oracles check signed extension, unsigned high bits, both source halves, all

@@ -135,6 +135,134 @@ protected:
     EXPECT_EQ(llvm::cantFail(CPU->reg(AArch64Register::X1)), Address);
   }
 };
+TEST_P(AArch64SIMD, ExtractBytesConcatenatesBeforeWritingAndPreservesState) {
+  struct ExtractCase {
+    uint32_t Word;
+    unsigned Bytes, Offset;
+  };
+  constexpr ExtractCase Cases[] = {
+#define NEVERD_AARCH64_EXTRACT_CASE(Word, Bytes, Offset) {Word, Bytes, Offset},
+#include "AArch64ExtractCases.def"
+#undef NEVERD_AARCH64_EXTRACT_CASE
+  };
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
+                             DefaultNaN | FlushToZero | (1u << RoundingShift)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (const auto &C : Cases)
+    for (unsigned First : {0u, 1u, 31u})
+      for (unsigned Second : {0u, 1u, 31u})
+        for (unsigned Destination : {0u, 1u, 31u}) {
+          SCOPED_TRACE(C.Word);
+          SCOPED_TRACE(First);
+          SCOPED_TRACE(Second);
+          SCOPED_TRACE(Destination);
+          vector(First, {0x0123456789abcdefULL, 0xfedcba9876543210ULL});
+          vector(Second, {0x08192a3b4c5d6e7fULL, 0xf0e1d2c3b4a59687ULL});
+          auto ExpectedVectors = vectors();
+          auto ExpectedScalars = scalars();
+          ExpectedScalars[unsigned(AArch64Register::PC)] =
+              Code + sizeof(uint32_t);
+          // Read an independent byte window from the two complete source
+          // snapshots. Narrow forms concatenate only their low eight bytes.
+          RegisterValue Expected{};
+          for (unsigned Byte = 0; Byte < C.Bytes; ++Byte) {
+            const unsigned Index = C.Offset + Byte;
+            const unsigned Source = Index < C.Bytes ? First : Second;
+            const unsigned SourceByte = Index % C.Bytes;
+            const uint8_t Value =
+                ExpectedVectors[Source][SourceByte / WordBytes] >>
+                ((SourceByte % WordBytes) * BytesPerBit);
+            Expected[Byte / WordBytes] |= uint64_t(Value)
+                                          << ((Byte % WordBytes) * BytesPerBit);
+          }
+          ExpectedVectors[Destination] = Expected;
+          const uint32_t Word = (C.Word & ~0x1f03ffu) | (Second << 16) |
+                                (First << 5) | Destination;
+          ASSERT_NO_FATAL_FAILURE(expectSuccess(run(Word)));
+          EXPECT_EQ(vectors(), ExpectedVectors);
+          EXPECT_EQ(scalars(), ExpectedScalars);
+          std::array<uint8_t, 64> After;
+          llvm::cantFail(CPU->snapshotBacking(Stack, After));
+          EXPECT_EQ(After, Guard);
+        }
+}
+// Each unsupported instruction needs a fresh checked execution fixture.
+TEST_P(AArch64SIMD, ExtractBytesRejectsReservedNarrowOffsetEight) {
+  expectRejected(0x2e02403f);
+}
+TEST_P(AArch64SIMD, ExtractBytesRejectsReservedNarrowOffsetFifteen) {
+  expectRejected(0x2e02783f);
+}
+TEST_P(AArch64SIMD, ExtractBytesRejectsScalableOffsetZero) {
+  expectRejected(0x05200020);
+}
+TEST_P(AArch64SIMD, ExtractBytesRejectsScalableOffsetMaximum) {
+  expectRejected(0x053f1c20);
+}
+TEST_P(AArch64SIMD, Reverse64ElementsPreserveCompleteState) {
+  struct Case {
+    uint32_t Word;
+    RegisterValue Result;
+  };
+  // Independently assembled 8B/16B/4H/8H/2S/4S forms. Each 64-bit block
+  // reverses elements; it does not reverse the complete 128-bit register.
+  constexpr Case Cases[] = {
+      {0x0e20083f, {0xefcdab8967452301ULL, 0}},
+      {0x4e20083f, {0xefcdab8967452301ULL, 0x1032547698badcfeULL}},
+      {0x0e60083f, {0xcdef89ab45670123ULL, 0}},
+      {0x4e60083f, {0xcdef89ab45670123ULL, 0x32107654ba98fedcULL}},
+      {0x0ea0083f, {0x89abcdef01234567ULL, 0}},
+      {0x4ea0083f, {0x89abcdef01234567ULL, 0x76543210fedcba98ULL}}};
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
+                             DefaultNaN | FlushToZero | (1u << RoundingShift)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (const auto &C : Cases)
+    for (unsigned Source : {0u, 1u, 31u})
+      for (unsigned Destination : {0u, 1u, 31u}) {
+        SCOPED_TRACE(C.Word);
+        SCOPED_TRACE(Source);
+        SCOPED_TRACE(Destination);
+        vector(Source, {0x0123456789abcdefULL, 0xfedcba9876543210ULL});
+        auto ExpectedVectors = vectors();
+        ExpectedVectors[Destination] = C.Result;
+        auto ExpectedScalars = scalars();
+        ExpectedScalars[unsigned(AArch64Register::PC)] =
+            Code + sizeof(uint32_t);
+        const uint32_t Word = (C.Word & ~0x3ffu) | (Source << 5) | Destination;
+        ASSERT_NO_FATAL_FAILURE(expectSuccess(run(Word)));
+        EXPECT_EQ(vectors(), ExpectedVectors);
+        EXPECT_EQ(scalars(), ExpectedScalars);
+        std::array<uint8_t, 64> After;
+        llvm::cantFail(CPU->snapshotBacking(Stack, After));
+        EXPECT_EQ(After, Guard);
+      }
+}
+// An unsupported exit is terminal. Each negative word needs a fresh fixture.
+TEST_P(AArch64SIMD, Reverse64RejectsReservedNarrowElementSize) {
+  expectRejected(0x0ee0083f);
+}
+TEST_P(AArch64SIMD, Reverse64RejectsReservedWideElementSize) {
+  expectRejected(0x4ee0083f);
+}
+// SVE REV Z31.B/H/S/D, Z1.B/H/S/D is a separate, unmodeled contract.
+TEST_P(AArch64SIMD, Reverse64RejectsScalableBytes) {
+  expectRejected(0x0538383f);
+}
+TEST_P(AArch64SIMD, Reverse64RejectsScalableHalfwords) {
+  expectRejected(0x0578383f);
+}
+TEST_P(AArch64SIMD, Reverse64RejectsScalableWords) {
+  expectRejected(0x05b8383f);
+}
+TEST_P(AArch64SIMD, Reverse64RejectsScalableDoublewords) {
+  expectRejected(0x05f8383f);
+}
 TEST_P(AArch64SIMD, LogicalInstructionsUseBothIndependentLanes) {
   const auto First = vector(FirstOperand), Second = vector(SecondOperand);
   for (auto Word : {VectorXor, VectorAnd, VectorOr}) {

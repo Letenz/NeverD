@@ -8198,6 +8198,11 @@ fixed 8B/16B/4H/8H/2S/4S/2D vectors. The existing vector-effect owner retains
 register and immediate-form validation. This admission adds no FP comparison
 semantics, scalable registers or reserved scalar/narrow forms.
 
+The same catalogue admits baseline `EXT` byte windows and `REV64` element
+reversal within each 64-bit block. Both 64-bit and 128-bit vectors use the
+existing vector-effect owner; narrow results clear the upper half. Reserved
+offsets, reserved element sizes and scalable encodings remain unsupported.
+
 Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
 The original instructions execute on the selected checked CPU transport; OS
 models do not replace them with scalar stubs. Optional/scalable forms still fail
