@@ -1,4 +1,4 @@
-//===- LLVMFlowSemantics.h - Finite scalar operation admission ---*- C++
+//===- LLVMFlowSemantics.h - Finite scalar operations ------------*- C++
 //-*-===//
 //
 // NeverD Decompiler

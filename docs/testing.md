@@ -1680,7 +1680,9 @@ optimized profile and displays plural origins with optional light/dark captures.
 These remain owned functional fixtures, not held-out accuracy or general
 optimization/obfuscation qualification.
 `BinaryDiffProgress` covers independent acyclic/nowrap-counter proof, signed
-and unsigned updates, underdefined seeds, exact widths and flags, reverse-sub
+and unsigned nonzero fixed steps, i1/i64 extremes, skipped exit values,
+all integer comparisons with both operand orders and branch polarities,
+underdefined seeds, exact widths and flags, zero/variable-step, reverse-sub
 and freeze/reset refusals, irreducible/re-entering cycles, attribute delimiter
 confusion, source promises without proof, parameter-elision remapping, finite
 operation admission, tampered witnesses and cumulative work/storage limits.

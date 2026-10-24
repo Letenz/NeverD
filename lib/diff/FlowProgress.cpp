@@ -32,37 +32,9 @@ llvm::StringRef flowProgressName(FlowProgressKind Kind) {
 }
 namespace {
 std::optional<FlowLoopProgress>
-counterLoop(const DataFlowGraph &G, uint32_t Block, llvm::StringRef Contract,
-            llvm::function_ref<void(uint64_t)> Charge) {
-  const auto &B = G.Blocks[Block];
-  if (B.Successors.size() != 2 ||
-      (B.Successors[0] == Block) == (B.Successors[1] == Block))
-    return {};
-  const auto &Branch = G.Nodes[B.Terminator];
-  Charge(1 + Branch.Semantics.size());
-  if (Branch.Opcode != "br" || Branch.Inputs.size() != 1 ||
-      Branch.Inputs[0].Type != FlowOperand::Kind::Node ||
-      Branch.Semantics != Contract.str() + ";result=i0;flags=0")
-    return {};
-  const auto Compare = Branch.Inputs[0].Node;
-  const auto &Cmp = G.Nodes[Compare];
-  Charge(1 + Cmp.Semantics.size());
-  const auto Comparison = [&](llvm::CmpInst::Predicate Predicate) {
-    return Cmp.Semantics == Contract.str() + ";result=i1;flags=0;predicate=" +
-                                std::to_string(Predicate);
-  };
-  const bool EQ = Comparison(llvm::CmpInst::ICMP_EQ);
-  if (Cmp.Block != Block || Cmp.Opcode != "icmp" || Cmp.Inputs.size() != 2 ||
-      (!EQ && !Comparison(llvm::CmpInst::ICMP_NE)) ||
-      B.Successors[EQ ? 1 : 0] != Block)
-    return {};
-  const auto *Value = &Cmp.Inputs[0], *Limit = &Cmp.Inputs[1];
-  if (Value->Type == FlowOperand::Kind::Constant)
-    std::swap(Value, Limit);
-  if (Value->Type != FlowOperand::Kind::Node ||
-      Limit->Type != FlowOperand::Kind::Constant)
-    return {};
-  const auto Update = Value->Node;
+counterUpdate(const DataFlowGraph &G, uint32_t Block, uint32_t Update,
+              uint32_t Compare, llvm::StringRef Contract,
+              llvm::function_ref<void(uint64_t)> Charge) {
   const auto &U = G.Nodes[Update];
   Charge(1 + U.Semantics.size());
   if (U.Block != Block || (U.Opcode != "add" && U.Opcode != "sub") ||
@@ -85,10 +57,10 @@ counterLoop(const DataFlowGraph &G, uint32_t Block, llvm::StringRef Contract,
     return {};
   constexpr unsigned NSW = llvm::OverflowingBinaryOperator::NoSignedWrap;
   constexpr unsigned NUW = llvm::OverflowingBinaryOperator::NoUnsignedWrap;
-  const uint64_t MinusOne =
-      UINT64_MAX >> (std::numeric_limits<uint64_t>::digits - Width);
-  if ((Step->Value != 1 && Step->Value != MinusOne) || (Flags & ~(NSW | NUW)) ||
-      (!(Flags & NSW) && (!(Flags & NUW) || Step->Value != 1)))
+  // Every nonzero fixed step exhausts its finite nowrap domain, even when
+  // the exit value is skipped. No signed conversion or iteration count is
+  // needed, including the i64 minimum signed step and maximum unsigned step.
+  if (!Step->Value || (Flags & ~(NSW | NUW)) || !(Flags & (NSW | NUW)))
     return {};
   const auto Counter = Phi->Node;
   const auto &P = G.Nodes[Counter];
@@ -110,6 +82,44 @@ counterLoop(const DataFlowGraph &G, uint32_t Block, llvm::StringRef Contract,
   if (SelfInputs != 1)
     return {};
   return FlowLoopProgress{Block, Counter, Update, Compare};
+}
+
+std::optional<FlowLoopProgress>
+counterLoop(const DataFlowGraph &G, uint32_t Block, llvm::StringRef Contract,
+            llvm::function_ref<void(uint64_t)> Charge) {
+  const auto &B = G.Blocks[Block];
+  if (B.Successors.size() != 2 ||
+      (B.Successors[0] == Block) == (B.Successors[1] == Block))
+    return {};
+  const auto &Branch = G.Nodes[B.Terminator];
+  Charge(1 + Branch.Semantics.size());
+  if (Branch.Opcode != "br" || Branch.Inputs.size() != 1 ||
+      Branch.Inputs[0].Type != FlowOperand::Kind::Node ||
+      Branch.Semantics != Contract.str() + ";result=i0;flags=0")
+    return {};
+  const auto Compare = Branch.Inputs[0].Node;
+  const auto &Cmp = G.Nodes[Compare];
+  Charge(1 + Cmp.Semantics.size());
+  llvm::StringRef Suffix(Cmp.Semantics);
+  unsigned Predicate = 0;
+  if (Cmp.Block != Block || Cmp.Opcode != "icmp" || Cmp.Inputs.size() != 2 ||
+      !Suffix.consume_front(Contract) ||
+      !Suffix.consume_front(";result=i1;flags=0;predicate=") ||
+      Suffix.getAsInteger(10, Predicate) ||
+      Suffix != std::to_string(Predicate) ||
+      Predicate < llvm::CmpInst::FIRST_ICMP_PREDICATE ||
+      Predicate > llvm::CmpInst::LAST_ICMP_PREDICATE)
+    return {};
+  // Any direct scalar comparison propagates poison from either operand to
+  // the branch. Progress does not depend on its predicate or exit polarity.
+  for (const auto &Input : Cmp.Inputs) {
+    Charge(1);
+    if (Input.Type == FlowOperand::Kind::Node)
+      if (auto L =
+              counterUpdate(G, Block, Input.Node, Compare, Contract, Charge))
+        return L;
+  }
+  return {};
 }
 } // namespace
 

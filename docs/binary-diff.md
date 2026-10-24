@@ -347,13 +347,18 @@ undefined behavior or returning control; this does not promise a normal return
 for invalid inputs or establish equivalent results.
 
 The proof first admits finite scalar operations. It accepts acyclic control
-flow and single-block counter loops with a direct PHI-to-unit-update recurrence,
-a nowrap constraint, and a direct equality/inequality exit test against a
-constant. The test must consume the update itself. Signed-nowrap addition or
-subtraction by ±1 is supported; unsigned-nowrap-only updates use positive 1.
-No iteration simulation or fixed choice for `undef` is assumed. Removing the
+flow and single-block counter loops with a direct PHI-to-update recurrence,
+a signed or unsigned nowrap constraint, and any nonzero fixed integer step.
+The branch must directly consume a scalar integer comparison of that update;
+all integer predicates, either operand order and either exit polarity are
+supported. The other operand need not be constant. A skipped exit value still
+exhausts the nowrap domain, producing poison consumed by the branch; this
+proves progress without promising a normal return. No iteration simulation,
+potentially overflowing iteration count or fixed choice for `undef` is assumed.
+Removing the
 proved self edges must leave the entire represented CFG acyclic. Wrapping-only
-recurrences, frozen or reset counters, unrelated exit conditions, multi-block
+recurrences, zero or variable steps, frozen or reset counters, unrelated exit
+conditions, multi-block
 and nested cycles remain **unproven**, with their exact source contracts and
 available graphs. Unproven does not mean nonterminating.
 

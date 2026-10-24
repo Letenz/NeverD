@@ -464,8 +464,11 @@ operation coverage. Legacy profiles retain their work and serialized contracts.
 `LLVMFlowSemantics` owns the finite scalar/intrinsic whitelist shared by original
 LLVM admission and saved proof checking. `FlowProgress` owns one linear,
 interruptible proof over detached graph nodes: acyclic control or direct
-nowrap-unit-counter self loops whose removal leaves a DAG. It never simulates
-iterations, assumes undef is fixed, or relies on existing progress attributes.
+nowrap-counter self loops whose removal leaves a DAG. Each nonzero fixed
+add/sub step exhausts its finite domain; a direct scalar comparison propagates
+poison to the branch, independently of its predicate or exit polarity. It never
+simulates iterations, assumes undef is fixed, or relies on existing progress
+attributes.
 Raw LLVM verification/admission and parameter elision precede this proof.
 `LLVMDataFlow` adds enum attributes to an AttributeSet copy, preserves both full
 contract prefixes, and changes only detached signatures. String attributes are

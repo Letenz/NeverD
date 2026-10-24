@@ -149,7 +149,11 @@ TEST(BinaryDiffProgress,
      SupportsExactNowrapDirectionsWidthsAndUnderdefinedSeeds) {
   for (llvm::StringRef Update :
        {"add nsw i8 %i, 1", "sub nsw i8 %i, 1", "sub nsw i8 %i, -1",
-        "add nuw i8 %i, 1", "sub nuw i8 %i, 1", "add nsw i8 -1, %i"}) {
+        "add nuw i8 %i, 1", "sub nuw i8 %i, 1", "add nsw i8 -1, %i",
+        "add nsw i8 %i, 2", "add nsw i8 %i, -2", "sub nsw i8 %i, 2",
+        "sub nsw i8 %i, -2", "add nuw i8 %i, 2", "sub nuw i8 %i, 2",
+        "add nuw i8 %i, -1", "sub nuw i8 %i, -1", "add nsw i8 %i, -128",
+        "sub nsw i8 %i, -128", "add nsw i8 %i, 127", "add nuw nsw i8 %i, 2"}) {
     SCOPED_TRACE(Update.str());
     EXPECT_EQ(
         graph(change(Loop.str(), "add nsw i8 %i, -1", Update)).Progress->Kind,
@@ -160,20 +164,69 @@ TEST(BinaryDiffProgress,
                            "[ " + Seed.str() + ", %entry ]"))
                   .Progress->Kind,
               FlowProgressKind::CounterLoops);
-  auto Wide = Loop.str();
-  for (size_t At = 0; (At = Wide.find("i8", At)) != std::string::npos; At += 3)
-    Wide.replace(At, 2, "i64");
-  EXPECT_EQ(graph(Wide).Progress->Kind, FlowProgressKind::CounterLoops);
-  auto NE = change(Loop.str(), "icmp eq", "icmp ne");
-  NE = change(NE, "label %exit, label %loop", "label %loop, label %exit");
-  EXPECT_EQ(graph(NE).Progress->Kind, FlowProgressKind::CounterLoops);
+  for (llvm::StringRef Type : {"i1", "i64"}) {
+    auto Text = Loop.str();
+    for (size_t At = 0; (At = Text.find("i8", At)) != std::string::npos;
+         At += Type.size())
+      Text.replace(At, 2, Type);
+    EXPECT_EQ(graph(Text).Progress->Kind, FlowProgressKind::CounterLoops);
+    if (Type == "i64")
+      for (llvm::StringRef Update : {"add nsw i64 %i, -9223372036854775808",
+                                     "sub nsw i64 %i, -9223372036854775808",
+                                     "add nsw i64 %i, 9223372036854775807",
+                                     "add nuw i64 %i, 18446744073709551615",
+                                     "sub nuw i64 %i, 18446744073709551615"}) {
+        SCOPED_TRACE(Update.str());
+        EXPECT_EQ(
+            graph(change(Text, "add nsw i64 %i, -1", Update)).Progress->Kind,
+            FlowProgressKind::CounterLoops);
+      }
+  }
+  // Even steps miss this exit. Nowrap exhaustion still proves progress;
+  // the otherwise identical wrapping counter can run forever.
+  auto Missed = change(Loop.str(), "[ %start, %entry ]", "[ 0, %entry ]");
+  Missed = change(Missed, "add nsw i8 %i, -1", "add nsw i8 %i, 2");
+  Missed = change(Missed, "icmp eq i8 %next, 0", "icmp eq i8 %next, 1");
+  EXPECT_EQ(graph(Missed).Progress->Kind, FlowProgressKind::CounterLoops);
+  EXPECT_EQ(graph(change(Missed, "add nsw", "add")).Progress->Kind,
+            FlowProgressKind::Unproven);
+}
+
+TEST(BinaryDiffProgress, DirectComparisonsConsumeCounterPoisonInEitherOperand) {
+  for (llvm::StringRef Predicate :
+       {"eq", "ne", "ugt", "uge", "ult", "ule", "sgt", "sge", "slt", "sle"})
+    for (llvm::StringRef Bound : {"0", "%start"})
+      for (bool Reverse : {false, true})
+        for (bool SelfOnTrue : {false, true}) {
+          const auto Operands =
+              Reverse ? Bound.str() + ", %next" : "%next, " + Bound.str();
+          auto Text = change(Loop.str(), "icmp eq i8 %next, 0",
+                             "icmp " + Predicate.str() + " i8 " + Operands);
+          if (SelfOnTrue)
+            Text = change(Text, "label %exit, label %loop",
+                          "label %loop, label %exit");
+          SCOPED_TRACE(Text);
+          const auto G = graph(Text);
+          EXPECT_EQ(G.Progress->Kind, FlowProgressKind::CounterLoops);
+          EXPECT_EQ(readDataFlowGraph(json(G)), G);
+        }
+  for (llvm::StringRef Bound : {"undef", "poison", "%next"})
+    EXPECT_EQ(graph(change(Loop.str(), "icmp eq i8 %next, 0",
+                           "icmp eq i8 %next, " + Bound.str()))
+                  .Progress->Kind,
+              FlowProgressKind::CounterLoops);
+  auto Other = change(Loop.str(),
+                      " %test =", " %other = add nsw i8 %start, 1\n %test =");
+  Other = change(Other, "icmp eq i8 %next, 0", "icmp slt i8 %other, %next");
+  EXPECT_EQ(graph(Other).Progress->Kind, FlowProgressKind::CounterLoops);
 }
 
 TEST(BinaryDiffProgress,
      UnprovedLoopsKeepTheirOriginalContractsAndRemainAvailable) {
   for (llvm::StringRef Update :
-       {"add i8 %i, -1", "add i8 %i, 2", "add nsw i8 %i, 2", "sub nsw i8 1, %i",
-        "add nuw i8 %i, -1"}) {
+       {"add i8 %i, -1", "add i8 %i, 2", "add nsw i8 %i, 0", "sub nuw i8 %i, 0",
+        "sub nsw i8 1, %i", "add nsw i8 %i, %start", "add nsw i8 %i, undef",
+        "add nsw i8 %i, poison"}) {
     SCOPED_TRACE(Update.str());
     const auto G = graph(change(Loop.str(), "add nsw i8 %i, -1", Update));
     ASSERT_TRUE(G.Progress);
@@ -183,14 +236,10 @@ TEST(BinaryDiffProgress,
     EXPECT_EQ(readDataFlowGraph(json(G)), G);
   }
   for (llvm::StringRef Comparison :
-       {"icmp eq i8 %start, 0", "icmp eq i8 %i, 0", "icmp eq i8 %next, %start",
-        "icmp slt i8 %next, 0"})
+       {"icmp eq i8 %start, 0", "icmp eq i8 %i, 0"})
     EXPECT_EQ(graph(change(Loop.str(), "icmp eq i8 %next, 0", Comparison))
                   .Progress->Kind,
               FlowProgressKind::Unproven);
-  const auto WrongEdge = change(Loop.str(), "label %exit, label %loop",
-                                "label %loop, label %exit");
-  EXPECT_EQ(graph(WrongEdge).Progress->Kind, FlowProgressKind::Unproven);
 }
 
 TEST(BinaryDiffProgress, FreezeAndResetCannotReplenishTheCounterDomain) {
@@ -284,6 +333,16 @@ TEST(BinaryDiffProgress, LowBitElisionPrecedesAndRemapsProofWitnesses) {
 TEST(BinaryDiffProgress,
      SavedProofsRejectForgedWitnessesAndNonfiniteOperations) {
   const auto G = graph(Loop);
+  for (llvm::StringRef Suffix :
+       {";result=i1;flags=0;predicate=31", ";result=i1;flags=0;predicate=42",
+        ";result=i1;flags=0;predicate=032", ";result=i1;flags=1;predicate=32",
+        ";result=i1;flags=0;predicate=32;unknown"}) {
+    auto Forged = G;
+    Forged.Nodes[G.Progress->Loops[0].Compare].Semantics =
+        G.Progress->ObservedContract + Suffix.str();
+    EXPECT_TRUE(Forged.validate({}));
+    EXPECT_THROW(readDataFlowGraph(json(Forged)), std::invalid_argument);
+  }
   for (llvm::StringRef Field : {"block", "counter", "update", "compare"}) {
     auto V = json(G);
     auto *P = V.getAsObject()->getObject("progress");

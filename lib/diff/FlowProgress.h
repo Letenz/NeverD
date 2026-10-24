@@ -1,4 +1,4 @@
-//===- FlowProgress.h - Source-bound finite execution evidence ---*- C++
+//===- FlowProgress.h - Finite execution evidence ----------------*- C++
 //-*-===//
 //
 // NeverD Decompiler
