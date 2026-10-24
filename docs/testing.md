@@ -1498,6 +1498,16 @@ rows while refreshing or navigating, then checks that the first-content signal
 waits for current rows and resets after clearing the input. Record a real
 workbench run after changing the report producer; worker replies and loaded
 prefetch rows do not independently establish painted instruction coverage.
+`initialNavigationOverviewDoesNotWaitForRefreshDebounce` checks that opening
+admits the initial address-map request in the same event turn, before the
+refresh debounce, and publishes the returned map for listing navigation.
+The query service's background-snapshot cases cover publication after open
+subscribers, cache reuse, correlation/context rejection, cancellation, and
+subscriber retirement/destruction. `replySnapshotsRejectOlderHeartbeatsInTheSameProject`
+checks publication ordering independently of opaque listing generations.
+`NeverDWorkerTransport` checks reply/heartbeat sequence agreement and the
+overview's generation against its executor snapshot. Keep real GUI startup
+comparisons separate from these protocol and controller checks.
 
 ## Configure a test build
 
@@ -1757,6 +1767,23 @@ original instructions, slices and saved CLI parity. The real Qt test selects the
 optimized profile and displays plural origins with optional light/dark captures.
 These remain owned functional fixtures, not held-out accuracy or general
 optimization/obfuscation qualification.
+`BinaryDiffProgress` covers independent acyclic/nowrap-counter proof, signed
+and unsigned nonzero fixed steps, i1/i64 extremes, skipped exit values,
+all integer comparisons with both operand orders and branch polarities,
+underdefined seeds, exact widths and flags, zero/variable-step, reverse-sub
+and freeze/reset refusals, irreducible/re-entering cycles, attribute delimiter
+confusion, source promises without proof, parameter-elision remapping, finite
+operation admission, tampered witnesses and cumulative work/storage limits.
+`LoopProgressPagesBindWitnessesAndOriginalContracts` exercises real O0/O2
+machine bytes, SDK paging/slicing, fresh restore and structurally plausible
+source-attribute forgery. Stopped/empty collection tests retain the new profile.
+The owned compiler corpus retains the previous71 comparisons and adds30 loop
+cells across x64/AArch64 ELF/COFF/Mach-O: O0/O2, reopen, changed final constant,
+iteration bound and body multiplier. These are functional fixtures, not a
+held-out accuracy benchmark. Worker, Python and Qt tests inspect the same
+proofs and saved reports; GUI proof/selection checks run in light/dark and at
+fractional DPI. Offscreen renders do not qualify native window-manager behavior.
+
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
 missing/stack/overlapping sites, detached and foreign users, raw and retained

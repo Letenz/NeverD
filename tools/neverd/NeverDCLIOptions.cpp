@@ -1531,7 +1531,8 @@ cl::opt<std::string> DiffDataFlowProfile(
     "dataflow-profile",
     cl::desc("SSA evidence profile: med-ssa-v2 (default) "
              "or llvm-ssa-v1 (optimized) or "
-             "llvm-parameter-ssa-v1 (native low-bit views)"),
+             "llvm-parameter-ssa-v1 (native low-bit views) or "
+             "llvm-progress-ssa-v1 (proved loop progress)"),
     cl::sub(DiffCmd));
 cl::opt<bool>
     DiffFlowFragments("flow-fragments",

@@ -6413,6 +6413,14 @@ Cobertura: %7</translation>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>Las vistas de parámetros comparan los 32 bits inferiores de los parámetros nativos de 64 bits que cumplen las condiciones. Se conservan las anchuras y los orígenes para su revisión.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>El análisis de bucles demuestra la terminación en los casos compatibles antes de comparar cálculos. Incluye vistas de parámetros y conserva los contratos de bucles no demostrados.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6465,8 +6473,8 @@ Seleccione una operación para seguir las dependencias. Las operaciones sintéti
         <translation>Examinar función original</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>Dependencias SSA observadas. Las llamadas, los alias y el flujo de control no resuelto siguen siendo lagunas explícitas. No se ha realizado validación semántica.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>Dependencias SSA observadas. Las llamadas, los alias y el flujo de control no resuelto siguen siendo lagunas explícitas. Estas observaciones no demuestran la equivalencia de toda la función.</translation>
     </message>
     <message>
         <source>Primary input</source>
@@ -6515,6 +6523,34 @@ Seleccione una operación para seguir las dependencias. Las operaciones sintéti
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>SSA optimizado con vistas de parámetros</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>Terminación demostrada: flujo de control acíclico.</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>Terminación demostrada · Bucles con contador: %1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>Terminación no demostrada: se conservan los contratos originales.</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>Contrato original:
+%1
+Contrato observado:
+%2
+La terminación no demuestra que coincidan los números de iteraciones ni los resultados de las funciones.</translation>
     </message>
 </context>
 <context>

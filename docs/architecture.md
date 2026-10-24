@@ -476,6 +476,14 @@ and caches that page rather than fetching every intervening row or independently
 sorting it. Navigation callbacks retire on session or navigation changes.
 The listing may reveal an item from already fetched rows only when
 their request serial, project revision and listing generation still match.
+The native executor publishes background state with each terminal reply as
+well as heartbeats. Its monotonic publication sequence orders these channels;
+listing generations and revisions remain opaque. The query dispatcher validates
+correlation and context, delivers subscribers, then publishes the snapshot.
+The primary Session alone adopts it, after open has installed its metadata,
+and rejects older heartbeats. Cached reads and analysis replicas cannot advance
+the primary Session's state. A listing already holding that generation keeps
+its rows instead of requesting them again.
 Cached and fetched jumps share cursor-placement rules; pending refreshes and
 partial item prefixes require a worker query.
 Function links can reuse a loaded item's worker-supplied function identity
@@ -539,6 +547,23 @@ PHI predecessors survive substitution, and only detached node references and
 terminators are renumbered. `retainedItems()` counts parameter rows together
 with nodes for production, reading and collection validation without changing
 operation coverage. Legacy profiles retain their work and serialized contracts.
+`llvm-progress-ssa-v1` extends that projection with schema 5 progress provenance.
+`LLVMFlowSemantics` owns the finite scalar/intrinsic whitelist shared by original
+LLVM admission and saved proof checking. `FlowProgress` owns one linear,
+interruptible proof over detached graph nodes: acyclic control or direct
+nowrap-counter self loops whose removal leaves a DAG. Each nonzero fixed
+add/sub step exhausts its finite domain; a direct scalar comparison propagates
+poison to the branch, independently of its predicate or exit polarity. It never
+simulates iterations, assumes undef is fixed, or relies on existing progress
+attributes.
+Raw LLVM verification/admission and parameter elision precede this proof.
+`LLVMDataFlow` adds enum attributes to an AttributeSet copy, preserves both full
+contract prefixes, and changes only detached signatures. String attributes are
+never searched for flags or removed by text matching. `retainedItems()` includes
+the proof root and witnesses; work/cancellation stays within the original
+projection allowance. Graph validation reruns the same proof and finite-op
+admission; fresh source binding authenticates source-to-observed attributes.
+CLI, SDK, worker and Qt share this owner and do not derive their own loop facts.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.

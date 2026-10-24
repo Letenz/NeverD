@@ -28,15 +28,22 @@ inline constexpr llvm::StringLiteral LLVMParameterFlowRegionProfile =
     "llvm-parameter-neighborhoods-v1";
 inline constexpr llvm::StringLiteral LLVMParameterFlowFragmentProfile =
     "llvm-parameter-fragments-v1";
+inline constexpr llvm::StringLiteral LLVMProgressFlowRegionProfile =
+    "llvm-progress-neighborhoods-v1";
+inline constexpr llvm::StringLiteral LLVMProgressFlowFragmentProfile =
+    "llvm-progress-fragments-v1";
 inline bool isFlowFragmentProfile(llvm::StringRef Profile) {
   return Profile == FlowFragmentProfile || Profile == LLVMFlowFragmentProfile ||
-         Profile == LLVMParameterFlowFragmentProfile;
+         Profile == LLVMParameterFlowFragmentProfile ||
+         Profile == LLVMProgressFlowFragmentProfile;
 }
 inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
   return Profile == LLVMFlowRegionProfile ||
          Profile == LLVMFlowFragmentProfile ||
          Profile == LLVMParameterFlowRegionProfile ||
-         Profile == LLVMParameterFlowFragmentProfile;
+         Profile == LLVMProgressFlowRegionProfile ||
+         Profile == LLVMParameterFlowFragmentProfile ||
+         Profile == LLVMProgressFlowFragmentProfile;
 }
 llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
                                   bool Fragments = false);

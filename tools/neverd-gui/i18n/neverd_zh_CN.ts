@@ -6377,6 +6377,14 @@ Coverage: %7</source>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>参数视图比较符合条件的 64 位原生参数的低 32 位。原始位宽和来源仍可查看。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>带循环分析的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>循环分析在比较计算前证明支持范围内的终止性。此模式包含参数视图，并保留未能证明的循环原始契约。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6429,8 +6437,8 @@ Select an operation to follow dependencies. Synthetic operations have block prov
         <translation>检查原始函数</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>已观察的 SSA 依赖。调用、别名和未解析控制流仍明确列为缺口。未执行语义验证。</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>已观察的 SSA 依赖。调用、别名和未解析控制流仍明确列为缺口。这些观察结果不证明整个函数的等价性。</translation>
     </message>
     <message>
         <source>Primary input</source>
@@ -6479,6 +6487,34 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>带参数视图的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>带循环分析的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>已证明终止性：控制流无环。</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>已证明终止性 · 计数循环：%1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>未能证明终止性：保留原始契约。</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>原始契约：
+%1
+观察契约：
+%2
+终止性不能证明循环次数或函数结果相同。</translation>
     </message>
 </context>
 <context>

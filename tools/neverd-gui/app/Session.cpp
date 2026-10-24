@@ -195,6 +195,8 @@ Session::Session(QString workerPath, QObject *parent)
                               total > 0 ? std::clamp(done / total, 0.0, 1.0)
                                         : -1.0);
           });
+  connect(&queries_, &QueryService::backgroundSnapshotReady, this,
+          &Session::applyBackgroundSnapshot);
   // A change on disk settles before the project takes it: git and editors
   // write several files, some by replacing them.
   projectSync_.setSingleShot(true);
@@ -285,40 +287,57 @@ void Session::receive(const QJsonObject &incoming) {
       openPending();
     }
   } else if (type == QLatin1String("heartbeat")) {
-    // A heartbeat the worker built before a reply that changed the project
-    // can arrive after that reply. Its background state, including discovery
-    // completion that releases the large-image replica gate, is not ours.
-    if (incoming.value("project_id").toString() != queries_.projectId())
-      return;
-    const auto background = incoming.value("background").toObject();
-    const auto state = background.value("state").toString();
-    if (loaded_ && background.value("discovery_complete")
-                       .toBool(state == QLatin1String("building") ||
-                               state == QLatin1String("ready") ||
-                               state == QLatin1String("unavailable")))
-      analysis_.setSnapshotBlocked(false);
-    if (background != background_) {
-      background_ = background;
-      const auto generation = background.value("generation").toString();
-      const bool newGeneration = generation != generation_;
-      generation_ = generation;
-      const auto functions =
-          background.value("functions").toInteger(functionCount_);
-      const bool moreFunctions =
-          functionCount_ >= 0 && functions != functionCount_;
-      functionCount_ = functions;
-      if (newGeneration || moreFunctions)
-        queries_.listingChanged();
-      emit backgroundChanged();
-      if (newGeneration)
-        emit generationChanged();
-      if (moreFunctions)
-        emit functionsChanged();
-      emit stateChanged();
-    }
+    applyBackgroundSnapshot(incoming);
   } else if (type == QLatin1String("fatal")) {
     setError(incoming.value("error").toObject().value("message").toString());
     client_.stop();
+  }
+}
+
+void Session::applyBackgroundSnapshot(const QJsonObject &incoming) {
+  if (!loaded_ || !incoming.value("background").isObject() ||
+      incoming.value("project_id").toString() != queries_.projectId() ||
+      (incoming.contains("revision") &&
+       incoming.value("revision").toString() != queries_.revision()))
+    return;
+  // A periodic heartbeat can be written after a newer executor reply.
+  // The worker's publication sequence orders both channels without guessing
+  // an ordering for opaque listing generations or project revisions.
+  const auto sequence = incoming.value("background_sequence");
+  if (!sequence.isUndefined()) {
+    bool valid = false;
+    const auto next = sequence.toString().toULongLong(&valid);
+    if (!valid || (BackgroundSequence && next <= *BackgroundSequence))
+      return;
+    BackgroundSequence = next;
+  } else if (BackgroundSequence) {
+    return;
+  }
+  const auto background = incoming.value("background").toObject();
+  const auto state = background.value("state").toString();
+  if (background.value("discovery_complete")
+          .toBool(state == QLatin1String("building") ||
+                  state == QLatin1String("ready") ||
+                  state == QLatin1String("unavailable")))
+    analysis_.setSnapshotBlocked(false);
+  if (background != background_) {
+    background_ = background;
+    const auto generation = background.value("generation").toString();
+    const bool newGeneration = generation != generation_;
+    generation_ = generation;
+    const auto functions =
+        background.value("functions").toInteger(functionCount_);
+    const bool moreFunctions =
+        functionCount_ >= 0 && functions != functionCount_;
+    functionCount_ = functions;
+    if (newGeneration || moreFunctions)
+      queries_.listingChanged();
+    emit backgroundChanged();
+    if (newGeneration)
+      emit generationChanged();
+    if (moreFunctions)
+      emit functionsChanged();
+    emit stateChanged();
   }
 }
 
@@ -425,6 +444,7 @@ void Session::resetState() {
   metadata_ = {};
   history_ = {};
   background_ = {};
+  BackgroundSequence.reset();
   generation_.clear();
   functionCount_ = -1;
 }
