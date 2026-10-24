@@ -832,7 +832,7 @@ class LowWordDecisions {
       if (!charge(C.size(), 2 * C.size() * sizeof(uint32_t)))
         break;
       Bits Remaining;
-      Remaining.reserve(2 * C.size());
+      Remaining.reserve(C.size());
       size_t Constants = 0;
       for (auto It = C.begin(); It != C.end(); ++It) {
         auto [Id, Copies] = *It;
@@ -866,15 +866,10 @@ class LowWordDecisions {
       for (unsigned J = I + 1; Constants && J < Count; ++J, Constants >>= 1)
         if ((Constants & 1) && !Insert(J, 1))
           break;
-      // Reduce each level before reusing its sums. A stack instead makes a
-      // growing parity chain whose intermediate decisions depend on factor
-      // construction order. At most half as many sums as inputs are appended;
-      // the column's prepaid storage covers this queue.
-      size_t Next = 0;
-      while (Remaining.size() - Next > 2 && !Failed) {
-        const auto A = Remaining[Next++];
-        const auto B = Remaining[Next++];
-        const auto C = Remaining[Next++];
+      while (Remaining.size() > 2 && !Failed) {
+        const auto A = Remaining.pop_back_val();
+        const auto B = Remaining.pop_back_val();
+        const auto C = Remaining.pop_back_val();
         const auto [Sum, Carry] =
             I + 1 < Count ? fullAdder(A, B, C)
                           : std::make_pair(parity(A, B, C), uint32_t(0));
@@ -883,10 +878,10 @@ class LowWordDecisions {
         if (I + 1 < Count && !Insert(I + 1, Carry))
           break;
       }
-      if (Remaining.size() > Next)
-        Left[I] = Remaining[Next];
-      if (Remaining.size() - Next > 1)
-        Right[I] = Remaining[Next + 1];
+      if (!Remaining.empty())
+        Left[I] = Remaining[0];
+      if (Remaining.size() > 1)
+        Right[I] = Remaining[1];
     }
     return calculate(SymOp::Add, Left, Right);
   }
@@ -1057,14 +1052,12 @@ class LowWordDecisions {
   struct WideSignature {
     uint32_t Identity = 0;
     std::array<uint32_t, 2> Delta{};
-    // Admission may know the identity before building its Boolean correction.
-    // A partial entry can only answer another identity query.
+    // Identity probes cannot supply a correction until the entry is complete.
     bool Complete = true;
   };
   struct WidePairingState {
     std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
     std::unordered_map<uint64_t, WideSignature> Words;
-    std::unordered_map<uint32_t, uint32_t> ReferenceBits;
   };
   // Ordinary low-word searches do not need this state. Construct it only
   // after pairing admission, and keep it within the active odd assumption.
@@ -1321,8 +1314,8 @@ class LowWordDecisions {
   // Equal identities share a full-width representative. Delta is its exact
   // additive correction in the two highest observed bits. Highest input bits
   // cancel when deriving an XOR correction; only the next bit is needed.
-  // Probes need only identities. Defer corrections until actual pairing, and
-  // upgrade partial cache entries before any arithmetic consumes their delta.
+  // Full-block admission needs only identities; defer Boolean corrections
+  // until pairing consumes them. Partial blocks keep their complete probes.
   WideSignature wideSignature(WidePairingState &State, SymRef R, unsigned Count,
                               unsigned Depth = 0, bool IdentityOnly = false) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
@@ -1399,25 +1392,13 @@ class LowWordDecisions {
             continue;
           const auto Coefficient =
               Values[I].Delta[0] ? apply(Xor, D[0], Values[I].Delta[0]) : D[0];
-          if (Coefficient) {
-            if (!charge())
-              return {};
-            // a_i = representative_i XOR delta_i at this bit. Replacing each
-            // a_i by its representative cancels every delta_i*delta_j twice;
-            // the literal's matching cross term cancels as well. Reuse that
-            // representative across equal identities, including their width.
-            auto It = State.ReferenceBits.find(Values[I].Identity);
-            if (It == State.ReferenceBits.end()) {
-              if (!charge(1, sizeof(decltype(State.ReferenceBits)::value_type) +
-                                 4 * sizeof(void *)))
-                return {};
-              auto Bit = apply(Xor, highestBit(Ctx.operand(R, I), Count - 1),
-                               Values[I].Delta[0]);
-              It = State.ReferenceBits.emplace(Values[I].Identity, Bit).first;
-            }
-            D[1] = apply(Xor, D[1], apply(And, Coefficient, It->second));
-          }
+          if (Coefficient)
+            D[1] = apply(Xor, D[1],
+                         apply(And, Coefficient,
+                               highestBit(Ctx.operand(R, I), Count - 1)));
         }
+        if (Literal & Unit)
+          D[1] = apply(Xor, D[1], D[0] ^ 1);
       }
       Literal &= Unit - 1;
       std::sort(Children.begin(), Children.end());
@@ -1773,16 +1754,13 @@ public:
           Nonconstants.size() > WideProbeBlock &&
           charge(1, sizeof(WidePairingState))) {
         State.Wide = std::make_unique<WidePairingState>();
-        const auto A =
-            wideSignature(*State.Wide, Nonconstants.front(), Observed, 0, true);
+        const auto A = wideSignature(*State.Wide, Nonconstants.front(),
+                                     Observed, 0, FullBlock);
         const auto Probe =
             Nonconstants.size() > WideBlock ? WideBlock : WideProbeBlock;
-        const auto B =
-            wideSignature(*State.Wide, Nonconstants[Probe], Observed, 0, true);
+        const auto B = wideSignature(*State.Wide, Nonconstants[Probe], Observed,
+                                     0, FullBlock);
         Wide = A.Identity == B.Identity;
-        // A miss at one construction-order position does not exclude a pair.
-        // Search the full block using identities only, leaving expensive
-        // corrections to the pairing that actually consumes them.
         for (size_t I = 1;
              !Wide && FullBlock && !Failed && I < Nonconstants.size(); ++I) {
           if (I == Probe)

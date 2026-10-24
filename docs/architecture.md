@@ -2375,15 +2375,13 @@ Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
 All signature, pairing and reconstruction work uses the existing cumulative
 work/storage allowances and decision-node limit.
-Two-bit admission caches structural identities before constructing their
-Boolean corrections. Partial entries can answer only identity queries and
-must be completed before arithmetic reads their correction. A full block can
-search past a failed positional probe without repeatedly materializing upper
-carries. XOR corrections share the representative bit of each exact identity;
-paired cross terms cancel before constructing decisions. Column sums consume
-one reduction level before reusing its sums, avoiding a long intermediate
-parity chain. These rules remain in the shared symbolic owner used by CLI
-and GUI source optimization.
+Full-block two-bit admission caches structural identities before constructing
+Boolean corrections. Partial cache entries can answer only identity queries
+and must be completed before arithmetic reads their correction. A full block
+can search past a failed positional probe without repeatedly materializing
+upper carries. Partial factor blocks retain complete probes, preserving their
+existing work headroom. These rules remain in the shared symbolic owner used
+by CLI and GUI source optimization.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding

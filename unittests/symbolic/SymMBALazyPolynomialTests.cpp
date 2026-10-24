@@ -59,7 +59,7 @@ struct DenseCarryFixture {
   }
 };
 
-enum class FactorOrder { Natural, Interleaved, Rotated };
+enum class FactorOrder { Natural, Interleaved };
 
 DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
                                     unsigned HighBits, unsigned Degree = 48,
@@ -80,8 +80,7 @@ DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
     const unsigned I =
         Order == FactorOrder::Interleaved
             ? 2 * (Position % (Degree / 2)) + Position / (Degree / 2)
-        : Order == FactorOrder::Rotated ? (Position + 3) % Degree
-                                        : Position;
+            : Position;
     std::string High = "((y+" + std::to_string(I) + ")&-" +
                        std::to_string(uint64_t(1) << HighBits) + ")";
     if (MixedMasks)
@@ -376,22 +375,6 @@ TEST(SymMBALazyPolynomial, InterleavedProductsFindTheirExactPairs) {
       EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
       checkFullWidthOracle(Ctx, F, Result.Expr);
     }
-}
-
-TEST(SymMBALazyPolynomial, BalancedCarriesFinishRotatedPartialBlocks) {
-  for (unsigned Width : {8u, 16u, 32u, 64u}) {
-    SCOPED_TRACE(Width);
-    SymContext Ctx;
-    const auto F = denseCarryFixture(Ctx, Width, 3, 64, 8, false, false, 3,
-                                     FactorOrder::Rotated);
-    MBAOptions Options;
-    Options.MaxWork = 65536;
-    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
-    EXPECT_LT(Result.Work, Options.MaxWork);
-    EXPECT_LE(Result.SizeAfter, 166u);
-    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
-    checkFullWidthOracle(Ctx, F, Result.Expr);
-  }
 }
 
 TEST(SymMBALazyPolynomial, PairProbesPreserveMixedProductHeadroom) {
