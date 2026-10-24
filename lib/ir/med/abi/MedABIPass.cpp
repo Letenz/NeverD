@@ -2487,8 +2487,14 @@ void recoverCallAbi(
       // the real variadic arguments so the callee reads the wrong slots
       // (printf("p[%d]=%.3f", i, v) then prints "p[0]=0.000").
       std::vector<MedVar> FoundFP;
+      // The pre-SSA read summary already proves a complete scalar register
+      // prefix with no vector inputs. Missing omitted-callee FP metadata
+      // cannot turn residual vector state into another argument. A count-only
+      // or unknown vector contract (-1) still uses the ordinary recovery.
+      const bool NoVectorArguments =
+          SummarizedIntegerOperands && Op.CalleeVectorArgs == 0;
       if (RegArgsApply && !FPParamRegs.empty() && DarwinVarArgBase < 0 &&
-          !CoreRegisterFloats && !HeaderVariadic) {
+          !CoreRegisterFloats && !HeaderVariadic && !NoVectorArguments) {
         // The FP-argument registers to probe, in ABI order.  Default to the
         // architecture's FP parameter registers (XMM0-7 / V0-7 / ARM D0-7); for
         // a direct call whose callee's exact FP layout is known, use it instead
