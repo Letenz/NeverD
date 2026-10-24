@@ -12,6 +12,7 @@
 
 #include "neverd/sdk/NeverDCAPI.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -27,6 +28,11 @@
 #include <vector>
 
 namespace {
+namespace sve_compare_fixture {
+#define NEVERD_SVE_COMPARE_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#include "BinaryDiffSVEPrefixFixtures.def"
+} // namespace sve_compare_fixture
+
 std::string take(const char *S) {
   const std::string Out = S ? S : "";
   neverd_free_string(S);
@@ -183,8 +189,7 @@ TEST_F(BinaryDiffSDK, AArch64OperandModifiersRemainObservableChanges) {
                {"lsr x0, x1, x2 / x3", 0x9ac22420, 0x9ac32420},
                {"asr x0, x1, x2 / x3", 0x9ac22820, 0x9ac32820},
                {"ror x0, x1, x2 / x3", 0x9ac22c20, 0x9ac32c20},
-               {"SVE merging / zeroing", 0x05904020, 0x05900020},
-               {"MOVPRFX merging / zeroing", 0x04912020, 0x04902020}};
+               {"SVE merging / zeroing", 0x05904020, 0x05900020}};
   for (const auto &Case : Cases) {
     SCOPED_TRACE(Case.Name);
     auto A = input(words({0xd28000e3, Case.A, 0x91000c00, 0xd65f03c0}), 0x1000,
@@ -207,6 +212,27 @@ TEST_F(BinaryDiffSDK, AArch64OperandModifiersRemainObservableChanges) {
                   ->getBoolean("analysis_complete"),
               true);
   }
+}
+
+TEST_F(BinaryDiffSDK, UnpairedMOVPRFXCannotReportCompleteSemanticComparison) {
+  using namespace sve_compare_fixture;
+  auto A = input(words({kSetup, kMerging, kIncompatibleNext, kReturn}),
+                 kPrimaryBase, kProcessor);
+  auto B = input(words({kSetup, kZeroing, kIncompatibleNext, kReturn}),
+                 kSecondaryBase, kProcessor);
+  auto Comparison = compare(A, B, kOptions);
+  auto Detail =
+      parsed(neverd_comparison_function_json(Comparison, 0, kPrimaryBase));
+  const auto *Evidence = Detail.getAsObject()->getObject(kEvidence);
+  ASSERT_TRUE(Evidence) << render(Detail);
+  EXPECT_EQ(Evidence->getBoolean(kNormalizedUnchanged), false);
+  EXPECT_EQ(Evidence->getBoolean(kAnalysisComplete), false);
+  auto Saved = parsed(neverd_comparison_export_json(Comparison));
+  const auto *Matches = Saved.getAsObject()->getArray(kMatches);
+  ASSERT_TRUE(Matches);
+  ASSERT_FALSE(Matches->empty());
+  EXPECT_EQ(Matches->front().getAsObject()->getBoolean(kAnalysisComplete),
+            false);
 }
 
 TEST_F(BinaryDiffSDK, AArch64BranchBitIndexIsNotASecondTargetOperand) {
@@ -2456,6 +2482,144 @@ TEST_F(BinaryDiffSDK, OptimizedSSAEarlyCancellationRetainsReopenableProfile) {
                 Fragments ? "llvm-fragments-v1" : "llvm-neighborhoods-v1");
       EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1)
           << take(neverd_comparison_last_error(C));
+      EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+    }
+}
+
+TEST_F(BinaryDiffSDK, ParameterViewsPageAndBindTheOriginalSourceSignature) {
+  // Owned control_regions_fixture.c family 1, x64 ELF O0/O2. Analysis only.
+  const auto Raw = [&](llvm::StringRef Hex, uint64_t Base) {
+    const auto Bytes = llvm::fromHex(Hex);
+    return input(
+        llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Bytes.data()),
+                                Bytes.size()),
+        Base);
+  };
+  const auto A =
+      Raw("554889e5897dfc8975f88b45fc3b45f873118b45fc83f0176bc00783c009"
+          "8945fceb0f8b45fc83c0116b4df80d31c88945fc8b45fc3345f883c0035dc3",
+          0x1000);
+  const auto B =
+      Raw("39f7731183f7178d04fd0000000029f883c009eb0b83c7118d04768d0486"
+          "31f831f083c003c3",
+          0x8000);
+  const auto Options =
+      R"({"discover":false,"dataflow":{"profile":"llvm-parameter-ssa-v1"},"flow_regions":true})";
+  const auto C = compare(A, B, Options);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_GT(Summary.getAsObject()
+                ->getObject("flow_regions")
+                ->getInteger("anchor_count"),
+            0);
+  auto Page = parsed(neverd_comparison_dataflow_json(
+      C,
+      R"({"kind":"nodes","side":"secondary","address":"0x8000","limit":200})"));
+  const auto *P = Page.getAsObject();
+  ASSERT_EQ(P->getString("availability"), "available") << render(Page);
+  EXPECT_EQ(P->getInteger("schema_version"), 4);
+  EXPECT_EQ(P->getInteger("projected_parameter_count"), 1);
+  EXPECT_FALSE(P->get("parameter_views"));
+  int64_t ProjectedNode = -1;
+  for (const auto &Row : *P->getArray("rows"))
+    for (const auto &View : *Row.getAsObject()->getArray("parameter_views"))
+      if (View.getAsObject()->getInteger("source_bits") == 64) {
+        EXPECT_EQ(View.getAsObject()->getInteger("view_bits"), 32);
+        EXPECT_EQ(View.getAsObject()->getInteger("elided_truncations"), 1);
+        ProjectedNode = *Row.getAsObject()->getInteger("id");
+      }
+  ASSERT_GE(ProjectedNode, 0);
+  const auto Slice = parsed(neverd_comparison_slice_json(
+      C, render(llvm::json::Object{{"side", "secondary"},
+                                   {"address", "0x8000"},
+                                   {"seeds", llvm::json::Array{ProjectedNode}}})
+             .c_str()));
+  EXPECT_EQ(Slice.getAsObject()->getInteger("schema_version"), 4);
+  const auto Reopened = compare(A, B, Options);
+  ASSERT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+  EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
+  for (unsigned Kind = 0; Kind < 3; ++Kind) {
+    auto Forged = llvm::json::parse(Saved);
+    auto *Graph = Forged->getAsObject()
+                      ->getObject("dataflow")
+                      ->getObject("secondary")
+                      ->getArray("entries")
+                      ->front()
+                      .getAsObject()
+                      ->getObject("graph");
+    auto *V = (*Graph->getArray("parameter_views"))[1].getAsObject();
+    if (Kind == 0) {
+      // A structurally valid alternative source; only fresh binding can refute
+      // it.
+      (*V)["source_bits"] = 32;
+      (*V)["elided_truncations"] = 0;
+      (*Graph)["projected_parameter_count"] = 0;
+    } else if (Kind == 1) {
+      (*V->getObject("native_site"))["index"] = "0x999";
+    } else {
+      (*Graph)["parameter_count"] = 0;
+    }
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
+  const auto Observations =
+      parsed(neverd_comparison_observations_json(C, R"({"address":"0x1000"})"));
+  EXPECT_EQ(Observations.getAsObject()
+                ->getObject("primary_ssa")
+                ->getString("availability"),
+            "unsupported_profile");
+  const auto Limited = compare(
+      B, B,
+      R"({"discover":false,"dataflow":{"profile":"llvm-parameter-ssa-v1","max_total_nodes":15}})");
+  const auto LimitedPage = parsed(neverd_comparison_dataflow_json(
+      Limited, R"({"kind":"nodes","address":"0x8000"})"));
+  EXPECT_EQ(LimitedPage.getAsObject()->getString("availability"),
+            "resource_limited");
+}
+
+TEST_F(BinaryDiffSDK,
+       ParameterViewsStoppedAndEmptyCollectionsKeepTheirProfile) {
+  for (bool Fragments : {false, true})
+    for (const auto *Phase :
+         {"primary:discovery", "primary:decode", "primary:dataflow"}) {
+      const auto A = input(body()), B = input(body());
+      const auto C = neverd_comparison_create();
+      Comparisons.push_back(C);
+      struct State {
+        neverd_comparison_t Comparison;
+        std::string Phase;
+      } Context{C, Phase};
+      const auto Cancel = [](void *Opaque, const char *Current, neverd_va_t,
+                             neverd_va_t) {
+        auto &S = *static_cast<State *>(Opaque);
+        if (S.Phase == Current)
+          neverd_comparison_cancel(S.Comparison);
+      };
+      const auto Options = render(llvm::json::Object{
+          {"dataflow",
+           llvm::json::Object{{"profile", "llvm-parameter-ssa-v1"}}},
+          {"flow_regions", llvm::json::Object{{"fragments", Fragments}}}});
+      ASSERT_EQ(
+          neverd_comparison_run(C, A, B, Options.c_str(), Cancel, &Context), 1)
+          << take(neverd_comparison_last_error(C));
+      const auto Saved = take(neverd_comparison_export_json(C));
+      auto Document = llvm::json::parse(Saved);
+      ASSERT_TRUE(bool(Document));
+      EXPECT_EQ(Document->getAsObject()->getString("state"), "cancelled")
+          << Phase;
+      EXPECT_EQ(Document->getAsObject()
+                    ->getObject("flow_regions")
+                    ->getString("profile"),
+                Fragments ? "llvm-parameter-fragments-v1"
+                          : "llvm-parameter-neighborhoods-v1");
+      EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1)
+          << take(neverd_comparison_last_error(C));
+      EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+      (*Document->getAsObject()->getObject("flow_regions"))["profile"] =
+          Fragments ? "llvm-fragments-v1" : "llvm-neighborhoods-v1";
+      EXPECT_EQ(neverd_comparison_restore_json(C, render(*Document).c_str()),
+                0);
       EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
     }
 }

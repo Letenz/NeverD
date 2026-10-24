@@ -11,6 +11,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "AArch64SVEPredicate.h"
+
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/lift/AArch64Regs.h"
 
@@ -194,18 +196,19 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     return Builder.CreateLoad(ScalableTy, Slot, Name);
   };
 
-  if (IC == I::A64_SvePtrue && Op.Output.Size == a64reg::PSize &&
-      Op.NumInputs >= 3) {
-    unsigned ElemBytes = sveElementSize(2);
-    auto *PredTy = llvm::ScalableVectorType::get(llvm::Type::getInt1Ty(*Ctx),
-                                                 16 / ElemBytes);
+  if (IC == I::A64_SvePtrue) {
+    if (!aarch64PtrueMedShapeIsValid(Op))
+      llvm::report_fatal_error(aarch64_sve::kMalformedPtrue);
+    const unsigned ElemBytes = Op.Inputs[2].ConstVal;
+    auto *PredTy = llvm::ScalableVectorType::get(
+        llvm::Type::getInt1Ty(*Ctx),
+        aarch64_sve::kMinimumPredicateLanes / ElemBytes);
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::aarch64_sve_ptrue, {PredTy});
-    llvm::Value *Pattern = getVar(Op.Inputs[1], Builder);
-    if (!Pattern->getType()->isIntegerTy(32))
-      Pattern = Builder.CreateZExtOrTrunc(Pattern, Builder.getInt32Ty());
+    llvm::Value *Pattern = Builder.getInt32(Op.Inputs[1].ConstVal);
     llvm::Value *Pred = Builder.CreateCall(Fn, {Pattern}, "svptrue");
-    return scalableToState(Pred, a64reg::PSize, "sve.pred");
+    return scalableToState(aarch64_sve::toSVBool(Builder, Pred), a64reg::PSize,
+                           "sve.pred");
   }
 
   if (IC == I::A64_SveDup && Op.Output.Size == a64reg::ZSize &&
@@ -247,7 +250,9 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     auto *VecTy = llvm::ScalableVectorType::get(ElemTy, 16 / ElemBytes);
     llvm::Value *PredState = getVar(Op.Inputs[1], Builder);
     llvm::Value *VecState = getVar(Op.Inputs[2], Builder);
-    llvm::Value *Pred = stateToScalable(PredState, PredTy, "sve.pred.value");
+    llvm::Value *Pred = stateToScalable(
+        PredState, aarch64_sve::svboolType(*Ctx), "sve.pred.value");
+    Pred = aarch64_sve::fromSVBool(Builder, Pred, PredTy);
     llvm::Value *Vec = stateToScalable(VecState, VecTy, "sve.vector.value");
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::aarch64_sve_lastb, {VecTy});

@@ -62,6 +62,7 @@
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <kddockwidgets/KDDockWidgets.h>
@@ -534,6 +535,45 @@ private slots:
         walk(action->menu());
     for (auto *action : registry.allActions())
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
+  }
+
+  void toolbarButtonsKeepKeysInTooltips() {
+    QMainWindow window;
+    ActionRegistry registry;
+    const auto toolbars = registry.buildToolbars(&window);
+    int hinted = 0;
+    for (auto *toolbar : toolbars)
+      for (auto *action : toolbar->actions()) {
+        auto *button =
+            qobject_cast<QToolButton *>(toolbar->widgetForAction(action));
+        if (!button)
+          continue;
+        QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+        if (action->shortcut().isEmpty())
+          continue;
+        ++hinted;
+        QVERIFY(button->toolTip().contains(
+            action->shortcut().toString(QKeySequence::NativeText)));
+        QVERIFY(action->isShortcutVisibleInContextMenu());
+      }
+    QVERIFY(hinted > 10);
+    auto *action = registry.action(ActionId::JumpEntry);
+    QToolButton *entry = nullptr;
+    for (auto *toolbar : toolbars)
+      if (auto *button =
+              qobject_cast<QToolButton *>(toolbar->widgetForAction(action)))
+        entry = button;
+    QVERIFY(entry);
+    QVERIFY(entry->toolTip().contains(
+        action->shortcut().toString(QKeySequence::NativeText)));
+    // Translation and action updates preserve the compact toolbar.
+    action->setShortcut(QKeySequence(Qt::Key_F12));
+    registry.retranslate();
+    action->setEnabled(false);
+    QVERIFY(entry->toolTip().contains(QStringLiteral("F12")));
+    QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    action->setShortcut({});
+    QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
   }
 
   void deepLinksTakeIdasFormAndRefuseWhatTheyCannotName() {

@@ -141,6 +141,42 @@ legacy PC signing and absolute state CFI, including DWARF fallback binding.
 The tests execute no fixture code. Missing Apple arm64e tools are explicit
 skips; after the baseline toolchain probe passes, fixture failures fail the test.
 
+`NeverDLanguageEHTests` checks the unified signing query's image/function
+provenance, exact PCs, source scopes and bounded CIE lookup.
+`NeverDUnwindFrameCAPITests` loads independent Mach-O fixtures through the
+public session API and covers all six query statuses, unsigned and absent
+sources, a shorter FDE than compact range, half-open boundaries and signing
+address zero. `NeverDUnwindFrameCLITests` compares complete CLI JSON against
+that same public API without adding dependencies to the C API suite.
+`pluginsdk/python/tests/test_unwind_query.py` checks the Python adapter's
+ownership, integer validation and complete JSON retention.
+`NeverDLinkedUnwindQuery` rebuilds the three Apple-linked fixtures and compares
+the complete C API, Python, CLI and worker results at 21 exact addresses. Its
+independent expectations distinguish signing-instruction and CFI-state
+boundaries from compact completed-prologue recipes. It retains compiler,
+linker, consumer and per-address results in the test artifact directory.
+Unavailable baseline tools skip; any later fixture or consumer failure fails.
+This check loads metadata and executes no arm64e fixture instructions.
+
+Enable `NEVERD_BUILD_GUI` for the worker and GUI consumers. Build
+`neverd-worker-test-server`, `neverd-gui-unwind-tests`,
+`neverd-gui-query-tests` and `neverd-gui`, then run `NeverDWorkerUnwindQuery`,
+`NeverDWorkerTransport`, `NeverDGuiUnwindInfo` and `NeverDGuiQueries`.
+The worker tests preserve exact high addresses and all source statuses through
+the protocol. GUI tests use the real query dispatcher with a controlled sender,
+including stale replies, destruction, missing capability, keyboard closure,
+long diagnostics and large fonts. `NEVERD_UNWIND_GUI_CAPTURES` selects a
+directory for actual light/dark, RTL and large-font captures to inspect.
+
+`NeverDAArch64SVEPredicateTests` checks PTRUE encodings and all patterns,
+canonical predicate conversions across element widths, LLVM verification and
+object compilation, HighC projection and malformed LowIR/MedIR refusal.
+`NeverDBinaryDiffSDKTests` retains incomplete analysis for unmodelled MOVPRFX.
+These tests do not execute SVE hardware or qualify scalable calling conventions.
+`MachONativeInplace.*` and the public-entry cases in `MachOPatchTransaction`
+check raw arm64e/x1 subtype capabilities, absent caller annotations and output
+rollback, with genuine ordinary arm64 writes as positive controls.
+
 `NeverDDyldSharedCacheTests` checks immutable arm64e cache mappings, old/new
 subcache tables, suffix/UUID/placement validation, embedded image layouts and
 cross-file reads. Independently serialized v2/v3/v5 fixtures cover extra
@@ -327,10 +363,13 @@ covers one through four float/double HFA members on COFF/ELF/Mach-O, including
 whole-record COFF/ELF stack placement, and rejects incomplete, padded,
 over-aligned and unsupported Mach-O stack layouts.
 `RecordCallContract.WindowsStackedHFAsPreserveGroupsAndFollowingArguments`
-uses an independent header/provider and linked ARM64 PE fixtures for one through
+and `RecordCallContract.WindowsStackedHFAImportSlotsPreserveCompleteCalls`
+use an independent header/provider and linked ARM64 PE fixtures for one through
 four float/double members, seven preceding floats, a following float, an integer
-and another HFA. Single/chained calls and O0/O2 inputs produce both C routes,
-executed at O0/O2 with address/undefined-behavior sanitizers. Every parameter,
+and another HFA. Single/chained calls through import thunks or import slots,
+and O0/O2 inputs, produce both C routes. The unchanged output compiles for
+Windows ARM64 and executes on the host at O0/O2 with address/undefined-behavior
+sanitizers. Every parameter,
 result member and output sentinel is observed, including signed zero and NaN
 payloads; malformed stack offsets and source groups fail the bound validator.
 LLVM parameters must retain HFA arrays instead of flattened or struct operands.
@@ -340,11 +379,25 @@ returns, variadic calls and special ABI attributes. The scalar/aggregate
 nonfinite constant test also checks exact quiet/signaling NaN, infinity and
 signed-zero bits. Native Windows/ARM64 execution and unobserved wrapper
 return-type recovery are separate coverage.
-The generated C matrix executes on the host. It does not establish native
-AArch64 C compilation of wide aggregate-result bridges: the paired Clang
-currently rejects `_BitInt` wider than 128 bits on AArch64. Three/four-double
-HighC result carriers still have that native-C limitation; native LLVM HFA
-carriers and ordinary SVE ACLE projections do not use that C scalar type.
+HighIR retains checked HFA results as records of their returned registers;
+field reads do not require unsupported 192/256-bit C integers on AArch64.
+`RecordCallContract.HFAResultRecordsRequireTheExactDeclaredLayout` rejects
+changed member classes, offsets, alignment, size and an unproved carrier.
+`RecordCallContract.WindowsHFAProjectionsExecuteOnAArch64` and
+`RecordCallContract.WindowsHFAImportSlotProjectionsExecuteOnAArch64` execute
+those C matrices as freestanding Linux AArch64 programs, directly on that
+architecture or with `qemu-aarch64` from `PATH`. Missing tools are explicit
+skips. Each test covers 128 programs across both C routes and O0/O2; the thunk
+and import-slot variants together cover 256 host and 256 AArch64 executions.
+The oracle observes every argument/result bit and the number of calls. This
+checks the C projection's AArch64 transport, not native Windows execution.
+`RecordCallContract.CachedImportsRequireUnchangedPrivateBytes` covers private
+spills and preserved registers on COFF/ELF/Mach-O, rejecting partial writes,
+escapes, unknown calls, expired storage and malformed declarations.
+`CachedImportsInvalidateDenseStackArgumentsAndPadding` checks that outgoing
+COFF/ELF HFA members and padding lose old spill identities; uninitialized
+members and unsupported Apple stack packing refuse. `CachedImportFrameQueriesShareTheirWorkBudget`
+checks that repeated pointer queries cannot reset the function's proof budget.
 `ReturnContract.ExplicitX87PrecisionRequiresAnExactIEEEValue` keeps arithmetic,
 raw byte changes and unknown loads at eighty bits while exact IEEE extensions
 and identity copies retain their declared precision. SDK checks use the
@@ -405,7 +458,11 @@ these shared import facts.
 
 `HighCStoreForwarding.IncompleteFrameRecordsKeepTheirInteriorFields` checks
 lazy display-field completion for frame records and call-type overlays among
-scalar slots. Both member names and types retain ambiguous-owner refusal.
+scalar slots with known or unknown extents. Exact slot addresses and mismatched
+access widths cannot name interior fields. Both member names and types retain
+ambiguous-owner refusal.
+`FrameMemberQueriesFollowNewSlotsAfterProjection` checks that a scalar-only
+function cannot suppress later record queries on the same writer.
 Run the store-forwarding, source-dialect and local-types debug-context owners
 after changing frame-member queries.
 
@@ -1621,6 +1678,19 @@ original instructions, slices and saved CLI parity. The real Qt test selects the
 optimized profile and displays plural origins with optional light/dark captures.
 These remain owned functional fixtures, not held-out accuracy or general
 optimization/obfuscation qualification.
+`BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
+all-use admission, multiple truncations, PHI predecessors, exact contracts,
+missing/stack/overlapping sites, detached and foreign users, raw and retained
+budgets, strict schema 4 records and parameter-row collection limits. The SDK
+test `ParameterViewsPageAndBindTheOriginalSourceSignature` pages and slices the
+actual x64 pipeline output, reopens it exactly and rejects structurally valid
+alternative source signatures and changed MedIR indices. The compiler corpus
+adds x64 ELF/COFF/Mach-O O0/O2 branch pairs, changed constants, changed branch
+conditions and high-bit uses. A finite control frontier may retain common
+operations; deeper condition coverage must refuse the changed branch.
+The real Qt `parameterViewsExplainNativeInputsAndRestoreSelection` test selects
+the profile, inspects low-bit details, traces inputs and restores the setting
+through the ordinary reopen dialog, with optional light/dark captures.
 `NeverDBinaryDiffFlowPipelineTests` projects owned x64/AArch64 bytes through the
 actual strict lifter and SSA pipeline, checking native origins and that a changed
 scalar survives beyond a short fingerprint's reported open frontier. It neither
@@ -1731,6 +1801,52 @@ provenance-only changes, changed native bodies, engine/input mismatches and
 missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
+
+`NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
+and shortcut tooltips through action changes, translation and disabled actions.
+`NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
+Ctrl+E/P/L/S keys, filtering, Enter, cancellation and navigation history with
+the fixture worker. `shortcutsCanBeFoundByKeyAndScope` checks the shortcut
+browser's scoped Ctrl+E commands and unassigned actions using native and
+portable key spellings. `commandButtonsExposeTheirKeys` checks local action
+buttons in both themes, including compact Close and Back buttons whose Escape
+binding stays functional without visible key text.
+Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
+repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
+and function-edit controller cases check that their scoped Ctrl+E still wins.
+
+`floatingDocksReturnToWorkbench` checks returning through the client title bar,
+its dock button and the tab context menu in both themes.
+`closedFloatingDocksReopenInWorkbench` closes floating panes through their
+native window and dock action, then reopens them in the main window. It covers
+disassembly, hex, functions, pseudocode, IR, types, analysis queries, output,
+overview and chooser panes, and preserves already open floating panes.
+`reopeningPaneDoesNotFollowFloatingAssembly` checks that a closed tab returns
+to the main window even when its previous tab group and disassembly are floating.
+`floatingAnalysisMenusStayWithTheirView` checks popup ownership and native
+transient parenting for floating text, graph, pseudocode and IR views.
+`floatingCommandDialogsStayWithTheirView` checks search, calculator input and
+results, options and other command dialogs against their floating owner.
+`floatingWindowsKeepMouseHistory` checks mouse Back and Forward in a floating
+listing. The Desktop GUI workflow runs these interactions with the native Qt
+platform on Windows and macOS, retaining separate logs beside the offscreen
+results.
+The jump-chooser matrix also runs from floating views.
+`selectedBytesExportWithIdasKey` presses Shift+E in docked and floating listing
+and hex selections, checks every text format and compares saved raw bytes.
+`byteExportsRejectHolesAndRetireStaleReads` covers paged ranges, unreadable
+tails, invalid bounds, input changes and project closure without replacing an
+existing file. The same `NEVERD_SHORTCUT_CAPTURES` directory captures these
+dialogs and windows. Repeat with the native Qt platform for compositor behavior;
+offscreen checks alone do not exercise native dragging or window stacking.
+
+`generatedViewsStayClosedAfterReopening` saves docked and floating pseudocode,
+LLVM C and every IR view, restarts from the saved desktop, reopens the binary
+and a packed database, and switches projects. Generated windows must stay
+closed until explicitly requested again, then display the selected function.
+It also checks closing a project and explicitly restoring a desktop, preserving
+generated content when it is still available. `searchResultsStayClosedAfterReopening`
+applies the same lifecycle checks to temporary search results, docked and floating.
 
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
 unwind coverage, cached and uncached selections, actual split-chunk ownership,
@@ -2042,6 +2158,26 @@ EAX/ECX inputs, Windows subleaf spelling and ordered effects, including CLI/STI.
 The CPUID C execution check replaces only the intrinsic environment, verifies
 one query with leaf 7/subleaf 1, and stores four high-bit output words into
 64-bit cells at O0/O2 across all three formats and default/NoOpt.
+The qualified native LLVM SDK adds a 426-module virtualization matrix covering
+both word sizes, three formats, default/NoOpt, FS/GS and long-mode narrow SVM
+addresses. Older SDKs explicitly skip that native-IR requirement while retaining
+the assembly route. Set `NEVERD_TEST_NEVERC=/path/to/neverc` to exercise 888 C
+compilations from both source routes at O0/O2, checking native intrinsic calls
+and the absence of inline assembly. That C test also runs with the old SDK's
+assembly IR. Stock Clang still compiles both C fallbacks; fork-only LLVM IR is
+compiled by the linked SDK rather than sent to an incompatible system Clang.
+`LLVMCValues.NativeVirtualizationKeepsStatusAndFailedReadPrior` supplies controlled
+VMX completion values to check C status conversion, exact operand evaluation
+and failed-read preservation without executing privileged instructions.
+`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 84 modules for
+CLTS, WRMSRNS, MSRLIST, default-address LKGS, INVLPGB and TLBSYNC. The corresponding
+NeverC test requires 240 C-to-native-IR compilations with no inline assembly;
+its fixtures explicitly initialize RSI/RDI across ABIs. The native-call refusal
+test checks mode, result identity and lost memory/nonreturning effects.
+`X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart` compiles both C
+routes with NeverC and executes the existing fault/register/completion/restart
+oracle at O0/O2. This uses controlled signal continuation and does not qualify
+successful privileged MSR access. Both NeverC tests use `NEVERD_TEST_NEVERC`.
 `SessionCAPITest.IntrinsicSourcePagesKeepTheExecutedInstruction` checks CPUID in
 C, LLVMC, pseudocode and HighIR, alongside CLI/STI effect rows. Native HighIR
 paging also shares the UTF-8,
@@ -3366,7 +3502,10 @@ straddling metadata ends, and cold-fragment ends without separate unwind
 records. Calls and traps share the fragment-end controls; adjacent fragments
 still continue. Owned NOP suffixes include runs beyond the heuristic lookahead
 limit, sized symbols/ranges and fragment-only ownership, with and without a
-neighbor entry. Prefix and MPX-disabled x86 NOPs share decoder classification;
+neighbor entry. Prefixed x86 NOPs and the architectural register NOP forms of
+`0F 1A/1B` share decoder classification. MPX memory forms retain instruction
+length, identity and explicit unsupported coverage until bounds state and
+fault behavior are modeled;
 REX.B register exchanges, upper-half-clearing copies, PAUSE and 32-bit INC remain
 observable controls. Interior NOP runs still reach real code, and an independent
 branch into a suffix retains its own ordinary fallthrough. Every partial
@@ -3550,6 +3689,79 @@ native or typed support from promoting portable, state or proof capabilities.
 `NeverDX87CapabilitiesPublicTests` compares unloaded-session C and CLI reports;
 Python API tests cover the ownership-safe adapter. These inventory tests do
 not establish native instruction or ARM64 portable execution coverage.
+
+`NeverDX87PortablePreparationTests` lifts authored x64 leaf, branch and loop
+bytes through the normal pipeline in default and NoOpt modes, then checks the
+private portable interface. It refuses malformed scalars/edges, counterfeit
+incoming-register copies, unsupported forms, external context handoffs and
+partial or unknown-upper-bit returns. It also verifies that ordinary emitters
+cannot publish the dedicated helpers. Run `NeverDMedMutableSourceTests` with it
+when changing the shared scalar-shape rules. These preparation checks do not
+establish generated execution or ARM64 translation coverage.
+
+`NeverDX87PortableEmissionTests` checks exact alternate function and helper
+types, effectful result consumption, original-address proof removal and output
+target refusals. `NeverDX87PortableGeneratedTests` compiles LLVM, HighC and
+LLVM-C shared artifacts at O0/O2 from default/NoOpt source pipelines. The authored
+x64 leaf, branch and loop fixtures cover every TOP and valid PC/RC setting,
+binary80 bits beyond binary64, success-only result publication, seven runtime
+refusals, both null-pointer guards and an untaken branch. Native x64 hosts also
+execute those exact original byte vectors and compare result bytes and defined
+state; relocated pointers and undefined C0/C2/C3 are excluded from that native
+comparison. Generated guest IP/DP are checked independently.
+
+`scripts/check_x87_portable_generated.py` freezes 36 compiled artifacts and
+6,096 observations on native Linux x64/AArch64. It requires complete coverage,
+cross-route/optimization agreement, no skips, stable source/build/compiler and
+runtime hashes, and retained raw state. On x64 it requires 5,760 original
+comparisons. The manual `x87-portable-generated.yml` workflow runs those hosts
+separately. This recorder supplies generated-program evidence; the workflow's
+separate translation, cross-host arithmetic and measurement steps have their
+own records. A pinned Linux AArch64 LLVM package is unavailable, so that lane
+builds the repository's exact LLVM revision from source.
+
+`NeverDX87TranslationRuntimeTests` checks transactional named-extension import
+and export, full payload/provenance preservation, completion and scalar latches,
+terminal helper validation, exact ten-byte faults, invalidation with cancellation,
+forged registries, stale credentials and the unchanged legacy factory.
+`NeverDX87TranslationTests` includes five AOT boundary/profile/cache checks and
+eight native Linux AArch64 invocation/session checks. Native cases compile on
+other hosts and explicitly skip execution there. They cover all 96 TOP/PC/RC
+combinations, refusals and prefix retention, the last byte of an 80-bit memory
+fault, both executable-write policies, mixed unsupported forms, branches,
+backedges at O0/O2, and budget checkpoint/restore.
+
+`scripts/check_x87_translation.py` requires all thirteen translation tests to
+execute without skips on native Linux AArch64. Its frozen fixture retains
+192 observations and the 1,152 actual ELF objects passed into JITLink, with
+serialized logical state after each block, O0/O2 agreement and production
+session agreement. `scripts/check_x87_cross_host.py` separately records three
+fixed arithmetic seeds on x64 and AArch64 (57,888 observations per host). Its
+comparison phase validates complete artifact manifests, matching source commits,
+6,096 generated state observations and arithmetic raw bits/defined status against
+the native x64 originals. Recording alone is not a passing cross-host comparison.
+
+`NeverDX87PortableBenchmark` loads only the authored libraries selected by
+`scripts/benchmark_x87_portable.py` from a passing frozen record. Its twenty
+x64 configurations cover the three routes and three body shapes, exact and
+controlled-refusal execution, raw transport and logical snapshots. Native ARM
+adds complete session cost, checked against frozen translation. Five trials
+retain all child results, failure attempts, counts, timings and process VmHWM.
+A single allowed CPU is selected; no frequency policy is changed. The record
+requires unchanged source/runtime/build inputs and does not claim a speedup.
+
+```sh
+python3 -m unittest scripts.tests.test_check_x87_portable_generated scripts.tests.test_check_x87_translation scripts.tests.test_check_x87_cross_host scripts.tests.test_benchmark_x87_portable -v
+python3 scripts/build.py build-release --target NeverDX87PortableGeneratedTests NeverDX87PortableBenchmark NeverDX87TranslationRuntimeTests NeverDX87TranslationTests --parallel 4
+python3 scripts/check_x87_portable_generated.py --driver build-release/bin/NeverDX87PortableGeneratedTests --runtime build-release/bin/libneverd_x87_runtime_v1.so --compiler /usr/lib/llvm-23/bin/clang --build-dir build-release --output-dir build-release/x87-generated-run1
+python3 scripts/benchmark_x87_portable.py --generated-record build-release/x87-generated-run1/record.json --driver build-release/bin/NeverDX87PortableBenchmark --output-dir build-release/x87-portable-timing1
+```
+
+On native AArch64, run `check_x87_translation.py` first and provide its record
+using `--translation-record` to the benchmark. Freeze and measurement must use
+the same clean committed source and build; rebuilding changes evidence inputs.
+The workflow retains failures as well as successful artifacts for thirty days.
+See [recorded qualification](x87-qualification.md) for actual runs and exclusions.
 
 `NeverDWorkerX87Capabilities` compares the real worker with the C/Python report
 and, when the CLI target is present, the CLI. It checks unloaded and loaded
@@ -11642,3 +11854,23 @@ Absolute-memory regressions cover bounded contiguous and sparse batches, complet
 The entry-object regressions check symbolic copies, spills and copied slots, runtime loops, lost bindings and joins, object aliases, full wide/atomic/segmented writes, relative-range boundaries, malformed declarations, receipt mutations, exact/short preparation and operation budgets, and exhausted node limits. Independent byte/register oracles check retained effects. Run the owning suites and raw consumer refusals together; these checks establish no whole-function, compiled-C or ordinary-ABI certificate.
 
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+Run `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) and `NeverDCSourcePresentationTests` for byte provenance, path agreement, overwritten or escaped storage, immutable image ranges, budgets, encodings and metadata bounds. `NeverDWorkerStackText` compiles public x64/ARM64 PE cases through both C routes, including unknown overwrites. It requires Clang and lld-link; native Windows execution is separate.
+
+`CallRegisterEffects.ExitConstants*` in `NeverDFPParameterMaskTests` checks
+agreement at every return, block ordering, partial and unknown writes, calls,
+intrinsics, address provenance, independent/exceptional roots, exact/short
+work budgets and ordinary ABI result ownership. `CallExitRegisters.*` in
+`NeverDWin64CallContractTests` executes decoded x64 COFF/ELF/Mach-O callers
+through both C routes, with source optimization enabled and disabled, at C
+O0/O2 with UBSan. The oracle observes the non-return register's stored value
+and the ordinary call result. This qualifies bounded scalar constants, not
+dynamic machine-state returns or other architectures.
+The opaque CPUID-exit counterexample checks that both C routes report an
+observed missing value before modifying the caller's output, after exactly one
+provider call. It covers serial and sharded LLVM source emission, optimized and
+unoptimized source, and C O0/O2 across the three x64 formats. Marker tests also
+check distinct observations after LLVM optimization, unused values and a real
+function whose name collides with the internal marker spelling. These tests
+certify explicit source unavailability, not a reconstructed dynamic call-state
+contract.

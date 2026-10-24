@@ -58,6 +58,8 @@ signals:
   void failed(const QString &Message);
 
 private:
+  static QString parameterViewText(const QJsonObject &View);
+  static QString parameterViewsText(const QJsonObject &Node);
   ComparisonSession &Session;
   Kind Type;
   QJsonObject Query;

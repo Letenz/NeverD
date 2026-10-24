@@ -544,12 +544,12 @@
         <translation>إدارة اتصالات MCP ومشاركة الجلسة</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>الإضافات(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>استعلامات التحليل</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>إدارة الإضافات التصريحية</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>تشغيل استعلامات التحليل المضمّنة أو المستوردة</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -1118,6 +1118,22 @@
     <message>
         <source>x87 &amp;support…</source>
         <translation>دعم x87(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>معلومات فك المكدس…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>فحص بيانات فك المكدس الوصفية عند التعليمة المحددة</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>نسخ البايتات المحددة أو حفظها</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>تصدير البيانات...</translation>
     </message>
 </context>
 <context>
@@ -1819,12 +1835,12 @@ Double-click to go to the declaration.</source>
         <translation>أسماء المتغيرات المحفوظة تخص عرضًا مختلفًا للمصدر</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>توسيع الكتلة (Ctrl+Shift+]‎)</translation>
+        <source>Expand block (%1)</source>
+        <translation>توسيع الكتلة (%1‎)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>طيّ الكتلة (Ctrl+Shift+[‎)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>طيّ الكتلة (%1‎)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2106,32 +2122,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>استيراد ملف بيان…</translation>
+        <source>Import queries…</source>
+        <translation>استيراد استعلامات…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>تشغيل</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>إلغاء التحميل</translation>
+        <source>Remove group</source>
+        <translation>إزالة المجموعة</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>استورد ملف بيان تصريحيًا لإضافة أوامر تحليل وعروض.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>شغّل استعلامات التحليل المضمّنة أو استورد تعريفات الاستعلامات من ملف JSON.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>اختر أمر إضافة لعرض نتيجته.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>حدد استعلامًا واختر تشغيل لعرض نتيجته.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>استيراد ملف بيان الإضافة</translation>
+        <source>Import analysis queries</source>
+        <translation>استيراد استعلامات التحليل</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>ملفات البيان (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>تعريفات الاستعلامات (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>إزالة جميع الاستعلامات في المجموعة المحددة.</translation>
     </message>
 </context>
 <context>
@@ -2193,8 +2213,8 @@ Double-click to go to the declaration.</source>
         <translation>شريط التنقل</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>الإضافات</translation>
+        <source>Analysis queries</source>
+        <translation>استعلامات التحليل</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -2985,6 +3005,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>حلّ رابط آخر محل هذا الرابط.</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>تكون الأولوية لأوامر القائمة عندما يكون التركيز عليها.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>تصفية حسب الإجراء أو الاختصار أو النطاق</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>النطاق</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>غير معيّن</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>عروض التحليل</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>مساحة العمل</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>تصفية سريعة</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>القوائم</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>إضافة أنواع…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>تحرير النوع…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>حذف الأنواع…</translation>
     </message>
 </context>
 <context>
@@ -3787,12 +3851,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>التالي</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>التطابق السابق (Shift+Enter أو Shift+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>التطابق السابق (%1 أو %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>التطابق التالي (Enter أو F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>التطابق التالي (%1 أو %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4663,12 +4727,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+نقرة للفتح</translation>
+        <source>%1click to open</source>
+        <translation>%1نقرة للفتح</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>انقر نقرًا مزدوجًا أو Ctrl+نقرة لفتح %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>انقر نقرًا مزدوجًا أو %2نقرة لفتح %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4717,8 +4781,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>تصريح</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>قراءة التصريحات ‎(Ctrl+Enter)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>قراءة التصريحات ‎(%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4878,8 +4942,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>يحتفظ المعامل برقمه.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>لا يحتوي البرنامج على بنى أو اتحادات. صرّح عنها في الأنواع المحلية (Shift+F1‎).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>لا يحتوي البرنامج على بنى أو اتحادات. صرّح عنها في الأنواع المحلية (%1‎).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6386,8 +6450,8 @@ Coverage: %7</source>
         <translation>حدد دالة لفحص نظيرتها.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>حدد الكتل لتتبع نظائرها. استخدم Ctrl+عجلة الفأرة للتكبير والتصغير.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>حدد الكتل لتتبع نظائرها. استخدم %1عجلة الفأرة للتكبير والتصغير.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -6484,6 +6548,14 @@ Coverage: %7</source>
     <message>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>البحث عن حسابات مشتركة رغم تغيّر الاعتماديات. تبقى العُقد التي تنتج المدخلات الخارجية دون تحقق. يتضمن فرضيات مناطق SSA.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA محسّن مع طرق عرض المعاملات</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>تقارن طرق عرض المعاملات أقل 32 بت من المعاملات الأصلية المؤهلة ذات 64 بت. تظل العروض الأصلية والمصادر متاحة للمراجعة.</translation>
     </message>
 </context>
 <context>
@@ -6583,6 +6655,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>تمثيل SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA محسّن مع طرق عرض المعاملات</translation>
     </message>
 </context>
 <context>
@@ -7366,6 +7442,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>ربط المدخلات الخارجية؛ لم تُقارَن العُقد التي تنتجها.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>المعامل %1: أقل %2 بت من أصل %3 بت</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>الأساسي: %1
+الثانوي: %2
+كل استخدام لمعامل مسقط يقرأ البتات الدنيا نفسها. لا يزال سلوك الدالة بأكملها غير متحقق منه.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>كل استخدام لهذا المعامل يقرأ البتات الدنيا نفسها؛ يُحتفظ بالعرض الأصلي والموقع الأصلي.</translation>
     </message>
 </context>
 <context>
@@ -8233,6 +8327,100 @@ SHA-256 الثانوي: %3
     <message>
         <source>unsupported</source>
         <translation>غير مدعوم</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>إعادة الإرساء في النافذة الرئيسية</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 بايت جاهزة.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 بايت جاهزة. تعرض المعاينة أول %2؛ يستخدم النسخ والحفظ النطاق الكامل.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>مصفوفة بايتات C (عشري)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>مصفوفة بايتات C (سداسي عشري)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>قيمة نصية حرفية بلغة C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>تعذرت قراءة النطاق الكامل عند %1. لم يتم تصدير شيء.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>نسخ</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>تعذر حفظ %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>عنوان النهاية (شامل):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>أدخل نطاق عناوين صالحًا.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>تصدير البيانات</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>يمكن تصدير %1 بايت كحد أقصى؛ حدد نطاقًا أصغر.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>التنسيق:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>سلسلة سداسية عشرية</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>بايتات خام (ملف فقط)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>جارٍ قراءة البايتات...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>جارٍ قراءة البايتات: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>حفظ باسم...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>تم حفظ %1 بايت في %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>سلسلة سداسية عشرية بمسافات</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>عنوان البداية:</translation>
     </message>
 </context>
 </TS>

@@ -111,7 +111,7 @@ NEVERD_IDA_ACTION("OpEnum", "M", EditOperandEnum)
 NEVERD_IDA_PLANNED("EditSegment", "Alt-S", "Edit")
 NEVERD_IDA_PLANNED("SetSegmentRegister", "Alt-G", "Edit")
 NEVERD_IDA_PLANNED("PatchedBytes", "Ctrl-Alt-P", "Edit")
-NEVERD_IDA_PLANNED("ExportData", "Shift-E", "Edit")
+NEVERD_IDA_ACTION("ExportData", "Shift-E", EditExportData)
 
 // Jump.
 NEVERD_IDA_ACTION("JumpEnter", "Enter", JumpOperand)

@@ -544,12 +544,12 @@
         <translation>MCP 接続とセッション共有を管理します</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>拡張機能(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>宣言型拡張機能を管理します</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>組み込みまたはインポートした解析クエリを実行</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -1118,6 +1118,22 @@
     <message>
         <source>x87 &amp;support…</source>
         <translation>x87 の対応状況(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>アンワインド情報…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>選択した命令位置のアンワインドメタデータを調べる</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>選択したバイトをコピーまたは保存</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>データをエクスポート...</translation>
     </message>
 </context>
 <context>
@@ -1794,12 +1810,12 @@ Double-click to go to the declaration.</source>
         <translation>保存された変数名は別のソース表示のものです</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>ブロックを展開 (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>ブロックを展開 (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>ブロックを折りたたむ (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>ブロックを折りたたむ (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2081,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>マニフェストをインポート…</translation>
+        <source>Import queries…</source>
+        <translation>クエリをインポート…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>実行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>アンロード</translation>
+        <source>Remove group</source>
+        <translation>グループを削除</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>宣言型マニフェストをインポートして、解析コマンドとビューを追加します。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>組み込みの解析クエリを実行するか、JSON ファイルからクエリ定義をインポートします。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>拡張機能のコマンドを選択すると、結果を確認できます。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>クエリを選択して「実行」をクリックすると結果が表示されます。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>拡張機能マニフェストのインポート</translation>
+        <source>Import analysis queries</source>
+        <translation>解析クエリをインポート</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>マニフェスト (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>クエリ定義 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>選択したグループのクエリをすべて削除します。</translation>
     </message>
 </context>
 <context>
@@ -2163,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>ナビゲーションバンド</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>拡張機能</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -2955,6 +2975,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>別のリンクがこのリンクに代わりました。</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>リストにフォーカスがある間は、リストのコマンドが優先されます。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>操作、ショートカット、適用範囲で絞り込み</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>適用範囲</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未割り当て</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>解析ビュー</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>ワークベンチ</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>クイックフィルター</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>リスト</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>型を追加…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>型を編集…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>型を削除…</translation>
     </message>
 </context>
 <context>
@@ -3752,12 +3816,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>次へ</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>前の一致（Shift+Enter または Shift+F3）</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>前の一致（%1 または %2）</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>次の一致（Enter または F3）</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>次の一致（%1 または %2）</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4578,12 +4642,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+クリックで開く</translation>
+        <source>%1click to open</source>
+        <translation>%1クリックで開く</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>ダブルクリックまたは Ctrl+クリックで %1 を開く</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>ダブルクリックまたは %2クリックで %1 を開く</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4627,8 +4691,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>宣言</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>宣言を読み込む（Ctrl+Enter）</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>宣言を読み込む（%1）</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4763,8 +4827,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>オペランドは数値のままです。</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>プログラムには構造体も共用体もありません。ローカル型（Shift+F1）で宣言してください。</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>プログラムには構造体も共用体もありません。ローカル型（%1）で宣言してください。</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6206,8 +6270,8 @@ Coverage: %7</source>
         <translation>関数を選択して対応する関数を調べてください。</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>ブロックを選択して対応先を追跡します。Ctrl+ホイールで拡大縮小できます。</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>ブロックを選択して対応先を追跡します。%1ホイールで拡大縮小できます。</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -6304,6 +6368,14 @@ Coverage: %7</source>
     <message>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>依存関係が変化しても共通する計算を検索します。外部入力の生成ノードは未検証のままです。SSA 領域の仮説を含みます。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>パラメータビューは、条件を満たす 64 ビットのネイティブパラメータの下位 32 ビットを比較します。元のビット幅と出所も確認できます。</translation>
     </message>
 </context>
 <context>
@@ -6403,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表現：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7186,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部入力の対応付けです。生成ノードは比較されていません。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>パラメータ %1：%3 ビット中の下位 %2 ビット</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>プライマリ：%1
+セカンダリ：%2
+投影されたパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。関数全体の動作は未検証です。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>このパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。元のビット幅とネイティブ位置は保持されます。</translation>
     </message>
 </context>
 <context>
@@ -8053,6 +8147,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>未対応</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>メインウィンドウに戻してドッキング</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 バイトの準備ができました。</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 バイトの準備ができました。プレビューは先頭 %2 バイトです。コピーと保存には範囲全体を使用します。</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C バイト配列（10進数）</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C バイト配列（16進数）</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C 文字列リテラル</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>%1 の範囲全体を読み取れません。何もエクスポートされませんでした。</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>コピー</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>%1 を保存できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>終了アドレス（含む）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>有効なアドレス範囲を入力してください。</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>データをエクスポート</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>エクスポートは最大 %1 バイトです。範囲を狭めてください。</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>形式：</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>16進数文字列</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>生バイト（ファイルのみ）</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>バイトを読み取り中...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>バイトを読み取り中：%1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>名前を付けて保存...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 バイトを %2 に保存しました</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>空白区切りの16進数文字列</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>開始アドレス：</translation>
     </message>
 </context>
 </TS>

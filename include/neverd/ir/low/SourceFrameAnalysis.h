@@ -7,6 +7,7 @@
 #include "neverd/ir/low/SourceFrameEffects.h"
 #include "neverd/ir/low/SourceRegisterCopy.h"
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <set>
@@ -49,6 +50,11 @@ std::optional<NativeSourceCallKey> nativeSourceCallKey(const LowOp &Operation);
 /// sufficient for native source ABI inference and preservation transfer.
 bool hasNativeScalarIntrinsicEvidence(const LowOp &Operation,
                                       Arch Architecture);
+
+/// A well-formed alignment guard changes no bytes on its normal continuation.
+/// Display observations may cross it while retaining the original guard. This
+/// grants no alignment, no-fault, restoration or source-rewrite certificate.
+bool isSourceFrameObservationGuard(const LowOp &Operation);
 
 /// Prove that every exit restores the incoming Darwin preserved registers,
 /// stack pointer and link register. Calls must already have validated source
@@ -106,7 +112,7 @@ bool certifiesPrivateSourceFrame(const LowFunc &Function, Arch Architecture,
                                  bool ExternalMemoryDisjoint,
                                  int64_t *RequiredFrameSize);
 
-/// An opaque, complete eight-byte LowIR definition, not an address or a call
+/// An opaque, complete LowIR definition, not an address or a call
 /// declaration. Consumers must authenticate its original instruction before
 /// interpreting these bytes as image data or code pointers.
 struct SourceFrameDefinition {
@@ -135,10 +141,14 @@ struct SourceFrameLoadDefinition {
 /// Calls unable to reach the query need no contract; this grants no source
 /// gate. Calls must be freshly authenticated against the current image and
 /// LowIR.
-std::optional<SourceFrameLoadDefinition>
-sourceFrameLoadedDefinition(const LowFunc &Function, Arch Architecture,
-                            const NativeSourceCalls &Calls, int BlockId,
-                            size_t OperationIndex);
+/// This query additionally accepts complete scalar/HFA stack members, using
+/// their actual widths and invalidating the entire outgoing argument area.
+/// Format selects preserved bytes; WorkRemaining optionally shares a budget
+/// across queries in one analysis rather than resetting it for every load.
+std::optional<SourceFrameLoadDefinition> sourceFrameLoadedDefinition(
+    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
+    int BlockId, size_t OperationIndex,
+    BinaryFormat Format = BinaryFormat::MachO, size_t *WorkRemaining = nullptr);
 
 struct SourceFrameStoredByte {
   bool Initialized = false;
@@ -164,6 +174,20 @@ struct SourceFrameArgumentStorage {
 std::optional<SourceFrameArgumentStorage> sourceFrameCallArgumentStorage(
     const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
     const NativeSourceCallKey &Site, size_t Parameter, size_t Bytes);
+
+/// Observe initialized private byte prefixes reached by physical pointers
+/// immediately before one original operation. This is a display observation,
+/// not an argument ABI, a memory-effect certificate or permission to rewrite
+/// storage. X64 and ARM64 use the same reaching-byte and escape proof. No
+/// preceding call is admitted; unknown external stores discard old frame
+/// bytes. Cyclic observations and expired storage fail closed. Every opaque
+/// definition still requires authentication by the consumer. Each prefix ends
+/// at uninitialized storage, a frame pointer, the entry-SP boundary or
+/// MaxBytes. WorkRemaining shares a cumulative budget across observations.
+std::vector<SourceFrameArgumentStorage> sourceFrameStorageBefore(
+    const LowFunc &Function, Arch Architecture, BinaryFormat Format,
+    int BlockId, size_t OperationIndex, const std::vector<NdVar> &Pointers,
+    size_t MaxBytes, size_t *WorkRemaining = nullptr);
 
 struct SourceFrameByValueCopy {
   size_t Parameter;

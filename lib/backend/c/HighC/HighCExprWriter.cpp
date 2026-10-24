@@ -29,6 +29,7 @@
 #include "neverd/backend/c/render/X87GuardedValueRender.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
@@ -1977,6 +1978,8 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isPortableX87Intrinsic(E.IntrinsicId))
+    return renderPortableX87Call(E);
   if (x87ValueInfo(E.IntrinsicId) &&
       !x87ValueShapeIsValid(x87ValueHighShape(E, Opts.TheArch)))
     llvm::report_fatal_error("invalid HighC x87 scalar value/status contract");
@@ -2077,7 +2080,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (E.SourceCallHint)
     return renderSourceCallExpr(E);
   if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
-      !isX86FPStateMemoryIntrinsic(E.IntrinsicId))
+      !isX86FPStateMemoryIntrinsic(E.IntrinsicId) &&
+      x86VirtualizationContract(E.IntrinsicId).MemoryArgument < 0)
     llvm::report_fatal_error(
         "HighC cannot safely render a segmented-memory intrinsic");
   std::string Name = resolvedCallTarget(E);
@@ -2252,7 +2256,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (const auto Signature =
             libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
         Signature &&
-        (Opts.TheArch == Arch::X86 || !Signature->Scalars.empty()) &&
+        (Opts.TheArch == Arch::X86 || !Signature->Scalars.empty() ||
+         Signature->ReturnElements) &&
         (!E.FloatingCallSignature || *E.FloatingCallSignature != *Signature))
       throw std::runtime_error("A mixed header call lost its checked ABI");
   const libc::LibCPrototype *Prototype = calleePrototype(E);
@@ -2324,8 +2329,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (const auto Declared = plainDeclarationArity(E))
     PrintedArgs = std::max(PrintedArgs, *Declared);
   const bool SourceRecord =
-      !Defined && Callee && Name == Callee->Name &&
-      (includesHeaderOf(Name) ||
+      !Defined && Callee &&
+      ((Name == Callee->Name && includesHeaderOf(Name)) ||
        libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format));
   const auto RecordCall =
       SourceRecord ? libc::recordCallArguments(*Callee, Opts.TheArch,
@@ -2736,16 +2741,34 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   S += Note;
   S += ")";
   if (RecordCall && RecordCall->FloatingResult) {
-    if (!E.Type || E.Type->Kind != NdTypeKind::Int ||
-        E.Type->Size != Callee->ReturnType->Size)
+    const bool RecordCarrier = [&] {
+      if (!E.Type || E.Type->Kind != NdTypeKind::Struct ||
+          !E.Type->RegisterReturnRecord ||
+          E.Type->Alignment != Callee->ReturnType->Alignment)
+        return false;
+      const auto Members = sourceAggregateMembers(E.Type);
+      const auto Leaves = aapcs64FloatingAggregate(Callee->ReturnType);
+      return !Members.empty() && Leaves &&
+             std::equal(Members.begin(), Members.end(), Leaves->begin(),
+                        Leaves->end(),
+                        [](const auto &Member, const auto &Leaf) {
+                          return Member.Type->Kind == NdTypeKind::Float &&
+                                 Leaf.Floating &&
+                                 Member.Type->Size == Leaf.Size &&
+                                 Member.ByteOffset == Leaf.Offset;
+                        });
+    }();
+    if (!E.Type || E.Type->Size != Callee->ReturnType->Size ||
+        (E.Type->Kind != NdTypeKind::Int && !RecordCarrier))
       throw std::runtime_error(
           "A record call has an incompatible result carrier");
-    // _BitInt(96) can occupy sixteen C bytes while a three-float record
-    // occupies twelve. Copy the exact record bytes into a zeroed carrier;
-    // bit_cast requires equal C object sizes and cannot express that case.
+    // Copy the exact declared bytes into the register record. Older integer
+    // carriers may have trailing C padding (_BitInt(96) occupies sixteen
+    // bytes for a twelve-byte HFA), so those still need a zeroed destination.
     S = "({ " + c_detail::recordCallType(Callee->ReturnType, Opts) +
         " __neverd_result = " + S + "; " + typeToC(E.Type) +
-        " __neverd_bits = 0; __builtin_memcpy(&__neverd_bits, "
+        " __neverd_bits = " + (RecordCarrier ? "{0}" : "0") +
+        "; __builtin_memcpy(&__neverd_bits, "
         "&__neverd_result, sizeof(__neverd_result)); __neverd_bits; })";
   }
   if (RecordCall && RecordCall->ResultPointer) {
@@ -3777,9 +3800,8 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return I < Have && isCtorDisplayOperand(E.Operands[I].get());
   };
   if (const auto Callee = debugCallee(E)) {
-    if (Callee->Name == Name &&
-        (includesHeaderOf(Name) ||
-         libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format)))
+    if ((Callee->Name == Name && includesHeaderOf(Name)) ||
+        libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format))
       if (const auto Layout = libc::recordCallArguments(
               *Callee, Opts.TheArch, Opts.Format, Opts.libcVariant()))
         return Layout->Positions;
@@ -4474,7 +4496,7 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   }
   if (const auto Floating =
           libc::floatingCallArguments(FS, Opts.TheArch, Opts.Format);
-      Identifier == FS.Name && Floating &&
+      Floating &&
       (!Floating->ParameterElements.empty() || Floating->ReturnElements)) {
     const auto Declare = [&](const TypeRef &Type, const std::string &Name) {
       return Type->Kind == NdTypeKind::Struct && !Type->IsEnum
@@ -5534,13 +5556,22 @@ TypeRef HighCWriter::typedSlotFunction(const HighExpr &Callee) const {
   return Member->Pointee;
 }
 
+std::string HighCWriter::unknownValueText(const HighExpr &E,
+                                          llvm::StringRef Kind) {
+  const std::string Text =
+      "(__builtin_trap(), 0 /* unknown " + Kind.str() + " */)";
+  if (E.Type && E.Type->Kind == NdTypeKind::Ptr)
+    return "(" + typeToC(E.Type) + ")(uintptr_t)" + Text;
+  return Text;
+}
+
 std::string HighCWriter::unknownVarUse(const HighExpr &E,
                                        const std::string &Name,
                                        const std::string &RawName) {
   // Definitions consisting only of unknown values are omitted from C.
   // Their observable uses must still fail, including renamed SSA temps.
   if (UnknownOnlyNames.count(Name))
-    return "(__builtin_trap(), 0 /* unknown value */)";
+    return unknownValueText(E, "value");
   // An unassigned architectural register or flag can be a genuine unknown
   // live-in. Keep the failure at the point of use instead of emitting an
   // undeclared name or inventing zero.
@@ -5555,7 +5586,7 @@ std::string HighCWriter::unknownVarUse(const HighExpr &E,
       return "(uintptr_t)__builtin_return_address(0)";
     if (x87HelperFor(E) == X87CHelper::ControlWord)
       return useX87Helper(X87CHelper::ControlWord) + "()";
-    return "(__builtin_trap(), 0 /* unknown register */)";
+    return unknownValueText(E, "register");
   }
   return {};
 }
@@ -6668,7 +6699,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
   case ExprKind::Undef:
     // An observed unknown value has no recovered semantics. Fail at this
     // use; an unchosen conditional operand must not fail eagerly.
-    return "(__builtin_trap(), 0 /* unknown value */)";
+    return unknownValueText(E, "value");
   case ExprKind::BinOp:
     if (ProjectFrameAliasesIntoStorage)
       if (const auto Disp = certifiedFrameStorageDisplacement(E))

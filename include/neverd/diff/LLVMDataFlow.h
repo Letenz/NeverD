@@ -34,6 +34,14 @@ DataFlowGraph buildLLVMDataFlow(const llvm::Function &Function,
                                 bool NativeComplete,
                                 const DataFlowOptions &Options = {},
                                 const ComparisonControl &Control = {});
+/// Observe a native i64 parameter as i32 only when every use is an origin-free,
+/// unflagged truncation and its recorded native site is unambiguous. The source
+/// signature and elision provenance remain in the detached graph.
+DataFlowGraph buildLLVMParameterDataFlow(
+    const llvm::Function &Function, const LLVMSourceMap &Sources,
+    uint64_t Entry, llvm::StringRef Revision, llvm::StringRef ABI,
+    bool NativeComplete, const DataFlowOptions &Options = {},
+    const ComparisonControl &Control = {});
 } // namespace diff
 } // namespace neverd
 

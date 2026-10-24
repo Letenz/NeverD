@@ -2,6 +2,8 @@
 
 #include "neverd/translate/X86TranslationBlockBuilder.h"
 
+#include "X87TranslationBoundary.h"
+
 #include "neverd/decode/Decoder.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -335,6 +337,7 @@ bool hasKnownTerminator(TranslationBlockTerminatorKindV1 Kind) {
   case TranslationBlockTerminatorKindV1::IndirectCall:
   case TranslationBlockTerminatorKindV1::Return:
   case TranslationBlockTerminatorKindV1::Opaque:
+  case TranslationBlockTerminatorKindV1::X87Runtime:
     return true;
   case TranslationBlockTerminatorKindV1::Invalid:
     return false;
@@ -352,6 +355,15 @@ llvm::Error invalidDescriptor(llvm::Twine Message) {
 llvm::Error validateTranslationBlockDescriptorV1(
     const TranslationBlockDescriptorV1 &Block) {
   const TranslationBlockDescriptorHeaderV1 &Header = Block.Header;
+  if (Block.RuntimeProfile != TranslationRuntimeProfileV1::ScalarInteger &&
+      Block.RuntimeProfile != TranslationRuntimeProfileV1::PortableX87)
+    return invalidDescriptor("translation block runtime profile is unknown");
+  const bool IsX87Boundary =
+      Header.Terminator == TranslationBlockTerminatorKindV1::X87Runtime;
+  if (IsX87Boundary &&
+      Block.RuntimeProfile != TranslationRuntimeProfileV1::PortableX87)
+    return invalidDescriptor(
+        "x87 boundary requires the explicit portable runtime profile");
   if (Header.Magic != kTranslationBlockDescriptorMagicV1 ||
       Header.Version != kTranslationBlockDescriptorVersionV1 ||
       Header.Size != kTranslationBlockDescriptorHeaderSizeV1)
@@ -421,9 +433,18 @@ llvm::Error validateTranslationBlockDescriptorV1(
     if ((!IsLast && (Boundary.Control != LowInstructionControl::None ||
                      Boundary.ControlFlags != LowInstructionControlFlag::None ||
                      Boundary.Immediate.has_value())) ||
-        (IsLast && Boundary.Control == LowInstructionControl::None))
+        (IsLast && Boundary.Control == LowInstructionControl::None &&
+         !IsX87Boundary))
       return invalidDescriptor(
           "translation block does not stop at its first control boundary");
+    if (Block.RuntimeProfile == TranslationRuntimeProfileV1::PortableX87) {
+      const bool HasStep =
+          detail::hasX87TranslationStep(llvm::ArrayRef<LowOp>(Block.Ops).slice(
+              Boundary.FirstOp, Boundary.OpCount));
+      if (HasStep != (IsLast && IsX87Boundary))
+        return invalidDescriptor(
+            "translation block does not stop at its first x87 boundary");
+    }
     ExpectedAddress += Boundary.Size;
     ExpectedFirstOp = OpEnd;
   }
@@ -439,6 +460,10 @@ llvm::Error validateTranslationBlockDescriptorV1(
   TranslationBlockTerminatorKindV1 BoundaryKind =
       TranslationBlockTerminatorKindV1::Invalid;
   switch (Last.Control) {
+  case LowInstructionControl::None:
+    if (IsX87Boundary)
+      BoundaryKind = TranslationBlockTerminatorKindV1::X87Runtime;
+    break;
   case LowInstructionControl::Branch:
     BoundaryKind = IsIndirect ? TranslationBlockTerminatorKindV1::IndirectBranch
                    : IsConditional
@@ -487,6 +512,7 @@ llvm::Error validateTranslationBlockDescriptorV1(
   case TranslationBlockTerminatorKindV1::Opaque:
     ExpectedControlFlags = LowInstructionControlFlag::Terminator;
     break;
+  case TranslationBlockTerminatorKindV1::X87Runtime:
   case TranslationBlockTerminatorKindV1::Invalid:
     break;
   }
@@ -526,20 +552,32 @@ llvm::Error validateTranslationBlockDescriptorV1(
 }
 
 X86TranslationBlockBuilder::X86TranslationBlockBuilder(
-    std::unique_ptr<Decoder> Decoder)
-    : TheDecoder(std::move(Decoder)) {}
+    std::unique_ptr<Decoder> Decoder, TranslationRuntimeProfileV1 Profile)
+    : TheDecoder(std::move(Decoder)), RuntimeProfile(Profile) {}
 
 X86TranslationBlockBuilder::~X86TranslationBlockBuilder() = default;
 
 llvm::Expected<std::unique_ptr<X86TranslationBlockBuilder>>
 X86TranslationBlockBuilder::create() {
+  return create(TranslationRuntimeProfileV1::ScalarInteger);
+}
+
+llvm::Expected<std::unique_ptr<X86TranslationBlockBuilder>>
+X86TranslationBlockBuilder::create(TranslationRuntimeProfileV1 Profile) {
+  if (Profile != TranslationRuntimeProfileV1::ScalarInteger &&
+      Profile != TranslationRuntimeProfileV1::PortableX87)
+    return failure(
+        X86TranslationBlockBuilderErrorCode::DecoderInitializationFailed, 0,
+        std::nullopt, "unknown runtime profile");
   auto DecoderInstance = std::make_unique<Decoder>();
   DecoderInstance->setStrict(true);
   if (!DecoderInstance->init(Arch::X64, InstructionMode::Default))
     return failure(
         X86TranslationBlockBuilderErrorCode::DecoderInitializationFailed, 0);
+  if (Profile == TranslationRuntimeProfileV1::PortableX87)
+    DecoderInstance->setX87ContextOwnership(true);
   return std::unique_ptr<X86TranslationBlockBuilder>(
-      new X86TranslationBlockBuilder(std::move(DecoderInstance)));
+      new X86TranslationBlockBuilder(std::move(DecoderInstance), Profile));
 }
 
 llvm::Expected<TranslationBlockDescriptorV1>
@@ -551,6 +589,7 @@ X86TranslationBlockBuilder::build(GuestMemoryRuntime &Memory, uint64_t EntryPC,
   TheDecoder->resetX86FpuState();
 
   TranslationBlockDescriptorV1 Block;
+  Block.RuntimeProfile = RuntimeProfile;
   Block.Header.EntryPC = EntryPC;
   uint64_t PC = EntryPC;
 
@@ -629,6 +668,9 @@ X86TranslationBlockBuilder::build(GuestMemoryRuntime &Memory, uint64_t EntryPC,
     if (InstructionSize > std::numeric_limits<uint64_t>::max() - PC)
       return failure(X86TranslationBlockBuilderErrorCode::GuestAddressOverflow,
                      PC);
+    const bool X87Boundary =
+        RuntimeProfile == TranslationRuntimeProfileV1::PortableX87 &&
+        detail::hasX87TranslationStep(InstructionOps);
     const uint64_t FirstOp = Block.Ops.size();
     Block.Ops.insert(Block.Ops.end(),
                      std::make_move_iterator(InstructionOps.begin()),
@@ -639,11 +681,13 @@ X86TranslationBlockBuilder::build(GuestMemoryRuntime &Memory, uint64_t EntryPC,
     Block.Bytes.insert(Block.Bytes.end(), ExactBytes.begin(), ExactBytes.end());
     PC += InstructionSize;
 
-    if (!Control.terminatesBlock())
+    if (!Control.terminatesBlock() && !X87Boundary)
       continue;
 
     Block.Header.FallthroughPC = PC;
-    Block.Header.Terminator = terminatorKind(Control);
+    Block.Header.Terminator = X87Boundary
+                                  ? TranslationBlockTerminatorKindV1::X87Runtime
+                                  : terminatorKind(Control);
     Block.Header.GuestInstructionCount = Block.InstructionBoundaries.size();
     Block.Header.GuestByteCount = Block.Bytes.size();
     if (Control.DirectTarget) {

@@ -28,6 +28,7 @@
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/med/I386PicAddress.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
@@ -56,6 +57,14 @@ void coalesceBranchEntryStatements(HighFunc &Func);
 
 namespace {
 
+TypeRef registerReturnType(std::vector<TypeRef> Members) {
+  TypeRef Record = NdType::makeStruct(std::move(Members));
+  if (!Record)
+    return {};
+  Record->RegisterReturnRecord = true;
+  return !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
+}
+
 /// The C record a struct returned across several registers is: one member
 /// per field register, in the order the call site packs them (an AArch64
 /// HFA, x86-64 SSE or mixed eightbytes).  The target ABI returns such a
@@ -71,11 +80,7 @@ TypeRef multiRegisterReturnType(const std::vector<MedReturnReg> &Fields) {
     Members.push_back(Field.IsFP ? NdType::makeFloat(Field.Size)
                                  : NdType::makeInt(Field.Size, false));
   }
-  TypeRef Record = NdType::makeStruct(std::move(Members));
-  if (!Record)
-    return {};
-  Record->RegisterReturnRecord = true;
-  return !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
+  return registerReturnType(std::move(Members));
 }
 
 // Temporary, opt-in observation of the actual source-recovery conversion.
@@ -365,6 +370,17 @@ TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
     if (auto Type = sourceABICallResultType(Op.SourceCallHint->Signature);
         Type && Type->Size == Op.Output.Size)
       return Type;
+  // The packed MedIR temporary owns all HFA result registers. Keep those
+  // fields in HighIR instead of inventing an integer wider than the C target
+  // supports. The bound signature validates every result and argument lane.
+  if (Op.ScalarCallSignature && Op.ScalarCallSignature->ReturnElements)
+    if (const auto Signature = boundFloatingCallArguments(
+            Op, TargetArch, Image ? Image->abiFormat() : BinaryFormat::Unknown))
+      if (auto Type = registerReturnType(std::vector<TypeRef>(
+              Signature->ReturnElements,
+              NdType::makeFloat(Signature->ReturnBytes /
+                                Signature->ReturnElements))))
+        return Type;
   if (Op.CalleeFloatReturnBytes && Op.Output.Kind == MedVar::Reg &&
       (Op.Output.RegOff == getTargetRegInfo(TargetArch).FPReturnReg ||
        (Op.ScalarCallSignature && TargetArch == Arch::X86 &&
@@ -1368,6 +1384,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                          : std::vector<SourceABIParameter>{};
   HighFunc Func;
   Func.Entry = Med.Entry;
+  Func.FrameBytes = Med.FrameBytes;
   Func.FrameSize = Med.FrameSize;
   Func.FrameHeadroom = Med.FrameHeadroom;
   // The incoming stack argument homes seeded below, written in place or read

@@ -21,6 +21,7 @@
 #include <QHelpEvent>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QPainter>
@@ -1351,11 +1352,18 @@ bool CodeText::event(QEvent *event) {
     auto *help = static_cast<QHelpEvent *>(event);
     const QPoint local = viewport()->mapFrom(this, help->pos());
     if (const QString id = blockAt(local); !id.isEmpty()) {
-      QToolTip::showText(help->globalPos(),
-                         library_.isFolded(id)
-                             ? tr("Expand block (Ctrl+Shift+])")
-                             : tr("Collapse block (Ctrl+Shift+[)"),
-                         this);
+      QToolTip::showText(
+          help->globalPos(),
+          library_.isFolded(id)
+              ? tr("Expand block (%1)")
+                    .arg(QKeySequence(Qt::CTRL | Qt::SHIFT |
+                                      Qt::Key_BracketRight)
+                             .toString(QKeySequence::NativeText))
+              : tr("Collapse block (%1)")
+                    .arg(
+                        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketLeft)
+                            .toString(QKeySequence::NativeText)),
+          this);
       return true;
     }
     if (const QString id = regionAt(local); !id.isEmpty()) {
@@ -1379,7 +1387,10 @@ bool CodeText::event(QEvent *event) {
                 ? tr("The attribute groups and metadata this function uses; "
                      "click to show them, Keypad - to fold them again.")
             : region.value(QStringLiteral("kind")) == "source-block"
-                ? tr("Expand block (Ctrl+Shift+])")
+                ? tr("Expand block (%1)")
+                      .arg(QKeySequence(Qt::CTRL | Qt::SHIFT |
+                                        Qt::Key_BracketRight)
+                               .toString(QKeySequence::NativeText))
                 : tr("%1\nRecognized library operation; click to show its "
                      "code.")
                       .arg(region.value(QStringLiteral("display_name"))

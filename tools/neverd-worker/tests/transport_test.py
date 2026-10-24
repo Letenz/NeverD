@@ -339,6 +339,10 @@ def run(executable):
         item = {"address": "0xffff800012343230", "action": "data"}
         assert client.call("item_define", item)["payload"]["kind"] == "byte"
         assert client.call("item_define", item)["payload"]["kind"] == "word"
+        word_rows = client.call("listing", {
+            "address": item["address"], "before": 0, "after": 2})["payload"]["lines"]
+        extent_rows = [row for row in word_rows if row["item"] == item["address"]]
+        assert extent_rows and all(row["item_size"] == "0x2" for row in extent_rows), word_rows
         bss = [" ".join(line["text"].split()) for line in client.call(
             "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
         assert any(line.startswith("word_FFFF800012343230 dw ?") for line in bss), bss
@@ -350,6 +354,10 @@ def run(executable):
         assert client.call("undo")["status"] == "ok"
         string = client.call("item_define", {"address": "0xffff800012343108", "action": "string"})["payload"]
         assert string == {"address": "0xffff800012343108", "kind": "string", "size": 10, "saved": True}, string
+        string_rows = client.call("listing", {
+            "address": string["address"], "before": 0, "after": 8})["payload"]["lines"]
+        extent_rows = [row for row in string_rows if row["item"] == string["address"]]
+        assert extent_rows and all(row["item_size"] == "0xa" for row in extent_rows), string_rows
         refused = client.call("item_define", {"address": BASE, "action": "data"})
         assert refused["error"]["code"] == "invalid_request", refused
         steps = [(step["kind"], step["address"]) for step in client.call("history")["payload"]["items"]

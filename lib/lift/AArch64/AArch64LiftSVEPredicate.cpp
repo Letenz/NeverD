@@ -15,8 +15,11 @@
 
 #include "AArch64LiftDetail.h"
 
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/AArch64Lifter.h"
+#include "neverd/support/BinaryEncoding.h"
 
 namespace neverd {
 
@@ -77,17 +80,23 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   // ========================================================================
   // SVE / SVE2 — predicate and control operations
   // ========================================================================
-  case AARCH64_INS_PTRUE:
-  case AARCH64_INS_PTRUES: {
-    if (ARM64.op_count >= 1) {
-      NdVar Dst = L.operandWrite(ARM64.operands[0]);
-      uint16_t ElemSize = sveElementSize(ARM64.operands[0].vas);
-      if (ElemSize != 0)
-        S.emitIntrinsic(Intrinsic::A64_SvePtrue, Dst,
-                        {NdVar::cst(31, 4), NdVar::cst(ElemSize, 1)});
-    }
+  case AARCH64_INS_PTRUE: {
+    const auto Operands =
+        aarch64_sve::decodePtrue(readLE<uint32_t>(Insn->bytes));
+    if (!Operands)
+      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
+    S.emitIntrinsic(
+        Intrinsic::A64_SvePtrue,
+        NdVar::reg(a64reg::P(Operands->Predicate), a64reg::PSize),
+        {NdVar::cst(Operands->Pattern, aarch64_sve::kPatternOperandBytes),
+         NdVar::cst(Operands->ElementBytes,
+                    aarch64_sve::kElementOperandBytes)});
     break;
   }
+  case AARCH64_INS_PTRUES:
+    // PTRUES also writes NZCV; the value-only predicate contract cannot
+    // publish those flag semantics.
+    throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
   case AARCH64_INS_PFALSE: {
     if (ARM64.op_count >= 1) {
       NdVar Dst = L.operandWrite(ARM64.operands[0]);
@@ -306,14 +315,11 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     }
     break;
   }
-  case AARCH64_INS_MOVPRFX: {
-    if (ARM64.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(ARM64.operands[0]);
-    NdVar Src = L.operandRead(S, ARM64.operands[1]);
-    S.emit(NdOp::COPY, Dst, {Src});
-    break;
-  }
+  case AARCH64_INS_MOVPRFX:
+    // MOVPRFX requires a compatible destructive instruction at PC+4. Until
+    // that pair has an owning validator, neither its unpredicated copy nor
+    // its merging/zeroing predicate operation has an admitted source shape.
+    throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
   case AARCH64_INS_MOVT: {
     if (ARM64.op_count < 2)
       break;

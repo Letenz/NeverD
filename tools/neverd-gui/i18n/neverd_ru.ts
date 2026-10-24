@@ -544,12 +544,12 @@
         <translation>Управлять подключениями MCP и общим доступом к сеансу</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>&amp;Расширения</translation>
+        <source>Analysis queries</source>
+        <translation>Аналитические запросы</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>Управлять декларативными расширениями</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>Выполнить встроенные или импортированные аналитические запросы</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -1118,6 +1118,22 @@
     <message>
         <source>x87 &amp;support…</source>
         <translation>&amp;Поддержка x87…</translation>
+    </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Сведения о раскрутке стека…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Просмотреть метаданные раскрутки стека для выбранной инструкции</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Копировать или сохранить выбранные байты</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Экспорт данных...</translation>
     </message>
 </context>
 <context>
@@ -1804,12 +1820,12 @@ Double-click to go to the declaration.</source>
         <translation>Сохранённые имена переменных относятся к другому варианту исходного кода</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Развернуть блок (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Развернуть блок (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Свернуть блок (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Свернуть блок (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2091,32 +2107,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>Импортировать манифест…</translation>
+        <source>Import queries…</source>
+        <translation>Импортировать запросы…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>Выполнить</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>Выгрузить</translation>
+        <source>Remove group</source>
+        <translation>Удалить группу</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>Импортируйте декларативный манифест, чтобы добавить команды и представления анализа.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>Выполняйте встроенные аналитические запросы или импортируйте определения запросов из файла JSON.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>Выберите команду расширения, чтобы просмотреть её результат.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>Выберите запрос и нажмите «Выполнить», чтобы увидеть результат.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>Импорт манифеста расширения</translation>
+        <source>Import analysis queries</source>
+        <translation>Импорт аналитических запросов</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>Манифесты (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>Определения запросов (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>Удалить все запросы в выбранной группе.</translation>
     </message>
 </context>
 <context>
@@ -2175,8 +2195,8 @@ Double-click to go to the declaration.</source>
         <translation>Полоса навигации</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>Расширения</translation>
+        <source>Analysis queries</source>
+        <translation>Аналитические запросы</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -2967,6 +2987,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>Эту ссылку заменила другая.</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>Команды списка имеют приоритет, пока список в фокусе.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Фильтр по действию, сочетанию клавиш или области</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Область действия</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Не назначено</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Представления анализа</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Рабочая область</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Быстрый фильтр</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Списки</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Добавить типы…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Изменить тип…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Удалить типы…</translation>
     </message>
 </context>
 <context>
@@ -3766,12 +3830,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Далее</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Предыдущее совпадение (Shift+Enter или Shift+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Предыдущее совпадение (%1 или %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Следующее совпадение (Enter или F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Следующее совпадение (%1 или %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4612,12 +4676,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+щелчок — открыть</translation>
+        <source>%1click to open</source>
+        <translation>%1щелчок — открыть</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Дважды щёлкните или Ctrl+щелчок, чтобы открыть %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Дважды щёлкните или %2щелчок, чтобы открыть %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4663,8 +4727,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Объявить</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Прочитать объявления (Ctrl+Enter)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Прочитать объявления (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4809,8 +4873,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Операнд сохраняет своё число.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>В программе нет структур и объединений. Объявите их в окне «Локальные типы» (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>В программе нет структур и объединений. Объявите их в окне «Локальные типы» (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6278,8 +6342,8 @@ Coverage: %7</source>
         <translation>Выберите функцию для изучения её соответствия.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Выбирайте блоки, чтобы следить за соответствиями. Ctrl+колесо меняет масштаб.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Выбирайте блоки, чтобы следить за соответствиями. %1колесо меняет масштаб.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -6376,6 +6440,14 @@ Coverage: %7</source>
     <message>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Поиск общих вычислений при изменённых зависимостях. Узлы, создающие внешние входные значения, остаются непроверенными. Включает гипотезы об областях SSA.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Оптимизированное SSA с представлениями параметров</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Представления параметров сравнивают младшие 32 бита подходящих 64-битных нативных параметров. Исходная разрядность и источники доступны для проверки.</translation>
     </message>
 </context>
 <context>
@@ -6475,6 +6547,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>Представление SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Оптимизированное SSA с представлениями параметров</translation>
     </message>
 </context>
 <context>
@@ -7258,6 +7334,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>Сопоставление внешних входных значений; создающие их узлы не сравнивались.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>параметр %1: младшие %2 из %3 бит</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Основной: %1
+Вторичный: %2
+Каждое использование проецируемого параметра читает одни и те же младшие биты. Поведение функции целиком не проверено.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Каждое использование этого параметра читает одни и те же младшие биты; исходная разрядность и нативное расположение сохранены.</translation>
     </message>
 </context>
 <context>
@@ -8125,6 +8219,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>не поддерживается</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Вернуть в главное окно</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>Готово: %1 байт.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>Готово: %1 байт. Показаны первые %2; копирование и сохранение используют весь диапазон.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Массив байтов C (десятичный)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Массив байтов C (шестнадцатеричный)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Строковый литерал C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Не удалось прочитать весь диапазон по адресу %1. Данные не экспортированы.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Копировать</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Не удалось сохранить %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Конечный адрес (включительно):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Введите допустимый диапазон адресов.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Экспорт данных</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>Можно экспортировать не более %1 байт; выберите меньший диапазон.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Формат:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Шестнадцатеричная строка</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Необработанные байты (только файл)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Чтение байтов...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Чтение байтов: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Сохранить как...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>Сохранено %1 байт в %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Шестнадцатеричная строка с пробелами</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Начальный адрес:</translation>
     </message>
 </context>
 </TS>

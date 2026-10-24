@@ -15,6 +15,7 @@
 
 #include "NeverDCLI.h"
 #include "ResourceLimits.h"
+#include "UnwindQuery.h"
 
 #include "neverd/dalvik/Budget.h"
 #include "neverd/diff/Limits.h"
@@ -1420,6 +1421,11 @@ ConcolicStringList ConcolicSolverGates(
 // JSON output option (shared)
 //===----------------------------------------------------------------------===//
 
+cl::opt<std::string>
+    InfoUnwindFrame(unwind_query::kOption, cl::desc(unwind_query::kDescription),
+                    cl::value_desc(unwind_query::kAddressValue),
+                    cl::sub(InfoCmd));
+
 cl::opt<bool>
     JsonOutput("json", cl::desc("Output as JSON"), cl::sub(InfoCmd),
                cl::sub(IdentifyCmd), cl::sub(FuncsCmd), cl::sub(DisasmCmd),
@@ -1521,11 +1527,12 @@ cl::opt<bool>
     DiffDataFlow("dataflow",
                  cl::desc("Capture bounded native SSA dependency evidence"),
                  cl::sub(DiffCmd));
-cl::opt<std::string>
-    DiffDataFlowProfile("dataflow-profile",
-                        cl::desc("SSA evidence profile: med-ssa-v2 (default) "
-                                 "or llvm-ssa-v1 (optimized)"),
-                        cl::sub(DiffCmd));
+cl::opt<std::string> DiffDataFlowProfile(
+    "dataflow-profile",
+    cl::desc("SSA evidence profile: med-ssa-v2 (default) "
+             "or llvm-ssa-v1 (optimized) or "
+             "llvm-parameter-ssa-v1 (native low-bit views)"),
+    cl::sub(DiffCmd));
 cl::opt<bool>
     DiffFlowFragments("flow-fragments",
                       cl::desc("Match finite SSA fragments with explicit "

@@ -24,6 +24,10 @@ namespace neverd::limits::loader {
   inline constexpr Type Name = Value;
 #include "neverd/loader/DWARF/AArch64ReturnAddressState.def"
 
+#define NEVERD_RA_QUERY_LIMIT(Type, Name, Value)                               \
+  inline constexpr Type Name = Value;
+#include "neverd/loader/ReturnAddressSigning.def"
+
 // include/neverd/loader/BinaryImageModel.h
 inline constexpr size_t kBinaryImageModelMaxDiagnostics = 64;
 

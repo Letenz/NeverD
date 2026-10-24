@@ -2,6 +2,7 @@
 #include "Engine.h"
 #include "Protocol.h"
 #include "ResourceLimits.h"
+#include "UnwindQuery.h"
 #include "WebEngine.h"
 
 #ifdef NEVERD_WORKER_HAS_MIMALLOC
@@ -351,6 +352,8 @@ Json hello() {
   if (Engine::findsCallPaths())
     for (const char *operation : {"call_paths", "call_tree"})
       result["capabilities"].push_back(operation);
+  if (Engine::reportsUnwindFrames())
+    result["capabilities"].push_back(unwind_query::kOperation);
   if (Engine::reportsX87Capabilities())
     result["capabilities"].push_back("x87_capabilities");
   result["web"] = WebEngine::capabilities();

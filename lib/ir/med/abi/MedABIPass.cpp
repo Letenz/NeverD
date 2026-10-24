@@ -418,63 +418,11 @@ boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
              Op.Output.Size < Op.CalleeFloatReturnBytes) {
     return std::nullopt;
   }
-  std::vector<TypeRef> Parameters;
-  for (size_t I = 0; I < Op.ScalarCallSignature->Scalars.size(); ++I) {
-    const auto &Parameter = Op.ScalarCallSignature->Scalars[I];
-    if (Op.Inputs[I + 1].Size < Parameter.Bytes ||
-        (Parameter.Pointer &&
-         (Parameter.Floating || Parameter.Bytes != Registers.PointerSize)))
+  for (size_t I = 0; I < Signature.Scalars.size(); ++I)
+    if (Op.Inputs[I + 1].Size < Signature.Scalars[I].Bytes)
       return std::nullopt;
-    Parameters.push_back(Parameter.Floating ? NdType::makeFloat(Parameter.Bytes)
-                         : Parameter.Pointer
-                             ? NdType::makePtr()
-                             : NdType::makeInt(Parameter.Bytes));
-    Parameters.back()->Size = Parameter.Bytes;
-  }
-  const auto Record = [](llvm::ArrayRef<TypeRef> Members) -> TypeRef {
-    if (Members.empty())
-      return nullptr;
-    for (const auto &Member : Members)
-      if (Member->Kind != NdTypeKind::Float ||
-          Member->Size != Members.front()->Size)
-        return nullptr;
-    auto Type = NdType::makeStruct(
-        std::vector<TypeRef>(Members.begin(), Members.end()));
-    if (Type)
-      Type->Passing = NdRecordPassing::ByValue;
-    return Type;
-  };
-  if (!Signature.ParameterElements.empty()) {
-    std::vector<TypeRef> Source;
-    size_t At = 0;
-    for (uint16_t Count : Signature.ParameterElements) {
-      const size_t Pieces = std::max<uint16_t>(Count, 1);
-      if (Pieces > Parameters.size() - At)
-        return std::nullopt;
-      TypeRef Type = Count
-                         ? Record(llvm::ArrayRef(Parameters).slice(At, Pieces))
-                         : Parameters[At];
-      if (!Type)
-        return std::nullopt;
-      Source.push_back(std::move(Type));
-      At += Pieces;
-    }
-    if (At != Parameters.size())
-      return std::nullopt;
-    Parameters = std::move(Source);
-  }
-  TypeRef Result = NdType::makeFloat(Signature.ReturnBytes);
-  if (Signature.ReturnElements) {
-    if (Signature.ReturnBytes % Signature.ReturnElements)
-      return std::nullopt;
-    std::vector<TypeRef> Members(
-        Signature.ReturnElements,
-        NdType::makeFloat(Signature.ReturnBytes / Signature.ReturnElements));
-    Result = Record(Members);
-  }
-  const auto Expected = floatingCallArguments(A, F, Result, Parameters);
-  return Expected && *Expected == *Op.ScalarCallSignature ? Expected
-                                                          : std::nullopt;
+  return floatingCallTypes(A, F, Signature) ? std::optional(Signature)
+                                            : std::nullopt;
 }
 
 std::optional<FloatingCallArguments>
@@ -1321,6 +1269,17 @@ void recoverCallAbi(
       constexpr int MaxArgs = limits::kMaxCallArgs;
       std::vector<MedVar> Found(MaxArgs);
       std::vector<bool> FoundMask(MaxArgs, false);
+      // A callee-read summary publishes its register uses before SSA. Those
+      // reaching operands survive propagation and call clobbers; scanning the
+      // physical registers again cannot replace them by incoming parameters
+      // or discard an unknown value that the callee still reads.
+      const bool SummarizedIntegerOperands =
+          Convention && Convention->RegisterArgumentsFromCalleeSummary &&
+          IntegerSummary &&
+          Op.CalleeRegisterArgs <= static_cast<int>(IntParamRegs.size()) &&
+          Op.NumInputs >= 1u + Op.CalleeRegisterArgs;
+      if (SummarizedIntegerOperands)
+        CalleeRegArgs = Op.CalleeRegisterArgs;
       // Slots filled by the stack-store scan (vs the register scan).  On i386 a
       // stack-argument slot index can fall into the integer-register slot range
       // (0,1) when the callee takes no integer register argument but does take
@@ -1329,7 +1288,7 @@ void recoverCallAbi(
       std::vector<bool> FromStackScan(MaxArgs, false);
       // The checked prefix and proven register tail already passed through
       // SSA. Keep those values when no setup write exists in this block.
-      if (HeaderVariadic)
+      if (HeaderVariadic || SummarizedIntegerOperands)
         for (int K = 0;
              K < Op.CalleeRegisterArgs && K < MaxArgs && K + 1 < Op.NumInputs;
              ++K) {
@@ -1727,7 +1686,8 @@ void recoverCallAbi(
 
       // An earlier call in the block may have clobbered the register of the
       // first argument (a Win64 thiscall helper clobbers rcx).
-      if (!CI.IsIndirect && Policy && Policy->ResolveFirstArgAfterCall)
+      if (!CI.IsIndirect && !SummarizedIntegerOperands && Policy &&
+          Policy->ResolveFirstArgAfterCall)
         Policy->ResolveFirstArgAfterCall(Ctx, Arg0FromInBlock);
 
       // A verified selector stub overwrites x1 before reading it. Even a

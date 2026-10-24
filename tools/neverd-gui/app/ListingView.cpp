@@ -29,6 +29,7 @@
 #include <QToolTip>
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <unordered_map>
 
 namespace neverd::gui {
@@ -308,6 +309,7 @@ void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
     const auto row = value.toObject();
     Line line;
     line.item = addressValue(row.value("item")).value_or(0);
+    line.itemSize = addressValue(row.value("item_size")).value_or(0);
     line.address = addressValue(row.value("address")).value_or(line.item);
     line.sub = row.value("sub").toInt();
     line.cls = row.value("cls").toInt();
@@ -696,6 +698,28 @@ std::optional<int> ListingView::currentOperand() const {
       }
   }
   return under;
+}
+
+std::optional<std::pair<Address, Address>> ListingView::byteSelection() const {
+  if (!rowsCurrent() || lines_.empty())
+    return std::nullopt;
+  const auto cursor = std::pair{cursorLine_, cursorColumn_};
+  const auto first = anchor_ ? std::min(*anchor_, cursor) : cursor;
+  const auto last = anchor_ ? std::max(*anchor_, cursor) : cursor;
+  Address begin = std::numeric_limits<Address>::max(), end = 0;
+  for (int i = first.first; i <= last.first; ++i) {
+    // A selection ending at the next line's start excludes that line.
+    if (i != first.first && i == last.first &&
+        last.second == firstColumn(lines_[i]))
+      break;
+    const auto &line = lines_[i];
+    if (!line.itemSize ||
+        line.itemSize - 1 > std::numeric_limits<Address>::max() - line.item)
+      return std::nullopt;
+    begin = std::min(begin, line.item);
+    end = std::max(end, line.item + line.itemSize - 1);
+  }
+  return std::pair{begin, end};
 }
 
 QString ListingView::selectedText() const {

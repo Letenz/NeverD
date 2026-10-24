@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -8164,6 +8165,145 @@ TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   EXPECT_EQ(Reads[Family(x86reg::RDX)], 0u);
   EXPECT_EQ(Reads[Family(x86reg::RCX)], 4u);
   EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
+}
+
+TEST(CallRegisterEffects, ExitConstantsRequireAgreementAtEveryReturn) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  const auto RCX = NdVar::reg(x86reg::RCX, 8);
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    SCOPED_TRACE(Case);
+    LowFunc Function = makeOneBlockLow(0x1000, "exits", [&](auto Push) {
+      Push(NdOp::COPY, RCX, {NdVar::cst(27, 8)});
+    });
+    LowBlock First = Function.Blocks.front();
+    First.Id = 1;
+    First.StartAddr = 0x1100;
+    LowBlock Second = First;
+    Second.Id = 2;
+    Second.StartAddr = 0x1200;
+    if (Case == 1)
+      Second.Ops.front().Inputs[0] = NdVar::cst(28, 8);
+    if (Case == 2)
+      Second.Ops.erase(Second.Ops.begin());
+    if (Case == 3) {
+      Second.Ops.front().Output.Size = 1;
+      Second.Ops.front().Inputs[0].Size = 1;
+    }
+    LowBlock Entry;
+    Entry.Id = 0;
+    Entry.StartAddr = Function.Entry;
+    Entry.Succs = {1, 2};
+    LowOp Branch;
+    Branch.Opcode = NdOp::COND_BR;
+    Branch.addInput(NdVar::cst(First.StartAddr, 8));
+    Branch.addInput(NdVar::reg(x86reg::ZF, 1));
+    Entry.Ops.push_back(Branch);
+    Function.Blocks = {Entry, First, Second};
+    if (Case == 4)
+      std::swap(Function.Blocks[1], Function.Blocks[2]);
+    const auto Effect = localRegisterEffect(Image, Function);
+    const GPRExitConstants Expected = Case == 0 || Case == 4
+                                          ? GPRExitConstants{{x86reg::RCX, 27}}
+                                          : GPRExitConstants{};
+    EXPECT_EQ(Effect.ExitConstants, Expected);
+    const auto Summaries =
+        solveCallRegisterEffects({{Function.Entry, Effect}}, 0, 0);
+    if (Expected.empty())
+      EXPECT_FALSE(Summaries.ExitConstants.count(Function.Entry));
+    else
+      EXPECT_EQ(Summaries.ExitConstants.at(Function.Entry), Expected);
+  }
+}
+
+TEST(CallRegisterEffects, ExitConstantsKeepUnknownAndAddressBoundaries) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  const auto RCX = NdVar::reg(x86reg::RCX, 8);
+  for (unsigned Case = 0; Case != 9; ++Case) {
+    SCOPED_TRACE(Case);
+    LowFunc Function = makeOneBlockLow(0x1000, "opaque", [&](auto Push) {
+      auto Constant = NdVar::cst(27, 8);
+      if (Case == 0)
+        Constant.Provenance = ConstantAddressProvenance::CodeAddress;
+      Push(NdOp::COPY, RCX, {Constant});
+      if (Case == 1)
+        Push(NdOp::CALL, NdVar::reg(x86reg::RAX, 8), {NdVar::cst(0x2000, 8)});
+      if (Case == 2)
+        Push(NdOp::LOAD, RCX, {NdVar::reg(x86reg::RDX, 8)});
+      if (Case == 3)
+        Push(NdOp::COPY, RCX, {NdVar::reg(x86reg::RDX, 8)});
+      if (Case == 4)
+        Push(NdOp::COPY, NdVar::reg(x86reg::RCX + 1, 1),
+             {NdVar::reg(x86reg::RDX, 1)});
+      if (Case == 5)
+        Push(NdOp::INTRINSIC, {}, {});
+    });
+    if (Case == 6)
+      Function.Blocks.front().ExceptionalSuccs.push_back({-1, 0});
+    if (Case == 7)
+      Function.ModuleAnalysisRoots.insert(0x1001);
+    if (Case == 8)
+      Function.UnsafeIndirectBranchAddresses.insert(0x1001);
+    EXPECT_TRUE(localRegisterEffect(Image, Function).ExitConstants.empty());
+  }
+}
+
+TEST(CallRegisterEffects, ExitConstantsUseScalarWidthsAndBoundedWork) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  const auto ECX = NdVar::reg(x86reg::RCX, 4);
+  const auto RCX = NdVar::reg(x86reg::RCX, 8);
+  LowFunc Function = makeOneBlockLow(0x1000, "scalar", [&](auto Push) {
+    Push(NdOp::COPY, ECX, {NdVar::cst(0xFFFFFFFE, 4)});
+    Push(NdOp::INT_ADD, ECX, {ECX, NdVar::cst(3, 4)});
+    Push(NdOp::INT_ZEXT, RCX, {ECX});
+  });
+  const GPRExitConstants Expected{{x86reg::RCX, 1}};
+  EXPECT_EQ(localRegisterEffect(Image, Function).ExitConstants, Expected);
+  auto &Ops = Function.Blocks.front().Ops;
+  const LowOp Padding = Ops.front();
+  Ops.insert(Ops.begin(), limits::kMaxCallExitConstantOps - Ops.size(),
+             Padding);
+  EXPECT_EQ(localRegisterEffect(Image, Function).ExitConstants, Expected);
+  Ops.insert(Ops.begin(), Padding);
+  EXPECT_TRUE(localRegisterEffect(Image, Function).ExitConstants.empty());
+}
+
+TEST(CallRegisterEffects, ExitConstantsDoNotReplaceABIResultCarriers) {
+  const auto RAX = NdVar::reg(x86reg::RAX, 8);
+  LowFunc Function = makeOneBlockLow(0x1000, "caller", [&](auto Push) {
+    Push(NdOp::CALL, RAX, {NdVar::cst(0x2000, 8)});
+    Push(NdOp::STORE, {}, {NdVar::cst(0x8000, 8), NdVar::reg(x86reg::RDX, 8)});
+    Push(NdOp::STORE, {}, {NdVar::cst(0x8008, 8), NdVar::reg(x86reg::RCX, 8)});
+  });
+  const std::map<va_t, GPRExitConstants> Constants{
+      {0x2000, {{x86reg::RAX, 1}, {x86reg::RDX, 77}, {x86reg::RCX, 27}}}};
+  LowToMedConverter Converter;
+  Converter.setCallExitConstants(&Constants);
+  const MedFunc Med = Converter.convert(Function, Arch::X64, BinaryFormat::ELF);
+  unsigned Stores = 0;
+  for (const MedBlock &Block : Med.Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2) {
+        ++Stores;
+        if (Op.Inputs[0].ConstVal == 0x8000)
+          EXPECT_FALSE(Op.Inputs[1].isConst());
+        else {
+          ASSERT_TRUE(Op.Inputs[1].isConst());
+          EXPECT_EQ(Op.Inputs[1].ConstVal, 27u);
+        }
+      }
+  EXPECT_EQ(Stores, 2u);
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  const LowFunc ResultOnly = makeOneBlockLow(0x2000, "result", [&](auto Push) {
+    Push(NdOp::COPY, RAX, {NdVar::cst(1, 8)});
+    Push(NdOp::COPY, NdVar::reg(x86reg::RDX, 8), {NdVar::cst(77, 8)});
+  });
+  EXPECT_TRUE(localRegisterEffect(Image, ResultOnly).ExitConstants.empty());
 }
 
 TEST(CallRegisterEffects, OverwrittenCopiesDoNotConsumeIncomingArguments) {

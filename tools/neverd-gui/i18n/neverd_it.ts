@@ -544,12 +544,12 @@
         <translation>Gestisci le connessioni MCP e la condivisione della sessione</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>Es&amp;tensioni</translation>
+        <source>Analysis queries</source>
+        <translation>Query di analisi</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>Gestisci le estensioni dichiarative</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>Esegui query di analisi integrate o importate</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -1118,6 +1118,22 @@
     <message>
         <source>x87 &amp;support…</source>
         <translation>&amp;Supporto x87…</translation>
+    </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Informazioni di unwinding…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Esamina i metadati di unwinding dell’istruzione selezionata</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copia o salva i byte selezionati</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Esporta dati...</translation>
     </message>
 </context>
 <context>
@@ -1799,12 +1815,12 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation>I nomi delle variabili salvati appartengono a un&apos;altra versione del sorgente generato</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Espandi blocco (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Espandi blocco (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Comprimi blocco (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Comprimi blocco (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2086,32 +2102,36 @@ Fai doppio clic per andare alla dichiarazione.</translation>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>Importa manifesto…</translation>
+        <source>Import queries…</source>
+        <translation>Importa query…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>Esegui</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>Rimuovi</translation>
+        <source>Remove group</source>
+        <translation>Rimuovi gruppo</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>Importa un manifesto dichiarativo per aggiungere comandi e viste di analisi.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>Esegui query di analisi integrate o importa definizioni di query da un file JSON.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>Seleziona un comando di estensione per esaminarne il risultato.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>Seleziona una query e premi Esegui per visualizzare il risultato.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>Importa manifesto di estensione</translation>
+        <source>Import analysis queries</source>
+        <translation>Importa query di analisi</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>Manifesti (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>Definizioni di query (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>Rimuovi tutte le query del gruppo selezionato.</translation>
     </message>
 </context>
 <context>
@@ -2169,8 +2189,8 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation>Banda di navigazione</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>Estensioni</translation>
+        <source>Analysis queries</source>
+        <translation>Query di analisi</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -2961,6 +2981,50 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Another link took this one's place.</source>
         <translation>Un altro link ha preso il posto di questo.</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>I comandi dell’elenco hanno priorità quando l’elenco ha il focus.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filtra per azione, scorciatoia o ambito</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Ambito</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Non assegnata</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Viste di analisi</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Area di lavoro</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Filtro rapido</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Elenchi</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Aggiungi tipi…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Modifica tipo…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Elimina tipi…</translation>
     </message>
 </context>
 <context>
@@ -3759,12 +3823,12 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>Successivo</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Corrispondenza precedente (Maiusc+Invio o Maiusc+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Corrispondenza precedente (%1 o %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Corrispondenza successiva (Invio o F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Corrispondenza successiva (%1 o %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4595,12 +4659,12 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+clic per aprire</translation>
+        <source>%1click to open</source>
+        <translation>%1clic per aprire</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Fai doppio clic o Ctrl+clic per aprire %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Fai doppio clic o %2clic per aprire %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4645,8 +4709,8 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>Dichiara</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Leggi le dichiarazioni (Ctrl+Invio)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Leggi le dichiarazioni (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4786,8 +4850,8 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <translation>L&apos;operando mantiene il suo numero.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>Il programma non ha strutture né unioni. Dichiarale in Tipi locali (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>Il programma non ha strutture né unioni. Dichiarale in Tipi locali (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6242,8 +6306,8 @@ Copertura: %7</translation>
         <translation>Seleziona una funzione per esaminarne la controparte.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Seleziona blocchi per seguirne le controparti. Ctrl+rotellina regola lo zoom.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Seleziona blocchi per seguirne le controparti. %1rotellina regola lo zoom.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -6340,6 +6404,14 @@ Copertura: %7</translation>
     <message>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Trova calcoli comuni anche se le dipendenze cambiano. I produttori degli input esterni restano non verificati. Include le ipotesi sulle regioni SSA.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA ottimizzato con viste dei parametri</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Le viste dei parametri confrontano i 32 bit meno significativi dei parametri nativi a 64 bit idonei. Le larghezze e le origini originali restano consultabili.</translation>
     </message>
 </context>
 <context>
@@ -6439,6 +6511,10 @@ Seleziona un&apos;operazione per seguirne le dipendenze. Le operazioni sintetich
     <message>
         <source>SSA representation: %1</source>
         <translation>Rappresentazione SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA ottimizzato con viste dei parametri</translation>
     </message>
 </context>
 <context>
@@ -7222,6 +7298,24 @@ Spiegazioni euristiche, comportamento non convalidato.
 %1</source>
         <translation>Corrispondenza degli input esterni; i produttori non sono stati confrontati.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>parametro %1: %2 bit meno significativi su %3</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Primario: %1
+Secondario: %2
+Ogni uso di un parametro proiettato legge gli stessi bit meno significativi. Il comportamento dell’intera funzione resta non verificato.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Ogni uso di questo parametro legge gli stessi bit meno significativi; la larghezza originale e la posizione nativa vengono conservate.</translation>
     </message>
 </context>
 <context>
@@ -8089,6 +8183,100 @@ SHA-256 secondario: %3
     <message>
         <source>unsupported</source>
         <translation>non supportato</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Riaggancia alla finestra principale</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 byte pronti.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 byte pronti. L’anteprima mostra i primi %2; copia e salvataggio usano l’intero intervallo.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Array di byte C (decimale)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Array di byte C (esadecimale)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Letterale stringa C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Impossibile leggere l’intero intervallo a %1. Nessun dato esportato.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copia</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Impossibile salvare %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Indirizzo finale (incluso):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Inserisci un intervallo di indirizzi valido.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Esporta dati</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>È possibile esportare al massimo %1 byte; seleziona un intervallo più piccolo.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Formato:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Stringa esadecimale</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Byte grezzi (solo file)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Lettura dei byte...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Lettura dei byte: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Salva con nome...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 byte salvati in %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Stringa esadecimale con spazi</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Indirizzo iniziale:</translation>
     </message>
 </context>
 </TS>

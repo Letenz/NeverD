@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../X86ScalarSystem.h"
 #include "../X86SystemRegister.h"
 
 #include "neverd/backend/Limits.h"
@@ -45,48 +46,176 @@ static const AsmToCEntry X86AsmTable[] = {
 
 } // anonymous namespace
 
+bool isX86ScalarSystemNativeName(llvm::StringRef Name) {
+  return x86ScalarSystemNative(std::string_view(Name.data(), Name.size()))
+      .has_value();
+}
+
+std::optional<InlineAsmRender>
+renderX86ScalarSystemCall(Arch TheArch, BinaryFormat Format,
+                          const llvm::CallBase &Call,
+                          const std::string &ResultName, bool ResultLive,
+                          const std::vector<std::string> &Args) {
+  auto Reject = []() -> std::optional<InlineAsmRender> {
+    throw std::invalid_argument("unsupported scalar x86 system call contract");
+  };
+  std::optional<X86ScalarSystemNative> P;
+  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (const auto *Callee = Call.getCalledFunction()) {
+    P = x86ScalarSystemNative(Callee->getName().str());
+    if (!P)
+      return std::nullopt;
+    if (!Callee->isIntrinsic() || !Callee->isDeclaration())
+      return Reject();
+  } else if (Asm) {
+    for (const auto &Candidate : X86ScalarSystemNativeInventory) {
+      std::string Text = Candidate.Mnemonic;
+      if (Candidate.Port)
+        Text += Candidate.Write ? " $0, $1" : " $1, $0";
+      else if (!Candidate.Write && TheArch == Arch::X64)
+        Text += "\n\tshlq $$32, %rdx\n\torq %rdx, %rax";
+      if (Text == Asm->getAsmString()) {
+        P = Candidate;
+        break;
+      }
+    }
+    if (!P)
+      return std::nullopt;
+    if (!Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
+        Asm->getDialect() != llvm::InlineAsm::AD_ATT)
+      return Reject();
+  } else {
+    return std::nullopt;
+  }
+  const bool SplitMsr = Asm && !P->Port && P->Write;
+  const bool Reverse = Asm && P->Port && P->Write;
+  if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
+      Call.getNumOperandBundles() || Call.doesNotReturn() ||
+      Call.getCallingConv() != llvm::CallingConv::C ||
+      Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
+      Call.getFunctionType()->isVarArg() ||
+      Call.arg_size() != P->arguments() + unsigned(SplitMsr) ||
+      Args.size() != Call.arg_size() ||
+      (P->Write ? !Call.getType()->isVoidTy()
+                : !Call.getType()->isIntegerTy(P->Bytes * 8)) ||
+      (ResultLive && !P->Write && ResultName.empty()))
+    return Reject();
+  std::vector<std::string> Arguments;
+  bool ImmediatePort = false;
+  for (unsigned I = 0; I < Call.arg_size(); ++I) {
+    const unsigned Input = Reverse ? 1 - I : I;
+    const auto *Value = Call.getArgOperand(Input);
+    const unsigned Bytes = SplitMsr ? 4 : P->argumentBytes(I);
+    if (Asm && P->Port && I == 0)
+      if (const auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Value))
+        ImmediatePort = Constant->getType()->isIntegerTy(8) &&
+                        Constant->getZExtValue() <= UINT8_MAX;
+    if (!Value->getType()->isIntegerTy(Bytes * 8) && !(I == 0 && ImmediatePort))
+      return Reject();
+    Arguments.push_back(Args[Input]);
+  }
+  if (Asm) {
+    std::string Constraints;
+    if (P->Port)
+      Constraints = std::string(P->Write ? "{ax}," : "={ax},") +
+                    (ImmediatePort ? "N" : "{dx}") + ",~{memory}";
+    else if (P->Write)
+      Constraints = "{ecx},{eax},{edx},~{memory}";
+    else
+      Constraints = TheArch == Arch::X64 ? "={rax},{ecx},~{rdx},~{memory}"
+                                         : "=A,{ecx},~{memory}";
+    if (Constraints != Asm->getConstraintString())
+      return Reject();
+  }
+  if (SplitMsr) {
+    Arguments[1] = "((uint64_t)(uint32_t)(" + Arguments[2] +
+                   ") << 32) | (uint32_t)(" + Arguments[1] + ")";
+    Arguments.pop_back();
+  }
+  const std::string Prefix = P->Write     ? ""
+                             : ResultLive ? ResultName + " = "
+                                          : "(void)";
+  return InlineAsmRender{
+      Prefix + renderX86ScalarSystemExpression(*P, Arguments) + ";\n",
+      Format == BinaryFormat::COFF};
+}
+
+bool isX86SystemRegisterNativeName(llvm::StringRef Name) {
+  if (!Name.consume_front("llvm.x86."))
+    return false;
+  Name.consume_back("32");
+  return Name == "readcr" || Name == "writecr" || Name == "readdr" ||
+         Name == "writedr";
+}
+
 std::optional<InlineAsmRender>
 renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
-                            const llvm::CallInst &Call,
+                            const llvm::CallBase &Call,
                             const std::string &ResultName, bool ResultLive,
                             const std::vector<std::string> &Args) {
-  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
-  if (!Asm)
-    return std::nullopt;
-  llvm::StringRef Text = Asm->getAsmString();
-  if (!Text.contains("%cr") && !Text.contains("%dr"))
-    return std::nullopt;
   auto Reject = []() -> std::optional<InlineAsmRender> {
     throw std::invalid_argument(
-        "unsupported x86 system register assembly contract");
+        "unsupported x86 system register call contract");
   };
-  if (!Text.consume_front("mov "))
-    return Reject();
-  auto [First, Second] = Text.split(',');
-  First = First.trim();
-  Second = Second.trim();
-  const bool Read = Second == "$0";
-  const auto Reg = Read ? First : Second;
-  uint64_t Index;
-  if ((!Reg.starts_with("%cr") && !Reg.starts_with("%dr")) ||
-      Reg.drop_front(3).getAsInteger(10, Index))
-    return Reject();
-  const bool Debug = Reg.starts_with("%dr");
-  const std::string CName = std::string(Read ? "__read" : "__write") +
-                            (Debug ? "dr" : "cr" + std::to_string(Index));
-  const auto P =
-      x86SystemRegisterAsm(intrinsicFromName(CName.c_str()), TheArch, Index);
-  if (!P || P->Text != Asm->getAsmString() ||
-      P->Constraints != Asm->getConstraintString() || !Asm->hasSideEffects() ||
-      Asm->isAlignStack() || Asm->canThrow() ||
-      Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
-      Call.getNumOperandBundles() ||
+  std::optional<X86SystemRegisterAsm> P;
+  unsigned FirstValue = 0;
+  if (const auto *Callee = Call.getCalledFunction();
+      Callee && isX86SystemRegisterNativeName(Callee->getName())) {
+    if (!Callee->isIntrinsic() || !Callee->isDeclaration() || Call.arg_empty())
+      return Reject();
+    const auto *Index =
+        llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(0));
+    if (!Index || !Index->getType()->isIntegerTy(32))
+      return Reject();
+    auto Access = Callee->getName().drop_front(9);
+    Access.consume_back("32");
+    const bool Debug = Access.ends_with("dr");
+    const std::string CName =
+        "__" + Access.str() +
+        (Debug ? "" : std::to_string(Index->getZExtValue()));
+    P = x86SystemRegisterAsm(intrinsicFromName(CName.c_str()), TheArch,
+                             Index->getZExtValue());
+    if (!P || P->LLVMName != Callee->getName() ||
+        Call.getCallingConv() != llvm::CallingConv::C)
+      return Reject();
+    FirstValue = 1;
+  } else {
+    const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+    if (!Asm)
+      return std::nullopt;
+    llvm::StringRef Text = Asm->getAsmString();
+    if (!Text.contains("%cr") && !Text.contains("%dr"))
+      return std::nullopt;
+    if (!Text.consume_front("mov "))
+      return Reject();
+    auto [First, Second] = Text.split(',');
+    First = First.trim();
+    Second = Second.trim();
+    const bool Read = Second == "$0";
+    const auto Reg = Read ? First : Second;
+    uint64_t Index;
+    if ((!Reg.starts_with("%cr") && !Reg.starts_with("%dr")) ||
+        Reg.drop_front(3).getAsInteger(10, Index))
+      return Reject();
+    const bool Debug = Reg.starts_with("%dr");
+    const std::string CName = std::string(Read ? "__read" : "__write") +
+                              (Debug ? "dr" : "cr" + std::to_string(Index));
+    P = x86SystemRegisterAsm(intrinsicFromName(CName.c_str()), TheArch, Index);
+    if (!P || P->Text != Asm->getAsmString() ||
+        P->Constraints != Asm->getConstraintString() ||
+        !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
+        Asm->getDialect() != llvm::InlineAsm::AD_ATT)
+      return Reject();
+  }
+  if (Call.getNumOperandBundles() ||
       Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
       Call.doesNotReturn() || Call.getFunctionType()->isVarArg() ||
-      Call.arg_size() != (P->Write ? 1 : 0) || Args.size() != Call.arg_size() ||
+      Call.arg_size() != FirstValue + unsigned(P->Write) ||
+      Args.size() != Call.arg_size() ||
       (P->Write
-           ? !Call.getType()->isVoidTy() ||
-                 !Call.getArgOperand(0)->getType()->isIntegerTy(8 * P->Bytes)
+           ? !Call.getType()->isVoidTy() || !Call.getArgOperand(FirstValue)
+                                                 ->getType()
+                                                 ->isIntegerTy(8 * P->Bytes)
            : !Call.getType()->isIntegerTy(8 * P->Bytes)) ||
       (ResultLive && !P->Write && ResultName.empty()))
     return Reject();
@@ -96,7 +225,10 @@ renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
                              : ResultLive ? ResultName + " = "
                                           : "(void)";
   return InlineAsmRender{
-      Prefix + renderX86SystemRegisterExpression(*P, Microsoft, Args) + ";\n",
+      Prefix +
+          renderX86SystemRegisterExpression(
+              *P, Microsoft, {Args.begin() + FirstValue, Args.end()}) +
+          ";\n",
       Microsoft};
 }
 

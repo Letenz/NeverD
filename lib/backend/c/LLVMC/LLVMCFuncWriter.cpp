@@ -27,6 +27,7 @@
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
+#include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/libc/LibCNames.h"
@@ -2145,6 +2146,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
 }
 
 bool LLVMCWriter::isUnknownCopyInst(const llvm::Instruction &Inst) const {
+  if (llvm_source_unknown::isValue(&Inst))
+    return true;
   if (isCallClobberName(Inst.getName()))
     return true;
   if (const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst)) {
@@ -7609,6 +7612,11 @@ bool LLVMCWriter::regionBeforeSkipTarget(
     if (!Cur || Cur == SkipTarget || Cur == From || In.count(Cur) ||
         SkipChain.count(Cur))
       continue;
+    // This region is printed in function layout, starting at RegionStart.
+    // An earlier target has already been printed or would precede the region's
+    // entry. Moving it here duplicates labels and can execute the wrong block.
+    if (Cur != RegionStart && !Before(RegionStart, Cur))
+      return false;
     // An empty hop, or a single-entry block with real instructions, may be
     // laid out after the shared exit and still fall into a block before it.
     const bool LateFromRegion = !Before(Cur, SkipTarget) &&
@@ -9374,6 +9382,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     }
   }
 
+  if (Opts.EmitComments)
+    for (const auto &Bytes : readSourceFrameBytes(Fn))
+      if (const auto Text = sourceFrameStringComment(Bytes)) {
+        emitIndent(1);
+        OS << "/* " << *Text << " */\n";
+      }
   BufOS.flush();
   const size_t DeclInsertPos = Buffered.size();
   emitFunctionDecls(Fn);

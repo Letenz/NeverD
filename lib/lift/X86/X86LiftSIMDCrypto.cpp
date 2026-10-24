@@ -88,13 +88,16 @@ bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_VSHA512RNDS2:
     return liftSHA512(L, S, Insn, X86);
 
+  // HLE prefixes belong to their memory instruction, not a standalone NOP.
+  case X86_INS_XACQUIRE:
+  case X86_INS_XRELEASE:
+    return false;
+
   // Intel TSX (transactional memory) instructions.
   case X86_INS_XBEGIN:
   case X86_INS_XEND:
   case X86_INS_XABORT:
-  case X86_INS_XTEST:
-  case X86_INS_XACQUIRE:
-  case X86_INS_XRELEASE: {
+  case X86_INS_XTEST: {
     if (InsnId == X86_INS_XABORT) {
       // xabort imm8 — capture the immediate so codegen can re-emit
       // `xabort $imm` (a bare `xabort` is rejected: too few operands).
@@ -118,12 +121,6 @@ bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     case X86_INS_XTEST:
       Id = Intrinsic::Xtest;
       break;
-    case X86_INS_XACQUIRE:
-      Id = Intrinsic::Xacquire;
-      break;
-    case X86_INS_XRELEASE:
-      Id = Intrinsic::Xrelease;
-      break;
     default:
       Id = Intrinsic::Xbegin;
       break;
@@ -138,7 +135,7 @@ bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     }
     if (Id != Intrinsic::Xbegin) {
-      // XEND and the XACQUIRE/XRELEASE hints write no register.
+      // XEND writes no register.
       S.emitIntrinsic(Id, NdVar());
       break;
     }
@@ -146,21 +143,16 @@ bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     break;
   }
 
-  // BNDxxx — MPX bounds (deprecated). Treat as side-effect or COPY.
+  // MPX owns bounds-register state, bounds tables and #BR completion. An
+  // ordinary COPY loses those semantics even on hosts that ignore MPX.
   case X86_INS_BNDMK:
   case X86_INS_BNDMOV:
   case X86_INS_BNDCL:
   case X86_INS_BNDCU:
   case X86_INS_BNDCN:
   case X86_INS_BNDLDX:
-  case X86_INS_BNDSTX: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    S.emit(NdOp::COPY, Dst, {Src});
-    break;
-  }
+  case X86_INS_BNDSTX:
+    return false;
 
   case X86_INS_AESENC:
   case X86_INS_VAESENC: {

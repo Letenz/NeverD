@@ -3,10 +3,13 @@
 #include "../Config.h"
 #include "Theme.h"
 
+#include <QContextMenuEvent>
+#include <QCoreApplication>
 #include <QCursor>
 #include <QEnterEvent>
 #include <QHoverEvent>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QStyle>
@@ -15,8 +18,10 @@
 #include <cmath>
 #include <kddockwidgets/Config.h>
 #include <kddockwidgets/KDDockWidgets.h>
+#include <kddockwidgets/core/DockWidget.h>
 #include <kddockwidgets/core/MainWindow.h>
 #include <kddockwidgets/core/Separator.h>
+#include <kddockwidgets/core/TabBar.h>
 #include <kddockwidgets/qtcommon/View.h>
 #include <kddockwidgets/qtwidgets/ViewFactory.h>
 #include <kddockwidgets/qtwidgets/views/FloatingWindow.h>
@@ -181,6 +186,26 @@ public:
   }
 
 protected:
+  void contextMenuEvent(QContextMenuEvent *event) override {
+    const int index = event->reason() == QContextMenuEvent::Keyboard
+                          ? currentIndex()
+                          : tabAt(event->pos());
+    auto *dock = tabBar()->dockWidgetAt(index);
+    if (!dock || !dock->isFloating() || !dock->hasPreviousDockedLocation())
+      return;
+    bool dockBack = false;
+    {
+      QMenu menu(this);
+      auto *restore = menu.addAction(
+          QCoreApplication::translate("Docking", "Dock back into main window"));
+      restore->setObjectName(QStringLiteral("dockBack"));
+      dockBack = menu.exec(event->globalPos()) == restore;
+    }
+    // Docking can delete this tab bar and its floating parent.
+    if (dockBack)
+      dock->setFloating(false);
+  }
+
   bool event(QEvent *event) override {
     const bool handled = TabBar::event(event);
     switch (event->type()) {
@@ -286,12 +311,14 @@ void configureDocking() {
   KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
   auto &config = KDDockWidgets::Config::self();
   // Every docked window carries a closable tab, as in classic disassemblers.
+  // Floating windows keep the client title bar: on Wayland the native title
+  // bar only moves windows, while the client bar performs docking drags.
   config.setFlags(KDDockWidgets::Config::Flag_AlwaysShowTabs |
                   KDDockWidgets::Config::Flag_HideTitleBarWhenTabsVisible |
+                  KDDockWidgets::Config::Flag_AlwaysTitleBarWhenFloating |
                   KDDockWidgets::Config::Flag_TabsHaveCloseButton |
                   KDDockWidgets::Config::Flag_AllowReorderTabs |
-                  KDDockWidgets::Config::Flag_TitleBarIsFocusable |
-                  KDDockWidgets::Config::Flag_DoubleClickMaximizes);
+                  KDDockWidgets::Config::Flag_TitleBarIsFocusable);
   // Setting the thickness resets the spacing too, so it comes first.
   config.setSeparatorThickness(
       ::neverd::limits::gui_config::kDockingSeparatorGrabWidth);

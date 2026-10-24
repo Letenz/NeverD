@@ -18,6 +18,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <algorithm>
+#include <limits>
 
 namespace neverd::gui {
 namespace {
@@ -100,8 +101,18 @@ void HexView::setTextEncoding(const QString &name) {
   clearChunks();
 }
 
+void HexView::setExportAction(QAction *action) {
+  ExportAction = action;
+  addAction(action);
+}
+
 void HexView::contextMenuEvent(QContextMenuEvent *event) {
+  setFocus(Qt::MouseFocusReason);
   QMenu menu(this);
+  if (ExportAction) {
+    menu.addAction(ExportAction);
+    menu.addSeparator();
+  }
   auto *encodings = menu.addMenu(tr("Text encoding"));
   auto *group = new QActionGroup(encodings);
   const auto add = [&](const QString &label, const QString &name) {
@@ -501,13 +512,10 @@ void HexView::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void HexView::copySelection() {
-  std::pair<Address, Address> range;
-  if (const auto selected = selection())
-    range = *selected;
-  else if (current_)
-    range = {*current_, *current_ + Address(currentSize_) - 1};
-  else
+  const auto selected = byteSelection();
+  if (!selected)
     return;
+  const auto range = *selected;
   if (range.second - range.first >= MaxCopyBytes) {
     emit session_.message(tr("Copy takes at most %1 bytes; select fewer.")
                               .arg(qulonglong(MaxCopyBytes)),
@@ -516,6 +524,16 @@ void HexView::copySelection() {
   }
   pendingCopy_ = range;
   completeCopy();
+}
+
+std::optional<std::pair<Address, Address>> HexView::byteSelection() const {
+  if (const auto selected = selection())
+    return selected;
+  if (!current_ || currentSize_ <= 0 ||
+      Address(currentSize_ - 1) >
+          std::numeric_limits<Address>::max() - *current_)
+    return std::nullopt;
+  return std::pair{*current_, *current_ + Address(currentSize_) - 1};
 }
 
 void HexView::completeCopy() {

@@ -10,6 +10,8 @@
 #include <list>
 #include <optional>
 
+class QAction;
+
 namespace neverd::gui {
 
 class AddressSpace;
@@ -33,9 +35,11 @@ public:
   /// The selected bytes, first and last, when more than the current one are
   /// selected: by dragging, shift-clicking or Shift and the arrow keys.
   std::optional<std::pair<Address, Address>> selection() const;
+  std::optional<std::pair<Address, Address>> byteSelection() const;
   /// Copy the selected bytes, or the current item's, as hex text
   /// (`48 89 5C 24 08`) once every one of them has loaded.
   void copySelection();
+  void setExportAction(QAction *action);
   std::optional<Address> currentAddress() const { return current_; }
   /// Map rows again after the regions of the address space changed.
   void addressSpaceChanged();
@@ -104,6 +108,7 @@ private:
   int visibleRows() const;
 
   Session &session_;
+  QAction *ExportAction = nullptr;
   const AddressSpace &space_;
   mutable QHash<Address, Chunk> chunks_;
   mutable std::list<Address> order_;

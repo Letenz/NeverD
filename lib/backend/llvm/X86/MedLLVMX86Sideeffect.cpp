@@ -18,12 +18,14 @@
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
+#include "neverd/backend/llvm/X86ScalarSystemNative.h"
 #include "neverd/backend/llvm/X86SystemRegisterAsm.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-x86-sideeffect"
 #include "neverd/ir/X87Stack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
+#include "neverd/ir/intrinsics/X86Unsupported.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/ADT/APInt.h"
@@ -32,6 +34,8 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicsX86.h"
+
+#include <utility>
 
 namespace neverd {
 
@@ -436,7 +440,7 @@ bool MedLLVMEmitter::emitX86SystemAsm(const MedOp &Op, Intrinsic IC,
 
   // OUT port, acc.
   if (IC == I::Out) {
-    emitX86PortOut(Op, Builder);
+    emitX86ScalarSystem(Op, IC, Builder);
     return true;
   }
 
@@ -522,82 +526,72 @@ llvm::Value *MedLLVMEmitter::emitX86SysRegStore(const MedOp &Op, Intrinsic IC,
 }
 
 //===----------------------------------------------------------------------===//
-// Port I/O (IN / OUT)
+// Scalar MSR and port I/O (RDMSR / WRMSR / IN / OUT)
 //===----------------------------------------------------------------------===//
 
-static const char *portIoSuffix(unsigned Bytes) {
-  return Bytes == 1 ? "b" : Bytes == 2 ? "w" : "l";
-}
-
-llvm::Value *MedLLVMEmitter::emitX86PortIn(const MedOp &Op,
-                                           llvm::IRBuilder<> &Builder) {
-  // INTRINSIC inputs: [code, port].  port const => imm8, else DX register.
-  unsigned Bytes = Op.Output.Size ? Op.Output.Size : 4;
-  auto *Ty = sizeToType(Bytes);
-  bool ImmPort = Op.NumInputs > 1 && Op.Inputs[1].isConst();
-  // AT&T: `in <port>, <acc>` — src(port) first, dest(acc=AX) second.
-  std::string Asm = std::string("in") + portIoSuffix(Bytes) + " $1, $0";
-  std::string Cons =
-      std::string("={ax},") + (ImmPort ? "N" : "{dx}") + ",~{memory}";
-  llvm::Value *Port;
-  if (ImmPort)
-    Port = llvm::ConstantInt::get(llvm::Type::getInt8Ty(*Ctx),
-                                  Op.Inputs[1].ConstVal & 0xFF);
-  else if (Op.NumInputs > 1)
-    Port = getVar(Op.Inputs[1], Builder);
-  else
-    Port = llvm::ConstantInt::get(llvm::Type::getInt8Ty(*Ctx), 0);
-  auto *AsmFnTy = llvm::FunctionType::get(Ty, {Port->getType()}, false);
-  auto *IA = llvm::InlineAsm::get(AsmFnTy, Asm, Cons, /*hasSideEffects=*/true);
-  return Builder.CreateCall(IA, {Port});
-}
-
-void MedLLVMEmitter::emitX86PortOut(const MedOp &Op,
-                                    llvm::IRBuilder<> &Builder) {
-  // INTRINSIC inputs: [code, port, acc].  port const => imm8, else DX register.
-  if (Op.NumInputs < 3)
-    return;
-  auto *Acc = getVar(Op.Inputs[2], Builder);
-  unsigned Bytes = Acc->getType()->isIntegerTy()
-                       ? Acc->getType()->getIntegerBitWidth() / 8
-                       : 4;
-  bool ImmPort = Op.Inputs[1].isConst();
-  // AT&T: `out <acc>, <port>` — src(acc=AX) first, dest(port) second.
-  std::string Asm = std::string("out") + portIoSuffix(Bytes) + " $0, $1";
-  std::string Cons =
-      std::string("{ax},") + (ImmPort ? "N" : "{dx}") + ",~{memory}";
-  llvm::Value *Port = ImmPort
-                          ? llvm::ConstantInt::get(llvm::Type::getInt8Ty(*Ctx),
-                                                   Op.Inputs[1].ConstVal & 0xFF)
-                          : getVar(Op.Inputs[1], Builder);
-  auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
-  auto *AsmFnTy =
-      llvm::FunctionType::get(VoidTy, {Acc->getType(), Port->getType()}, false);
-  auto *IA = llvm::InlineAsm::get(AsmFnTy, Asm, Cons, /*hasSideEffects=*/true);
-  Builder.CreateCall(IA, {Acc, Port});
-}
-
-//===----------------------------------------------------------------------===//
-// MPX / transactional memory (treated as NOP)
-//===----------------------------------------------------------------------===//
-
-static bool isX86MpxOrTransactional(Intrinsic IC) {
-  using I = Intrinsic;
-  switch (IC) {
-  case I::BndMk:
-  case I::BndMov:
-  case I::BndCl:
-  case I::BndCu:
-  case I::BndCn:
-  case I::BndLdx:
-  case I::BndStx:
-  case I::Xacquire:
-  case I::Xrelease:
-  case I::ShaGeneric:
-    return true;
-  default:
-    return false;
+llvm::Value *MedLLVMEmitter::emitX86ScalarSystem(const MedOp &Op, Intrinsic IC,
+                                                 llvm::IRBuilder<> &Builder) {
+  const bool Write = IC == Intrinsic::Wrmsr || IC == Intrinsic::Out;
+  const unsigned Bytes =
+      Write && Op.NumInputs == 3 ? Op.Inputs[2].Size : Op.Output.Size;
+  const auto P = x86ScalarSystemNative(IC, TargetArch, Bytes);
+  if (!P || !hasValidMedIntrinsicId(Op) ||
+      Op.Inputs[0].ConstVal != unsigned(IC) ||
+      Op.NumInputs != P->arguments() + 1 ||
+      Op.Output.Size != (Write ? 0 : Bytes) || !Op.IntrinsicOutputs.empty() ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    llvm::report_fatal_error("invalid scalar x86 system instruction shape");
+  llvm::SmallVector<llvm::Value *, 2> Arguments;
+  for (unsigned I = 0; I < P->arguments(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    // The lifter retains an imm8 port as one byte. A propagated DX constant
+    // still has all 16 bits; it must never be silently truncated to imm8.
+    const bool ImmediatePort = P->Port && I == 0 && Input.Size == 1 &&
+                               Input.isConst() && Input.ConstVal <= UINT8_MAX;
+    if (Input.Size != P->argumentBytes(I) && !ImmediatePort)
+      llvm::report_fatal_error("invalid scalar x86 system operand width");
+    auto *Value = getVar(Input, Builder);
+    if (!Value->getType()->isIntegerTy())
+      llvm::report_fatal_error("scalar x86 system operand is not an integer");
+    Arguments.push_back(
+        Builder.CreateZExtOrTrunc(Value, sizeToType(P->argumentBytes(I))));
   }
+  if (auto ID = llvm::Intrinsic::lookupIntrinsicID(P->LLVMName))
+    return Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(Mod, ID),
+                              Arguments);
+
+  auto *ResultTy = Write ? llvm::Type::getVoidTy(*Ctx) : sizeToType(Bytes);
+  std::string Text = P->Mnemonic, Constraints;
+  if (P->Port) {
+    const auto *Port = llvm::dyn_cast<llvm::ConstantInt>(Arguments[0]);
+    const bool Immediate = Port && Port->getZExtValue() <= UINT8_MAX;
+    if (Immediate)
+      Arguments[0] = Builder.CreateTrunc(Arguments[0], sizeToType(1));
+    Constraints = std::string(Write ? "{ax}," : "={ax},") +
+                  (Immediate ? "N" : "{dx}") + ",~{memory}";
+    Text += Write ? " $0, $1" : " $1, $0";
+    if (Write)
+      std::swap(Arguments[0], Arguments[1]);
+  } else if (Write) {
+    auto *Value = Arguments.pop_back_val();
+    Arguments.push_back(Builder.CreateTrunc(Value, sizeToType(4)));
+    Arguments.push_back(
+        Builder.CreateTrunc(Builder.CreateLShr(Value, 32), sizeToType(4)));
+    Constraints = "{ecx},{eax},{edx},~{memory}";
+  } else if (TargetArch == Arch::X64) {
+    Text += "\n\tshlq $$32, %rdx\n\torq %rdx, %rax";
+    Constraints = "={rax},{ecx},~{rdx},~{memory}";
+  } else {
+    Constraints = "=A,{ecx},~{memory}";
+  }
+  llvm::SmallVector<llvm::Type *, 3> Types;
+  for (const auto *Value : Arguments)
+    Types.push_back(Value->getType());
+  auto *FunctionTy = llvm::FunctionType::get(ResultTy, Types, false);
+  auto *Asm = llvm::InlineAsm::get(FunctionTy, Text, Constraints,
+                                   /*hasSideEffects=*/true);
+  return Builder.CreateCall(Asm, Arguments);
 }
 
 //===----------------------------------------------------------------------===//
@@ -626,6 +620,11 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
     if (!Value->getType()->isIntegerTy(8 * P->Bytes))
       llvm::report_fatal_error(
           "x86 system register write has a non-native value");
+    if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P->LLVMName)) {
+      Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(Mod, IID),
+                         {Builder.getInt32(P->Index), Value});
+      return true;
+    }
     auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
                                          {Value->getType()}, false);
     auto *IA = llvm::InlineAsm::get(FnTy, P->Text, P->Constraints,
@@ -777,23 +776,7 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
 
   // WRMSR writes EDX:EAX to the MSR selected by ECX.
   if (IC == I::Wrmsr) {
-    if (Op.NumInputs != 3)
-      llvm::report_fatal_error("x86 WRMSR has an invalid operand shape");
-    auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
-    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
-    llvm::Value *Selector =
-        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty);
-    llvm::Value *Value =
-        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), I64Ty);
-    llvm::Value *Lo = Builder.CreateTrunc(Value, I32Ty, "msr_lo");
-    llvm::Value *Hi =
-        Builder.CreateTrunc(Builder.CreateLShr(Value, 32), I32Ty, "msr_hi");
-    auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
-                                         {I32Ty, I32Ty, I32Ty}, false);
-    auto *IA =
-        llvm::InlineAsm::get(FnTy, "wrmsr", "{ecx},{eax},{edx},~{memory}",
-                             /*hasSideEffects=*/true);
-    Builder.CreateCall(IA, {Selector, Lo, Hi});
+    emitX86ScalarSystem(Op, IC, Builder);
     return true;
   }
 
@@ -1145,8 +1128,8 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
     return true;
   if (emitX86SystemAsm(Op, IC, Builder))
     return true;
-  if (isX86MpxOrTransactional(IC))
-    return true;
+  if (const char *Reason = x86UnsupportedIntrinsicReason(IC))
+    llvm::report_fatal_error(Reason);
   if (emitX86Privileged(Op, IC, Builder))
     return true;
   return false;

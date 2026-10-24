@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/NdTypes.h"
+#include "neverd/ir/SourceFrameBytes.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
@@ -582,6 +583,8 @@ struct HighLocal {
 };
 
 struct HighFunc {
+  /// Same original-machine byte observations carried by MedFunc.
+  std::vector<SourceFrameBytes> FrameBytes;
   va_t Entry = 0;
   uint64_t OriginalSize = 0;
   /// Bytes reserved below and above the synthetic entry stack pointer.

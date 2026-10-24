@@ -2094,3 +2094,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 入口物件回歸檢查符號複製、溢出槽與槽複製、執行期迴圈、遺失綁定與匯合、物件別名、完整寬／原子／分段寫入、相對邊界、無效宣告、憑據變異，以及準備和操作預算的精確或不足邊界及節點預算耗盡。獨立的位元組及暫存器判定器檢查保留效果。須一起執行所屬測試集與 raw 消費者拒絕測試；這些檢查不提供整函式、編譯後 C 或普通 ABI 憑證。
 
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+執行 `NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）和 `NeverDCSourcePresentationTests`，檢查位元組來源、路徑一致性、遭覆寫或逸出的儲存、不可變映像範圍、預算、編碼及中繼資料邊界。`NeverDWorkerStackText` 編譯公開的 x64/ARM64 PE 樣例並透過兩條 C 路徑驗證，包括未知的覆寫。此測試需要 Clang 和 lld-link；Windows 原生執行需要另外驗證。

@@ -426,6 +426,8 @@ constexpr uint64_t kMaxOverlapDistance = 0x10000;
 /// the ABI clobber set.
 constexpr int kMaxCallEffectCalleeDepth = 4;
 constexpr size_t kMaxCallEffectExtraLifts = 256;
+/// Scalar exit facts inspect only bounded, complete, call-free callee bodies.
+constexpr size_t kMaxCallExitConstantOps = 4096;
 /// All-path predecessor stack-store evidence for one call argument setup.
 /// Exhaustion supplies no partial proof.
 constexpr size_t kMaxCallSetupStackProofWork = 4096;

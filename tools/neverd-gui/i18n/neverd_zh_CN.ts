@@ -544,12 +544,12 @@
         <translation>管理 MCP 连接与会话共享</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>扩展(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>分析查询</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>管理声明式扩展</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>运行内置或导入的分析查询</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -1118,6 +1118,22 @@
     <message>
         <source>x87 &amp;support…</source>
         <translation>x87 支持(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>栈展开信息…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>检查所选指令处的栈展开元数据</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>复制或保存所选字节</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>导出数据...</translation>
     </message>
 </context>
 <context>
@@ -1794,12 +1810,12 @@ Double-click to go to the declaration.</source>
         <translation>已保存的变量名对应的是另一版源代码</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>展开代码块（Ctrl+Shift+]）</translation>
+        <source>Expand block (%1)</source>
+        <translation>展开代码块（%1）</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>折叠代码块（Ctrl+Shift+[）</translation>
+        <source>Collapse block (%1)</source>
+        <translation>折叠代码块（%1）</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2081,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>导入清单…</translation>
+        <source>Import queries…</source>
+        <translation>导入查询…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>运行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>卸载</translation>
+        <source>Remove group</source>
+        <translation>移除查询组</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>导入声明式清单，以添加分析命令与视图。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>运行内置分析查询，或从 JSON 文件导入查询定义。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>选择扩展命令以查看其结果。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>选择查询并点击“运行”查看结果。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>导入扩展清单</translation>
+        <source>Import analysis queries</source>
+        <translation>导入分析查询</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>清单 (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>查询定义 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>移除所选组中的全部查询。</translation>
     </message>
 </context>
 <context>
@@ -2163,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>导航栏</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>扩展</translation>
+        <source>Analysis queries</source>
+        <translation>分析查询</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -2955,6 +2975,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Another link took this one's place.</source>
         <translation>另一个链接取代了此链接。</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>列表获得焦点时，优先执行列表命令。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>按操作、快捷键或作用范围筛选</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>作用范围</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未分配</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>分析视图</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>工作台</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>快速筛选</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>列表</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>添加类型…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>编辑类型…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>删除类型…</translation>
     </message>
 </context>
 <context>
@@ -3752,12 +3816,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>下一个</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>上一个匹配项（Shift+Enter 或 Shift+F3）</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>上一个匹配项（%1 或 %2）</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>下一个匹配项（Enter 或 F3）</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>下一个匹配项（%1 或 %2）</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4578,12 +4642,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+点击打开</translation>
+        <source>%1click to open</source>
+        <translation>%1点击打开</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>双击或 Ctrl+点击打开 %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>双击或 %2点击打开 %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4627,8 +4691,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>声明</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>读取这些声明（Ctrl+Enter）</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>读取这些声明（%1）</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4763,8 +4827,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>操作数保持原来的数字。</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>程序没有结构体或联合体，可在本地类型（Shift+F1）中声明。</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>程序没有结构体或联合体，可在本地类型（%1）中声明。</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6206,8 +6270,8 @@ Coverage: %7</source>
         <translation>选择函数以检查其对应函数。</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>选择基本块以跟踪其对应项。Ctrl+滚轮可缩放。</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>选择基本块以跟踪其对应项。%1滚轮可缩放。</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -6304,6 +6368,14 @@ Coverage: %7</source>
     <message>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>在依赖发生变化时查找共享计算。外部输入的产生节点仍未验证。包含 SSA 区域假设。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>带参数视图的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>参数视图比较符合条件的 64 位原生参数的低 32 位。原始位宽和来源仍可查看。</translation>
     </message>
 </context>
 <context>
@@ -6403,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表示：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>带参数视图的优化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7186,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部输入映射；产生这些输入的节点尚未比较。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>参数 %1：%3 位中的低 %2 位</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>主输入：%1
+次输入：%2
+投影参数的每次使用都读取相同的低位。整个函数的行为尚未验证。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>此参数的每次使用都读取相同的低位；原始位宽和原生位置均已保留。</translation>
     </message>
 </context>
 <context>
@@ -8053,6 +8147,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>不支持</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>停靠回主窗口</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 字节已就绪。</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 字节已就绪。预览显示前 %2 字节；复制和保存会使用完整范围。</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C 字节数组（十进制）</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C 字节数组（十六进制）</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C 字符串字面量</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>无法读取 %1 处的完整范围。未导出任何内容。</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>复制</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>无法保存 %1：%2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>结束地址（含）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>请输入有效的地址范围。</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>导出数据</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>最多可导出 %1 字节；请选择较小的范围。</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>格式：</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>十六进制字符串</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>原始字节（仅保存到文件）</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>正在读取字节...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>正在读取字节：%1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>另存为...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>已将 %1 字节保存到 %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>带空格的十六进制字符串</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>起始地址：</translation>
     </message>
 </context>
 </TS>

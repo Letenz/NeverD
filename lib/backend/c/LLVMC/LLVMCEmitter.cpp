@@ -26,7 +26,10 @@
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "../render/X86FPStateHelpers.h"
+#include "../render/X86ScalarSystem.h"
 #include "../render/X86SystemRegister.h"
+#include "../render/X86SystemState.h"
+#include "../render/X86Virtualization.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
@@ -446,9 +449,11 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   HeaderCallRecords.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
-  prepareSourceImportPrototypes(Mod);
   collectImageDataUses(Mod);
   writeIncludes(Mod);
+  // Header conflicts can rename a local import. Key its checked declaration
+  // by that final C identifier while retaining the original lookup name.
+  prepareSourceImportPrototypes(Mod);
   OS << "\n";
   // What follows names the program's records, whose definitions go before
   // it once it is written.
@@ -766,6 +771,9 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   bool NeedsX86SystemRegisterDispatch = false;
+  bool NeedsX86ScalarSystemDispatch = false;
+  bool NeedsX86VirtualizationDispatch = false;
+  bool NeedsX86SystemStateDispatch = false;
   bool HasFloatingArithmetic = false;
   bool HasWin64Call = false;
   Win64CallABI.clear();
@@ -862,6 +870,47 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
+          if (auto System = renderX86ScalarSystemCall(
+                  Opts.TheArch, Opts.Format, *CI, "result", true,
+                  std::vector<std::string>(CI->arg_size(), "0"))) {
+            NeedsX86ScalarSystemDispatch = true;
+            if (System->SetIntrinsics) {
+              Headers.insert("intrin.h");
+              HasCIntrinsics = true;
+            }
+            continue;
+          }
+          if (auto SystemRegister = renderX86SystemRegisterCall(
+                  Opts.TheArch, Opts.Format, *CI, "result", true,
+                  std::vector<std::string>(CI->arg_size(), "0"))) {
+            NeedsX86SystemRegisterDispatch |=
+                Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF;
+            if (SystemRegister->SetIntrinsics) {
+              Headers.insert("intrin.h");
+              HasCIntrinsics = true;
+            }
+            continue;
+          }
+          if (Opts.TheArch == Arch::X64) {
+            const std::vector<std::string> Arguments(CI->arg_size(), "0");
+            NeedsX86SystemStateDispatch |=
+                renderX86SystemStateNativeCall(Opts.TheArch, *CI, "result",
+                                               !CI->getType()->isVoidTy(),
+                                               Arguments)
+                    .has_value() ||
+                renderX86SystemStateCall(Opts.TheArch, *CI, "result",
+                                         !CI->getType()->isVoidTy(), Arguments)
+                    .has_value();
+            NeedsX86VirtualizationDispatch |=
+                renderX86VirtualizationNativeCall(Opts.TheArch, *CI, "result",
+                                                  !CI->getType()->isVoidTy(),
+                                                  Arguments)
+                    .has_value() ||
+                renderX86VirtualizationCall(Opts.TheArch, *CI, "result",
+                                            !CI->getType()->isVoidTy(),
+                                            Arguments)
+                    .has_value();
+          }
           if (classifyX86ShadowStackReadAsm(*CI)) {
             const unsigned Word = CI->getType()->getIntegerBitWidth() / 8;
             if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
@@ -897,16 +946,6 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 Asm->getAsmString() == "pushl $0\n\tpopfl")
               Headers.insert(Opts.Format == BinaryFormat::COFF ? "intrin.h"
                                                                : "x86intrin.h");
-            if (auto SystemRegister = renderX86SystemRegisterCall(
-                    Opts.TheArch, Opts.Format, *CI, "result", true,
-                    std::vector<std::string>(CI->arg_size(), "0"))) {
-              if (SystemRegister->SetIntrinsics) {
-                Headers.insert("intrin.h");
-                HasCIntrinsics = true;
-                NeedsX86SystemRegisterDispatch = true;
-              }
-              continue;
-            }
             if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
@@ -1038,6 +1077,12 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   }
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86ScalarSystemDispatch)
+    OS << X86ScalarSystemCompilerDispatch;
+  if (NeedsX86VirtualizationDispatch)
+    OS << X86VirtualizationCompilerDispatch;
+  if (NeedsX86SystemStateDispatch)
+    OS << X86SystemStateCompilerDispatch;
   if (Opts.TheArch == Arch::X86) {
     // i386 Clang supports bit-precise integers but does not define the native
     // 128-bit aliases used by LLVM C's 65..128-bit scalar carriers. Retain the
@@ -1066,15 +1111,28 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     const char *Header = libc::headerFor(CName);
     return Header && IncludedHeaders.count(Header);
   };
+  // A mirrored import initializer can reference a module declaration even
+  // when every call is indirect. Its declaration and the calls must use the
+  // same alias, including when the selected projection omits the initializer.
+  for (const llvm::Function &Fn : Mod)
+    if (Fn.isDeclaration() && !Fn.isIntrinsic() &&
+        UserImports.count(cNameOfGlobal(Fn.getName(), true).str()))
+      UserFunctions.insert(&Fn);
   for (const llvm::Function *Fn : UserFunctions)
-    if (HeaderDeclares(cNameOfGlobal(Fn->getName(), true))) {
+    if (const std::string Name = cNameOfGlobal(Fn->getName(), true).str();
+        HeaderDeclares(Name)) {
       std::string &Identifier = FunctionIdentifiers[Fn];
-      Identifier =
-          GlobalIdentifierAllocator.allocate(Identifier, "nd_function");
+      auto [Alias, Inserted] = UserImportIdentifiers.try_emplace(Name);
+      if (Inserted) {
+        Alias->second =
+            GlobalIdentifierAllocator.allocate(Identifier, "nd_function");
+        UserImportLinkNames.emplace(Alias->second, Name);
+      }
+      Identifier = Alias->second;
       FunctionIdentifierNames.insert(Identifier);
     }
   for (const std::string &Name : UserImports)
-    if (HeaderDeclares(Name)) {
+    if (HeaderDeclares(Name) && !UserImportIdentifiers.count(Name)) {
       if (!GlobalIdentifierAllocator.holds(Name))
         GlobalIdentifierAllocator.allocateVerbatim(Name);
       const std::string Identifier =
@@ -1729,9 +1787,9 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
         if (Name.empty() || Rejected.count(Name))
           continue;
         const auto Source = Dbg->resolvePrototype(
-            Direct ? cNameOfGlobal(Direct->getName(), true) : Name);
+            Direct ? cNameOfGlobal(Direct->getName(), true)
+                   : importCalleeCName(Call->getCalledOperand()));
         if (!Source || Source->PrototypeLibrary.empty() ||
-            Source->PrototypeLibrary == UserPrototypeLibrary ||
             Source->PrototypeFromCLibrary)
           continue;
         bool Fits =
@@ -1764,6 +1822,10 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           }
           continue;
         }
+        // A checked local floating declaration uses the same import adapter.
+        // Other user declarations retain their existing source-call model.
+        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating)
+          continue;
         Fits &= ScalarParameters;
         const auto Layout =
             Fits && !Floating
@@ -2168,10 +2230,15 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     if (OnlyFunction) {
       // Selected fragments need declarations for their referenced providers,
       // including scalar calls and definitions whose bodies are not emitted.
-      if (!SelectedGlobals.count(&Fn))
+      // A checked import call may name its provider only through an image
+      // pointer mirror. That mirror's initializer is deliberately not followed
+      // by referencedGlobals, but its source declaration still belongs here.
+      if (!SelectedGlobals.count(&Fn) &&
+          !(Fn.isDeclaration() &&
+            SourceImportPrototypes.count(functionIdentifier(Fn))))
         continue;
     }
-    if (Fn.isIntrinsic())
+    if (Fn.isIntrinsic() || llvm_source_unknown::isFunction(Fn))
       continue;
     if (llvmc::isCStackAllocationFunction(Fn))
       continue;

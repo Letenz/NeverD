@@ -36,6 +36,7 @@
 #include <QGuiApplication>
 #include <QHeaderView>
 #include <QJsonArray>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
@@ -292,10 +293,16 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
                        ::neverd::limits::diff::kMedSSAProfile);
   FlowProfile->addItem(tr("Optimized SSA"),
                        ::neverd::limits::diff::kLLVMSSAProfile);
+  FlowProfile->addItem(tr("Optimized SSA with parameter views"),
+                       ::neverd::limits::diff::kLLVMParameterSSAProfile);
   FlowProfile->setEnabled(false);
   FlowProfile->setToolTip(
       tr("Optimized SSA reduces compiler scaffolding for comparison. Functions "
-         "outside its supported scope remain listed with a reason."));
+         "outside its supported scope remain listed with a reason.") +
+      '\n' +
+      tr("Parameter views compare the low 32 bits of eligible 64-bit native "
+         "parameters. Original widths and sources remain available for "
+         "review."));
   AnalyzeFlowRegions = new QCheckBox(tr("SSA region hypotheses"), Settings);
   AnalyzeFlowRegions->setObjectName("comparisonAnalyzeFlowRegions");
   AnalyzeFlowRegions->setToolTip(
@@ -412,7 +419,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   Columns->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(Columns, &QHeaderView::customContextMenuRequested, this,
           [this, Columns](const QPoint &Position) {
-            QMenu Menu;
+            QMenu Menu(Columns);
             for (int I = 0; I < Functions->columnCount(); ++I) {
               auto *Action = Menu.addAction(
                   Functions->headerData(I, Qt::Horizontal, Qt::DisplayRole)
@@ -538,7 +545,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   auto *GraphHeader = new QHBoxLayout;
   auto *GraphStatus = label(
       Graphs,
-      tr("Select blocks to follow their counterparts. Ctrl+wheel zooms."));
+      tr("Select blocks to follow their counterparts. %1wheel zooms.")
+          .arg(QKeySequence(Qt::CTRL).toString(QKeySequence::NativeText)));
   auto *Fit = new QPushButton(tr("Fit graphs"), Graphs);
   GraphHeader->addWidget(GraphStatus, 1);
   GraphHeader->addWidget(Fit);

@@ -91,6 +91,12 @@ inline constexpr int kCodeViewNameRefreshPageLines =
 // tools/neverd-gui/app/FindInViewDialog.cpp
 inline constexpr int kFindInViewDebounceMs = 120;
 
+// Selected byte export: bound retained bytes and the interactive preview.
+inline constexpr quint64 kExportDataMaxBytes = 1024 * 1024;
+inline constexpr qsizetype kExportDataChunkBytes = 4096;
+inline constexpr qsizetype kExportDataPreviewBytes = 4096;
+inline constexpr int kExportDataDebounceMs = 120;
+
 // tools/neverd-gui/app/DisassemblyView.cpp
 inline constexpr std::size_t kDisassemblyViewMaxHistory = 512;
 

@@ -253,6 +253,10 @@ NEVERD_VIEW_ACTION(EditBookmark,
                    "bookmark",
                    QT_TRANSLATE_NOOP("Actions", "Bookmark the current address"))
 
+NEVERD_VIEW_ACTION(
+    EditExportData, QT_TRANSLATE_NOOP("Actions", "Export data..."), "Shift+E",
+    "save", QT_TRANSLATE_NOOP("Actions", "Copy or save the selected bytes"))
+
 // Jump.
 NEVERD_VIEW_ACTION(
     JumpOperand, QT_TRANSLATE_NOOP("Actions", "Jump to &operand"), "Return",
@@ -454,6 +458,11 @@ NEVERD_ACTION(ViewTypeLibraries,
 NEVERD_ACTION(ViewSegments, QT_TRANSLATE_NOOP("Actions", "S&egments"),
               "Shift+F7", "segments",
               QT_TRANSLATE_NOOP("Actions", "Show the segments window"))
+NEVERD_ACTION(
+    ViewUnwindInfo, QT_TRANSLATE_NOOP("Actions", "Unwind information…"), "",
+    "view_details",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Inspect unwind metadata at the selected instruction"))
 NEVERD_ACTION(ViewCrossReferences,
               QT_TRANSLATE_NOOP("Actions", "&Cross references"), "", "xrefs",
               QT_TRANSLATE_NOOP("Actions",
@@ -487,9 +496,10 @@ NEVERD_ACTION(ViewConnections, QT_TRANSLATE_NOOP("Actions", "MCP c&onnections"),
               "", "mcp",
               QT_TRANSLATE_NOOP("Actions",
                                 "Manage MCP connections and session sharing"))
-NEVERD_ACTION(ViewExtensions, QT_TRANSLATE_NOOP("Actions", "Ex&tensions"), "",
-              "extensions",
-              QT_TRANSLATE_NOOP("Actions", "Manage declarative extensions"))
+NEVERD_ACTION(ViewExtensions, QT_TRANSLATE_NOOP("Actions", "Analysis queries"),
+              "", "search_text",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Run built-in or imported analysis queries"))
 NEVERD_ACTION(ViewUndoHistory, QT_TRANSLATE_NOOP("Actions", "&Undo history"),
               "", "undo",
               QT_TRANSLATE_NOOP("Actions",

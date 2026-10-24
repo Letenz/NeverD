@@ -127,7 +127,9 @@ private:
   static KDDockWidgets::Core::DockWidget *createDock(const QString &name);
   Dock *dockNamed(const QString &name);
   void retranslateUi();
-  void openDock(Dock *dock, bool tabbed);
+  void
+  openDock(Dock *dock, bool tabbed,
+           KDDockWidgets::Location location = KDDockWidgets::Location_OnBottom);
   void showConnections();
 
   void buildMenusAndToolbars();
@@ -272,15 +274,19 @@ private:
   /// length, applied to the listing and the Strings window.
   void showStringOptions();
   void stringOptionsDialog(const QJsonArray &encodings,
-                           const QJsonObject &current);
+                           const QJsonObject &current, QWidget *owner);
   void chooseFont();
   void chooseTheme();
   void showShortcuts();
+  /// Choose a jump target without changing the corresponding dock's state.
+  void chooseLocation(ChooserKind kind, ActionId command);
   QWidget *commandFocusWidget() const;
+  QWidget *commandWindow() const;
   /// Edit > Copy: the selection of the view holding the focus.
   void copySelection();
   void showCommandPalette();
   void exportCurrent(bool pseudocode);
+  void exportData();
   void loadPdb();
   /// File, Load file, DWARF file: the DWARF of the open ELF or Mach-O image
   /// from a separate file the user picks.
@@ -293,11 +299,12 @@ private:
   void loadHeader();
   /// Load the MAP \p facts describe, as map_inspect read it, once the user
   /// confirmed a MAP of another build; nothing when the session changed.
-  void confirmMap(const QJsonObject &facts, quint64 epoch);
+  void confirmMap(const QJsonObject &facts, quint64 epoch, QWidget *owner);
   void runCommand(const QString &command, const QString &argument);
   void saveDesktop();
   void restoreDesktop();
   void resetDesktop();
+  void closeTransientDocks(bool discardContents = true);
   void cycleWindows(bool forward);
   void fillPlaceholder(QMenu *menu, const QString &name);
   void contextMenu(const QPoint &globalPosition);

@@ -14,6 +14,8 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/llvm/SourceFrameBytes.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -171,6 +173,107 @@ TEST(CSourcePresentation, WideImageReadsShowTextInBothCRoutes) {
           }
         }
       }
+    }
+  }
+}
+
+TEST(CSourcePresentation, StackTextSurvivesBothRoutesAsCommentsOnly) {
+  for (unsigned Unit : {1u, 2u, 4u}) {
+    for (bool Big : {false, true}) {
+      if (Unit == 1 && Big)
+        continue;
+      SourceFrameBytes Observation{0x1234, -256, {}};
+      const std::string Message = "Text assembled in separate writes";
+      for (unsigned char Character : Message)
+        for (unsigned I = 0; I < Unit; ++I)
+          Observation.Bytes.push_back(I == (Big ? Unit - 1 : 0) ? Character
+                                                                : 0);
+      Observation.Bytes.insert(Observation.Bytes.end(), Unit, 0);
+      HighFunc Function;
+      Function.Entry = 0x1000;
+      Function.Name = "frame_text";
+      Function.ReturnType = NdType::makeInt(8);
+      Function.FrameBytes.push_back(Observation);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeConst(42, 8);
+      Function.Body.push_back(std::move(Return));
+      llvm::LLVMContext Context;
+      llvm::SMDiagnostic Diagnostic;
+      auto Module = llvm::parseAssemblyString(
+          "target datalayout = \"e-p:64:64-i64:64-n8:16:32:64-S128\"\n"
+          "define i64 @frame_text() { ret i64 42 }",
+          Diagnostic, Context);
+      ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+      writeSourceFrameBytes(*Module->getFunction("frame_text"), {Observation});
+      const auto RoundTrip =
+          readSourceFrameBytes(*Module->getFunction("frame_text"));
+      ASSERT_EQ(RoundTrip.size(), 1U);
+      EXPECT_EQ(RoundTrip[0].Bytes, Observation.Bytes);
+      EXPECT_EQ(RoundTrip[0].FrameOffset, Observation.FrameOffset);
+      EXPECT_EQ(RoundTrip[0].Instruction, Observation.Instruction);
+      for (bool LLVM : {false, true}) {
+        for (bool Comments : {false, true}) {
+          CEmitterOptions Options;
+          Options.TheArch = Arch::X64;
+          Options.Format = BinaryFormat::ELF;
+          Options.EmitComments = Comments;
+          Options.PreserveLLVMFunctionTypes = true;
+          std::string Text;
+          llvm::raw_string_ostream Stream(Text);
+          ASSERT_TRUE(LLVM ? LLVMCEmitter().emit(*Module, Stream, Options)
+                           : HighCEmitter().emit({Function}, Stream, Options));
+          EXPECT_TRUE(Text.find("return 42") != std::string::npos ||
+                      Text.find("return 0x2A") != std::string::npos)
+              << Text;
+          const size_t Body = Text.find('{', Text.rfind("frame_text("));
+          ASSERT_NE(Body, std::string::npos) << Text;
+          if (Comments) {
+            EXPECT_NE(Text.find(Message, Body), std::string::npos) << Text;
+            EXPECT_NE(Text.find("stack text at 0x1234", Body),
+                      std::string::npos)
+                << Text;
+            if (Unit > 1) {
+              const std::string Encoding = std::string("UTF-") +
+                                           (Unit == 2 ? "16" : "32") +
+                                           (Big ? "BE" : "LE");
+              EXPECT_NE(Text.find(Encoding, Body), std::string::npos) << Text;
+            }
+          } else {
+            EXPECT_EQ(Text.find(Message), std::string::npos) << Text;
+          }
+        }
+      }
+      writeSourceFrameBytes(*Module->getFunction("frame_text"), {});
+      EXPECT_FALSE(Module->getFunction("frame_text")
+                       ->getMetadata(kSourceFrameBytesMetadata));
+      EXPECT_TRUE(
+          readSourceFrameBytes(*Module->getFunction("frame_text")).empty());
+      for (int64_t Offset : {int64_t{0}, int64_t{1}, int64_t{-1},
+                             -limits::ir::kSourceFrameAnalysisMaxFrame - 1}) {
+        auto Invalid = Observation;
+        Invalid.FrameOffset = Offset;
+        writeSourceFrameBytes(*Module->getFunction("frame_text"), {Invalid});
+        EXPECT_TRUE(
+            readSourceFrameBytes(*Module->getFunction("frame_text")).empty());
+      }
+      auto Oversized = Observation;
+      Oversized.Bytes.resize(limits::ir::kSourceFrameTextBytes + 1);
+      writeSourceFrameBytes(*Module->getFunction("frame_text"), {Oversized});
+      EXPECT_TRUE(
+          readSourceFrameBytes(*Module->getFunction("frame_text")).empty());
+      writeSourceFrameBytes(
+          *Module->getFunction("frame_text"),
+          std::vector<SourceFrameBytes>(
+              limits::ir::kSourceFrameTextObservations + 1, Observation));
+      EXPECT_TRUE(
+          readSourceFrameBytes(*Module->getFunction("frame_text")).empty());
+      Module->getFunction("frame_text")
+          ->setMetadata(kSourceFrameBytesMetadata,
+                        llvm::MDNode::get(Context, llvm::MDString::get(
+                                                       Context, "malformed")));
+      EXPECT_TRUE(
+          readSourceFrameBytes(*Module->getFunction("frame_text")).empty());
     }
   }
 }

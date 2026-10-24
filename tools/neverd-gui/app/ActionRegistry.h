@@ -33,6 +33,8 @@ public:
   const QList<QAction *> &allActions() const { return all_; }
   /// Attach the view-scoped shortcuts to \p view.
   void attachViewShortcuts(QWidget *view) const;
+  /// Keep workbench shortcuts available when a dock becomes a top-level window.
+  void attachWindowShortcuts(QWidget *view) const;
 
   /// Placeholder callback: fill \p menu with dynamic entries for \p name.
   using PlaceholderFiller = std::function<void(QMenu *menu, const QString &)>;

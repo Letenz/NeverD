@@ -253,7 +253,9 @@ SIDEEFFECT(Intrinsic::X86FPMaskCompareMemoryState);
 #undef NEVERD_X86_VIRTUALIZATION
 
 #define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, ...) SIDEEFFECT(Intrinsic::Id);
+#define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86SystemState.def"
+#undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
 
 SIDEEFFECT(Intrinsic::X86Encls);

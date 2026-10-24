@@ -18,6 +18,7 @@
 #include "../CSourceRecorder.h"
 #include "../DebugParamBinding.h"
 
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -230,7 +231,8 @@ public:
     if (auto It = UnknownPlaceholderCache.find(V);
         It != UnknownPlaceholderCache.end())
       return It->second;
-    bool Unknown = isCallClobberValue(V) || llvm::isa<llvm::UndefValue>(V) ||
+    bool Unknown = llvm_source_unknown::isValue(V) || isCallClobberValue(V) ||
+                   llvm::isa<llvm::UndefValue>(V) ||
                    llvm::isa<llvm::PoisonValue>(V);
     if (!Unknown)
       if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(V);

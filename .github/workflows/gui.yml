@@ -97,21 +97,41 @@ jobs:
             exit "$ctest_status"
           fi
           ctest --test-dir build-gui --output-on-failure
-      - name: Verify the native window frame
-        # Offscreen keeps the system frame; Windows and macOS frame the
-        # workbench natively, so maximize and full screen run there for real,
-        # whatever the earlier contract checks found.
+      - name: Verify native windows, floating panes and shortcuts
+        timeout-minutes: 10
+        # Exercise native ownership and focus as well as the offscreen
+        # contracts, whatever the earlier contract checks found.
         if: ${{ !cancelled() && runner.os != 'Linux' }}
         shell: bash
         run: |
           # Windows does not pass a console test's standard output on; read
           # the log file back on every platform.
+          mkdir -p build-gui/ci-diagnostics
           set +e
           build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
-            -o native-frame.txt,txt
-          status=$?
-          cat native-frame.txt
-          exit "$status"
+            toolbarButtonsKeepKeysInTooltips \
+            -o build-gui/ci-diagnostics/native-frame.txt,txt
+          frame_status=$?
+          build-gui/bin/neverd-gui-tests \
+            floatingDocksReturnToWorkbench \
+            closedFloatingDocksReopenInWorkbench \
+            reopeningPaneDoesNotFollowFloatingAssembly \
+            floatingAnalysisMenusStayWithTheirView \
+            floatingWindowsKeepMouseHistory \
+            floatingCommandDialogsStayWithTheirView \
+            classicJumpChoosersSelectAndCancel \
+            selectedBytesExportWithIdasKey \
+            shortcutsCanBeFoundByKeyAndScope \
+            commandButtonsExposeTheirKeys \
+            generatedViewsStayClosedAfterReopening \
+            searchResultsStayClosedAfterReopening \
+            -o build-gui/ci-diagnostics/native-interactions.txt,txt \
+            -o build-gui/ci-diagnostics/native-interactions.xml,xml
+          interaction_status=$?
+          cat build-gui/ci-diagnostics/native-frame.txt
+          cat build-gui/ci-diagnostics/native-interactions.txt
+          if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
+          exit "$interaction_status"
       - name: Retain desktop GUI contract diagnostics
         id: gui_diagnostics
         if: ${{ always() && runner.os != 'Linux' }}
@@ -135,6 +155,9 @@ jobs:
               "ctest.xml": "ci-diagnostics/ctest.xml",
               "ctest.log": "ci-diagnostics/ctest.log",
               "ctest-exit-code.txt": "ci-diagnostics/ctest-exit-code.txt",
+              "native-frame.txt": "ci-diagnostics/native-frame.txt",
+              "native-interactions.txt": "ci-diagnostics/native-interactions.txt",
+              "native-interactions.xml": "ci-diagnostics/native-interactions.xml",
               "LastTest.log": "Testing/Temporary/LastTest.log",
               "LastTestsFailed.log": "Testing/Temporary/LastTestsFailed.log",
           }

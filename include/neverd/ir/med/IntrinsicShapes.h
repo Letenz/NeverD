@@ -17,9 +17,11 @@
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/X87GuardedValue.h"
+#include "neverd/ir/X87PortableABI.h"
 #include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86AmxState.h"
 #include "neverd/ir/intrinsics/X86Sgx.h"
@@ -34,6 +36,57 @@ namespace neverd {
 inline bool hasValidMedIntrinsicId(const MedOp &Op) {
   return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
          Op.NumInputs <= Op.Inputs.size() && Op.Inputs.front().isConst();
+}
+
+inline bool aarch64PtrueMedShapeIsValid(const MedOp &Op) {
+  using namespace aarch64_sve;
+  if (!hasValidMedIntrinsicId(Op) || Op.NumInputs != kPtrueOperandCount + 1 ||
+      Op.Inputs[0].ConstVal != static_cast<uint64_t>(Intrinsic::A64_SvePtrue) ||
+      !Op.IntrinsicOutputs.empty() ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return isValidPtrueShape(
+      {Op.NumInputs - 1U, Op.Output.Size, Op.Inputs[1].Size, Op.Inputs[2].Size,
+       Op.Inputs[1].isConst() ? std::optional<uint64_t>(Op.Inputs[1].ConstVal)
+                              : std::nullopt,
+       Op.Inputs[2].isConst() ? std::optional<uint64_t>(Op.Inputs[2].ConstVal)
+                              : std::nullopt});
+}
+
+inline bool portableX87MedShapeIsValid(const MedOp &Op) {
+  if (!hasValidMedIntrinsicId(Op) || !Op.IntrinsicOutputs.empty() ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Op.Output.Kind != MedVar::Temp || Op.Output.Id < 0 ||
+      (Op.Output.TheArch != Arch::Unknown && Op.Output.TheArch != Arch::X64))
+    return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+  if (!isPortableX87Intrinsic(Id))
+    return false;
+  const auto &Signature = x87PortableHelperSignatureV1(
+      Id == Intrinsic::PortableX87Step ? X87PortableHelperV1::Step
+                                       : X87PortableHelperV1::Result);
+  const auto Bytes = [](X87PortableABIValueV1 Value) -> unsigned {
+    return Value == X87PortableABIValueV1::I32 ? 4 : 8;
+  };
+  if (Op.NumInputs != Signature.Parameters.size() + 1 ||
+      Op.Inputs[0].Size != 4 || Op.Output.Size != Bytes(Signature.Result))
+    return false;
+  for (unsigned I = 0; I != Signature.Parameters.size(); ++I) {
+    const auto &Value = Op.Inputs[I + 1];
+    if (Value.Size != Bytes(Signature.Parameters[I]) ||
+        (Value.Kind != MedVar::Param && Value.Kind != MedVar::Temp &&
+         !Value.isConst()) ||
+        (Value.TheArch != Arch::Unknown && Value.TheArch != Arch::X64))
+      return false;
+  }
+  if (Op.Inputs[1].Kind != MedVar::Param)
+    return false;
+  return Id == Intrinsic::PortableX87Result ||
+         (Op.Inputs[2].isConst() && Op.Inputs[2].ConstVal <= UINT32_MAX &&
+          Op.Inputs[3].isConst());
 }
 
 inline bool aarch64PAuthMedShapeIsValid(const MedOp &Op) {
