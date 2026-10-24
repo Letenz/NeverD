@@ -510,7 +510,7 @@ private:
 
   /// Hash of a node's identity to the nodes carrying that hash.  Collisions
   /// are resolved by comparing the candidate against each bucket entry. The
-  /// zero tag keeps every 64-bit hash outside DenseMap's reserved key pairs.
+  /// split halves keep every 64-bit hash outside DenseMap's reserved key pairs.
   llvm::DenseMap<std::pair<uint64_t, uint32_t>, llvm::SmallVector<uint32_t, 2>>
       InternTable;
   /// Plain variables keep their legacy name-and-width declaration identity.
