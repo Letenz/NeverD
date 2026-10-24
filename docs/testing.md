@@ -267,6 +267,14 @@ they do not qualify native execution or standalone cache reconstruction.
 `NeverDDebugInfoTests` rejects automatic container companion discovery while
 retaining explicit per-image debug-file diagnostics.
 
+`HighCPointerAddresses.CompilerDispatchDoesNotDependOnIncludes` checks all five
+x86 compiler-dispatch families through HighC and LLVMC, across COFF/ELF/Mach-O.
+Disabling includes must retain the required definitions; each unmodified source
+unit is syntax-checked for the Windows x64 target with externally supplied
+standard integer declarations. The trailing-argument fixture uses real dynamic
+CPUID outputs, so scalar constant recovery cannot make its unknown-state
+assertions vacuous. PHI copies retain the explicit unknown marker.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
