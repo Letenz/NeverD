@@ -7096,9 +7096,11 @@ should orchestrate those components rather than absorb their algorithms.
 Finite direct native memory accesses into pointer-bearing data use a canonical
 relocation-free byte interval in `MedLLVMEmitter`. A gap larger than the single
 embedding limit retains only demanded finite bytes, merging and rebinding
-overlapping intervals as demand grows. Unobserved alignment padding preserves
-atomic alignment during backwards growth; the encoded global base includes
-that padding so source and patch projections retain the original addresses.
+overlapping intervals as demand grows within the same segment and
+relocation-free gap. Adjacent mappings retain their own bytes and mutability.
+Unobserved alignment padding preserves atomic alignment during backwards
+growth; the encoded global base includes that padding so source and patch
+projections retain the original addresses.
 These bounded intervals require a mapping aligned to the shared maximum
 embedded-data alignment. They do not recursively materialize unrelated pointer
 slots. An address-valued, indexed or pointer-slot

@@ -12235,8 +12235,10 @@ parsing and trigger this admission rule before pointer publication.
 unrelated unresolved pointer slots across x86, x64, ARM and AArch64 and
 PE/COFF, ELF and Mach-O image models. Large relocation-free gaps must remain
 bounded by demand, retain aliases in both access orders, merge bridging
-accesses, and promote earlier byte objects when an address escapes. Backwards
-growth must preserve atomic alignment and the symbolized original address.
+accesses, and promote earlier byte objects when an address escapes. Adjacent
+segments must retain independent bytes and mutability in either access order.
+Backwards growth must preserve atomic alignment and the symbolized original
+address.
 Required unresolved pointers and shared-shard storage keep their rejection or
 whole-run contracts. Run the owning pointer and memory suites together:
 
