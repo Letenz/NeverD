@@ -202,9 +202,7 @@ TEST(X86SystemSideeffect, UnmodeledSystemInstructionsStayUnlifted) {
   // Complete machine transitions still require an explicit state contract.
   for (const std::vector<uint8_t> &Bytes :
        {std::vector<uint8_t>{0x0f, 0x01, 0xd8},    // VMRUN
-        std::vector<uint8_t>{0x0f, 0x01, 0xde},    // SKINIT
-        std::vector<uint8_t>{0x0f, 0x37},          // GETSEC
-        std::vector<uint8_t>{0x0f, 0x01, 0xd7}}) { // ENCLU
+        std::vector<uint8_t>{0x0f, 0x01, 0xde}}) { // SKINIT
     Decoder Dec;
     ASSERT_TRUE(Dec.init(Arch::X64));
     DecodedInsn Insn{};

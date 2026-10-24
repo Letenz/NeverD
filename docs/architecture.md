@@ -80,8 +80,19 @@ older-SDK fallback and native API names. The bounded x64 MOVS/STOS analysis
 accepts only unsegmented 64-bit addresses, proves count/direction, validates all
 auxiliary output bindings and charges the complete scalar expansion.
 
+`X86BoundedLeaf.h` owns the returning ENCLU/GETSEC leaf sets and their
+register/flag dependencies. The x86 lifter emits pending full state; CFG owns
+the predecessor proof and rebuilds leaf-specific LowIR through the same state
+builder. Raw decoder records remain pending so graph discovery can revoke a
+proof. Only final unresolved state becomes an unsupported-instruction report.
+LowIR, MedIR, LLVM and both C routes validate the same state shape. The shared
+arithmetic-flag transport definition also supplies REP's packed flag constants.
+MedIR owns the dependency from an old flag input to the returned flags; dead
+flags cannot invent a source parameter. Ordinary completion does not supply a
+complete guest exception or nonlocal continuation ABI.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
-attributes for AMX, SGX and REP comparison flags. Instruction renderers report their required feature
+attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
 use. Separate target attributes would discard one group's requirements in a
 mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP
@@ -166,7 +177,21 @@ The Mach-O loader retains the CPU subtype, including its ABI capability bits,
 and identifies arm64e and arm64e.x1 separately from ordinary arm64. The shared
 subtype table also gates source replacement and plain Objective-C object
 reconstruction; x1 cannot bypass authenticated-ABI requirements. All use
-the AArch64 decoder. `AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
+the AArch64 decoder.
+
+`AArch64DecodeContract` separates raw occurrence identity from operand detail.
+The decoder records the original word, producer identity and buffer generation;
+classification-only results cannot reuse old operands. Native fast decoding
+can supply complete detail with text disabled, while the Capstone fallback
+cannot. Every decode attempt, reset and successful reinitialization expires
+borrowed records, including copies at the same PC and word. An owned snapshot
+must copy both the instruction and its detail and retain the occurrence fields.
+Lifting and operand queries share that admission contract. Operand queries
+reject a different requested architecture before accessing the record. Raw
+classification remains available without detail; direct BL targets use the shared encoding
+decoder. MOVPRFX follower evidence belongs to the same occurrence.
+
+`AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
 implicit LR/SP and X17/X16 HINT aliases, and authenticated branch/call/return
 semantics. Authenticated calls read the old operands before overwriting LR.
 `AArch64PAuth.def` owns the instruction inventory, implicit HINT operands,
@@ -451,8 +476,9 @@ For a selected dyld cache image, debug discovery does not inspect the container
 or automatically attach its adjacent companions. Explicit DWARF and MAP paths
 retain the existing selected-image architecture and identity checks.
 Exception-level
-authentication, PACM state and CPA2 address arithmetic remain unsupported;
-recognizing x1's header does not claim those instruction semantics.
+authentication, implicit-entry PACM state and CPA2 memory address arithmetic
+remain unsupported; recognizing x1's header does not claim those instruction
+semantics.
 
 ## GUI project and search ownership
 

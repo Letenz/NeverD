@@ -685,6 +685,10 @@ add_neverd_unittest(NeverDX86VirtualizationSourceTests
 target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
+add_neverd_unittest(NeverDX86BoundedLeafTests
+  x86/X86BoundedLeafTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
 add_neverd_unittest(NeverDX86RepStateTests
   x86_64/X86RepStateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -1958,6 +1962,7 @@ target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
 )
 
 add_neverd_unittest(NeverDAArch64DecodeValidityTests
+  aarch64/AArch64DecodeOccurrenceTests.cpp
   aarch64/AArch64DecodeValidityTests.cpp
   aarch64/AArch64_NativeDecodeParityTests.cpp
   aarch64/AArch64_NativeDecodeParityControlTests.cpp

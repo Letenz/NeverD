@@ -1254,6 +1254,8 @@ private:
 
   /// Fold executed PACM prefixes into their consumers, retaining mixed edges.
   void resolveAArch64PAuthPrefixes(LowFunc &Func);
+  void resolveX86BoundedLeaves(LowFunc &Func);
+  size_t RemainingX86BoundedLeafWork = 0;
 
   /// Re-base x87 ST(i) register references so each block's TOP matches its CFG
   /// predecessor's exit TOP rather than the worklist lift order.  The lifter

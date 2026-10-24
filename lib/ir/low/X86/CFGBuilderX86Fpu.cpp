@@ -1111,6 +1111,12 @@ class X87CallEffectIndex {
       return true;
     if (static_cast<Intrinsic>(Op.Inputs[0].Offset) == Intrinsic::X86AMXState)
       return x86AmxShapeIsValid(x86AmxLowShape(Op, Architecture));
+    if (isX86BoundedLeafIntrinsic(
+            static_cast<Intrinsic>(Op.Inputs[0].Offset)) ||
+        isX86BoundedLeafPending(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
+      return x86BoundedLeafShapeIsValid(
+          static_cast<Intrinsic>(Op.Inputs[0].Offset),
+          x86BoundedLeafLowShape(Op, Architecture));
     if (isX86SgxIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
       return x86SgxShapeIsValid(static_cast<Intrinsic>(Op.Inputs[0].Offset),
                                 x86SgxLowShape(Op, Architecture));

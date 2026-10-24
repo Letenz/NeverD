@@ -60,6 +60,10 @@ constexpr uint64_t kMaxObjectExternStatedReach = 0x10000;
 /// Exhaustion preserves the original indirect transfers.
 constexpr size_t kMaxScalarBranchEvidenceWork = 262144;
 
+/// Total register-byte, operand and graph work for bounded SGX/SMX leaf
+/// proofs, including revalidation after CFG discovery adds incoming edges.
+constexpr size_t kMaxX86BoundedLeafEvidenceWork = 262144;
+
 /// Hard upper bound on jump-table entries.  Tables exceeding this are
 /// almost certainly false positives.
 constexpr uint32_t kMaxJumpTableEntries = 4096;

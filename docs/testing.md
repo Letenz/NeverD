@@ -1721,6 +1721,21 @@ illegal-to-valid transition through full, light and native-fast routes, includin
 direct permissive lifter calls. It also runs the existing independent Capstone
 parity sweeps with poisoned reused-buffer validity state. The SDK case requires
 incomplete DIFF evidence and no invented flow/reference facts for the same bytes.
+`AArch64DecodeOccurrence` in that target covers PAC, authenticated loads and
+transfers, scalar/vector CPA, ordinary arithmetic, calls and NOP. It crosses
+all three decode routes with detail/text settings, cold/reused buffers and both
+strictness settings. Complete native detail without text remains usable;
+classification never publishes stale operands. Tests cover failed attempts,
+reset/reinitialization, reconstructed decoder objects, altered records, direct
+missing-detail calls and copied MOVPRFX records with a changed follower.
+Deep snapshots remain usable across decoder replacement; shallow copies expire.
+Refused attempts clear prior undefined-output and preserved-state evidence,
+including real x64 certificates retained across an architecture change.
+Operand queries reject a mismatched requested architecture for both owned
+snapshots and expired borrowed records before reading their detail.
+Raw classifiers and BL targets still work without detail, while operand queries
+and expired records remain conservative. These are decode/lift lifecycle checks,
+not qualification of native PAC/CPA execution or additional ISA families.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw
@@ -12321,3 +12336,35 @@ ctest --test-dir build-release --build-config Release --output-on-failure \
 
 The format/architecture matrix uses shared image models; it is not native
 execution qualification for every listed architecture or host platform.
+
+
+### Bounded ENCLU/GETSEC state
+
+`NeverDX86BoundedLeafTests` checks both modes, CFG joins/loops/partial writes,
+independent and exception entries, malformed inputs and both source routes.
+It compiles 156 complete pipeline fixtures across ELF, COFF and Mach-O.
+Set `NEVERD_BOUNDED_LEAF_EXPORT_DIR` to export complete-state C/IR/object
+wrappers and pipeline C fixtures for independent qualification:
+
+```sh
+cmake --build build --target NeverDX86BoundedLeafTests
+NEVERD_BOUNDED_LEAF_EXPORT_DIR="$PWD/build/bounded-exports" \
+  build/bin/NeverDX86BoundedLeafTests
+python scripts/verify_x86_bounded_leaf.py \
+  --exports build/bounded-exports \
+  --oracle /path/to/NeverC/tests/verify-sgx-supervisor-completion.py \
+  --route high --compiler clang --bits 64 --report build/bounded-high.json
+```
+
+Use `--route llvm` for LLVM-to-C, `--route ir --llc /path/to/llc` for the
+exported LLVM IR, `--route object` for NeverD's production objects and
+`--route pipeline` to cross-compile the full C fixtures. `--neverc` additionally
+requires native builtin IR without inline asm. `--bits 32` runs the i386
+controlled checks; `--abi win64` tests Windows register preservation without
+executing a Windows binary on Linux. The script needs Capstone, LIEF, Unicorn
+and a NeverC checkout containing the independent raw-opcode signal-context
+fixtures. Linux x64 physical outcomes are recorded separately from controlled
+completions; fault-only observations do not qualify successful enclave/SMX
+execution. New-SDK IR must use the native state intrinsics, while the pinned
+older SDK exercises the owned assembly path. Keep LLVM builds separate from
+NeverD native-profile tests so linked compiler tools do not change mid-run.

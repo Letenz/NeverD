@@ -13,6 +13,7 @@
 
 #include "AArch64LiftDetail.h"
 
+#include "neverd/decode/AArch64/AArch64DecodeContract.h"
 #include "neverd/decode/AArch64/AArch64FastClassify.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
@@ -312,17 +313,15 @@ NdVar AArch64Lifter::operandWrite(const cs_aarch64_op &Op) {
 void AArch64Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
                          bool ScalarWideImmediate,
                          std::optional<uint32_t> FollowingWord) {
+  if (!Insn || !Insn->detail)
+    throw UnliftedInstruction(Insn ? Insn->address : InvalidVA,
+                              aarch64_decode::kMissingDetail, nullptr);
   // A decoded spelling is still useful for inspection, but an illegal or
   // architecturally unpredictable encoding has no ordinary LowIR semantics.
   // Refuse it even in permissive mode, before emitting any operations.
   if (Insn->illegal)
     throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   auto *Detail = Insn->detail;
-  if (!Detail) {
-    if (Insn->id == AARCH64_INS_MOVPRFX)
-      throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
-    return;
-  }
 
   auto &ARM64 = Detail->aarch64;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
@@ -462,13 +461,11 @@ bool AArch64Lifter::isReturn(const cs_insn *I) {
 }
 
 va_t AArch64Lifter::directCallTarget(const cs_insn *I) {
-  if (!I->detail)
+  if (!I || I->id != AARCH64_INS_BL || I->size != sizeof(uint32_t))
     return InvalidVA;
-  const cs_aarch64 &A = I->detail->aarch64;
-  if (I->id == AARCH64_INS_BL && A.op_count >= 1 &&
-      A.operands[0].type == AARCH64_OP_IMM)
-    return static_cast<va_t>(A.operands[0].imm);
-  return InvalidVA;
+  // Classification-only decoding still owns the raw BL displacement.
+  return decodeBranchLinkTarget(llvm::support::endian::read32le(I->bytes),
+                                I->address);
 }
 
 va_t AArch64Lifter::decodeBranchLinkTarget(uint32_t Word, va_t Addr) {
