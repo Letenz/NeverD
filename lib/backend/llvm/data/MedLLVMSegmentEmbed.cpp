@@ -352,6 +352,7 @@ llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
     // not force resolution of every unrelated pointer in its segment. Grow
     // overlapping intervals on demand and redirect their previous accesses;
     // address-valued uses still promote them to the canonical whole mirror.
+    const uint64_t GapBegin = Begin, GapEnd = End;
     Begin = Addr;
     End = Addr + Size;
     auto It = DirectDataByteGlobals.lower_bound(Begin);
@@ -359,7 +360,9 @@ llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
       --It;
     for (; It != DirectDataByteGlobals.end() && It->first <= End; ++It) {
       const uint64_t PreviousEnd = It->first + It->second.Size;
-      if (PreviousEnd < Begin)
+      // Address adjacency does not give another mapping the same backing
+      // bytes or permissions. Growth must stay inside this segment's gap.
+      if (It->first < GapBegin || PreviousEnd > GapEnd || PreviousEnd < Begin)
         continue;
       Begin = std::min(Begin, It->first);
       End = std::max(End, PreviousEnd);

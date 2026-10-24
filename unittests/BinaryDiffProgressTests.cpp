@@ -49,7 +49,7 @@ using namespace neverd::diff;
 namespace {
 DataFlowGraph graph(llvm::StringRef Text, const DataFlowOptions &Options = {},
                     const ComparisonControl &Control = {}, bool Legacy = false,
-                    bool MultiBlock = false) {
+                    bool MultiBlock = false, bool Nested = false) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;
   auto M = llvm::parseAssemblyString(Text, Diagnostic, Context);
@@ -73,6 +73,7 @@ DataFlowGraph graph(llvm::StringRef Text, const DataFlowOptions &Options = {},
   llvm::raw_string_ostream Old(Before), New(After);
   F.print(Old);
   const auto Build = Legacy       ? buildLLVMParameterDataFlow
+                     : Nested     ? buildLLVMNestedProgressDataFlow
                      : MultiBlock ? buildLLVMMultiBlockProgressDataFlow
                                   : buildLLVMProgressDataFlow;
   auto G =
@@ -682,7 +683,7 @@ TEST(BinaryDiffMultiBlockProgress, SharesStorageWorkAndCooperativeStop) {
   uint64_t Work = 0;
   const auto P = proveFlowProgress(
       G, G.Progress->ObservedContract, {}, [&](uint64_t N) { Work += N; },
-      true);
+      FlowProgressMode::MultiBlock);
   EXPECT_EQ(P.Kind, G.Progress->Kind);
   EXPECT_EQ(P.Loops, G.Progress->Loops);
   for (const auto StopAt : {Work / 2, Work - 1}) {
@@ -694,7 +695,7 @@ TEST(BinaryDiffMultiBlockProgress, SharesStorageWorkAndCooperativeStop) {
                        if (Done >= StopAt)
                          throw DataFlowInterrupted(ComparisonState::Cancelled);
                      },
-                     true),
+                     FlowProgressMode::MultiBlock),
                  DataFlowInterrupted);
     EXPECT_EQ(G.Progress->Loops, P.Loops);
   }
@@ -758,7 +759,7 @@ TEST(BinaryDiffMultiBlockProgress, RejectsManyLatchesWithoutRepeatedSeedScans) {
     uint64_t Work = 0;
     const auto P = proveFlowProgress(
         G, G.Progress->ObservedContract, {}, [&](uint64_t N) { Work += N; },
-        true);
+        FlowProgressMode::MultiBlock);
     EXPECT_EQ(P.Kind, FlowProgressKind::Unproven);
     return Work;
   };
@@ -767,4 +768,279 @@ TEST(BinaryDiffMultiBlockProgress, RejectsManyLatchesWithoutRepeatedSeedScans) {
   const auto Small = Measure(64), Large = Measure(512);
   EXPECT_GT(Large, Small);
   EXPECT_LT(Large, Small * 10);
+}
+
+namespace {
+constexpr llvm::StringLiteral NestedLoop = R"(
+define i8 @f(i8 %start, i8 %seed, i1 %choose) {
+entry: br label %outer
+outer:
+ %i = phi i8 [ %start, %entry ], [ %next, %latch ]
+ br label %inner
+inner:
+ %j = phi i8 [ %seed, %outer ], [ %step, %inner ]
+ %step = add nsw i8 %j, -1
+ %guard = icmp ne i8 %step, 0
+ br i1 %guard, label %inner, label %latch
+latch:
+ %next = add nsw i8 %i, -1
+ %test = icmp eq i8 %next, 0
+ br i1 %test, label %exit, label %outer
+exit: ret i8 %next
+})";
+
+DataFlowGraph nestedGraph(llvm::StringRef Text = NestedLoop,
+                          const DataFlowOptions &Options = {},
+                          const ComparisonControl &Control = {}) {
+  return graph(Text, Options, Control, false, false, true);
+}
+
+std::string nestedCounters(unsigned Depth) {
+  std::string Text = "define i32 @f(i32 %start) {\nentry: br label %h0\n";
+  for (unsigned I = 0; I < Depth; ++I) {
+    const auto N = std::to_string(I);
+    const auto Previous = I ? std::to_string(I - 1) : std::string();
+    Text += "h" + N + ":\n %i" + N + " = phi i32 [ " +
+            (I ? "%i" + Previous + ", %h" + Previous : "%start, %entry") +
+            " ], [ %up" + N + ", %l" + N + " ]\n br label %" +
+            (I + 1 == Depth ? "l" + N : "h" + std::to_string(I + 1)) + "\n";
+  }
+  for (unsigned I = Depth; I-- > 0;) {
+    const auto N = std::to_string(I);
+    Text += "l" + N + ":\n %up" + N + " = add nsw i32 %i" + N + ", -1\n %cmp" +
+            N + " = icmp eq i32 %up" + N + ", 0\n br i1 %cmp" + N +
+            ", label %" + (I ? "l" + std::to_string(I - 1) : "exit") +
+            ", label %h" + N + "\n";
+  }
+  return Text + "exit: ret i32 %up0\n}";
+}
+} // namespace
+
+TEST(BinaryDiffNestedProgress,
+     ProvesReseededInnerCounterWithoutChangingLegacy) {
+  for (const auto &Text :
+       {NestedLoop.str(),
+        change(NestedLoop.str(), "[ %seed, %outer ]", "[ %i, %outer ]")}) {
+    const auto G = nestedGraph(Text);
+    ASSERT_TRUE(G.Progress);
+    EXPECT_EQ(G.Profile, LLVMNestedProgressDataFlowProfile);
+    EXPECT_EQ(G.Progress->Kind, FlowProgressKind::CounterLoops);
+    ASSERT_EQ(G.Progress->Loops.size(), 2u);
+    // Outer is proved first, but paged witnesses remain ordered by latch.
+    EXPECT_EQ(G.Progress->Loops[0].Block, 2u);
+    EXPECT_EQ(G.Progress->Loops[0].Header, 2u);
+    EXPECT_EQ(G.Progress->Loops[1].Block, 3u);
+    EXPECT_EQ(G.Progress->Loops[1].Header, 1u);
+    EXPECT_NE(G.Progress->SourceContract, G.Progress->ObservedContract);
+    EXPECT_EQ(readDataFlowGraph(json(G)), G);
+    EXPECT_EQ(graph(Text).Progress->Kind, FlowProgressKind::Unproven);
+    EXPECT_EQ(multiGraph(Text).Progress->Kind, FlowProgressKind::Unproven);
+  }
+  EXPECT_EQ(nestedGraph("define void @f() { ret void }").Progress->Kind,
+            FlowProgressKind::Acyclic);
+  EXPECT_EQ(nestedGraph(Loop).Progress->Loops.size(), 1u);
+  EXPECT_EQ(nestedGraph(MultiBlockLoop).Progress->Loops.size(), 1u);
+}
+
+TEST(BinaryDiffNestedProgress,
+     ProvesHeaderUpdatesEarlyExitsAndSequentialInnerLoops) {
+  auto Hoisted = change(NestedLoop.str(), " %next = add nsw i8 %i, -1\n", "");
+  Hoisted = change(Hoisted, " br label %inner",
+                   " %next = add nsw i8 %i, -1\n br label %inner");
+  const auto Early = change(Hoisted, " br label %inner",
+                            " br i1 %choose, label %exit, label %inner");
+  auto InnerEarly =
+      change(NestedLoop.str(), "[ %step, %inner ]", "[ %step, %inner_latch ]");
+  InnerEarly = change(InnerEarly, " %step =",
+                      " br i1 %choose, label %latch, label %inner_latch\n"
+                      "inner_latch:\n %step =");
+  auto Sequential =
+      change(NestedLoop.str(), "br i1 %guard, label %inner, label %latch",
+             "br i1 %guard, label %inner, label %second\n"
+             "second:\n"
+             " %k = phi i8 [ %step, %inner ], [ %more, %second ]\n"
+             " %more = sub nuw i8 %k, 1\n"
+             " %done = icmp eq i8 %more, 0\n"
+             " br i1 %done, label %latch, label %second");
+  for (const auto &Text : {Hoisted, Early, InnerEarly, Sequential}) {
+    SCOPED_TRACE(Text);
+    const auto G = nestedGraph(Text);
+    EXPECT_EQ(G.Progress->Kind, FlowProgressKind::CounterLoops);
+    EXPECT_EQ(G.Progress->Loops.size(), Text == Sequential ? 3u : 2u);
+    EXPECT_EQ(readDataFlowGraph(json(G)), G);
+  }
+}
+
+TEST(BinaryDiffNestedProgress, KeepsProofIndependentOfNestedBlockLayout) {
+  const auto Text = NestedLoop.str();
+  const auto Outer = Text.find("outer:\n"), Inner = Text.find("inner:\n"),
+             Latch = Text.find("latch:\n"), Exit = Text.find("exit:");
+  const auto Reordered = Text.substr(0, Outer) +
+                         Text.substr(Latch, Exit - Latch) +
+                         Text.substr(Inner, Latch - Inner) +
+                         Text.substr(Outer, Inner - Outer) + Text.substr(Exit);
+  const auto G = nestedGraph(Reordered);
+  ASSERT_EQ(G.Progress->Kind, FlowProgressKind::CounterLoops);
+  ASSERT_EQ(G.Progress->Loops.size(), 2u);
+  EXPECT_EQ(G.Progress->Loops[0].Block, 1u);
+  EXPECT_EQ(G.Progress->Loops[0].Header, 3u);
+  EXPECT_EQ(G.Progress->Loops[1].Block, 2u);
+  EXPECT_EQ(G.Progress->Loops[1].Header, 2u);
+  EXPECT_EQ(readDataFlowGraph(json(G)), G);
+}
+
+TEST(BinaryDiffNestedProgress,
+     DiscardsEveryWitnessWhenAnyLayerRemainsUnproven) {
+  const auto Frozen = change(
+      NestedLoop.str(), " %guard =", " %frozen = freeze i8 %step\n %guard =");
+  for (const auto &Text :
+       {change(NestedLoop.str(), "add nsw i8 %i, -1", "add i8 %i, -1"),
+        change(NestedLoop.str(), "add nsw i8 %j, -1", "add i8 %j, -1"),
+        change(NestedLoop.str(), "add nsw i8 %j, -1", "add nsw i8 %j, 0"),
+        change(NestedLoop.str(), "[ %step, %inner ]", "[ %seed, %inner ]"),
+        change(Frozen, "icmp ne i8 %step, 0", "icmp ne i8 %frozen, 0"),
+        change(NestedLoop.str(), "br i1 %guard, label %inner, label %latch",
+               "br i1 %choose, label %inner, label %latch"),
+        change(NestedLoop.str(), "exit: ret i8 %next",
+               "exit: ret i8 %next\nunreachable_cycle: br label "
+               "%unreachable_cycle")}) {
+    SCOPED_TRACE(Text);
+    for (const auto &Body :
+         {Text, change(Text, "i1 %choose) {",
+                       "i1 %choose) mustprogress willreturn {")}) {
+      const auto G = nestedGraph(Body);
+      EXPECT_EQ(G.Progress->Kind, FlowProgressKind::Unproven);
+      EXPECT_TRUE(G.Progress->Loops.empty());
+      EXPECT_EQ(G.Progress->SourceContract, G.Progress->ObservedContract);
+      EXPECT_EQ(readDataFlowGraph(json(G)), G);
+    }
+  }
+}
+
+TEST(BinaryDiffNestedProgress,
+     RefusesOuterResetsDuplicateEdgesAndIrreducibleEntries) {
+  auto Reset = change(NestedLoop.str(), "[ %next, %latch ]",
+                      "[ %next, %latch ], [ %start, %reset ]");
+  Reset = change(Reset, "br i1 %guard, label %inner, label %latch",
+                 "br i1 %guard, label %inner, label %check\ncheck:\n"
+                 " br i1 %choose, label %reset, label %latch\n"
+                 "reset: br label %outer");
+  auto Duplicate = change(NestedLoop.str(), "label %exit, label %outer",
+                          "label %outer, label %outer");
+  Duplicate = change(Duplicate, "[ %next, %latch ]",
+                     "[ %next, %latch ], [ %next, %latch ]");
+  for (const auto &Text : {Reset, Duplicate, std::string(R"(
+define i8 @f(i8 %start, i1 %choose) {
+entry: br i1 %choose, label %a, label %b
+a:
+ %i = phi i8 [ %start, %entry ], [ %up, %a ], [ 0, %b ]
+ %up = add nsw i8 %i, 1
+ %ci = icmp eq i8 %up, 0
+ br i1 %ci, label %b, label %a
+b:
+ %j = phi i8 [ %start, %entry ], [ %down, %b ], [ 0, %a ]
+ %down = sub nuw i8 %j, 1
+ %cj = icmp eq i8 %down, 0
+ br i1 %cj, label %a, label %b
+})")}) {
+    const auto G = nestedGraph(Text);
+    EXPECT_EQ(G.Progress->Kind, FlowProgressKind::Unproven);
+    EXPECT_TRUE(G.Progress->Loops.empty());
+  }
+}
+
+TEST(BinaryDiffNestedProgress, ValidatesAllLayersFromScratchAndBindsSchema) {
+  const auto G = nestedGraph(nestedCounters(3));
+  ASSERT_EQ(G.Progress->Loops.size(), 3u);
+  for (unsigned I = 0; I < G.Progress->Loops.size(); ++I) {
+    auto Forged = G;
+    Forged.Progress->Loops[I].Header = G.Progress->Loops[I].Block;
+    EXPECT_TRUE(Forged.validate({}));
+    EXPECT_THROW(readDataFlowGraph(json(Forged)), std::invalid_argument);
+    Forged = G;
+    Forged.Progress->Loops.erase(Forged.Progress->Loops.begin() + I);
+    EXPECT_TRUE(Forged.validate({}));
+  }
+  auto Reordered = G;
+  std::swap(Reordered.Progress->Loops.front(),
+            Reordered.Progress->Loops.back());
+  EXPECT_TRUE(Reordered.validate({}));
+  auto V = json(G);
+  EXPECT_EQ(V.getAsObject()->getInteger("schema_version"), 7);
+  (*V.getAsObject())["schema_version"] = 6;
+  EXPECT_THROW(readDataFlowGraph(V), std::invalid_argument);
+  auto Old = G;
+  Old.Profile = LLVMMultiBlockProgressDataFlowProfile.str();
+  EXPECT_TRUE(Old.validate({}));
+  EXPECT_THROW(readDataFlowGraph(json(Old)), std::invalid_argument);
+  V = json(G);
+  V.getAsObject()
+      ->getObject("progress")
+      ->getArray("loops")
+      ->front()
+      .getAsObject()
+      ->erase("header");
+  EXPECT_THROW(readDataFlowGraph(V), std::invalid_argument);
+}
+
+TEST(BinaryDiffNestedProgress, KeepsNestedTraversalBoundedAndInterruptible) {
+  const auto G = nestedGraph(nestedCounters(64));
+  ASSERT_EQ(G.Progress->Kind, FlowProgressKind::CounterLoops);
+  EXPECT_EQ(G.Progress->Loops.size(), 64u);
+  uint64_t OneRound = 0, AllRounds = 0;
+  const auto One = proveFlowProgress(
+      G, G.Progress->ObservedContract, {}, [&](uint64_t N) { OneRound += N; },
+      FlowProgressMode::MultiBlock);
+  EXPECT_EQ(One.Kind, FlowProgressKind::Unproven);
+  const auto All = proveFlowProgress(
+      G, G.Progress->ObservedContract, {}, [&](uint64_t N) { AllRounds += N; },
+      FlowProgressMode::Nested);
+  EXPECT_EQ(All.Loops, G.Progress->Loops);
+  EXPECT_GT(AllRounds, OneRound);
+  for (const auto StopAt : {OneRound + 1, AllRounds - 1}) {
+    uint64_t Work = 0;
+    EXPECT_THROW(proveFlowProgress(
+                     G, G.Progress->ObservedContract, {},
+                     [&](uint64_t N) {
+                       Work += N;
+                       if (Work >= StopAt)
+                         throw DataFlowInterrupted(ComparisonState::Cancelled);
+                     },
+                     FlowProgressMode::Nested),
+                 DataFlowInterrupted);
+    EXPECT_EQ(G.Progress->Loops, All.Loops);
+  }
+  DataFlowOptions O;
+  O.MaxWork = OneRound;
+  EXPECT_THROW(nestedGraph(nestedCounters(64), O), DataFlowInterrupted);
+  std::atomic<bool> Cancel{true};
+  ComparisonControl C;
+  C.Cancel = &Cancel;
+  EXPECT_THROW(nestedGraph(NestedLoop, {}, C), DataFlowInterrupted);
+}
+
+TEST(BinaryDiffNestedProgress, SharesExactRetainedAndProjectionAllowances) {
+  const auto G = nestedGraph();
+  DataFlowOptions O;
+  O.MaxNodes = G.retainedItems();
+  EXPECT_EQ(nestedGraph(NestedLoop, O), G);
+  --O.MaxNodes;
+  EXPECT_THROW(nestedGraph(NestedLoop, O), DataFlowInterrupted);
+  EXPECT_THROW(readDataFlowGraph(json(G), O), std::invalid_argument);
+  O = {};
+  uint64_t Low = 1, High = limits::diff::kDefaultFlowMaxWork;
+  while (Low < High) {
+    O.MaxWork = Low + (High - Low) / 2;
+    try {
+      nestedGraph(NestedLoop, O);
+      High = O.MaxWork;
+    } catch (const DataFlowInterrupted &E) {
+      EXPECT_EQ(E.State, ComparisonState::ResourceLimited);
+      Low = O.MaxWork + 1;
+    }
+  }
+  O.MaxWork = Low;
+  EXPECT_EQ(nestedGraph(NestedLoop, O), G);
+  --O.MaxWork;
+  EXPECT_THROW(nestedGraph(NestedLoop, O), DataFlowInterrupted);
 }

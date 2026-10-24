@@ -202,6 +202,16 @@ is computed in the header or latch; after cutting proved backedges the complete
 CFG must be acyclic. Nested/irreducible or bypass cycles remain unproven.
 Published v1 proofs and schema 5 encodings are unchanged.
 
+`profile:"llvm-progress-ssa-v3"` extends the same proof to nested components.
+Each layer must meet the single-entry/backedge recurrence rules, with original
+entry edges retained during residual analysis. Every residual cycle must be
+discharged before any progress is published. Schema 7 witnesses use the same
+explicit header/latch/counter/update/compare fields and remain sorted by latch;
+paged node rows expose only their own latch witness. Recipes use
+`llvm-progress-neighborhoods-v3` / `llvm-progress-fragments-v3`. Repeated SCC
+analysis and witness ordering share the existing work/cancellation limits;
+there is no separate depth cap. v1/v2 contracts and encodings are unchanged.
+
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
 allowance; public node counts and coverage still count operations. Metadata

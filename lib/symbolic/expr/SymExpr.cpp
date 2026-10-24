@@ -135,7 +135,9 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
   for (SymRef R : Ops)
     H = mixHash(H, R.index());
 
-  auto &Bucket = InternTable[{H, 0}];
+  // Split the full hash across both fields. A constant second field biases
+  // DenseMap's pair mixer; the upper half also cannot equal a 64-bit sentinel.
+  auto &Bucket = InternTable[{H >> 32, uint32_t(H)}];
   for (uint32_t Cand : Bucket) {
     const SymNode &N = Nodes[Cand];
     if (N.Op != Op || N.Width != Width || N.Aux != Aux ||

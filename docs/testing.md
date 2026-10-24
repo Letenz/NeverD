@@ -1855,6 +1855,23 @@ controls, changed final constant, bound and body arithmetic. Worker/Python/Qt
 checks retain both published profile versions. Frozen v1 proved and unproven
 reports in complete/limited/cancelled states are replayed byte-for-byte.
 
+`BinaryDiffNestedProgress` exercises reseeded inner counters, header updates,
+early exits, sequential inner loops, differing proof/latch order and 64 nested
+layers. Wrapping outer or inner counters, hidden progress behind freeze,
+internal resets, irreducible entries, duplicate edges and unreachable spins
+must discard all tentative witnesses. Schema 7 tests forge each layer, remove
+or reorder witnesses and attempt cross-version restore. Exact retained/work
+allowances and cancellation after outer-layer analysis remain bounded.
+`NestedProgressPagesEveryLayerAndRechecksFreshSource` checks owned x64 family4
+bytes through SDK single-node paging, all loop witnesses, slicing and fresh
+source-bound restore. The compiler corpus includes family4 nested loops across
+x64/AArch64 ELF/COFF/Mach-O, with explicit v2 unproven controls, saved replay and
+changed final constants, bounds and body arithmetic. Worker, Python and Qt
+exercise the same profile and both layers; Qt retains light/dark and fractional
+DPI checks. Frozen v2 self, branched and unproved nested reports supplement the
+older byte-exact compatibility fixtures. These are owned functional fixtures,
+not held-out accuracy or general behavioral-equivalence qualification.
+
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
 missing/stack/overlapping sites, detached and foreign users, raw and retained
@@ -2071,12 +2088,16 @@ dialog; it must terminate without the probe forcing successful process exit.
 
 `codeOpensBesideFloatingDisassembly` checks new, existing and reopened source
 and IR panes beside their floating disassembly. `focusModeGroupsViewsAndRestoresLayout`
-presses Q three times to create one floating workspace with assembly on the
+presses F three times to create one floating workspace with assembly on the
 left, code on the right and output across the bottom. It checks both themes,
 docked and floating origins, restoring the previous layout, unchanged data,
-and ordinary command input. `focusSequenceKeepsSingleQAndIgnoresAutoRepeat`
-checks that the Q sequence has a 400 ms interval, a single Q retains the
-hexadecimal-format action, and holding Q does not enter focus mode.
+data addresses outside functions, and ordinary command input. Keys enter
+through `QWindow` so forwarding to the focused widget cannot silently reset
+the sequence.
+`focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
+one second apart, interruption by another key or focus change, timeout,
+auto-repeat, ordinary text input, reopening a closed assembly pane, and
+immediate single-Q operand formatting.
 `fileReviewWindowsOfferWindowControls` checks the offline
 package and binary-comparison dialogs; the title-bar unit cases exercise
 minimize, maximize and restore with default and customized dialog flags.
@@ -12231,8 +12252,10 @@ parsing and trigger this admission rule before pointer publication.
 unrelated unresolved pointer slots across x86, x64, ARM and AArch64 and
 PE/COFF, ELF and Mach-O image models. Large relocation-free gaps must remain
 bounded by demand, retain aliases in both access orders, merge bridging
-accesses, and promote earlier byte objects when an address escapes. Backwards
-growth must preserve atomic alignment and the symbolized original address.
+accesses, and promote earlier byte objects when an address escapes. Adjacent
+segments must retain independent bytes and mutability in either access order.
+Backwards growth must preserve atomic alignment and the symbolized original
+address.
 Required unresolved pointers and shared-shard storage keep their rejection or
 whole-run contracts. Run the owning pointer and memory suites together:
 
