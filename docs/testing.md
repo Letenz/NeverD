@@ -12204,6 +12204,11 @@ the complete pre-SSA argument prefix and the positions of stack arguments.
 `NeverDSessionLLVMTests`'s `OmittedDebugNamedRuntimeUsesItsDeclaredArity` check
 that PDB public names reach argument recovery before either the module or
 single-function source route emits a call to an omitted runtime routine.
+`OverwrittenEntrySpillsAreNotValueReads` executes whole and split overwrites
+of incoming-register home slots through both routes. The companion
+`EntrySpillProofKeepsObservedBytesAndEscapes` retains partial observations,
+reads or calls before overwrite, returned frame addresses and branches where
+only one arm overwrites the saved bytes.
 
 The threaded arm64e loader validates unique segment ownership and rejects roots
 at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams

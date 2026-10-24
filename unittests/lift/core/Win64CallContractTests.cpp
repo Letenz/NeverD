@@ -30,6 +30,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -41,6 +42,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
+#include <initializer_list>
 #include <map>
 #include <set>
 #include <string>
@@ -878,6 +880,147 @@ int main(void) {
             Source + Oracle,
             {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
     }
+}
+
+TEST(CallExitRegisters, OverwrittenEntrySpillsAreNotValueReads) {
+  constexpr va_t Consumer = Text + 0x80;
+  for (bool Split : {false, true}) {
+    std::vector<uint8_t> Code(0xA0, 0xCC);
+    std::vector<uint8_t> Caller = {0x4C, 0x89, 0x4C, 0x24,
+                                   0x20,                   // mov [rsp+20h],r9
+                                   0x48, 0x83, 0xEC, 0x28, // sub rsp,28h
+                                   0x48, 0x01, 0xD1,       // add rcx,rdx
+                                   0x4C, 0x01, 0xC1,       // add rcx,r8
+                                   0x48, 0x83, 0xC1, 19};  // add rcx,19
+    if (Split) {
+      Caller.insert(Caller.end(), {0x89, 0x4C, 0x24, 0x48, 0xC7, 0x44, 0x24,
+                                   0x4C, 0, 0, 0, 0});
+    } else {
+      Caller.insert(Caller.end(), {0x48, 0x89, 0x4C, 0x24, 0x48});
+    }
+    Caller.insert(Caller.end(), {0x48, 0x8D, 0x4C, 0x24, 0x48, 0xE8});
+    const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
+    Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+    Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x28, 0xC3});
+    put(Code, Text, Caller);
+    put(Code, Consumer, {0x48, 0x8B, 0x01, 0xC3});
+    const auto Image =
+        makeImage(Code, {{Text, "reused_home"}, {Consumer, "read_home"}}, {});
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(Split);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text, Consumer};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source +
+                  "\nint main(void) { return reused_home(1, 2, 3) != 25 || "
+                  "reused_home(7, 11, 13) != 50; }\n",
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+  }
+}
+
+TEST(CallExitRegisters, EntrySpillProofKeepsObservedBytesAndEscapes) {
+  for (unsigned Mode = 0; Mode < 7; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Function;
+    Function.Entry = Text;
+    Function.FrameSize = 40;
+    Function.CC = CallingConv::Win64;
+    auto Register = [](int Id, uint64_t Offset) {
+      MedVar V;
+      V.Kind = MedVar::Reg;
+      V.Id = Id;
+      V.RegOff = Offset;
+      V.Size = 8;
+      V.TheArch = Arch::X64;
+      return V;
+    };
+    const MedVar SP = Register(0, x86reg::RSP);
+    const MedVar Incoming = Register(1, x86reg::R9);
+    MedVar Address = Register(2, x86reg::R10);
+    Address.SSAVer = 1;
+    MedVar Loaded = Register(3, x86reg::RAX);
+    Loaded.SSAVer = 1;
+    auto Operation = [](NdOp Opcode, MedVar Output,
+                        std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      return Op;
+    };
+    MedBlock Entry;
+    Entry.Id = 0;
+    Entry.StartAddr = Text;
+    Entry.Ops = {
+        Operation(NdOp::COPY, SP, {SP}),
+        Operation(NdOp::COPY, Incoming, {Incoming}),
+        Operation(NdOp::INT_ADD, Address, {SP, MedVar::makeConst(32, 8)}),
+        Operation(NdOp::STORE, {}, {Address, Incoming})};
+    const auto Write = Operation(
+        NdOp::STORE, {}, {Address, MedVar::makeConst(19, Mode == 1 ? 4 : 8)});
+    const auto Read = Operation(NdOp::LOAD, Loaded, {Address});
+    const auto Return = Operation(NdOp::RETURN, {}, {Loaded});
+    if (Mode == 2)
+      Entry.Ops.push_back(Operation(
+          NdOp::CALL, {}, {MedVar::makeConst(Text + 0x80, 8), Address}));
+    if (Mode == 3)
+      Entry.Ops.push_back(Read);
+    if (Mode >= 5) {
+      Entry.Succs = {1, 2};
+      Entry.Ops.push_back(Operation(
+          NdOp::COND_BR, {}, {MedVar::makeConst(Text + 0x20, 8), Incoming}));
+      Function.Blocks.push_back(std::move(Entry));
+      for (int Id : {1, 2}) {
+        MedBlock Arm;
+        Arm.Id = Id;
+        Arm.StartAddr = Text + 0x20 * Id;
+        Arm.Preds = {0};
+        if (Mode == 5 || Id == 1)
+          Arm.Ops.push_back(Write);
+        Arm.Ops.push_back(Read);
+        Arm.Ops.push_back(Return);
+        Function.Blocks.push_back(std::move(Arm));
+      }
+    } else if (Mode == 4) {
+      Entry.Ops.push_back(Operation(NdOp::RETURN, {}, {Address}));
+      Function.Blocks.push_back(std::move(Entry));
+    } else {
+      Entry.Ops.push_back(Write);
+      Entry.Ops.push_back(Read);
+      Entry.Ops.push_back(Return);
+      Function.Blocks.push_back(std::move(Entry));
+    }
+    markSourceStackAccesses(Function, Arch::X64, BinaryFormat::COFF);
+    EXPECT_EQ(Function.Blocks.front().Ops[3].PrologueSave,
+              Mode == 0 || Mode == 5);
+  }
 }
 
 TEST(CallExitRegisters, ConstantScratchValueReachesTheCallersStore) {
