@@ -12273,12 +12273,13 @@ of incoming-register home slots through both routes. The companion
 `EntrySpillProofKeepsObservedBytesAndEscapes` retains partial observations,
 reads or calls before overwrite, returned frame addresses and branches where
 only one arm overwrites the saved bytes.
-`OverwrittenCallClobberSpillsAreNotValueReads` checks post-call scratch stores,
+`OverwrittenCallClobberSpills.*` checks post-call scratch stores,
 with and without flags transfers and unused restores. Both source routes keep
 the call and flags effects while discarding overwritten values. COFF, ELF and
 Mach-O image models exercise optimized/unoptimized source; host-header emission
 of the same recovered IR executes at O0/O2 with UBSan and an independent call
-counter. This does not qualify native Windows or Darwin execution. All scratch
+counter. Flags execution cases explicitly skip on non-x64 hosts. This does not
+qualify native Windows or Darwin execution. All scratch
 proofs share the existing per-function work budget; opaque calls, unknown memory
 accesses, partial overwrites and escaping addresses remain barriers.
 

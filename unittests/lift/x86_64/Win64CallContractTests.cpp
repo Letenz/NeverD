@@ -1026,88 +1026,99 @@ TEST(CallExitRegisters, EntrySpillProofKeepsObservedBytesAndEscapes) {
     }
 }
 
-TEST(CallExitRegisters, OverwrittenCallClobberSpillsAreNotValueReads) {
+class OverwrittenCallClobberSpills : public testing::TestWithParam<unsigned> {};
+
+INSTANTIATE_TEST_SUITE_P(SourceStackSpills, OverwrittenCallClobberSpills,
+                         testing::Values(0u, 1u, 2u));
+
+TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
+  const unsigned Variant = GetParam();
+#if !defined(__x86_64__) && !defined(_M_X64)
+  if (Variant)
+    GTEST_SKIP() << "Native x64 flags-transfer execution requires an x64 host";
+#endif
   for (BinaryFormat Format :
-       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
-    for (unsigned Variant : {0u, 1u, 2u}) {
-      // An opaque call leaves R11 unavailable to an ordinary source function.
-      // Its scratch spill is fully overwritten before the body reads the slot.
-      const auto Call = throughSlot(Text + 4, slot(0));
-      std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
-      Code.insert(Code.end(), Call.begin(), Call.end());
-      const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
-      Code.insert(Code.end(), Save.begin(), Save.end());
-      if (Variant)
-        Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
-      if (Variant == 2)
-        Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
-      const std::vector<uint8_t> Body = {
-          0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
-          0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
-          0x48, 0x83, 0xC4, 0x28, 0xC3};
-      Code.insert(Code.end(), Body.begin(), Body.end());
-      auto Image = makeImage(Code, {{Text, "reused_scratch"}}, {"rand"});
-      Image.Format = Format;
-      ASSERT_TRUE(Image.recordImportStorageSlot(
-          Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
-      for (bool LLVM : {false, true})
-        for (bool NoOpt : {false, true}) {
-          SCOPED_TRACE(testing::Message() << unsigned(Format) << ':' << Variant
-                                          << ':' << LLVM << ':' << NoOpt);
-          llvm::LLVMContext Context;
-          PipelineOptions Options;
-          Options.EmitDumpOutput = false;
-          Options.OnlyFunctionEntries = {Text};
-          Options.LiftMode = LLVM;
-          Options.SourceProjection = true;
-          Options.NoOpt = NoOpt;
-          auto Result = Pipeline().run(Image, Context, Options);
-          ASSERT_TRUE(Result.Success) << Result.Error;
-          std::string Source;
-          llvm::raw_string_ostream Output(Source);
-          CEmitterOptions COptions;
-          COptions.TheArch = Image.Arch;
-          COptions.Format = Image.Format;
-          COptions.Image = &Image;
-          if (LLVM) {
-            ASSERT_TRUE(Result.LlvmModule);
-            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
-            ASSERT_TRUE(
-                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
-          } else
-            ASSERT_TRUE(
-                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
-          EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-          if (Variant) {
-            EXPECT_NE(Source.find("__readeflags"), std::string::npos) << Source;
-            EXPECT_NE(Source.find("__writeeflags"), std::string::npos)
-                << Source;
-          }
-          if (Source.find("__builtin_trap") != std::string::npos)
-            continue;
-          // Execute the same recovered IR with the host intrinsic header.
-          // COFF emission above keeps the Windows spelling; selecting ELF
-          // here supplies x86intrin.h for the native Linux compiler.
-          std::string Native;
-          llvm::raw_string_ostream NativeOutput(Native);
-          COptions.Format = BinaryFormat::ELF;
-          if (LLVM)
-            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, NativeOutput,
-                                            COptions));
-          else
-            ASSERT_TRUE(
-                HighCEmitter().emit(Result.HighFuncs, NativeOutput, COptions));
-          const std::string Oracle = R"(
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    // An opaque call leaves R11 unavailable to an ordinary source function.
+    // Its scratch spill is fully overwritten before the body reads the slot.
+    const auto Call = throughSlot(Text + 4, slot(0));
+    std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
+    Code.insert(Code.end(), Call.begin(), Call.end());
+    const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
+    Code.insert(Code.end(), Save.begin(), Save.end());
+    if (Variant)
+      Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
+    if (Variant == 2)
+      Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
+    const std::vector<uint8_t> Body = {
+        0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
+        0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
+        0x48, 0x83, 0xC4, 0x28, 0xC3};
+    Code.insert(Code.end(), Body.begin(), Body.end());
+    auto Image = makeImage(Code, {{Text, "reused_scratch"}}, {"rand"});
+    Image.Format = Format;
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(testing::Message() << unsigned(Format) << ':' << Variant
+                                        << ':' << LLVM << ':' << NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        if (Variant) {
+          EXPECT_NE(Source.find("__readeflags"), std::string::npos) << Source;
+          EXPECT_NE(Source.find("__writeeflags"), std::string::npos) << Source;
+        }
+        if (Source.find("__builtin_trap") != std::string::npos)
+          continue;
+        // Execute the same recovered IR with the host intrinsic header.
+        // COFF emission above keeps the Windows spelling; selecting ELF
+        // here supplies x86intrin.h for the native Linux compiler.
+        std::string Native;
+        llvm::raw_string_ostream NativeOutput(Native);
+        COptions.Format = BinaryFormat::ELF;
+        if (LLVM)
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, NativeOutput, COptions));
+        else
+          ASSERT_TRUE(
+              HighCEmitter().emit(Result.HighFuncs, NativeOutput, COptions));
+        const std::string Provider = R"(
+#include <stdlib.h>
 static unsigned calls;
-int rand(void) { ++calls; return 13; }
+static int spill_provider(void) { ++calls; return 13; }
+#define rand spill_provider
+)";
+        const std::string Oracle = R"(
 int main(void) { return reused_scratch() != 19 || calls != 1; }
 )";
-          for (llvm::StringRef Level : {"-O0", "-O2"})
-            source_call_execution_test::compileAndRun(
-                Native + Oracle,
-                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
-        }
-    }
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Provider + Native + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+  }
 }
 
 TEST(CallExitRegisters, ConstantScratchValueReachesTheCallersStore) {
