@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CDeferredValue.h"
 #include "../UnalignedMemory.h"
 #include "HighCWriter.h"
 
@@ -212,6 +213,29 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
 
 std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                                              int ParentPrec) {
+  if ((E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR) && E.Type &&
+      E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum &&
+      (E.Type->Size == 1 || E.Type->Size == 2 || E.Type->Size == 4 ||
+       E.Type->Size == 8) &&
+      E.Operands.size() == 2)
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto &Unknown = E.Operands[I];
+      const auto &Known = E.Operands[1 - I];
+      if (!Unknown || !Known || !isUnknownCallOperand(Unknown.get()) ||
+          isUnknownCallOperand(Known.get()) ||
+          (Known->Kind != ExprKind::Var && Known->Kind != ExprKind::Phi &&
+           Known->Kind != ExprKind::Const) ||
+          !Known->Type || Known->Type->Size != E.Type->Size)
+        continue;
+      const std::string Value = exprStr(*Known);
+      // A forwarded load/call must keep its native evaluation and effects.
+      if (Known->Kind == ExprKind::Const || Value == varName(Known->Var))
+        return shortCircuitUnknownBits(
+            E.Op == NdOp::INT_AND, E.Type->Size * 8, typeToC(E.Type),
+            exprStr(*Unknown), Value,
+            Known->Kind == ExprKind::Const ? std::optional(Known->ConstVal)
+                                           : std::nullopt);
+    }
   auto IsZeroLike = [this](const ExprPtr &Op) {
     if (!Op)
       return false;

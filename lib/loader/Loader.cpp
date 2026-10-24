@@ -77,7 +77,10 @@ Loader::readFileBuffer(const std::filesystem::path &Path, BinaryFormat Fmt,
                        const LoadProgress &Control) {
   const auto Name = pathToUTF8(Path);
   Control.report("read", 0, 1, Name.c_str());
-  auto Buffer = llvm::MemoryBuffer::getFile(Name);
+  // Binary parsers consume bounded bytes. Requiring a trailing NUL would
+  // force a whole-file copy for page-aligned inputs instead of mapping them.
+  auto Buffer = llvm::MemoryBuffer::getFile(Name, /*IsText=*/false,
+                                            /*RequiresNullTerminator=*/false);
   if (!Buffer)
     return llvm::make_error<llvm::StringError>(std::string(getFormatTag(Fmt)) +
                                                    ": cannot open " + Name,

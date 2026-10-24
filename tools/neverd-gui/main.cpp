@@ -362,6 +362,8 @@ int main(int argc, char **argv) {
   QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {
     QSettings().setValue(GeometryKey, window.saveGeometry());
   });
+  QObject::connect(&window, &MainWindow::shutdownAccepted, &app,
+                   &QCoreApplication::quit);
 
 #ifdef NEVERD_GUI_TEST_PROBES
   if (probe) {

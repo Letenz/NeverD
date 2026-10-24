@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>切换包含反汇编、伪代码和输出的浮动工作区</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>专注模式(&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>打开(&amp;O)...</translation>
     </message>
@@ -2174,6 +2182,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>无法恢复进入专注模式前的布局。</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>重新加载输入文件</translation>
@@ -6385,6 +6397,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>循环分析在比较计算前证明支持范围内的终止性。此模式包含参数视图，并保留未能证明的循环原始契约。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>带多块循环分析的优化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6515,6 +6531,14 @@ Progress does not establish equal loop counts or function results.</source>
 观察契约：
 %2
 终止性不能证明循环次数或函数结果相同。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>带多块循环分析的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>已证明的循环：入口块 %1 → 回边块 %2 · 计数器 #%3 → 更新 #%4 · 条件 #%5</translation>
     </message>
 </context>
 <context>
@@ -8190,6 +8214,18 @@ Secondary SHA-256: %3
     <message>
         <source>Dock back into main window</source>
         <translation>停靠回主窗口</translation>
+    </message>
+    <message>
+        <source>Move window</source>
+        <translation>移动窗口</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>锁定浮窗</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>解锁浮窗</translation>
     </message>
 </context>
 <context>

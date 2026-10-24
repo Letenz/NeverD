@@ -29,6 +29,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
 #include <cctype>
@@ -519,6 +520,46 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     OS << SourceRecorder->end(*Event);
 }
 
+bool HighCWriter::writeDeferredUnknownCopy(const HighStmt &Stmt, int Indent) {
+  if (!Stmt.Dst || !Stmt.Val ||
+      (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi))
+    return false;
+  const std::string Name = varName(Stmt.Dst->Var);
+  const auto Flag = DeferredUnknownFlags.find(Name);
+  if (Flag == DeferredUnknownFlags.end())
+    return false;
+  if (isUnknownCallOperand(Stmt.Val.get())) {
+    emitIndent(Indent);
+    OS << Flag->second << " = 0;\n";
+    return true;
+  }
+  std::string Available = "1";
+  const HighExpr *Value = peelIntegerViewOps(Stmt.Val.get());
+  if (Value && (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi))
+    if (auto Source =
+            DeferredUnknownFlags.find(copyForwardName(varName(Value->Var)));
+        Source != DeferredUnknownFlags.end())
+      Available = Source->second;
+  std::string Payload;
+  {
+    llvm::SaveAndRestore<bool> Transport(ReadingDeferredPayload,
+                                         Available != "1");
+    Payload = exprStr(*Stmt.Val);
+  }
+  // The zero is only an unavailable payload. It cannot become a recovered
+  // machine value: every observation checks the accompanying availability.
+  emitIndent(Indent);
+  OS << Name << " = ";
+  if (Available != "1")
+    OS << Available << " ? (" << Payload << ") : 0";
+  else
+    OS << Payload;
+  OS << ";\n";
+  emitIndent(Indent);
+  OS << Flag->second << " = " << Available << ";\n";
+  return true;
+}
+
 void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   if (Analysis.DeadStmts.count(&Stmt) &&
       !(Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
@@ -546,6 +587,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   switch (Stmt.Kind) {
   case StmtKind::Assign: {
     if (!Stmt.Dst || !Stmt.Val)
+      return;
+    if (writeDeferredUnknownCopy(Stmt, Indent))
       return;
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
       const std::string DestRaw = varName(Stmt.Dst->Var);

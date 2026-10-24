@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Toggle a floating workspace with disassembly, pseudocode and output</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>&amp;Focus mode</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Open...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Double-click to go to the declaration.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Could not restore the layout before focus mode.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Reload the input file</translation>
@@ -6421,6 +6433,10 @@ Coverage: %7</translation>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Optimized SSA with multi-block loop analysis</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6551,6 +6567,14 @@ Progress does not establish equal loop counts or function results.</source>
 Observed contract:
 %2
 Progress does not establish equal loop counts or function results.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Optimized SSA with multi-block loop analysis</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</translation>
     </message>
 </context>
 <context>
@@ -8226,6 +8250,18 @@ Secondary SHA-256: %3
     <message>
         <source>Dock back into main window</source>
         <translation>Dock back into main window</translation>
+    </message>
+    <message>
+        <source>Move window</source>
+        <translation>Move window</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Lock floating window</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Unlock floating window</translation>
     </message>
 </context>
 <context>

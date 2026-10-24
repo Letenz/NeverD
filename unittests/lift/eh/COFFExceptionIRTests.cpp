@@ -2875,7 +2875,9 @@ TEST(COFFExceptionIR,
       llvm::StringRef(HostileFunctionBytes, sizeof(HostileFunctionBytes) - 1),
       "unsafe_hostile_helper");
   Hostile->setMetadata(windows_eh_md::FunctionAttachment, Payload);
-  const char HostileArgumentBytes[] = "for\0) { pwned(); }\nint injected";
+  // LLVM rejects NUL in value names. Keep a legal control byte here; the
+  // HighC hostile-name fixture also covers NUL before LLVM admission.
+  const char HostileArgumentBytes[] = "for\x01) { pwned(); }\nint injected";
   llvm::FunctionType *ArgumentsType =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
                               {llvm::PointerType::getUnqual(Context),

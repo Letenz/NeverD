@@ -287,46 +287,50 @@ def parameter_views(client, args, root, fixture):
 
 def loop_progress(client, args, root, fixture):
     source = fixture.with_name("control_regions_fixture.c")
-    for arch, target in (("x64", "x86_64-unknown-linux-gnu"),
-                         ("aarch64", "aarch64-unknown-linux-gnu")):
-        paths = [root / f"progress-{arch}-O{level}.o" for level in (0, 2)]
-        for path, level in zip(paths, (0, 2)):
-            subprocess.run([args.cc, f"--target={target}", "-c", f"-O{level}",
-                            "-fno-asynchronous-unwind-tables", "-DFAMILY=2",
-                            str(source), "-o", str(path)], check=True, capture_output=True)
-        start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paths[1])},
-                 "options": {"use_names": False, "dataflow": {"profile": "llvm-progress-ssa-v1"},
-                             "flow_regions": {"fragments": True}}}
-        summary = ok(client, "comparison_start", start)
-        assert summary["flow_regions"]["anchor_count"] > 0, summary
-        entries = ok(client, "comparison_dataflow", {"kind": "functions", "side": "primary"})["rows"]
-        address = next(e["function"] for e in entries if e["availability"] == "available")
-        query = {"side": "primary", "kind": "nodes", "address": address, "limit": 1}
-        page = ok(client, "comparison_dataflow", query)
-        assert page["schema_version"] == 5
-        assert page["progress"]["kind"] == "counter_loops"
-        assert "loops" not in page["progress"]
-        witnesses = []
-        for offset in range(page["total"]):
-            row = ok(client, "comparison_dataflow", {**query, "offset": offset})["rows"][0]
-            if row["progress_loop"]:
-                proof = row["progress_loop"]
-                assert all(proof[key] < page["total"] for key in ("counter", "update", "compare"))
-                witnesses.append(proof)
-        assert witnesses
-        sliced = ok(client, "comparison_slice", {"side": "primary", "address": address,
-                    "seeds": [witnesses[0]["update"]], "limit": 1})
-        assert sliced["schema_version"] == 5 and sliced["rows"]
-        document = ok(client, "comparison_export")
-        saved = root / f"progress-{arch}.nddiff"
-        saved.write_text(json.dumps(document))
-        cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(paths[0]),
-                              "-b", str(paths[1]), "--reopen", str(saved), "--json"],
-                             capture_output=True, text=True, timeout=60)
-        assert cli.returncode in (0, 2), cli.stderr
-        assert json.loads(cli.stdout) == document
-        ok(client, "comparison_start", {**start, "restore_path": str(saved)})
-        assert ok(client, "comparison_export") == document
+    for family, version in ((2, 1), (3, 2)):
+        for arch, target in (("x64", "x86_64-unknown-linux-gnu"),
+                             ("aarch64", "aarch64-unknown-linux-gnu")):
+            paths = [root / f"progress-v{version}-{arch}-O{level}.o" for level in (0, 2)]
+            for path, level in zip(paths, (0, 2)):
+                subprocess.run([args.cc, f"--target={target}", "-c", f"-O{level}",
+                                "-fno-asynchronous-unwind-tables", f"-DFAMILY={family}",
+                                str(source), "-o", str(path)], check=True, capture_output=True)
+            start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paths[1])},
+                     "options": {"use_names": False, "dataflow": {"profile": f"llvm-progress-ssa-v{version}"},
+                                 "flow_regions": {"fragments": True}}}
+            summary = ok(client, "comparison_start", start)
+            assert summary["flow_regions"]["anchor_count"] > 0, summary
+            entries = ok(client, "comparison_dataflow", {"kind": "functions", "side": "primary"})["rows"]
+            address = next(e["function"] for e in entries if e["availability"] == "available")
+            query = {"side": "primary", "kind": "nodes", "address": address, "limit": 1}
+            page = ok(client, "comparison_dataflow", query)
+            assert page["schema_version"] == 4 + version
+            assert page["progress"]["kind"] == "counter_loops"
+            assert "loops" not in page["progress"]
+            witnesses = []
+            for offset in range(page["total"]):
+                row = ok(client, "comparison_dataflow", {**query, "offset": offset})["rows"][0]
+                if row["progress_loop"]:
+                    proof = row["progress_loop"]
+                    assert all(proof[key] < page["total"] for key in ("counter", "update", "compare"))
+                    if version == 2:
+                        assert proof["header"] != proof["block"]
+                        assert proof["header"] < page["block_count"]
+                    witnesses.append(proof)
+            assert witnesses
+            sliced = ok(client, "comparison_slice", {"side": "primary", "address": address,
+                        "seeds": [witnesses[0]["update"]], "limit": 1})
+            assert sliced["schema_version"] == 4 + version and sliced["rows"]
+            document = ok(client, "comparison_export")
+            saved = root / f"progress-v{version}-{arch}.nddiff"
+            saved.write_text(json.dumps(document))
+            cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(paths[0]),
+                                  "-b", str(paths[1]), "--reopen", str(saved), "--json"],
+                                 capture_output=True, text=True, timeout=60)
+            assert cli.returncode in (0, 2), cli.stderr
+            assert json.loads(cli.stdout) == document
+            ok(client, "comparison_start", {**start, "restore_path": str(saved)})
+            assert ok(client, "comparison_export") == document
     print("Loop progress: x64/AArch64 proofs, paged witnesses, slices and CLI/worker restore passed")
 
 

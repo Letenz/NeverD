@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Schwebenden Arbeitsbereich mit Disassemblierung, Pseudocode und Ausgabe umschalten</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>&amp;Fokusmodus</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>Ö&amp;ffnen...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Das Layout vor dem Fokusmodus konnte nicht wiederhergestellt werden.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Eingabedatei neu laden</translation>
@@ -6421,6 +6433,10 @@ Abdeckung: %7</translation>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>Die Schleifenanalyse weist, soweit unterstützt, die Terminierung vor dem Vergleich von Berechnungen nach. Sie umfasst Parametersichten und behält unbewiesene Schleifenverträge bei.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Optimierte SSA mit Mehrblock-Schleifenanalyse</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6551,6 +6567,14 @@ Progress does not establish equal loop counts or function results.</source>
 Beobachteter Vertrag:
 %2
 Terminierung belegt keine gleichen Schleifenzahlen oder Funktionsergebnisse.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Optimierte SSA mit Mehrblock-Schleifenanalyse</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Bewiesene Schleife: Kopfblock %1 → Rücksprungblock %2 · Zähler #%3 → Aktualisierung #%4 · Bedingung #%5</translation>
     </message>
 </context>
 <context>
@@ -8226,6 +8250,18 @@ Sekundäre SHA-256: %3
     <message>
         <source>Dock back into main window</source>
         <translation>Wieder im Hauptfenster andocken</translation>
+    </message>
+    <message>
+        <source>Move window</source>
+        <translation>Fenster verschieben</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Schwebendes Fenster sperren</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Schwebendes Fenster entsperren</translation>
     </message>
 </context>
 <context>

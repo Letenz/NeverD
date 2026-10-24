@@ -44,6 +44,9 @@ inline constexpr int kCopiedLinkHashDigits = 16;
 inline constexpr int kMainWindowMaximumFunctionsWidth = 420;
 inline constexpr int kMainWindowMinimumOutputHeight = 120;
 inline constexpr int kMainWindowMaximumOutputHeight = 260;
+// Q remains the operand-format command; a short Q sequence opens focus mode.
+inline constexpr int kFocusModeSequenceTimeoutMs = 400;
+inline constexpr int kFocusModeSequenceLength = 3;
 
 // tools/neverd-gui/app/QuickStartDialog.cpp
 /// The widest the side grows for a translation's longer actions.
@@ -205,6 +208,8 @@ inline constexpr int kTitleBarTitlePadding = 12;
 // tools/neverd-gui/app/WindowFrame.cpp
 /// The band outside the visible window that holds its shadow.
 inline constexpr int kWindowFrameShadowExtent = 10;
+/// Resize presses take precedence over content and docking inside this band.
+inline constexpr int kWindowFrameResizeInset = 8;
 
 // tools/neverd-gui/app/WorkbenchStyle.cpp
 /// The size of icons drawn on the 16 pixel grid of IconSet.def.

@@ -693,6 +693,32 @@ TEST(HighControlFlowSemantics, BooleanEqualitySurvivesDominatingScalarCopies) {
   EXPECT_TRUE(Report.Items.empty());
 }
 
+TEST(HighControlFlowSemantics, EntrySelectorsAreKnownBeforeGuardRefinement) {
+  // The parameter is read only by a switch, so branch predicates never
+  // register it. Refining the later boolean guards still queries its writes.
+  for (bool ReassignCopy : {false, true}) {
+    SCOPED_TRACE(ReassignCopy);
+    auto F = copiedBooleanEquality(ReassignCopy);
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    HighStmt Switch;
+    Switch.Kind = StmtKind::Switch;
+    Switch.Addr = 0x100;
+    Switch.SwitchExpr = HighExpr::makeVar(Parameter);
+    Switch.Cases.push_back({0, {assign(0x104, 20, 1)}});
+    F.Body.insert(F.Body.begin(), std::move(Switch));
+
+    const auto Report = analyzeHighSourceFlow(F, true);
+    ASSERT_TRUE(Report.Complete);
+    EXPECT_EQ(Report.Items.empty(), !ReassignCopy);
+    if (!ReassignCopy)
+      for (uint64_t Input : {uint64_t{0}, uint64_t{1}, UINT64_MAX})
+        EXPECT_EQ(execute(F, Input), 0u);
+  }
+}
+
 TEST(HighControlFlowSemantics,
      BooleanEqualitySurvivesIdenticalCopiesOnBothBranchArms) {
   auto F = copiedBooleanEquality(false);

@@ -250,8 +250,7 @@ both C projections. The machine instruction observes the execution host's
 checking controls and preserves poisoning behavior. Fixed scratch registers
 and raw instruction words support assemblers predating CPA mnemonics, with
 explicit operand and clobber constraints. Compilation does not establish CPU
-feature availability. SVE CPA forms fail explicitly until scalable state is
-modelled. These operations preserve call argument setup and frame taint,
+feature availability. These operations preserve call argument setup and frame taint,
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
@@ -325,13 +324,34 @@ widths. `AArch64SVEPredicate.def` owns PTRUE encodings, legal shapes and C
 projection contracts; LowIR, MedIR and both emitters reject malformed forms.
 LLVM converts typed predicates at the producer and consumer boundaries. All
 architectural PTRUE patterns are retained, including reserved empty patterns.
-MOVPRFX and flag-setting PTRUES remain unsupported until their paired-instruction
-and NZCV contracts are modelled. This does not establish V/Z aliasing, an SVE
-call ABI or the six SVE checked-pointer instruction forms.
+Flag-setting PTRUES remains unsupported until its NZCV contract is modelled.
+This does not establish V/Z aliasing or an SVE call ABI.
 
 `AArch64SVEVector.def` owns typed DUP/INDEX/LASTB/ST1/STNT1 shapes. HighC
 stores local Z values as `svuint8_t` and reinterprets them at typed operation
 boundaries; LLVM retains its integer backing with scalable typed views.
+`AArch64SVECPA.def` owns all six scalable CPA forms: unpredicated and merging
+ADDPT/SUBPT, MADPT and MLAPT. Original words retain destructive inputs and
+MADPT's multiplicand versus MLAPT's addend. LLVM and HighC emit real checked
+instructions over active-width Z values and canonical predicates, preserving
+inactive destination lanes, signed multiply-overflow checks and runtime enable
+controls. The shared vector contract records every vector and predicate input;
+none may acquire a scalar or constant substitute. Dead results still execute
+the checking operation. This is local instruction preservation, without native
+SVE/CPA execution qualification or a scalable LLVM-to-C carrier.
+
+`AArch64SVEPrefix.def` owns all three MOVPRFX forms before compatible CPA
+consumers. Detailed decoding captures PC+4 from the same supplied byte buffer;
+the snapshot stays bound to the original prefix address and raw word.
+Missing, classification-only or mismatched occurrences confer no pair evidence.
+Raw admission checks matching destinations, predicates, .D elements and
+forbidden source aliases
+before emitting separate copy/selection dataflow. A branch into the consumer
+bypasses the prefix, and SSA keeps the two incoming destination values. Other
+SVE consumers remain refused until their pair contracts are owned. LLVM and
+HighC select the active .D source lanes, retaining old inactive lanes for /m
+and zeroing them for /z; the real CPA consumer retains runtime checks.
+
 IRMed's `validateAArch64SVEState` owns bounded, complete local Z/P definition
 and COPY/PHI closure for both Med-to-High and LLVM emission. It checks the
 executed CFG and every incoming definition before a consumer can use state.
@@ -588,6 +608,16 @@ the proof root and witnesses; work/cancellation stays within the original
 projection allowance. Graph validation reruns the same proof and finite-op
 admission; fresh source binding authenticates source-to-observed attributes.
 CLI, SDK, worker and Qt share this owner and do not derive their own loop facts.
+The separate `llvm-progress-ssa-v2` selects multi-block proof explicitly, before
+changing the detached graph profile. An iterative charged Tarjan traversal
+finds components, their unique external-entry target and exact internal header
+edge inventory. Only a single latch can reach PHI admission, preventing
+candidate-by-seed quadratic work. Header PHIs receive the exact nowrap update
+through the sole backedge, or outside seeds. The update is computed in the header
+or latch; the direct latch comparison/branch consumes its poison.
+The residual whole CFG must be a DAG. Schema 6 names header and latch separately;
+v1 keeps its original scanner, accounting and four-field schema 5 witnesses.
+No loader, optimizer, ABI or transport adapter acquires a second proof owner.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
@@ -689,6 +719,11 @@ and its sources; destruction/close releases them. Other immutable snapshot
 queries retain their session-independent contract.
 `LoadProgress` in support owns borrowed loading progress and stop checkpoints.
 It carries no session state and is never retained in a `BinaryImage`.
+`Loader::readFileBuffer` supplies length-bounded binary bytes without requiring
+a trailing NUL. This lets LLVM map page-aligned inputs instead of copying the
+whole file solely to append a terminator. LLVM retains its small-file and
+failed-mapping read fallbacks. The image still owns its parsed bytes, and input
+hashing covers every file byte, including any unmapped overlay.
 Controlled loader calls restore the previous control on every exit and translate
 stops to `operation_canceled`; legacy calls retain their existing contracts.
 Hashing keeps the shared hardware-accelerated SHA-256 implementation and polls
@@ -4771,6 +4806,12 @@ Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
 
+`prepareMedStackAccesses` owns the post-conversion entry-kind, alignment and
+annotation sequence. Register-pair return recovery calls it again after
+reconverting a caller from LowIR: old operation flags cannot describe that new
+sequence. HighC and LLVM C request the source projection; machine lift,
+patching and analysis keep the original stack operations.
+
 The entry-stack proof keeps definitions, joins, ambiguity and transient active
 flags in one ordered index. Each visit still consumes its ordinary work and
 depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
@@ -5193,6 +5234,14 @@ before writing, including arguments it only passes on to its own callees.
 For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
+
+A complete scalar register summary also publishes an empty vector bank.
+Win64 does so only when no tracked vector family is read; a positional float
+or overlapping integer/vector input retains its existing contract. The shared
+MedIR ABI pass keeps this zero distinct from unknown vector demand when an
+omitted callee's FP metadata is unavailable. Incidental XMM writes and
+call-clobbered PHIs therefore cannot become extra source-call arguments.
+Count-only and unsummarized calls still use ordinary argument recovery.
 
 The same owner proves scalar exit constants for bounded, complete x64 bodies
 without calls, intrinsics, unresolved control flow or exceptional/independent
@@ -6718,6 +6767,8 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
 
 `PEHeaderMapping` owns the optional file-backed `<PE headers>` mapping in linked PE images. It appends a normalized segment and region after real COFF sections, preserving their indexes, and copies original file bytes even when LLVM needs a zero-VirtualSize reader projection. Complete headers, target-width bounds, ordinary page alignment, and disjoint raw and virtual section ownership are required. Padding beyond SizeOfHeaders is not admitted. Unsupported layouts retain `pe.headers_unmapped` and grant no header read authority.
+
+Windows process and driver admission share `COFFLoader::hasExpectedPEMappingInventory` to validate the real-section count and the optional header's exact bytes, position and read-only identity; each retains its independent execution preflight and creates exactly one guest header region.
 
 `PEHeaderInitialization` bounds the loader write footprint before publishing this read-only mapping. Ordinary import lookup/IAT extents, scalar base relocations and legacy load-configuration cookie destinations must exclude header pages. `PELoaderWriteRanges` shares the metadata-overlap rule with the fixed-image reader, so one write cannot change a later descriptor, terminator or configuration field. A rebased cookie destination requires its own complete scalar fixup. TLS, delay/bound imports, extended load configurations and other unmodeled writer protocols retain the refusal. The four-million-unit budget charges visited metadata bytes and section/record queries; fixed-image validation also charges that work to its caller's limits. This proves storage initialization, not a callee's effects or an unreachable control branch.
 

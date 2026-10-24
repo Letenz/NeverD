@@ -1663,7 +1663,8 @@ private slots:
     QCOMPARE(at(200, 150), Qt::Edges());
     QCOMPARE(at(2, 150), Qt::Edges(Qt::LeftEdge));
     QCOMPARE(at(12, 150), Qt::Edges(Qt::LeftEdge));
-    QCOMPARE(at(14, 150), Qt::Edges());
+    QCOMPARE(at(16, 150), Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(at(18, 150), Qt::Edges());
     QCOMPARE(at(395, 150), Qt::Edges(Qt::RightEdge));
     QCOMPARE(at(200, 5), Qt::Edges(Qt::TopEdge));
     QCOMPARE(at(200, 292), Qt::Edges(Qt::BottomEdge));
@@ -1674,7 +1675,9 @@ private slots:
     // Without a shadow the edges lie just inside the window.
     QCOMPARE(WindowFrame::edgesAt(QPoint(1, 150), size, QMargins()),
              Qt::Edges(Qt::LeftEdge));
-    QCOMPARE(WindowFrame::edgesAt(QPoint(5, 150), size, QMargins()),
+    QCOMPARE(WindowFrame::edgesAt(QPoint(6, 150), size, QMargins()),
+             Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(WindowFrame::edgesAt(QPoint(8, 150), size, QMargins()),
              Qt::Edges());
   }
 
@@ -1902,7 +1905,14 @@ private slots:
     QCOMPARE(window.size(), normal);
   }
 
+  void dialogTitleBarOffersTheButtonsItsFlagsAskFor_data() {
+    QTest::addColumn<bool>("customized");
+    QTest::newRow("default-dialog-flags") << false;
+    QTest::newRow("customized-flags") << true;
+  }
+
   void dialogTitleBarOffersTheButtonsItsFlagsAskFor() {
+    QFETCH(bool, customized);
     QDialog dialog;
     dialog.setWindowTitle(QStringLiteral("Jump anywhere"));
     auto *bar = new TitleBar(dialog);
@@ -1925,9 +1935,12 @@ private slots:
     QTRY_VERIFY(!dialog.isVisible());
 
     // A dialog whose flags ask for Maximize offers it.
-    QDialog resizable(
-        nullptr, Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
-                     Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+    Qt::WindowFlags flags = Qt::Dialog | Qt::WindowTitleHint |
+                            Qt::WindowCloseButtonHint |
+                            Qt::WindowMinMaxButtonsHint;
+    if (customized)
+      flags |= Qt::CustomizeWindowHint;
+    QDialog resizable(nullptr, flags);
     auto *second = new TitleBar(resizable);
     resizable.resize(500, 300);
     second->setGeometry(0, 0, 500, second->sizeHint().height());
@@ -1937,6 +1950,12 @@ private slots:
     QVERIFY(maximize->isVisible());
     QTest::mouseClick(maximize, Qt::LeftButton);
     QTRY_VERIFY(resizable.isMaximized());
+    QTest::mouseClick(maximize, Qt::LeftButton);
+    QTRY_VERIFY(!resizable.isMaximized());
+    QAbstractButton *minimize = button(second, "minimizeButton");
+    QVERIFY(minimize->isVisible());
+    QTest::mouseClick(minimize, Qt::LeftButton);
+    QTRY_VERIFY(resizable.isMinimized());
   }
 
   void returnOpensTheCurrentItemOnce() {

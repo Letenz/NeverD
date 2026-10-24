@@ -1128,7 +1128,9 @@ TEST_P(MBAMachOARMFiveSourceTest, RecoversFiveInputArithmeticAndRuns) {
   EXPECT_EQ(Body.find(" ^ "), std::string::npos) << Body;
   EXPECT_EQ(Body.find(" & "), std::string::npos) << Body;
   EXPECT_EQ(Body.find("~"), std::string::npos) << Body;
-  EXPECT_FALSE(functionBody(Source, "mba_five_fold").empty());
+  const auto FoldBody = functionBody(Source, "mba_five_fold");
+  EXPECT_FALSE(FoldBody.empty());
+  EXPECT_EQ(FoldBody.find("unknown register"), std::string::npos) << FoldBody;
 
   const char *Harness = R"(
 #include <stdint.h>

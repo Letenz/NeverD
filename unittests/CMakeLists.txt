@@ -152,6 +152,7 @@ add_neverd_unittest(NeverDLLVMVariableEditsTests
 add_neverd_unittest(NeverDPipelineOutcomeTests
   PipelineOutcomeTests.cpp
   CalleeSignatureMemoTests.cpp
+  PipelineSourceStackAccessesTests.cpp
   LINK_COMPONENTS Pipeline BackendC
 )
 target_include_directories(NeverDPipelineOutcomeTests PRIVATE

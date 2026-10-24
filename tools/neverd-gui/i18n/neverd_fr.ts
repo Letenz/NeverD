@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Basculer vers un espace flottant avec désassemblage, pseudocode et sortie</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>Mode &amp;focus</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Ouvrir...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Double-cliquez pour aller à la déclaration.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Impossible de restaurer la disposition précédant le mode focus.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Recharger le fichier d&apos;entrée</translation>
@@ -6421,6 +6433,10 @@ Couverture : %7</translation>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>L’analyse des boucles prouve la terminaison dans les cas pris en charge avant de comparer les calculs. Elle inclut les vues des paramètres et conserve les contrats des boucles non prouvés.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à plusieurs blocs</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6551,6 +6567,14 @@ Progress does not establish equal loop counts or function results.</source>
 Contrat observé :
 %2
 La terminaison ne prouve pas l’égalité des nombres d’itérations ou des résultats des fonctions.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à plusieurs blocs</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Boucle démontrée : bloc d’entrée %1 → bloc de retour %2 · compteur #%3 → mise à jour #%4 · condition #%5</translation>
     </message>
 </context>
 <context>
@@ -8226,6 +8250,18 @@ SHA-256 secondaire : %3
     <message>
         <source>Dock back into main window</source>
         <translation>Rattacher à la fenêtre principale</translation>
+    </message>
+    <message>
+        <source>Move window</source>
+        <translation>Déplacer la fenêtre</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Verrouiller la fenêtre flottante</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Déverrouiller la fenêtre flottante</translation>
     </message>
 </context>
 <context>

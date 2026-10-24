@@ -36,7 +36,8 @@ Controls controlsFor(Qt::WindowFlags flags) {
   if (!(flags & Qt::CustomizeWindowHint)) {
     const Qt::WindowFlags type = flags & Qt::WindowType_Mask;
     const bool window = type != Qt::Dialog && type != Qt::Tool;
-    return {window, window, true};
+    return {window || bool(flags & Qt::WindowMinimizeButtonHint),
+            window || bool(flags & Qt::WindowMaximizeButtonHint), true};
   }
   return {bool(flags & Qt::WindowMinimizeButtonHint),
           bool(flags & Qt::WindowMaximizeButtonHint),
@@ -87,7 +88,7 @@ protected:
 /// A window control: a light wash under the pointer, red behind Close.
 class WindowButton final : public HoverButton {
 public:
-  enum class Kind { Minimize, Maximize, Close };
+  using Kind = TitleBar::WindowControl;
   WindowButton(Kind kind, QWidget &window, QWidget *parent)
       : HoverButton(window, parent), kind_(kind) {}
   QSize sizeHint() const override {
@@ -98,54 +99,7 @@ public:
 protected:
   void paintEvent(QPaintEvent *) override {
     QPainter painter(this);
-    const bool close = kind_ == Kind::Close;
-    if (isDown())
-      painter.fillRect(rect(), chrome(close ? "WindowClosePressed"
-                                            : "WindowControlPressed"));
-    else if (underMouse())
-      painter.fillRect(
-          rect(), chrome(close ? "WindowCloseHover" : "WindowControlHover"));
-    const QColor glyph =
-        close && lit() ? chrome("WindowCloseText") : titleText(window_);
-    painter.setPen(QPen(glyph, 1));
-    // Whole pixels, so the glyph's one-pixel strokes stay sharp.
-    const double left = std::round(
-        (width() - ::neverd::limits::gui_config::kTitleBarGlyphSize) / 2.0);
-    const double top = std::round(
-        (height() - ::neverd::limits::gui_config::kTitleBarGlyphSize) / 2.0);
-    switch (kind_) {
-    case Kind::Minimize:
-      painter.drawLine(
-          QPointF(left, top + 5.5),
-          QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize,
-                  top + 5.5));
-      break;
-    case Kind::Maximize:
-      if (window_.isMaximized()) {
-        // Restore: the window, and the one behind it.
-        painter.drawRect(QRectF(left + 0.5, top + 2.5, 7, 7));
-        const QPointF back[] = {{left + 2.5, top + 2.5},
-                                {left + 2.5, top + 0.5},
-                                {left + 9.5, top + 0.5},
-                                {left + 9.5, top + 7.5},
-                                {left + 7.5, top + 7.5}};
-        painter.drawPolyline(back, std::size(back));
-      } else {
-        painter.drawRect(QRectF(left + 0.5, top + 0.5, 9, 9));
-      }
-      break;
-    case Kind::Close:
-      painter.setRenderHint(QPainter::Antialiasing);
-      painter.drawLine(
-          QPointF(left, top),
-          QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize,
-                  top + ::neverd::limits::gui_config::kTitleBarGlyphSize));
-      painter.drawLine(
-          QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize, top),
-          QPointF(left,
-                  top + ::neverd::limits::gui_config::kTitleBarGlyphSize));
-      break;
-    }
+    TitleBar::paintWindowControl(painter, *this, window_, kind_);
   }
 
 private:
@@ -200,6 +154,62 @@ protected:
   }
 };
 } // namespace
+
+void TitleBar::paintWindowControl(QPainter &painter,
+                                  const QAbstractButton &button,
+                                  const QWidget &window,
+                                  WindowControl control) {
+  const bool close = control == WindowControl::Close;
+  if (button.isDown())
+    painter.fillRect(button.rect(), chrome(close ? "WindowClosePressed"
+                                                 : "WindowControlPressed"));
+  else if (button.underMouse())
+    painter.fillRect(button.rect(),
+                     chrome(close ? "WindowCloseHover" : "WindowControlHover"));
+  const QColor glyph = close && (button.underMouse() || button.isDown())
+                           ? chrome("WindowCloseText")
+                           : titleText(window);
+  painter.setPen(QPen(glyph, 1));
+  // Whole pixels, so the glyph's one-pixel strokes stay sharp.
+  const double left = std::round(
+      (button.width() - ::neverd::limits::gui_config::kTitleBarGlyphSize) /
+      2.0);
+  const double top = std::round(
+      (button.height() - ::neverd::limits::gui_config::kTitleBarGlyphSize) /
+      2.0);
+  switch (control) {
+  case WindowControl::Minimize:
+    painter.drawLine(
+        QPointF(left, top + 5.5),
+        QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize,
+                top + 5.5));
+    break;
+  case WindowControl::Maximize:
+    if (window.isMaximized()) {
+      // Restore: the window, and the one behind it.
+      painter.drawRect(QRectF(left + 0.5, top + 2.5, 7, 7));
+      const QPointF back[] = {{left + 2.5, top + 2.5},
+                              {left + 2.5, top + 0.5},
+                              {left + 9.5, top + 0.5},
+                              {left + 9.5, top + 7.5},
+                              {left + 7.5, top + 7.5}};
+      painter.drawPolyline(back, std::size(back));
+    } else {
+      painter.drawRect(QRectF(left + 0.5, top + 0.5, 9, 9));
+    }
+    break;
+  case WindowControl::Close:
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.drawLine(
+        QPointF(left, top),
+        QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize,
+                top + ::neverd::limits::gui_config::kTitleBarGlyphSize));
+    painter.drawLine(
+        QPointF(left + ::neverd::limits::gui_config::kTitleBarGlyphSize, top),
+        QPointF(left, top + ::neverd::limits::gui_config::kTitleBarGlyphSize));
+    break;
+  }
+}
 
 TitleBar::TitleBar(QWidget &window, QMenuBar *menuBar)
     : QWidget(&window), window_(window), menuBar_(menuBar),

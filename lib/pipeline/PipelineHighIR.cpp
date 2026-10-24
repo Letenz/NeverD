@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PipelineCallAbiDetail.h"
+#include "PipelineFunctionNames.h"
 #include "PipelineHighIRDetail.h"
 #include "PipelineLowIRDetail.h"
 #include "PipelineReturnModelingDetail.h"
@@ -177,7 +178,7 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   for (MedFunc &MF : Result.MedFuncs)
     if (!MF.SourceParametersBound)
       inferMedTypes(MF, Img.Arch);
-  modelWideIntReturns(Img, Result);
+  modelWideIntReturns(Img, Result, MedStackProjection::Source);
   // Calls remodeled to return a packed register pair must agree with the
   // corresponding definition on the HighIR route as well as the LLVM route.
   recoverStructReturnFromCallers(Img, Result);
@@ -196,6 +197,9 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   else
     Names.adoptOwned(buildFuncNameMap(Img, Result));
   std::map<va_t, std::string> &AllFuncNames = Names.names();
+  for (const auto &[Address, Name] :
+       pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
+    Names.assign(Address, Name);
   // Without callee summaries, a convention's call arguments, and the
   // parameters a forwarder passes straight through, are the setup each caller
   // writes, as the LLVM route recovers them.
@@ -295,32 +299,9 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
   else
     Names.adoptOwned(buildFuncNameMap(Img, Result));
   std::map<va_t, std::string> &AllFuncNames = Names.names();
-  if (Dbg && Dbg->hasInfo()) {
-    for (const MedFunc &MF : Result.MedFuncs) {
-      if (auto DF = Dbg->functionName(MF.Entry); DF && !DF->empty()) {
-        auto It = AllFuncNames.find(MF.Entry);
-        if (It == AllFuncNames.end() || It->second.empty() ||
-            isSynthesizedFuncName(It->second))
-          Names.assign(MF.Entry, *DF);
-      }
-      for (const MedBlock &B : MF.Blocks) {
-        for (const MedOp &Op : B.Ops) {
-          if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
-              !Op.Inputs[0].isConst())
-            continue;
-          const va_t Target = static_cast<va_t>(Op.Inputs[0].ConstVal);
-          if (!Target)
-            continue;
-          auto It = AllFuncNames.find(Target);
-          if (It != AllFuncNames.end() && !It->second.empty() &&
-              !isSynthesizedFuncName(It->second))
-            continue;
-          if (auto DF = Dbg->functionName(Target); DF && !DF->empty())
-            Names.assign(Target, *DF);
-        }
-      }
-    }
-  }
+  for (const auto &[Address, Name] :
+       pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
+    Names.assign(Address, Name);
 
   // detectThunkStubs writes LowFunc entries itself. Remember those values
   // first so an overwrite of an import name is undone with the rest.

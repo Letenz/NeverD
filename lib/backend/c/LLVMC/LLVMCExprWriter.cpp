@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CDeferredValue.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCStorage.h"
 #include "LLVMCVariableEdits.h"
@@ -3210,6 +3211,15 @@ std::string LLVMCWriter::memberAsAccessed(const llvm::LoadInst &Load,
 std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  if (auto Flag = DeferredUnknownFlags.find(V);
+      Flag != DeferredUnknownFlags.end()) {
+    if (ReadingDeferredPayload)
+      return getName(V);
+    return "(" + Flag->second + " ? " + getName(V) +
+           " : (__builtin_trap(), 0 /* unknown machine state */))";
+  }
+  if (llvm_source_unknown::isValue(V))
+    return "(__builtin_trap(), 0 /* unknown machine state */)";
   // A parameter the signature types as a pointer is the integer the code
   // computes with.
   if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(V);
@@ -3240,8 +3250,6 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     if (auto It = SelectUseText.find(LI); It != SelectUseText.end())
       return It->second;
   }
-  if (llvm_source_unknown::isValue(V))
-    return "(__builtin_trap(), 0 /* unknown machine state */)";
   if (isCallClobberValue(V))
     return "0 /* unknown */";
   if (llvm::isa<llvm::FreezeInst>(V))
@@ -4012,6 +4020,32 @@ std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
                         : Text;
 }
 
+std::optional<std::string>
+LLVMCWriter::unknownBitwiseText(const llvm::BinaryOperator &Op) {
+  if ((Op.getOpcode() != llvm::Instruction::And &&
+       Op.getOpcode() != llvm::Instruction::Or) ||
+      !Op.getType()->isIntegerTy())
+    return std::nullopt;
+  const unsigned Bits = Op.getType()->getIntegerBitWidth();
+  if (Bits != 1 && Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64)
+    return std::nullopt;
+  for (unsigned I = 0; I < 2; ++I) {
+    const llvm::Value *Unknown = Op.getOperand(I);
+    const llvm::Value *Known = Op.getOperand(1 - I);
+    if (!llvm_source_unknown::isValue(Unknown) ||
+        llvm_source_unknown::isValue(Known))
+      continue;
+    const std::string Value = valueStr(Known);
+    const auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Known);
+    if (Constant || Value == getName(Known))
+      return shortCircuitUnknownBits(
+          Op.getOpcode() == llvm::Instruction::And, Bits,
+          typeToCLLVM(Op.getType()), valueStr(Unknown), Value,
+          Constant ? std::optional(Constant->getZExtValue()) : std::nullopt);
+  }
+  return std::nullopt;
+}
+
 std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
   if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst))
     if (RawMemoryExpressionLoads.count(Load))
@@ -4028,6 +4062,8 @@ std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
   if (const auto *Compare = llvm::dyn_cast<llvm::FCmpInst>(&Inst))
     return fcmpInlineText(*Compare);
   if (Inst.isBinaryOp()) {
+    if (auto Text = unknownBitwiseText(llvm::cast<llvm::BinaryOperator>(Inst)))
+      return *Text;
     if (auto Identity =
             targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst)))
       return *Identity;

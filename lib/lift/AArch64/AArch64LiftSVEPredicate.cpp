@@ -7,9 +7,8 @@
 /// \file
 /// Predicate generation and manipulation (PTRUE/PFALSE/PFIRST/
 /// PNEXT/PSEL/PUNPK), vector-length arithmetic (RDVL/ADDVL/CNTB/
-/// INCB/DECB/SQINCB/...), element ops (SEL/SPLICE/CPY/INDEX/
-/// MOVPRFX), the WHILExx predicates and the BRK* predicate
-/// breaks.
+/// INCB/DECB/SQINCB/...), element ops (SEL/SPLICE/CPY/INDEX), the WHILExx
+/// predicates and the BRK* predicate breaks.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -315,11 +314,6 @@ bool liftSVEPredicate(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     }
     break;
   }
-  case AARCH64_INS_MOVPRFX:
-    // MOVPRFX requires a compatible destructive instruction at PC+4. Until
-    // that pair has an owning validator, neither its unpredicated copy nor
-    // its merging/zeroing predicate operation has an admitted source shape.
-    throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
   case AARCH64_INS_MOVT: {
     if (ARM64.op_count < 2)
       break;

@@ -14,6 +14,7 @@
 #define NEVERD_SDK_CAPI_SESSION_IMPL_H
 
 #include "../../pipeline/PipelineCallAbiDetail.h"
+#include "../../pipeline/PipelineFunctionNames.h"
 #include "../plugin/PluginManager.h"
 #include "FunctionAuditReason.h"
 #include "ImageStrings.h"
@@ -1157,6 +1158,11 @@ struct Session {
       for (const auto &MF : PipeResult.MedFuncs)
         if (!MF.Name.empty())
           FuncNames[MF.Entry] = MF.Name;
+      for (const auto &[Address, Name] : Img.getImportAddressNames())
+        FuncNames[Address] = Name;
+      for (auto &[Address, Name] : pipeline_detail::debugFunctionNames(
+               PipeResult, FuncNames, decompileDebug()))
+        FuncNames[Address] = std::move(Name);
       // Recover the calls as the module pipeline does, with its evidence:
       // every callee's arity, the signatures of callees this pipeline did
       // not keep, and what each function-pointer variable starts at.

@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Alternar un espacio flotante con desensamblado, pseudocódigo y salida</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>Modo de en&amp;foque</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Abrir...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Haga doble clic para ir a la declaración.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>No se pudo restaurar la disposición anterior al modo de enfoque.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Recargar el archivo de entrada</translation>
@@ -6421,6 +6433,10 @@ Cobertura: %7</translation>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>El análisis de bucles demuestra la terminación en los casos compatibles antes de comparar cálculos. Incluye vistas de parámetros y conserva los contratos de bucles no demostrados.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles de varios bloques</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6551,6 +6567,14 @@ Progress does not establish equal loop counts or function results.</source>
 Contrato observado:
 %2
 La terminación no demuestra que coincidan los números de iteraciones ni los resultados de las funciones.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles de varios bloques</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Bucle demostrado: bloque de cabecera %1 → bloque de retorno %2 · contador #%3 → actualización #%4 · condición #%5</translation>
     </message>
 </context>
 <context>
@@ -8226,6 +8250,18 @@ SHA-256 secundario: %3
     <message>
         <source>Dock back into main window</source>
         <translation>Volver a acoplar a la ventana principal</translation>
+    </message>
+    <message>
+        <source>Move window</source>
+        <translation>Mover ventana</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Bloquear ventana flotante</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Desbloquear ventana flotante</translation>
     </message>
 </context>
 <context>

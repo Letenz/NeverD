@@ -157,6 +157,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
     : QDialog(Parent), Session(Worker, this) {
   setObjectName("binaryComparison");
   setWindowTitle(tr("Binary comparison"));
+  setWindowFlags((windowFlags() | Qt::WindowMinMaxButtonsHint) &
+                 ~Qt::WindowContextHelpButtonHint);
   setWindowIcon(icon("compare"));
   setAttribute(Qt::WA_DeleteOnClose);
   setSizeGripEnabled(true);
@@ -298,6 +300,9 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
                        ::neverd::limits::diff::kLLVMParameterSSAProfile);
   FlowProfile->addItem(tr("Optimized SSA with loop analysis"),
                        ::neverd::limits::diff::kLLVMProgressSSAProfile);
+  FlowProfile->addItem(
+      tr("Optimized SSA with multi-block loop analysis"),
+      ::neverd::limits::diff::kLLVMMultiBlockProgressSSAProfile);
   FlowProfile->setEnabled(false);
   FlowProfile->setToolTip(
       tr("Optimized SSA reduces compiler scaffolding for comparison. Functions "

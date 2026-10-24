@@ -53,6 +53,59 @@ std::string render(const llvm::json::Value &V) {
   return S;
 }
 
+// Inspection cancellation is cooperative: a request may race the last poll or
+// the operation may finish before this thread observes it. Only a successfully
+// completed attempt can be retried, with refresh, within one shared deadline.
+// Errors and other stop states return immediately so the caller's assertions
+// still fail. The test must obtain an actual cancelled result before
+// proceeding.
+template <typename Inspect>
+std::string cancelRunningInspection(neverd_comparison_t C,
+                                    llvm::StringRef Phase,
+                                    Inspect InspectFresh) {
+  const auto Deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  std::string Text;
+  do {
+    std::promise<void> Start;
+    auto Ready = Start.get_future();
+    auto Future = std::async(std::launch::async, [&] {
+      Ready.wait();
+      return take(InspectFresh());
+    });
+    Start.set_value();
+    while (Future.wait_for(std::chrono::milliseconds(0)) !=
+               std::future_status::ready &&
+           std::chrono::steady_clock::now() < Deadline) {
+      const auto Status = parsed(neverd_comparison_status_json(C));
+      const auto *O = Status.getAsObject();
+      if (O && O->getBoolean("running").value_or(false) &&
+          O->getString("phase") == Phase)
+        neverd_comparison_cancel(C);
+      std::this_thread::yield();
+    }
+    if (Future.wait_for(std::chrono::seconds(10)) !=
+        std::future_status::ready) {
+      ADD_FAILURE() << "Inspection did not stop: "
+                    << take(neverd_comparison_status_json(C));
+      return {};
+    }
+    Text = Future.get();
+    auto Result = llvm::json::parse(Text);
+    if (!Result) {
+      ADD_FAILURE() << llvm::toString(Result.takeError()) << "\n" << Text;
+      return Text;
+    }
+    const auto *O = Result->getAsObject();
+    if (!O || O->getString("state") != "complete")
+      return Text;
+  } while (std::chrono::steady_clock::now() < Deadline);
+  ADD_FAILURE() << "No in-flight cancellation was acknowledged: " << Text
+                << "\nStatus: " << take(neverd_comparison_status_json(C))
+                << "\nError: " << take(neverd_comparison_last_error(C));
+  return Text;
+}
+
 class BinaryDiffSDK : public ::testing::Test {
 protected:
   std::filesystem::path Directory;
@@ -1564,28 +1617,10 @@ TEST_F(BinaryDiffSDK, CallEffectInspectionCanCancelCacheAndRefresh) {
   Code.insert(Code.end(), {0xff, 0xd0, 0xc3});
   auto C = compare(input(Code), input(Code));
   const char *Query = R"({"seeds":["0x1000"],"kind":"effects","limit":1})";
-  auto Future = std::async(std::launch::async, [&] {
-    return take(neverd_comparison_impact_json(C, Query));
+  const auto Text = cancelRunningInspection(C, "impact:effects", [&] {
+    return neverd_comparison_impact_json(
+        C, R"({"seeds":["0x1000"],"kind":"effects","limit":1,"refresh":true})");
   });
-  bool Cancelled = false;
-  const auto Deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(10);
-  while (Future.wait_for(std::chrono::milliseconds(0)) !=
-             std::future_status::ready &&
-         std::chrono::steady_clock::now() < Deadline) {
-    const auto Status = parsed(neverd_comparison_status_json(C));
-    const auto *O = Status.getAsObject();
-    if (O && O->getBoolean("running").value_or(false) &&
-        O->getString("phase") == "impact:effects") {
-      neverd_comparison_cancel(C);
-      Cancelled = true;
-    }
-    std::this_thread::yield();
-  }
-  ASSERT_EQ(Future.wait_for(std::chrono::seconds(10)),
-            std::future_status::ready);
-  ASSERT_TRUE(Cancelled);
-  const auto Text = Future.get();
   auto Stopped = llvm::json::parse(Text);
   ASSERT_TRUE(bool(Stopped));
   const auto *O = Stopped->getAsObject();
@@ -1617,29 +1652,10 @@ TEST_F(BinaryDiffSDK, FunctionDetailCancellationCacheAndRefreshKeepState) {
   std::vector<uint8_t> Code(60000, 0x90);
   Code.push_back(0xc3);
   auto C = compare(input(Code), input(Code));
-  auto Future = std::async(std::launch::async, [&] {
-    return take(neverd_comparison_function_page_json(
-        C, R"({"address":"0x1000","refresh":true,"limit":1})"));
+  const auto Text = cancelRunningInspection(C, "detail:compare", [&] {
+    return neverd_comparison_function_page_json(
+        C, R"({"address":"0x1000","refresh":true,"limit":1})");
   });
-  bool Cancelled = false;
-  const auto Deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(10);
-  while (Future.wait_for(std::chrono::milliseconds(0)) !=
-             std::future_status::ready &&
-         std::chrono::steady_clock::now() < Deadline) {
-    const auto Status = parsed(neverd_comparison_status_json(C));
-    const auto *O = Status.getAsObject();
-    if (O && O->getBoolean("running").value_or(false) &&
-        O->getString("phase") == "detail:compare") {
-      neverd_comparison_cancel(C);
-      Cancelled = true;
-    }
-    std::this_thread::yield();
-  }
-  ASSERT_EQ(Future.wait_for(std::chrono::seconds(10)),
-            std::future_status::ready);
-  ASSERT_TRUE(Cancelled);
-  const auto Text = Future.get();
   auto Stopped = llvm::json::parse(Text);
   ASSERT_TRUE(bool(Stopped));
   const auto *O = Stopped->getAsObject();
@@ -2580,7 +2596,8 @@ TEST_F(BinaryDiffSDK, ParameterViewsPageAndBindTheOriginalSourceSignature) {
 
 TEST_F(BinaryDiffSDK,
        ParameterViewsStoppedAndEmptyCollectionsKeepTheirProfile) {
-  for (const auto *Profile : {"llvm-parameter-ssa-v1", "llvm-progress-ssa-v1"})
+  for (const auto *Profile : {"llvm-parameter-ssa-v1", "llvm-progress-ssa-v1",
+                              "llvm-progress-ssa-v2"})
     for (bool Fragments : {false, true})
       for (const auto *Phase :
            {"primary:discovery", "primary:decode", "primary:dataflow"}) {
@@ -2612,7 +2629,10 @@ TEST_F(BinaryDiffSDK,
         EXPECT_EQ(Document->getAsObject()
                       ->getObject("flow_regions")
                       ->getString("profile"),
-                  std::string(Profile) == "llvm-progress-ssa-v1"
+                  std::string(Profile) == "llvm-progress-ssa-v2"
+                      ? (Fragments ? "llvm-progress-fragments-v2"
+                                   : "llvm-progress-neighborhoods-v2")
+                  : std::string(Profile) == "llvm-progress-ssa-v1"
                       ? (Fragments ? "llvm-progress-fragments-v1"
                                    : "llvm-progress-neighborhoods-v1")
                       : (Fragments ? "llvm-parameter-fragments-v1"
@@ -2722,4 +2742,77 @@ TEST_F(BinaryDiffSDK, LoopProgressPagesBindWitnessesAndOriginalContracts) {
       Limited, R"({"kind":"nodes","address":"0x1000"})"));
   EXPECT_EQ(LimitedPage.getAsObject()->getString("availability"),
             "resource_limited");
+}
+
+TEST_F(BinaryDiffSDK, MultiBlockProgressBindsPagedHeadersAndFreshSource) {
+  // Owned control_regions_fixture.c family3, clang x64 ELF O0. Inspect only.
+  const auto Bytes = llvm::fromHex(
+      "554889e5897dfc8975f88b45f883e0078945f48b45f489c183c1ff894df483f800746e8b"
+      "45fc83e00183f80074528b45fc83f0176bc00783c0098945fc8b45fcc1e8058b4dfcc1e1"
+      "1b09c88945fc8b45fc05674523013345f88945fc8b45fc8b4dfcc1e90b31c86bc00d8945"
+      "fc8b45fcc1e0078b4dfcc1e91909c88945fceb0f8b45fc83c0116b4df80d31c88945fceb"
+      "828b45fc3345f883c0035dc3");
+  const auto A =
+      input(llvm::ArrayRef<uint8_t>(
+                reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()),
+            0x1000);
+  const auto B =
+      input(llvm::ArrayRef<uint8_t>(
+                reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()),
+            0x8000);
+  const auto Options =
+      R"({"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v2"},"flow_regions":{"fragments":true}})";
+  const auto C = compare(A, B, Options);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(
+      Summary.getAsObject()->getObject("flow_regions")->getString("profile"),
+      "llvm-progress-fragments-v2");
+  auto Page = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000","limit":200})"));
+  ASSERT_EQ(Page.getAsObject()->getString("availability"), "available")
+      << render(Page);
+  EXPECT_EQ(Page.getAsObject()->getInteger("schema_version"), 6);
+  ASSERT_EQ(Page.getAsObject()->getObject("progress")->getString("kind"),
+            "counter_loops")
+      << render(Page);
+  EXPECT_FALSE(Page.getAsObject()->getObject("progress")->get("loops"));
+  bool Seen = false;
+  for (const auto &Row : *Page.getAsObject()->getArray("rows"))
+    if (const auto *Loop = Row.getAsObject()->getObject("progress_loop")) {
+      Seen = true;
+      EXPECT_NE(Loop->getInteger("header"), Loop->getInteger("block"));
+      auto Slice = parsed(neverd_comparison_slice_json(
+          C,
+          render(llvm::json::Object{
+                     {"address", "0x1000"},
+                     {"seeds", llvm::json::Array{*Loop->getInteger("update")}}})
+              .c_str()));
+      EXPECT_EQ(Slice.getAsObject()->getInteger("schema_version"), 6);
+      break;
+    }
+  EXPECT_TRUE(Seen);
+  const auto Reopened = compare(A, B, Options);
+  ASSERT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+  EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
+  for (const auto Header : {false, true}) {
+    auto V = llvm::json::parse(Saved);
+    auto *Proof = V->getAsObject()
+                      ->getObject("dataflow")
+                      ->getObject("primary")
+                      ->getArray("entries")
+                      ->front()
+                      .getAsObject()
+                      ->getObject("graph")
+                      ->getObject("progress");
+    if (Header) {
+      auto *L = Proof->getArray("loops")->front().getAsObject();
+      (*L)["header"] = *L->getInteger("block");
+    } else
+      (*Proof)["source_contract"] =
+          Proof->getString("observed_contract")->str();
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*V).c_str()), 0);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
 }

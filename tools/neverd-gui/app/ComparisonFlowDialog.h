@@ -34,7 +34,7 @@ private:
   QComboBox *Side;
   QCheckBox *Control;
   QPushButton *Backward, *Forward, *Cancel, *Inspect;
-  QLabel *Summary, *FunctionStatus, *SliceStatus;
+  QLabel *Summary, *FunctionStatus, *LoopStatus, *SliceStatus;
   QString Revision, Address;
   bool Requested = false;
   void refresh();
