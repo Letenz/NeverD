@@ -10,6 +10,8 @@
 
 #include "neverd/diff/LLVMDataFlow.h"
 
+#include "FlowParameterViews.h"
+
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -33,6 +35,7 @@ class Projection {
   const LLVMSourceMap &Sources;
   const DataFlowOptions &Options;
   const ComparisonControl &Control;
+  const bool ParameterViews;
   DataFlowGraph G;
   uint64_t Work = 0;
   std::map<const BasicBlock *, uint32_t> Blocks;
@@ -276,11 +279,118 @@ class Projection {
     signature(N.Semantics);
   }
 
+  void projectParameters() {
+    // The raw graph, metadata and direct observations have already passed
+    // admission. Never make unsupported annotations disappear by elision.
+    if (F.arg_size() > Options.MaxNodes)
+      throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+    charge(F.arg_size());
+    for (const auto &A : F.args()) {
+      FlowParameterView V;
+      V.SourceBits = V.ViewBits = bits(A.getType());
+      V.Attributes = attributes(F.getAttributes().getParamAttrs(A.getArgNo()));
+      if (Sites) {
+        const auto &S = (*Sites)[A.getArgNo()];
+        V.NativeSite = FlowParameterSite{S.RegOff, S.MedIndex};
+      }
+      G.ParameterViews.push_back(std::move(V));
+    }
+    const auto Unambiguous = unambiguousParameterSites(
+        G.ParameterViews, [&](uint64_t N) { charge(N); });
+    charge(G.Nodes.size());
+    std::vector<uint32_t> Parameters(G.Nodes.size(), NoIndex);
+    uint32_t Removed = 0;
+    for (const auto &A : F.args()) {
+      charge();
+      auto &V = G.ParameterViews[A.getArgNo()];
+      if (V.SourceBits != 64 || !V.Attributes.empty() ||
+          !Unambiguous[A.getArgNo()] || A.use_empty())
+        continue;
+      bool Eligible = true;
+      uint32_t Count = 0;
+      for (const auto &Use : A.uses()) {
+        charge();
+        const auto *T = dyn_cast<TruncInst>(Use.getUser());
+        if (!T || !Nodes.contains(T) || !T->getType()->isIntegerTy(32) ||
+            T->getRawSubclassOptionalData() ||
+            G.Nodes[Nodes.at(T)].hasNativeOrigin())
+          Eligible = false;
+        ++Count;
+      }
+      if (!Eligible)
+        continue;
+      V.ViewBits = 32;
+      V.ElidedTruncations = Count;
+      Removed += Count;
+      for (const auto &Use : A.uses()) {
+        charge();
+        Parameters[Nodes.at(Use.getUser())] = A.getArgNo();
+      }
+    }
+    if (G.Nodes.size() - Removed + G.ParameterViews.size() > Options.MaxNodes)
+      throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+    charge(G.Nodes.size());
+    std::vector<uint32_t> Remap(G.Nodes.size(), NoIndex);
+    uint32_t Next = 0;
+    for (uint32_t I = 0; I < G.Nodes.size(); ++I) {
+      charge();
+      if (Parameters[I] == NoIndex)
+        Remap[I] = Next++;
+    }
+    std::vector<FlowNode> Kept;
+    Kept.reserve(Next);
+    for (uint32_t I = 0; I < G.Nodes.size(); ++I) {
+      charge();
+      if (Parameters[I] != NoIndex)
+        continue;
+      auto &N = G.Nodes[I];
+      for (auto &Input : N.Inputs) {
+        charge();
+        if (Input.Type == FlowOperand::Kind::Node) {
+          if (Parameters[Input.Node] != NoIndex) {
+            const auto Parameter = Parameters[Input.Node];
+            const auto Predecessor = Input.Predecessor;
+            Input = {};
+            Input.Type = FlowOperand::Kind::Parameter;
+            Input.Value = Parameter;
+            Input.Predecessor = Predecessor;
+          } else {
+            Input.Node = Remap[Input.Node];
+          }
+        }
+        if (Input.Type == FlowOperand::Kind::Parameter) {
+          const auto &V = G.ParameterViews[Input.Value];
+          Input.Bytes = (V.ViewBits + 7) / 8;
+          Input.Semantics = parameterViewSemantics(V);
+          signature(Input.Semantics);
+        }
+      }
+      Kept.push_back(std::move(N));
+    }
+    G.Nodes = std::move(Kept);
+    for (auto &B : G.Blocks) {
+      charge(1 + B.Successors.size());
+      B.Terminator = Remap[B.Terminator];
+    }
+    G.Profile = LLVMParameterDataFlowProfile.str();
+    // Reserve validation work from the same projection allowance, including
+    // the native-site sort. No second projection budget starts after removal.
+    if (auto Error =
+            validateParameterViews(G, Options, [&](uint64_t N) { charge(N); }))
+      throw std::invalid_argument(*Error);
+    for (const auto &N : G.Nodes)
+      charge(1 + N.Inputs.size() + flowExtraWork(N));
+    if (auto Error = G.validate(Options))
+      throw std::invalid_argument(*Error);
+  }
+
 public:
   Projection(const Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
              StringRef Revision, StringRef ABI, bool NativeComplete,
-             const DataFlowOptions &Options, const ComparisonControl &Control)
-      : F(F), Sources(Sources), Options(Options), Control(Control) {
+             const DataFlowOptions &Options, const ComparisonControl &Control,
+             bool ParameterViews = false)
+      : F(F), Sources(Sources), Options(Options), Control(Control),
+        ParameterViews(ParameterViews) {
     G.Profile = LLVMDataFlowProfile.str();
     G.Function = Entry;
     G.Revision = Revision.str();
@@ -370,6 +480,8 @@ public:
     }
     if (auto Error = G.validate(Options))
       throw std::invalid_argument(*Error);
+    if (ParameterViews)
+      projectParameters();
     poll();
     return std::move(G);
   }
@@ -383,6 +495,14 @@ DataFlowGraph buildLLVMDataFlow(const llvm::Function &F,
                                 const ComparisonControl &Control) {
   return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
                     Control)
+      .run();
+}
+DataFlowGraph buildLLVMParameterDataFlow(
+    const llvm::Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
+    llvm::StringRef Revision, llvm::StringRef ABI, bool NativeComplete,
+    const DataFlowOptions &Options, const ComparisonControl &Control) {
+  return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
+                    Control, true)
       .run();
 }
 } // namespace neverd::diff

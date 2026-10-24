@@ -305,6 +305,38 @@ Slices and GUI dependency pages retain these plural origins. Optimized regions
 use `llvm-neighborhoods-v1`; saved profile/metadata/origin edits are checked
 against a fresh projection, including empty and stopped collections.
 
+**Optimized SSA with parameter views** (`--dataflow-profile=llvm-parameter-ssa-v1`)
+also recognizes an i64 native parameter whose every actual use is an unflagged,
+origin-free truncation to i32. It observes the same low 32 bits as an i32
+parameter at the same argument position and recorded native register. Empty
+argument attributes and an unambiguous, non-stack native register range are
+required. High-bit uses, mixed widths, truncation flags, direct origins,
+missing/overlapping sites or unusable source indices retain the raw parameter
+and all its truncations. This is a read-only observation; no input or LLVM body
+is rewritten. Exact function attributes, PHI edges and remaining native origins
+are preserved.
+
+Schema 4 records every source argument in `parameter_views`: `source_bits`,
+`view_bits`, `attributes`, optional `native_site:{register,index}`, and
+`elided_truncations`. Site values are hexadecimal bit strings; null means no
+record, while register `0xffffffffffffffff` denotes a recorded stack site.
+The MedIR index is local provenance, not a cross-build ABI ordinal, and is
+checked on reopen without becoming a correspondence key. Metadata pages expose
+`parameter_count` and `projected_parameter_count`; node/slice/region pages add
+only the parameter records used by that node, with `input` and `parameter`
+positions. Qt shows the original and observed widths on projected inputs.
+Parameter rows and retained nodes share the node/storage allowance, including
+`max_total_nodes`; public node counts and coverage still count operations only.
+Elided nodes also remain subject to the original per-graph node/work budget.
+Existing schemas and saved encodings are unchanged.
+
+This profile uses `llvm-parameter-neighborhoods-v1` or, with shared fragments,
+`llvm-parameter-fragments-v1`. Owned x64 ELF/COFF/Mach-O O0/O2 branch fixtures
+exercise the added correspondence. A changed final constant is excluded from
+matching; changed control beyond a finite neighborhood remains an open frontier,
+and a deeper inspection checks that condition. These fixtures do not establish
+general optimization coverage, equivalent behavior, or loop correspondence.
+
 Native-to-SSA change associations and call-effect contracts currently require
 the original MedIR profile. Change review explicitly reports an unsupported
 association profile for LLVM evidence while retaining native changes. Local

@@ -5,9 +5,19 @@
 #ifndef FAMILY
 #define FAMILY 1
 #endif
+#ifdef HIGH_INPUT
+__attribute__((noinline, used)) unsigned transform(unsigned x,
+                                                   unsigned long long raw_y) {
+  unsigned y = (unsigned)raw_y;
+#else
 __attribute__((noinline, used)) unsigned transform(unsigned x, unsigned y) {
+#endif
 #if FAMILY == 1
+#ifdef CHANGED_BRANCH
+  if (y < x)
+#else
   if (x < y)
+#endif
     x = (x ^ 23u) * 7u + 9u;
   else
     x = (x + 17u) ^ (y * 13u);
@@ -18,5 +28,9 @@ __attribute__((noinline, used)) unsigned transform(unsigned x, unsigned y) {
     x = (x >> 5) | (x << 27);
   }
 #endif
+#ifdef HIGH_INPUT
+  return ((x ^ y) + FINAL_ADD) ^ (unsigned)(raw_y >> 32);
+#else
   return (x ^ y) + FINAL_ADD;
+#endif
 }

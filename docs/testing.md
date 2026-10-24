@@ -1664,6 +1664,19 @@ original instructions, slices and saved CLI parity. The real Qt test selects the
 optimized profile and displays plural origins with optional light/dark captures.
 These remain owned functional fixtures, not held-out accuracy or general
 optimization/obfuscation qualification.
+`BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
+all-use admission, multiple truncations, PHI predecessors, exact contracts,
+missing/stack/overlapping sites, detached and foreign users, raw and retained
+budgets, strict schema 4 records and parameter-row collection limits. The SDK
+test `ParameterViewsPageAndBindTheOriginalSourceSignature` pages and slices the
+actual x64 pipeline output, reopens it exactly and rejects structurally valid
+alternative source signatures and changed MedIR indices. The compiler corpus
+adds x64 ELF/COFF/Mach-O O0/O2 branch pairs, changed constants, changed branch
+conditions and high-bit uses. A finite control frontier may retain common
+operations; deeper condition coverage must refuse the changed branch.
+The real Qt `parameterViewsExplainNativeInputsAndRestoreSelection` test selects
+the profile, inspects low-bit details, traces inputs and restores the setting
+through the ordinary reopen dialog, with optional light/dark captures.
 `NeverDBinaryDiffFlowPipelineTests` projects owned x64/AArch64 bytes through the
 actual strict lifter and SSA pipeline, checking native origins and that a changed
 scalar survives beyond a short fingerprint's reported open frontier. It neither

@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>&amp;Поддержка x87…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Информация о раскрутке стека…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Просмотреть метаданные раскрутки стека для выбранной инструкции</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6377,6 +6385,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Поиск общих вычислений при изменённых зависимостях. Узлы, создающие внешние входные значения, остаются непроверенными. Включает гипотезы об областях SSA.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Оптимизированное SSA с представлениями параметров</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Представления параметров сравнивают младшие 32 бита подходящих 64-битных нативных параметров. Исходная разрядность и источники доступны для проверки.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6475,6 +6491,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>Представление SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Оптимизированное SSA с представлениями параметров</translation>
     </message>
 </context>
 <context>
@@ -7258,6 +7278,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>Сопоставление внешних входных значений; создающие их узлы не сравнивались.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>параметр %1: младшие %2 из %3 бит</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Основной: %1
+Вторичный: %2
+Каждое использование проецируемого параметра читает одни и те же младшие биты. Поведение функции целиком не проверено.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Каждое использование этого параметра читает одни и те же младшие биты; исходная разрядность и нативное расположение сохранены.</translation>
     </message>
 </context>
 <context>

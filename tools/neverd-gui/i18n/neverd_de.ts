@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>x87-&amp;Unterstützung…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Unwind-Informationen…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Unwind-Metadaten der ausgewählten Anweisung untersuchen</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6341,6 +6349,14 @@ Abdeckung: %7</translation>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Gemeinsame Berechnungen trotz geänderter Abhängigkeiten finden. Erzeuger externer Eingaben bleiben ungeprüft. Enthält Hypothesen zu SSA-Regionen.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Optimiertes SSA mit Parameteransichten</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Parameteransichten vergleichen die unteren 32 Bit geeigneter nativer 64-Bit-Parameter. Ursprüngliche Bitbreiten und Quellen bleiben einsehbar.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6439,6 +6455,10 @@ Wählen Sie eine Operation, um Abhängigkeiten zu verfolgen. Synthetische Operat
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA-Darstellung: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Optimiertes SSA mit Parameteransichten</translation>
     </message>
 </context>
 <context>
@@ -7222,6 +7242,24 @@ Heuristische Erklärungen, kein validiertes Verhalten.
 %1</source>
         <translation>Zuordnung externer Eingaben; die Erzeuger wurden nicht verglichen.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>Parameter %1: untere %2 von %3 Bit</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Primär: %1
+Sekundär: %2
+Jede Verwendung eines projizierten Parameters liest dieselben unteren Bits. Das Verhalten der gesamten Funktion bleibt ungeprüft.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Jede Verwendung dieses Parameters liest dieselben unteren Bits; die ursprüngliche Bitbreite und native Position bleiben erhalten.</translation>
     </message>
 </context>
 <context>

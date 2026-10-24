@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>x87 の対応状況(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>アンワインド情報…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>選択した命令のアンワインドメタデータを確認</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6305,6 +6313,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>依存関係が変化しても共通する計算を検索します。外部入力の生成ノードは未検証のままです。SSA 領域の仮説を含みます。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>パラメータビューは、条件を満たす 64 ビットのネイティブパラメータの下位 32 ビットを比較します。元のビット幅と出所も確認できます。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6403,6 +6419,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表現：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7186,6 +7206,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部入力の対応付けです。生成ノードは比較されていません。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>パラメータ %1：%3 ビット中の下位 %2 ビット</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>プライマリ：%1
+セカンダリ：%2
+投影されたパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。関数全体の動作は未検証です。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>このパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。元のビット幅とネイティブ位置は保持されます。</translation>
     </message>
 </context>
 <context>

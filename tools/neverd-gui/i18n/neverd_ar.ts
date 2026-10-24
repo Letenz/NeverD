@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>دعم x87(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>معلومات فك المكدس…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>فحص بيانات فك المكدس الوصفية عند التعليمة المحددة</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6485,6 +6493,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>البحث عن حسابات مشتركة رغم تغيّر الاعتماديات. تبقى العُقد التي تنتج المدخلات الخارجية دون تحقق. يتضمن فرضيات مناطق SSA.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA محسّن مع طرق عرض المعاملات</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>تقارن طرق عرض المعاملات أقل 32 بت من المعاملات الأصلية المؤهلة ذات 64 بت. تظل العروض الأصلية والمصادر متاحة للمراجعة.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6583,6 +6599,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>تمثيل SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA محسّن مع طرق عرض المعاملات</translation>
     </message>
 </context>
 <context>
@@ -7366,6 +7386,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>ربط المدخلات الخارجية؛ لم تُقارَن العُقد التي تنتجها.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>المعامل %1: أقل %2 بت من أصل %3 بت</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>الأساسي: %1
+الثانوي: %2
+كل استخدام لمعامل مسقط يقرأ البتات الدنيا نفسها. لا يزال سلوك الدالة بأكملها غير متحقق منه.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>كل استخدام لهذا المعامل يقرأ البتات الدنيا نفسها؛ يُحتفظ بالعرض الأصلي والموقع الأصلي.</translation>
     </message>
 </context>
 <context>

@@ -24,6 +24,9 @@
 namespace neverd::diff {
 llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
                                   bool Fragments) {
+  if (GraphProfile == LLVMParameterDataFlowProfile)
+    return Fragments ? LLVMParameterFlowFragmentProfile
+                     : LLVMParameterFlowRegionProfile;
   if (GraphProfile == LLVMDataFlowProfile)
     return Fragments ? LLVMFlowFragmentProfile : LLVMFlowRegionProfile;
   if (GraphProfile == DataFlowProfile)

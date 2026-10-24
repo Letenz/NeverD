@@ -11,6 +11,7 @@
 #include "neverd/diff/DataFlow.h"
 
 #include "FlowContract.h"
+#include "FlowParameterViews.h"
 
 #include "neverd/diff/StableHash.h"
 
@@ -186,7 +187,7 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
     return Error;
   if (Nodes.size() > Options.MaxNodes || Blocks.size() > Options.MaxBlocks)
     return "dataflow snapshot exceeds its node/block allowance";
-  if ((Profile != DataFlowProfile && Profile != LLVMDataFlowProfile) ||
+  if ((Profile != DataFlowProfile && !isLLVMDataFlowProfile(Profile)) ||
       Revision.empty() || ABI.empty() ||
       Revision.size() > limits::kMaxFlowIdentityBytes ||
       ABI.size() > limits::kMaxFlowIdentityBytes || (Gaps & ~AllFlowGaps))
@@ -194,6 +195,16 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
   if (Blocks.empty() || EntryBlock >= Blocks.size())
     return "dataflow snapshot has no valid entry block";
   uint64_t Inputs = 0;
+  try {
+    if (auto Error = validateParameterViews(*this, Options, [&](uint64_t N) {
+          if (N > Options.MaxWork - Inputs)
+            throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+          Inputs += N;
+        }))
+      return Error;
+  } catch (const DataFlowInterrupted &) {
+    return "parameter views exceed the work allowance";
+  }
   for (uint32_t BI = 0; BI < Blocks.size(); ++BI) {
     const auto &B = Blocks[BI];
     if (B.Gaps & ~AllFlowGaps)
@@ -252,6 +263,15 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
           (!N.Phi ||
            !llvm::is_contained(Blocks[I.Predecessor].Successors, N.Block)))
         return "dataflow PHI input is not attached to an incoming CFG edge";
+      if (Profile == LLVMParameterDataFlowProfile &&
+          I.Type == FlowOperand::Kind::Parameter) {
+        if (I.Value >= ParameterViews.size())
+          return "dataflow parameter has no source argument record";
+        const auto &V = ParameterViews[I.Value];
+        if (I.Bytes != (V.ViewBits + 7) / 8 || I.Provenance || I.AddressOwner ||
+            I.Semantics != parameterViewSemantics(V))
+          return "dataflow parameter disagrees with its observed bit view";
+      }
     }
   }
   return {};

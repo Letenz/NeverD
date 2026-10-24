@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>x87 支持(&amp;S)…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>展开信息…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>检查所选指令处的栈展开元数据</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6305,6 +6313,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>在依赖发生变化时查找共享计算。外部输入的产生节点仍未验证。包含 SSA 区域假设。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>带参数视图的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>参数视图比较符合条件的 64 位原生参数的低 32 位。原始位宽和来源仍可查看。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6403,6 +6419,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表示：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>带参数视图的优化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7186,6 +7206,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部输入映射；产生这些输入的节点尚未比较。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>参数 %1：%3 位中的低 %2 位</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>主输入：%1
+次输入：%2
+投影参数的每次使用都读取相同的低位。整个函数的行为尚未验证。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>此参数的每次使用都读取相同的低位；原始位宽和原生位置均已保留。</translation>
     </message>
 </context>
 <context>

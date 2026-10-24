@@ -1119,6 +1119,14 @@
         <source>x87 &amp;support…</source>
         <translation>&amp;Compatibilidad con x87…</translation>
     </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>Información de desenrollado…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>Inspeccionar los metadatos de desenrollado en la instrucción seleccionada</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -6341,6 +6349,14 @@ Cobertura: %7</translation>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Buscar cálculos comunes aunque cambien las dependencias. Los productores de las entradas externas quedan sin verificar. Incluye hipótesis de regiones SSA.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA optimizado con vistas de parámetros</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Las vistas de parámetros comparan los 32 bits inferiores de los parámetros nativos de 64 bits que cumplen las condiciones. Se conservan las anchuras y los orígenes para su revisión.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6439,6 +6455,10 @@ Seleccione una operación para seguir las dependencias. Las operaciones sintéti
     <message>
         <source>SSA representation: %1</source>
         <translation>Representación SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA optimizado con vistas de parámetros</translation>
     </message>
 </context>
 <context>
@@ -7222,6 +7242,24 @@ Explicaciones heurísticas; comportamiento no validado.
 %1</source>
         <translation>Correspondencia de entradas externas; sus productores no se han comparado.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>parámetro %1: %2 bits inferiores de %3</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Primario: %1
+Secundario: %2
+Cada uso de un parámetro proyectado lee los mismos bits inferiores. El comportamiento de la función completa sigue sin verificarse.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Cada uso de este parámetro lee los mismos bits inferiores; se conservan la anchura original y la ubicación nativa.</translation>
     </message>
 </context>
 <context>
