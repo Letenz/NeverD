@@ -163,8 +163,10 @@ TEST(SymMBAWidePairs, CorrectionsHaveIndependentFullWidthProofs) {
       solver::Z3SolverOptions Options;
       Options.TimeoutMs = ProofTimeoutMs;
       solver::Z3Solver Verifier(Ctx, Options);
-      EXPECT_EQ(Verifier.checkDistinct(F.Input, Result),
-                solver::SatResult::Unsat)
+      // Each verifier checks one complete formula, allowing one-shot
+      // preprocessing instead of treating the difference as an assumption.
+      ASSERT_TRUE(Verifier.assertDistinct(F.Input, Result));
+      EXPECT_EQ(Verifier.check(), solver::SatResult::Unsat)
           << Verifier.reasonUnknown();
     }
 }
