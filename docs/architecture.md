@@ -7484,6 +7484,18 @@ backend.
 
 ## CPU execution
 
+`ExecutionBackend::readRegisters` observes the stopped CPU through the shared
+`Registers.def` inventory, including vector lanes and extended x64 FP values.
+It publishes a complete packet or an error and never saves/restores a context,
+executes an instruction, or reads guest memory. Width validation rejects invalid
+backend values; architecture transports retain ownership of normalization.
+Android's opt-in `observe_cpu_state` reserves its raw register-byte budget before
+execution and reports the current thread under `android.cpu_state`, even after a
+terminal CPU fault. Registers are named pairs of hexadecimal low/high 64-bit
+words. Capture failure has `registers: null` and a separate diagnostic, preserving
+the original workload stop. This is an observation of modeled architectural
+registers, not suspended-thread state or a resumable VM checkpoint.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage: partial failures, cancellation and deadline expiry cannot publish a

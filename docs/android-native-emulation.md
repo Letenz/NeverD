@@ -98,7 +98,20 @@ thread and `exit_group` ends the workload. Destructors are not run when the
 observation ends at the selected function's return. The libc
 `exit` import and automatic FINI-array execution remain unsupported.
 
-### Selected execution observations
+### Execution observations
+
+`android.observe_cpu_state: true` adds `android.cpu_state` to the final report.
+It contains the current guest `thread_id` and all modeled ARM64 registers:
+`X0`–`X30`, `SP`, `PC`, `NZCV`, the three modeled `TPIDR` registers, `FPCR`,
+`FPSR`, and `V0`–`V31`. Each named value is a pair of hexadecimal strings
+`[low_64_bits, high_64_bits]`, including scalars whose upper word is zero.
+Capture also runs at terminal CPU/model failures. A read failure produces
+`registers: null` with its own `diagnostic`; the workload's stop reason and
+diagnostic remain intact. The option is false by default and reserves 1,144 raw
+report bytes from `output_limit` before execution. It does not observe suspended
+threads, guest memory, or backend-private state and is not a resumable
+checkpoint. The captured `PC` is the actual CPU register; a service report may
+separately identify a call site or continuation.
 
 `android.observe_execution` records state immediately before explicit absolute
 guest PCs, without patching code or supplying call results:

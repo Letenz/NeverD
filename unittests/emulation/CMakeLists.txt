@@ -1,3 +1,9 @@
+add_neverd_unittest(NeverDRegisterSnapshotTests
+  RegisterSnapshotTests.cpp
+  TIMEOUT 20
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU)
+
 add_neverd_unittest(NeverDExecutionRunJSONTests
   ExecutionRunJSONTests.cpp
   TIMEOUT 20

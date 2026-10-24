@@ -498,11 +498,15 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       }
       Out.JavaLibrary = std::move(*S);
-    } else if (Name == field::ObserveJavaState) {
+    } else if (Name == field::ObserveJavaState ||
+               Name == field::ObserveCPUState) {
       auto B = V.getAsBoolean();
       if (!B)
         return invalid(Name);
-      Out.ObserveJavaState = *B;
+      if (Name == field::ObserveJavaState)
+        Out.ObserveJavaState = *B;
+      else
+        Out.ObserveCPUState = *B;
     } else if (Name == field::ReadMemory) {
       auto Reads = memoryReads(V);
       if (!Reads)
@@ -592,6 +596,21 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                          {field::Trace, std::move(Trace)},
                          {field::TraceTruncated, Result.TraceTruncated},
                          {field::Memory, std::move(Memory)}};
+  if (Result.CPUState) {
+    const auto &State = *Result.CPUState;
+    llvm::json::Value Registers = nullptr;
+    if (State.Registers) {
+      llvm::json::Object Values;
+      for (const auto &R : *State.Registers)
+        Values[registerName(R.Register)] =
+            llvm::json::Array{bits(R.Value[0]), bits(R.Value[1])};
+      Registers = std::move(Values);
+    }
+    Out[field::CPUState] =
+        llvm::json::Object{{field::ThreadID, State.ThreadID},
+                           {field::ObservationRegisters, std::move(Registers)},
+                           {field::Diagnostic, State.Diagnostic}};
+  }
   if (!Result.JNIRegistrations.empty()) {
     llvm::json::Array Bindings;
     for (const auto &Binding : Result.JNIRegistrations)

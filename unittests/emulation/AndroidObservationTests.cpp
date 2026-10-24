@@ -14,6 +14,7 @@
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <tuple>
 
@@ -76,9 +77,152 @@ protected:
   }
   void sameWorkload(const ProcessResult &Before, ProcessResult After) {
     After.ExecutionObservationsEnabled = false;
+    After.CPUState.reset();
     EXPECT_EQ(processResultJSON(Before), processResultJSON(After));
   }
 };
+TEST_P(AndroidObservation, TerminalRegistersPreserveOriginalStopsAndEffects) {
+  struct Case {
+    const char *Entry;
+    ProcessStopReason Stop;
+    bool Initialize = false;
+    uint64_t Instructions = process_defaults::Instructions;
+    uint64_t Events = process_defaults::Events;
+  };
+  for (const auto &C :
+       {Case{"observation_call", ProcessStopReason::Returned},
+        Case{"unknown_call", ProcessStopReason::UnsupportedService},
+        Case{"stdio_content", ProcessStopReason::CPUFailure},
+        Case{"bad_free", ProcessStopReason::RuntimeFailure},
+        Case{"busy_loop", ProcessStopReason::InstructionLimit, false, 37},
+        Case{"tls_slots", ProcessStopReason::EventLimit, true,
+             process_defaults::Instructions, 1}}) {
+    SCOPED_TRACE(C.Entry);
+    Options.Android->EntrySymbol = C.Entry;
+    Options.Android->Initialize = C.Initialize;
+    Options.Limits.Instructions = C.Instructions;
+    Options.Limits.Events = C.Events;
+    Options.Android->ObserveCPUState = false;
+    const auto Before = run();
+    ASSERT_EQ(Before.Stop, C.Stop) << Before.Diagnostic;
+    EXPECT_FALSE(Before.CPUState);
+    Options.Android->ObserveCPUState = true;
+    const auto After = run();
+    sameWorkload(Before, After);
+    ASSERT_TRUE(After.CPUState);
+    EXPECT_EQ(After.CPUState->ThreadID, 1000u);
+    ASSERT_TRUE(After.CPUState->Registers) << After.CPUState->Diagnostic;
+    EXPECT_EQ(After.CPUState->Registers->size(), 71u);
+  }
+}
+TEST_P(AndroidObservation, TerminalRegistersRetainEveryIntegerAndVectorLane) {
+  auto &A = *Options.Android;
+  auto &Data = A.Memory[0].Bytes;
+  auto &Bytes = A.Memory[1].Bytes;
+  Data.assign(2048, 0);
+  Bytes.clear();
+  auto Emit = [&](uint32_t Word) {
+    const auto Offset = Bytes.size();
+    Bytes.resize(Offset + 4);
+    llvm::support::endian::write32le(Bytes.data() + Offset, Word);
+  };
+  constexpr uint64_t Integer = 0xfedcba9876540000ull;
+  constexpr uint64_t Low = 0x0123456789abcdefull;
+  constexpr uint64_t High = 0xfedcba9876543210ull;
+  for (unsigned I = 0; I < 31; ++I)
+    llvm::support::endian::write64le(Data.data() + 8 * I, Integer + I);
+  for (unsigned I = 0; I < 32; ++I) {
+    llvm::support::endian::write64le(Data.data() + 0x100 + 16 * I, Low + I);
+    llvm::support::endian::write64le(Data.data() + 0x108 + 16 * I, High - I);
+    Emit(0x3dc00000 | ((0x10 + I) << 10) | I); // ldr qI,[x0,#offset]
+  }
+  const uint32_t Controls[] = {0xa0000000, 0x00400000, 0x0800001f};
+  const uint32_t MSR[] = {0xd51b4201, 0xd51b4401, 0xd51b4421};
+  for (unsigned I = 0; I < 3; ++I) {
+    llvm::support::endian::write64le(Data.data() + 0x600 + I * 8, Controls[I]);
+    Emit(0xf9400001 | ((0xc0 + I) << 10)); // ldr x1,[x0,#offset]
+    Emit(MSR[I]);                          // msr nzcv/fpcr/fpsr,x1
+  }
+  for (unsigned I = 1; I < 31; ++I)
+    Emit(0xf9400000 | (I << 10) | I); // ldr xI,[x0,#I*8]
+  Emit(0xf9400000);                   // ldr x0,[x0]
+  const uint64_t StopPC = Code + Bytes.size();
+  Emit(0xd4000001); // svc #0: x8 names an unknown, authored syscall
+  A.ReadMemory = {{Buffer, Data.size()}, {Code, Bytes.size()}};
+  const auto Before = run();
+  ASSERT_EQ(Before.Stop, ProcessStopReason::UnsupportedService)
+      << Before.Diagnostic;
+  A.ObserveCPUState = true;
+  const auto After = run();
+  sameWorkload(Before, After);
+  ASSERT_TRUE(After.CPUState);
+  ASSERT_TRUE(After.CPUState->Registers) << After.CPUState->Diagnostic;
+  std::map<CPURegister, RegisterValue> Registers;
+  for (const auto &R : *After.CPUState->Registers)
+    Registers.emplace(R.Register, R.Value);
+  ASSERT_EQ(Registers.size(), 71u);
+  for (unsigned I = 0; I < 31; ++I)
+    EXPECT_EQ(Registers.at(CPURegister(unsigned(CPURegister::AArch64X0) + I)),
+              (RegisterValue{Integer + I, 0}));
+  for (unsigned I = 0; I < 32; ++I)
+    EXPECT_EQ(Registers.at(vectorRegister(GuestArchitecture::AArch64, I)),
+              (RegisterValue{Low + I, High - I}));
+  EXPECT_EQ(Registers.at(CPURegister::AArch64PC), (RegisterValue{StopPC, 0}));
+  EXPECT_EQ(Registers.at(CPURegister::AArch64NZCV),
+            (RegisterValue{Controls[0], 0}));
+  EXPECT_EQ(Registers.at(CPURegister::AArch64FPCR),
+            (RegisterValue{Controls[1], 0}));
+  EXPECT_EQ(Registers.at(CPURegister::AArch64FPSR),
+            (RegisterValue{Controls[2], 0}));
+  ASSERT_FALSE(After.Services.empty());
+  EXPECT_FALSE(After.Services.back().Result);
+}
+TEST_P(AndroidObservation, TerminalRegistersBelongToTheActualStoppedChild) {
+  auto &A = *Options.Android;
+  A.EntrySymbol = "observation_threads";
+  A.Arguments = {Code, Buffer};
+  A.ThreadLimit = 3;
+  // mov x8,#65535; svc #0
+  A.Memory[1].Bytes = {0xe8, 0xff, 0x9f, 0xd2, 1, 0, 0, 0xd4};
+  for (uint64_t Quantum : {1, 7, 1000}) {
+    SCOPED_TRACE(Quantum);
+    Options.InstructionQuantum = Quantum;
+    A.ObserveCPUState = false;
+    const auto Before = run();
+    ASSERT_EQ(Before.Stop, ProcessStopReason::UnsupportedService);
+    A.ObserveCPUState = true;
+    const auto After = run();
+    sameWorkload(Before, After);
+    ASSERT_TRUE(After.CPUState);
+    ASSERT_TRUE(After.CPUState->Registers);
+    EXPECT_NE(After.CPUState->ThreadID, 1000u);
+    ASSERT_FALSE(After.Services.empty());
+    EXPECT_EQ(After.Services.back().ThreadID, After.CPUState->ThreadID);
+    const auto Thread = std::find_if(
+        After.NativeThreads.begin(), After.NativeThreads.end(),
+        [&](const auto &T) { return T.ID == After.CPUState->ThreadID; });
+    ASSERT_NE(Thread, After.NativeThreads.end());
+    for (const auto &R : *After.CPUState->Registers)
+      if (R.Register == CPURegister::AArch64TPIDR_EL0)
+        EXPECT_EQ(R.Value, (RegisterValue{Thread->TLS, 0}));
+  }
+}
+TEST_P(AndroidObservation, TerminalRegisterBudgetIsReservedBeforeExecution) {
+  auto &A = *Options.Android;
+  A.TraceLimit = 0;
+  A.ReadMemory.clear();
+  A.ObserveCPUState = true;
+  Options.OutputLimit = 8 + 71 * 16 - 1;
+  auto Rejected =
+      emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  ASSERT_FALSE(bool(Rejected));
+  llvm::consumeError(Rejected.takeError());
+  ++Options.OutputLimit;
+  const auto R = run();
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned);
+  ASSERT_TRUE(R.CPUState);
+  ASSERT_TRUE(R.CPUState->Registers);
+}
 TEST_P(AndroidObservation, ExactBeforeInstructionStateAndUnchangedWorkload) {
   for (uint64_t Quantum : {1, 2, 3, 1000}) {
     SCOPED_TRACE(Quantum);

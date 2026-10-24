@@ -2244,6 +2244,63 @@ TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidTerminalCPUStateMatchesSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "android.so")
+             .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Entry : {"add_arguments", "unknown_call"}) {
+    SCOPED_TRACE(Entry);
+    const bool Returned = llvm::StringRef(Entry) == "add_arguments";
+    llvm::json::Value Baseline = nullptr;
+    for (bool Observe : {false, true}) {
+      llvm::json::Object Options;
+      Options[field::Backend] = emulation::execution::Unicorn;
+      Options[field::Android] = llvm::json::Object{
+          {field::EntrySymbol, Entry},
+          {field::Arguments, llvm::json::Array{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}},
+          {field::ObserveCPUState, Observe}};
+      const auto Request = jsonText(std::move(Options));
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+      EXPECT_EQ(Parsed.getAsObject()->getString(field::Stop),
+                Returned ? "returned" : "unsupported_service");
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Request, Output),
+                Returned ? process_cli::Success : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
+      auto *Android = Parsed.getAsObject()->getObject(field::Android);
+      ASSERT_NE(Android, nullptr);
+      if (!Observe) {
+        EXPECT_FALSE(Android->get(field::CPUState));
+        Baseline = std::move(Parsed);
+        continue;
+      }
+      const auto *State = Android->getObject(field::CPUState);
+      ASSERT_NE(State, nullptr);
+      EXPECT_EQ(State->getInteger(field::ThreadID), 1000);
+      EXPECT_EQ(State->getString(field::Diagnostic), "");
+      const auto *Registers = State->getObject(field::ObservationRegisters);
+      ASSERT_NE(Registers, nullptr);
+      EXPECT_EQ(Registers->size(), 71u);
+      const auto *X0 = Registers->getArray("X0");
+      ASSERT_NE(X0, nullptr);
+      EXPECT_EQ((*X0)[0].getAsString(), Returned ? "192" : "13");
+      EXPECT_EQ((*X0)[1].getAsString(), "0");
+      Android->erase(field::CPUState);
+      EXPECT_EQ(Parsed, Baseline);
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidFinalizersKeepGuestEffectsAcrossSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

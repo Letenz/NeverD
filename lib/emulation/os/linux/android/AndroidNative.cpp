@@ -56,6 +56,15 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return Budget.takeError();
   std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
+  if (Native.ObserveCPUState) {
+    const uint64_t Bytes =
+        sizeof(uint64_t) +
+        architectureRegisters(GuestArchitecture::AArch64).size() *
+            sizeof(RegisterValue);
+    if (Bytes > Options.OutputLimit - ReportSize)
+      return failure(diagnostic::SnapshotLimits);
+    ReportSize += Bytes;
+  }
   if (Native.ThreadLimit > 1) {
     const uint64_t ThreadBytes = Native.ThreadLimit * thread_model::ReportBytes;
     if (ThreadBytes > Options.OutputLimit - ReportSize)
@@ -646,6 +655,15 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       }
       Result.MemorySnapshots.push_back(std::move(Snapshot));
     }
+  }
+  if (Native.ObserveCPUState) {
+    auto &State = Result.CPUState.emplace();
+    State.ThreadID = Threads.id();
+    auto Registers = CPU.readRegisters();
+    if (Registers)
+      State.Registers = std::move(*Registers);
+    else
+      State.Diagnostic = llvm::toString(Registers.takeError());
   }
   return Result;
 }

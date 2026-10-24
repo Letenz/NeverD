@@ -10,6 +10,7 @@
 #include "neverd/dalvik/RuntimeSnapshot.h"
 #include "neverd/emulation/AndroidResolverOptions.h"
 #include "neverd/emulation/ProcessCall.h"
+#include "neverd/emulation/Registers.h"
 
 #include <array>
 #include <cstdint>
@@ -80,6 +81,14 @@ struct NativeExecutionObservation {
   std::array<uint64_t, 31> Registers{};
   std::vector<NativeMemorySnapshot> Memory;
 };
+/// Registers of the current CPU at the final stop, including terminal faults.
+/// Suspended threads, memory, and backend-private state are not captured.
+/// A failed read leaves Registers absent and records its separate diagnostic.
+struct NativeCPUState {
+  uint64_t ThreadID = 0;
+  std::optional<std::vector<RegisterSnapshot>> Registers;
+  std::string Diagnostic;
+};
 
 /// One visible logd v4 entry. Payload is opaque; no host log is consulted.
 struct NativeLogRecord {
@@ -125,6 +134,9 @@ struct AndroidNativeOptions {
   /// Retain this many admitted instruction PCs. Zero disables tracing.
   uint64_t TraceLimit = 0;
   std::optional<NativeExecutionObservationOptions> ObserveExecution;
+  /// Read the final current-thread architectural registers without executing
+  /// or switching contexts. Failure never replaces the original stop reason.
+  bool ObserveCPUState = false;
   /// Concrete analysis choice for bytes returned by malloc and the new tail
   /// of realloc. Zero preserves the default. This is not a claim about an
   /// Android allocator or proof that reading uninitialized bytes is valid.

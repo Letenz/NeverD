@@ -6463,6 +6463,19 @@ writer copies, moves and resets. Both C emitters share this allocator.
 
 ## CPU execution checks
 
+`NeverDRegisterSnapshotTests` checks the complete architecture inventories,
+lossless scalar/vector/80-bit values, refusal of every injected register-read
+failure, and repeated observations through available checked backends.
+`AndroidObservation.TerminalRegister*` executes authored ARM64 register loads,
+compares complete reports with observation disabled, preserves normal/error and
+budget stops, checks stopped-child ownership across quanta, and enforces exact
+output-budget admission. `ProcessReport.CPUStateObservation*` checks strict
+opt-in JSON, high-bit preservation, and separate capture failures. Run these with
+`ProcessPublic.AndroidTerminalCPUStateMatchesSDKAndCLI` for normal and unknown
+service stops through both public surfaces, then run
+the Android native, Linux process and execution-session suites after changes to
+terminal register observation. Unavailable transports are skips.
+
 `UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
 distinct scalar and SIMD values across repeated checked user/supervisor steps
 and context restoration. Linux's `NeverDUnicornStateTransferTests` injects each
