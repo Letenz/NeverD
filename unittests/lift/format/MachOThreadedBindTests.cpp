@@ -541,7 +541,7 @@ TEST(MachOThreadedBind, MixedAuxiliaryStreamsFailBeforePublication) {
 TEST(MachOThreadedBind, PublicLoaderRetainsWeakStreamAdmission) {
   ThreadedImage F(kRebasesOnly);
   F.word(0, kAuthRebase);
-  F.Info.WeakBindOff = F.Info.BindOff + F.Info.BindSize - 1;
+  F.Info.WeakBindOff = F.Info.BindOff + F.Info.BindSize;
   F.Info.WeakBindSize = 1;
   auto File = F.linkedFile();
   File[kStreamOffset + kPublicSegmentOpcodeOffset] = kPublicSegmentOpcode;
@@ -549,7 +549,8 @@ TEST(MachOThreadedBind, PublicLoaderRetainsWeakStreamAdmission) {
       llvm::StringRef(reinterpret_cast<const char *>(File.data()), File.size()),
       kBufferName));
   ASSERT_FALSE(bool(Image));
-  EXPECT_NE(llvm::toString(Image.takeError()).find(kError), std::string::npos);
+  const std::string Error = llvm::toString(Image.takeError());
+  EXPECT_NE(Error.find(kError), std::string::npos) << Error;
 }
 
 TEST(MachOThreadedBind, RootsRequireUniqueStorageBeforeLinkedit) {
