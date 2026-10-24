@@ -5488,7 +5488,7 @@ TEST(HighCPointerAddresses, IsEmptyDropsLeftoverClobberArgs) {
   EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 0) << Source;
 }
 
-TEST(HighCPointerAddresses, PhiCopyUndefAssignPrintsZeroNotUnknown) {
+TEST(HighCPointerAddresses, PhiCopyUndefAssignRetainsUnknownState) {
   HighFunc Func;
   Func.Name = "find_null_id";
   Func.ReturnType = NdType::makeVoid();
@@ -5521,8 +5521,10 @@ TEST(HighCPointerAddresses, PhiCopyUndefAssignPrintsZeroNotUnknown) {
        HighExpr::makeConst(1, 4), HighExpr::makeVar(Key)});
   Func.Body = {If, Call};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find(" = 0;"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("0 /* unknown */"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" = 0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_trap(), 0 /* unknown value */"),
+            std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find(", 0);"), std::string::npos) << Source;
 }
 
@@ -43533,8 +43535,9 @@ TEST(HighCPointerAddresses, ByteResultReturnsOnlyTheDefinedByte) {
 }
 
 TEST(HighCPointerAddresses, RequiredTrailingUnknownCallArgumentKeepsItsSlot) {
-  // The first callee writes every Win64 argument register. Its non-return
-  // register results remain unknown to the caller's call summary. The next
+  // The first callee writes dynamic CPUID results to every Win64 argument
+  // register. Its non-return results remain unknown to the call summary;
+  // constant zero writes would correctly be recovered instead. The next
   // callee reads one such register: that required final slot must survive,
   // including when all earlier positional slots are provably unread.
   constexpr va_t Entry = 0x140001000;
@@ -43554,10 +43557,13 @@ TEST(HighCPointerAddresses, RequiredTrailingUnknownCallArgumentKeepsItsSlot) {
                                  0xc3};                        // ret
     const size_t CallerSize = Code.size();
     Code.resize(Clobber - Entry, 0xcc);
-    const std::vector<uint8_t> ClobberCode = {0x31, 0xc9,       // xor ecx, ecx
-                                              0x31, 0xd2,       // xor edx, edx
-                                              0x45, 0x31, 0xc0, // xor r8d, r8d
-                                              0x45, 0x31, 0xc9, // xor r9d, r9d
+    const std::vector<uint8_t> ClobberCode = {0x53,             // push rbx
+                                              0x31, 0xc0,       // xor eax, eax
+                                              0x31, 0xc9,       // xor ecx, ecx
+                                              0x0f, 0xa2,       // cpuid
+                                              0x41, 0x89, 0xd8, // mov r8d, ebx
+                                              0x41, 0x89, 0xc1, // mov r9d, eax
+                                              0x5b,             // pop rbx
                                               0xc3};            // ret
     Code.insert(Code.end(), ClobberCode.begin(), ClobberCode.end());
     Code.resize(Consumer - Entry, 0xcc);
@@ -44881,13 +44887,48 @@ TEST(HighCPointerAddresses, MsrAccessKeepsSelectorAndValue) {
   // LLVM-to-C spells the i32 selector 0xC0000084 as unsigned or signed.
   EXPECT_TRUE(std::regex_search(
       LLVMC,
-      std::regex(R"(__readmsr\(((\(uint32_t\))?3221225604|-1073741692)\))")))
+      std::regex(
+          R"(__readmsr\((\(uint32_t\))?\(?(3221225604|-1073741692)\)?\))")))
       << LLVMC;
   EXPECT_TRUE(std::regex_search(
       LLVMC,
-      std::regex(R"(__writemsr\(((\(uint32_t\))?3221225604|-1073741692), )")))
+      std::regex(
+          R"(__writemsr\((\(uint32_t\))?\(?(3221225604|-1073741692)\)?, )")))
       << LLVMC;
   expectCompilesForMsvc("#include <intrin.h>\n" + HighC);
+}
+
+TEST(HighCPointerAddresses, CompilerDispatchDoesNotDependOnIncludes) {
+  struct Fixture {
+    const char *Macro;
+    std::vector<uint8_t> Code;
+  };
+  const Fixture Cases[] = {
+      {"NEVERD_X86_SCALAR_SYSTEM", {0x0f, 0x32, 0xc3}}, // rdmsr; ret
+      {"NEVERD_X86_SYSTEM_REGISTER", {0x44, 0x0f, 0x20, 0xc0, 0xc3}},
+      {"NEVERD_X86_DESCRIPTOR_STATE", {0x0f, 0x00, 0xd0, 0xc3}}, // lldt ax
+      {"NEVERD_X86_VIRTUALIZATION", {0x0f, 0x01, 0xc4, 0xc3}},   // vmxoff
+      {"NEVERD_X86_SYSTEM_STATE", {0x0f, 0x03, 0xc1, 0xc3}}};    // lsl eax, ecx
+  constexpr va_t Entry = 0x1000;
+  for (const auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    for (const auto &Case : Cases) {
+      SCOPED_TRACE(Case.Macro);
+      auto Image = makeCodeFixture(Entry, Case.Code);
+      Image.Format = Format;
+      // These helpers disable includes. Required compiler dispatch remains
+      // part of the source unit, with the same contract in both C routes.
+      for (const auto &Source :
+           {highcOnlyFunction(Image, Entry), llvmcOnlyFunction(Image, Entry)}) {
+        EXPECT_EQ(Source.find("#include"), std::string::npos) << Source;
+        EXPECT_NE(Source.find(std::string("#define ") + Case.Macro + "("),
+                  std::string::npos)
+            << Source;
+        expectCompilesForMsvc(Source);
+      }
+    }
+  }
 }
 
 TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
@@ -45853,7 +45894,10 @@ TEST(HighCPointerAddresses, LslReadsTheSegmentLimit) {
                                      0xc3};
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("__segmentlimit("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__builtin_ia32_lsl_reg32("), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("lsl %2, %0"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("setz %1"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("__halt"), std::string::npos) << HighC;
 }
 
