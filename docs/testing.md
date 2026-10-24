@@ -4929,6 +4929,15 @@ checks that 32 independent entries remain executable after their first copies
 fold away during MedIR-to-HighIR conversion. An independent interpreter enters
 each original address and checks its return value on x86, x64, ARM and AArch64.
 
+`HighControlFlowSemantics.NestedRegionSplicesRetainTheirOuterFollow` checks
+single-entry region moves through block, if/else and switch parents up to 41
+levels deep. Independent branch results distinguish the enclosing follow from
+sibling/default returns across repeated reductions.
+`ARegionNeverSplicesIntoItsOwnDescendant` keeps an ancestor region intact when
+its only incoming jump sits inside that region, including deeply nested sites.
+These cases cover the parent-path metadata used by goto reduction; existing
+handler and landing-pad cases retain the exception-boundary coverage.
+
 `HighBoundPrivateFrameCopies.*` in `NeverDHighControlFlowTests` checks copies through nonescaping private frame slots after call ABI binding, including branches, slot reuse and agreement across guard contexts. For x64 and AArch64, the emitted C runs at `-O0` and `-O2` with undefined-behavior traps and independent arithmetic checks. Negative cases preserve the original function for frame escape, unknown call ABIs, missing or inconsistent frame aliases, reassigned entry inputs, overlapping accesses, ordered or atomic memory, malformed statements, cycles and exhausted budgets. Ordinary value conversions must not become PHI copies.
 
 `HighIntegerSignedness.*` in `NeverDHighControlFlowTests` checks the late pass that declares each register or temporary local signed or unsigned by what most of its uses read. Wrapping arithmetic, logical shifts and unsigned comparisons favor unsigned; signed comparisons, signed division, arithmetic shifts and sign extension favor signed; a conversion to an integer as wide as its operand favors the signedness it converts to; a shift count reads unsigned, so its masking arithmetic prints without a signed view; a local with any non-integer use keeps its types. The emitted C runs at `-O0` and `-O2` with undefined-behavior traps against independent reference arithmetic, including a signed comparison of a local that became unsigned.
@@ -7567,6 +7576,22 @@ imports through both IAT calls and jump veneers. Provider, name, delayed-import,
 conflicting-slot, addend, backing-byte, metadata, architecture and caller-cleanup
 mutations must refuse; every accepted stack fact still lacks an object or
 initializer memory contract.
+The portable `CRTImportQueriesKeepTheirStorageProofs` case covers nineteen
+CRT identity/provider combinations without optional corpus inputs. It requeries
+the same image after changing names, providers, delay flags, slot evidence,
+addends, backing bytes, conflicts, overlapping fixups, mapping or target traits.
+Both stack-cleanup facts and `_controlfp_s` recognition retain their complete
+current-storage checks. Run the registration-callee-stack, SEH-runtime-memory,
+read-only-bytes and pipeline-outcome owners after changing these queries.
+`RuntimeProviderSetsKeepDistinctContracts` prevents one runtime contract from
+borrowing another's DLL set, including debug runtimes, PE32/Win64 control-FP,
+math/stdio API sets and C++ exception providers. Paths, suffixes and embedded
+NULs remain invalid identities. `ControlFPProviderIdentityDoesNotBorrowPE32Contracts`
+checks those Win64 distinctions through decoded calls and the frame proof.
+`X87ImportCall.RecognizedNamesDoNotGrantUnsupportedTransport` keeps unsupported
+register-stack entries distinct from ordinary C calls and retains exact symbol
+case and provider checks. Changes to the shared `.def` inventories also require
+the x87 call-graph, registration state/EH/frame and exception-edge owners.
 `NestedReturningStackProofIsBoundedAndNonCircular` checks multi-level callee
 cleanup, mismatched pops, recursive dependencies, the depth boundary and shared
 work exhaustion. It does not admit dispatcher-entered parent returns through

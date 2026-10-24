@@ -10134,6 +10134,19 @@ bypass the shared x87 graph cache and parallel prefetch. The ordinary x87
 projection leaves a registration language graph opaque before constructing its
 callback closure; that graph needs a separate dispatcher invocation domain.
 
+`COFF/RuntimeProviders.def` owns the exact DLL sets used by PE runtime proofs;
+`RuntimeProviders.h` generates case-insensitive LLVM `StringSwitch` queries.
+PE32 and Win64 control-FP, legacy CRT, C++ exception, SEH handler, continuation
+and jump/local-unwind contracts retain their distinct provider sets.
+`X86/RegistrationRuntimeImports.def` owns registration cleanup, jump and
+local-unwind names; `Windows/SEHRuntimeImports.def` maps the Win64 CRT memory
+entries to their routine kinds and provider queries. Symbol names remain case
+sensitive. `X87CRTImports.def` keeps recognized x87 names and supported argument
+counts together: an unsupported transport remains recognized and rejected,
+never an ordinary zero-argument call. These identity tables grant no storage,
+veneer, frame, language-record or invocation authority; the existing query
+owners still establish every such fact from the current image.
+
 Every PE32 registration ABI proof builds its callee with the decoded x87 stack
 (`CFGBuilder::buildIntegerFrameProof`): returning-stack, leaf, member,
 initializer, throw, conditional-call and caller-frame proofs alike. These
