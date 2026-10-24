@@ -410,6 +410,7 @@ private:
   void command(const QString &operation, const QJsonObject &payload,
                Callback done, Failure failed = {});
   void receive(const QJsonObject &message);
+  void applyBackgroundSnapshot(const QJsonObject &snapshot);
   void startWorker();
   void openPending();
   void sendOpen(const QString &requested, const QString &path,
@@ -464,6 +465,7 @@ private:
   QHash<QString, QByteArray> databaseState_;
   std::function<QHash<QString, QByteArray>()> stateProvider_;
   QString generation_;
+  std::optional<quint64> BackgroundSequence;
   qint64 functionCount_ = -1;
   QJsonObject metadata_, background_, history_, selection_;
   QJsonArray contributions_;

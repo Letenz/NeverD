@@ -11,6 +11,8 @@
 #include "neverd/diff/LLVMDataFlow.h"
 
 #include "FlowParameterViews.h"
+#include "FlowProgress.h"
+#include "LLVMFlowSemantics.h"
 
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/ParameterSites.h"
@@ -36,6 +38,7 @@ class Projection {
   const DataFlowOptions &Options;
   const ComparisonControl &Control;
   const bool ParameterViews;
+  const bool Progress;
   DataFlowGraph G;
   uint64_t Work = 0;
   std::map<const BasicBlock *, uint32_t> Blocks;
@@ -139,29 +142,6 @@ class Projection {
       unsupported("unmodelled metadata: " + Name);
     }
   }
-  bool intrinsic(Intrinsic::ID ID) const {
-    switch (ID) {
-    case Intrinsic::fshl:
-    case Intrinsic::fshr:
-    case Intrinsic::bswap:
-    case Intrinsic::bitreverse:
-    case Intrinsic::ctpop:
-    case Intrinsic::ctlz:
-    case Intrinsic::cttz:
-    case Intrinsic::abs:
-    case Intrinsic::smin:
-    case Intrinsic::smax:
-    case Intrinsic::umin:
-    case Intrinsic::umax:
-    case Intrinsic::sadd_sat:
-    case Intrinsic::uadd_sat:
-    case Intrinsic::ssub_sat:
-    case Intrinsic::usub_sat:
-      return true;
-    default:
-      return false;
-    }
-  }
   FlowOperand operand(const Value &V) {
     charge();
     FlowOperand Out;
@@ -230,7 +210,9 @@ class Projection {
       N.Semantics +=
           ";return-attrs=" + attributes(F.getAttributes().getRetAttrs());
     } else if (const auto *C = dyn_cast<IntrinsicInst>(&I)) {
-      if (!intrinsic(C->getIntrinsicID()) || C->hasOperandBundles())
+      if (intrinsicFlowShape(C->getIntrinsicID()) ==
+              LLVMFlowShape::Unsupported ||
+          C->hasOperandBundles())
         unsupported("unmodelled intrinsic or operand bundle");
       N.Opcode = C->getCalledFunction()->getName().str();
       N.Semantics += ";cc=" + std::to_string(C->getCallingConv()) +
@@ -245,30 +227,8 @@ class Projection {
       for (const auto &A : C->args())
         Add(*A);
     } else {
-      switch (I.getOpcode()) {
-      case Instruction::Add:
-      case Instruction::Sub:
-      case Instruction::Mul:
-      case Instruction::UDiv:
-      case Instruction::SDiv:
-      case Instruction::URem:
-      case Instruction::SRem:
-      case Instruction::Shl:
-      case Instruction::LShr:
-      case Instruction::AShr:
-      case Instruction::And:
-      case Instruction::Or:
-      case Instruction::Xor:
-      case Instruction::Trunc:
-      case Instruction::ZExt:
-      case Instruction::SExt:
-      case Instruction::ICmp:
-      case Instruction::Select:
-      case Instruction::Freeze:
-        break;
-      default:
+      if (integerFlowShape(N.Opcode) == LLVMFlowShape::Unsupported)
         unsupported("unmodelled operation: " + StringRef(I.getOpcodeName()));
-      }
       if (const auto *Cmp = dyn_cast<ICmpInst>(&I))
         N.Semantics += ";predicate=" + std::to_string(Cmp->getPredicate());
       if (isa<FreezeInst>(I))
@@ -384,13 +344,42 @@ class Projection {
       throw std::invalid_argument(*Error);
   }
 
+  void projectProgress() {
+    auto P = proveFlowProgress(G, FunctionContract, Options,
+                               [&](uint64_t N) { charge(N); });
+    if (P.Kind != FlowProgressKind::Unproven) {
+      // Add enum attributes to a copy; strings may contain arbitrary attribute
+      // names or delimiters. Source LLVM and all other contracts stay exact.
+      auto Attrs = F.getAttributes().getFnAttrs();
+      Attrs = Attrs.addAttribute(F.getContext(), Attribute::MustProgress);
+      Attrs = Attrs.addAttribute(F.getContext(), Attribute::WillReturn);
+      P.ObservedContract = "llvm=" LLVM_VERSION_STRING ";cc=" +
+                           std::to_string(F.getCallingConv()) +
+                           ";function-attrs=" + attributes(Attrs);
+      signature(P.ObservedContract);
+      for (auto &N : G.Nodes) {
+        charge();
+        N.Semantics.replace(0, FunctionContract.size(), P.ObservedContract);
+        signature(N.Semantics);
+      }
+    }
+    G.Profile = LLVMProgressDataFlowProfile.str();
+    G.Progress = std::move(P);
+    if (auto Error =
+            validateFlowProgress(G, Options, [&](uint64_t N) { charge(N); }))
+      throw std::invalid_argument(*Error);
+    // Structure and parameters were validated before proof. Only the verified
+    // prefix and bounded progress record changed; their checks above share
+    // this projection's allowance, without another independent proof budget.
+  }
+
 public:
   Projection(const Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
              StringRef Revision, StringRef ABI, bool NativeComplete,
              const DataFlowOptions &Options, const ComparisonControl &Control,
-             bool ParameterViews = false)
+             bool ParameterViews = false, bool Progress = false)
       : F(F), Sources(Sources), Options(Options), Control(Control),
-        ParameterViews(ParameterViews) {
+        ParameterViews(ParameterViews), Progress(Progress) {
     G.Profile = LLVMDataFlowProfile.str();
     G.Function = Entry;
     G.Revision = Revision.str();
@@ -482,6 +471,8 @@ public:
       throw std::invalid_argument(*Error);
     if (ParameterViews)
       projectParameters();
+    if (Progress)
+      projectProgress();
     poll();
     return std::move(G);
   }
@@ -503,6 +494,14 @@ DataFlowGraph buildLLVMParameterDataFlow(
     const DataFlowOptions &Options, const ComparisonControl &Control) {
   return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
                     Control, true)
+      .run();
+}
+DataFlowGraph buildLLVMProgressDataFlow(
+    const llvm::Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
+    llvm::StringRef Revision, llvm::StringRef ABI, bool NativeComplete,
+    const DataFlowOptions &Options, const ComparisonControl &Control) {
+  return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
+                    Control, true, true)
       .run();
 }
 } // namespace neverd::diff

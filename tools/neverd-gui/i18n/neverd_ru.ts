@@ -6449,6 +6449,14 @@ Coverage: %7</source>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>Представления параметров сравнивают младшие 32 бита подходящих 64-битных нативных параметров. Исходная разрядность и источники доступны для проверки.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>Оптимизированная SSA с анализом циклов</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>Анализ циклов доказывает завершение в поддерживаемых случаях перед сравнением вычислений. Он включает представления параметров и сохраняет недоказанные контракты циклов.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6501,8 +6509,8 @@ Select an operation to follow dependencies. Synthetic operations have block prov
         <translation>Изучить исходную функцию</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>Наблюдаемые зависимости SSA. Вызовы, алиасы и неразрешённый поток управления остаются явными пробелами. Семантическая проверка не проводилась.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>Наблюдаемые зависимости SSA. Вызовы, алиасы и неразрешённый поток управления остаются явными пробелами. Эти наблюдения не доказывают эквивалентность всей функции.</translation>
     </message>
     <message>
         <source>Primary input</source>
@@ -6551,6 +6559,34 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>Оптимизированное SSA с представлениями параметров</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>Оптимизированная SSA с анализом циклов</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>Завершение доказано: ациклический поток управления.</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>Завершение доказано · Циклы со счётчиком: %1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>Завершение не доказано: исходные контракты сохранены.</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>Исходный контракт:
+%1
+Наблюдаемый контракт:
+%2
+Завершение не доказывает равенство числа итераций или результатов функций.</translation>
     </message>
 </context>
 <context>
@@ -8226,6 +8262,10 @@ Secondary SHA-256: %3
     <message>
         <source>Dock back into main window</source>
         <translation>Вернуть в главное окно</translation>
+    </message>
+    <message>
+        <source>Move window</source>
+        <translation>Переместить окно</translation>
     </message>
 </context>
 <context>

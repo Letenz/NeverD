@@ -128,6 +128,27 @@ Capstone classifiers, lifter, intrinsic metadata and emitters consume those
 rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
+`MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
+shared by modern chained fixups and the original arm64e threaded bind format.
+The threaded bytecode reader plans the entire ordinal table and every chain
+before mutating the image. Exact load-command segment and library ordinals,
+header-mapping base, writable file-backed storage, unique ownership and
+existing import provenance are validated before publication. Authenticated
+words retain their bytes; plain rebases and binds use the same canonical slot
+records as modern chains. Mixed weak/lazy/classic rebase streams are rejected
+until their joint binding semantics are represented.
+
+Native dyld binding records and authenticated import recipes also retain the
+original signed library ordinal. SELF, main-executable, flat and weak lookup
+scopes remain distinct even when their module strings are empty; duplicate
+dependency names do not erase load-command identity. The shared
+`recordDyldBindSlot` operation rejects incompatible known scopes in either
+order and can refine absent legacy scope evidence without treating it as SELF.
+Classic, modern chained and threaded readers all use this model. A recipe with
+an import lookup scope cannot prove a local metadata pointer, including when
+the scope is numerically zero. Local object relocations and dyld-cache slide
+recipes retain their separate target provenance without an import ordinal.
+
 Generated C temporaries avoid every operand expression, preserving parameters
 and results that already use the renderer's preferred local names.
 Validated pointer-authentication operations preserve argument setup across
@@ -445,6 +466,14 @@ and caches that page rather than fetching every intervening row or independently
 sorting it. Navigation callbacks retire on session or navigation changes.
 The listing may reveal an item from already fetched rows only when
 their request serial, project revision and listing generation still match.
+The native executor publishes background state with each terminal reply as
+well as heartbeats. Its monotonic publication sequence orders these channels;
+listing generations and revisions remain opaque. The query dispatcher validates
+correlation and context, delivers subscribers, then publishes the snapshot.
+The primary Session alone adopts it, after open has installed its metadata,
+and rejects older heartbeats. Cached reads and analysis replicas cannot advance
+the primary Session's state. A listing already holding that generation keeps
+its rows instead of requesting them again.
 Cached and fetched jumps share cursor-placement rules; pending refreshes and
 partial item prefixes require a worker query.
 Function links can reuse a loaded item's worker-supplied function identity
@@ -508,6 +537,23 @@ PHI predecessors survive substitution, and only detached node references and
 terminators are renumbered. `retainedItems()` counts parameter rows together
 with nodes for production, reading and collection validation without changing
 operation coverage. Legacy profiles retain their work and serialized contracts.
+`llvm-progress-ssa-v1` extends that projection with schema 5 progress provenance.
+`LLVMFlowSemantics` owns the finite scalar/intrinsic whitelist shared by original
+LLVM admission and saved proof checking. `FlowProgress` owns one linear,
+interruptible proof over detached graph nodes: acyclic control or direct
+nowrap-counter self loops whose removal leaves a DAG. Each nonzero fixed
+add/sub step exhausts its finite domain; a direct scalar comparison propagates
+poison to the branch, independently of its predicate or exit polarity. It never
+simulates iterations, assumes undef is fixed, or relies on existing progress
+attributes.
+Raw LLVM verification/admission and parameter elision precede this proof.
+`LLVMDataFlow` adds enum attributes to an AttributeSet copy, preserves both full
+contract prefixes, and changes only detached signatures. String attributes are
+never searched for flags or removed by text matching. `retainedItems()` includes
+the proof root and witnesses; work/cancellation stays within the original
+projection allowance. Graph validation reruns the same proof and finite-op
+admission; fresh source binding authenticates source-to-observed attributes.
+CLI, SDK, worker and Qt share this owner and do not derive their own loop facts.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.

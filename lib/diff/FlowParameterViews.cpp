@@ -87,7 +87,7 @@ unambiguousParameterSites(llvm::ArrayRef<FlowParameterView> Views,
 std::optional<std::string>
 validateParameterViews(const DataFlowGraph &G, const DataFlowOptions &Options,
                        llvm::function_ref<void(uint64_t)> Charge) {
-  if (G.Profile != LLVMParameterDataFlowProfile)
+  if (!hasParameterViews(G.Profile))
     return G.ParameterViews.empty()
                ? std::nullopt
                : std::optional<std::string>(

@@ -112,11 +112,13 @@ add_neverd_component_library(NeverDLoader
   MachO/ImmutableNativeCalls.cpp
   MachO/ImmutableNativeFrame.cpp
   MachO/RuntimeFunctionAddress.cpp
+  MachO/MachOArm64eFixups.cpp
   MachO/MachOChainedFixups.cpp
   MachO/MachOARM32Mode.cpp
   MachO/MachOCompactUnwind.cpp
   MachO/MachOCompactUnwindEncoding.cpp
   MachO/MachODyldBind.cpp
+  MachO/MachOThreadedBind.cpp
   MachO/MachODyldRebase.cpp
   MachO/MachOProgramLinking.cpp
   MachO/MachOExceptions.cpp

@@ -107,6 +107,7 @@ add_neverd_unittest(NeverDBinaryDiffTests
   BinaryDiffDataFlowTests.cpp
   BinaryDiffLLVMDataFlowTests.cpp
   BinaryDiffParameterViewTests.cpp
+  BinaryDiffProgressTests.cpp
   BinaryDiffFlowRegionsTests.cpp
   BinaryDiffFlowFragmentsTests.cpp
   BinaryDiffImpactTests.cpp
