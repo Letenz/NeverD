@@ -5362,6 +5362,35 @@ void MainWindow::closeEvent(QCloseEvent *event) {
   KDDockWidgets::LayoutSaver().saveToFile(layoutPath());
   event->accept();
   KDDockWidgets::QtWidgets::MainWindow::closeEvent(event);
+  if (!event->isAccepted())
+    return;
+
+  // Floating panes with minimize controls are independent top-level windows.
+  // Save their layout first, then close every pane and its auxiliary windows
+  // while the session and borrowed view state still exist.
+  QSet<QWidget *> owners{this};
+  QList<QPointer<Dock>> panes;
+  for (auto *dock : std::as_const(docks_)) {
+    owners.insert(dock->QWidget::window());
+    panes.append(dock);
+  }
+  QList<QPointer<QWidget>> windows;
+  for (auto *window : QApplication::topLevelWidgets()) {
+    if (window == this)
+      continue;
+    for (auto *owner = window; owner; owner = owner->parentWidget())
+      if (owners.contains(owner)) {
+        windows.append(window);
+        break;
+      }
+  }
+  for (const auto &dock : panes)
+    if (dock)
+      dock->dockWidget()->forceClose();
+  for (const auto &window : windows)
+    if (window)
+      window->close();
+  emit shutdownAccepted();
 }
 
 } // namespace neverd::gui
