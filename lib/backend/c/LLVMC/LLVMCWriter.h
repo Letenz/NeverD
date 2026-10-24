@@ -810,6 +810,7 @@ public:
   std::string unsignedCompareOperand(const llvm::Value *V, std::string Text);
   std::string renderInline(const llvm::Instruction &Inst);
   std::string renderInlineImpl(const llvm::Instruction &Inst);
+  std::optional<std::string> unknownBitwiseText(const llvm::BinaryOperator &Op);
   /// \p Call as C; as a \p Statement, whose value nothing reads.
   std::string callExpr(const llvm::CallBase &Call, bool Statement = false);
   /// The C function-pointer type of \p Call's callee, from the call's own

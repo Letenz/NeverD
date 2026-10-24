@@ -647,6 +647,13 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
       for (int8_t I = 0; I < Slots; ++I)
         if (R->second[ArgRegs[I] / 8] || SlotVectorWidth(I))
           Count = I + 1;
+      // Stack arguments in a positional ABI retain every preceding register
+      // position, even when the callee ignores its trailing registers. Bind
+      // those holes as unread below, before SSA can attach stale values.
+      if (Convention->PositionalArgumentSlots && CallEntryStackArgs)
+        if (auto S = CallEntryStackArgs->find(ArgumentsKey);
+            S != CallEntryStackArgs->end() && S->second > Slots)
+          Count = Slots;
       // Pass exactly the bytes the callee reads (DL for a KIRQL), so the
       // bytes it ignores do not become an unknown incoming value.  An unread
       // slot below the last read one is still an argument position; the

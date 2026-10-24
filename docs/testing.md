@@ -12181,6 +12181,17 @@ function whose name collides with the internal marker spelling. These tests
 certify explicit source unavailability, not a reconstructed dynamic call-state
 contract.
 
+`CallExitRegisters.UnknownOnlyJoinCopiesAreNotReads` checks HighC join copies.
+`ConditionalHomeSavesAreNotValueReads` and the `Absorbing*` cases execute both
+C routes at O0/O2, including the nonabsorbing inputs that must still diagnose
+unavailable values. `SummarizedCallArguments.UnreadRegisterTailsDoNotBecomeArguments`
+and `Win64CallContract.UnreadRegisterHolesBeforeStackArgumentsStayUnread` retain
+the complete pre-SSA argument prefix and the positions of stack arguments.
+`Win64CallContract.DebugNamedOmittedRuntimeKeepsItsFixedArity` and
+`NeverDSessionLLVMTests`'s `OmittedDebugNamedRuntimeUsesItsDeclaredArity` check
+that PDB public names reach argument recovery before either the module or
+single-function source route emits a call to an omitted runtime routine.
+
 The threaded arm64e loader validates unique segment ownership and rejects roots
 at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams
 remain explicitly unsupported; their presence cannot silently discard fixups.
