@@ -4513,6 +4513,14 @@ are checked even when the final annotation is absent. A contiguous per-slot
 storage inventory must partition the freshly proved runtime envelope exactly.
 Other architectures and complex tables retain their existing conservative rules.
 
+ELF and COFF extent discovery reads DWARF frame headers through the same
+bounded decoder as full exception recovery, without constructing the unused
+CFI instruction programs. These private header records supply only code
+extents, never unwind rules or language metadata. Runtime-index extension
+records retain the complete decode their admission requires. Full recovery
+still reads the current bytes after symbol/import discovery and validates all
+CFI programs, personalities and LSDAs before publishing exception metadata.
+
 DWARF frame-section decoding failures remain structural failures on every
 FDE-backed function from that section in Itanium and Darwin. A later language
 refresh cannot clear them; complete sections add no new refresh authority.
