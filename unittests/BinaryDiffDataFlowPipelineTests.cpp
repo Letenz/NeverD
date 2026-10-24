@@ -244,7 +244,7 @@ TEST(BinaryDiffDataFlowPipeline, LLVMRetentionPreservesSerialAndShardedOutput) {
         continue;
       const auto Owner = Observed.LLVMSources->Functions.find(O.Function);
       ASSERT_NE(Owner, Observed.LLVMSources->Functions.end());
-      EXPECT_EQ(Owner->second, I->getFunction());
+      EXPECT_EQ(static_cast<llvm::Value *>(Owner->second), I->getFunction());
       EXPECT_EQ(I->getModule(), Observed.LlvmModule.get());
       EXPECT_GE(O.Occurrence.Address, O.Function);
       EXPECT_LT(O.Occurrence.Address, O.Function + x64().size());
