@@ -445,6 +445,19 @@ class LowWordDecisions {
   }
 
   Bits square(const Bits &A) {
+    // For an odd word A=1+2U, A*A=1+4*(U*U+U). Only N-2 bits
+    // of U survive, so avoid constructing the unobserved upper carries.
+    if (A.size() > 2 && A.front() == 1) {
+      if (!charge(A.size(), 2 * sizeof(Bits)))
+        return Bits(A.size(), 0);
+      Bits U(A.begin() + 1, A.end() - 1);
+      const auto Correction =
+          calculate(SymOp::Add, U, calculate(SymOp::Mul, U, U));
+      Bits Result(A.size(), 0);
+      Result.front() = 1;
+      std::copy(Correction.begin(), Correction.end(), Result.begin() + 2);
+      return Result;
+    }
     Bits Result(A.size(), 0);
     for (size_t I = 0; I < A.size() && !Failed; ++I) {
       Bits Row(A.size(), 0);
@@ -567,6 +580,30 @@ class LowWordDecisions {
     const auto &Empty = EmptyWords[Count];
     if (!charge())
       return Empty;
+    // This cache describes only Count low bits. Canonicalize native constant
+    // operands in that quotient before interning its key, so different source
+    // offsets/masks reuse the same low-word view. The original expression and
+    // every wider cache entry retain their complete constant. Native constants
+    // are inline; wide constants keep the existing APInt accounting below.
+    const auto InitialOp = Ctx.op(R);
+    if ((InitialOp == SymOp::Add || InitialOp == SymOp::And ||
+         InitialOp == SymOp::Or || InitialOp == SymOp::Xor) &&
+        Ctx.numOperands(R) == 2 &&
+        Ctx.width(R) <= std::numeric_limits<uint64_t>::digits &&
+        Ctx.isConst(Ctx.operand(R, 0))) {
+      const auto Constant = Ctx.operand(R, 0), Other = Ctx.operand(R, 1);
+      const uint64_t Value = Ctx.node(Constant).Aux;
+      const uint64_t Low = Value & ((uint64_t(1) << Count) - 1);
+      if (Low != Value) {
+        if (!charge(2, 2 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+          return Empty;
+        const auto K = Ctx.mkConst(Ctx.width(R), Low);
+        R = InitialOp == SymOp::Add   ? Ctx.mkAdd(K, Other)
+            : InitialOp == SymOp::And ? Ctx.mkAnd(K, Other)
+            : InitialOp == SymOp::Or  ? Ctx.mkOr(K, Other)
+                                      : Ctx.mkXor(K, Other);
+      }
+    }
     const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
     if (auto It = Words.find(Key); It != Words.end())
       return It->second;
@@ -1692,9 +1729,9 @@ public:
     if (Failed || Product.empty())
       return Root;
     Assumption.reset();
-    if (Parity != 1)
-      for (auto &Bit : Product)
-        Bit = apply(And, Parity, Bit);
+    // Every product bit was proved under the same parity condition. Keep it
+    // outside the complete emitted word instead of repeating it in every bit.
+    // The other branch is zero by the selector or factor-count proof above.
 
     // Equal output decisions share their complete modular coefficient.
     std::map<uint32_t, llvm::APInt> Coefficients;
@@ -1775,7 +1812,10 @@ public:
         Reachable.insert(Id);
         const auto D = decision(Id);
         Variables.try_emplace(D.Variable, 0);
-        if (Variables.size() > limits::kMaxResidueDecisionSynthesisInputs)
+        // Admission counts the whole guarded function, including the bit
+        // fixed by the assumption while constructing this cofactor.
+        if (Variables.size() + unsigned(Parity != 1) >
+            limits::kMaxResidueDecisionSynthesisInputs)
           return Fallback;
         Pending.push_back(D.Low);
         Pending.push_back(D.High);
@@ -2393,7 +2433,18 @@ public:
                 (Terms.size() + 1) * (sizeof(SymNode) + 4 * sizeof(SymRef)))) {
       return Root;
     }
-    auto Result = Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(Terms);
+    SymRef OutputGate;
+    if (Parity != 1) {
+      OutputGate = Emit(Emit, Parity, 0);
+      if (!OutputGate || Failed ||
+          !charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+        return Root;
+      OutputGate = Ctx.mkAnd(OutputGate, Ctx.mkConst(Width, 1));
+    }
+    auto Gate = [&](SymRef R) {
+      return OutputGate ? Ctx.mkMul(OutputGate, R) : R;
+    };
+    auto Result = Gate(Terms.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(Terms));
     // Finish the proved reading before optional Boolean recipe search.
     // A later refusal must retain that complete result, including when one
     // output bit has a more complicated support than the others.
@@ -2417,7 +2468,7 @@ public:
         if (!Term)
           break;
         Terms[I] = Term;
-        auto Next = Ctx.mkAdd(Terms);
+        auto Next = Gate(Ctx.mkAdd(Terms));
         if (readingScore(Ctx, Next) < readingScore(Ctx, Result))
           Result = Next;
       }

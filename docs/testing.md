@@ -888,6 +888,12 @@ Single- and two-group cofactor partitions also avoid redundant maps and sorts.
 A degree-24 fixture must finish within the shared work budget; exhaustive
 eight-bit supports and independent 8–257-bit arithmetic oracles retain
 remainders with variables outside the reused cofactor's support.
+Shared parity guards and reduced-precision odd squares retain both selector
+branches, including complemented parity, with independent 8–257-bit oracles
+and full-width Z3 checks at 8/16/32/64 bits. Dense public-entry work and cost
+ceilings protect the corresponding reduction in repeated bit-level work.
+Low-word constant views also complete a degree-96 mixed masked product at
+native widths; the independent oracle retains its full arithmetic wraparound.
 `SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
 normalized products, nested additions, multi-input XOR carries and changed
 parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor

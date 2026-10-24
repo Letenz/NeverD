@@ -37,34 +37,52 @@ struct DenseCarryFixture {
   unsigned HighBits;
   unsigned Degree;
   unsigned Observed;
+  bool ComplementParity = false;
+  bool MixedMasks = false;
 
   unsigned inputWidth(unsigned) const { return Width; }
 
   llvm::APInt oracle(const std::array<llvm::APInt, 4> &V) const {
     auto Result = llvm::APInt(Width, 3).shl(Width - Observed);
     const auto Mask = ~llvm::APInt::getLowBitsSet(Width, HighBits);
-    for (unsigned I = 0; I < Degree; ++I)
-      Result *= (V[0] + 2 * I) ^ ((V[1] + I) & Mask);
+    const auto X = V[0] ^ llvm::APInt(Width, ComplementParity);
+    for (unsigned I = 0; I < Degree; ++I) {
+      auto High = (V[1] + I) & Mask;
+      if (MixedMasks)
+        High =
+            ((V[1] + I) & ~llvm::APInt(Width, 1)) *
+            ((V[2] + 2 * I) & ~llvm::APInt::getLowBitsSet(Width, HighBits - 1));
+      Result *= (X + 2 * I) ^ High;
+    }
     return Result + V[0] + V[1] + V[2] + V[3];
   }
 };
 
 DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
                                     unsigned HighBits, unsigned Degree = 48,
-                                    unsigned Observed = 7) {
+                                    unsigned Observed = 7,
+                                    bool ComplementParity = false,
+                                    bool MixedMasks = false) {
   // Preserve the public expression parser's construction order: the measured
   // cost/work bounds below belong to these two complete public-entry inputs.
   llvm::SmallString<96> Scale;
   llvm::APInt(Width, 3).shl(Width - Observed).toString(Scale, 10, false);
   std::string Expression = "(" + Scale.str().str();
-  for (unsigned I = 0; I < Degree; ++I)
-    Expression += "*((x+" + std::to_string(2 * I) + ")^((y+" +
-                  std::to_string(I) + ")&-" +
-                  std::to_string(uint64_t(1) << HighBits) + "))";
+  const std::string X = ComplementParity ? "(x^1)" : "x";
+  for (unsigned I = 0; I < Degree; ++I) {
+    std::string High = "((y+" + std::to_string(I) + ")&-" +
+                       std::to_string(uint64_t(1) << HighBits) + ")";
+    if (MixedMasks)
+      High = "(((y+" + std::to_string(I) + ")&-2)*((z+" +
+             std::to_string(2 * I) + ")&-" +
+             std::to_string(uint64_t(1) << (HighBits - 1)) + "))";
+    Expression += "*((" + X + "+" + std::to_string(2 * I) + ")^" + High + ")";
+  }
   Expression += ")+(x^y)+2*(x&y)+(z|w)+(z&w)";
   const auto Parsed = parseSymExpr(Ctx, Expression, Width);
   EXPECT_TRUE(Parsed.ok()) << Parsed.Error;
-  return {Parsed.Root, Width, HighBits, Degree, Observed};
+  return {Parsed.Root,      Width,     HighBits, Degree, Observed,
+          ComplementParity, MixedMasks};
 }
 
 struct BitPolynomialFixture {
@@ -204,6 +222,14 @@ void checkFullWidthOracle(SymContext &Ctx, const Fixture &F, SymRef Result) {
       if (Trial < 256)
         Values[I] = llvm::APInt(InputWidth, Trial * (2 * I + 1));
     }
+    if (Trial == 256) {
+      // Complemented parity needs a nonzero x with a zero complete result:
+      // the product's even branch vanishes, while x+w cancels modulo Width.
+      for (unsigned I = 0; I < Values.size(); ++I)
+        Values[I] = llvm::APInt(F.inputWidth(I), 0);
+      Values[0] = llvm::APInt(F.inputWidth(0), 1);
+      Values[3] = llvm::APInt::getAllOnes(F.inputWidth(3));
+    }
     const auto Expected = F.oracle(Values);
     const auto Actual = Eval.evalWith([&](uint32_t Id) -> const llvm::APInt * {
       if (Id >= Bindings.size() || Bindings[Id] >= Values.size()) {
@@ -221,9 +247,9 @@ void checkFullWidthOracle(SymContext &Ctx, const Fixture &F, SymRef Result) {
 }
 
 TEST(SymMBALazyPolynomial, DenseCarryEmissionKeepsMeasuredWorkCeilings) {
-  // The predecessor uses 63,948 and 59,167 units; the streaming reader and
-  // lazy construction use 60,693 and 55,945. Fixed ceilings distinguish work
-  // even though both versions eventually produce the same complete expression.
+  // Sharing the parity guard and evaluating odd squares at reduced precision
+  // removes repeated bit-level work. Preserve the complete public-entry cost
+  // and work gains alongside the independent modular value checks.
   for (const unsigned HighBits : {2u, 3u}) {
     SCOPED_TRACE(HighBits);
     SymContext Ctx;
@@ -234,9 +260,48 @@ TEST(SymMBALazyPolynomial, DenseCarryEmissionKeepsMeasuredWorkCeilings) {
     const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
     ASSERT_NE(Result.Expr, F.Input);
     EXPECT_EQ(Result.SizeBefore, 495u);
-    EXPECT_EQ(Result.SizeAfter, HighBits == 2 ? 331u : 327u);
+    EXPECT_EQ(Result.SizeAfter, HighBits == 2 ? 325u : 321u);
     EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
-    EXPECT_LE(Result.Work, HighBits == 2 ? 61000u : 56500u);
+    EXPECT_LE(Result.Work, HighBits == 2 ? 45000u : 40000u);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
+}
+
+TEST(SymMBALazyPolynomial, SharedParityGuardsKeepBothBranchesExact) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (bool Complement : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Complement);
+      SymContext Ctx;
+      const auto F = denseCarryFixture(Ctx, Width, 2, 8, 5, Complement);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+      ASSERT_NE(Result.Expr, F.Input);
+      EXPECT_LT(Result.Work, Options.MaxWork);
+      EXPECT_LT(Result.SizeAfter, Result.SizeBefore);
+      checkFullWidthOracle(Ctx, F, Result.Expr);
+      if (Width <= 64 && solver::Z3Solver::available()) {
+        solver::Z3SolverOptions VerifyOptions;
+        VerifyOptions.TimeoutMs = 30000;
+        solver::Z3Solver Verifier(Ctx, VerifyOptions);
+        EXPECT_EQ(Verifier.checkDistinct(F.Input, Result.Expr),
+                  solver::SatResult::Unsat)
+            << Verifier.reasonUnknown();
+      }
+    }
+}
+
+TEST(SymMBALazyPolynomial, LowWordConstantViewsFinishDegree96MixedProducts) {
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, Width, 3, 96, 7, false, true);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LT(Result.Work, 60000u);
+    EXPECT_LE(Result.SizeAfter, 19u);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
     checkFullWidthOracle(Ctx, F, Result.Expr);
   }
 }
