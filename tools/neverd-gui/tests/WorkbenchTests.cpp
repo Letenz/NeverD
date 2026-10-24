@@ -199,6 +199,25 @@ struct Workbench {
   }
 };
 
+/// Bound a regression to exec() so a modal reference list fails rather than
+/// hanging the native interaction tests.
+QPointer<QDialog> openLocalReferences(Workbench &bench, CodeView *view) {
+  QTimer guard;
+  guard.setSingleShot(true);
+  QObject::connect(&guard, &QTimer::timeout, &guard, [] {
+    if (auto *dialog =
+            qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+      dialog->reject();
+  });
+  guard.start(OpenTimeoutMs);
+  bench.action(ActionId::JumpXrefsTo)->trigger();
+  for (auto *dialog :
+       view->findChildren<QDialog *>(QStringLiteral("localReferencesDialog")))
+    if (dialog->isVisible())
+      return dialog;
+  return nullptr;
+}
+
 /// The representations a code view's menu offers, in order.
 QStringList representationsOf(CodeView *view) {
   QStringList names;
@@ -1900,9 +1919,9 @@ private slots:
     QCOMPARE(code->lineCount(), 18);
     const QPoint pastHeader(code->viewport()->width() - 4, arrow.y());
     QTest::mouseMove(code->viewport(), arrow);
-    QCOMPARE(code->viewport()->cursor().shape(), Qt::PointingHandCursor);
+    QTRY_COMPARE(code->viewport()->cursor().shape(), Qt::PointingHandCursor);
     QTest::mouseMove(code->viewport(), pastHeader);
-    QCOMPARE(code->viewport()->cursor().shape(), Qt::IBeamCursor);
+    QTRY_COMPARE(code->viewport()->cursor().shape(), Qt::IBeamCursor);
     QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier,
                       pastHeader);
     QCOMPARE(code->lineCount(), 18);
@@ -2073,112 +2092,101 @@ private slots:
     code->setCursorLine(0);
     QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
     code->setFocus();
-    bool sawDialog = false, correctRows = false;
-    QTimer chooser;
-    connect(&chooser, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-      auto *table = dialog ? dialog->findChild<QTableView *>(
-                                 QStringLiteral("localReferencesTable"))
-                           : nullptr;
-      // The rows are ready at once; keys reach them once the dialog is active.
-      if (!table || !dialog->isActiveWindow() || !table->hasFocus())
-        return;
-      chooser.stop();
-      const auto close = qScopeGuard([&] {
-        if (dialog->isVisible())
-          dialog->reject();
-      });
-      sawDialog = dialog->windowTitle().contains(name);
-      QCOMPARE(dialog->parentWidget(), view->window());
-      const auto *model = table->model();
-      correctRows = model->rowCount() == 5 &&
-                    model->index(2, 0).data().toInt() == 551 &&
-                    model->index(2, 1).data().toInt() == 3;
-      // Clicking the initially selected row must also reveal its exact token.
-      QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
-                        table->visualRect(model->index(0, 0)).center());
-      QCOMPARE(code->selectedText(), name);
-      QCOMPARE(code->searchSelection(),
-               std::pair(references[0].begin, references[0].end));
-      QVERIFY(table->hasFocus());
-      QVERIFY(dialog->isVisible());
+    QTRY_VERIFY(code->hasFocus());
+    const auto dialog = openLocalReferences(bench, view);
+    QVERIFY(dialog);
+    QVERIFY(dialog->windowTitle().contains(name));
+    QCOMPARE(dialog->parentWidget(), view);
+    QCOMPARE(dialog->windowModality(), Qt::NonModal);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(QTest::qWaitForWindowActive(dialog));
+    auto *table =
+        dialog->findChild<QTableView *>(QStringLiteral("localReferencesTable"));
+    QVERIFY(table);
+    QTRY_VERIFY(table->hasFocus());
+    QVERIFY(dialog->windowHandle());
+    QCOMPARE(dialog->windowHandle()->transientParent(),
+             view->window()->windowHandle());
+    QSignalSpy finished(dialog, &QDialog::finished);
+    const auto *model = table->model();
+    QCOMPARE(model->rowCount(), 5);
+    QCOMPARE(model->index(2, 0).data().toInt(), 551);
+    QCOMPARE(model->index(2, 1).data().toInt(), 3);
+    // Clicking the initially selected row must also reveal its exact token.
+    QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      table->visualRect(model->index(0, 0)).center());
+    QCOMPARE(code->selectedText(), name);
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[0].begin, references[0].end));
+    QVERIFY(table->hasFocus());
+    QVERIFY(dialog->isVisible());
 
-      // A single click unfolds the distant use immediately, without closing
-      // the list or moving the independent assembly cursor.
-      QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
-                        table->visualRect(model->index(2, 2)).center());
-      QCOMPARE(code->searchSelection(),
-               std::pair(references[2].begin, references[2].end));
-      QVERIFY(!code->libraryFolded());
-      QVERIFY(table->hasFocus());
-      QVERIFY(dialog->isVisible());
-      QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+    // A single click unfolds the distant use immediately, without closing
+    // the list or moving the independent assembly cursor.
+    QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      table->visualRect(model->index(2, 2)).center());
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[2].begin, references[2].end));
+    QVERIFY(!code->libraryFolded());
+    QVERIFY(table->hasFocus());
+    QVERIFY(dialog->isVisible());
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
 
-      const auto captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
-      if (!captures.isEmpty() && representation == QLatin1String("source") &&
-          !renamed) {
-        auto &theme = Theme::instance();
-        const auto mode = theme.mode();
-        const auto restore = qScopeGuard([&] { theme.setMode(mode); });
-        QDir().mkpath(captures);
-        for (const bool dark : {false, true}) {
-          theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
-          theme.apply();
-          QApplication::processEvents();
-          const QString suffix = QString(floating ? "-floating" : "-docked") +
-                                 (dark ? "-dark.png" : "-light.png");
-          QVERIFY(view->grab().save(captures + "/local-xrefs-code" + suffix));
-          QVERIFY(dialog->grab().save(captures + "/local-xrefs-list" + suffix));
-        }
+    const auto captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (!captures.isEmpty() && representation == QLatin1String("source") &&
+        !renamed) {
+      auto &theme = Theme::instance();
+      const auto mode = theme.mode();
+      const auto restore = qScopeGuard([&] { theme.setMode(mode); });
+      QDir().mkpath(captures);
+      for (const bool dark : {false, true}) {
+        theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+        theme.apply();
+        QApplication::processEvents();
+        const QString suffix = QString(floating ? "-floating" : "-docked") +
+                               (dark ? "-dark.png" : "-light.png");
+        QVERIFY(view->grab().save(captures + "/local-xrefs-code" + suffix));
+        QVERIFY(dialog->grab().save(captures + "/local-xrefs-list" + suffix));
       }
+    }
 
-      // Two uses on the same line have distinct columns; keyboard selection
-      // must preview each occurrence, even when its source line is unchanged.
-      QTest::keyClick(table, Qt::Key_Down);
-      QCOMPARE(code->searchSelection(),
-               std::pair(references[3].begin, references[3].end));
-      QTest::keyClick(table, Qt::Key_Down);
-      QCOMPARE(code->searchSelection(),
-               std::pair(references[4].begin, references[4].end));
-      QTest::keyClick(table, Qt::Key_Up);
-      QCOMPARE(code->searchSelection(),
-               std::pair(references[3].begin, references[3].end));
-      QTest::keyClick(table, Qt::Key_Up);
-      QCOMPARE(code->searchSelection(),
-               std::pair(references[2].begin, references[2].end));
-      QVERIFY(table->hasFocus());
-      if (finish == QLatin1String("ok")) {
-        auto *buttons = dialog->findChild<QDialogButtonBox *>();
-        QVERIFY(buttons);
-        QTest::mouseClick(buttons->button(QDialogButtonBox::Ok),
-                          Qt::LeftButton);
-      } else if (finish == QLatin1String("enter")) {
-        QTest::keyClick(table, Qt::Key_Return);
-      } else if (finish == QLatin1String("double")) {
-        // QTest's double-click sends only the second press. Supply the first
-        // click too, as a native double-click does after keyboard navigation.
-        const auto point = table->visualRect(model->index(2, 0)).center();
-        QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
-                          point);
-        QTest::mouseDClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
-                           point);
-      } else {
-        QTest::keyClick(table, Qt::Key_Escape);
-      }
-      QVERIFY(!dialog->isVisible());
-      QCOMPARE(dialog->result(), finish == QLatin1String("escape")
-                                     ? int(QDialog::Rejected)
-                                     : int(QDialog::Accepted));
-    });
-    chooser.start(10);
-    QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
-      if (auto *dialog =
-              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
-        dialog->reject();
-    });
-    bench.action(ActionId::JumpXrefsTo)->trigger();
-    QVERIFY(sawDialog);
-    QVERIFY(correctRows);
+    // Two uses on the same line have distinct columns; keyboard selection
+    // must preview each occurrence, even when its source line is unchanged.
+    QTest::keyClick(table, Qt::Key_Down);
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[3].begin, references[3].end));
+    QTest::keyClick(table, Qt::Key_Down);
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[4].begin, references[4].end));
+    QTest::keyClick(table, Qt::Key_Up);
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[3].begin, references[3].end));
+    QTest::keyClick(table, Qt::Key_Up);
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[2].begin, references[2].end));
+    QVERIFY(table->hasFocus());
+    if (finish == QLatin1String("ok")) {
+      auto *buttons = dialog->findChild<QDialogButtonBox *>();
+      QVERIFY(buttons);
+      QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
+    } else if (finish == QLatin1String("enter")) {
+      QTest::keyClick(table, Qt::Key_Return);
+    } else if (finish == QLatin1String("double")) {
+      // QTest's double-click sends only the second press. Supply the first
+      // click too, as a native double-click does after keyboard navigation.
+      const auto point = table->visualRect(model->index(2, 0)).center();
+      QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                        point);
+      QTest::mouseDClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                         point);
+    } else {
+      QTest::keyClick(table, Qt::Key_Escape);
+    }
+    QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().first().toInt(), finish == QLatin1String("escape")
+                                                   ? int(QDialog::Rejected)
+                                                   : int(QDialog::Accepted));
+    QTRY_VERIFY(!dialog);
     QCOMPARE(code->selectedText(), name);
     QCOMPARE(code->currentToken(), name);
     QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
@@ -2190,6 +2198,213 @@ private slots:
     QVERIFY(row);
     QCOMPARE(row->value("line").toInt(), 550);
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+  }
+
+  void localReferencesAllowWorkbenchInteraction_data() {
+    QTest::addColumn<bool>("floating");
+    QTest::newRow("docked") << false;
+    QTest::newRow("floating") << true;
+  }
+
+  void localReferencesAllowWorkbenchInteraction() {
+    QFETCH(bool, floating);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-references.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(code->complete());
+    auto *dock = bench.dockFor(view);
+    auto *assemblyDock = bench.dockFor(assembly);
+    QVERIFY(dock && assemblyDock);
+    if (floating)
+      dock->setFloating(true);
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    view->window()->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(view->window()));
+    QVERIFY(code->findText(QStringLiteral("v7 = 0"), true));
+    const auto target = code->renameTarget();
+    QVERIFY(target);
+    const auto references = code->localReferences(*target);
+    QCOMPARE(references.size(), 5);
+    const auto version = code->documentVersion();
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const auto dialog = openLocalReferences(bench, view);
+    QVERIFY(dialog);
+    auto *table =
+        dialog->findChild<QTableView *>(QStringLiteral("localReferencesTable"));
+    QVERIFY(table);
+    QVERIFY(QTest::qWaitForWindowActive(dialog));
+    QTRY_VERIFY(table->hasFocus());
+    QCOMPARE(dialog->windowModality(), Qt::NonModal);
+    QVERIFY(!QApplication::activeModalWidget());
+
+    // Real input must reach the source and another analysis pane while the
+    // reference list remains open, including controller-level navigation.
+    view->window()->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(view->window()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const auto line = code->cursorLine();
+    QTest::keyClick(code, Qt::Key_Down);
+    QCOMPARE(code->cursorLine(), line + 1);
+    const auto top = code->verticalScrollBar()->value();
+    QTest::keyClick(code, Qt::Key_PageDown);
+    QVERIFY(code->verticalScrollBar()->value() > top);
+    QVERIFY(dialog->isVisible());
+
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    auto *functions = bench.functions();
+    QVERIFY(functions);
+    QTRY_COMPARE(functions->model().addressAt(24),
+                 std::optional<Address>(Base + 0x180));
+    functions->table()->setCurrentIndex(functions->model().index(24, 0));
+    functions->table()->setFocus();
+    QTRY_VERIFY(functions->table()->hasFocus());
+    QTest::keyClick(functions->table(), Qt::Key_Return);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x180));
+    QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+    QCOMPARE(code->documentVersion(), version);
+    dialog->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(dialog));
+    table->setFocus();
+    QTRY_VERIFY(table->hasFocus());
+    QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      table->visualRect(table->model()->index(1, 0)).center());
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[1].begin, references[1].end));
+
+    // Floating and docking replace the native owner, not the source or list.
+    // The actual dock button must still receive its click behind the list.
+    dock->setFloating(true);
+    QTRY_VERIFY(dock->isFloating());
+    QVERIFY(dialog && dialog->isVisible());
+    QTRY_COMPARE(dialog->windowHandle()->transientParent(),
+                 view->window()->windowHandle());
+    view->window()->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(view->window()));
+    QAbstractButton *dockButton = nullptr;
+    for (auto *bar :
+         view->window()->findChildren<KDDockWidgets::QtWidgets::TitleBar *>())
+      if (bar->isVisible())
+        for (auto *button : bar->findChildren<QAbstractButton *>())
+          if (button->isVisible() &&
+              button->toolTip() == QStringLiteral("Dock window"))
+            dockButton = button;
+    QVERIFY(dockButton);
+    QTest::mouseClick(dockButton, Qt::LeftButton);
+    QTRY_VERIFY(!dock->isFloating());
+    QCOMPARE(view->window(), bench.window.get());
+    QVERIFY(dialog && dialog->isVisible());
+    QTRY_COMPARE(dialog->windowHandle()->transientParent(),
+                 bench.window->windowHandle());
+    QCOMPARE(code->documentVersion(), version);
+
+    // Switching tabs also leaves the document intact. A reference click
+    // reveals its source tab without taking keyboard focus from the list.
+    assemblyDock->addDockWidgetAsTab(dock);
+    assemblyDock->setAsCurrentTab();
+    QTRY_VERIFY(!view->isVisible());
+    QVERIFY(dialog && dialog->isVisible());
+    dialog->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(dialog));
+    table->setFocus();
+    QTRY_VERIFY(table->hasFocus());
+    QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      table->visualRect(table->model()->index(4, 0)).center());
+    QTRY_VERIFY(view->isVisible());
+    QCOMPARE(code->searchSelection(),
+             std::pair(references[4].begin, references[4].end));
+    QCOMPARE(code->documentVersion(), version);
+    QVERIFY(table->hasFocus());
+    QVERIFY(dialog->isVisible());
+    QTest::keyClick(table, Qt::Key_Escape);
+    QTRY_VERIFY(!dialog);
+  }
+
+  void changedSourceDismissesLocalReferences_data() {
+    QTest::addColumn<QString>("change");
+    QTest::addColumn<bool>("floating");
+    for (const bool floating : {false, true})
+      for (const auto *change : {"reload", "function", "representation",
+                                 "close", "replace", "window"})
+        QTest::newRow(qPrintable(QString::fromLatin1(change) +
+                                 (floating ? "-floating" : "-docked")))
+            << QString::fromLatin1(change) << floating;
+  }
+
+  void changedSourceDismissesLocalReferences() {
+    QFETCH(QString, change);
+    QFETCH(bool, floating);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-references.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(code->complete());
+    auto *dock = bench.dockFor(view);
+    QVERIFY(dock);
+    if (floating)
+      dock->setFloating(true);
+    view->window()->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(view->window()));
+    QVERIFY(code->findText(QStringLiteral("v7 = 0"), true));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    const auto dialog = openLocalReferences(bench, view);
+    QVERIFY(dialog);
+    if (change == QLatin1String("reload"))
+      view->showFunction(Base + 0x140);
+    else if (change == QLatin1String("function"))
+      view->showFunction(Base + 0x160);
+    else if (change == QLatin1String("representation"))
+      view->setRepresentation(QStringLiteral("llvmc"));
+    else if (change == QLatin1String("close"))
+      dock->forceClose();
+    else if (change == QLatin1String("window"))
+      bench.window.reset();
+    else {
+      view->window()->activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(view->window()));
+      code->setFocus();
+      QTRY_VERIFY(code->hasFocus());
+      const auto replacement = openLocalReferences(bench, view);
+      QVERIFY(replacement && replacement != dialog);
+      QTRY_VERIFY(!dialog);
+      QVERIFY(replacement->isVisible());
+      QCOMPARE(
+          view->findChildren<QDialog *>(QStringLiteral("localReferencesDialog"))
+              .size(),
+          1);
+      replacement->reject();
+      QTRY_VERIFY(!replacement);
+    }
+    QTRY_VERIFY(!dialog);
   }
 
   void closingFileDismissesLocalVariableReferences() {
@@ -2212,31 +2427,16 @@ private slots:
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
     code->setFocus();
     QTRY_VERIFY(code->hasFocus());
-    bool closed = false;
-    QTimer closer;
-    connect(&closer, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-      if (!dialog ||
-          dialog->objectName() != QLatin1String("localReferencesDialog"))
-        return;
-      closer.stop();
-      closed = true;
-      auto *table = dialog->findChild<QTableView *>(
-          QStringLiteral("localReferencesTable"));
-      QVERIFY(table);
-      table->setCurrentIndex(table->model()->index(2, 0));
-      QVERIFY(code->commentTarget());
-      QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
-      bench.session.closeFile();
-    });
-    closer.start(10);
-    QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
-      if (auto *dialog =
-              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
-        dialog->reject();
-    });
-    bench.action(ActionId::JumpXrefsTo)->trigger();
-    QVERIFY(closed);
+    const auto dialog = openLocalReferences(bench, view);
+    QVERIFY(dialog);
+    auto *table =
+        dialog->findChild<QTableView *>(QStringLiteral("localReferencesTable"));
+    QVERIFY(table);
+    table->setCurrentIndex(table->model()->index(2, 0));
+    QVERIFY(code->commentTarget());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
+    bench.session.closeFile();
+    QTRY_VERIFY(!dialog);
     QVERIFY(!bench.session.loaded());
     QVERIFY(!code->function());
     QVERIFY(code->selectedText().isEmpty());

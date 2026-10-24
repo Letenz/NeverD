@@ -1810,8 +1810,17 @@ selection in local-variable reference lists for pseudocode, C and LLVM C, both
 docked and floating. It checks clicking the initially selected row, unfolding a
 distant occurrence, distinct columns on the same line, renamed locals, focus
 remaining in the list, and closing with OK, Enter, double-click or Escape.
+`localReferencesAllowWorkbenchInteraction` exercises source keyboard navigation,
+scrolling, function-list navigation, the native dock button and tab switching
+while the modeless list remains open. It checks that the list follows the
+source's native window and still selects exact occurrences after docking.
+On Wayland, provide activation through the test compositor: QtTest cannot
+activate another window while the modeless list has focus.
+`changedSourceDismissesLocalReferences` covers reloads, function/representation
+changes, pane closure, list replacement and workbench destruction, both docked
+and floating.
 `closingFileDismissesLocalVariableReferences` closes the project after a live
-reference selection. Both cases also run in the native Windows/macOS checks;
+reference selection. These cases also run in the native Windows/macOS checks;
 `NEVERD_SHORTCUT_CAPTURES` captures the source selection and list in both themes.
 
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,

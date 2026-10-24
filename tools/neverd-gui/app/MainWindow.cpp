@@ -104,6 +104,7 @@
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <kddockwidgets/Config.h>
 #include <kddockwidgets/LayoutSaver.h>
 #include <kddockwidgets/core/DockWidget.h>
@@ -306,6 +307,24 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+  // Qt retains a child dialog's old native transient parent when an ancestor
+  // is reparented. Follow the source through single-pane and grouped docking,
+  // once the new top-level window has been created and shown.
+  if (LocalReferencesDialog && (event->type() == QEvent::ParentChange ||
+                                event->type() == QEvent::Show)) {
+    auto *widget = qobject_cast<QWidget *>(object);
+    auto *source = LocalReferencesDialog->parentWidget();
+    if (widget && source &&
+        (widget == source || widget->isAncestorOf(source))) {
+      const auto dialog = LocalReferencesDialog;
+      QTimer::singleShot(0, dialog, [dialog] {
+        if (dialog->isVisible())
+          if (auto *window = dialog->windowHandle())
+            window->setTransientParent(
+                dialog->parentWidget()->window()->windowHandle());
+      });
+    }
+  }
   const auto inWorkbench = [this](QWidget *widget) {
     if (!widget)
       return false;
@@ -2983,29 +3002,41 @@ void MainWindow::showLocalReferences(CodeView *origin,
   auto references = view->text()->localReferences(target);
   if (references.isEmpty())
     return;
+  if (LocalReferencesDialog)
+    LocalReferencesDialog->reject();
+  QPointer<Dock> sourceDock;
+  for (auto *dock : std::as_const(docks_))
+    if (dock->widget() == view) {
+      sourceDock = dock;
+      break;
+    }
   const auto epoch = session_.epoch();
-  const auto serial = codeNavigationSerial_;
   const auto function = view->text()->function();
   const auto representation = view->representation();
   const auto version = view->text()->documentVersion();
-  const auto valid = [this, view, epoch, serial, function, representation,
+  const auto valid = [this, view, sourceDock, epoch, function, representation,
                       version] {
-    return view && session_.loaded() && view->isVisible() &&
-           epoch == session_.epoch() && serial == codeNavigationSerial_ &&
+    return view && sourceDock && sourceDock->isOpen() && session_.loaded() &&
+           view->text()->complete() && epoch == session_.epoch() &&
            function == view->text()->function() &&
            representation == view->representation() &&
            version == view->text()->documentVersion();
   };
-  QDialog dialog(view->window());
-  dialog.setObjectName(QStringLiteral("localReferencesDialog"));
-  dialog.setWindowTitle(tr("xrefs to %1").arg(target.value("name").toString()));
-  dialog.setWindowIcon(icon(QStringLiteral("xrefs")));
-  dialog.resize(760, 360);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *table = new QTableView(&dialog);
+  // The source view survives floating/docking; its temporary top-level
+  // window does not. Keep the modeless list owned by that stable view.
+  auto *dialog = new QDialog(view);
+  LocalReferencesDialog = dialog;
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setObjectName(QStringLiteral("localReferencesDialog"));
+  dialog->setWindowTitle(
+      tr("xrefs to %1").arg(target.value("name").toString()));
+  dialog->setWindowIcon(icon(QStringLiteral("xrefs")));
+  dialog->resize(760, 360);
+  auto *layout = new QVBoxLayout(dialog);
+  auto *table = new QTableView(dialog);
   table->setObjectName(QStringLiteral("localReferencesTable"));
   auto *model = new LocalReferencesModel(
-      std::move(references), {tr("Line"), tr("Column"), tr("Code")}, &dialog);
+      std::move(references), {tr("Line"), tr("Column"), tr("Code")}, dialog);
   table->setModel(model);
   table->setSelectionBehavior(QAbstractItemView::SelectRows);
   table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -3020,37 +3051,51 @@ void MainWindow::showLocalReferences(CodeView *origin,
   table->selectRow(0);
   // Preview inside the originating document without taking focus from the
   // list. clicked also covers clicking its already selected initial row.
-  const auto preview = [view, model, target, valid](const QModelIndex &index) {
+  const auto preview = [view, sourceDock, model, target,
+                        valid](const QModelIndex &index) {
     if (valid())
       if (const auto *reference = model->reference(index.row()))
-        view->text()->selectLocalReference(target, *reference);
+        if (view->text()->selectLocalReference(target, *reference))
+          sourceDock->setAsCurrentTab();
   };
-  connect(table, &QTableView::clicked, &dialog, preview);
+  connect(table, &QTableView::clicked, dialog, preview);
   connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged,
-          &dialog, preview);
+          dialog, preview);
   activateOnReturn(*table);
   layout->addWidget(table);
   auto *buttons = new QDialogButtonBox(
-      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
   layout->addWidget(buttons);
-  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  connect(table, &QTableView::activated, &dialog,
-          [&dialog](const QModelIndex &) { dialog.accept(); });
-  connect(&session_, &Session::unloaded, &dialog, &QDialog::reject);
-  connect(view, &QObject::destroyed, &dialog, &QDialog::reject);
-  connect(view->text(), &CodeText::statusChanged, &dialog, [&dialog, valid] {
+  connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+  connect(table, &QTableView::activated, dialog,
+          [dialog](const QModelIndex &) { dialog->accept(); });
+  connect(&session_, &Session::unloaded, dialog, &QDialog::reject);
+  connect(view->text(), &CodeText::statusChanged, dialog, [dialog, valid] {
     if (!valid())
-      dialog.reject();
+      dialog->reject();
   });
+  if (sourceDock)
+    connect(sourceDock, &Dock::isOpenChanged, dialog, [dialog](bool open) {
+      if (!open)
+        dialog->reject();
+    });
+  connect(dialog, &QDialog::accepted, dialog,
+          [view, sourceDock, model, table, target, valid] {
+            if (!valid())
+              return;
+            if (const auto *chosen =
+                    model->reference(table->currentIndex().row()))
+              if (view->text()->selectLocalReference(target, *chosen)) {
+                sourceDock->raise();
+                view->window()->activateWindow();
+                view->text()->setFocus();
+              }
+          });
+  dialog->show();
+  dialog->raise();
+  dialog->activateWindow();
   table->setFocus();
-  if (dialog.exec() != QDialog::Accepted || !valid())
-    return;
-  if (const auto *chosen = model->reference(table->currentIndex().row()))
-    if (view->text()->selectLocalReference(target, *chosen)) {
-      view->window()->activateWindow();
-      view->text()->setFocus();
-    }
 }
 
 void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
