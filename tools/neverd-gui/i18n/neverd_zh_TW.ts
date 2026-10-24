@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>切換包含反組譯、虛擬碼和輸出的浮動工作區</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>專注模式(&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>開啟(&amp;O)...</translation>
     </message>
@@ -2174,6 +2182,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>無法還原進入專注模式前的配置。</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>重新載入輸入檔案</translation>
@@ -6385,6 +6397,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>迴圈分析在比較運算前證明支援範圍內的終止性。此模式包含參數檢視，並保留未能證明的迴圈原始契約。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>含多區塊迴圈分析的最佳化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6515,6 +6531,14 @@ Progress does not establish equal loop counts or function results.</source>
 觀察契約：
 %2
 終止性無法證明迴圈次數或函式結果相同。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>含多區塊迴圈分析的最佳化 SSA</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>已證明的迴圈：入口區塊 %1 → 回邊區塊 %2 · 計數器 #%3 → 更新 #%4 · 條件 #%5</translation>
     </message>
 </context>
 <context>
@@ -8194,6 +8218,14 @@ Secondary SHA-256: %3
     <message>
         <source>Move window</source>
         <translation>移動視窗</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>鎖定浮動視窗</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>解鎖浮動視窗</translation>
     </message>
 </context>
 <context>

@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>逆アセンブリ、疑似コード、出力を含むフローティング作業領域を切り替える</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>集中モード(&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>開く(&amp;O)...</translation>
     </message>
@@ -2174,6 +2182,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>集中モードに入る前のレイアウトを復元できませんでした。</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>入力ファイルの再読み込み</translation>
@@ -6385,6 +6397,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>ループ解析は、対応する範囲で終了性を証明してから計算を比較します。パラメータビューを含み、証明できないループの元の契約は保持します。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>複数ブロックのループ解析付き最適化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6515,6 +6531,14 @@ Progress does not establish equal loop counts or function results.</source>
 観測された契約：
 %2
 終了性はループ回数や関数の結果の一致を証明するものではありません。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>複数ブロックのループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>証明済みループ：ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · 条件 #%5</translation>
     </message>
 </context>
 <context>
@@ -8194,6 +8218,14 @@ Secondary SHA-256: %3
     <message>
         <source>Move window</source>
         <translation>ウィンドウを移動</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>フローティングウィンドウを固定</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>フローティングウィンドウの固定を解除</translation>
     </message>
 </context>
 <context>

@@ -3236,7 +3236,7 @@ TEST(LLVMCPointerAddresses, AtomicFetchAddPrintsBuiltin) {
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *Slot = Builder.CreateAlloca(I32, nullptr, "ref");
   llvm::Value *Old = Builder.CreateAtomicRMW(
-      llvm::AtomicRMWInst::Add, Slot, llvm::ConstantInt::get(I32, -1),
+      llvm::AtomicRMWInst::Add, Slot, llvm::ConstantInt::getSigned(I32, -1),
       llvm::MaybeAlign(), llvm::AtomicOrdering::SequentiallyConsistent);
   llvm::Value *Cmp =
       Builder.CreateICmpNE(Old, llvm::ConstantInt::get(I32, 1), "last");
@@ -5521,7 +5521,9 @@ TEST(HighCPointerAddresses, PhiCopyUndefAssignRetainsUnknownState) {
        HighExpr::makeConst(1, 4), HighExpr::makeVar(Key)});
   Func.Body = {If, Call};
   const std::string Source = emitFunctions({Func});
-  EXPECT_EQ(Source.find(" = 0;"), std::string::npos) << Source;
+  // Availability may start at zero; the unknown payload must not become a
+  // recovered zero argument. Execution coverage is in CallExitRegisters.
+  EXPECT_EQ(Source.find("t13 = 0;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("__builtin_trap(), 0 /* unknown value */"),
             std::string::npos)
       << Source;

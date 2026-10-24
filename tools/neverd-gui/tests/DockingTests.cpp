@@ -47,6 +47,8 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#elif defined(Q_OS_MACOS)
+#include <ApplicationServices/ApplicationServices.h>
 #endif
 
 using namespace neverd::gui;
@@ -109,6 +111,17 @@ class Pointer {
   QPointer<QWidget> Pressed;
 
 public:
+  bool click(QWidget &widget) {
+    const QPoint point = widget.rect().center();
+    if (!move(widget, point, false))
+      return false;
+    QTest::qWait(50);
+    if (!button(widget, point, true))
+      return false;
+    QTest::qWait(50);
+    return button(widget, point, false);
+  }
+
   bool move(QWidget &widget, QPoint point, bool held) {
     if (onWayland()) {
       QWidget *window = widget.window();
@@ -133,6 +146,9 @@ public:
 #ifdef Q_OS_WIN
     Q_UNUSED(held);
     return true; // Native buttons also drive the system move loop.
+#elif defined(Q_OS_MACOS)
+    return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
+                       global);
 #else
     QWidget *receiver = Pressed ? Pressed.data() : &widget;
     QMouseEvent event(QEvent::MouseMove, receiver->mapFromGlobal(global),
@@ -165,6 +181,11 @@ public:
     input.type = INPUT_MOUSE;
     input.mi.dwFlags = pressed ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
     return SendInput(1, &input, sizeof(input)) == 1;
+#elif defined(Q_OS_MACOS)
+    Q_UNUSED(widget);
+    Q_UNUSED(point);
+    return nativeMouse(pressed ? kCGEventLeftMouseDown : kCGEventLeftMouseUp,
+                       QCursor::pos());
 #else
     if (pressed) {
       Pressed = &widget;
@@ -178,6 +199,19 @@ public:
     return true;
 #endif
   }
+
+#ifdef Q_OS_MACOS
+private:
+  static bool nativeMouse(CGEventType type, QPoint point) {
+    CGEventRef event = CGEventCreateMouseEvent(
+        nullptr, type, CGPointMake(point.x(), point.y()), kCGMouseButtonLeft);
+    if (!event)
+      return false;
+    CGEventPost(kCGHIDEventTap, event);
+    CFRelease(event);
+    return true;
+  }
+#endif
 };
 
 struct Desktop {
@@ -212,6 +246,11 @@ struct Desktop {
       if (bar->isVisible())
         return bar;
     return nullptr;
+  }
+
+  QAbstractButton *lockButton() const {
+    return Source.QWidget::window()->findChild<QAbstractButton *>(
+        QStringLiteral("floatingLockButton"));
   }
 };
 } // namespace
@@ -258,6 +297,13 @@ private slots:
         QStringLiteral("floatingMinimizeButton"));
     QVERIFY(maximize && maximize->isVisible());
     QVERIFY(minimize && minimize->isVisible());
+    QVERIFY(desktop.lockButton() && desktop.lockButton()->isChecked());
+    auto *close = floating->findChild<QAbstractButton *>(
+        QStringLiteral("floatingCloseButton"));
+    QVERIFY(close && close->isVisible());
+    // The full window controls remain usable, unlike tiny dock-tool buttons.
+    QVERIFY(close->width() >= 40);
+    QVERIFY(close->height() >= 28);
     if (onWayland()) {
       QVERIFY(floating->windowFlags() & Qt::FramelessWindowHint);
       QCOMPARE(floating->windowHandle()->frameMargins(), QMargins());
@@ -307,6 +353,208 @@ private slots:
     QTRY_VERIFY(floating->width() > size.width() &&
                 floating->height() > size.height());
     QVERIFY(desktop.Source.isFloating());
+  }
+
+  void floatingEdgesResizeWithoutDocking_data() {
+    QTest::addColumn<int>("edges");
+    QTest::addColumn<bool>("locked");
+    for (bool locked : {false, true})
+      for (auto [name, edges] :
+           {std::pair{"left", Qt::Edges(Qt::LeftEdge)},
+            {"right", Qt::Edges(Qt::RightEdge)},
+            {"top", Qt::Edges(Qt::TopEdge)},
+            {"bottom", Qt::Edges(Qt::BottomEdge)},
+            {"top-left", Qt::TopEdge | Qt::LeftEdge},
+            {"top-right", Qt::TopEdge | Qt::RightEdge},
+            {"bottom-left", Qt::BottomEdge | Qt::LeftEdge},
+            {"bottom-right", Qt::BottomEdge | Qt::RightEdge}})
+        QTest::newRow(qPrintable(QString::fromLatin1(name) +
+                                 (locked ? "-locked" : "-unlocked")))
+            << int(edges) << locked;
+  }
+
+  void doubleClickDetachStartsLocked() {
+    Desktop desktop;
+    desktop.Source.setFloating(false);
+    QTRY_VERIFY(!desktop.Source.isFloating());
+    auto *bar = desktop.Window.findChild<KD::QtWidgets::TabBar *>();
+    QVERIFY(bar);
+    QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier,
+                       bar->tabRect(bar->currentIndex()).center());
+    QTRY_VERIFY(desktop.Source.isFloating());
+    QVERIFY(desktop.lockButton() && desktop.lockButton()->isChecked());
+  }
+
+  void explicitDockIgnoresLock() {
+    Desktop desktop;
+    auto *floating = desktop.Source.QWidget::window();
+    QVERIFY(QTest::qWaitForWindowExposed(floating));
+    QTest::qWait(250);
+    QVERIFY(place(*floating, QPoint(100, 100)));
+    QTest::qWait(100);
+    QVERIFY(desktop.lockButton() && desktop.lockButton()->isChecked());
+    QAbstractButton *dock = nullptr;
+    for (auto *button : desktop.titleBar()->findChildren<QAbstractButton *>())
+      if (button->isVisible() &&
+          button->toolTip() == QStringLiteral("Dock window"))
+        dock = button;
+    QVERIFY(dock && dock->isEnabled());
+    Pointer pointer;
+    QVERIFY(pointer.click(*dock));
+    QTRY_VERIFY(!desktop.Source.isFloating());
+    QCOMPARE(desktop.Source.QWidget::window(), &desktop.Window);
+    QVERIFY(desktop.Source.widget()->isVisible());
+  }
+
+  void lockedDragsStayFloating_data() {
+    QTest::addColumn<bool>("tab");
+    QTest::newRow("caption") << false;
+    QTest::newRow("tab") << true;
+  }
+
+  void lockedDragsStayFloating() {
+    if (QGuiApplication::platformName() == QLatin1String("offscreen"))
+      QSKIP("Dragging needs a native window manager.");
+    if (onWayland() && !qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER"))
+      QSKIP("Wayland needs the isolated compositor's native pointer.");
+    QFETCH(bool, tab);
+    Desktop desktop;
+    auto *floating = desktop.Source.QWidget::window();
+    QVERIFY(QTest::qWaitForWindowExposed(&desktop.Window));
+    QVERIFY(QTest::qWaitForWindowExposed(floating));
+    QTest::qWait(250);
+    QVERIFY(place(desktop.Window, QPoint(20, 50)));
+    QVERIFY(place(*floating, QPoint(320, 250)));
+    QTest::qWait(100);
+    QVERIFY(desktop.lockButton() && desktop.lockButton()->isChecked());
+    QWidget *source = floating->findChild<QWidget *>(
+        QStringLiteral("floatingWindowMoveArea"));
+    QVERIFY(source && source->isVisible());
+    QPoint start = source->rect().center();
+    if (tab) {
+      auto *tabs = floating->findChild<KD::QtWidgets::TabBar *>();
+      QVERIFY(tabs);
+      source = tabs;
+      start = tabs->tabRect(tabs->currentIndex()).center();
+    }
+    const QPoint before = floating->pos();
+    if (onWayland())
+      QVERIFY(shell(
+          QStringLiteral("global.neverdBeforeMove = (%1).get_frame_rect();")
+              .arg(nativeWindow(*floating))));
+    Pointer pointer;
+    auto *area = desktop.Window.mainWindow()->dropArea();
+    bool moved = false;
+    bool preview = false;
+    bool released = false;
+    QVERIFY(pointer.move(*source, start, false));
+    QTest::qWait(50);
+    QVERIFY(pointer.button(*source, start, true));
+    QTimer::singleShot(50, &desktop.Window, [&] {
+      moved =
+          pointer.move(desktop.Window, desktop.Window.rect().center(), true);
+    });
+    QTimer::singleShot(250, &desktop.Window, [&] {
+      preview = area->dropIndicatorOverlay()->isVisible();
+      released = pointer.button(desktop.Window, QPoint(), false);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(released, 5000);
+    QTest::qWait(150);
+    QVERIFY(moved);
+    QVERIFY(!preview);
+    QVERIFY(desktop.Source.isFloating());
+    QCOMPARE(desktop.Source.QWidget::window(), floating);
+    QVERIFY(desktop.lockButton()->isChecked());
+    if (!tab) {
+      if (onWayland())
+        QVERIFY(shell(
+            QStringLiteral("(() => {const r = (%1).get_frame_rect();"
+                           "if (r.x === global.neverdBeforeMove.x && "
+                           "r.y === global.neverdBeforeMove.y) "
+                           "throw Error('locked caption cannot move');})()")
+                .arg(nativeWindow(*floating))));
+      else
+        QTRY_VERIFY(floating->pos() != before);
+    }
+  }
+
+  void floatingEdgesResizeWithoutDocking() {
+    if (QGuiApplication::platformName() == QLatin1String("offscreen"))
+      QSKIP("Resizing needs native windows.");
+    if (onWayland() && !qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER"))
+      QSKIP("Wayland needs the isolated compositor's native pointer.");
+    QFETCH(int, edges);
+    QFETCH(bool, locked);
+    Desktop desktop;
+    QPointer<QWidget> floating = desktop.Source.QWidget::window();
+    QVERIFY(QTest::qWaitForWindowExposed(&desktop.Window));
+    QVERIFY(QTest::qWaitForWindowExposed(floating));
+    QTest::qWait(250);
+    QVERIFY(place(desktop.Window, QPoint(20, 50)));
+    QVERIFY(place(*floating, QPoint(320, 250)));
+    QTest::qWait(100);
+    QVERIFY(desktop.lockButton() && desktop.lockButton()->isChecked());
+    Pointer pointer;
+    if (!locked) {
+      QVERIFY(pointer.click(*desktop.lockButton()));
+      QTRY_VERIFY(!desktop.lockButton()->isChecked());
+    }
+    const QSize size = floating->size();
+    // Start just inside the visible edge, including the top caption corners.
+    // Previously only the extreme bottom-right corner was tested.
+    // Linux's drawn border has an eight-pixel interior hit area. The native
+    // Windows frame and macOS resize handler also accept the immediate edge.
+#ifdef Q_OS_LINUX
+    const int inset = (onWayland() ? 10 : 0) + 6;
+#else
+    const int inset = 1;
+#endif
+    QPoint start = floating->rect().center();
+    QPoint delta;
+    if (edges & Qt::LeftEdge) {
+      start.setX(inset);
+      delta.setX(-60);
+    } else if (edges & Qt::RightEdge) {
+      start.setX(size.width() - inset - 1);
+      delta.setX(60);
+    }
+    if (edges & Qt::TopEdge) {
+      start.setY(inset);
+      delta.setY(-60);
+    } else if (edges & Qt::BottomEdge) {
+      start.setY(size.height() - inset - 1);
+      delta.setY(60);
+    }
+    auto *area = desktop.Window.mainWindow()->dropArea();
+    bool preview = false;
+    bool moved = false;
+    bool released = false;
+    QVERIFY(pointer.move(*floating, start, false));
+    QTest::qWait(50);
+    QVERIFY(pointer.button(*floating, start, true));
+    QTimer::singleShot(50, &desktop.Window, [&] {
+      if (floating)
+        moved = pointer.move(*floating, start + delta, true);
+    });
+    QTimer::singleShot(250, &desktop.Window, [&] {
+      preview = area->dropIndicatorOverlay()->isVisible();
+      released = pointer.button(desktop.Window, QPoint(), false);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(released, 5000);
+    QTest::qWait(200);
+    QVERIFY(moved);
+    QVERIFY(!preview);
+    QVERIFY(desktop.Source.isFloating());
+    QVERIFY(floating);
+    if (delta.x())
+      QTRY_VERIFY(floating->width() > size.width());
+    else
+      QCOMPARE(floating->width(), size.width());
+    if (delta.y())
+      QTRY_VERIFY(floating->height() > size.height());
+    else
+      QCOMPARE(floating->height(), size.height());
+    QVERIFY(!area->dropIndicatorOverlay()->isVisible());
   }
 
   void floatingWindowStates() {
@@ -444,16 +692,22 @@ private slots:
       QVERIFY(shell(
           QStringLiteral("global.neverdBeforeDrag = (%1).get_frame_rect();")
               .arg(nativeWindow(*floating))));
+    QVERIFY(desktop.lockButton() && desktop.lockButton()->isChecked());
+    Pointer pointer;
+    QVERIFY(pointer.click(*desktop.lockButton()));
+    QTRY_VERIFY(!desktop.lockButton()->isChecked());
     QWidget *source = desktop.titleBar();
     QVERIFY(source);
-    QPoint start = source->rect().center();
+    auto *caption =
+        source->findChild<QWidget *>(QStringLiteral("floatingWindowMoveArea"));
+    QVERIFY(caption);
+    QPoint start = caption->geometry().center();
     if (tab) {
       auto *tabs = floating->findChild<KD::QtWidgets::TabBar *>();
       QVERIFY(tabs);
       source = tabs;
       start = tabs->tabRect(tabs->currentIndex()).center();
     }
-    Pointer pointer;
     QVERIFY(pointer.move(*source, start, false));
     QTest::qWait(50);
     QVERIFY(pointer.button(*source, start, true));

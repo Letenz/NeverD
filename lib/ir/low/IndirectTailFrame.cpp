@@ -392,7 +392,8 @@ class TailFrameGuard {
       case NdOp::INTRINSIC: {
         // Checked arithmetic writes only its explicit result. Retain all
         // operand taint without assuming checking controls or an exact value.
-        if (lowAArch64CPAShapeIsValid(Op))
+        if (lowAArch64CPAShapeIsValid(Op) || lowAArch64SVECPAShapeIsValid(Op) ||
+            lowAArch64SVEPrefixShapeIsValid(Op))
           break;
         if (lowAArch64PAuthShapeIsValid(Op)) {
           // A modifier's stack address is not the authenticated target.

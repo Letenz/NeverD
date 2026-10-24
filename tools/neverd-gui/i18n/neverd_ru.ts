@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Переключить плавающее рабочее пространство с дизассемблированием, псевдокодом и выводом</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>Режим &amp;фокусировки</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Открыть...</translation>
     </message>
@@ -2186,6 +2194,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Не удалось восстановить расположение до режима фокусировки.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Перезагрузить входной файл</translation>
@@ -6457,6 +6469,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>Анализ циклов доказывает завершение в поддерживаемых случаях перед сравнением вычислений. Он включает представления параметров и сохраняет недоказанные контракты циклов.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Оптимизированная SSA с анализом многоблочных циклов</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6587,6 +6603,14 @@ Progress does not establish equal loop counts or function results.</source>
 Наблюдаемый контракт:
 %2
 Завершение не доказывает равенство числа итераций или результатов функций.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Оптимизированная SSA с анализом многоблочных циклов</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Доказанный цикл: блок заголовка %1 → блок обратного перехода %2 · счётчик #%3 → обновление #%4 · условие #%5</translation>
     </message>
 </context>
 <context>
@@ -8266,6 +8290,14 @@ Secondary SHA-256: %3
     <message>
         <source>Move window</source>
         <translation>Переместить окно</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Закрепить плавающее окно</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Открепить плавающее окно</translation>
     </message>
 </context>
 <context>

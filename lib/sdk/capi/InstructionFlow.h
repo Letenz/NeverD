@@ -135,6 +135,11 @@ public:
   InstructionFlow summarize(const BinaryImage &Img, Decoder &Dec,
                             const DecodedInsn &DI,
                             const TargetRegInfo *StackRegisters = nullptr);
+  /// References needed by the width inventory. Scalar x86 register/immediate
+  /// forms cannot access static memory and need no temporary flag arithmetic.
+  /// Every other form retains the complete LowIR reference computation.
+  llvm::SmallVector<InstructionRef, 2>
+  dataAccesses(const BinaryImage &Img, Decoder &Dec, const DecodedInsn &DI);
 
 private:
   std::vector<LowOp> Ops;

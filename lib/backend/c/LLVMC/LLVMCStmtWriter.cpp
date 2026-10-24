@@ -61,6 +61,7 @@
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <cctype>
 #include <iterator>
@@ -1492,8 +1493,33 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     OS << SourceRecorder->end(*Event);
 }
 
+bool LLVMCWriter::writeDeferredUnknownCopy(llvm::Instruction &Inst,
+                                           int Indent) {
+  const auto Flag = DeferredUnknownFlags.find(&Inst);
+  if (Flag == DeferredUnknownFlags.end() || llvm::isa<llvm::PHINode>(&Inst))
+    return false;
+  const auto Source = DeferredUnknownFlags.find(Inst.getOperand(0));
+  if (Source == DeferredUnknownFlags.end())
+    return false;
+  std::string Payload;
+  {
+    llvm::SaveAndRestore<bool> Transport(ReadingDeferredPayload, true);
+    InlineCache.clear();
+    Payload = renderInline(Inst);
+    InlineCache.clear();
+  }
+  emitIndent(Indent);
+  OS << getName(&Inst) << " = " << Source->second << " ? (" << Payload
+     << ") : 0;\n";
+  emitIndent(Indent);
+  OS << Flag->second << " = " << Source->second << ";\n";
+  return true;
+}
+
 void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
   if (llvm_source_unknown::isValue(&Inst))
+    return;
+  if (writeDeferredUnknownCopy(Inst, Indent))
     return;
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
@@ -1807,6 +1833,12 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
   auto Name = Inst.getType()->isVoidTy() ? "" : getName(&Inst);
 
   if (Inst.isBinaryOp()) {
+    if (auto Text =
+            unknownBitwiseText(llvm::cast<llvm::BinaryOperator>(Inst))) {
+      emitIndent(Indent);
+      OS << Name << " = " << *Text << ";\n";
+      return;
+    }
     if (auto Identity =
             targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst))) {
       emitIndent(Indent);
@@ -6112,7 +6144,7 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
   }
   const llvm::BasicBlock *BB = Call.getParent();
   if (const llvm::PHINode *Phi = joinPhiForCallArg(Arg, BB))
-    return getName(Phi);
+    return DeferredUnknownFlags.count(Phi) ? valueStr(Phi) : getName(Phi);
   if (const llvm::LoadInst *ArgLoad =
           llvm::dyn_cast<llvm::LoadInst>(peelCastFreeze(Arg))) {
     if (auto It = SelectUseText.find(ArgLoad); It != SelectUseText.end())
@@ -7059,6 +7091,8 @@ bool LLVMCWriter::phiIncomingIsPrinted(const llvm::PHINode *Phi,
                                        bool ForceMaterialized) {
   if (!Phi || !Incoming || Analysis.Inlinable.count(Phi))
     return false;
+  if (DeferredUnknownFlags.count(Phi))
+    return true;
   if ((OmittedUnknowns.count(Phi) || OmittedInlined.count(Phi) ||
        usersAreDeadCopies(Phi)) &&
       !phiPrintedAsJoinCallArg(Phi))
@@ -7153,6 +7187,7 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   struct PhiCopy {
     const llvm::PHINode *Phi;
     const llvm::Value *Incoming;
+    llvm::Type *Type;
     std::string RHS;
     std::string Destination;
     std::string Temp;
@@ -7178,10 +7213,34 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
       if (auto Imm = foldImmediate(Incoming))
         EdgeImmediates.emplace(Phi, *Imm);
     if (phiIncomingIsPrinted(Phi, Incoming, MaterializeEdge)) {
-      const std::string RHS = integerPointerOperandStr(Incoming);
       const std::string Destination = getName(Phi);
+      if (auto Flag = DeferredUnknownFlags.find(Phi);
+          Flag != DeferredUnknownFlags.end()) {
+        std::string Available = "1";
+        std::string RHS;
+        if (isDeferredUnknownInput(Incoming)) {
+          Available = "0";
+          RHS = "0";
+        } else if (auto Source = DeferredUnknownFlags.find(Incoming);
+                   Source != DeferredUnknownFlags.end()) {
+          Available = Source->second;
+          llvm::SaveAndRestore<bool> Transport(ReadingDeferredPayload, true);
+          RHS =
+              Available + " ? (" + integerPointerOperandStr(Incoming) + ") : 0";
+        } else
+          RHS = integerPointerOperandStr(Incoming);
+        Copies.push_back({Phi, Incoming, Phi->getType(), RHS, Destination, {}});
+        Copies.push_back({nullptr,
+                          nullptr,
+                          llvm::Type::getInt8Ty(Phi->getContext()),
+                          Available,
+                          Flag->second,
+                          {}});
+        continue;
+      }
+      const std::string RHS = integerPointerOperandStr(Incoming);
       if (!ForceMaterialized || RHS != Destination)
-        Copies.push_back({Phi, Incoming, RHS, Destination, {}});
+        Copies.push_back({Phi, Incoming, Phi->getType(), RHS, Destination, {}});
     }
   }
   // Evaluate the whole edge against its predecessor state before publishing
@@ -7237,13 +7296,13 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
   const int CopyIndent = Indent + (HasTemps ? 1 : 0);
   for (const auto &Copy : Copies) {
     emitIndent(CopyIndent);
-    if (Copy.Phi == Declare && !HasTemps && Indent == 1) {
+    if (Copy.Phi && Copy.Phi == Declare && !HasTemps && Indent == 1) {
       ScopedScalarNames.insert(Copy.Destination);
       OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Destination << " = "
          << Copy.RHS << ";\n";
       continue;
     }
-    if (Copy.Temp.empty())
+    if (Copy.Temp.empty() && Copy.Phi && !DeferredUnknownFlags.count(Copy.Phi))
       if (auto Update = scalarConditionalUpdate(Copy.Phi, Copy.Incoming)) {
         if (!Update->Initial.empty()) {
           OS << Update->Initial << ";\n";
@@ -7252,13 +7311,13 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
         OS << "if (" << Update->Condition << ") " << Update->Update << ";\n";
         continue;
       }
-    if (Copy.Temp.empty())
+    if (Copy.Temp.empty() && Copy.Phi && !DeferredUnknownFlags.count(Copy.Phi))
       if (auto Update = scalarUpdateText(Copy.Phi, Copy.Incoming)) {
         OS << *Update << ";\n";
         continue;
       }
     if (!Copy.Temp.empty())
-      OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Temp;
+      OS << typeToCLLVM(Copy.Type) << " " << Copy.Temp;
     else
       OS << Copy.Destination;
     OS << " = " << Copy.RHS << ";\n";

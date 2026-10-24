@@ -44,9 +44,11 @@
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
+#include "TitleBar.h"
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "WindowFrame.h"
+#include "WindowFramePlatform.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -159,6 +161,7 @@ struct Workbench {
   GuiSessionBroker broker;
   QTemporaryDir layout;
   std::unique_ptr<MainWindow> window;
+  mutable QPointer<ChooserView> functionsView;
 
   /// Unless \p shown, the window stays as a startup without a file leaves
   /// it: hidden, its desktop not laid out yet.
@@ -174,9 +177,11 @@ struct Workbench {
     window->show();
   }
   ChooserView *functions() const {
-    auto *table =
-        window->findChild<QTreeView *>(QStringLiteral("functionsList"));
-    return table ? qobject_cast<ChooserView *>(table->parentWidget()) : nullptr;
+    if (!functionsView)
+      if (auto *table =
+              window->findChild<QTreeView *>(QStringLiteral("functionsList")))
+        functionsView = qobject_cast<ChooserView *>(table->parentWidget());
+    return functionsView;
   }
   QAction *action(ActionId id) const { return window->actions().action(id); }
   QString dockTitle(const QString &uniqueName) const {
@@ -187,9 +192,10 @@ struct Workbench {
     return {};
   }
   KDDockWidgets::QtWidgets::DockWidget *dockFor(QWidget *view) const {
-    for (auto *dock :
-         window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
-      if (dock->widget() == view)
+    // Floating panes have their own top-level QObject tree.
+    for (auto *parent = view; parent; parent = parent->parentWidget())
+      if (auto *dock =
+              qobject_cast<KDDockWidgets::QtWidgets::DockWidget *>(parent))
         return dock;
     return nullptr;
   }
@@ -395,7 +401,13 @@ private slots:
         QVERIFY(floating->grab().save(
             captures + (dark ? "/floating-dark.png" : "/floating-light.png")));
       }
+      auto *lock = floating->findChild<QAbstractButton *>(
+          QStringLiteral("floatingLockButton"));
+      QVERIFY(lock && lock->isChecked());
       if (method == 0) {
+        // Direct Dock actions below deliberately leave the default lock on.
+        QTest::mouseClick(lock, Qt::LeftButton);
+        QVERIFY(!lock->isChecked());
         QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier,
                            bar->rect().center());
       } else if (method == 1) {
@@ -436,6 +448,372 @@ private slots:
       QCOMPARE(assembly->window(), bench.window.get());
       QVERIFY(assembly->isVisible());
     }
+  }
+
+  void closingWorkbenchClosesDetachedWindows_data() {
+    QTest::addColumn<bool>("dirty");
+    QTest::newRow("clean") << false;
+    QTest::newRow("cancel-then-discard") << true;
+  }
+
+  void codeOpensBesideFloatingDisassembly_data() {
+    QTest::addColumn<int>("command");
+    QTest::addColumn<bool>("alreadyOpen");
+    for (const auto [name, command] :
+         {std::pair{"source", ActionId::ViewPseudocode},
+          {"ir", ActionId::ViewMedIR}})
+      for (bool open : {false, true})
+        QTest::newRow(
+            qPrintable(QString::fromLatin1(name) + (open ? "-open" : "-new")))
+            << int(command) << open;
+  }
+
+  void codeOpensBesideFloatingDisassembly() {
+    QFETCH(int, command);
+    QFETCH(bool, alreadyOpen);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "floating-code.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    auto *action = bench.action(ActionId(command));
+    if (alreadyOpen)
+      action->trigger();
+    auto *assemblyDock = bench.dockFor(assembly);
+    QVERIFY(assemblyDock);
+    assemblyDock->setFloating(true);
+    auto *floating = assembly->window();
+    floating->resize(1100, 700);
+    QVERIFY(activateTestWindow(floating));
+    assembly->focusContent();
+    action->trigger();
+    QTRY_VERIFY(floating->findChild<CodeView *>());
+    auto *code = floating->findChild<CodeView *>();
+    QTRY_VERIFY(code->isVisible());
+    QCOMPARE(code->window(), assembly->window());
+    QVERIFY(code->mapTo(floating, QPoint()).x() >=
+            assembly->mapTo(floating, QPoint()).x() + assembly->width());
+    QTRY_COMPARE(code->text()->function(), assembly->currentFunction());
+    KDDockWidgets::QtWidgets::DockWidget *codeDock = nullptr;
+    for (auto *dock :
+         floating->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->widget() == code)
+        codeDock = dock;
+    QVERIFY(codeDock);
+    codeDock->forceClose();
+    QVERIFY(!code->isVisible());
+    assembly->focusContent();
+    action->trigger();
+    QTRY_VERIFY(code->isVisible());
+    QCOMPARE(code->window(), floating);
+  }
+
+  void focusModeGroupsViewsAndRestoresLayout_data() {
+    QTest::addColumn<bool>("floating");
+    QTest::addColumn<bool>("dark");
+    QTest::addColumn<bool>("inFunction");
+    for (bool floating : {false, true})
+      for (bool dark : {false, true})
+        QTest::newRow(qPrintable(QString(floating ? "floating" : "docked") +
+                                 (dark ? "-dark" : "-light")))
+            << floating << dark << true;
+    QTest::newRow("data-address") << false << false << false;
+  }
+
+  void focusModeGroupsViewsAndRestoresLayout() {
+    QFETCH(bool, floating);
+    QFETCH(bool, dark);
+    QFETCH(bool, inFunction);
+    auto &theme = Theme::instance();
+    const auto previous = theme.mode();
+    const auto restoreTheme = qScopeGuard([&] { theme.setMode(previous); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    theme.apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "focus-mode.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    const Address address = Base + (inFunction ? 0x140 : 0x3000);
+    assembly->navigate(address);
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(address));
+    QTRY_COMPARE(assembly->currentFunction(),
+                 inFunction ? std::optional<Address>(address) : std::nullopt);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    auto *output = bench.window->findChild<OutputWindow *>();
+    auto *assemblyDock = bench.dockFor(assembly);
+    auto *outputDock = bench.dockFor(output);
+    QVERIFY(assemblyDock && outputDock);
+    if (floating)
+      assemblyDock->setFloating(true);
+    QVERIFY(activateTestWindow(assembly->window()));
+    assembly->focusContent();
+    auto *mode = bench.action(ActionId::ViewFocusMode);
+    QVERIFY(mode->isEnabled());
+    QSignalSpy hex(bench.action(ActionId::EditOperandHex), &QAction::triggered);
+    const bool dirty = bench.session.dirty();
+    QTest::keyClick(assembly->window()->windowHandle(), Qt::Key_F);
+    QTest::keyClick(assembly->window()->windowHandle(), Qt::Key_F);
+    QVERIFY(!mode->isChecked());
+    QTest::keyClick(assembly->window()->windowHandle(), Qt::Key_F);
+    QTRY_VERIFY(mode->isChecked());
+    auto *workspace = assembly->window();
+    QVERIFY(workspace != bench.window.get());
+    auto *code = workspace->findChild<CodeView *>();
+    QVERIFY(code);
+    QCOMPARE(output->window(), workspace);
+    QTRY_VERIFY(code->isVisible() && output->isVisible());
+    QTRY_COMPARE(code->text()->function(), assembly->currentFunction());
+    QTRY_VERIFY(!code->text()->loading());
+    QVERIFY(code->mapTo(workspace, QPoint()).x() >=
+            assembly->mapTo(workspace, QPoint()).x() + assembly->width());
+    QVERIFY(output->mapTo(workspace, QPoint()).y() >=
+            assembly->mapTo(workspace, QPoint()).y() + assembly->height());
+    QVERIFY(output->width() >= assembly->width() + code->width());
+    QCOMPARE(hex.size(), 0);
+    QCOMPARE(bench.session.dirty(), dirty);
+    auto *input = output->findChild<QLineEdit *>();
+    QVERIFY(input);
+    QVERIFY(activateTestWindow(workspace));
+    input->setFocus();
+    for (int i = 0; i < 3; ++i)
+      QTest::keyClick(input->window()->windowHandle(), Qt::Key_F);
+    QCOMPARE(input->text(), QStringLiteral("fff"));
+    QVERIFY(mode->isChecked());
+    input->clear();
+    QTest::keyClicks(input, "help");
+    QTest::keyClick(input, Qt::Key_Return);
+    QVERIFY(
+        output->findChild<QPlainTextEdit *>()->toPlainText().contains("help"));
+    const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(workspace->grab().save(captures + "/focus-" +
+                                     QTest::currentDataTag() + ".png"));
+    }
+    code->text()->setFocus();
+    for (int i = 0; i < 3; ++i)
+      QTest::keyClick(code->window()->windowHandle(), Qt::Key_F);
+    QTRY_VERIFY(!mode->isChecked());
+    QCOMPARE(assembly->window() != bench.window.get(), floating);
+    QCOMPARE(output->window(), bench.window.get());
+    QVERIFY(output->isVisible() && assembly->isVisible());
+    QVERIFY(!code->isVisible());
+    QCOMPARE(hex.size(), 0);
+  }
+
+  void fileReviewWindowsOfferWindowControls_data() {
+    QTest::addColumn<int>("command");
+    QTest::addColumn<QString>("name");
+    QTest::newRow("offline-package") << int(ActionId::FilePackageReview)
+                                     << QStringLiteral("offlinePackageReview");
+    QTest::newRow("binary-comparison")
+        << int(ActionId::FileCompare) << QStringLiteral("binaryComparison");
+  }
+
+  void focusSequenceUsesNativeKeysAndIgnoresTyping() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "code-numbers.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() > 3);
+    code->setPreludeFolded(false);
+    QVERIFY(activateTestWindow(bench.window.get()));
+    code->setFocus();
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("24"), true));
+    auto *hexAction = bench.action(ActionId::EditOperandHex);
+    QVERIFY(hexAction->isEnabled());
+    QSignalSpy hex(hexAction, &QAction::triggered);
+    auto *mode = bench.action(ActionId::ViewFocusMode);
+    QTest::keyClick(code->window()->windowHandle(), Qt::Key_Q);
+    QCOMPARE(hex.size(), 1); // No delay waiting to distinguish a Q sequence.
+    QTRY_VERIFY(!code->loading() &&
+                code->allText().contains(QStringLiteral("v0 + 0x18; /* 8 */")));
+    QCOMPARE(code->window(), bench.window.get());
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("0x18"), true));
+    auto *output = bench.window->findChild<OutputWindow *>();
+    auto *input = output->findChild<QLineEdit *>();
+    QVERIFY(input);
+    const auto tap = [code] {
+      QTest::keyClick(code->window()->windowHandle(), Qt::Key_F);
+    };
+    tap();
+    QKeyEvent held(QEvent::KeyPress, Qt::Key_F, Qt::NoModifier,
+                   QStringLiteral("f"), true);
+    QApplication::sendEvent(code->window()->windowHandle(), &held);
+    QApplication::sendEvent(code->window()->windowHandle(), &held);
+    QVERIFY(!mode->isChecked());
+    // Another key, a focus change, or a long gap breaks the sequence.
+    QTest::keyClick(code->window()->windowHandle(), Qt::Key_Right);
+    tap();
+    tap();
+    QVERIFY(!mode->isChecked());
+    input->setFocus();
+    for (int i = 0; i < 3; ++i)
+      QTest::keyClick(input->window()->windowHandle(), Qt::Key_F);
+    QCOMPARE(input->text(), QStringLiteral("fff"));
+    QVERIFY(!mode->isChecked());
+    code->setFocus();
+    tap();
+    QVERIFY(!mode->isChecked());
+    tap();
+    QTest::qWait(1100);
+    tap();
+    QVERIFY(!mode->isChecked());
+    input->setFocus();
+    code->setFocus();
+    bench.dockFor(assembly)->forceClose();
+    QVERIFY(!assembly->isVisible());
+    code->setFocus();
+    // Deliberate taps need not fit the previous 400 ms interval. Route every
+    // key through QWindow, including its forwarding to the focused widget.
+    tap();
+    QTest::qWait(600);
+    tap();
+    QTest::qWait(600);
+    tap();
+    QTRY_VERIFY(mode->isChecked());
+    QVERIFY(assembly->isVisible());
+    QCOMPARE(hex.size(), 1);
+    mode->trigger();
+    QVERIFY(!assembly->isVisible());
+    QTRY_VERIFY(!mode->isChecked());
+    QVERIFY(view->isVisible());
+    QCOMPARE(code->window(), bench.window.get());
+  }
+
+  void fileReviewWindowsOfferWindowControls() {
+    QFETCH(int, command);
+    QFETCH(QString, name);
+    Workbench bench;
+    bench.action(ActionId(command))->trigger();
+    QTRY_VERIFY(visibleDialog(name));
+    QPointer<QDialog> dialog = visibleDialog(name);
+    QVERIFY(dialog->windowFlags() & Qt::WindowMinimizeButtonHint);
+    QVERIFY(dialog->windowFlags() & Qt::WindowMaximizeButtonHint);
+    const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (!captures.isEmpty()) {
+      auto &theme = Theme::instance();
+      const auto mode = theme.mode();
+      const auto restoreTheme = qScopeGuard([&] { theme.setMode(mode); });
+      QDir().mkpath(captures);
+      for (bool dark : {false, true}) {
+        theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+        theme.apply();
+        QApplication::processEvents();
+        QVERIFY(dialog->grab().save(captures + "/" + name +
+                                    (dark ? "-dark.png" : "-light.png")));
+      }
+    }
+    if (auto *bar = dialog->findChild<TitleBar *>()) {
+      auto *maximize =
+          bar->findChild<QAbstractButton *>(QStringLiteral("maximizeButton"));
+      auto *minimize =
+          bar->findChild<QAbstractButton *>(QStringLiteral("minimizeButton"));
+      QVERIFY(maximize && minimize);
+      if (platform::drawsWindowControls())
+        QVERIFY(maximize->isVisible() && minimize->isVisible());
+      if (maximize->isVisible()) {
+        QTest::mouseClick(maximize, Qt::LeftButton);
+        QTRY_VERIFY(dialog->isMaximized());
+        QTest::mouseClick(maximize, Qt::LeftButton);
+        QTRY_VERIFY(!dialog->isMaximized());
+      }
+    }
+    dialog->close();
+    QTRY_VERIFY(!dialog || !dialog->isVisible());
+  }
+
+  void closingWorkbenchClosesDetachedWindows() {
+    QFETCH(bool, dirty);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "exit-floating.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *assemblyDock = bench.dockFor(assembly);
+    auto *hexDock = bench.dockFor(bench.window->findChild<HexView *>());
+    auto *functionsDock = bench.dockFor(bench.functions());
+    QVERIFY(assemblyDock && hexDock && functionsDock);
+    QList<QPointer<QWidget>> floating;
+    for (auto *dock : {assemblyDock, hexDock, functionsDock}) {
+      dock->setFloating(true);
+      QVERIFY(dock->isFloating());
+      floating.append(dock->QWidget::window());
+      QVERIFY(QTest::qWaitForWindowExposed(floating.back()));
+    }
+    auto *sourceChild = new QDialog(assembly);
+    sourceChild->setAttribute(Qt::WA_DeleteOnClose);
+    sourceChild->show();
+    const QPointer<QDialog> sourceGuard = sourceChild;
+    QDialog mainChild(bench.window.get());
+    mainChild.show();
+    QDialog unrelated;
+    unrelated.show();
+    QVERIFY(QTest::qWaitForWindowExposed(sourceChild));
+    QVERIFY(QTest::qWaitForWindowExposed(&mainChild));
+    QSignalSpy shutdown(bench.window.get(), &MainWindow::shutdownAccepted);
+    bool answered = false;
+    QMessageBox::StandardButton response = QMessageBox::Cancel;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        if (auto *button = box->button(response)) {
+          answer.stop();
+          answered = true;
+          button->click();
+        }
+      }
+    });
+    if (dirty) {
+      bench.session.setComment(Base,
+                               QStringLiteral("keep unless exit is accepted"));
+      QTRY_VERIFY(bench.session.dirty());
+      answer.start(10);
+      bench.window->close();
+      QTRY_VERIFY(answered);
+      QCOMPARE(shutdown.size(), 0);
+      QVERIFY(bench.window->isVisible());
+      for (const auto &window : floating)
+        QVERIFY(window && window->isVisible());
+      QVERIFY(sourceGuard && sourceGuard->isVisible());
+      QVERIFY(mainChild.isVisible());
+      answered = false;
+      response = QMessageBox::Discard;
+      answer.start(10);
+    }
+    bench.window->close();
+    QTRY_COMPARE(shutdown.size(), 1);
+    QTRY_VERIFY(!bench.window->isVisible());
+    if (dirty)
+      QVERIFY(answered);
+    for (const auto &window : floating)
+      QTRY_VERIFY(!window || !window->isVisible());
+    QTRY_VERIFY(!sourceGuard || !sourceGuard->isVisible());
+    QVERIFY(!mainChild.isVisible());
+    QVERIFY(unrelated.isVisible());
+    QVERIFY(QFileInfo::exists(
+        bench.layout.filePath(QStringLiteral("layout.json"))));
   }
 
   void closedFloatingDocksReopenInWorkbench_data() {
@@ -7984,6 +8362,7 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
     configureDocking();
+    WindowFrame::frameDialogs(*qApp);
   }
 
   void windowChromeLeavesRoomToType() {

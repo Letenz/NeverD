@@ -5575,6 +5575,11 @@ std::string HighCWriter::unknownValueText(const HighExpr &E,
 std::string HighCWriter::unknownVarUse(const HighExpr &E,
                                        const std::string &Name,
                                        const std::string &RawName) {
+  if (!ReadingDeferredPayload)
+    if (auto Flag = DeferredUnknownFlags.find(Name);
+        Flag != DeferredUnknownFlags.end())
+      return "(" + Flag->second + " ? " + Name + " : " +
+             unknownValueText(E, "value") + ")";
   // Definitions consisting only of unknown values are omitted from C.
   // Their observable uses must still fail, including renamed SSA temps.
   if (UnknownOnlyNames.count(Name))
@@ -8445,6 +8450,13 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
   if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
       (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
     DstName = varName(Stmt.Dst->Var);
+    // A join may need its own name after frame-alias forwarding is rejected.
+    // Unknown-only copies still transport no observable value: their reads
+    // diagnose missing state, so retaining the join must not revive a trap
+    // on every incoming edge.
+    if (UnknownOnlyNames.count(DstName) && Stmt.Val &&
+        !highCExpressionHasEffect(*Stmt.Val))
+      return true;
     if (AmbiguousFrameAliases.count(DstName) || JoinPhiNames.count(DstName))
       return false;
   }
@@ -8523,9 +8535,7 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
       const std::string &Name = DstName;
       if (!JoinPhiNames.count(Name) &&
-          (FieldForward.count(Name) || ValueForward.count(Name) ||
-           (UnknownOnlyNames.count(Name) &&
-            (!Stmt.Val || !highCExpressionHasEffect(*Stmt.Val)))))
+          (FieldForward.count(Name) || ValueForward.count(Name)))
         return true;
     }
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&

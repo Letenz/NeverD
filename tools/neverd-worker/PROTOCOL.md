@@ -192,6 +192,16 @@ rows include only their block's `progress_loop` or null. Proof rows share retain
 storage limits. Unproved loops remain available with their original attributes;
 progress does not establish equal iteration counts or results. Fresh restore
 binds the original contract and proof to the actual source projection.
+
+`profile:"llvm-progress-ssa-v2"` also proves single-entry multi-block loop
+components. Schema 6 adds a `header` block ID to witnesses; `block` is the latch.
+Only latch-node rows carry that bounded witness. The recipes use
+`llvm-progress-neighborhoods-v2` / `llvm-progress-fragments-v2`. Header PHIs must
+receive the exact update from the latch edge with no internal reset. The update
+is computed in the header or latch; after cutting proved backedges the complete
+CFG must be acyclic. Nested/irreducible or bypass cycles remain unproven.
+Published v1 proofs and schema 5 encodings are unchanged.
+
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
 allowance; public node counts and coverage still count operations. Metadata

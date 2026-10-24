@@ -750,6 +750,8 @@ public:
   /// or prints as a literal already.
   std::string stringArgumentNote(const HighExpr &Arg);
   void collectUnknownOnlyNames(const HighFunc &Func);
+  void collectDeferredUnknowns(const HighFunc &Func);
+  bool writeDeferredUnknownCopy(const HighStmt &Stmt, int Indent);
   void collectCtorSourceNames(const HighFunc &Func);
   bool isUnknownCallOperand(const HighExpr *Op) const;
   bool isCtorSourceExpr(const HighExpr *Op) const;
@@ -1462,8 +1464,11 @@ public:
   std::set<std::string> HiddenCxxCtorIdentifiers;
   std::set<std::string> CatchAliasTemps;
   /// Destinations whose only assignments are Undef / unknown copies of those.
-  /// Assigns are hidden; stores of the name print `0`.
+  /// Assigns are hidden; observable uses diagnose missing state.
   std::set<std::string> UnknownOnlyNames;
+  /// Availability of mixed known/unknown integer PHIs and their copies.
+  std::map<std::string, std::string> DeferredUnknownFlags;
+  bool ReadingDeferredPayload = false;
   /// Names that appear as assign destinations in this function.
   std::set<std::string> AssignedNames;
   /// Temps assigned a pointer/string/frame address (copy/string ctor src).

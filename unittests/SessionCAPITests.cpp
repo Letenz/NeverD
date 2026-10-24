@@ -3472,6 +3472,58 @@ TEST_F(SessionCAPITest,
   }
 }
 
+TEST(InstructionDataAccesses, ScalarFilterAgreesWithCompleteLowIR) {
+  for (auto Architecture : {neverd::Arch::X86, neverd::Arch::X64}) {
+    neverd::BinaryImage Image;
+    Image.Arch = Architecture;
+    Image.Bits = Architecture == neverd::Arch::X86 ? neverd::Bitness::Bits32
+                                                   : neverd::Bitness::Bits64;
+    Image.Format = neverd::BinaryFormat::COFF;
+    neverd::Segment Code;
+    Code.VA = 0x1000;
+    Code.Flags =
+        neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+    // Independent encoded forms include scalar registers, immediate addresses,
+    // absolute/RIP-relative loads, RMW, segment offsets and implicit stack and
+    // string operands. The random suffix probes prefixes and rarer forms.
+    Code.Data = {0x31, 0xc0, 0x89, 0xd8, 0x83, 0xc0, 0x01, 0xb8, 0x00,
+                 0x30, 0x00, 0x00, 0x48, 0x8b, 0x05, 0x10, 0x00, 0x00,
+                 0x00, 0x83, 0x05, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65,
+                 0x48, 0x8b, 0x04, 0x25, 0x88, 0x01, 0x00, 0x00, 0x50,
+                 0x58, 0xa4, 0xf3, 0xa5, 0xc3};
+    uint64_t State = 0x9e3779b97f4a7c15ULL;
+    for (unsigned I = 0; I != 65536; ++I) {
+      State ^= State << 13;
+      State ^= State >> 7;
+      State ^= State << 17;
+      Code.Data.push_back(static_cast<uint8_t>(State));
+    }
+    Code.Size = Code.FileSz = Code.Data.size();
+    Image.Segments.push_back(std::move(Code));
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(Image));
+    using Access = neverd::sdk::SessionTestAccess;
+    const auto &Bytes = Image.Segments.front().Data;
+    unsigned Decoded = 0;
+    for (size_t Offset = 0; Offset < Bytes.size();) {
+      neverd::DecodedInsn Insn;
+      const int Size = Decoder.decodeOne(
+          Bytes.data() + Offset, Bytes.size() - Offset, 0x1000 + Offset, Insn);
+      if (Size <= 0) {
+        ++Offset;
+        continue;
+      }
+      EXPECT_EQ(Access::instructionDataAccesses(Image, Decoder, Insn, true),
+                Access::instructionDataAccesses(Image, Decoder, Insn, false))
+          << static_cast<unsigned>(Architecture) << ':' << Offset << ':'
+          << Insn.Id;
+      Offset += Size;
+      ++Decoded;
+    }
+    EXPECT_GT(Decoded, 10000u);
+  }
+}
+
 TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
   const auto Input = write("widths.elf", accessWidthCacheELF());
   std::string Cold;

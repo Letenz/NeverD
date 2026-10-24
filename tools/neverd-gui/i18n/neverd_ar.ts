@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>تبديل مساحة عمل عائمة تضم التفكيك والشيفرة الزائفة والمخرجات</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>وضع التركيز (&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>فتح(&amp;O)...</translation>
     </message>
@@ -2204,6 +2212,10 @@ Double-click to go to the declaration.</source>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>تعذرت استعادة التخطيط السابق لوضع التركيز.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>إعادة تحميل ملف الإدخال</translation>
@@ -6565,6 +6577,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>يثبت تحليل الحلقات الانتهاء في الحالات المدعومة قبل مقارنة الحسابات. ويشمل عروض المعاملات ويحافظ على عقود الحلقات غير المثبتة.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات متعددة الكتل</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6695,6 +6711,14 @@ Progress does not establish equal loop counts or function results.</source>
 العقد المرصود:
 %2
 لا يثبت الانتهاء تساوي عدد تكرارات الحلقات أو نتائج الدوال.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات متعددة الكتل</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>حلقة مثبتة: كتلة البداية %1 → كتلة العودة %2 · العداد #%3 → التحديث #%4 · الشرط #%5</translation>
     </message>
 </context>
 <context>
@@ -8374,6 +8398,14 @@ SHA-256 الثانوي: %3
     <message>
         <source>Move window</source>
         <translation>تحريك النافذة</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>قفل النافذة العائمة</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>إلغاء قفل النافذة العائمة</translation>
     </message>
 </context>
 <context>

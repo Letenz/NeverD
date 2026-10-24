@@ -10,6 +10,7 @@
 
 #include "neverd/support/IntegerLiterals.h"
 
+#include <QByteArray>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -115,6 +116,8 @@ public:
 signals:
   /// The disassembly painted its first content after a file opened.
   void firstContentPainted();
+  /// The workbench accepted exit after save/worker checks and closed its panes.
+  void shutdownAccepted();
 
 protected:
   void closeEvent(QCloseEvent *event) override;
@@ -150,6 +153,11 @@ private:
                  QWidget *content);
   Dock *chooserDock(ChooserKind kind);
   CodeView *codeView(const QString &representation);
+  /// Open code beside the active disassembly, including in a floating window.
+  void openCodeDock(Dock *dock);
+  void toggleFocusMode();
+  void leaveFocusMode();
+  void resetFocusSequence();
   /// Title the pseudocode and IR windows by what they show, lettered apart.
   void retitleCodeDocks();
 
@@ -381,6 +389,11 @@ private:
   QMenu *recentMenu_ = nullptr;
   QMenu *windowsMenu_ = nullptr;
   QString layoutPath_;
+  QByteArray focusLayout_;
+  QPointer<QWidget> focusReturn_;
+  QPointer<QWidget> focusSequenceView_;
+  QTimer focusSequenceTimer_;
+  int focusSequenceCount_ = 0;
   QString lastTextSearch_, lastByteSearch_, lastImmediateSearch_;
   quint64 searchSerial_ = 0, searchSubscription_ = 0;
   QString lastPaletteCommand_;

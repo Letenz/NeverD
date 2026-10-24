@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PipelineCallAbiDetail.h"
+#include "PipelineFunctionNames.h"
 #include "PipelineLLVMDetail.h"
 #include "PipelineMedAudit.h"
 #include "PipelineReturnModelingDetail.h"
@@ -151,6 +152,10 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
+  if (Opts.SourceProjection)
+    for (auto &[Address, Name] :
+         pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
+      AllFuncNames[Address] = std::move(Name);
 
   // Infer types for every function first: call-ABI recovery
   // (recoverModuleCallAbi) bounds each call by its callee's inferred

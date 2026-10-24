@@ -378,6 +378,28 @@ bounds, changed body arithmetic and native deltas remain visible. Progress is
 not equality of loop counts, whole-function behavior or patch presence. All
 previous profiles, schemas and saved encodings keep their existing behavior.
 
+**Optimized SSA with multi-block loop analysis**
+(`--dataflow-profile=llvm-progress-ssa-v2`) extends that proof to branched loop
+bodies. Each cyclic component must have one entry header and exactly one
+internal edge back to it. The latch directly tests the fixed nowrap update of
+that header's counter PHI, computed in the header or latch; no internal edge may
+supply a fresh counter seed.
+Removing those proved backedges must leave the whole graph acyclic. Multiple
+external seed edges into the same header, early exits and sequential loops are
+supported. Nested cycles, extra backedges, irreducible entries and unreachable
+cycles without an entry remain unproven. This adds evidence without guessing a
+loop bound or changing native behavior.
+
+Schema 6 adds `header` to each witness; `block` identifies the latch, while
+`counter`, `update` and `compare` identify operations. Metadata remains paged:
+only latch-block rows carry the witness, and the GUI shows its header, latch,
+counter update and guard when such a row is selected. The recipes are
+`llvm-progress-neighborhoods-v2` and `llvm-progress-fragments-v2`. All v1 proof
+rules, work charges and schema 5 report bytes retain their existing contract.
+The SCC traversal is iterative and linear in graph size, with the existing
+work, storage and cancellation allowances. Both proof versions retain the
+same finite-operation admission and source-binding requirements.
+
 Native-to-SSA change associations and call-effect contracts currently require
 the original MedIR profile. Change review explicitly reports an unsupported
 association profile for LLVM evidence while retaining native changes. Local

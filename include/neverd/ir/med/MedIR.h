@@ -243,8 +243,9 @@ struct MedOp {
   bool HasSourceErrorResult = false;
   bool Dead = false;
   /// Source views only: this STORE saves a callee-saved register's entry
-  /// value into prologue storage (markCalleeSavePrologueSaves), so source
-  /// emitters leave it out.  Binary lifting and patching never set it.
+  /// value into prologue storage, or an incoming register into scratch bytes
+  /// proved unobserved before overwrite/return (markSourceStackAccesses).
+  /// Source emitters leave it out. Binary lifting and patching never set it.
   bool PrologueSave = false;
   /// Source views only: this LOAD reads the return address the call pushed,
   /// in a function that never overwrites it (markReturnAddressReads).

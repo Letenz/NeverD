@@ -77,6 +77,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -90,6 +91,7 @@
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QScopedValueRollback>
+#include <QScreen>
 #include <QSet>
 #include <QSettings>
 #include <QSpinBox>
@@ -299,6 +301,13 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
             }
           });
   connectActions();
+  focusSequenceTimer_.setSingleShot(true);
+  focusSequenceTimer_.setInterval(
+      ::neverd::limits::gui_config::kFocusModeSequenceTimeoutMs);
+  connect(&focusSequenceTimer_, &QTimer::timeout, this,
+          &MainWindow::resetFocusSequence);
+  connect(qApp, &QApplication::focusChanged, this,
+          [this] { resetFocusSequence(); });
   // Other programs find this window and open links in it, as in IDA 9.4.
   instances_.setInfo([this] { return instanceInfo(); });
   instances_.setLinkHandler(
@@ -333,6 +342,54 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
       return widget == dock || dock->isAncestorOf(widget);
     });
   };
+  if (event->type() == QEvent::ShortcutOverride ||
+      event->type() == QEvent::KeyPress) {
+    auto *key = static_cast<QKeyEvent *>(event);
+    auto *widget = qobject_cast<QWidget *>(object);
+    bool analysis = false;
+    if (inWorkbench(widget) && !QApplication::activeModalWidget())
+      for (auto *parent = widget; parent; parent = parent->parentWidget()) {
+        if (qobject_cast<QLineEdit *>(parent) ||
+            qobject_cast<QPlainTextEdit *>(parent) ||
+            qobject_cast<QComboBox *>(parent))
+          break;
+        if (qobject_cast<ListingView *>(parent) ||
+            qobject_cast<GraphView *>(parent) ||
+            qobject_cast<CodeText *>(parent)) {
+          analysis = true;
+          break;
+        }
+      }
+    const bool sequenceKey =
+        analysis && key->key() == Qt::Key_F &&
+        key->modifiers() == Qt::NoModifier &&
+        actions_.action(ActionId::ViewFocusMode)->isEnabled();
+    if (sequenceKey) {
+      // Handle deliberate taps here so native auto-repeat cannot complete
+      // the multi-key shortcut, and text inputs keep their ordinary typing.
+      key->accept();
+      if (event->type() == QEvent::ShortcutOverride || key->isAutoRepeat())
+        return true;
+      if (focusSequenceView_ != QApplication::focusWidget())
+        resetFocusSequence();
+      focusSequenceView_ = QApplication::focusWidget();
+      if (++focusSequenceCount_ ==
+          ::neverd::limits::gui_config::kFocusModeSequenceLength) {
+        resetFocusSequence();
+        actions_.action(ActionId::ViewFocusMode)->trigger();
+      } else {
+        focusSequenceTimer_.start();
+      }
+      return true;
+    }
+    // Native keyboard input first reaches a QWindow, then its focus widget.
+    // Only the final widget delivery may break a sequence; clearing on the
+    // QWindow delivery made each real tap start over at one.
+    if (widget && focusSequenceCount_)
+      resetFocusSequence();
+  }
+  if (event->type() == QEvent::MouseButtonPress && focusSequenceCount_)
+    resetFocusSequence();
   // The quick start shows what a drop would do while a file is over it.
   if (event->type() == QEvent::DragLeave || event->type() == QEvent::Drop)
     if (auto *start = qobject_cast<QuickStartDialog *>(quickStart_.data())) {
@@ -1087,10 +1144,15 @@ void MainWindow::connectSession() {
             if (rows != bookmarks_)
               showBookmarks(rows);
           });
-  connect(&session_, &Session::quitApproved, this, [this] {
-    quitting_ = true;
-    close();
-  });
+  // Discard can approve synchronously from the close event's save prompt.
+  // QWidget ignores reentrant close(), so finish closing on the next turn.
+  connect(
+      &session_, &Session::quitApproved, this,
+      [this] {
+        quitting_ = true;
+        close();
+      },
+      Qt::QueuedConnection);
   connect(&session_, &Session::selectionChanged, &broker_,
           &GuiSessionBroker::setSelection);
   connect(&broker_, &GuiSessionBroker::queryRequested, &session_,
@@ -1921,6 +1983,9 @@ void MainWindow::connectActions() {
              KDDockWidgets::Location_OnTop);
   });
   on(ActionId::ViewToggleGraph, [this] { toggleGraph(); });
+  actions_.action(ActionId::ViewFocusMode)->setCheckable(true);
+  actions_.action(ActionId::ViewFocusMode)->setAutoRepeat(false);
+  on(ActionId::ViewFocusMode, [this] { toggleFocusMode(); });
   on(ActionId::ViewPseudocode,
      [this] { showPseudocode(CodeView::pseudocodeRepresentation()); });
   on(ActionId::ViewLLVMC, [this] { showPseudocode(QStringLiteral("llvmc")); });
@@ -2098,6 +2163,8 @@ void MainWindow::updateActions() {
                         name == QLatin1String("ViewConnections");
     action->setEnabled(always || loaded);
   }
+  actions_.action(ActionId::ViewFocusMode)
+      ->setEnabled(!focusLayout_.isEmpty() || loaded);
   actions_.action(ActionId::ViewUnwindInfo)
       ->setEnabled(location && !focusedCodeView() &&
                    session_.reportsUnwindFrames());
@@ -3190,6 +3257,36 @@ void MainWindow::showPseudocode(const QString &representation,
                    : codeView(representation);
   const bool c = view == pseudocode_;
   auto *dock = docks_.value(c ? PseudocodeDock : RepresentationDock);
+  openCodeDock(dock);
+  view->setRepresentation(representation);
+  // Reusing the loaded function keeps its cursor and folding state. Tab is
+  // the only ordinary cursor action that selects an address in the other pane.
+  if (!selectAssemblyAddress || view->text()->function() != function ||
+      view->text()->interrupted())
+    view->showFunction(*function);
+  if (selectAssemblyAddress)
+    if (const auto address = disassembly_->currentAddress())
+      view->text()->selectAddress(*address);
+  view->window()->activateWindow();
+  view->text()->setFocus();
+}
+
+void MainWindow::openCodeDock(Dock *dock) {
+  Dock *assembly = nullptr;
+  for (auto *candidate : std::as_const(docks_))
+    if (candidate->widget() == disassembly_)
+      assembly = candidate;
+  if (assembly && assembly->isOpen() && assembly->QWidget::window() != this &&
+      (!dock->isOpen() || dock->QWidget::window() == this)) {
+    // Keep analysis in the window the user is working in. Already open panes
+    // in a separate floating workspace keep their deliberate placement.
+    assembly->dockWidget()->addDockWidgetToContainingWindow(
+        dock->dockWidget(), KDDockWidgets::Location_OnRight,
+        assembly->dockWidget());
+    const int difference = assembly->dockWidget()->sizeInLayout().width() -
+                           dock->dockWidget()->sizeInLayout().width();
+    dock->dockWidget()->resizeInLayout(difference / 2, 0, 0, 0);
+  }
   if (!dock->isOpen()) {
     auto *functions = docks_.value(FunctionsDock);
     const int functionsWidth =
@@ -3201,24 +3298,13 @@ void MainWindow::showPseudocode(const QString &representation,
       functions->dockWidget()->resizeInLayout(
           0, 0,
           functionsWidth - functions->dockWidget()->sizeInLayout().width(), 0);
-    if (auto *assembly = docks_.value(DisassemblyDock);
-        assembly->QWidget::window() == this) {
+    if (assembly && assembly->QWidget::window() == this) {
       const int difference = assembly->dockWidget()->sizeInLayout().width() -
                              dock->dockWidget()->sizeInLayout().width();
       dock->dockWidget()->resizeInLayout(difference / 2, 0, 0, 0);
     }
   }
   openDock(dock, false, KDDockWidgets::Location_OnRight);
-  view->setRepresentation(representation);
-  // Reusing the loaded function keeps its cursor and folding state. Tab is
-  // the only ordinary cursor action that selects an address in the other pane.
-  if (!selectAssemblyAddress || view->text()->function() != function ||
-      view->text()->interrupted())
-    view->showFunction(*function);
-  if (selectAssemblyAddress)
-    if (const auto address = disassembly_->currentAddress())
-      view->text()->selectAddress(*address);
-  view->text()->setFocus();
 }
 
 void MainWindow::toggleGraph() {
@@ -5087,24 +5173,104 @@ void MainWindow::editFunction(Address entry) {
 // Desktop
 //===----------------------------------------------------------------------===//
 
+void MainWindow::toggleFocusMode() {
+  if (!focusLayout_.isEmpty()) {
+    leaveFocusMode();
+    return;
+  }
+  auto *action = actions_.action(ActionId::ViewFocusMode);
+  if (!session_.loaded()) {
+    action->setChecked(false);
+    return;
+  }
+  Dock *assembly = nullptr;
+  for (auto *dock : std::as_const(docks_))
+    if (dock->widget() == disassembly_)
+      assembly = dock;
+  if (!assembly) {
+    action->setChecked(false);
+    return;
+  }
+  // Include the on-demand code pane in the snapshot, even when it is closed.
+  auto *code = codeView(CodeView::pseudocodeRepresentation());
+  auto *codeDock = docks_.value(PseudocodeDock);
+  focusLayout_ = KDDockWidgets::LayoutSaver().serializeLayout();
+  focusReturn_ = QApplication::focusWidget();
+  if (!focusReturn_)
+    focusReturn_ = disassembly_;
+  action->setChecked(true);
+
+  assembly->open();
+  assembly->setFloating(true);
+  auto *floating = assembly->QWidget::window();
+  if (!floating->isMaximized())
+    floating->resize(
+        size().boundedTo(floating->screen()->availableGeometry().size()));
+  assembly->dockWidget()->addDockWidgetToContainingWindow(
+      codeDock->dockWidget(), KDDockWidgets::Location_OnRight,
+      assembly->dockWidget());
+  auto *output = docks_.value(OutputDock);
+  const int outputHeight = std::clamp(int(floating->height() * OutputShare),
+                                      MinimumOutputHeight, MaximumOutputHeight);
+  assembly->dockWidget()->addDockWidgetToContainingWindow(
+      output->dockWidget(), KDDockWidgets::Location_OnBottom, nullptr,
+      InitialOption(QSize(0, outputHeight)));
+  const int difference = assembly->dockWidget()->sizeInLayout().width() -
+                         codeDock->dockWidget()->sizeInLayout().width();
+  codeDock->dockWidget()->resizeInLayout(difference / 2, 0, 0, 0);
+  assembly->setAsCurrentTab();
+  codeDock->setAsCurrentTab();
+  output->setAsCurrentTab();
+  showPseudocode(code->representation());
+  floating->raise();
+  floating->activateWindow();
+  disassembly_->focusContent();
+}
+
+void MainWindow::resetFocusSequence() {
+  focusSequenceTimer_.stop();
+  focusSequenceCount_ = 0;
+  focusSequenceView_.clear();
+}
+
+void MainWindow::leaveFocusMode() {
+  resetFocusSequence();
+  if (focusLayout_.isEmpty())
+    return;
+  const auto layout = std::exchange(focusLayout_, {});
+  const auto focus = std::exchange(focusReturn_, {});
+  actions_.action(ActionId::ViewFocusMode)->setChecked(false);
+  if (!KDDockWidgets::LayoutSaver().restoreLayout(layout))
+    output_->append(tr("Could not restore the layout before focus mode."), 1);
+  if (focus && focus->isVisible()) {
+    focus->window()->raise();
+    focus->window()->activateWindow();
+    focus->setFocus();
+  }
+}
+
 void MainWindow::saveDesktop() {
   KDDockWidgets::LayoutSaver().saveToFile(layoutPath());
   output_->append(tr("Desktop saved"), 0);
 }
 
 void MainWindow::restoreDesktop() {
+  leaveFocusMode();
   if (!KDDockWidgets::LayoutSaver().restoreFromFile(layoutPath()))
     output_->append(tr("No saved desktop"), 1);
   closeTransientDocks(false);
 }
 
 void MainWindow::resetDesktop() {
+  leaveFocusMode();
   for (auto *dock : std::as_const(docks_))
     dock->forceClose();
   applyDefaultLayout();
 }
 
 void MainWindow::closeTransientDocks(bool discardContents) {
+  if (discardContents)
+    leaveFocusMode();
   for (const char *id : {PseudocodeDock, RepresentationDock})
     if (auto *dock = docks_.value(id)) {
       auto *text = static_cast<CodeView *>(dock->widget())->text();
@@ -5210,7 +5376,9 @@ QHash<QString, QByteArray> MainWindow::projectState() const {
   state.insert(QString::fromLatin1(ProjectDatabase::BookmarksState),
                QJsonDocument(bookmarks_).toJson(QJsonDocument::Compact));
   state.insert(QString::fromLatin1(ProjectDatabase::DesktopState),
-               KDDockWidgets::LayoutSaver().serializeLayout());
+               focusLayout_.isEmpty()
+                   ? KDDockWidgets::LayoutSaver().serializeLayout()
+                   : focusLayout_);
   state.insert(
       QString::fromLatin1(ProjectDatabase::PathfinderState),
       QJsonDocument(pathfinder_ ? pathfinder_->state() : pathfinderState_)
@@ -5356,12 +5524,42 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     event->ignore();
     return;
   }
+  leaveFocusMode();
   // The project remembers where the user was, like the desktop does.
   if (session_.loaded())
     session_.saveDatabaseState();
   KDDockWidgets::LayoutSaver().saveToFile(layoutPath());
   event->accept();
   KDDockWidgets::QtWidgets::MainWindow::closeEvent(event);
+  if (!event->isAccepted())
+    return;
+
+  // Floating panes with minimize controls are independent top-level windows.
+  // Save their layout first, then close every pane and its auxiliary windows
+  // while the session and borrowed view state still exist.
+  QSet<QWidget *> owners{this};
+  QList<QPointer<Dock>> panes;
+  for (auto *dock : std::as_const(docks_)) {
+    owners.insert(dock->QWidget::window());
+    panes.append(dock);
+  }
+  QList<QPointer<QWidget>> windows;
+  for (auto *window : QApplication::topLevelWidgets()) {
+    if (window == this)
+      continue;
+    for (auto *owner = window; owner; owner = owner->parentWidget())
+      if (owners.contains(owner)) {
+        windows.append(window);
+        break;
+      }
+  }
+  for (const auto &dock : panes)
+    if (dock)
+      dock->dockWidget()->forceClose();
+  for (const auto &window : windows)
+    if (window)
+      window->close();
+  emit shutdownAccepted();
 }
 
 } // namespace neverd::gui

@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>Attiva o disattiva uno spazio mobile con disassemblato, pseudocodice e output</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>Modalità &amp;focus</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>&amp;Apri...</translation>
     </message>
@@ -2180,6 +2188,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
 </context>
 <context>
     <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>Impossibile ripristinare la disposizione precedente alla modalità focus.</translation>
+    </message>
     <message>
         <source>Reload the input file</source>
         <translation>Ricarica il file di input</translation>
@@ -6421,6 +6433,10 @@ Copertura: %7</translation>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>L’analisi dei cicli dimostra la terminazione nei casi supportati prima di confrontare i calcoli. Include le viste dei parametri e conserva i contratti dei cicli non dimostrati.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli su più blocchi</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6551,6 +6567,14 @@ Progress does not establish equal loop counts or function results.</source>
 Contratto osservato:
 %2
 La terminazione non dimostra che il numero di iterazioni o i risultati delle funzioni siano uguali.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli su più blocchi</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Ciclo dimostrato: blocco di ingresso %1 → blocco di ritorno %2 · contatore #%3 → aggiornamento #%4 · condizione #%5</translation>
     </message>
 </context>
 <context>
@@ -8230,6 +8254,14 @@ SHA-256 secondario: %3
     <message>
         <source>Move window</source>
         <translation>Sposta finestra</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Blocca finestra mobile</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Sblocca finestra mobile</translation>
     </message>
 </context>
 <context>

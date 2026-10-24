@@ -339,37 +339,92 @@ llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
       !restrictToGap(ConflictingImportStorageSlots, PtrSize) ||
       !restrictToGap(ExternalFunctionPointerSlots, PtrSize) ||
       !restrictToGap(DataSymbolBindings, PtrSize) ||
-      !restrictToGap(Img->RelCodeRelocSlots, 4) ||
-      End - Begin > limits::kMaxSingleGlobalEmbedLen)
+      !restrictToGap(Img->RelCodeRelocSlots, 4))
     return nullptr;
 
-  auto *&GV = DirectDataByteGlobals[Begin];
+  uint64_t Prefix = 0;
+  if (End - Begin > limits::kMaxSingleGlobalEmbedLen) {
+    // The padded symbol's virtual base must remain in its original mapping,
+    // including for source-view externalization and patch-object rebinding.
+    if (Seg->VA % limits::kMaxEmbeddedDataAlignment)
+      return nullptr;
+    // Only these finite bytes are observed. A large relocation-free gap must
+    // not force resolution of every unrelated pointer in its segment. Grow
+    // overlapping intervals on demand and redirect their previous accesses;
+    // address-valued uses still promote them to the canonical whole mirror.
+    const uint64_t GapBegin = Begin, GapEnd = End;
+    Begin = Addr;
+    End = Addr + Size;
+    auto It = DirectDataByteGlobals.lower_bound(Begin);
+    if (It != DirectDataByteGlobals.begin())
+      --It;
+    for (; It != DirectDataByteGlobals.end() && It->first <= End; ++It) {
+      const uint64_t PreviousEnd = It->first + It->second.Size;
+      // Address adjacency does not give another mapping the same backing
+      // bytes or permissions. Growth must stay inside this segment's gap.
+      if (It->first < GapBegin || PreviousEnd > GapEnd || PreviousEnd < Begin)
+        continue;
+      Begin = std::min(Begin, It->first);
+      End = std::max(End, PreviousEnd);
+    }
+    if (End - Begin > limits::kMaxSingleGlobalEmbedLen)
+      return nullptr;
+    Prefix = Begin % limits::kMaxEmbeddedDataAlignment;
+    if (Prefix > limits::kMaxSingleGlobalEmbedLen ||
+        End - Begin > limits::kMaxSingleGlobalEmbedLen - Prefix)
+      return nullptr;
+  }
+
+  auto It = DirectDataByteGlobals.find(Begin);
+  llvm::GlobalVariable *GV =
+      It == DirectDataByteGlobals.end() ? nullptr : It->second.Global;
+  if (GV && It->second.Size != End - Begin)
+    GV = nullptr;
   if (!GV) {
     const bool IsConstant = !Seg->isWritable() || isReadOnlyAfterReloc(Seg);
     const auto Bytes = llvm::ArrayRef<uint8_t>(
         Seg->Data.data() + (Begin - Seg->VA), End - Begin);
-    auto *Init = llvm::ConstantDataArray::get(*Ctx, Bytes);
+    // Padding has no image identity and cannot be observed by finite accesses.
+    // Align the allocation, then place Begin at its original residue within
+    // that alignment. Rebinding must account for this prefix as well.
+    llvm::Constant *Init = nullptr;
+    if (Prefix) {
+      std::vector<uint8_t> Padded(Prefix, 0);
+      Padded.insert(Padded.end(), Bytes.begin(), Bytes.end());
+      Init = llvm::ConstantDataArray::get(*Ctx, Padded);
+    } else {
+      Init = llvm::ConstantDataArray::get(*Ctx, Bytes);
+    }
     GV = new llvm::GlobalVariable(
         *Mod, Init->getType(), IsConstant, dataLinkage(), Init,
-        (kNdCodePtrPrefix + llvm::utohexstr(Begin)).str() + ".bytes");
+        // The symbolized base includes padding: source views and patch-object
+        // rebinding recover its original VA from this name before adding GEPs.
+        (kNdCodePtrPrefix + llvm::utohexstr(Begin - Prefix)).str() + ".bytes");
     GV->setAlignment(
-        llvm::Align(uint64_t{1} << llvm::countr_zero(
-                        Begin | limits::kMaxEmbeddedDataAlignment)));
+        llvm::Align(Prefix ? limits::kMaxEmbeddedDataAlignment
+                           : uint64_t{1} << llvm::countr_zero(
+                                 Begin | limits::kMaxEmbeddedDataAlignment)));
+    auto *Base = llvm::ConstantExpr::getGetElementPtr(
+        llvm::Type::getInt8Ty(*Ctx), GV,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Prefix));
+    rebindDirectDataBytes(Base, Begin, End);
+    DirectDataByteGlobals[Begin] = {GV, End - Begin, Prefix};
   }
   return llvm::ConstantExpr::getGetElementPtr(
       llvm::Type::getInt8Ty(*Ctx), GV,
-      llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Addr - Begin));
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx),
+                             Addr - Begin + Prefix));
 }
 
 void MedLLVMEmitter::rebindDirectDataBytes(llvm::Constant *Mirror,
                                            uint64_t Begin, uint64_t End) {
   auto It = DirectDataByteGlobals.lower_bound(Begin);
   while (It != DirectDataByteGlobals.end() && It->first < End) {
-    auto *GV = It->second;
+    auto *GV = It->second.Global;
     auto *Address = llvm::ConstantExpr::getGetElementPtr(
         llvm::Type::getInt8Ty(*Ctx), Mirror,
         llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx),
-                               It->first - Begin));
+                               It->first - Begin - It->second.Prefix));
     GV->replaceAllUsesWith(Address);
     GV->eraseFromParent();
     It = DirectDataByteGlobals.erase(It);

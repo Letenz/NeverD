@@ -49,6 +49,55 @@ def verify_function_views(client, address, entry):
     assert entry in entries and (address == entry or address not in entries), inventory
 
 
+def verify_saved_code_navigation(executable, directory, image, entry, fragments):
+    """Saved code is still eligible for bounded function-owner recovery."""
+    for offset, size in fragments:
+        target = entry + offset
+        for kind, state in (("code", None), ("code", "deleted"),
+                            ("code", "created"), ("undefined", None), ("byte", None)):
+            for preceding in (False, True):
+                binary = Path(directory) / f"saved-{offset}-{kind}-{state}-{preceding}.elf"
+                binary.write_bytes(image)
+                project = Path(str(binary) + ".neverd")
+                project.mkdir()
+                items = [{"addr": hex(target), "kind": kind,
+                          "size": 1 if kind == "byte" else size}]
+                (project / "items.json").write_text(json.dumps(items))
+                functions = [{"addr": hex(target), "state": state}] if state else []
+                (project / "functions.json").write_text(json.dumps(functions))
+                with Client(executable) as client:
+                    ok(client, "open", {"path": str(binary), "analysis": False,
+                                        "warm": False, "read_only": True})
+                    # Literal GUI navigation reaches listing before resolve or
+                    # decompile can warm the recovered instruction index.
+                    request = {"address": hex(target - int(preceding)),
+                               "recover_address": hex(target), "before": 0, "after": 16}
+                    page = ok(client, "listing", request)
+                    at = [row for row in page["lines"] if row["address"] == hex(target)
+                          and row["kind"] == "insn"]
+                    if kind != "code":
+                        assert not at, page
+                    else:
+                        expected = hex(target if state == "created" else entry)
+                        assert at and all(row.get("function_address") == expected
+                                          for row in at), (binary.name, page)
+                        assert ok(client, "resolve", {"query": hex(target)})[
+                            "function_address"] == expected
+                        if state != "created":
+                            for route in ("c", "llvmc"):
+                                source = ok(client, "decompile", {"address": hex(target),
+                                            "representation": route, "limit": 2048})
+                                assert source["address"] == expected, source
+                                assert "__builtin_trap" not in source["text"], source
+                    again = ok(client, "listing", request)
+                    selected = lambda rows: [(row["item_size"], row.get("function_address"))
+                                             for row in rows if row["address"] == hex(target)
+                                             and row["kind"] == "insn"]
+                    assert selected(again["lines"]) == selected(page["lines"]), (page, again)
+                assert json.loads((project / "items.json").read_text()) == items
+                assert json.loads((project / "functions.json").read_text()) == functions
+
+
 def run(executable):
     with tempfile.TemporaryDirectory(prefix="neverd-constant-branch-") as directory:
         binary = Path(directory) / "branches.elf"
@@ -143,6 +192,8 @@ def run(executable):
         scattered_segment = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base,
                                         120 + len(code), 120 + len(code), 4096)
         scattered.write_bytes(header + scattered_segment + code)
+        verify_saved_code_navigation(executable, directory, scattered.read_bytes(), entry,
+                                     ((0x71, 5), (0x51, 3)))
         for first, navigation in ((entry + 0x71, "resolve"),
                                   (entry + 0x51, "resolve"),
                                   (entry + 0x71, "listing"),
@@ -199,6 +250,22 @@ def run(executable):
                                "before": 12, "after": 1})
                 assert any(row["address"] == hex(first) and row["kind"] == "insn"
                            for row in preceding["lines"]), preceding
+
+        # The same saved-item contract on ARM64: save the frame/LR, call an
+        # independent helper, then follow ADR/BR forward and backward before
+        # restoring the original frame and returning seven.
+        arm64 = bytearray(0x78)
+        arm64[:24] = bytes.fromhex("fd7bbfa9fd0300910a000094e00080520903001020011fd6")
+        arm64[0x30:0x38] = bytes.fromhex("20018052c0035fd6")
+        arm64[0x50:0x58] = bytes.fromhex("fd7bc1a8c0035fd6")
+        arm64[0x70:0x78] = bytes.fromhex("09ffff1020011fd6")
+        arm64_header = bytearray(header)
+        struct.pack_into("<H", arm64_header, 18, 183)
+        arm64_segment = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base,
+                                    120 + len(arm64), 120 + len(arm64), 4096)
+        verify_saved_code_navigation(executable, directory,
+                                     arm64_header + arm64_segment + arm64, entry,
+                                     ((0x70, 4), (0x50, 4)))
 
         # A cold fragment before the entry must not become the stack tracker's
         # initial block merely because its address sorts first.
