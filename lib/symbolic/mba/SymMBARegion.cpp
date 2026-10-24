@@ -157,6 +157,98 @@ std::optional<Region> readRegion(SymContext &Ctx, SymRef E,
   return Out;
 }
 
+// Reject a dense linear measurement only when every candidate consumer is
+// already impossible. Different observed corner weights disprove a constant;
+// too many distinct nonzero weights exceed groupedForm's exact group limit.
+// The conjunction and tiny residual consumers have independent static guards.
+// These observations are only rejection certificates, never equality proofs.
+bool linearFormsCannotFit(const SymContext &Ctx, SymRef Body,
+                          llvm::ArrayRef<uint32_t> AtomIds, size_t Corners,
+                          size_t TermBudget, const SolverLimits &Limits,
+                          WorkBudget &Budget, size_t &Storage) {
+  const size_t Count = AtomIds.size();
+  if (!Count || Budget.exhausted() || Corners <= Limits.SynthesisWork / Count ||
+      Count <=
+          std::min({limits::kMaxResidualSynthesisAtoms,
+                    Limits.MaxOptimalSynthesisAtoms, Limits.MaxSynthesisAtoms}))
+    return false;
+  const bool Grouped = Count <= Limits.MaxSynthesisAtoms;
+  const size_t GroupBudget =
+      std::min(TermBudget, std::max<size_t>(1, Limits.SynthesisWork / Corners));
+  // Inversion's rejected work bound implies GroupBudget < Count. Keep that
+  // relation explicit before sizing a certificate from caller-controlled
+  // limits.
+  if (Grouped && GroupBudget >= Count)
+    return false;
+  const size_t Witnesses = Grouped ? GroupBudget + 2 : 2;
+  const size_t Probes = std::min(Corners, std::bit_ceil(Witnesses));
+  const size_t PrintedCost = readingCost(Ctx, Body);
+  if (PrintedCost > SIZE_MAX / 2)
+    return false;
+  // Printed subtraction hides its minus-one coefficient and unary sign;
+  // inequality can merge Not/Eq. Twice the printed tree bounds the actual
+  // operator/leaf tree, and therefore both plan steps and operand edges.
+  const size_t Cost = 2 * PrintedCost;
+  const size_t Words = (size_t(Ctx.width(Body)) - 1) / 64 + 1;
+  constexpr size_t NodeBytes = 256;
+  const size_t WordBytes = sizeof(llvm::APInt) + Words * sizeof(uint64_t);
+  if (Words > (SIZE_MAX - NodeBytes) / (4 * sizeof(uint64_t)) ||
+      2 * Witnesses + 4 > SIZE_MAX / WordBytes ||
+      Cost > SIZE_MAX - Witnesses - 3)
+    return false;
+  const size_t ContainerBytes =
+      sizeof(CornerEvaluator) + sizeof(std::vector<llvm::APInt>);
+  const size_t WitnessBytes = (2 * Witnesses + 4) * WordBytes;
+  if (WitnessBytes > SIZE_MAX - ContainerBytes)
+    return false;
+  const size_t FixedBytes = ContainerBytes + WitnessBytes;
+  // Cover the evaluator's lowering maps, pending edges, flat steps and wide
+  // scratch before constructing it. The expanded tree bound covers reachable
+  // nodes and edges; a shared subgraph only makes it more conservative.
+  const size_t PerNodeBytes = NodeBytes + 4 * Words * sizeof(uint64_t);
+  if (FixedBytes > Storage || Cost > (Storage - FixedBytes) / PerNodeBytes)
+    return false;
+  // Every probe executes the complete lowered plan. Include word-width work
+  // for its steps, negation and all certificate comparisons, even if an early
+  // witness finishes the exclusion before the planned probe count.
+  const size_t ProbeTerms = Cost + Witnesses + 3;
+  if (ProbeTerms > (SIZE_MAX - 1) / Words ||
+      Probes > SIZE_MAX / (1 + ProbeTerms * Words))
+    return false;
+  const size_t ProbeWork = Probes * (1 + ProbeTerms * Words);
+  if (Cost > (SIZE_MAX - ProbeWork) / 3 ||
+      !Budget.canConsume(3 * Cost + ProbeWork))
+    return false;
+  Budget.consume(3 * Cost + ProbeWork);
+  Storage -= FixedBytes + Cost * PerNodeBytes;
+  CornerEvaluator Evaluator(Ctx, Body, AtomIds);
+  std::vector<llvm::APInt> Nonzero;
+  Nonzero.reserve(Witnesses);
+  std::optional<llvm::APInt> First;
+  bool Different = false;
+  // Flipping an even number of free coordinates keeps the Gray-code shear
+  // invertible; an odd count would collapse probes onto one parity plane.
+  const size_t FoldMask = Corners - ((Count & 1) ? 2 : 4);
+  for (size_t K = 0; K < Probes; ++K) {
+    // Keep the first variable asserted while alternating the other axes
+    // between distant corners. These are only rejection witnesses; failure
+    // preserves the full reading.
+    const size_t Pattern =
+        ((((K ^ (K >> 1)) << 1) | 1) ^ ((K & 1) ? FoldMask : 0)) &
+        (Corners - 1);
+    auto Weight = -Evaluator.eval(Pattern);
+    if (!First)
+      First = Weight;
+    else
+      Different |= Weight != *First;
+    if (!Weight.isZero() && !llvm::is_contained(Nonzero, Weight))
+      Nonzero.push_back(std::move(Weight));
+    if (Different && (!Grouped || Nonzero.size() > GroupBudget))
+      return true;
+  }
+  return false;
+}
+
 /// Best form of \p E as a single region.
 ///
 /// Two readings of the same expression are tried.  The linear one treats a
@@ -222,15 +314,22 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     Measured = true;
     TryProducts = Linear->Abstract.MayHaveProducts;
     auto NumAtoms = static_cast<unsigned>(Linear->AtomIds.size());
-    TryCoarseMasks = NumAtoms > std::min(3u, Limits.MaxOptimalSynthesisAtoms);
+    TryCoarseMasks = NumAtoms > std::min(limits::kMaxResidualSynthesisAtoms,
+                                         Limits.MaxOptimalSynthesisAtoms);
     std::optional<size_t> Corners = cornerCount(Linear->AtomIds.size());
     const bool Direct =
         isCanonicalAffineSum(Ctx, Linear->Abstract.Body, NumAtoms);
-    if (!Corners ||
-        !Budget.consume(Direct ? Ctx.numOperands(Linear->Abstract.Body)
-                               : *Corners)) {
+    const bool Excluded =
+        !Direct && Corners &&
+        linearFormsCannotFit(Ctx, Linear->Abstract.Body, Linear->AtomIds,
+                             *Corners, termBudget(Ctx, E, Opts), Limits, Budget,
+                             ParityStorage);
+    if (!Excluded &&
+        (!Corners ||
+         !Budget.consume(Direct ? Ctx.numOperands(Linear->Abstract.Body)
+                                : *Corners))) {
       Rep.BudgetExhausted = true;
-    } else {
+    } else if (!Excluded) {
       llvm::SmallVector<SymRef, 4> Forms;
       // Exact abstraction can eliminate every input. The literal is already
       // the candidate; bitwise synthesis requires at least one atom. Keep the
@@ -250,7 +349,8 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
             (Width / 64 + (Width % 64 != 0)) * sizeof(uint64_t);
         const bool ResidualStorageFits = WordBytes <= Opts.MaxTableBytes / 64;
         if (NumAtoms >= 2 &&
-            NumAtoms <= std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+            NumAtoms <= std::min({limits::kMaxResidualSynthesisAtoms,
+                                  Limits.MaxOptimalSynthesisAtoms,
                                   Limits.MaxSynthesisAtoms}) &&
             ResidualStorageFits)
           ResidualWeights = Weights;
@@ -274,6 +374,10 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
            readingScore(Ctx, Linear->Abstract.IndependentBody) <
                readingScore(Ctx, Linear->Abstract.Body)))
         LinearRegion = std::move(Linear);
+    } else if (Linear->Abstract.IndependentBody != Linear->Abstract.Body &&
+               readingScore(Ctx, Linear->Abstract.IndependentBody) <
+                   readingScore(Ctx, Linear->Abstract.Body)) {
+      LinearRegion = std::move(Linear);
     }
   }
 
@@ -314,6 +418,10 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                                                Coarse->AtomIds.size());
       if (Corners &&
           (Direct || *Corners <= Opts.MaxTableBytes / 8 / WordBytes) &&
+          (Direct ||
+           !linearFormsCannotFit(Ctx, Coarse->Abstract.Body, Coarse->AtomIds,
+                                 *Corners, termBudget(Ctx, E, Opts), Limits,
+                                 Budget, ParityStorage)) &&
           Budget.consume(Direct ? Ctx.numOperands(Coarse->Abstract.Body)
                                 : *Corners)) {
         llvm::SmallVector<SymRef, 4> Forms;
@@ -359,6 +467,10 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       const bool StorageFits =
           Corners && (Direct || *Corners <= Opts.MaxTableBytes / 8 / WordBytes);
       if (AtomIds.size() <= Limits.MaxAtoms && StorageFits &&
+          (Direct ||
+           !linearFormsCannotFit(Ctx, Abstract.IndependentBody, AtomIds,
+                                 *Corners, termBudget(Ctx, E, Opts), Limits,
+                                 Budget, ParityStorage)) &&
           Budget.consume(Direct ? Ctx.numOperands(Abstract.IndependentBody)
                                 : *Corners)) {
         llvm::SmallVector<SymRef, 16> Atoms;

@@ -18,6 +18,10 @@
 
 namespace neverd::symbolic::detail::limits {
 
+/// Residual recovery reuses the small exact Boolean recipes without building
+/// the four-input exhaustive table.
+inline constexpr unsigned kMaxResidualSynthesisAtoms = 3;
+
 inline constexpr std::size_t kMaxLinearTailTerms = 128;
 inline constexpr std::size_t kMaxLinearTailNodes = 32;
 inline constexpr unsigned kMinLinearTailSummands = 2;

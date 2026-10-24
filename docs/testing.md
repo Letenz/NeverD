@@ -4520,6 +4520,12 @@ Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
 
+`SymMBALinearAdmission` checks rejection of dense corner measurements only
+when every linear candidate consumer is excluded. It covers exact group and
+conjunction limits, retained small residual synthesis, hidden subtraction
+nodes, exact/short work and table storage, all Boolean corners and independent
+8–257-bit arithmetic oracles. Rejection witnesses never establish equivalence.
+
 `SymMBAMinimumTests` checks proved binary-leaf minima with only traversal work,
 exhausts cheaper functions at small widths, and covers wide words, resource
 refusals and related or opaque inputs that still require full simplification.

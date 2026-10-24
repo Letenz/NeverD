@@ -46,6 +46,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBAWidePairTests.cpp
   SymMBAResidueCacheTests.cpp
   SymMBAResidueCoordinateTests.cpp
+  SymMBALinearAdmissionTests.cpp
   SymMBAComplementBoundaryTests.cpp
   SymMBAConstantRegionTests.cpp
   SymMBAMeasureTests.cpp
@@ -120,6 +121,7 @@ add_neverd_unittest(NeverDSymMBAQuadraticTests
   SymMBAWidePairTests.cpp
   SymMBAResidueCacheTests.cpp
   SymMBAResidueCoordinateTests.cpp
+  SymMBALinearAdmissionTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
 
