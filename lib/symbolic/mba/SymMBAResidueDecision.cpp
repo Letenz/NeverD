@@ -1316,8 +1316,9 @@ class LowWordDecisions {
   // cancel when deriving an XOR correction; only the next bit is needed.
   // Full-block admission needs only identities; defer Boolean corrections
   // until pairing consumes them. Partial blocks keep their complete probes.
+  template <bool IdentityOnly = false>
   WideSignature wideSignature(WidePairingState &State, SymRef R, unsigned Count,
-                              unsigned Depth = 0, bool IdentityOnly = false) {
+                              unsigned Depth = 0) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
       return {};
@@ -1363,7 +1364,7 @@ class LowWordDecisions {
           Values.push_back({});
         } else {
           auto Value =
-              wideSignature(State, Child, Count, Depth + 1, IdentityOnly);
+              wideSignature<IdentityOnly>(State, Child, Count, Depth + 1);
           if (Failed)
             return {};
           Children.push_back(Value.Identity);
@@ -1432,7 +1433,7 @@ class LowWordDecisions {
         Result = {internSignature(State, {0, Count, 0}), {0, 0}};
       else {
         const auto Child = Ctx.operand(R, 1);
-        auto S = wideSignature(State, Child, Count, Depth + 1, IdentityOnly);
+        auto S = wideSignature<IdentityOnly>(State, Child, Count, Depth + 1);
         if (Mask == 4 * Unit - 1)
           Result = S;
         else {
@@ -1468,9 +1469,9 @@ class LowWordDecisions {
         llvm::SmallVector<Bits, 16> Deltas, Low, Prefix;
         bool Changed = false;
         for (size_t I = 0; I < OperandCount; ++I) {
-          auto S = wideSignature(State, Ctx.operand(R, I),
-                                 Count - TotalZeros + Zeros[I], Depth + 1,
-                                 IdentityOnly);
+          auto S = wideSignature<IdentityOnly>(State, Ctx.operand(R, I),
+                                               Count - TotalZeros + Zeros[I],
+                                               Depth + 1);
           Children.push_back(S.Identity);
           Deltas.push_back(Delta(S));
           Changed |= S.Delta[0] || S.Delta[1];
@@ -1754,12 +1755,18 @@ public:
           Nonconstants.size() > WideProbeBlock &&
           charge(1, sizeof(WidePairingState))) {
         State.Wide = std::make_unique<WidePairingState>();
-        const auto A = wideSignature(*State.Wide, Nonconstants.front(),
-                                     Observed, 0, FullBlock);
+        const auto A =
+            FullBlock
+                ? wideSignature<true>(*State.Wide, Nonconstants.front(),
+                                      Observed)
+                : wideSignature(*State.Wide, Nonconstants.front(), Observed);
         const auto Probe =
             Nonconstants.size() > WideBlock ? WideBlock : WideProbeBlock;
-        const auto B = wideSignature(*State.Wide, Nonconstants[Probe], Observed,
-                                     0, FullBlock);
+        const auto B =
+            FullBlock
+                ? wideSignature<true>(*State.Wide, Nonconstants[Probe],
+                                      Observed)
+                : wideSignature(*State.Wide, Nonconstants[Probe], Observed);
         Wide = A.Identity == B.Identity;
         for (size_t I = 1;
              !Wide && FullBlock && !Failed && I < Nonconstants.size(); ++I) {
@@ -1768,7 +1775,7 @@ public:
           if (!charge())
             break;
           const auto Other =
-              wideSignature(*State.Wide, Nonconstants[I], Observed, 0, true);
+              wideSignature<true>(*State.Wide, Nonconstants[I], Observed);
           Wide = A.Identity == Other.Identity;
         }
       }
