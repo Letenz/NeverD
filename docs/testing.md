@@ -1855,6 +1855,23 @@ controls, changed final constant, bound and body arithmetic. Worker/Python/Qt
 checks retain both published profile versions. Frozen v1 proved and unproven
 reports in complete/limited/cancelled states are replayed byte-for-byte.
 
+`BinaryDiffNestedProgress` exercises reseeded inner counters, header updates,
+early exits, sequential inner loops, differing proof/latch order and 64 nested
+layers. Wrapping outer or inner counters, hidden progress behind freeze,
+internal resets, irreducible entries, duplicate edges and unreachable spins
+must discard all tentative witnesses. Schema 7 tests forge each layer, remove
+or reorder witnesses and attempt cross-version restore. Exact retained/work
+allowances and cancellation after outer-layer analysis remain bounded.
+`NestedProgressPagesEveryLayerAndRechecksFreshSource` checks owned x64 family4
+bytes through SDK single-node paging, all loop witnesses, slicing and fresh
+source-bound restore. The compiler corpus includes family4 nested loops across
+x64/AArch64 ELF/COFF/Mach-O, with explicit v2 unproven controls, saved replay and
+changed final constants, bounds and body arithmetic. Worker, Python and Qt
+exercise the same profile and both layers; Qt retains light/dark and fractional
+DPI checks. Frozen v2 self, branched and unproved nested reports supplement the
+older byte-exact compatibility fixtures. These are owned functional fixtures,
+not held-out accuracy or general behavioral-equivalence qualification.
+
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
 missing/stack/overlapping sites, detached and foreign users, raw and retained
@@ -5199,6 +5216,18 @@ code-pointer, direct-branch and code-generation boundaries.
 `COFFRelocatableAbsoluteRelocation.MachOARM32*` checks ARM32 Mach-O object
 relocations, including Thumb BL, B.W and BLX across sections, halfword-aligned
 call sites, backward calls, malformed encodings and jumps that need a veneer.
+
+`HighControlFlowSemantics.Word*` and
+`HighControlFlowSemantics.CastAbsorption*` in `NeverDHighControlFlowTests`
+check default word identities through same-width integer casts and modular
+scalar offset combination at 8/16/32/64 bits. Signedness, reversed operands,
+exact cancellation and wrap boundaries agree with an independent evaluator.
+Width changes, memory observations, calls, unknown values and explicit code
+addresses retain their meaning. High kernel addresses must not become negative
+scalar offsets. The existing expression-expansion bound remains enforced.
+`NegativeOffsetSpellingKeepsTheOperationWidth` additionally retains the
+original extension in mixed-width additions and positive low-64-bit constants
+in a 128-bit operation.
 
 `HighControlFlowDAG.*` in `NeverDHighControlFlowTests` checks single-use
 condition folding on large shared expression graphs. Shared reads retain

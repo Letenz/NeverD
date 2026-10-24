@@ -6437,6 +6437,10 @@ Abdeckung: %7</translation>
         <source>Optimized SSA with multi-block loop analysis</source>
         <translation>Optimierte SSA mit Mehrblock-Schleifenanalyse</translation>
     </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>Optimierte SSA mit Analyse verschachtelter Schleifen</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6571,6 +6575,10 @@ Terminierung belegt keine gleichen Schleifenzahlen oder Funktionsergebnisse.</tr
     <message>
         <source>Optimized SSA with multi-block loop analysis</source>
         <translation>Optimierte SSA mit Mehrblock-Schleifenanalyse</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>Optimierte SSA mit Analyse verschachtelter Schleifen</translation>
     </message>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>

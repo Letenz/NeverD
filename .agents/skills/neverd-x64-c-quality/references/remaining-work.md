@@ -88,6 +88,10 @@ Readonly scalar loads among instruction bytes reuse the immutable code reader's
 mapping and relocation checks. Default source cleanup also folds exact integer
 idempotence and absorption without symbolic search. Runtime-indexed memory and
 unresolved relocatable code identities remain separate recovery requirements.
+Same-width signed/unsigned views no longer hide word absorption. Consecutive
+scalar offsets combine modulo their declared width; negative-literal spelling
+retains scalar provenance and leaves explicit high kernel addresses intact.
+This source cleanup does not resolve a VM target that depends on runtime data.
 
 Mapped LLVM C now keeps array and record allocations out of scalar variable
 typing, including frames larger than the supported integer width. HighC and

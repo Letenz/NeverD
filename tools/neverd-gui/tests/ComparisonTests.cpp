@@ -37,6 +37,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSet>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -359,14 +360,14 @@ private slots:
     QCOMPARE(Failures.size(), 0);
   }
   void loopProgressExplainsProofAndRestoresSelection_data() {
-    QTest::addColumn<bool>("MultiBlock");
-    QTest::newRow("self-loop-v1") << false;
-    QTest::newRow("multi-block-v2") << true;
+    QTest::addColumn<int>("Version");
+    QTest::newRow("self-loop-v1") << 1;
+    QTest::newRow("multi-block-v2") << 2;
+    QTest::newRow("nested-v3") << 3;
   }
   void loopProgressExplainsProofAndRestoresSelection() {
-    QFETCH(bool, MultiBlock);
-    const auto RequestedProfile =
-        MultiBlock ? "llvm-progress-ssa-v2" : "llvm-progress-ssa-v1";
+    QFETCH(int, Version);
+    const auto RequestedProfile = QString("llvm-progress-ssa-v%1").arg(Version);
     const auto A = Directory.filePath("progress-before.bin");
     const auto B = Directory.filePath("progress-after.bin");
     // Owned control_regions_fixture.c, family 2, x64 ELF O0/O2; never executed.
@@ -386,7 +387,7 @@ private slots:
                                          "178d14c50000000029c283c20989d0c1c01b8"
                                          "3f906741483f0178d0cc50000000029c183"
                                          "c109c1c11b89c831f083c003c3")));
-    if (MultiBlock) {
+    if (Version == 2) {
       // Owned family3 O0 has a branched loop body; both sides retain it.
       const auto Bytes = QByteArray::fromHex(
           "554889e5897dfc8975f88b45f883e0078945f48b45f489c183c1ff894df483f80074"
@@ -394,6 +395,19 @@ private slots:
           "4dfcc1e11b09c88945fc8b45fc05674523013345f88945fc8b45fc8b4dfcc1e90b31"
           "c86bc00d8945fc8b45fcc1e0078b4dfcc1e91909c88945fceb0f8b45fc83c0116b4d"
           "f80d31c88945fceb828b45fc3345f883c0035dc3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
+    if (Version == 3) {
+      // Owned family4 O0 retains both nested counters; never execute it.
+      const auto Bytes = QByteArray::fromHex(
+          "554889e5897dfc8975f88b45f883e0078945f48b45f489c183c1ff894df483f80074"
+          "5b"
+          "8b45fc83e00783c0018945f08b45f089c183c1ff894df083f800742e8b45fc83f017"
+          "6b"
+          "c00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fc8b45fc0345f43345f8"
+          "89"
+          "45fcebc28b45fcc1e0070345f43345fc8945fceb958b45fc3345f883c0035dc3");
       QVERIFY(write(A, Bytes));
       QVERIFY(write(B, Bytes));
     }
@@ -455,9 +469,25 @@ private slots:
     auto *LoopStatus = Dialog->findChild<QLabel *>("flowLoopStatus");
     QVERIFY(LoopStatus && LoopStatus->isVisible());
     QVERIFY(LoopStatus->text().contains("header block"));
-    if (MultiBlock) {
+    if (Version == 2) {
       const auto Witness = Rows->row(Proved)["progress_loop"].toObject();
       QVERIFY(Witness["header"] != Witness["block"]);
+    }
+    if (Version == 3) {
+      QSet<int> Latches;
+      for (int N = 0; N < Rows->rowCount(); ++N) {
+        const auto Witness = Rows->row(N)["progress_loop"].toObject();
+        if (Witness.isEmpty())
+          continue;
+        Latches.insert(Witness["block"].toInt());
+        Table->selectRow(N);
+        QVERIFY(LoopStatus->text().contains(
+            QString("header block %1").arg(Witness["header"].toInt())));
+        QVERIFY(LoopStatus->text().contains(
+            QString("latch block %1").arg(Witness["block"].toInt())));
+      }
+      QCOMPARE(Latches.size(), 2);
+      Table->selectRow(Proved);
     }
     QTest::mouseClick(Dialog->findChild<QPushButton *>("flowBackward"),
                       Qt::LeftButton);
@@ -470,16 +500,19 @@ private slots:
         Theme::instance().setMode(Mode);
         Dialog->resize(1280, 800);
         QTest::qWait(40);
-        QVERIFY(Dialog->grab().save(
-            Captures + (MultiBlock ? "/multiblock" : "/singleblock") +
-            (Mode == Theme::Mode::Dark ? "-loop-progress-dark.png"
-                                       : "-loop-progress-light.png")));
+        QVERIFY(Dialog->grab().save(Captures +
+                                    (Version == 3   ? "/nested"
+                                     : Version == 2 ? "/multiblock"
+                                                    : "/singleblock") +
+                                    (Mode == Theme::Mode::Dark
+                                         ? "-loop-progress-dark.png"
+                                         : "-loop-progress-light.png")));
       }
     }
     Side->setCurrentIndex(Side->findData("secondary"));
     QTRY_VERIFY_WITH_TIMEOUT(
-        Status->text().contains(MultiBlock ? "Counter loops"
-                                           : "acyclic control flow"),
+        Status->text().contains(Version >= 2 ? "Counter loops"
+                                             : "acyclic control flow"),
         Timeout);
     const auto Saved = Directory.filePath("progress.nddiff");
     Session.command("comparison_save", {{"path", Saved}});
