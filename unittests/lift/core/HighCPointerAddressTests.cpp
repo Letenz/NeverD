@@ -80,6 +80,12 @@ void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
 namespace {
 using namespace neverd;
 
+namespace descriptor_source {
+#define NEVERD_DESCRIPTOR_SOURCE_TEXT(Name, Value)                             \
+  constexpr char Name[] = Value;
+#include "X86DescriptorSourceExpectations.def"
+} // namespace descriptor_source
+
 ExprPtr parameter(unsigned Id, TypeRef ExprType = NdType::makeInt(8)) {
   MedVar Var;
   Var.Kind = MedVar::Param;
@@ -45815,8 +45821,13 @@ TEST(HighCPointerAddresses, VerwKeepsItsBufferFlush) {
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
   EXPECT_EQ(HighC.find("__halt"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("verw (%[address])"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("verw %%gs:(%[address])"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find(descriptor_source::kVerwAddress), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find(descriptor_source::kVerwGSAddress), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find(descriptor_source::kDescriptorEffects),
+            std::string::npos)
+      << HighC;
 }
 
 TEST(HighCPointerAddresses, VerwZeroFlagReachesItsReader) {
@@ -45827,7 +45838,8 @@ TEST(HighCPointerAddresses, VerwZeroFlagReachesItsReader) {
                                      0xc3};
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("setz %[zf]"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find(descriptor_source::kVerwZeroFlag), std::string::npos)
+      << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
 }
 
@@ -45983,7 +45995,11 @@ TEST(HighCPointerAddresses, RegisterFormLldtLoadsItsOperand) {
                                      0xc3};
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("__asm__ volatile(\"lldt %w0\""), std::string::npos)
+  EXPECT_NE(HighC.find(descriptor_source::kLldtRegister), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find(descriptor_source::kSelectorWidth), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find(descriptor_source::kDescriptorMemory), std::string::npos)
       << HighC;
   EXPECT_EQ(HighC.find("__asm {"), std::string::npos) << HighC;
 }
