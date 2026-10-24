@@ -424,21 +424,8 @@ protected:
       update();
     });
     updateMaximize();
-    if (m_dockWidgetIcon) {
-      constexpr int size = ::neverd::limits::gui_config::kTitleBarIconSize;
-      m_dockWidgetIcon->setFixedSize(size, size);
-      m_dockWidgetIcon->setScaledContents(true);
-    }
-    if (onWayland() && m_dockWidgetIcon) {
-      // Wayland's compositor move and QDrag docking are separate operations.
-      // The caption and tab dock; the icon moves the window on the desktop.
-      m_dockWidgetIcon->setObjectName(
-          QStringLiteral("floatingWindowMoveHandle"));
-      m_dockWidgetIcon->setToolTip(
-          QCoreApplication::translate("Docking", "Move window"));
-      m_dockWidgetIcon->setCursor(Qt::SizeAllCursor);
-      m_dockWidgetIcon->installEventFilter(this);
-    }
+    if (m_dockWidgetIcon)
+      m_dockWidgetIcon->hide();
   }
 
   bool eventFilter(QObject *object, QEvent *event) override {
@@ -465,11 +452,6 @@ protected:
       for (auto *button : findChildren<QAbstractButton *>())
         button->update();
     }
-    if (object == m_dockWidgetIcon &&
-        event->type() == QEvent::MouseButtonPress &&
-        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
-      if (auto *handle = QWidget::window()->windowHandle())
-        return handle->startSystemMove();
     return TitleBar::eventFilter(object, event);
   }
 
@@ -488,7 +470,7 @@ protected:
     QPainter painter(this);
     const auto &theme = Theme::instance();
     painter.fillRect(rect(), theme.chrome("TitleBar"));
-    // The tabs identify each pane; keep the floating caption free of text.
+    // The tabs identify each pane; leave its floating caption blank.
     moveArea_->setGeometry(0, 0, lock_->x(), height());
   }
 
@@ -511,6 +493,8 @@ private:
             : QCoreApplication::translate("Docking", "Lock floating window");
     lock_->setToolTip(text);
     lock_->setAccessibleName(text);
+    moveArea_->setAccessibleName(
+        QCoreApplication::translate("Docking", "Move window"));
     moveArea_->setVisible(locked);
     moveArea_->raise();
   }

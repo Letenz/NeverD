@@ -26,6 +26,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
+#include "neverd/ir/intrinsics/X86/X86BoundedLeaf.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86RepState.h"
 #include "neverd/ir/intrinsics/X86/X86Sgx.h"
@@ -789,6 +790,60 @@ inline X86SgxShape x86SgxMedShape(const MedOp &Op,
   if (Op.IntrinsicOutputs.size() == X86SgxAuxiliaryOutputs &&
       Op.IntrinsicOutputs[0].Id == Op.IntrinsicOutputs[1].Id)
     S.ValidId = false;
+  return S;
+}
+
+inline X86BoundedLeafShape
+x86BoundedLeafMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
+  X86BoundedLeafShape S;
+  S.TargetArch = TargetArch;
+  if (S.TargetArch == Arch::Unknown && Op.Output.Kind == MedVar::Reg)
+    S.TargetArch = Op.Output.TheArch;
+  S.MemoryOrdering = Op.MemoryOrdering;
+  S.MemoryAddressSpace = Op.MemoryAddressSpace;
+  S.ValidId = Op.NumInputs && Op.NumInputs <= std::size(Op.Inputs) &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+              Op.Inputs[0].ConstVal <= UINT16_MAX;
+  if (Op.Output.Kind == MedVar::Reg && Op.Output.TheArch != S.TargetArch)
+    S.ValidId = false;
+  S.WritableOutput =
+      (Op.Output.Kind == MedVar::Reg || Op.Output.Kind == MedVar::Temp) &&
+      Op.Output.Id >= 0;
+  S.OutputSize = Op.Output.Size;
+  S.Arguments = Op.NumInputs ? Op.NumInputs - 1 : 0;
+  for (unsigned I = 0; I < S.Arguments && I < S.InputSizes.size(); ++I) {
+    const auto &Input = Op.Inputs[I + 1];
+    S.InputSizes[I] = Input.Size;
+    S.ScalarInputs[I] =
+        isMedIntrinsicScalarInput(Input) || Input.Kind == MedVar::Param ||
+        Input.Kind == MedVar::Stack || Input.Kind == MedVar::RetVal;
+    if (Input.Kind == MedVar::Reg) {
+      if (S.TargetArch == Arch::Unknown)
+        S.TargetArch = Input.TheArch;
+      else if (Input.TheArch != S.TargetArch)
+        S.ValidId = false;
+    }
+  }
+  if (Op.IntrinsicOutputs.size() != X86BoundedLeafAuxiliaryOutputs)
+    S.ValidId = false;
+  else
+    for (unsigned I = 0; I < X86BoundedLeafAuxiliaryOutputs; ++I) {
+      const auto &V = Op.IntrinsicOutputs[I];
+      if (V.Kind != MedVar::Temp || V.Id < 0 ||
+          V.Size != (I < 3 ? S.OutputSize : X86ArithmeticFlagsBytes))
+        S.ValidId = false;
+    }
+  for (unsigned I = 0; I < Op.IntrinsicOutputs.size(); ++I) {
+    if (Op.Output.Kind == MedVar::Temp &&
+        Op.IntrinsicOutputs[I].Id == Op.Output.Id)
+      S.ValidId = false;
+    for (unsigned J = 0; J < I; ++J)
+      if (Op.IntrinsicOutputs[I].Id == Op.IntrinsicOutputs[J].Id)
+        S.ValidId = false;
+  }
+  if (Op.NumInputs > 1 && Op.Inputs[1].isConst() &&
+      !isAddressProvenance(Op.Inputs[1].Provenance))
+    S.Ax = Op.Inputs[1].ConstVal;
   return S;
 }
 

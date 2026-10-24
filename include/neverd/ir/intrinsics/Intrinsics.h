@@ -452,6 +452,12 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/X86/X86RepState.def"
 #undef NEVERD_X86_REP_STATE
 
+  // Append-only: CFG proves a bounded leaf before publishing native state.
+  X86EncluPending,
+  X86GetsecPending,
+  X86EncluBounded,
+  X86GetsecBounded,
+
   _Count = 16000
 };
 

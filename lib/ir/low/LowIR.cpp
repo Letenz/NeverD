@@ -127,6 +127,11 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   }
   if (Id == Intrinsic::X86AMXState && !x86AmxShapeIsValid(x86AmxLowShape(Op)))
     return invalid("AMX architectural bank operation has an invalid shape");
+  if (isX86BoundedLeafIntrinsic(Id) || isX86BoundedLeafPending(Id)) {
+    if (!x86BoundedLeafShapeIsValid(Id, x86BoundedLeafLowShape(Op)))
+      return invalid(X86BoundedLeafUnproven);
+    return llvm::Error::success();
+  }
   if (isX86SgxIntrinsic(Id)) {
     if (!x86SgxShapeIsValid(Id, x86SgxLowShape(Op)))
       return invalid("x86 SGX intrinsic has an invalid completion contract");

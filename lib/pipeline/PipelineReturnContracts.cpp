@@ -647,6 +647,9 @@ private:
           ((Id == Intrinsic::X86AMXState &&
             x86AmxShapeIsValid(x86AmxMedShape(Op, Img.Arch))) ||
            x86SgxShapeIsValid(Id, x86SgxMedShape(Op, Img.Arch)) ||
+           (isX86BoundedLeafIntrinsic(Id) &&
+            x86BoundedLeafShapeIsValid(Id,
+                                       x86BoundedLeafMedShape(Op, Img.Arch))) ||
            x86SystemStateShapeIsValid(Id,
                                       x86SystemStateMedShape(Op, Img.Arch)) ||
            x86VirtualizationShapeIsValid(

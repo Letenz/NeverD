@@ -29,6 +29,9 @@ public:
   void reveal();
   void dismiss();
 
+signals:
+  void widthChanged(int width);
+
 protected:
   bool eventFilter(QObject *object, QEvent *event) override;
   void paintEvent(QPaintEvent *event) override;
@@ -39,6 +42,11 @@ private:
   QPointer<QWidget> area_;
   QPointer<QToolButton> toggle_;
   QPointer<QWidget> previousFocus_;
+  QWidget *resizeHandle_;
+  int preferredWidth_;
+  int resizeStartWidth_ = 0;
+  qreal resizeStartX_ = 0;
+  bool resizing_ = false;
 };
 
 } // namespace neverd::gui

@@ -13,6 +13,7 @@
 #include "X86NativeFeatures.h"
 
 #include "X86AmxState.h"
+#include "X86BoundedLeaf.h"
 #include "X86RepState.h"
 
 #include "neverd/backend/llvm/X86/X86SgxNative.h"
@@ -36,8 +37,8 @@ std::string featureNames(const std::set<std::string> &Features) {
   return Text;
 }
 std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
-                     bool Compare) {
-  if (Amx.empty() && !Sgx && !Rep)
+                     bool Compare, bool Bounded, bool BoundedEnclu) {
+  if (Amx.empty() && !Sgx && !Rep && !Bounded)
     return {};
   std::string Text;
   if (!Amx.empty())
@@ -55,6 +56,14 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
             "#define NEVERD_X86_AMX(native, ...) native\n"
             "#else\n"
             "#define NEVERD_X86_AMX(native, ...) __VA_ARGS__\n"
+            "#endif\n#endif\n";
+  if (Bounded)
+    Text += "#ifndef NEVERD_X86_BOUNDED_LEAF\n"
+            "#if defined(__NEVERC_X86_BOUNDED_LEAF_STATE__) && "
+            "__NEVERC_X86_BOUNDED_LEAF_STATE__ >= 1\n"
+            "#define NEVERD_X86_NATIVE_BOUNDED_LEAF 1\n"
+            "#define NEVERD_X86_BOUNDED_LEAF(native, ...) native\n"
+            "#else\n#define NEVERD_X86_BOUNDED_LEAF(native, ...) __VA_ARGS__\n"
             "#endif\n#endif\n";
   if (Sgx)
     Text += "#ifndef NEVERD_X86_SGX\n"
@@ -81,16 +90,21 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
   };
   const auto End =
       Compare ? "#else\n" + Attribute("") + "#endif\n" : "#endif\n";
-  if (!Amx.empty() && Sgx)
-    Text += "#if defined(NEVERD_X86_NATIVE_AMX) && "
-            "defined(NEVERD_X86_NATIVE_SGX)\n" +
+  std::string SgxCondition;
+  if (Sgx)
+    SgxCondition = "defined(NEVERD_X86_NATIVE_SGX)";
+  if (BoundedEnclu)
+    SgxCondition += (SgxCondition.empty() ? "" : " || ") +
+                    std::string("defined(NEVERD_X86_NATIVE_BOUNDED_LEAF)");
+  if (!Amx.empty() && !SgxCondition.empty())
+    Text += "#if defined(NEVERD_X86_NATIVE_AMX) && (" + SgxCondition + ")\n" +
             Attribute(AmxNames + ",sgx") +
             "#elif defined(NEVERD_X86_NATIVE_AMX)\n" + Attribute(AmxNames) +
-            "#elif defined(NEVERD_X86_NATIVE_SGX)\n" + Attribute("sgx") + End;
+            "#elif " + SgxCondition + "\n" + Attribute("sgx") + End;
   else if (!Amx.empty())
     Text += "#if defined(NEVERD_X86_NATIVE_AMX)\n" + Attribute(AmxNames) + End;
-  else if (Sgx)
-    Text += "#if defined(NEVERD_X86_NATIVE_SGX)\n" + Attribute("sgx") + End;
+  else if (!SgxCondition.empty())
+    Text += "#if " + SgxCondition + "\n" + Attribute("sgx") + End;
   else if (Compare)
     Text += Attribute("");
   return Text;
@@ -98,11 +112,17 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
 } // namespace
 
 std::string x86NativeFunctionPreamble(const HighFunc &Function) {
-  bool Sgx = false, Rep = false, Compare = false;
+  bool Sgx = false, Rep = false, Compare = false, Bounded = false,
+       BoundedEnclu = false;
   std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
     if (!E)
       return;
     Sgx |= isX86SgxIntrinsic(E->IntrinsicId);
+    if (isX86BoundedLeafIntrinsic(E->IntrinsicId)) {
+      Bounded = true;
+      BoundedEnclu |= isX86EncluLeaf(E->IntrinsicId);
+      Compare = true;
+    }
     if (const auto C = x86RepContract(E->IntrinsicId)) {
       Rep = true;
       Compare |= C->Compare;
@@ -111,10 +131,12 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
       Visit(Operand);
   };
   walkStmts(Function.Body, [&](const HighStmt &S) { forEachExpr(S, Visit); });
-  return preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare);
+  return preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
+                  BoundedEnclu);
 }
 std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
-  bool Sgx = false, Rep = false, Compare = false;
+  bool Sgx = false, Rep = false, Compare = false, Bounded = false,
+       BoundedEnclu = false;
   for (const auto &Block : Function)
     for (const auto &Instruction : Block) {
       const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction);
@@ -125,6 +147,11 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
                                    Result->getElementType(0)->isIntegerTy(64)
                                ? Arch::X64
                                : Arch::X86;
+      if (const auto Id = x86BoundedLeafCallId(RepArch, *Call)) {
+        Bounded = true;
+        BoundedEnclu |= isX86EncluLeaf(*Id);
+        Compare = true;
+      }
       if (const auto P = x86RepCallPlan(RepArch, *Call)) {
         Rep = true;
         Compare |= P->Contract.Compare;
@@ -138,6 +165,7 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
         Sgx |= Mnemonic == "encls" || Mnemonic == "enclv";
       }
     }
-  return preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare);
+  return preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
+                  BoundedEnclu);
 }
 } // namespace neverd

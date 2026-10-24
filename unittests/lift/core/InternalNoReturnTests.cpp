@@ -557,9 +557,9 @@ TEST(InternalNoReturn, ScreenWantsEveryReturnAfterACallThatCannotComeBack) {
 }
 
 TEST(InternalNoReturn, ScreenTreatsAnUnliftableByteAsUnknown) {
-  // b: call c; getsec; ret, with c stated never to return.  GETSEC has no
-  // lift, so the screen cannot know b's branches: it sends b to no proof
-  // instead of throwing out of the CFG build that asked.
+  // b: call c; getsec; ret, with c stated never to return. GETSEC remains
+  // pending without a register proof, so the screen cannot know b's
+  // branches. It declines the proof instead of assuming local completion.
   std::vector<uint8_t> Code(0x30, 0xcc);
   putCall(Code, Base, Base + 0x20);
   Code[5] = 0x0f;

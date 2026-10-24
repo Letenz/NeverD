@@ -48,3 +48,8 @@ MULTI_OUT(Intrinsic::X86Enclv, 2);
 #define NEVERD_X86_REP_STATE(Id, Name, Words, Compare, ...) MULTI_OUT(Intrinsic::Id, Words - 1 + Compare);
 #include "neverd/ir/intrinsics/X86/X86RepState.def"
 #undef NEVERD_X86_REP_STATE
+
+MULTI_OUT(Intrinsic::X86EncluPending, 4);
+MULTI_OUT(Intrinsic::X86GetsecPending, 4);
+MULTI_OUT(Intrinsic::X86EncluBounded, 4);
+MULTI_OUT(Intrinsic::X86GetsecBounded, 4);

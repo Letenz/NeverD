@@ -337,6 +337,18 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+  if (event->type() == QEvent::Close && focusSidebar_ &&
+      object == focusSidebar_->window()) {
+    // Closing the temporary workspace exits focus mode instead of closing
+    // all its docks. Restore after the caption/desktop close callback unwinds.
+    event->ignore();
+    const QPointer<FocusSidebar> sidebar = focusSidebar_;
+    QTimer::singleShot(0, this, [this, sidebar] {
+      if (sidebar && sidebar == focusSidebar_)
+        leaveFocusMode();
+    });
+    return true;
+  }
   const auto inWorkbench = [this](QWidget *widget) {
     if (!widget)
       return false;
@@ -5267,6 +5279,14 @@ void MainWindow::toggleFocusMode() {
     functions->revealAddress(*function);
   focusSidebar_ =
       new FocusSidebar(*floating, *area, *functions, tr("Functions"));
+  auto *header = functions->table()->header();
+  connect(focusSidebar_, &FocusSidebar::widthChanged, functions,
+          [header, width = focusSidebar_->width()](int newWidth) mutable {
+            const int difference = newWidth - std::exchange(width, newWidth);
+            header->resizeSection(
+                0, std::max(header->minimumSectionSize(),
+                            header->sectionSize(0) + difference));
+          });
   updateActions();
 }
 

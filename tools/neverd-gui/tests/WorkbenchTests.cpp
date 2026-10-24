@@ -609,6 +609,32 @@ private slots:
     QVERIFY(output->isVisible() && assembly->isVisible());
     QVERIFY(!code->isVisible());
     QCOMPARE(hex.size(), 0);
+    // Both the drawn close button and a desktop close request leave focus
+    // mode through the same layout restoration as the F sequence.
+    for (bool button : {true, false}) {
+      mode->trigger();
+      workspace = assembly->window();
+      QVERIFY(activateTestWindow(workspace));
+      QVERIFY(mode->isChecked());
+      if (button) {
+        auto *close = workspace->findChild<QAbstractButton *>(
+            QStringLiteral("floatingCloseButton"));
+        QVERIFY(close && close->isVisible());
+        QTest::mouseClick(workspace->windowHandle(), Qt::LeftButton,
+                          Qt::NoModifier,
+                          close->mapTo(workspace, close->rect().center()));
+      } else {
+        workspace->close();
+      }
+      QTRY_VERIFY(!mode->isChecked());
+      QCOMPARE(assembly->window() != bench.window.get(), floating);
+      QTRY_COMPARE(assembly->window()->isMaximized(), wasMaximized);
+      QCOMPARE(output->window(), bench.window.get());
+      QVERIFY(output->isVisible() && assembly->isVisible());
+      QVERIFY(!code->isVisible());
+      QVERIFY(output->findChild<QPlainTextEdit *>()->toPlainText().contains(
+          "help"));
+    }
   }
 
   void fileReviewWindowsOfferWindowControls_data() {
@@ -645,6 +671,7 @@ private slots:
     QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
     auto *original = bench.functions();
     QVERIFY(original);
+    const int originalNameWidth = original->table()->header()->sectionSize(0);
     original->setFilterText(QStringLiteral("function_1"));
     QTRY_COMPARE(original->model().filter(), QStringLiteral("function_1"));
     assembly->focusContent();
@@ -692,6 +719,43 @@ private slots:
     QTRY_VERIFY(functions->model().total() > 0 &&
                 !functions->model().loading());
     QVERIFY(capture(QStringLiteral("open")));
+    auto *handle = sidebar->findChild<QWidget *>(
+        QStringLiteral("focusSidebarResizeHandle"));
+    QVERIFY(handle && handle->isVisible());
+    QCOMPARE(handle->cursor().shape(), Qt::SizeHorCursor);
+    const int initialWidth = sidebar->width();
+    const int nameWidth = functions->table()->header()->sectionSize(0);
+    const auto resizeBy = [&](int delta) {
+      const QPoint start = handle->mapTo(workspace, handle->rect().center());
+      const QPoint end = start + QPoint(delta, 0);
+      QTest::mousePress(workspace->windowHandle(), Qt::LeftButton,
+                        Qt::NoModifier, start);
+      QTest::mouseMove(workspace->windowHandle(), end);
+      QTest::mouseRelease(workspace->windowHandle(), Qt::LeftButton,
+                          Qt::NoModifier, end);
+    };
+    resizeBy(180);
+    QTRY_COMPARE(sidebar->width(), initialWidth + 180);
+    QTRY_COMPARE(functions->table()->header()->sectionSize(0), nameWidth + 180);
+    resizeBy(-80);
+    QTRY_COMPARE(sidebar->width(), initialWidth + 100);
+    resizeBy(-workspace->width());
+    QTRY_COMPARE(sidebar->width(), 240);
+    resizeBy(workspace->width() * 2);
+    QVERIFY(sidebar->geometry().right() <= workspace->rect().right());
+    resizeBy(initialWidth + 180 - sidebar->width());
+    QTRY_COMPARE(sidebar->width(), initialWidth + 180);
+    handle->setFocus(Qt::TabFocusReason);
+    QTest::keyClick(handle, Qt::Key_Right);
+    QVERIFY(sidebar->width() > initialWidth + 180);
+    QTest::keyClick(handle, Qt::Key_Left);
+    QCOMPARE(sidebar->width(), initialWidth + 180);
+    QCOMPARE(toggle->mapTo(workspace, toggle->rect().center()), triangle);
+    QCOMPARE(QRect(assembly->mapTo(workspace, QPoint()), assembly->size()),
+             assemblyGeometry);
+    QCOMPARE(QRect(code->mapTo(workspace, QPoint()), code->size()),
+             codeGeometry);
+    QVERIFY(capture(QStringLiteral("resized")));
     QTest::mouseMove(workspace->windowHandle(),
                      code->mapTo(workspace, code->rect().center()));
     QTest::qWait(350);
@@ -735,6 +799,7 @@ private slots:
     QCOMPARE(toggle->arrowType(), Qt::RightArrow);
     bench.action(ActionId::ViewFunctions)->trigger();
     QVERIFY(sidebar->isVisible());
+    QCOMPARE(sidebar->width(), initialWidth + 180);
     QCOMPARE(filter->text(), QStringLiteral("function_30"));
     filter->clear();
     filter->setFocus();
@@ -744,6 +809,7 @@ private slots:
     mode->trigger();
     QVERIFY(!sidebar && !toggle);
     QCOMPARE(original->model().filter(), QStringLiteral("function_1"));
+    QCOMPARE(original->table()->header()->sectionSize(0), originalNameWidth);
     QCOMPARE(original->window(), bench.window.get());
     mode->trigger();
     QPointer<QWidget> reopened = assembly->window()->findChild<QWidget *>(

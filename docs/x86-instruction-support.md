@@ -108,8 +108,8 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | --- | --- |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
-| GETSEC | Leaf-specific register/state results and control transfer, including measured-environment entry/exit. |
-| ENCLU | Leaf-specific GPR/flag results, enclave entry/exit/resume and asynchronous exit state. |
+| GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
+| ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
@@ -120,7 +120,10 @@ retain WC protocol, concurrent write completion and device transactions, but
 these tests do not independently measure those properties. The concrete
 emulator models only the single-threaded ordinary-memory projection.
 
-VMRUN, SKINIT, GETSEC and ENCLU still fail strict lifting explicitly. Legacy
+VMRUN and SKINIT still fail strict lifting explicitly. ENCLU and GETSEC decode
+to pending state, which cannot enter MedIR or either emitter until the CFG
+proves a supported leaf. Dynamic, transferring and unknown leaves remain
+explicitly unsupported. Legacy
 AMX value-form intrinsics retain their LLVM guard: an arbitrary 64-byte config
 and 1024-byte tile SSA value cannot be treated as the ambient CPU bank. Decoded
 AMX instructions now use the separate architectural-bank contract below. An
@@ -183,10 +186,10 @@ incomplete intermediate batch.
    with separate expectations for decoding, strict lifting and each emitter.
    Include positive and negative forms for widths, register banks, masks,
    address sizes, segments and privilege-sensitive operations.
-2. Integrate the native bounded ENCLU and GETSEC APIs below into NeverD's
-   shared state contracts, including leaf proofs, exact register dependencies
-   and incoming flag preservation. Their transferring leaves remain part of
-   the complete-state continuation work below.
+2. Extend instruction coverage without weakening the bounded ENCLU/GETSEC
+   proof or inventing successful hardware execution. The native state
+   integration below is implemented; selectors with unknown natural-register
+   high bits and transferring leaves still require additional contracts.
 3. Introduce a versioned complete-machine-state boundary and explicit
    continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
@@ -583,7 +586,8 @@ installed-header probes pass; the overload audit has zero mismatches. Only
 ENCLU's implicit register uses/defs change in the plugin schema, retaining all
 18,495 opcode identities. This does not qualify successful enclave execution,
 incoming flag preservation, AEX or nonlocal continuations. NeverD's strict
-lifter still rejects ENCLU until those selected-leaf semantics are integrated.
+lifter rejected ENCLU at that stage. The later bounded state integration
+below now admits proven returning leaves.
 
 SGX qualification passes 1,344 full-LLVM checks and 784 each for NeverC and
 the bridge, covering every register/status output, dead/repeated operations,
@@ -672,8 +676,8 @@ Frontend and backend validation share `X86SmxIntrinsics.h`, reject code16 and
 wrong word sizes, and do not require the unrelated SGX feature. Native
 processor, CR4.SMXE, privilege, chipset and measured-environment checks remain
 inside GETSEC. This follows [SDM 093 Volume 2D](https://cdrdv2.intel.com/v1/dl/getContent/671143),
-chapter 7. NeverD still rejects GETSEC until its explicit state and leaf-proof
-contract is integrated.
+chapter 7. NeverD rejected GETSEC at that stage; the later bounded state
+integration below supplies its explicit state and CFG leaf proof.
 
 GETSEC qualification passes 608 full-LLVM checks and 304 checks on each NeverC
 route, plus 16 real CPL3 boundaries per C route. It covers all four leaves,
@@ -1477,7 +1481,59 @@ unqualified. The compiler merge also retains identical machine code in all
 passing. `--keep` records per-leaf physical outcomes in
 `native-observations.json`.
 
-NeverD's incoming CFG leaf proof and leaf-specific register dependencies are
-still required before admitting ENCLU or GETSEC. These normal-completion APIs
-do not transport AEX, VM exits or nonlocal machine continuations. The final
-LLVM release, production pin and LLVM submodule update remain pending.
+The NeverD integration below supplies the incoming CFG leaf proof and
+leaf-specific register dependencies. These normal-completion APIs do not
+transport AEX, VM exits or nonlocal machine continuations. The final LLVM
+release, production pin and LLVM submodule update remain pending.
+
+
+## NeverD bounded SGX/SMX state integration
+
+NeverD now admits ENCLU leaves 0, 1 and 5..11, and GETSEC leaves 0 and 6..8,
+when the final CFG proves the complete natural-width AX value. The shared
+contract owns input dependencies, register writes, arithmetic flags and
+mode/shape validation. ENCLU's preserved registers and flags keep their
+original SSA values. GETSEC PARAMETERS retains the old BX/CX values needed
+by its conditional writes. EVERIFYREPORT2 captures actual native flags with
+the previous flags as input because SDM 093's pseudocode and Flags Affected
+paragraph disagree. A dead flag result does not create an otherwise unused
+entry flag dependency; this rule belongs to MedIR liveness.
+
+The decoder retains explicit pending state, including all potentially changed
+registers. A bounded byte-fact analysis meets every predecessor, resets
+instruction-local temporaries and refuses address-derived selectors. Calls,
+independent entries and exception entries supply unknown incoming state.
+Partial register writes retain their unaffected bytes. Rebuilding the CFG
+starts from the pending decoder records, so another discovered edge can revoke
+a proof. Only the final graph publishes unresolved leaves as unsupported;
+no-return screening also refuses to guess their control effects. Budget
+exhaustion leaves the operation pending. Knowing EAX alone is insufficient in
+x64 when the upper AX bytes remain unknown: the published native API requires
+the whole AX operand to be constant.
+
+LLVM output selects the real `llvm.x86.{enclu,getsec}.bounded.state{,32}`
+interface when available. An older SDK uses a strictly identified, indivisible
+assembly window with explicit EFLAGS and memory effects. HighC and LLVM-to-C
+share one renderer and validate complete types, selectors, effects and
+auxiliary results. NeverC's capability macro selects its native builtin;
+other C compilers use the owned assembly. SGX and SAHF requirements compose
+with the existing AMX/SGX/REP function attributes.
+
+Qualification covers both SDK configurations: 156 complete pipeline fixtures
+per configuration, plus 182 exported IR modules per configuration including
+complete-state wrappers. All 182 modules from the new SDK use native calls.
+The independent NeverC oracle and `scripts/verify_x86_bounded_leaf.py` pass
+678,912 controlled register/flag/ABI checks and 89,856 real Linux CPL3 boundary
+comparisons. These include i386, SysV x64 and Win64, reserved flag inputs,
+Clang/GCC/NeverC source output, LLVM IR and production objects. NeverC's source
+routes are additionally checked to contain the native intrinsic and no inline
+assembly. Another 1,872 C compilations cover complete ELF/COFF/Mach-O pipeline
+fixtures at O0/O2. The SDKs produce identical complete-state C wrappers; the
+60 differing pipeline C files are recompiled in the new SDK matrix.
+
+Every physical observation on this host was a fault. Controlled completions
+qualify transport, not successful enclave or SMX semantics. These ordinary
+completion values are not a complete guest exception context and do not
+implement AEX, VM exits, enclave entry/exit/resume, measured-environment
+transitions or other machine continuations. Release and production pinning
+remain deferred until the remaining instruction work is complete.

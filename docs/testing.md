@@ -2073,10 +2073,10 @@ python tools/neverd-gui/tests/run_wayland_docking.py --scale 1.5 \
 The Wayland runner requires GNOME Shell and creates a private headless desktop
 and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
 mouse events cannot authorize Wayland drag-and-drop. `customFloatingMoveAndResize`
-checks moving the floating window through its caption icon and resizing its
+checks moving the floating window through its blank caption and resizing its
 drawn edges. Unlocking enables caption and tab docking drags; a locked caption
-moves the window on the desktop. On Wayland the icon also starts a compositor
-move while unlocked. No system caption is added.
+moves the window on the desktop. Pane names and icons remain in the tabs;
+the floating caption contains only window controls. No system caption is added.
 While a whole floating window is dragged, its native surface is minimized so
 it cannot obscure the target. Cancelled drags must restore its native position,
 size and window state, and accept another mouse click. No input is sent
@@ -2104,6 +2104,12 @@ list, triangle clicks, unchanged analysis geometry, single-click navigation in
 both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
 away do not toggle the sidebar. The normal Functions window keeps its own filter;
 reentering focus mode starts folded in both themes.
+The right edge resizes the sidebar and its function-name column, keeps the
+analysis panes in place, clamps to the workspace, and retains the width when
+folded and reopened. Pointer drags and keyboard resizing exercise this in both
+themes. Closing the focus workspace through its caption or a desktop close
+request restores the same layout as the F sequence, including Output and its
+retained text.
 `focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
 one second apart, interruption by another key or focus change, timeout,
 auto-repeat, ordinary text input, reopening a closed assembly pane, and
@@ -12302,3 +12308,35 @@ ctest --test-dir build-release --build-config Release --output-on-failure \
 
 The format/architecture matrix uses shared image models; it is not native
 execution qualification for every listed architecture or host platform.
+
+
+### Bounded ENCLU/GETSEC state
+
+`NeverDX86BoundedLeafTests` checks both modes, CFG joins/loops/partial writes,
+independent and exception entries, malformed inputs and both source routes.
+It compiles 156 complete pipeline fixtures across ELF, COFF and Mach-O.
+Set `NEVERD_BOUNDED_LEAF_EXPORT_DIR` to export complete-state C/IR/object
+wrappers and pipeline C fixtures for independent qualification:
+
+```sh
+cmake --build build --target NeverDX86BoundedLeafTests
+NEVERD_BOUNDED_LEAF_EXPORT_DIR="$PWD/build/bounded-exports" \
+  build/bin/NeverDX86BoundedLeafTests
+python scripts/verify_x86_bounded_leaf.py \
+  --exports build/bounded-exports \
+  --oracle /path/to/NeverC/tests/verify-sgx-supervisor-completion.py \
+  --route high --compiler clang --bits 64 --report build/bounded-high.json
+```
+
+Use `--route llvm` for LLVM-to-C, `--route ir --llc /path/to/llc` for the
+exported LLVM IR, `--route object` for NeverD's production objects and
+`--route pipeline` to cross-compile the full C fixtures. `--neverc` additionally
+requires native builtin IR without inline asm. `--bits 32` runs the i386
+controlled checks; `--abi win64` tests Windows register preservation without
+executing a Windows binary on Linux. The script needs Capstone, LIEF, Unicorn
+and a NeverC checkout containing the independent raw-opcode signal-context
+fixtures. Linux x64 physical outcomes are recorded separately from controlled
+completions; fault-only observations do not qualify successful enclave/SMX
+execution. New-SDK IR must use the native state intrinsics, while the pinned
+older SDK exercises the owned assembly path. Keep LLVM builds separate from
+NeverD native-profile tests so linked compiler tools do not change mid-run.

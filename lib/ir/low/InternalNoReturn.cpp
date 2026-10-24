@@ -197,7 +197,14 @@ InternalNoReturnIndex::screenedTransfers(va_t Target) const {
           return false;
         }
         for (const LowOp &Op : Ops) {
-          if (Op.Opcode == NdOp::INDIR_BR) {
+          if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+              Op.Inputs[0].isConst() &&
+              isX86BoundedLeafPending(
+                  static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
+            // The screen has no incoming-register proof. A pending ENCLU or
+            // GETSEC may still be a nonlocal machine transition.
+            Unknown = true;
+          } else if (Op.Opcode == NdOp::INDIR_BR) {
             Unknown = true;
           } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
             if (Op.NumInputs == 0 || !Op.Inputs[0].isConst()) {
