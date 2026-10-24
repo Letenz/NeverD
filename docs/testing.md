@@ -1803,6 +1803,11 @@ existing file. The same `NEVERD_SHORTCUT_CAPTURES` directory captures these
 dialogs and windows. Repeat with the native Qt platform for compositor behavior;
 offscreen checks alone do not exercise native dragging or window stacking.
 
+`generatedViewsStayClosedAfterReopening` saves docked and floating pseudocode,
+LLVM C and every IR view, restarts from the saved desktop, reopens the binary
+and a packed database, and switches projects. Generated windows must stay
+closed until explicitly requested again, then display the selected function.
+
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
 unwind coverage, cached and uncached selections, actual split-chunk ownership,
 and rejection of truncated instructions. `SafetyReport.PipelineCoverageRejectsPartialFunctionLifts`

@@ -186,8 +186,9 @@ conditional (green/red) and unconditional edges routed around blocks; panning
 and zooming are local, and text is dropped at low zoom. The graph overview
 shows the whole function and the visible area.
 
-Opening a file or database starts with disassembly and does not generate
-pseudocode, including when a saved desktop had it open. **F5** or **Tab** opens
+Opening a file or database starts with disassembly and keeps pseudocode and
+IR windows closed, including when a saved desktop had them open. Generate the
+desired representation to reopen its window. **F5** or **Tab** opens
 Pseudocode on the right of disassembly. The cursors follow each other, as
 Hex-Rays' synchronized views do: a click or arrow key on a code row mapped to
 an instruction moves the disassembly cursor there, keeping the focus in the

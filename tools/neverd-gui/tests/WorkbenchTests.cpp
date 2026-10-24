@@ -10579,6 +10579,116 @@ private slots:
                           QStringLiteral("renamed mark")}));
   }
 
+  void generatedViewsStayClosedAfterReopening_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::addColumn<int>("action");
+    QTest::addColumn<bool>("floating");
+    for (const auto &[name, command] :
+         {std::pair{"source", ActionId::ViewPseudocode},
+          std::pair{"llvmc", ActionId::ViewLLVMC},
+          std::pair{"low", ActionId::ViewLowIR},
+          std::pair{"med", ActionId::ViewMedIR},
+          std::pair{"high", ActionId::ViewHighIR},
+          std::pair{"llvm", ActionId::ViewLLVMIR}})
+      for (const bool floating : {false, true})
+        QTest::newRow((QByteArray(name) + (floating ? "-floating" : "-docked"))
+                          .constData())
+            << QString::fromLatin1(name) << int(command) << floating;
+  }
+
+  void generatedViewsStayClosedAfterReopening() {
+    QFETCH(QString, representation);
+    QFETCH(int, action);
+    QFETCH(bool, floating);
+    QTemporaryDir directory;
+    LoadDialogAcceptor loads;
+    const auto path = writeFixture(directory, "restore-generated.bin");
+    const auto database = directory.filePath("generated.nddb");
+    const auto layout = directory.filePath("desktop.json");
+    const auto command = ActionId(action);
+    const Address function = Base + 0x140;
+    const auto viewsClosed = [] {
+      // Floating docks need not be QObject children of the main window.
+      bool found = false;
+      for (auto *widget : QApplication::allWidgets())
+        if (auto *view = qobject_cast<CodeView *>(widget)) {
+          found = true;
+          if (view->isVisible() || view->text()->function() ||
+              view->text()->loading())
+            return false;
+        }
+      return found;
+    };
+    {
+      Workbench bench;
+      bench.window->setLayoutPath(layout);
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.window->disassembly()->navigate(function);
+      QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                   std::optional<Address>(function));
+      QTRY_VERIFY(ListingViewTestAccess::settled(
+          *bench.window->disassembly()->listing()));
+      bench.action(command)->trigger();
+      auto *view = bench.codeView(representation);
+      QVERIFY(view);
+      QTRY_VERIFY(!view->text()->loading() &&
+                  !view->text()->allText().isEmpty());
+      auto *dock = bench.dockFor(view);
+      QVERIFY(dock);
+      if (floating)
+        dock->setFloating(true);
+      QTRY_VERIFY(view->isVisible());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.packDatabase(database);
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+      QVERIFY(bench.window->close());
+    }
+    QVERIFY(QFileInfo::exists(layout));
+    {
+      // Restart without a file first, then restore the binary's own desktop.
+      Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+      bench.window->setLayoutPath(layout);
+      bench.window->initializeLayout();
+      bench.window->show();
+      QTRY_VERIFY(viewsClosed());
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QTRY_VERIFY(viewsClosed());
+      QTRY_VERIFY(ListingViewTestAccess::settled(
+          *bench.window->disassembly()->listing()));
+      bench.action(command)->trigger();
+      auto *view = bench.codeView(representation);
+      QVERIFY(view);
+      QTRY_VERIFY(view->isVisible() && !view->text()->loading() &&
+                  !view->text()->allText().isEmpty());
+      QCOMPARE(view->text()->function(), std::optional<Address>(function));
+      // Switching projects also closes the old generated view.
+      const auto other = writeFixture(directory, "next-generated.bin");
+      bench.window->openFile(other);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded() &&
+                                   bench.session.filePath() == other,
+                               OpenTimeoutMs);
+      QTRY_VERIFY(viewsClosed());
+    }
+    {
+      // A packed database can restore a different desktop after startup.
+      Workbench bench;
+      bench.window->openFile(database);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QTRY_VERIFY(viewsClosed());
+      QTRY_VERIFY(ListingViewTestAccess::settled(
+          *bench.window->disassembly()->listing()));
+      bench.action(command)->trigger();
+      auto *view = bench.codeView(representation);
+      QVERIFY(view);
+      QTRY_VERIFY(view->isVisible() && !view->text()->loading() &&
+                  !view->text()->allText().isEmpty());
+      QCOMPARE(view->text()->function(), std::optional<Address>(function));
+    }
+  }
+
   void databaseCarriesTheProject() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("project.bin"));

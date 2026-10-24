@@ -891,9 +891,8 @@ void MainWindow::initializeLayout() {
   if (!QFile::exists(layoutPath()) ||
       !KDDockWidgets::LayoutSaver().restoreFromFile(layoutPath()))
     applyDefaultLayout();
-  // A saved arrangement must not start a decompile while opening a file.
-  if (auto *dock = docks_.value(PseudocodeDock))
-    dock->forceClose();
+  // Generated views reopen only through an explicit analysis command.
+  closeCodeDocks();
 }
 
 void MainWindow::applyDefaultLayout() {
@@ -987,19 +986,15 @@ void MainWindow::connectSession() {
     pseudocodeAfterJump_.reset();
     disassembly_ = primaryDisassembly_;
     overview_->setGraph(disassembly_->graph());
-    if (auto *dock = docks_.value(PseudocodeDock))
-      dock->forceClose();
-    if (pseudocode_)
-      pseudocode_->text()->clear();
+    closeCodeDocks();
     space_.clear();
     disassembly_->setGraphMode(false);
     for (auto *chooser : std::as_const(choosers_))
       chooser->model().reload();
     restoreProjectState();
     // A database also carries a desktop. Restore its arrangement, but keep
-    // source analysis explicit for each newly opened project.
-    if (auto *dock = docks_.value(PseudocodeDock))
-      dock->forceClose();
+    // generated code views closed for each newly opened project.
+    closeCodeDocks();
     updateTitle();
     updateActions();
     disassembly_->focusContent();
@@ -4935,6 +4930,14 @@ void MainWindow::resetDesktop() {
   for (auto *dock : std::as_const(docks_))
     dock->forceClose();
   applyDefaultLayout();
+}
+
+void MainWindow::closeCodeDocks() {
+  for (const char *id : {PseudocodeDock, RepresentationDock})
+    if (auto *dock = docks_.value(id)) {
+      dock->forceClose();
+      static_cast<CodeView *>(dock->widget())->text()->clear();
+    }
 }
 
 void MainWindow::cycleWindows(bool forward) {

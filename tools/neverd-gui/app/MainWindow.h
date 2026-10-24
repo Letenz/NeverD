@@ -302,6 +302,7 @@ private:
   void saveDesktop();
   void restoreDesktop();
   void resetDesktop();
+  void closeCodeDocks();
   void cycleWindows(bool forward);
   void fillPlaceholder(QMenu *menu, const QString &name);
   void contextMenu(const QPoint &globalPosition);
