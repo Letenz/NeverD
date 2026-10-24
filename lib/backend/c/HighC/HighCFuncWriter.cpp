@@ -20,6 +20,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/HighC/AArch64SVEVectorState.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
@@ -34,6 +35,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <algorithm>
 #include <cctype>
@@ -53,6 +55,9 @@
 namespace neverd {
 
 namespace {
+
+#define NEVERD_A64_SVE_VECTOR_C_TYPE(Name, Text) constexpr char Name[] = Text;
+#include "neverd/backend/c/render/AArch64SVEVectorC.def"
 
 uint64_t checkedStackAdd(uint64_t Left, uint64_t Right) {
   if (Left > std::numeric_limits<uint64_t>::max() - Right)
@@ -597,6 +602,21 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
 
   std::map<std::string, TypeRef> UsedVars;
   std::map<std::string, std::string> ExplicitDeclarations;
+  const auto VectorNames =
+      aarch64SVEVectorLocalNames(Func, Opts.TheArch, VarFn);
+  std::set<std::string> CanonicalVectorNames;
+  auto DeclareVector = [&](const std::string &Name) {
+    if (!Name.empty()) {
+      CanonicalVectorNames.insert(Name);
+      ExplicitDeclarations[Name] =
+          llvm::formatv(kVectorDeclaration, Name).str();
+    }
+  };
+  for (const auto &Name : VectorNames) {
+    DeclareVector(Name);
+    DeclareVector(copyForwardName(Name));
+    DeclareVector(printedForwardedVar(Name, 0));
+  }
   std::set<std::string> VisibleAssigned;
   std::function<void(const std::vector<HighStmt> &, bool)> CollectPrinted;
   CollectPrinted = [&](const std::vector<HighStmt> &Stmts, bool InCleanup) {
@@ -618,20 +638,6 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
           } else if (S.Val->Kind == ExprKind::Call &&
                      S.Val->IntrinsicId == Intrinsic::A64_SvePtrue) {
             ExplicitDeclarations[Name] = "svbool_t " + Name;
-          } else if (S.Val->Kind == ExprKind::Call &&
-                     (S.Val->IntrinsicId == Intrinsic::A64_SveDup ||
-                      S.Val->IntrinsicId == Intrinsic::A64_SveIndex)) {
-            uint64_t ElemBytes = 1;
-            size_t ElemIndex =
-                S.Val->IntrinsicId == Intrinsic::A64_SveIndex ? 2 : 1;
-            if (S.Val->Operands.size() > ElemIndex &&
-                S.Val->Operands[ElemIndex]->Kind == ExprKind::Const)
-              ElemBytes = S.Val->Operands[ElemIndex]->ConstVal;
-            const std::string Type = ElemBytes == 2   ? "svuint16_t"
-                                     : ElemBytes == 4 ? "svuint32_t"
-                                     : ElemBytes == 8 ? "svuint64_t"
-                                                      : "svuint8_t";
-            ExplicitDeclarations[Name] = Type + " " + Name;
           }
         }
         const HighExpr *Call =
@@ -789,7 +795,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     });
     for (const auto &[Name, Ty] : AllVars)
       if (!Name.empty() && !UsedVars.count(Name))
-        DeferredDecls.emplace(Name, DeferredDecl{Ty, {}});
+        DeferredDecls.emplace(
+            Name, DeferredDecl{Ty, ExplicitDeclarations.count(Name)
+                                       ? ExplicitDeclarations.at(Name)
+                                       : std::string()});
   }
 
   std::set<std::string> DeclaredNames(ParamNames);
@@ -824,7 +833,8 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     auto ExplicitTy = ExplicitDeclarations.find(Name);
     if (ExplicitTy == ExplicitDeclarations.end())
       ExplicitTy = ExplicitDeclarations.find(Local.Name);
-    if (TypeRef Stated = statedVariableTypeNamed(Name)) {
+    if (TypeRef Stated = statedVariableTypeNamed(Name);
+        Stated && !CanonicalVectorNames.count(Name)) {
       Ty = Stated;
       ExplicitTy = ExplicitDeclarations.end();
       DeclaredCTypes[Name] = Stated;
@@ -871,7 +881,8 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         (ProjectFrameAliasesIntoStorage && FrameAliases.count(Name) &&
          !VisibleAssigned.count(Name)))
       continue;
-    if (TypeRef Stated = statedVariableTypeNamed(Name)) {
+    if (TypeRef Stated = statedVariableTypeNamed(Name);
+        Stated && !CanonicalVectorNames.count(Name)) {
       Ty = Stated;
       ExplicitDeclarations.erase(Name);
     }

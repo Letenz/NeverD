@@ -140,8 +140,7 @@ after authentication with the matching key and entry-SP offset (or zero).
 Clang's explicit authentication-failure branch retains the setup of its sole
 continuing authenticated tail. Source C names an unassigned entry LR using
 `__builtin_return_address(0)`, as the LLVM projection already does.
-LDRAA/LDRAB authenticate the base before adding the offset, loading, and
-applying writeback. `AArch64PAuthLR.def` owns explicit FEAT_PAuth_LR encodings
+`AArch64PAuthLR.def` owns explicit FEAT_PAuth_LR encodings
 and their three-input operations. Fixed-register, original-PC, backward-PC-relative and
 register-modifier forms retain both diversifiers. Authentication of a return
 target remains observable without writing LR, including a poison check before
@@ -178,6 +177,20 @@ its key or modifier as a code pointer or bypass authentication to name a callee.
 PACGA retains two independent 64-bit inputs and its generic signing operation.
 Both C routes emit the real instruction with an explicit output constraint;
 they do not depend on a nonexistent ACLE builtin or an unresolved LLVM helper.
+
+`LDRAA`/`LDRAB` retain a combined authentication-and-load operation. The
+original encoding owns the key, signed offset, addressing mode and SP origin.
+`AArch64PAuthLoad.def` owns the shared shape and fixed-register machine contract;
+the low result half contains the loaded value and the high half the outgoing
+base, unchanged without writeback. LLVM and both C projections execute one
+original-family instruction with a memory clobber. In particular, standalone
+`AUTDA`/`AUTDB` followed by a load is not equivalent when `FEAT_FPAC` is enabled
+without `FEAT_FPACCOMBINE`. Dead results still retain memory and failure effects.
+SP-origin forms remain representable for analysis but execution projections
+reject them: replacing SP with a GPR would lose `CheckSPAlignment` and the
+original memory-tag-checking contract. Constrained-unpredictable writeback
+register overlap is rejected. This does not grant an ABI/native replacement
+proof. The operation follows Arm's [LDRA and Auth pseudocode](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
 Scalar FEAT_CPA `ADDPT`, `SUBPT`, `MADDPT` and `MSUBPT` retain checked-pointer
 operations rather than ordinary integer arithmetic. `AArch64CPA.def` owns
@@ -264,6 +277,30 @@ architectural PTRUE patterns are retained, including reserved empty patterns.
 MOVPRFX and flag-setting PTRUES remain unsupported until their paired-instruction
 and NZCV contracts are modelled. This does not establish V/Z aliasing, an SVE
 call ABI or the six SVE checked-pointer instruction forms.
+
+`AArch64SVEVector.def` owns typed DUP/INDEX/LASTB/ST1/STNT1 shapes. HighC
+stores local Z values as `svuint8_t` and reinterprets them at typed operation
+boundaries; LLVM retains its integer backing with scalable typed views.
+IRMed's `validateAArch64SVEState` owns bounded, complete local Z/P definition
+and COPY/PHI closure for both Med-to-High and LLVM emission. It checks the
+executed CFG and every incoming definition before a consumer can use state.
+Validated PAuth operations reuse their explicit scalar output contract and
+preserve local Z/P state; unresolved PACM operations remain inadmissible.
+Unknown inputs, opaque calls, scalable ABI escape and overlapping V/Z use
+remain rejected. Standalone HighIR retains its own representation checks;
+LLVM-to-C rejects scalable carriers explicitly. These local value proofs do
+not establish a scalable calling convention or physical register aliasing.
+Serial and sharded LLVM pipelines both return semantic refusals through the
+pipeline result without publishing a partial module or source map.
+
+Plain ERET retains its legacy intrinsic identity for stored IR compatibility,
+but all lifting and emission entry points reject it until an ELR/SPSR/PSTATE
+contract is available. It cannot become an ordinary return or a zero-valued
+unimplemented intrinsic. Authenticated exception returns remain unsupported.
+
+Validated combined authenticated loads read memory and update only their
+explicit result pair. ABI recovery preserves earlier arguments in other
+registers across them; malformed load shapes remain recovery barriers.
 
 `macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
 placement validation, sorted disjoint mappings, and the cache image catalogue.

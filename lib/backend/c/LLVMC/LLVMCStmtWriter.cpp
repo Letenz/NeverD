@@ -5028,6 +5028,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto AuthenticatedLoad = renderAArch64PAuthLoadCall(
+          Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << AuthenticatedLoad->Code;
+    return true;
+  }
   if (auto Descriptor = renderX86DescriptorStateCall(
           Opts.TheArch, Opts.Format, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);

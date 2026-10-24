@@ -14,7 +14,9 @@
 #include "AArch64LiftDetail.h"
 
 #include "neverd/decode/AArch64NativeDecode.h"
+#include "neverd/ir/intrinsics/AArch64PAuthLoad.h"
 #include "neverd/lift/AArch64Lifter.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include <cstring>
 
@@ -238,28 +240,29 @@ bool liftLdStVariant(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   }
   case AARCH64_INS_LDRAA:
   case AARCH64_INS_LDRAB: {
-    if (ARM64.op_count != 2 || ARM64.operands[0].type != AARCH64_OP_REG ||
-        ARM64.operands[1].type != AARCH64_OP_MEM ||
-        ARM64.operands[1].mem.index != AARCH64_REG_INVALID ||
-        (Insn->detail->writeback &&
-         ARM64.operands[0].reg == ARM64.operands[1].mem.base))
+    if (Insn->size != kPAuthLoadWordBytes)
       return false;
-    NdVar Dst = L.operandWrite(ARM64.operands[0]);
-    const auto &Mem = ARM64.operands[1];
-    auto BaseInfo = mapCapstoneReg(static_cast<aarch64_reg>(Mem.mem.base));
-    NdVar Base = NdVar::reg(BaseInfo.Offset, 8);
-    NdVar Authenticated = S.makeTemp(8);
-    // LDRA* authenticates the base (DA/DB, zero modifier), then applies the
-    // signed byte offset; it does not authenticate the value loaded there.
-    S.emitIntrinsic(Insn->id == AARCH64_INS_LDRAA ? Intrinsic::Autda
-                                                  : Intrinsic::Autdb,
-                    Authenticated, {Base, NdVar::cst(0, 8)});
-    NdVar EA = S.makeTemp(8);
-    S.emit(NdOp::INT_ADD, EA,
-           {Authenticated, NdVar::cst(static_cast<uint64_t>(Mem.mem.disp), 8)});
-    S.emit(NdOp::LOAD, Dst, {EA});
-    if (Insn->detail->writeback)
-      S.emit(NdOp::COPY, Base, {EA});
+    const auto Instruction =
+        aarch64PAuthLoadInstruction(readLE<uint32_t>(Insn->bytes));
+    if (!Instruction)
+      return false;
+    // Preserve the original word, including SP provenance. Replacing this
+    // with AUT + LOAD changes architectural failure under FEAT_FPAC.
+    const auto BaseReg = a64native::gprSP(Instruction->base(), true);
+    const auto Destination = a64native::gpr(Instruction->destination(), true);
+    NdVar Base =
+        NdVar::reg(mapCapstoneReg(BaseReg).Offset, kPAuthLoadPointerBytes);
+    NdVar Pair = S.makeTemp(kPAuthLoadPairBytes);
+    S.emitIntrinsic(Instruction->Id, Pair,
+                    {Base, NdVar::cst(Instruction->Word, kPAuthLoadWordBytes)});
+    if (Instruction->destination() != kPAuthLoadRegisterMask)
+      S.emit(NdOp::SUBBYTES,
+             NdVar::reg(mapCapstoneReg(Destination).Offset,
+                        kPAuthLoadPointerBytes),
+             {Pair, NdVar::cst(0, kPAuthLoadWordBytes)});
+    if (Instruction->writeback())
+      S.emit(NdOp::SUBBYTES, Base,
+             {Pair, NdVar::cst(kPAuthLoadPointerBytes, kPAuthLoadWordBytes)});
     break;
   }
   case AARCH64_INS_LDIAPP: {

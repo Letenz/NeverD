@@ -41,6 +41,12 @@ unavailable execution is an explicit skip. Unresolved terminal prefixes and
 implicit-entry joins cannot escape into ordinary source. Frame fixtures reject
 mixed implicit/explicit signing recipes and preserve unrelated tail-call proofs
 across function-lifetime mode temporaries.
+`AArch64ExceptionReturnSemantics` rejects plain ERET in both decoder routes
+and strict/permissive lifting. Handwritten LowIR, MedIR and HighIR cannot
+bypass the ELR/SPSR/PSTATE requirement through void/value, masked-body or
+cross-target emission. Ordinary RET remains supported. Authenticated exception
+returns retain their existing explicit refusal; this is not an exception-level
+runtime implementation.
 Malformed-input checks reject invalid scalar kinds, mode widths and operand
 counts in every PACM operation. Pending prefixes require their exact LowIR
 shape and remain inadmissible in MedIR and native output.
@@ -53,7 +59,10 @@ optimized LLVM output. Its ordinary arm64 process must produce a nonzero
 generic signature. PAC/AUT can be disabled in that process despite hardware
 feature discovery, so it cannot qualify pointer authentication.
 `NativeKeysAgreeWithBothCProjections` instead compiles an arm64e execution
-probe and explicitly skips if the host refuses it. On an eligible host it
+probe and explicitly skips unless all four signing keys change pointers and
+PACGA produces a nonzero signature in that process. A requested target triple
+or a runnable empty main cannot establish this: a linker may produce ordinary
+arm64 with inactive keys. On an eligible host it
 compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
 modifiers; each key must change at least one pointer, excluding a NOP profile.
 Other architectures skip the native checks.
@@ -173,6 +182,30 @@ canonical predicate conversions across element widths, LLVM verification and
 object compilation, HighC projection and malformed LowIR/MedIR refusal.
 `NeverDBinaryDiffSDKTests` retains incomplete analysis for unmodelled MOVPRFX.
 These tests do not execute SVE hardware or qualify scalable calling conventions.
+The same target's `AArch64SVEVector` cases exercise all producer/consumer
+element widths, canonical HighC Z storage, COPY and real diamond/loop PHIs,
+typed LLVM boundaries and O0/O2 C compilation. Shared MedIR state admission
+rejects undefined, late or dead producers, invalid CFG/PHI edges, exhausted
+budgets, scalable ABI escape, opaque calls and unmodelled V/Z overlap through
+both Med-to-High and masked/unmasked LLVM emission. Run the existing
+`AArch64_SVEState`, `AArch64_SVEStore`, `AArch64_SVELength` and ordinary NEON/FP
+cases in `NeverDLiftTests` after changing these shared boundaries.
+The local-state suite also checks scalar PAuth, explicit PAuth_LR and resolved
+PACM operations, rejecting malformed shapes and unresolved PACM. A raw
+PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
+state must return a normal error for both one-function serial and eight-function
+sharded LLVM emission, with and without optimization.
+`AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
+writeback and dead-result retention through a single combined authenticated
+load, with independent emitted-word checks at O0/O2 through LLVM and both C
+routes. Malformed IR and unavailable SP execution contracts fail explicitly.
+HighC also validates supplied authenticated-load expressions before hiding or
+preparing source, rejecting extra outputs, indirect callees, dynamic encodings,
+invalid widths, SP execution and cross-target use without partial C output.
+These object checks do not qualify FPAC/FPACCOMBINE trap behavior on hardware.
+`AArch64_PAuth.CombinedLoadsRetainEarlierCallArguments` checks real LDRAA/LDRAB
+sequences with and without writeback before an imported call, at both LLVM
+optimization settings. The argument set before the load must remain intact.
 `MachONativeInplace.*` and the public-entry cases in `MachOPatchTransaction`
 check raw arm64e/x1 subtype capabilities, absent caller annotations and output
 rollback, with genuine ordinary arm64 writes as positive controls.

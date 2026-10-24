@@ -12,6 +12,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/c/render/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/codegen/CodeGen.h"
@@ -20,6 +21,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/AArch64CPA.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
@@ -47,6 +49,7 @@
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 #include <array>
+#include <climits>
 #include <functional>
 #include <string>
 #include <vector>
@@ -801,23 +804,455 @@ TEST(AArch64PAuthSemantics, BranchesAndReturnsAuthenticateAndTerminate) {
     }
 }
 
-TEST(AArch64PAuthSemantics,
-     AuthenticatedLoadAuthenticatesBaseBeforeOffsetAndWriteback) {
-  for (bool Fast : {false, true}) {
-    const auto Ops = lift(0xf87fec20u, Fast); // ldraa x0, [x1, #-16]!
-    ASSERT_EQ(Ops.size(), 4);
-    expectIntrinsic(Ops[0], Intrinsic::Autda, 2);
-    expectRegister(Ops[0].Inputs[1], a64reg::X1);
-    EXPECT_EQ(Ops[0].Inputs[2].Offset, 0);
-    EXPECT_EQ(Ops[1].Opcode, NdOp::INT_ADD);
-    EXPECT_EQ(Ops[1].Inputs[0], Ops[0].Output);
-    EXPECT_EQ(Ops[1].Inputs[1].Offset, uint64_t(-16));
-    EXPECT_EQ(Ops[2].Opcode, NdOp::LOAD);
-    EXPECT_EQ(Ops[2].Inputs[0], Ops[1].Output);
-    EXPECT_EQ(Ops[3].Opcode, NdOp::COPY);
-    expectRegister(Ops[3].Output, a64reg::X1);
-    EXPECT_EQ(Ops[3].Inputs[0], Ops[1].Output);
+namespace {
+namespace pauth_load_fixture {
+#define NEVERD_PAUTH_LOAD_VALUE(Type, Name, Value)                             \
+  inline constexpr Type Name = Value;
+#define NEVERD_PAUTH_LOAD_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AArch64PAuthLoadFixtures.def"
+
+struct Case {
+  uint32_t Word;
+  Intrinsic Id;
+  unsigned Destination;
+  unsigned Base;
+  int64_t Displacement;
+  bool Writeback;
+  uint32_t Scratch;
+  bool Compile;
+};
+constexpr Case Cases[] = {
+#define NEVERD_PAUTH_LOAD_CASE(Word, Id, Dst, Base, Offset, WB, Scratch,       \
+                               Compile)                                        \
+  {Word, Intrinsic::Id, Dst, Base, Offset, WB, Scratch, Compile},
+#include "AArch64PAuthLoadFixtures.def"
+};
+
+MedFunc function(uint32_t Word, bool Discard = false) {
+  MedFunc Function;
+  Function.Name = kName;
+  Function.Entry = kEntry;
+  Function.ReturnType = NdType::makeInt(kPairBytes, false);
+  MedVar Base;
+  Base.Kind = MedVar::Param;
+  Base.TheArch = Arch::AArch64;
+  Base.Id = 0;
+  Base.RegOff = a64reg::X0;
+  Base.Size = kScalarBytes;
+  Function.Params.push_back(Base);
+  MedOp Load;
+  Load.Opcode = NdOp::INTRINSIC;
+  Load.Output.Kind = MedVar::Temp;
+  Load.Output.TheArch = Arch::AArch64;
+  Load.Output.Id = 1;
+  Load.Output.SSAVer = 1;
+  Load.Output.Size = kPairBytes;
+  Load.addInput(MedVar::makeConst(
+      static_cast<uint64_t>(aarch64PAuthLoadInstruction(Word)->Id),
+      kIdentifierBytes));
+  Load.addInput(Base);
+  Load.addInput(MedVar::makeConst(Word, kWordBytes));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Discard ? MedVar::makeConst(0, kPairBytes) : Load.Output);
+  Function.Blocks.emplace_back();
+  Function.Blocks.front().Id = 0;
+  Function.Blocks.front().StartAddr = kEntry;
+  Function.Blocks.front().Ops = {Load, Return};
+  return Function;
+}
+
+void checkObject(llvm::MemoryBufferRef Buffer, uint32_t Expected) {
+  auto Image = MachOLoader().loadBuffer(Buffer);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  unsigned Count = 0;
+  for (const auto &Segment : Image->Segments)
+    if (Segment.isExecutable())
+      for (size_t Offset = 0; Offset + kWordBytes <= Segment.Data.size();
+           Offset += kWordBytes)
+        Count += readLE<uint32_t>(Segment.Data.data() + Offset) == Expected;
+  EXPECT_EQ(Count, 1);
+}
+
+void checkProjections(uint32_t Word, uint32_t Scratch, bool Discard) {
+  const auto Function = function(Word, Discard);
+  ASSERT_TRUE(verifyMedFunc(Function, kName));
+  for (bool Optimize : {false, true}) {
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    if (Optimize)
+      optimize(*Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    unsigned Count = 0;
+    for (const auto &Block : *Module->getFunction(kName))
+      for (const auto &Insn : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Insn)) {
+          const auto *Asm =
+              llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+          ASSERT_TRUE(Asm);
+          EXPECT_EQ(Asm->getAsmString(), kPAuthLoadAsm);
+          EXPECT_EQ(Asm->getConstraintString(), kPAuthLoadConstraints);
+          EXPECT_NE(Asm->getConstraintString().find(kMemoryClobber),
+                    std::string::npos);
+          EXPECT_TRUE(Asm->hasSideEffects());
+          ASSERT_EQ(Call->arg_size(), kPAuthLoadOperandCount);
+          const auto *Immediate =
+              llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(1));
+          ASSERT_TRUE(Immediate);
+          EXPECT_EQ(Immediate->getZExtValue(), Scratch);
+          ++Count;
+        }
+    EXPECT_EQ(Count, 1);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.Format = BinaryFormat::MachO;
+    for (bool LLVMRoute : {false, true}) {
+      if (!LLVMRoute && Optimize)
+        continue;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      if (LLVMRoute)
+        ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+      else {
+        const auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+        ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
+      }
+      EXPECT_NE(Source.find(kAsmPrefix), std::string::npos) << Source;
+      EXPECT_EQ(Source.find(kUnknown), std::string::npos) << Source;
+      compileArm64eC(Source, [&](llvm::StringRef Path) {
+        const auto Buffer = llvm::MemoryBuffer::getFile(Path);
+        ASSERT_TRUE(bool(Buffer));
+        checkObject((*Buffer)->getMemBufferRef(), Scratch);
+      });
+    }
+    const auto Object =
+        Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
+    ASSERT_TRUE(Object.Success);
+    checkObject(
+        llvm::MemoryBufferRef(llvm::StringRef(reinterpret_cast<const char *>(
+                                                  Object.ObjectData.data()),
+                                              Object.ObjectData.size()),
+                              kObject),
+        Scratch);
   }
+}
+} // namespace pauth_load_fixture
+} // namespace
+
+TEST(AArch64PAuthLoadSemantics,
+     RawWordsRetainCombinedLoadAndCompletedWriteback) {
+  using namespace pauth_load_fixture;
+  for (const auto &Case : Cases)
+    for (bool Fast : {false, true}) {
+      SCOPED_TRACE(Case.Word);
+      const auto Instruction = aarch64PAuthLoadInstruction(Case.Word);
+      ASSERT_TRUE(Instruction);
+      EXPECT_EQ(Instruction->Id, Case.Id);
+      EXPECT_EQ(Instruction->destination(), Case.Destination);
+      EXPECT_EQ(Instruction->base(), Case.Base);
+      EXPECT_EQ(Instruction->displacement(), Case.Displacement);
+      EXPECT_EQ(Instruction->writeback(), Case.Writeback);
+      EXPECT_EQ(Instruction->scratchWord(), Case.Scratch);
+      const auto Ops = lift(Case.Word, Fast);
+      ASSERT_EQ(Ops.size(),
+                1U + (Case.Destination != kZeroRegister) + Case.Writeback);
+      expectIntrinsic(Ops.front(), Case.Id, kPAuthLoadOperandCount);
+      EXPECT_TRUE(lowAArch64PAuthLoadShapeIsValid(Ops.front()));
+      EXPECT_FALSE(lowIntrinsicHasOnlyValueEffects(Ops.front()));
+      EXPECT_FALSE(lowIntrinsicMemoryOperands(Ops.front()).Complete);
+      EXPECT_EQ(Ops.front().Output.Size, kPairBytes);
+      EXPECT_EQ(Ops.front().Inputs[2].Offset, Case.Word);
+      expectRegister(Ops.front().Inputs[1],
+                     Case.Base == kZeroRegister
+                         ? a64reg::SP
+                         : a64reg::X0 + Case.Base * kScalarBytes);
+      if (Case.Destination != kZeroRegister) {
+        EXPECT_EQ(Ops[1].Opcode, NdOp::SUBBYTES);
+        EXPECT_EQ(Ops[1].Inputs[0], Ops.front().Output);
+        EXPECT_EQ(Ops[1].Inputs[1].Offset, 0);
+        expectRegister(Ops[1].Output,
+                       a64reg::X0 + Case.Destination * kScalarBytes);
+      }
+      if (Case.Writeback) {
+        EXPECT_EQ(Ops.back().Opcode, NdOp::SUBBYTES);
+        EXPECT_EQ(Ops.back().Inputs[0], Ops.front().Output);
+        EXPECT_EQ(Ops.back().Inputs[1].Offset, kScalarBytes);
+        EXPECT_EQ(Ops.back().Output, Ops.front().Inputs[1]);
+      }
+      EXPECT_TRUE(isSideeffectIntrinsic(Case.Id));
+    }
+  EXPECT_FALSE(aarch64PAuthLoadInstruction(kOverlap));
+  EXPECT_FALSE(aarch64PAuthLoadInstruction(kInvalidOpcode));
+  EXPECT_FALSE(aarch64PAuthLoadInstruction(kOversizedWord));
+}
+
+TEST(AArch64PAuthLoadSemantics, LLVMAndCEmitOneCombinedInstruction) {
+  using namespace pauth_load_fixture;
+  for (const auto &Case : Cases)
+    if (Case.Compile)
+      checkProjections(Case.Word, Case.Scratch, false);
+}
+
+TEST(AArch64PAuthLoadSemantics, ValidLoadsPreserveUnwrittenCallArguments) {
+  using namespace pauth_load_fixture;
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    const auto Function = function(Case.Word);
+    const auto &Load = Function.Blocks.front().Ops.front();
+    ASSERT_TRUE(aarch64PAuthLoadMedShapeIsValid(Load));
+    EXPECT_FALSE(endsCallArgumentSetup(Load));
+  }
+}
+
+TEST(AArch64PAuthLoadSemantics, DiscardedResultsRetainMemoryAndPACFailure) {
+  using namespace pauth_load_fixture;
+  checkProjections(kDeadA, kDeadScratchA, true);
+  checkProjections(kDeadB, kDeadScratchB, true);
+}
+
+TEST(AArch64PAuthLoadSemantics, SPProvenanceCannotBecomeGPRExecution) {
+  using namespace pauth_load_fixture;
+  for (const auto &Case : Cases) {
+    if (Case.Base != kZeroRegister)
+      continue;
+    const auto Function = function(Case.Word);
+    EXPECT_TRUE(
+        aarch64PAuthLoadMedShapeIsValid(Function.Blocks.front().Ops.front()));
+    llvm::LLVMContext Context;
+    EXPECT_THROW(
+        MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64),
+        std::runtime_error);
+    bool HasIntrinsics = false;
+    EXPECT_THROW(renderARMIntrinsicCall(
+                     Case.Id, {kBaseExpression, std::to_string(Case.Word)},
+                     kPairBytes, HasIntrinsics, {kScalarBytes, kWordBytes}),
+                 std::invalid_argument);
+  }
+}
+
+TEST(AArch64PAuthLoadSemantics, MalformedContractsFailBeforeEmission) {
+  using namespace pauth_load_fixture;
+  const auto Function = function(kFirst);
+  const auto Ops = lift(kFirst, false);
+  enum class Mutation {
+    WrappedId,
+    Width,
+    WordWidth,
+    DynamicWord,
+    InvalidWord,
+    WrongKey,
+    ExtraInput,
+    ExtraOutput,
+    BaseKind,
+    Ordering,
+    AddressSpace
+  };
+  for (const auto Change :
+       {Mutation::WrappedId, Mutation::Width, Mutation::WordWidth,
+        Mutation::DynamicWord, Mutation::InvalidWord, Mutation::WrongKey,
+        Mutation::ExtraInput, Mutation::ExtraOutput, Mutation::BaseKind,
+        Mutation::Ordering, Mutation::AddressSpace}) {
+    auto Bad = Function;
+    auto Low = Ops.front();
+    auto &Med = Bad.Blocks.front().Ops.front();
+    switch (Change) {
+    case Mutation::WrappedId:
+      Low.Inputs[0].Offset += kWrappedIdIncrement;
+      Med.Inputs[0].ConstVal += kWrappedIdIncrement;
+      break;
+    case Mutation::Width:
+      Low.Output.Size = Med.Output.Size = kScalarBytes;
+      break;
+    case Mutation::WordWidth:
+      Low.Inputs[2].Size = Med.Inputs[2].Size = kScalarBytes;
+      break;
+    case Mutation::DynamicWord:
+      Low.Inputs[2].Space = VnodeSpace::TEMP;
+      Med.Inputs[2].Kind = MedVar::Temp;
+      break;
+    case Mutation::InvalidWord:
+      Low.Inputs[2].Offset = Med.Inputs[2].ConstVal = kInvalidOpcode;
+      break;
+    case Mutation::WrongKey:
+      Low.Inputs[2].Offset = Med.Inputs[2].ConstVal = kDifferentKey;
+      break;
+    case Mutation::ExtraInput:
+      Low.addInput(Low.Inputs[1]);
+      Med.addInput(Med.Inputs[1]);
+      break;
+    case Mutation::ExtraOutput:
+      Med.IntrinsicOutputs.push_back(Med.Output);
+      break;
+    case Mutation::BaseKind:
+      Low.Inputs[1].Space = VnodeSpace::RAM;
+      Med.Inputs[1].Kind = MedVar::Stack;
+      break;
+    case Mutation::Ordering:
+      Low.MemoryOrdering = Med.MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case Mutation::AddressSpace:
+      Low.MemoryAddressSpace = Med.MemoryAddressSpace =
+          NdMemoryAddressSpace::X86FS;
+      break;
+    }
+    if (Change != Mutation::ExtraOutput)
+      EXPECT_FALSE(lowAArch64PAuthLoadShapeIsValid(Low));
+    EXPECT_FALSE(aarch64PAuthLoadMedShapeIsValid(Med));
+    EXPECT_TRUE(endsCallArgumentSetup(Med));
+    EXPECT_FALSE(verifyMedFunc(Bad, kName));
+    llvm::LLVMContext Context;
+    EXPECT_THROW(MedLLVMEmitter().emit({Bad}, Context, kName, Arch::AArch64),
+                 std::runtime_error);
+  }
+}
+
+TEST(AArch64PAuthLoadSemantics, SourceAdaptersRejectMalformedOwnedOperations) {
+  using namespace pauth_load_fixture;
+  const auto Function = function(kFirst);
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
+  ASSERT_TRUE(Module);
+  llvm::CallInst *Call = nullptr;
+  for (auto &Block : *Module->getFunction(kName))
+    for (auto &Insn : Block)
+      if (auto *Candidate = llvm::dyn_cast<llvm::CallInst>(&Insn))
+        if (const auto *Asm =
+                llvm::dyn_cast<llvm::InlineAsm>(Candidate->getCalledOperand());
+            Asm && Asm->getAsmString() == kPAuthLoadAsm)
+          Call = Candidate;
+  ASSERT_TRUE(Call);
+  const std::vector<std::string> Args = {kBaseExpression,
+                                         std::to_string(Cases[0].Scratch)};
+  ASSERT_TRUE(renderAArch64PAuthLoadCall(Arch::AArch64, *Call, kResultName,
+                                         true, Args));
+  EXPECT_THROW(
+      renderAArch64PAuthLoadCall(Arch::X64, *Call, kResultName, true, Args),
+      std::invalid_argument);
+  auto *Original = Call->getArgOperand(1);
+  Call->setArgOperand(
+      1, llvm::ConstantInt::get(Context,
+                                llvm::APInt(kWordBytes * CHAR_BIT, kFirst)));
+  EXPECT_THROW(
+      renderAArch64PAuthLoadCall(Arch::AArch64, *Call, kResultName, true, Args),
+      std::invalid_argument);
+  Call->setArgOperand(1, Original);
+  bool HasIntrinsics = false;
+  for (const auto Widths :
+       {std::vector<uint16_t>{}, std::vector<uint16_t>{kWordBytes, kWordBytes},
+        std::vector<uint16_t>{kScalarBytes, kScalarBytes}})
+    EXPECT_THROW(renderARMIntrinsicCall(Intrinsic::A64_Ldraa, Args, kPairBytes,
+                                        HasIntrinsics, Widths),
+                 std::invalid_argument);
+
+  HighExpr Expression;
+  Expression.Kind = ExprKind::Call;
+  Expression.IntrinsicId = Intrinsic::A64_Ldraa;
+  Expression.Type = NdType::makeInt(kPairBytes, false);
+  auto Base = std::make_shared<HighExpr>();
+  Base->Kind = ExprKind::Var;
+  Base->Type = NdType::makeInt(kScalarBytes, false);
+  auto Word = std::make_shared<HighExpr>();
+  Word->Kind = ExprKind::Const;
+  Word->Type = NdType::makeInt(kWordBytes, false);
+  Word->ConstVal = kFirst;
+  Expression.Operands = {Base, Word};
+  ASSERT_TRUE(aarch64PAuthLoadHighShapeIsValid(Expression));
+  Base->Type = NdType::makeInt(kWordBytes, true);
+  EXPECT_FALSE(aarch64PAuthLoadHighShapeIsValid(Expression));
+  Base->Type = NdType::makeFloat(kScalarBytes);
+  EXPECT_FALSE(aarch64PAuthLoadHighShapeIsValid(Expression));
+  Base->Type = NdType::makeInt(kScalarBytes, false);
+  Word->Kind = ExprKind::Var;
+  EXPECT_FALSE(aarch64PAuthLoadHighShapeIsValid(Expression));
+}
+
+TEST(AArch64PAuthLoadSemantics, HighCRejectsMalformedLoadsBeforeHiding) {
+  using namespace pauth_load_fixture;
+  enum class Mutation {
+    ExtraOutput,
+    IndirectCall,
+    IndirectTarget,
+    NonCall,
+    WrongWidth,
+    DynamicWord,
+    StackBase,
+    CrossArchitecture
+  };
+  for (bool Hidden : {false, true})
+    for (const auto Change :
+         {Mutation::ExtraOutput, Mutation::IndirectCall,
+          Mutation::IndirectTarget, Mutation::NonCall, Mutation::WrongWidth,
+          Mutation::DynamicWord, Mutation::StackBase,
+          Mutation::CrossArchitecture}) {
+      SCOPED_TRACE(static_cast<int>(Change));
+      SCOPED_TRACE(Hidden);
+      HighFunc Function;
+      Function.Entry = kEntry;
+      Function.Name = kName;
+      Function.ReturnType = NdType::makeVoid();
+      auto Load = std::make_shared<HighExpr>();
+      Load->Kind = ExprKind::Call;
+      Load->IntrinsicId = Intrinsic::A64_Ldraa;
+      Load->Type = NdType::makeInt(kPairBytes, false);
+      Load->Operands = {HighExpr::makeConst(kEntry, kScalarBytes),
+                        HighExpr::makeConst(kFirst, kWordBytes)};
+      ASSERT_TRUE(aarch64PAuthLoadHighShapeIsValid(*Load));
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      switch (Change) {
+      case Mutation::ExtraOutput:
+        Load->IntrinsicOutputs.push_back(MedVar::makeConst(0, kScalarBytes));
+        break;
+      case Mutation::IndirectCall:
+        Load->IsIndirectCall = true;
+        break;
+      case Mutation::IndirectTarget:
+        Load->IndirectTarget = HighExpr::makeConst(kEntry, kScalarBytes);
+        break;
+      case Mutation::NonCall:
+        Load->Kind = ExprKind::Const;
+        break;
+      case Mutation::WrongWidth:
+        Load->Type = NdType::makeInt(kScalarBytes, false);
+        break;
+      case Mutation::DynamicWord:
+        Load->Operands.back()->Kind = ExprKind::Var;
+        break;
+      case Mutation::StackBase:
+        Load->Operands.back()->ConstVal = kStackBase;
+        break;
+      case Mutation::CrossArchitecture:
+        Options.TheArch = Arch::X64;
+        break;
+      }
+      HighStmt Invoke;
+      Invoke.Kind = StmtKind::ExprStmt;
+      Invoke.Val = Load;
+      if (Hidden) {
+        HighStmt Branch;
+        Branch.Kind = StmtKind::If;
+        Branch.Cond = HighExpr::makeConst(0, kBooleanBytes);
+        Branch.Body.push_back(Invoke);
+        Function.Body.push_back(Branch);
+      } else {
+        Function.Body.push_back(Invoke);
+      }
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      EXPECT_THROW(HighCEmitter().emit({Function}, Out, Options),
+                   std::invalid_argument);
+      EXPECT_TRUE(Source.empty()) << Source;
+    }
+}
+
+TEST(AArch64PAuthLoadSemantics, CTemporariesDoNotCaptureBaseExpression) {
+  using namespace pauth_load_fixture;
+  const auto Expression =
+      aarch64PAuthLoadC(*aarch64PAuthLoadInstruction(kFirst), kBaseExpression);
+  compileArm64eC(llvm::formatv(kCapturedSource, Expression).str());
 }
 
 TEST(AArch64PAuthSemantics, AuthenticationCannotBeEliminatedAsDead) {
@@ -1174,17 +1609,19 @@ TEST(AArch64PAuthSemantics, NativeGenericSignaturesAgreeWithBothCProjections) {
 }
 
 TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
+#define NEVERD_PAUTH_NATIVE_TEXT(Name, Value) constexpr char Name[] = Value;
+#include "AArch64PAuthNative.def"
   if (!hasNativePAuth())
     GTEST_SKIP() << "native key comparison requires a PAuth Apple Silicon host";
-  // macOS can execute ordinary arm64 with PAC/AUT disabled, even though the
-  // CPU advertises PAuth. Only an arm64e process qualifies these operations.
+  // A requested target alone is not evidence: a linker may emit ordinary
+  // arm64. Require each signing key to change a pointer in the actual process.
   bool ExecutionAvailable = false;
-  compileArm64eC("int main(void) { return 0; }\n", {}, /*EmitLLVM=*/false,
-                 "arm64e-apple-macos", &ExecutionAvailable);
+  compileArm64eC(kSigningKeyProbe, {}, /*EmitLLVM=*/false, kSigningKeyTarget,
+                 &ExecutionAvailable);
   if (HasFatalFailure())
     return;
   if (!ExecutionAvailable)
-    GTEST_SKIP() << "this host cannot execute the arm64e signing-key oracle";
+    GTEST_SKIP() << kSigningKeysUnavailable;
   const auto Oracle = llvm::MemoryBuffer::getFile(
       std::string(NEVERD_ARM64E_TEST_HEADERS) + "/pauth_oracle.c");
   ASSERT_TRUE(Oracle);
@@ -1202,7 +1639,7 @@ TEST(AArch64PAuthSemantics, NativeKeysAgreeWithBothCProjections) {
     F.Blocks.front().StartAddr = F.Entry;
     Functions.push_back(std::move(F));
   }
-  executeCProjections(Functions, (*Oracle)->getBuffer(), "arm64e-apple-macos");
+  executeCProjections(Functions, (*Oracle)->getBuffer(), kSigningKeyTarget);
 }
 
 TEST(AArch64PAuthLRSemantics, NativeTwoModifierKeysAgreeWithBothCProjections) {
@@ -2268,4 +2705,182 @@ TEST(AArch64PACMSemantics, PrefixedReturnsKeepX0AndTheOriginalSigningPC) {
       compileArm64eC(Source);
     }
   }
+}
+
+namespace {
+namespace exception_return_fixture {
+#define NEVERD_A64_ERET_VALUE(Type, Name, Value)                               \
+  inline constexpr Type Name = Value;
+#define NEVERD_A64_ERET_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AArch64ExceptionReturnFixtures.def"
+
+LowFunc lowFunction(bool HasOutput) {
+  LowFunc Function;
+  Function.Name = kFunctionName;
+  Function.Entry = kBase;
+  LowOp Op;
+  Op.Opcode = NdOp::INTRINSIC;
+  Op.Addr = kBase;
+  Op.addInput(
+      NdVar::cst(static_cast<uint64_t>(Intrinsic::Eret), kIntrinsicIdBytes));
+  if (HasOutput)
+    Op.Output = NdVar::reg(a64reg::X0, kPointerBytes);
+  LowBlock Block;
+  Block.StartAddr = kBase;
+  Block.EndAddr = kBase + kWordBytes;
+  Block.Ops.push_back(Op);
+  LowInstructionBoundary Boundary;
+  Boundary.Address = kBase;
+  Boundary.Size = kWordBytes;
+  Boundary.OpCount = Block.Ops.size();
+  Block.InstructionBoundaries.push_back(Boundary);
+  Function.Blocks.push_back(Block);
+  return Function;
+}
+
+MedFunc medFunction(bool HasOutput) {
+  MedFunc Function;
+  Function.Name = kFunctionName;
+  Function.Entry = kBase;
+  Function.ReturnType = NdType::makeVoid();
+  MedOp Op;
+  Op.Opcode = NdOp::INTRINSIC;
+  Op.Addr = kBase;
+  Op.addInput(MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Eret),
+                                kIntrinsicIdBytes));
+  if (HasOutput) {
+    Op.Output.Kind = MedVar::Reg;
+    Op.Output.TheArch = Arch::AArch64;
+    Op.Output.Size = kPointerBytes;
+    Op.Output.RegOff = a64reg::X0;
+    Op.Output.SSAVer = 1;
+  }
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Function.Blocks.emplace_back();
+  Function.Blocks.front().Id = 0;
+  Function.Blocks.front().StartAddr = kBase;
+  Function.Blocks.front().Ops = {Op, Return};
+  return Function;
+}
+} // namespace exception_return_fixture
+} // namespace
+
+TEST(AArch64ExceptionReturnSemantics, RawInstructionsNeverPublishOrdinaryIR) {
+  using namespace exception_return_fixture;
+  const uint32_t Words[] = {
+#define NEVERD_A64_ERET_WORD(Word) Word,
+#include "AArch64ExceptionReturnFixtures.def"
+  };
+  for (uint32_t Word : Words)
+    for (bool Strict : {false, true})
+      for (bool Fast : {false, true}) {
+        SCOPED_TRACE(testing::Message() << Word << Strict << Fast);
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Arch::AArch64));
+        Dec.setStrict(Strict);
+        std::array<uint8_t, kWordBytes> Bytes;
+        writeLE<uint32_t>(Bytes.data(), Word);
+        DecodedInsn Insn;
+        ASSERT_EQ(
+            Fast ? Dec.decodeOneForLift(Bytes.data(), Bytes.size(), kBase, Insn)
+                 : Dec.decodeOne(Bytes.data(), Bytes.size(), kBase, Insn),
+            kWordBytes);
+        std::vector<LowOp> Ops;
+        EXPECT_THROW(Dec.liftToLow(Insn, Ops), UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+      }
+  for (bool Fast : {false, true}) {
+    const auto Ops = lift(kReturn, Fast);
+    ASSERT_FALSE(Ops.empty());
+    EXPECT_EQ(Ops.back().Opcode, NdOp::RETURN);
+  }
+}
+
+TEST(AArch64ExceptionReturnSemantics, HandwrittenIRCannotReachLLVMFallback) {
+  using namespace exception_return_fixture;
+  for (bool HasOutput : {false, true}) {
+    const auto Low = lowFunction(HasOutput);
+    auto Error = validateLowInstructionBoundaries(Low.Blocks.front());
+    ASSERT_TRUE(bool(Error));
+    EXPECT_EQ(llvm::toString(std::move(Error)),
+              kAArch64ExceptionReturnUnsupported);
+    for (Arch Target : {Arch::AArch64, Arch::X64}) {
+      LowToMedConverter Converter;
+      EXPECT_THROW(Converter.convert(Low, Target, BinaryFormat::MachO),
+                   LowToMedConversionError);
+      const auto Function = medFunction(HasOutput);
+      EXPECT_FALSE(verifyMedFunc(Function, kFunctionName));
+      for (bool Masked : {false, true}) {
+        llvm::LLVMContext Context;
+        const std::vector<char> Mask{0};
+        EXPECT_THROW(MedLLVMEmitter().emit({Function}, Context, Function.Name,
+                                           Target, {}, nullptr,
+                                           BinaryFormat::MachO, false,
+                                           Masked ? &Mask : nullptr),
+                     std::runtime_error);
+      }
+    }
+  }
+  auto Ordinary = medFunction(false);
+  Ordinary.Blocks.front().Ops.erase(Ordinary.Blocks.front().Ops.begin());
+  EXPECT_TRUE(verifyMedFunc(Ordinary, kFunctionName));
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Ordinary}, Context, Ordinary.Name, Arch::AArch64);
+  ASSERT_TRUE(Module);
+  EXPECT_FALSE(llvm::verifyModule(*Module));
+}
+
+TEST(AArch64ExceptionReturnSemantics, DirectCRenderingCannotEmitBareAssembly) {
+  using namespace exception_return_fixture;
+  for (uint16_t ResultBytes : {0u, kPointerBytes}) {
+    bool HasIntrinsics = false;
+    EXPECT_THROW(
+        renderARMIntrinsicCall(Intrinsic::Eret, {}, ResultBytes, HasIntrinsics),
+        std::invalid_argument);
+    for (Arch Target : {Arch::AArch64, Arch::ARM, Arch::X64, Arch::X86}) {
+      EXPECT_THROW(renderIntrinsicCall(Intrinsic::Eret, Target, {}, ResultBytes,
+                                       HasIntrinsics),
+                   std::invalid_argument);
+      EXPECT_THROW(MultiOutputRender{}(Target, Intrinsic::Eret, {}, {}, {}, {}),
+                   std::invalid_argument);
+    }
+    EXPECT_FALSE(HasIntrinsics);
+  }
+}
+
+TEST(AArch64ExceptionReturnSemantics, HiddenHighIRCannotPublishSource) {
+  using namespace exception_return_fixture;
+  for (bool Hidden : {false, true})
+    for (bool HasOutput : {false, true}) {
+      HighFunc Function;
+      Function.Entry = kBase;
+      Function.Name = kFunctionName;
+      Function.ReturnType = NdType::makeVoid();
+      HighStmt Invoke;
+      Invoke.Kind = StmtKind::ExprStmt;
+      Invoke.Val = std::make_shared<HighExpr>();
+      Invoke.Val->Kind = ExprKind::Call;
+      Invoke.Val->Type = HasOutput ? NdType::makeInt(kPointerBytes, false)
+                                   : NdType::makeVoid();
+      Invoke.Val->IntrinsicId = Intrinsic::Eret;
+      if (Hidden) {
+        HighStmt Branch;
+        Branch.Kind = StmtKind::If;
+        Branch.Cond = HighExpr::makeConst(0, 1);
+        Branch.Body.push_back(Invoke);
+        Function.Body.push_back(Branch);
+      } else
+        Function.Body.push_back(Invoke);
+      for (Arch Target : {Arch::AArch64, Arch::X64}) {
+        CEmitterOptions Options;
+        Options.TheArch = Target;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        EXPECT_THROW(HighCEmitter().emit({Function}, Out, Options),
+                     std::invalid_argument);
+        EXPECT_TRUE(Source.empty());
+      }
+    }
 }

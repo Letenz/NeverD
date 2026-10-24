@@ -12,6 +12,7 @@
 
 #include "neverd/backend/c/render/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64PAuthC.h"
+#include "neverd/backend/c/render/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64PointerC.h"
 #include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
@@ -20,9 +21,14 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/AtomicOrdering.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
 
 namespace neverd {
@@ -36,6 +42,45 @@ static const AsmToCEntry ARMAsmTable[] = {
 };
 
 } // anonymous namespace
+
+std::optional<InlineAsmRender>
+renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,
+                           const std::string &ResultName, bool ResultLive,
+                           const std::vector<std::string> &Args) {
+  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (!Asm || Asm->getAsmString() != kPAuthLoadAsm)
+    return std::nullopt;
+  const auto *Result = llvm::dyn_cast<llvm::StructType>(Call.getType());
+  if (TheArch != Arch::AArch64 ||
+      Asm->getConstraintString() != kPAuthLoadConstraints ||
+      !Asm->hasSideEffects() || Call.arg_size() != kPAuthLoadOperandCount ||
+      Args.size() != kPAuthLoadOperandCount || !Result ||
+      Result->getNumElements() != kPAuthLoadOperandCount ||
+      !Result->getElementType(kPAuthLoadValueIndex)
+           ->isIntegerTy(kPAuthLoadPointerBits) ||
+      !Result->getElementType(kPAuthLoadBaseIndex)
+           ->isIntegerTy(kPAuthLoadPointerBits) ||
+      !Call.getArgOperand(0)->getType()->isIntegerTy(kPAuthLoadPointerBits) ||
+      !Call.getArgOperand(1)->getType()->isIntegerTy(kPAuthLoadWordBytes *
+                                                     CHAR_BIT))
+    throw std::invalid_argument(kPAuthLoadMalformed);
+  const auto *Word = llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(1));
+  const auto Instruction =
+      Word ? aarch64PAuthLoadInstruction(Word->getZExtValue()) : std::nullopt;
+  if (!Instruction || Instruction->base() != kPAuthLoadScratchBase ||
+      Instruction->destination() != kPAuthLoadScratchValue)
+    throw std::invalid_argument(kPAuthLoadMalformed);
+  const auto Value = aarch64PAuthLoadC(*Instruction, Args[0]);
+  if (!ResultLive || ResultName.empty())
+    return InlineAsmRender{
+        llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(), false};
+  const auto PairName =
+      aarch64PAuthTemporary(kPAuthLoadCPair, {ResultName, Args[0], Args[1]});
+  return InlineAsmRender{
+      llvm::formatv(kPAuthLoadCStructAssignment, PairName, Value, ResultName)
+          .str(),
+      false};
+}
 
 const char *lookupArmAsmToC(const char *Mnem) {
   for (const auto &E : ARMAsmTable)

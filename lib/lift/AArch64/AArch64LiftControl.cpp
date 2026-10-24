@@ -13,6 +13,7 @@
 
 #include "AArch64LiftDetail.h"
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/AArch64Lifter.h"
 
@@ -354,9 +355,12 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
   // YIELD/WFE/WFI/SEV/SEVL → HINT in Capstone 6 (handled by HINT case)
 
   // --- Exception return ---
-  case AARCH64_INS_ERET:
-    S.emitIntrinsic(Intrinsic::Eret);
-    break;
+  // Restoring ELR/SPSR/PSTATE is not an ordinary function return. Refuse
+  // before publishing LowIR, including when permissive lifting is selected.
+#define NEVERD_A64_EXCEPTION_RETURN_INTRINSIC(Id, InsnID)                      \
+  case AARCH64_INS_##InsnID:                                                   \
+    throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.def"
 
   // --- CLREX (clear exclusive monitor) ---
   case AARCH64_INS_CLREX:
