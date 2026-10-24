@@ -8231,6 +8231,14 @@ Sekundäre SHA-256: %3
         <source>Move window</source>
         <translation>Fenster verschieben</translation>
     </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Schwebendes Fenster sperren</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Schwebendes Fenster entsperren</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ExportDataDialog</name>

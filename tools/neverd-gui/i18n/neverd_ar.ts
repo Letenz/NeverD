@@ -8375,6 +8375,14 @@ SHA-256 الثانوي: %3
         <source>Move window</source>
         <translation>تحريك النافذة</translation>
     </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>قفل النافذة العائمة</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>إلغاء قفل النافذة العائمة</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ExportDataDialog</name>

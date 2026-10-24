@@ -8231,6 +8231,14 @@ SHA-256 secondaire : %3
         <source>Move window</source>
         <translation>Déplacer la fenêtre</translation>
     </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Verrouiller la fenêtre flottante</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Déverrouiller la fenêtre flottante</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ExportDataDialog</name>

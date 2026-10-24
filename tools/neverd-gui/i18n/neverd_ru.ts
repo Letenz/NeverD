@@ -8267,6 +8267,14 @@ Secondary SHA-256: %3
         <source>Move window</source>
         <translation>Переместить окно</translation>
     </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>Закрепить плавающее окно</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>Открепить плавающее окно</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ExportDataDialog</name>

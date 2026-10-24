@@ -115,6 +115,8 @@ public:
 signals:
   /// The disassembly painted its first content after a file opened.
   void firstContentPainted();
+  /// The workbench accepted exit after save/worker checks and closed its panes.
+  void shutdownAccepted();
 
 protected:
   void closeEvent(QCloseEvent *event) override;

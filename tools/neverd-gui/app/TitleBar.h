@@ -7,6 +7,7 @@
 class QAbstractButton;
 class QAction;
 class QMenuBar;
+class QPainter;
 
 namespace neverd::gui {
 
@@ -30,6 +31,12 @@ public:
   void setCommandCenterText(const QString &text, const QString &toolTip);
   /// The command the command center runs when clicked.
   void setCommandCenterAction(QAction *action);
+
+  enum class WindowControl { Minimize, Maximize, Close };
+  /// Shared window-control drawing for workbench, dialogs and floating panes.
+  static void paintWindowControl(QPainter &painter,
+                                 const QAbstractButton &button,
+                                 const QWidget &window, WindowControl control);
 
   QSize sizeHint() const override;
   QSize minimumSizeHint() const override;
