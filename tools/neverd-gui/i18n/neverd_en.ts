@@ -544,12 +544,12 @@
         <translation>Manage MCP connections and session sharing</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>Ex&amp;tensions</translation>
+        <source>Analysis queries</source>
+        <translation>Analysis queries</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>Manage declarative extensions</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>Run built-in or imported analysis queries</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2102,32 +2102,36 @@ Double-click to go to the declaration.</translation>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>Import manifest…</translation>
+        <source>Import queries…</source>
+        <translation>Import queries…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>Run</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>Unload</translation>
+        <source>Remove group</source>
+        <translation>Remove group</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>Import a declarative manifest to add analysis commands and views.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>Run built-in analysis queries or import query definitions from a JSON file.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>Select an extension command to inspect its result.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>Select a query and choose Run to view its result.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>Import extension manifest</translation>
+        <source>Import analysis queries</source>
+        <translation>Import analysis queries</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>Manifests (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>Query definitions (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>Remove all queries in the selected group.</translation>
     </message>
 </context>
 <context>
@@ -2185,8 +2189,8 @@ Double-click to go to the declaration.</translation>
         <translation>Navigation band</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>Extensions</translation>
+        <source>Analysis queries</source>
+        <translation>Analysis queries</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6401,6 +6405,14 @@ Coverage: %7</translation>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Optimized SSA with parameter views</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6499,6 +6511,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA representation: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Optimized SSA with parameter views</translation>
     </message>
 </context>
 <context>
@@ -7282,6 +7298,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>External input binding; the producers have not been compared.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>param %1: low %2 of %3 bits</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Every use of this parameter reads the same low bits; the original width and native site are retained.</translation>
     </message>
 </context>
 <context>

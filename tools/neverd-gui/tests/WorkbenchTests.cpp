@@ -395,6 +395,121 @@ private slots:
     }
   }
 
+  void closedFloatingDocksReopenInWorkbench_data() {
+    QTest::addColumn<int>("command");
+    QTest::addColumn<QString>("id");
+    for (const auto &[id, action] :
+         {std::pair{"disassembly-a", ActionId::ViewDisassembly},
+          std::pair{"hex-1", ActionId::ViewHex},
+          std::pair{"functions", ActionId::ViewFunctions},
+          std::pair{"pseudocode-a", ActionId::ViewPseudocode},
+          std::pair{"ir-a", ActionId::ViewMedIR},
+          std::pair{"local-types", ActionId::ViewLocalTypes},
+          std::pair{"type-libraries", ActionId::ViewTypeLibraries},
+          std::pair{"pathfinder", ActionId::ViewPathfinder},
+          std::pair{"extensions", ActionId::ViewExtensions},
+          std::pair{"output", ActionId::ViewOutput},
+          std::pair{"graph-overview", ActionId::ViewGraphOverview}})
+      QTest::newRow(id) << int(action) << QString::fromLatin1(id);
+    QTest::newRow("names")
+        << int(ActionId::ViewNames)
+        << QStringLiteral("chooser-%1").arg(int(ChooserKind::Names));
+  }
+
+  void closedFloatingDocksReopenInWorkbench() {
+    QFETCH(int, command);
+    QFETCH(QString, id);
+    Theme::instance().apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "reopen-dock.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    auto *action = bench.action(ActionId(command));
+    action->trigger();
+    KDDockWidgets::QtWidgets::DockWidget *dock = nullptr;
+    for (auto *candidate :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (candidate->uniqueName() == id)
+        dock = candidate;
+    QVERIFY(dock);
+    QTRY_VERIFY(dock->isOpen());
+    for (int method = 0; method < 2; ++method) {
+      dock->setFloating(true);
+      QTRY_VERIFY(dock->widget()->isVisible());
+      QTRY_VERIFY(dock->isFloating());
+      auto *floating = dock->QWidget::window();
+      QVERIFY(floating != bench.window.get());
+      // Raising an existing floating pane must not move it. Overview's action
+      // is a visibility toggle, so it deliberately closes an open overview.
+      if (ActionId(command) != ActionId::ViewGraphOverview) {
+        action->trigger();
+        QVERIFY(dock->isOpen());
+        QCOMPARE(dock->QWidget::window(), floating);
+      }
+      if (method == 0)
+        QVERIFY(floating->close());
+      else
+        dock->toggleAction()->trigger();
+      QTRY_VERIFY(!dock->isOpen());
+      QVERIFY(!dock->widget()->isVisible());
+      action->trigger();
+      QTRY_VERIFY(dock->isOpen() && dock->widget()->isVisible());
+      QTRY_COMPARE(dock->QWidget::window(), bench.window.get());
+      QVERIFY(!dock->isFloating());
+    }
+    if (ActionId(command) == ActionId::ViewExtensions)
+      for (auto *button : dock->widget()->findChildren<QPushButton *>())
+        QVERIFY2(button->width() >= button->sizeHint().width(),
+                 qPrintable(button->text()));
+    const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (ActionId(command) == ActionId::ViewExtensions && !captures.isEmpty()) {
+      auto &theme = Theme::instance();
+      const auto mode = theme.mode();
+      const auto restore = qScopeGuard([&] { theme.setMode(mode); });
+      QDir().mkpath(captures);
+      for (const bool dark : {false, true}) {
+        theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+        theme.apply();
+        QApplication::processEvents();
+        QVERIFY(bench.window->grab().save(
+            captures + (dark ? "/queries-dark.png" : "/queries-light.png")));
+      }
+    }
+  }
+
+  void reopeningPaneDoesNotFollowFloatingAssembly() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "reopen-group.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY(bench.action(ActionId::ViewHex)->isEnabled());
+    auto *assembly = bench.window->disassembly();
+    auto *assemblyDock = bench.dockFor(assembly);
+    auto *hex = bench.window->findChild<HexView *>();
+    auto *hexDock = bench.dockFor(hex);
+    QVERIFY(assemblyDock && hexDock);
+    assemblyDock->setFloating(true);
+    // Two tabs in one floating window report isFloating() differently from
+    // a standalone floating dock. Reopening must still return to the main UI.
+    assemblyDock->addDockWidgetAsTab(hexDock);
+    QTRY_COMPARE(hex->window(), assembly->window());
+    QVERIFY(hex->window() != bench.window.get());
+    hexDock->toggleAction()->trigger();
+    QTRY_VERIFY(!hexDock->isOpen());
+    bench.action(ActionId::ViewHex)->trigger();
+    QTRY_VERIFY(hex->isVisible());
+    QCOMPARE(hex->window(), bench.window.get());
+    QVERIFY(assembly->window() != bench.window.get());
+    QVERIFY(assemblyDock->isOpen());
+  }
+
   void floatingAnalysisMenusStayWithTheirView_data() {
     QTest::addColumn<QString>("viewKind");
     QTest::addColumn<bool>("dark");

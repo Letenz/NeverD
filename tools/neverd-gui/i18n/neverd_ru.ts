@@ -544,12 +544,12 @@
         <translation>Управлять подключениями MCP и общим доступом к сеансу</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>&amp;Расширения</translation>
+        <source>Analysis queries</source>
+        <translation>Аналитические запросы</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>Управлять декларативными расширениями</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>Выполнить встроенные или импортированные аналитические запросы</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2107,32 +2107,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>Импортировать манифест…</translation>
+        <source>Import queries…</source>
+        <translation>Импортировать запросы…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>Выполнить</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>Выгрузить</translation>
+        <source>Remove group</source>
+        <translation>Удалить группу</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>Импортируйте декларативный манифест, чтобы добавить команды и представления анализа.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>Выполняйте встроенные аналитические запросы или импортируйте определения запросов из файла JSON.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>Выберите команду расширения, чтобы просмотреть её результат.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>Выберите запрос и нажмите «Выполнить», чтобы увидеть результат.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>Импорт манифеста расширения</translation>
+        <source>Import analysis queries</source>
+        <translation>Импорт аналитических запросов</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>Манифесты (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>Определения запросов (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>Удалить все запросы в выбранной группе.</translation>
     </message>
 </context>
 <context>
@@ -2191,8 +2195,8 @@ Double-click to go to the declaration.</source>
         <translation>Полоса навигации</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>Расширения</translation>
+        <source>Analysis queries</source>
+        <translation>Аналитические запросы</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6437,6 +6441,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>Поиск общих вычислений при изменённых зависимостях. Узлы, создающие внешние входные значения, остаются непроверенными. Включает гипотезы об областях SSA.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Оптимизированное SSA с представлениями параметров</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>Представления параметров сравнивают младшие 32 бита подходящих 64-битных нативных параметров. Исходная разрядность и источники доступны для проверки.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6535,6 +6547,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>Представление SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>Оптимизированное SSA с представлениями параметров</translation>
     </message>
 </context>
 <context>
@@ -7318,6 +7334,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>Сопоставление внешних входных значений; создающие их узлы не сравнивались.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>параметр %1: младшие %2 из %3 бит</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>Основной: %1
+Вторичный: %2
+Каждое использование проецируемого параметра читает одни и те же младшие биты. Поведение функции целиком не проверено.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>Каждое использование этого параметра читает одни и те же младшие биты; исходная разрядность и нативное расположение сохранены.</translation>
     </message>
 </context>
 <context>

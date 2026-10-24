@@ -244,10 +244,9 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
                                           const FlowRegionSettings &Settings) {
   const auto &O = object(V);
   const auto Profile = text(field(O, "profile"));
-  const bool Fragments =
-      Profile == FlowFragmentProfile || Profile == LLVMFlowFragmentProfile;
-  require(Profile == FlowRegionProfile || Profile == LLVMFlowRegionProfile ||
-              Fragments,
+  const bool Fragments = isFlowFragmentProfile(Profile);
+  require(Profile == FlowRegionProfile || isLLVMFlowRegionProfile(Profile) ||
+              Profile == FlowFragmentProfile,
           "unsupported profile");
   require(Fragments == Settings.Fragments,
           "fragment profile disagrees with settings");
@@ -310,8 +309,7 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
       require(!A.get("depth") && !A.get("frontier") && !A.get("frontier_count"),
               "legacy neighborhood contains fragment fields");
     }
-    const uint64_t OriginAllowance = (R.Profile == LLVMFlowRegionProfile ||
-                                      R.Profile == LLVMFlowFragmentProfile)
+    const uint64_t OriginAllowance = isLLVMFlowRegionProfile(R.Profile)
                                          ? limits::kMaxFlowNativeInstructions
                                          : Row.Nodes.size();
     Row.PrimaryOrigins = count(field(A, "primary_origins"), OriginAllowance);

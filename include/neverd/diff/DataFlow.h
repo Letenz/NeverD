@@ -19,6 +19,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -39,6 +40,12 @@ inline constexpr llvm::StringLiteral
     DataFlowProfile(limits::diff::kMedSSAProfile);
 inline constexpr llvm::StringLiteral
     LLVMDataFlowProfile(limits::diff::kLLVMSSAProfile);
+inline constexpr llvm::StringLiteral
+    LLVMParameterDataFlowProfile(limits::diff::kLLVMParameterSSAProfile);
+inline bool isLLVMDataFlowProfile(llvm::StringRef Profile) {
+  return Profile == LLVMDataFlowProfile ||
+         Profile == LLVMParameterDataFlowProfile;
+}
 std::vector<llvm::StringRef> flowGapNames(uint32_t Mask);
 
 /// An interrupted projection publishes no graph with missing definitions.
@@ -131,6 +138,21 @@ struct FlowBlock {
   bool operator==(const FlowBlock &) const = default;
 };
 
+/// Recorded native parameter identity; UINT64_MAX denotes a stack site.
+/// This metadata is not an independent ABI or register-validity proof.
+struct FlowParameterSite {
+  uint64_t Register = UINT64_MAX;
+  int64_t Index = -1;
+  bool operator==(const FlowParameterSite &) const = default;
+};
+struct FlowParameterView {
+  uint16_t SourceBits = 0, ViewBits = 0;
+  std::string Attributes;
+  std::optional<FlowParameterSite> NativeSite;
+  uint32_t ElidedTruncations = 0;
+  bool operator==(const FlowParameterView &) const = default;
+};
+
 struct DataFlowGraph {
   std::string Revision;
   std::string Profile = DataFlowProfile.str();
@@ -140,6 +162,12 @@ struct DataFlowGraph {
   uint32_t Gaps = 0;
   std::vector<FlowNode> Nodes;
   std::vector<FlowBlock> Blocks;
+  /// Source argument order, including unused/unprojected parameters. Only the
+  /// parameter-view profile owns these records; they are not operation nodes.
+  std::vector<FlowParameterView> ParameterViews;
+  uint64_t retainedItems() const {
+    return uint64_t(Nodes.size()) + ParameterViews.size();
+  }
   bool operator==(const DataFlowGraph &) const = default;
   std::optional<std::string> validate(const DataFlowOptions &Options) const;
 };

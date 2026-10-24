@@ -544,12 +544,12 @@
         <translation>MCP 연결과 세션 공유를 관리합니다</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>확장 기능(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>분석 쿼리</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>선언형 확장 기능을 관리합니다</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>기본 제공 또는 가져온 분석 쿼리 실행</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2097,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>매니페스트 가져오기…</translation>
+        <source>Import queries…</source>
+        <translation>쿼리 가져오기…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>실행</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>언로드</translation>
+        <source>Remove group</source>
+        <translation>그룹 제거</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>선언형 매니페스트를 가져와 분석 명령과 보기를 추가하세요.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>기본 제공 분석 쿼리를 실행하거나 JSON 파일에서 쿼리 정의를 가져옵니다.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>확장 기능 명령을 선택하여 결과를 확인하세요.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>쿼리를 선택하고 실행을 클릭하여 결과를 확인하세요.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>확장 기능 매니페스트 가져오기</translation>
+        <source>Import analysis queries</source>
+        <translation>분석 쿼리 가져오기</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>매니페스트 (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>쿼리 정의 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>선택한 그룹의 모든 쿼리를 제거합니다.</translation>
     </message>
 </context>
 <context>
@@ -2179,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>탐색 밴드</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>확장 기능</translation>
+        <source>Analysis queries</source>
+        <translation>분석 쿼리</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6365,6 +6369,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>종속성이 변경되어도 공통 계산을 찾습니다. 외부 입력을 생성하는 노드는 검증되지 않은 상태로 남습니다. SSA 영역 가설을 포함합니다.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>매개변수 뷰가 포함된 최적화 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>매개변수 뷰는 조건에 맞는 64비트 네이티브 매개변수의 하위 32비트를 비교합니다. 원래 비트 너비와 출처도 확인할 수 있습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6463,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 표현: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>매개변수 뷰가 포함된 최적화 SSA</translation>
     </message>
 </context>
 <context>
@@ -7246,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>외부 입력 대응 관계입니다. 입력을 생성하는 노드는 비교하지 않았습니다.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>매개변수 %1: %3비트 중 하위 %2비트</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>기본 입력: %1
+보조 입력: %2
+투영된 매개변수는 모든 사용 지점에서 같은 하위 비트를 읽습니다. 함수 전체의 동작은 아직 검증되지 않았습니다.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>이 매개변수는 모든 사용 지점에서 같은 하위 비트를 읽으며, 원래 비트 너비와 네이티브 위치는 유지됩니다.</translation>
     </message>
 </context>
 <context>

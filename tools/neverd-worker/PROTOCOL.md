@@ -170,7 +170,15 @@ revision checks and cooperative cancellation contract as source inspection.
 (`backward`/`forward`), `control`, `timeout_ms`, `offset`, `limit`, and optional
 `refresh`. Both require `dataflow:true` or a bounded settings object at start.
 The settings object accepts `profile:"med-ssa-v2"` (default) or
-`profile:"llvm-ssa-v1"` (optimized machine integer SSA). LLVM dependency schema 3
+`profile:"llvm-ssa-v1"` (optimized machine integer SSA), or
+`profile:"llvm-parameter-ssa-v1"` (eligible native low-bit parameter views).
+Schema 4 retains source/view bits, argument attributes, optional native site
+and elided truncation counts. Parameter rows consume the shared retained-item
+allowance; public node counts and coverage still count operations. Metadata
+pages expose parameter counts, and each node page exposes only its referenced
+parameter rows with input and parameter positions. Reopen binds all source
+records to fresh extraction, including snapshot-local MedIR indices.
+LLVM dependency schema 3
 adds typed `semantics` and plural `origins:[{address,sequence}]`; operands have an
 eighth exact type/attribute field. Its region profile is `llvm-neighborhoods-v1`.
 Optimized region nodes return `originals` for every distinct native address and
@@ -979,7 +987,8 @@ analysis remain separate work. JSON DOM overhead may exceed serialized length.
 
 ## Declarative contribution manifests
 
-An explicit GUI import can register a JSON file such as:
+The GUI's **Analysis queries → Import queries…** action can register a JSON
+file such as:
 
 ```json
 {
@@ -1016,6 +1025,11 @@ strings as code. Registry changes have their own monotonic revision. Registry
 contents last for one worker lifetime; the GUI may remember explicitly imported
 manifest paths and import them again after restart. Registration does not
 authorize file writes or autonomous query execution.
+
+Analysis queries are distinct from executable plugins. The CLI exposes these
+analysis categories through its existing commands and can reuse saved argument
+files; see [Analysis queries from the CLI](../../docs/gui.md#analysis-queries-from-the-cli).
+Those argument files and these JSON manifests are different formats.
 
 ## Building and tests
 

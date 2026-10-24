@@ -496,9 +496,10 @@ NEVERD_ACTION(ViewConnections, QT_TRANSLATE_NOOP("Actions", "MCP c&onnections"),
               "", "mcp",
               QT_TRANSLATE_NOOP("Actions",
                                 "Manage MCP connections and session sharing"))
-NEVERD_ACTION(ViewExtensions, QT_TRANSLATE_NOOP("Actions", "Ex&tensions"), "",
-              "extensions",
-              QT_TRANSLATE_NOOP("Actions", "Manage declarative extensions"))
+NEVERD_ACTION(ViewExtensions, QT_TRANSLATE_NOOP("Actions", "Analysis queries"),
+              "", "search_text",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Run built-in or imported analysis queries"))
 NEVERD_ACTION(ViewUndoHistory, QT_TRANSLATE_NOOP("Actions", "&Undo history"),
               "", "undo",
               QT_TRANSLATE_NOOP("Actions",

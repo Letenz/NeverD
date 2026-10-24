@@ -544,12 +544,12 @@
         <translation>إدارة اتصالات MCP ومشاركة الجلسة</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>الإضافات(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>استعلامات التحليل</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>إدارة الإضافات التصريحية</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>تشغيل استعلامات التحليل المضمّنة أو المستوردة</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2122,32 +2122,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>استيراد ملف بيان…</translation>
+        <source>Import queries…</source>
+        <translation>استيراد استعلامات…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>تشغيل</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>إلغاء التحميل</translation>
+        <source>Remove group</source>
+        <translation>إزالة المجموعة</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>استورد ملف بيان تصريحيًا لإضافة أوامر تحليل وعروض.</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>شغّل استعلامات التحليل المضمّنة أو استورد تعريفات الاستعلامات من ملف JSON.</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>اختر أمر إضافة لعرض نتيجته.</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>حدد استعلامًا واختر تشغيل لعرض نتيجته.</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>استيراد ملف بيان الإضافة</translation>
+        <source>Import analysis queries</source>
+        <translation>استيراد استعلامات التحليل</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>ملفات البيان (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>تعريفات الاستعلامات (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>إزالة جميع الاستعلامات في المجموعة المحددة.</translation>
     </message>
 </context>
 <context>
@@ -2209,8 +2213,8 @@ Double-click to go to the declaration.</source>
         <translation>شريط التنقل</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>الإضافات</translation>
+        <source>Analysis queries</source>
+        <translation>استعلامات التحليل</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6545,6 +6549,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>البحث عن حسابات مشتركة رغم تغيّر الاعتماديات. تبقى العُقد التي تنتج المدخلات الخارجية دون تحقق. يتضمن فرضيات مناطق SSA.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA محسّن مع طرق عرض المعاملات</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>تقارن طرق عرض المعاملات أقل 32 بت من المعاملات الأصلية المؤهلة ذات 64 بت. تظل العروض الأصلية والمصادر متاحة للمراجعة.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6643,6 +6655,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>تمثيل SSA: %1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>SSA محسّن مع طرق عرض المعاملات</translation>
     </message>
 </context>
 <context>
@@ -7426,6 +7442,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>ربط المدخلات الخارجية؛ لم تُقارَن العُقد التي تنتجها.
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>المعامل %1: أقل %2 بت من أصل %3 بت</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>الأساسي: %1
+الثانوي: %2
+كل استخدام لمعامل مسقط يقرأ البتات الدنيا نفسها. لا يزال سلوك الدالة بأكملها غير متحقق منه.
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>كل استخدام لهذا المعامل يقرأ البتات الدنيا نفسها؛ يُحتفظ بالعرض الأصلي والموقع الأصلي.</translation>
     </message>
 </context>
 <context>

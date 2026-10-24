@@ -150,6 +150,9 @@ click its dock button to return. A floating tab also offers **Dock back into
 main window** in its context menu. On Wayland the outer system title bar moves
 the window; use the inner bar to dock it. Menus and view dialogs belong to the
 floating window that opened them, and workbench shortcuts remain available.
+Closing a floating pane and opening it again from the workbench returns it to
+the main window, using its last embedded position when available. Selecting an
+already open pane keeps its current placement.
 Docked windows are one hairline apart; drag the line to resize its neighbors, or double-click
 it to share their space evenly. A window narrows to about the width of its tab:
 a status line or a row of buttons that no longer fits is cut at the window's
@@ -1347,16 +1350,50 @@ additional ABI support. An unproved register value, incomplete outgoing stack
 write or unsupported variadic floating carrier refuses the edit and reports its
 reason in Output. No missing argument is filled with an invented value.
 
-## Languages, extensions and MCP
+## Languages, analysis queries and MCP
 
 The UI starts in English and bundles all 11 project languages; **Options →
 Language** switches immediately without reloading the analysis, and Arabic
 mirrors the window chrome while code and addresses stay left to right.
 
-**View → Open subviews → Extensions** imports versioned JSON manifests with namespaced
-read-only query contributions and runs them on the current address. Manifests
-cannot run scripts or register arbitrary engine operations. See the manifest
-schema in the [worker protocol](../tools/neverd-worker/PROTOCOL.md).
+**View → Open subviews → Analysis queries** runs the built-in image metadata,
+functions and strings queries. **Import queries…** adds query definitions from
+a versioned JSON file, and **Remove group** removes all queries belonging to
+the selected imported group. Address-based queries use the current address.
+These definitions describe read-only analysis operations; they cannot run
+scripts or register arbitrary engine operations. See the manifest schema in the
+[worker protocol](../tools/neverd-worker/PROTOCOL.md#declarative-contribution-manifests).
+
+### Analysis queries from the CLI
+
+The CLI exposes the same categories of analysis directly. Each command below
+accepts `--json` for scripts; its output schema and selection options belong to
+that command, rather than to the GUI query registry.
+
+| Query operation | CLI example |
+|---|---|
+| `metadata` | `neverd info binary --json` |
+| `functions` | `neverd funcs binary --json` |
+| `strings` | `neverd strings binary --json` |
+| `disasm` | `neverd disasm binary --func=main --json` |
+| `decompile` | `neverd decompile binary --func=main --json` |
+| `xrefs` | `neverd xrefs binary --addr=0xADDRESS --json` |
+
+Use `neverd <command> --help` for each command's options. To reuse a query,
+save its command and options in a text argument file, for example
+`functions.args`:
+
+```text
+funcs
+--json
+```
+
+Run it against any input with `neverd @functions.args binary`. Quote argument
+values containing spaces. Argument files contain CLI arguments, not the GUI's
+JSON query definitions; GUI manifests are imported through Analysis queries.
+The separate `neverd plugins` command lists or runs executable plugins.
+
+### MCP connections
 
 **View → Open subviews → MCP connections** starts connections only on
 request. It supports local

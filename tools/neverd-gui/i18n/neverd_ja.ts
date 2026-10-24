@@ -544,12 +544,12 @@
         <translation>MCP 接続とセッション共有を管理します</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>拡張機能(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>宣言型拡張機能を管理します</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>組み込みまたはインポートした解析クエリを実行</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -2097,32 +2097,36 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import manifest…</source>
-        <translation>マニフェストをインポート…</translation>
+        <source>Import queries…</source>
+        <translation>クエリをインポート…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>実行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>アンロード</translation>
+        <source>Remove group</source>
+        <translation>グループを削除</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>宣言型マニフェストをインポートして、解析コマンドとビューを追加します。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>組み込みの解析クエリを実行するか、JSON ファイルからクエリ定義をインポートします。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>拡張機能のコマンドを選択すると、結果を確認できます。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>クエリを選択して「実行」をクリックすると結果が表示されます。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>拡張機能マニフェストのインポート</translation>
+        <source>Import analysis queries</source>
+        <translation>解析クエリをインポート</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>マニフェスト (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>クエリ定義 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>選択したグループのクエリをすべて削除します。</translation>
     </message>
 </context>
 <context>
@@ -2179,8 +2183,8 @@ Double-click to go to the declaration.</source>
         <translation>ナビゲーションバンド</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>拡張機能</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
         <source>Hex View-1</source>
@@ -6365,6 +6369,14 @@ Coverage: %7</source>
         <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
         <translation>依存関係が変化しても共通する計算を検索します。外部入力の生成ノードは未検証のままです。SSA 領域の仮説を含みます。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>パラメータビューは、条件を満たす 64 ビットのネイティブパラメータの下位 32 ビットを比較します。元のビット幅と出所も確認できます。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6463,6 +6475,10 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>SSA representation: %1</source>
         <translation>SSA 表現：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
     </message>
 </context>
 <context>
@@ -7246,6 +7262,24 @@ Heuristic explanations, not validated behavior.
 %1</source>
         <translation>外部入力の対応付けです。生成ノードは比較されていません。
 %1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>パラメータ %1：%3 ビット中の下位 %2 ビット</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>プライマリ：%1
+セカンダリ：%2
+投影されたパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。関数全体の動作は未検証です。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>このパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。元のビット幅とネイティブ位置は保持されます。</translation>
     </message>
 </context>
 <context>

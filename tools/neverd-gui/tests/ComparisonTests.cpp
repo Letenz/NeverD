@@ -247,6 +247,117 @@ private slots:
     }
     QCOMPARE(Failures.size(), 0);
   }
+  void parameterViewsExplainNativeInputsAndRestoreSelection() {
+    const auto A = Directory.filePath("parameter-before.bin");
+    const auto B = Directory.filePath("parameter-after.bin");
+    // Owned control_regions_fixture.c, x64 ELF O0/O2; never executed.
+    QVERIFY(write(
+        A,
+        QByteArray::fromHex(
+            "554889e5897dfc8975f88b45fc3b45f873118b45fc83f0176bc00783c009"
+            "8945fceb0f8b45fc83c0116b4df80d31c88945fc8b45fc3345f883c0035dc3")));
+    QVERIFY(write(
+        B, QByteArray::fromHex(
+               "39f7731183f7178d04fd0000000029f883c009eb0b83c7118d04768d0486"
+               "31f831f083c003c3")));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    View.findChild<QLineEdit *>("comparisonPrimary")->setText(A);
+    View.findChild<QLineEdit *>("comparisonSecondary")->setText(B);
+    for (const auto *Name : {"primaryLoader", "secondaryLoader"})
+      View.findChild<QComboBox *>(Name)->setCurrentIndex(1);
+    View.findChild<QLineEdit *>("primaryBase")->setText("0x1000");
+    View.findChild<QLineEdit *>("secondaryBase")->setText("0x8000");
+    View.findChild<QCheckBox *>("comparisonAnalyzeFlowRegions")
+        ->setChecked(true);
+    auto *Profile = View.findChild<QComboBox *>("comparisonFlowProfile");
+    const int ParameterProfile = Profile->findData("llvm-parameter-ssa-v1");
+    QVERIFY(ParameterProfile >= 0);
+    Profile->setCurrentIndex(ParameterProfile);
+    QTest::mouseClick(View.findChild<QToolButton *>("comparisonSettings"),
+                      Qt::LeftButton);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonStart"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Failures.size(), 0);
+    QVERIFY(
+        Session.summary()["flow_regions"].toObject()["anchor_count"].toInt() >
+        0);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonFlowReview"),
+                      Qt::LeftButton);
+    auto *Dialog =
+        View.findChild<ComparisonFlowDialog *>("comparisonFlowDialog");
+    QVERIFY(Dialog);
+    auto *Side = Dialog->findChild<QComboBox *>("flowSide");
+    Side->setCurrentIndex(Side->findData("secondary"));
+    auto *Table = Dialog->findChild<QTableView *>("flowNodes");
+    auto *Rows = qobject_cast<ComparisonModel *>(Table->model());
+    QTRY_VERIFY_WITH_TIMEOUT(Rows->rowCount() && !Rows->row(0).isEmpty(),
+                             Timeout);
+    int Projected = -1;
+    for (int N = 0; N < Rows->rowCount(); ++N)
+      if (Rows->data(Rows->index(N, 4), Qt::DisplayRole)
+              .toString()
+              .contains("low 32 of 64 bits")) {
+        Projected = N;
+        break;
+      }
+    QVERIFY(Projected >= 0);
+    QVERIFY(Rows->data(Rows->index(Projected, 4), Qt::ToolTipRole)
+                .toString()
+                .contains("original width and native site"));
+    QVERIFY(Dialog->findChild<QLabel *>("flowSummary")
+                ->text()
+                .contains("parameter views"));
+    Table->selectRow(Projected);
+    QTest::mouseClick(Dialog->findChild<QPushButton *>("flowBackward"),
+                      Qt::LeftButton);
+    auto *Slice = Dialog->findChild<QTableView *>("flowSlice");
+    QTRY_VERIFY_WITH_TIMEOUT(Slice->model()->rowCount(), Timeout);
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        Dialog->resize(1280, 800);
+        QTest::qWait(40);
+        QVERIFY(Dialog->grab().save(Captures +
+                                    (Mode == Theme::Mode::Dark
+                                         ? "/parameter-views-dark.png"
+                                         : "/parameter-views-light.png")));
+      }
+    }
+    const auto Saved = Directory.filePath("parameters.nddiff");
+    Session.command("comparison_save", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && QFile::exists(Saved), Timeout);
+    Dialog->hide();
+    Profile->setCurrentIndex(Profile->findData("med-ssa-v2"));
+    bool Selected = false;
+    QTimer Select;
+    connect(&Select, &QTimer::timeout, this, [&] {
+      if (auto *File =
+              qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+        File->selectFile(Saved);
+        if (auto *Name = File->findChild<QLineEdit *>("fileNameEdit"))
+          Name->setText(Saved);
+        Selected = true;
+        static_cast<QDialog *>(File)->accept();
+      }
+    });
+    Select.start(10);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonReopen"),
+                      Qt::LeftButton);
+    Select.stop();
+    QVERIFY(Selected);
+    QTRY_COMPARE_WITH_TIMEOUT(Profile->currentData().toString(),
+                              QString("llvm-parameter-ssa-v1"), Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Failures.size(), 0);
+  }
   void sharedFragmentsKeepExternalInputsSeparateAndRestoreSettings() {
     const auto A = Directory.filePath("fragments-before.bin");
     const auto B = Directory.filePath("fragments-after.bin");
