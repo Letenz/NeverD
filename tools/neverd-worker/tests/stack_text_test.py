@@ -90,6 +90,7 @@ def check(worker, binary, route):
             text = payload.get("text", "") or "\n".join(
                 row if isinstance(row, str) else row.get("text", "")
                 for row in payload.get("lines", []))
+            assert "extern void observe_text(const uint16_t *text);" in text, text
             body = text[text.rfind(function + "("):]
             comments = [line for line in body.splitlines() if "stack text at 0x" in line]
             expected = function == "stack_text"

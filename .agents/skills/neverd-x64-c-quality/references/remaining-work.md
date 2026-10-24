@@ -64,6 +64,14 @@ Explicit address and loader relocation evidence still permit genuine low data
 addresses. Cross-architecture/format boundary checks cover scalar, unknown,
 address and data-address occurrences, direct/indirect calls and copies; ARM64
 PE/ELF consumers independently execute both C outputs at O0/O2.
+Register-only local scalar import declarations now reuse the checked shared
+carrier layout in LLVMC. Both C routes retain authenticated portable pointer
+qualifiers, including nested const and volatile pointers. Counts, carrier
+widths, calling conventions and observed results must agree before using the
+source declaration; incompatible calls remain unprojected regardless of query
+order. Public PE/ELF workers and independent C providers cover x64 and ARM64,
+including void, pointer and narrow integer returns. These source contracts do
+not recover missing machine state or certify unsupported calling conventions.
 Readonly scalar loads among instruction bytes reuse the immutable code reader's
 mapping and relocation checks. Default source cleanup also folds exact integer
 idempotence and absorption without symbolic search. Runtime-indexed memory and
@@ -92,7 +100,6 @@ The public constant-branch and worker chunk regressions cover these boundaries.
 |---|---|
 | LLVMC Windows EH remains goto form | Keep recovered filters, nested cleanup order, and both normal and unwind edges visible. Compare the public `seh_probe` and C++ EH corpus output with HighC. |
 | LLVMC output may retain avoidable frame references or control flow | Reproduce each issue with a public synthetic LLVM fixture. Keep a negative test for any value or edge that must remain printed. |
-| Register-only local scalar import declarations can remain untyped in LLVMC | A supplied `void observe_text(const unsigned short *)` declaration is honored by HighC but can remain an unspecified integer-return declaration in LLVM C. Reproduce through fresh worker sessions; certify the machine argument/result contract before publishing the source prototype. |
 | Source types and member calls remain partially recovered | Use authenticated PDB/TPI type and method metadata; do not infer a virtual method name from a vtable offset alone. |
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | UCRT declarations do not yet imply complete source-call coverage | Use `scripts/check_windows_ucrt_calls.py` with retained official inputs. Pointer qualifiers, variadic prefixes, pointer-only record/union tags, mixed scalar banks and x86 float/double stack arguments now have public contracts. Declared x87 scalar results retain TOP and exact source precision; real extended arithmetic still requires an 80-bit C type. Dense ARM64 HFAs retain their complete source groups in registers and ordinary COFF/ELF stack slots, and all one-to-four float/double result fields. The HFA adapter still requires an FP/HFA result; integer/void-result variants, padded or over-aligned records, Apple stack packing and nonordinary conventions remain outside it. Checked HFA results now retain their register-record shape in HighIR, avoiding artificial 192/256-bit C integers. Both C routes have Windows ARM64 target compilation, host sanitizer execution and freestanding Linux AArch64 execution matrices for import thunks/slots and single/chained calls; native Windows runtime execution remains separate. A wrapper without a source return type or observing caller still cannot infer a source aggregate result merely from residual FP registers. The strict SDK check independently compares anonymous enum values/layout and compiles the unmodified standalone output too; compiler success alone does not certify execution. |

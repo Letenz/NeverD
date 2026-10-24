@@ -9,17 +9,20 @@
 #include "../../../lib/backend/c/pass/LLVMC/LLVMCBitTests.h"
 #include "../../../lib/backend/c/pass/LLVMC/LLVMCCommonBranches.h"
 #include "../../../lib/backend/c/render/X86Virtualization.h"
+#include "WindowsQualifiedFixture.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/LLVMX86DivRemAsm.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/NoFolder.h"
 #include "llvm/IR/Verifier.h"
@@ -32,6 +35,7 @@
 #include "llvm/TargetParser/Host.h"
 
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 
@@ -3397,6 +3401,295 @@ int main(void) {
 }
 )c";
   compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, LocalRegisterImportPrototypesAgreeWithCalls) {
+  for (const auto Arch : {neverd::Arch::X64, neverd::Arch::AArch64})
+    for (const auto Format :
+         {neverd::BinaryFormat::COFF, neverd::BinaryFormat::ELF,
+          neverd::BinaryFormat::MachO})
+      for (const bool Indirect : {false, true})
+        for (const bool VoidResult : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Arch));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Indirect);
+          SCOPED_TRACE(VoidResult);
+          neverd::windows_qualified_test::Header Debug;
+          Debug.Local = true;
+          Debug.Nested = true;
+          Debug.VoidResult = VoidResult;
+          llvm::LLVMContext Context;
+          llvm::SMDiagnostic Diagnostic;
+          const std::string IR =
+              std::string(Indirect
+                              ? "@fixture_qualified = external global i8, "
+                                "!neverd.data-symbol !0\n"
+                              : "declare i64 @fixture_qualified(i64, i64)\n") +
+              "define i64 @use_local(i64 %input, i64 %output) {\n"
+              "  %result = call i64 @fixture_qualified(i64 %input, i64 "
+              "%output)\n"
+              "  ret i64 " +
+              (VoidResult ? "0" : "%result") + "\n}\n!0 = !{}\n";
+          auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
+          ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+          Module->setDataLayout("e-p:64:64-i64:64-i128:128");
+          ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+          neverd::CEmitterOptions Options;
+          Options.TheArch = Arch;
+          Options.Format = Format;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          ASSERT_TRUE(
+              neverd::LLVMCEmitter().emit(*Module, Out, Options, &Debug));
+          EXPECT_NE(Source.find(Debug.declaration()), std::string::npos)
+              << Source;
+          const std::string Definition =
+              std::string("\n") + (VoidResult ? "void" : "const uint16_t *") +
+              R"c( fixture_qualified(const uint16_t *const *input,
+                                    volatile uint32_t *output) {
+  if (**input != 0x1234 || *output != 41) __builtin_trap();
+  *output = 42;
+)c" + (VoidResult ? "" : "  return *input;\n") +
+              R"c(}
+int main(void) {
+  const uint16_t value = 0x1234;
+  const uint16_t *input = &value;
+  uint32_t output = 41;
+  uint64_t result = use_local((uint64_t)(uintptr_t)&input,
+                              (uint64_t)(uintptr_t)&output);
+  return output != 42 || result != )c" +
+              (VoidResult ? "0" : "(uint64_t)(uintptr_t)&value") + ";\n}\n";
+          for (const auto Optimization : {"-O0", "-O2"}) {
+            compileAndRun(Source + Definition, Optimization, {}, true);
+            if (::testing::Test::HasFailure())
+              return;
+          }
+        }
+}
+
+class LocalScalarPrototype : public neverd::NullDebugContext {
+public:
+  neverd::FunctionSym Function;
+  std::optional<neverd::FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const override {
+    return Name == Function.Name ? std::optional(Function) : std::nullopt;
+  }
+};
+
+TEST(LLVMCValues, LocalRegisterIntegerAndEmptyPrototypesExecute) {
+  for (const auto Arch : {neverd::Arch::X64, neverd::Arch::AArch64})
+    for (const auto Format :
+         {neverd::BinaryFormat::COFF, neverd::BinaryFormat::ELF,
+          neverd::BinaryFormat::MachO})
+      for (const bool Indirect : {false, true})
+        for (const bool Empty : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Arch));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Indirect);
+          SCOPED_TRACE(Empty);
+          LocalScalarPrototype Debug;
+          auto &Function = Debug.Function;
+          Function.Name = "fixture_scalar";
+          Function.PrototypeLibrary = neverd::UserPrototypeLibrary.str();
+          Function.ReturnType = Empty ? neverd::NdType::makeVoid()
+                                      : neverd::NdType::makeInt(4, true);
+          if (!Empty)
+            Function.Params = {{"a", neverd::NdType::makeInt(1, true)},
+                               {"b", neverd::NdType::makeInt(2, false)},
+                               {"c", neverd::NdType::makeInt(4, false)}};
+          Function.PortablePrototypeDeclaration =
+              Empty
+                  ? "void fixture_scalar(void)"
+                  : "int32_t fixture_scalar(int8_t a, uint16_t b, uint32_t c)";
+          const std::string Result = Empty ? "i64" : "i32";
+          const std::string Parameters = Empty ? "" : "i64, i64, i64";
+          const std::string IR =
+              (Indirect ? "@fixture_scalar = external global i8, "
+                          "!neverd.data-symbol !0\n"
+                        : "declare " + Result + " @fixture_scalar(" +
+                              Parameters + ")\n") +
+              "define i64 @use_local() {\n  %result = call " + Result +
+              " @fixture_scalar(" +
+              (Empty ? "" : "i64 511, i64 114415, i64 6604705263") + ")\n" +
+              (Empty ? "  ret i64 0\n"
+                     : "  %wide = zext i32 %result to i64\n  ret i64 %wide\n") +
+              "}\n!0 = !{}\n";
+          llvm::LLVMContext Context;
+          llvm::SMDiagnostic Diagnostic;
+          auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
+          ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+          Module->setDataLayout("e-p:64:64-i64:64-i128:128");
+          ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+          neverd::CEmitterOptions Options;
+          Options.TheArch = Arch;
+          Options.Format = Format;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          ASSERT_TRUE(
+              neverd::LLVMCEmitter().emit(*Module, Out, Options, &Debug));
+          EXPECT_NE(Source.find(Function.PortablePrototypeDeclaration),
+                    std::string::npos)
+              << Source;
+          Source += "\nstatic unsigned observed;\n";
+          Source +=
+              Empty
+                  ? "void fixture_scalar(void) { ++observed; }\n"
+                  : R"c(int32_t fixture_scalar(int8_t a, uint16_t b, uint32_t c) {
+  if (a != -1 || b != 0xbeef || c != 0x89abcdefU) __builtin_trap();
+  ++observed;
+  return -7;
+}
+)c";
+          Source += "int main(void) { uint64_t result = use_local(); "
+                    "return observed != 1 || result != " +
+                    std::string(Empty ? "0" : "(uint32_t)-7") + "; }\n";
+          for (const auto Optimization : {"-O0", "-O2"}) {
+            compileAndRun(Source, Optimization, {}, true);
+            if (::testing::Test::HasFailure())
+              return;
+          }
+        }
+}
+
+TEST(LLVMCValues, LocalRegisterPrototypesRejectIncompatibleCarriers) {
+  enum class Mutation {
+    MissingArgument,
+    ExtraArgument,
+    NarrowArgument,
+    FloatingArgument,
+    FloatingResult,
+    LiveVoidResult,
+    ExplicitEntry,
+    NonPlatform,
+    Fastcall,
+    Thiscall,
+    Variadic,
+    PreserveLLVM
+  };
+  for (const auto Arch : {neverd::Arch::X64, neverd::Arch::AArch64})
+    for (const auto Format :
+         {neverd::BinaryFormat::COFF, neverd::BinaryFormat::ELF,
+          neverd::BinaryFormat::MachO})
+      for (const bool Indirect : {false, true})
+        for (const auto Change :
+             {Mutation::MissingArgument, Mutation::ExtraArgument,
+              Mutation::NarrowArgument, Mutation::FloatingArgument,
+              Mutation::FloatingResult, Mutation::LiveVoidResult,
+              Mutation::ExplicitEntry, Mutation::NonPlatform,
+              Mutation::Fastcall, Mutation::Thiscall, Mutation::Variadic,
+              Mutation::PreserveLLVM}) {
+          SCOPED_TRACE(static_cast<unsigned>(Arch));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Indirect);
+          SCOPED_TRACE(static_cast<unsigned>(Change));
+          neverd::windows_qualified_test::Header Header;
+          Header.Local = true;
+          Header.VoidResult = Change == Mutation::LiveVoidResult;
+          LocalScalarPrototype Debug;
+          Debug.Function = *Header.resolvePrototype("fixture_qualified");
+          auto &Function = Debug.Function;
+          if (Change == Mutation::ExplicitEntry)
+            Function.ParamEntryLocations.resize(Function.Params.size());
+          Function.PlatformConvention = Change != Mutation::NonPlatform;
+          Function.IsVariadic = Change == Mutation::Variadic;
+          if (Change == Mutation::Fastcall)
+            Function.CallConv = neverd::DebugCallConv::Fastcall;
+          if (Change == Mutation::Thiscall)
+            Function.CallConv = neverd::DebugCallConv::Thiscall;
+          llvm::LLVMContext Context;
+          llvm::Module Module("local-register-refusal", Context);
+          Module.setDataLayout("e-p:64:64-i64:64-i128:128");
+          llvm::IRBuilder<> Builder(Context);
+          auto *ResultType = Change == Mutation::FloatingResult
+                                 ? Builder.getDoubleTy()
+                                 : Builder.getInt64Ty();
+          llvm::Type *FirstType = Builder.getInt64Ty();
+          if (Change == Mutation::NarrowArgument)
+            FirstType = Builder.getInt32Ty();
+          if (Change == Mutation::FloatingArgument)
+            FirstType = Builder.getDoubleTy();
+          auto *Type = llvm::FunctionType::get(ResultType, {FirstType}, true);
+          llvm::Value *Callee;
+          if (Indirect) {
+            auto *Symbol =
+                new llvm::GlobalVariable(Module, Builder.getInt8Ty(), false,
+                                         llvm::GlobalValue::ExternalLinkage,
+                                         nullptr, "fixture_qualified");
+            Symbol->setMetadata("neverd.data-symbol",
+                                llvm::MDNode::get(Context, {}));
+            Callee = Symbol;
+          } else {
+            Callee =
+                llvm::Function::Create(Type, llvm::GlobalValue::ExternalLinkage,
+                                       "fixture_qualified", Module);
+          }
+          auto *Caller = llvm::Function::Create(
+              llvm::FunctionType::get(Builder.getInt64Ty(), {}, false),
+              llvm::GlobalValue::ExternalLinkage, "use_local", Module);
+          Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "", Caller));
+          llvm::SmallVector<llvm::Value *, 3> Arguments{Builder.getInt64(7),
+                                                        Builder.getInt64(9)};
+          if (Change == Mutation::MissingArgument)
+            Arguments.pop_back();
+          if (Change == Mutation::ExtraArgument)
+            Arguments.push_back(Builder.getInt64(11));
+          if (Change == Mutation::NarrowArgument)
+            Arguments[0] = Builder.getInt32(7);
+          if (Change == Mutation::FloatingArgument)
+            Arguments[0] = llvm::ConstantFP::get(Builder.getDoubleTy(), 7.0);
+          auto *Call = Builder.CreateCall(Type, Callee, Arguments);
+          Builder.CreateRet(Builder.CreateBitCast(Call, Builder.getInt64Ty()));
+          ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+          neverd::CEmitterOptions Options;
+          Options.TheArch = Arch;
+          Options.Format = Format;
+          Options.PreserveLLVMFunctionTypes = Change == Mutation::PreserveLLVM;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          ASSERT_TRUE(
+              neverd::LLVMCEmitter().emit(Module, Out, Options, &Debug));
+          EXPECT_EQ(Source.find(Function.PortablePrototypeDeclaration),
+                    std::string::npos)
+              << Source;
+          EXPECT_NE(Source.find("fixture_qualified("), std::string::npos)
+              << Source;
+          EXPECT_EQ(Source.find("return 0;"), std::string::npos) << Source;
+        }
+}
+
+TEST(LLVMCValues, LocalRegisterPrototypeAgreementDoesNotDependOnCallOrder) {
+  for (const bool BadFirst : {false, true}) {
+    SCOPED_TRACE(BadFirst);
+    llvm::LLVMContext Context;
+    llvm::Module Module("local-register-call-order", Context);
+    Module.setDataLayout("e-p:64:64-i64:64-i128:128");
+    llvm::IRBuilder<> Builder(Context);
+    auto *Type = llvm::FunctionType::get(Builder.getInt64Ty(), {}, true);
+    auto *Callee = llvm::Function::Create(
+        Type, llvm::GlobalValue::ExternalLinkage, "fixture_qualified", Module);
+    auto *Caller = llvm::Function::Create(
+        llvm::FunctionType::get(Builder.getInt64Ty(), {}, false),
+        llvm::GlobalValue::ExternalLinkage, "use_local", Module);
+    Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "", Caller));
+    llvm::Value *Result = nullptr;
+    for (const bool Bad : {BadFirst, !BadFirst}) {
+      llvm::SmallVector<llvm::Value *, 2> Arguments{Builder.getInt64(7)};
+      if (!Bad)
+        Arguments.push_back(Builder.getInt64(9));
+      Result = Builder.CreateCall(Type, Callee, Arguments);
+    }
+    Builder.CreateRet(Result);
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    neverd::windows_qualified_test::Header Debug;
+    Debug.Local = true;
+    neverd::CEmitterOptions Options;
+    Options.TheArch = neverd::Arch::X64;
+    Options.Format = neverd::BinaryFormat::COFF;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options, &Debug));
+    EXPECT_EQ(Source.find(Debug.declaration()), std::string::npos) << Source;
+  }
 }
 
 TEST(LLVMCValues, ARuntimeRoutineReturningAFunctionPointerIsDeclared) {
