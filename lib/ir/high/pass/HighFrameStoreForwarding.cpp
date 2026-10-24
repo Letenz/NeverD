@@ -46,9 +46,13 @@ bool isForwardableInteger(const TypeRef &Type) {
           Type->Size == 8);
 }
 
-bool sameIntegerType(const TypeRef &Left, const TypeRef &Right) {
+bool sameIntegerWidth(const TypeRef &Left, const TypeRef &Right) {
   return isForwardableInteger(Left) && isForwardableInteger(Right) &&
-         Left->Size == Right->Size && Left->IsSigned == Right->IsSigned;
+         Left->Size == Right->Size;
+}
+
+bool sameIntegerType(const TypeRef &Left, const TypeRef &Right) {
+  return sameIntegerWidth(Left, Right) && Left->IsSigned == Right->IsSigned;
 }
 
 bool rangesOverlap(int64_t Left, uint16_t LeftBytes, int64_t Right,
@@ -173,9 +177,33 @@ bool safeFrameValue(const ExprPtr &Root, std::set<LocalIdentity> &Dependencies,
   return true;
 }
 
-// Prove the effect boundary once, with an acyclic, bounded graph walk. A call,
-// atomic operation or address escape can invalidate private-memory facts even
-// when it occurs inside an otherwise ordinary assignment.
+// Only a statement's outermost call has a known argument/effect boundary.
+// Nested calls can change memory before another argument or operand reads it.
+const HighExpr *statementCall(const HighStmt &Stmt) {
+  const HighExpr *Root = nullptr;
+  switch (Stmt.Kind) {
+  case StmtKind::Assign:
+    if (Stmt.Dst && Stmt.Dst->Kind == ExprKind::Var)
+      Root = Stmt.Val.get();
+    break;
+  case StmtKind::ExprStmt:
+    Root = Stmt.Val.get();
+    break;
+  case StmtKind::Call:
+    Root = Stmt.CallExpr.get();
+    break;
+  case StmtKind::Return:
+    Root = Stmt.RetVal.get();
+    break;
+  default:
+    break;
+  }
+  return Root && Root->Kind == ExprKind::Call ? Root : nullptr;
+}
+
+// Prove the effect boundary once, with an acyclic, bounded graph walk. An
+// outermost call consumes its arguments before invalidating memory facts;
+// nested effects, atomic operations and address escapes remain unsupported.
 bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
                                         size_t &Budget) {
   if (Func.FrameSize <= 0 || Func.StructuredExceptionRegions ||
@@ -201,8 +229,8 @@ bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
       return false;
     }
     if (Stmt.Kind != StmtKind::Assign && Stmt.Kind != StmtKind::Store &&
-        Stmt.Kind != StmtKind::ExprStmt && Stmt.Kind != StmtKind::Return &&
-        Stmt.Kind != StmtKind::Nop)
+        Stmt.Kind != StmtKind::ExprStmt && Stmt.Kind != StmtKind::Call &&
+        Stmt.Kind != StmtKind::Return && Stmt.Kind != StmtKind::Nop)
       return false;
     if (Stmt.Kind == StmtKind::Assign &&
         (!Stmt.Dst || !Stmt.Val ||
@@ -213,13 +241,16 @@ bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
       return false;
     if (Stmt.Kind == StmtKind::Store && (!Stmt.StoreAddr || !Stmt.StoreVal))
       return false;
+    const auto *Call = statementCall(Stmt);
+    if (Stmt.Kind == StmtKind::Call && !Call)
+      return false;
     bool Safe = true;
     forEachExpr(Stmt, [&](const ExprPtr &Root) {
       std::vector<std::pair<ExprPtr, bool>> Work{{Root, false}};
       while (Safe && !Work.empty()) {
         const auto [E, Ready] = Work.back();
         Work.pop_back();
-        if (!Budget || !E) {
+        if (!Budget || !E || (E->Kind == ExprKind::Call && E.get() != Call)) {
           Safe = false;
           break;
         }
@@ -232,10 +263,9 @@ bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
           continue;
         }
         if (!Active.insert(E.get()).second || !hasValidShape(*E) ||
-            E->IndirectTarget || E->Kind == ExprKind::Call ||
-            E->Kind == ExprKind::Addr || E->Kind == ExprKind::Store ||
-            E->Op == NdOp::ATOMIC_ADD || E->Op == NdOp::ATOMIC_XCHG ||
-            E->Op == NdOp::ATOMIC_CMPXCHG ||
+            E->IndirectTarget || E->Kind == ExprKind::Addr ||
+            E->Kind == ExprKind::Store || E->Op == NdOp::ATOMIC_ADD ||
+            E->Op == NdOp::ATOMIC_XCHG || E->Op == NdOp::ATOMIC_CMPXCHG ||
             E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
             E->MemoryOrdering != NdMemoryOrdering::None ||
             E->MemoryAddressSpace != NdMemoryAddressSpace::Default) {
@@ -303,9 +333,10 @@ ExprPtr replaceFrameLoads(const ExprPtr &Root,
             E->Operands[0], E->Type->Size, Func, Architecture, Budget, Aliases);
         const auto It = Offset ? Stores.find(*Offset) : Stores.end();
         if (It != Stores.end() && It->second.Bytes == E->Type->Size &&
-            sameIntegerType(It->second.Type, E->Type)) {
+            sameIntegerWidth(It->second.Type, E->Type)) {
           // A store/load pair is also an integer truncation boundary. Preserve
-          // it explicitly when C's integer promotions would widen an operator.
+          // it explicitly when C's integer promotions would widen an operator
+          // or the read interprets the same stored bits with another sign.
           auto Value = std::make_shared<HighExpr>();
           Value->Kind = ExprKind::Cast;
           Value->Type = Value->CastTo = E->Type;
@@ -418,10 +449,13 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
   for (HighStmt &Stmt : Func.Body) {
     if (!Budget)
       break;
+    const bool Calls = statementCall(Stmt) != nullptr;
     forEachRhsExpr(Stmt, [&](ExprPtr &E) {
       E = replaceFrameLoads(E, Stores, Func, Architecture, Budget,
                             ExpansionBudget, Aliases);
     });
+    if (Calls)
+      Stores.clear();
     if (Stmt.Kind == StmtKind::Store) {
       recordFrameStore(Stmt.StoreAddr, Stmt.StoreVal,
                        Stmt.StoreVal ? Stmt.StoreVal->Type : nullptr, Stores,

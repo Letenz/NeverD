@@ -9017,10 +9017,12 @@ original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and
-bytes remain unchanged. Unknown or overlapping writes invalidate facts;
-calls, ordered memory, malformed graphs and control-flow joins prevent this
-proof. Replayed operations must be total and explicitly typed, store/load
-truncation is retained, and budgets count rendered trees including repeated
+bytes remain unchanged. Unknown or overlapping writes invalidate facts. A
+statement's outermost direct call can consume forwarded arguments, then clears
+all stored-memory facts. Nested calls, indirect targets, ordered memory,
+malformed graphs and control-flow joins prevent this proof. Replayed operations
+must be total and explicitly typed; store/load truncation and the read's signed
+interpretation are retained. Budgets count rendered trees including repeated
 DAG edges. The proof applies to both 32-bit and 64-bit targets.
 HighIR's scalar-definition proof also survives an ordinary store whose address
 and value contain no hidden effects: the store changes memory, not an

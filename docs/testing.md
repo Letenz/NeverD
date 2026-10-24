@@ -5160,7 +5160,14 @@ valid address and pointer expressions. `HighFrameStoreForwarding.*` checks exact
 access widths,
 source-local mutation, memory-home writes, prefix aliases, partial overlaps,
 ordered memory, malformed/cyclic graphs and rendered expansion bounds. Its
-narrow-complement regression executes after semantic simplification.
+narrow-complement regression executes after semantic simplification. Call
+argument cases cover assignment, expression, call and return statements, keep
+the original stores and invalidate memory facts after each call. Nested calls
+and indirect targets retain their reads. Same-width signed/unsigned views
+execute at O0/O2 with UBSan against an independent byte-copy reference.
+`NeverDSessionCAPITests` checks these forwarded x64/ARM64 import arguments and
+the V7/V8 recovery optimization paths. On macOS this SDK consumer resolves
+LLVM from the shared engine alone, preserving pass-analysis key identity.
 `HighCStoreForwarding.RetainsDefinitionsUsedByForwardedValues` keeps the cached
 store-value dependencies live across all four architectures, including floating
 reinterpretations and additional direct uses. `SymSimplifyGuard.OpaqueLoad*`
