@@ -868,6 +868,17 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
+          if (auto SystemRegister = renderX86SystemRegisterCall(
+                  Opts.TheArch, Opts.Format, *CI, "result", true,
+                  std::vector<std::string>(CI->arg_size(), "0"))) {
+            NeedsX86SystemRegisterDispatch |=
+                Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF;
+            if (SystemRegister->SetIntrinsics) {
+              Headers.insert("intrin.h");
+              HasCIntrinsics = true;
+            }
+            continue;
+          }
           if (Opts.TheArch == Arch::X64) {
             const std::vector<std::string> Arguments(CI->arg_size(), "0");
             NeedsX86SystemStateDispatch |=
@@ -923,16 +934,6 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 Asm->getAsmString() == "pushl $0\n\tpopfl")
               Headers.insert(Opts.Format == BinaryFormat::COFF ? "intrin.h"
                                                                : "x86intrin.h");
-            if (auto SystemRegister = renderX86SystemRegisterCall(
-                    Opts.TheArch, Opts.Format, *CI, "result", true,
-                    std::vector<std::string>(CI->arg_size(), "0"))) {
-              if (SystemRegister->SetIntrinsics) {
-                Headers.insert("intrin.h");
-                HasCIntrinsics = true;
-                NeedsX86SystemRegisterDispatch = true;
-              }
-              continue;
-            }
             if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))

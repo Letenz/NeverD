@@ -604,6 +604,11 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
     if (!Value->getType()->isIntegerTy(8 * P->Bytes))
       llvm::report_fatal_error(
           "x86 system register write has a non-native value");
+    if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P->LLVMName)) {
+      Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(Mod, IID),
+                         {Builder.getInt32(P->Index), Value});
+      return true;
+    }
     auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
                                          {Value->getType()}, false);
     auto *IA = llvm::InlineAsm::get(FnTy, P->Text, P->Constraints,

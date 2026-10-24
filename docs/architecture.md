@@ -4,6 +4,12 @@
 
 # NeverD Architecture
 
+`X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
+LLVM/C API names. LLVM emission and both C projections share that contract.
+The LLVM-to-C adapter validates the complete native call or legacy assembly
+before rendering it; neither a mnemonic nor an intrinsic declaration alone
+authorizes an architectural register access. Both forms retain unknown memory
+effects, undefined arithmetic flags and native faults, including dead reads.
 
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
