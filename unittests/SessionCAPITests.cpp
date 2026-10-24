@@ -7047,7 +7047,23 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
         << HighC;
     // A call through a member passes the parameters its type declares: on
     // x86 the word the caller pushed to make room on the stack is none.
-    EXPECT_EQ(HighC.find("unknown register"), std::string::npos) << HighC;
+    // These fixture arguments contain no commas inside a nested expression.
+    for (const auto &[Callee, Count] :
+         {std::pair{"(SystemTable->ConOut->OutputString))(", 2u},
+          std::pair{"(SystemTable->BootServices->HandleProtocol))(", 3u}}) {
+      const auto Begin = HighC.find(Callee);
+      ASSERT_NE(Begin, std::string::npos) << HighC;
+      const auto Call = HighC.substr(Begin, HighC.find('\n', Begin) - Begin);
+      EXPECT_EQ(std::count(Call.begin(), Call.end(), ','), Count - 1) << Call;
+      EXPECT_EQ(Call.find("unknown register"), std::string::npos) << Call;
+    }
+    // The x86 allocation pushes incoming EAX into the later protocol-output
+    // slot. Its address escapes to an external body, so the signature alone
+    // cannot prove that the saved bytes are unobserved. Keep that diagnostic
+    // instead of dropping a real store or inventing an initial value.
+    EXPECT_EQ(HighC.find("unknown register") != std::string::npos,
+              std::string_view(P.File) == "uefi_calls_x86.efi")
+        << HighC;
     const std::string LLVMC = takeString(
         neverd_decompile_llvm(Uefi, neverd_session_entry_addr(Uefi)));
     EXPECT_NE(LLVMC.find("(SystemTable->ConOut->OutputString))("),

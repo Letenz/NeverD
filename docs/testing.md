@@ -5185,6 +5185,10 @@ execute at O0/O2 with UBSan against an independent byte-copy reference.
 `NeverDSessionCAPITests` checks these forwarded x64/ARM64 import arguments and
 the V7/V8 recovery optimization paths. On macOS this SDK consumer resolves
 LLVM from the shared engine alone, preserving pass-analysis key identity.
+The UEFI SDK fixture checks each typed protocol call's argument count separately
+from required missing-state diagnostics. Its x86 stack allocation saves incoming
+EAX to a slot later passed to an external protocol; that unproved write remains
+explicit, while neither protocol call gains a spurious register argument.
 `HighCStoreForwarding.RetainsDefinitionsUsedByForwardedValues` keeps the cached
 store-value dependencies live across all four architectures, including floating
 reinterpretations and additional direct uses. `SymSimplifyGuard.OpaqueLoad*`
