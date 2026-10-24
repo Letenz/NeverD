@@ -2055,6 +2055,12 @@ controls and full-size close targets. `doubleClickDetachStartsLocked` and
 tab docking. `explicitDockIgnoresLock` clicks the dock button while locked.
 `floatingEdgesResizeWithoutDocking` resizes all four edges and all four corners
 with the lock both enabled and disabled, without opening a docking preview.
+Offscreen pointer actions send Qt events to their widgets instead of native
+input to nonexistent OS windows. On macOS, resize motion and release run
+independently of the GUI thread so AppKit's tracking loop cannot starve the
+release timer. The resize still must change the requested dimensions and
+must never transition into docking. Failed drag assertions retain pointer,
+window and drop-target state at each movement boundary.
 Its native `dragIntoWorkbench` cases press and drag the title bar or tab, verify
 the drop preview, and release into a tab group or horizontal/vertical split.
 They cover separate, overlapping and maximized floating windows, and release

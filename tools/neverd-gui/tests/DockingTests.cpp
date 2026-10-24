@@ -14,6 +14,7 @@
 
 #include <QApplication>
 #include <QCursor>
+#include <QDebug>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -32,6 +33,8 @@
 #include <QTimer>
 #include <QWindow>
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include <kddockwidgets/KDDockWidgets.h>
 #include <kddockwidgets/core/DropArea.h>
 #include <kddockwidgets/core/DropIndicatorOverlay.h>
@@ -41,6 +44,8 @@
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <kddockwidgets/qtwidgets/views/TabBar.h>
 #include <kddockwidgets/qtwidgets/views/TitleBar.h>
+#include <thread>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -123,6 +128,15 @@ public:
   }
 
   bool move(QWidget &widget, QPoint point, bool held) {
+    if (QGuiApplication::platformName() == QLatin1String("offscreen")) {
+      QWidget *receiver = Pressed ? Pressed.data() : &widget;
+      const QPoint global = widget.mapToGlobal(point);
+      QMouseEvent event(QEvent::MouseMove, receiver->mapFromGlobal(global),
+                        global, Qt::NoButton,
+                        held ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+      QApplication::sendEvent(receiver, &event);
+      return true;
+    }
     if (onWayland()) {
       QWidget *window = widget.window();
       const QPoint local = widget.mapTo(window, point) +
@@ -160,6 +174,20 @@ public:
   }
 
   bool button(QWidget &widget, QPoint point, bool pressed) {
+    // An offscreen widget has no OS window to receive native mouse input,
+    // including when the test host itself is Windows or macOS.
+    if (QGuiApplication::platformName() == QLatin1String("offscreen")) {
+      if (pressed) {
+        Pressed = &widget;
+        QTest::mousePress(&widget, Qt::LeftButton, Qt::NoModifier, point);
+      } else {
+        QWidget *receiver = Pressed ? Pressed.data() : &widget;
+        QTest::mouseRelease(receiver, Qt::LeftButton, Qt::NoModifier,
+                            receiver->mapFromGlobal(widget.mapToGlobal(point)));
+        Pressed.clear();
+      }
+      return true;
+    }
     if (QGuiApplication::platformName() == QLatin1String("xcb")) {
       QProcess process;
       process.start(
@@ -201,6 +229,19 @@ public:
   }
 
 #ifdef Q_OS_MACOS
+  std::future<std::pair<bool, bool>> finishNativeResize(QPoint destination) {
+    // Cocoa tracks a system resize in an AppKit loop that does not service
+    // Qt timers. Deliver motion and release independently of that loop. Only
+    // copied screen coordinates cross threads; widgets stay on the GUI thread.
+    return std::async(std::launch::async, [destination] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      const bool moved = nativeMouse(kCGEventLeftMouseDragged, destination);
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      const bool released = nativeMouse(kCGEventLeftMouseUp, destination);
+      return std::make_pair(moved, released);
+    });
+  }
+
 private:
   static bool nativeMouse(CGEventType type, QPoint point) {
     CGEventRef event = CGEventCreateMouseEvent(
@@ -526,12 +567,29 @@ private slots:
       delta.setY(60);
     }
     auto *area = desktop.Window.mainWindow()->dropArea();
+    QSignalSpy floatingChanges(&desktop.Source,
+                               &KD::QtWidgets::DockWidget::isFloatingChanged);
     bool preview = false;
     bool moved = false;
     bool released = false;
     QVERIFY(pointer.move(*floating, start, false));
     QTest::qWait(50);
     QVERIFY(pointer.button(*floating, start, true));
+#ifdef Q_OS_MACOS
+    QTimer observePreview;
+    connect(&observePreview, &QTimer::timeout, &desktop.Window,
+            [&] { preview |= area->dropIndicatorOverlay()->isVisible(); });
+    observePreview.start(50);
+    auto completion =
+        pointer.finishNativeResize(floating->mapToGlobal(start + delta));
+    QTRY_VERIFY_WITH_TIMEOUT(completion.wait_for(std::chrono::milliseconds(
+                                 0)) == std::future_status::ready,
+                             5000);
+    const auto completed = completion.get();
+    moved = completed.first;
+    released = completed.second;
+    observePreview.stop();
+#else
     QTimer::singleShot(50, &desktop.Window, [&] {
       if (floating)
         moved = pointer.move(*floating, start + delta, true);
@@ -540,11 +598,13 @@ private slots:
       preview = area->dropIndicatorOverlay()->isVisible();
       released = pointer.button(desktop.Window, QPoint(), false);
     });
+#endif
     QTRY_VERIFY_WITH_TIMEOUT(released, 5000);
     QTest::qWait(200);
     QVERIFY(moved);
     QVERIFY(!preview);
     QVERIFY(desktop.Source.isFloating());
+    QCOMPARE(floatingChanges.size(), 0);
     QVERIFY(floating);
     if (delta.x())
       QTRY_VERIFY(floating->width() > size.width());
@@ -716,15 +776,28 @@ private slots:
     bool released = false;
     QPoint destination;
     auto *area = desktop.Window.mainWindow()->dropArea();
+    QString dragState;
+    auto recordDrag = [&](const char *phase) {
+      QDebug state(&dragState);
+      state << phase << "grabber" << QWidget::mouseGrabber() << "buttons"
+            << QGuiApplication::mouseButtons() << "drop"
+            << area->currentDropLocation() << "overlay"
+            << area->dropIndicatorOverlay()->isVisible() << "cursor"
+            << QCursor::pos() << "source" << floating->geometry() << "target"
+            << desktop.Window.geometry() << "destination"
+            << desktop.Window.mapToGlobal(destination);
+    };
     // Separate timers can run in Wayland's nested QDrag event loop.
     QTimer::singleShot(50, &desktop.Window, [&] {
       moved = pointer.move(*source, start + QPoint(0, 50), true);
     });
     QTimer::singleShot(150, &desktop.Window, [&] {
+      recordDrag("before target motion");
       moved &=
           pointer.move(desktop.Window, desktop.Window.rect().center(), true);
     });
     QTimer::singleShot(350, &desktop.Window, [&] {
+      recordDrag("before indicator motion");
       destination = location == KD::DropLocation_None
                         ? QPoint(100, 100)
                         : desktop.Window.mapFromGlobal(
@@ -753,6 +826,7 @@ private slots:
                captures + "/" + name + "-desktop.png"});
       }
       preview = area->currentDropLocation() == location;
+      recordDrag("before release");
       released = pointer.button(desktop.Window, destination, false);
     });
     QTRY_VERIFY_WITH_TIMEOUT(released, 5000);
@@ -765,7 +839,7 @@ private slots:
                    Qt::MouseButtons(Qt::NoButton));
     QTRY_VERIFY(!area->dropIndicatorOverlay()->isVisible());
     QVERIFY(moved);
-    QVERIFY(preview);
+    QVERIFY2(preview, qPrintable(dragState));
     QTRY_COMPARE(desktop.Source.isFloating(),
                  location == KD::DropLocation_None);
     QVERIFY(desktop.Source.widget()->isVisible());
