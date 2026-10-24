@@ -620,6 +620,140 @@ private slots:
         << int(ActionId::FileCompare) << QStringLiteral("binaryComparison");
   }
 
+  void focusFunctionsSidebarTogglesAndNavigates_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void focusFunctionsSidebarTogglesAndNavigates() {
+    QFETCH(bool, dark);
+    auto &theme = Theme::instance();
+    const auto previous = theme.mode();
+    const auto restoreTheme = qScopeGuard([&] { theme.setMode(previous); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    theme.apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "focus-sidebar.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    auto *original = bench.functions();
+    QVERIFY(original);
+    original->setFilterText(QStringLiteral("function_1"));
+    QTRY_COMPARE(original->model().filter(), QStringLiteral("function_1"));
+    assembly->focusContent();
+    auto *mode = bench.action(ActionId::ViewFocusMode);
+    mode->trigger();
+    auto *workspace = assembly->window();
+    QVERIFY(activateTestWindow(workspace));
+    QPointer<QWidget> sidebar = workspace->findChild<QWidget *>(
+        QStringLiteral("focusFunctionsSidebar"));
+    QPointer<QToolButton> toggle = workspace->findChild<QToolButton *>(
+        QStringLiteral("focusSidebarToggle"));
+    QVERIFY(sidebar && toggle && toggle->isVisible());
+    QVERIFY(!sidebar->isVisible());
+    auto *code = workspace->findChild<CodeView *>();
+    QVERIFY(code);
+    QTRY_VERIFY(!code->text()->loading());
+    const QRect assemblyGeometry(assembly->mapTo(workspace, QPoint()),
+                                 assembly->size());
+    const QRect codeGeometry(code->mapTo(workspace, QPoint()), code->size());
+    const QPoint triangle = toggle->mapTo(workspace, toggle->rect().center());
+    const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    const auto capture = [&](const QString &state) {
+      if (captures.isEmpty())
+        return true;
+      QDir().mkpath(captures);
+      return workspace->grab().save(captures + "/focus-sidebar-" + state + "-" +
+                                    QTest::currentDataTag() + ".png");
+    };
+    QVERIFY(capture(QStringLiteral("collapsed")));
+    QTest::mouseMove(workspace->windowHandle(), triangle);
+    QTest::qWait(350);
+    QVERIFY(!sidebar->isVisible()); // Hover must not open the list.
+    QTest::mouseClick(workspace->windowHandle(), Qt::LeftButton, Qt::NoModifier,
+                      triangle);
+    QTRY_VERIFY(sidebar->isVisible());
+    QVERIFY(toggle->isChecked());
+    QCOMPARE(toggle->arrowType(), Qt::LeftArrow);
+    QCOMPARE(toggle->mapTo(workspace, toggle->rect().center()), triangle);
+    QCOMPARE(QRect(assembly->mapTo(workspace, QPoint()), assembly->size()),
+             assemblyGeometry);
+    QCOMPARE(QRect(code->mapTo(workspace, QPoint()), code->size()),
+             codeGeometry);
+    auto *functions = sidebar->findChild<ChooserView *>();
+    QVERIFY(functions && functions != original);
+    QTRY_VERIFY(functions->model().total() > 0 &&
+                !functions->model().loading());
+    QVERIFY(capture(QStringLiteral("open")));
+    QTest::mouseMove(workspace->windowHandle(),
+                     code->mapTo(workspace, code->rect().center()));
+    QTest::qWait(350);
+    QVERIFY(sidebar->isVisible()); // Moving away must not fold it either.
+    auto *filter = functions->findChild<QLineEdit *>();
+    QVERIFY(filter && filter->isVisible());
+    filter->setFocus();
+    QTest::keyClicks(filter, "function_30");
+    QTRY_COMPARE(functions->model().filter(), QStringLiteral("function_30"));
+    constexpr Address Target = Base + 0x1e0;
+    QTRY_COMPARE(functions->model().addressAt(0),
+                 std::optional<Address>(Target));
+    auto *table = functions->table();
+    const QPoint row =
+        table->visualRect(functions->model().index(0, 0)).center();
+    QTest::mouseClick(workspace->windowHandle(), Qt::LeftButton, Qt::NoModifier,
+                      table->viewport()->mapTo(workspace, row));
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(Target));
+    QTRY_COMPARE(code->text()->function(), std::optional<Address>(Target));
+    QVERIFY(sidebar->isVisible());
+    bool menuOwned = false;
+    QTimer closeMenu;
+    closeMenu.setSingleShot(true);
+    connect(&closeMenu, &QTimer::timeout, this, [&] {
+      if (auto *menu =
+              qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+        menuOwned = menu->parentWidget() == workspace;
+        menu->close();
+      }
+    });
+    closeMenu.start(0);
+    emit table->customContextMenuRequested(row);
+    closeMenu.stop();
+    QVERIFY(menuOwned);
+    QVERIFY(sidebar->isVisible());
+    QVERIFY(capture(QStringLiteral("filtered")));
+    QTest::mouseClick(workspace->windowHandle(), Qt::LeftButton, Qt::NoModifier,
+                      triangle);
+    QTRY_VERIFY(!sidebar->isVisible());
+    QVERIFY(!toggle->isChecked());
+    QCOMPARE(toggle->arrowType(), Qt::RightArrow);
+    bench.action(ActionId::ViewFunctions)->trigger();
+    QVERIFY(sidebar->isVisible());
+    QCOMPARE(filter->text(), QStringLiteral("function_30"));
+    filter->clear();
+    filter->setFocus();
+    QTest::keyClicks(filter, "fff");
+    QCOMPARE(filter->text(), QStringLiteral("fff"));
+    QVERIFY(mode->isChecked());
+    mode->trigger();
+    QVERIFY(!sidebar && !toggle);
+    QCOMPARE(original->model().filter(), QStringLiteral("function_1"));
+    QCOMPARE(original->window(), bench.window.get());
+    mode->trigger();
+    QPointer<QWidget> reopened = assembly->window()->findChild<QWidget *>(
+        QStringLiteral("focusFunctionsSidebar"));
+    QVERIFY(reopened && !reopened->isVisible());
+    QVERIFY(bench.window->close());
+    QTRY_VERIFY(!bench.window->isVisible());
+    QVERIFY(!reopened);
+  }
+
   void focusSequenceUsesNativeKeysAndIgnoresTyping() {
     QTemporaryDir directory;
     Workbench bench;

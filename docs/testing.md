@@ -2099,6 +2099,11 @@ themes, docked and floating origins, restoring the previous layout and window
 state, unchanged data, data addresses outside functions, and ordinary command
 input. Keys enter through `QWindow` so forwarding to the focused widget cannot
 silently reset the sequence.
+`focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
+list, triangle clicks, unchanged analysis geometry, single-click navigation in
+both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
+away do not toggle the sidebar. The normal Functions window keeps its own filter;
+reentering focus mode starts folded in both themes.
 `focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
 one second apart, interruption by another key or focus change, timeout,
 auto-repeat, ordinary text input, reopening a closed assembly pane, and

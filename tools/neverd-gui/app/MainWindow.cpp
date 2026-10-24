@@ -12,6 +12,7 @@
 #include "ExportDataDialog.h"
 #include "ExtensionsView.h"
 #include "FindInViewDialog.h"
+#include "FocusSidebar.h"
 #include "FunctionEditDialog.h"
 #include "GnomeWindowEdges.h"
 #include "GraphView.h"
@@ -110,6 +111,10 @@
 #include <kddockwidgets/Config.h>
 #include <kddockwidgets/LayoutSaver.h>
 #include <kddockwidgets/core/DockWidget.h>
+#include <kddockwidgets/core/DropArea.h>
+#include <kddockwidgets/core/FloatingWindow.h>
+#include <kddockwidgets/qtcommon/View.h>
+#include <kddockwidgets/qtwidgets/views/FloatingWindow.h>
 
 namespace neverd::gui {
 namespace {
@@ -484,6 +489,8 @@ MainWindow::~MainWindow() {
   disconnect(&session_, nullptr, this, nullptr);
   disconnect(&broker_, nullptr, this, nullptr);
   disconnect(qApp, &QApplication::focusChanged, this, nullptr);
+  focusFunctions_.clear();
+  delete focusSidebar_.data();
   // Hiding can lay out child models. Their borrowed address space and the
   // other window members must still exist while that happens.
   hide();
@@ -745,18 +752,7 @@ void MainWindow::buildDocks() {
   for (const auto kind : {ChooserKind::Imports, ChooserKind::Exports})
     chooserDock(kind);
 
-  connect(functions_, &ChooserView::activated, this,
-          &MainWindow::activateFunction);
-  // IDA's Functions window edits the function a row lists by its key and
-  // its context menu.
-  connect(functions_, &ChooserView::commandRequested, this,
-          [this](ChooserCommand command, Address entry) {
-            if (command == ChooserCommand::Edit)
-              editFunction(entry);
-          });
-  functions_->table()->setContextMenuPolicy(Qt::CustomContextMenu);
-  connect(functions_->table(), &QWidget::customContextMenuRequested, this,
-          [this](const QPoint &position) { functionsMenu(position); });
+  connectFunctions(functions_);
   connectDisassembly(disassembly_);
   connect(hex_, &HexView::locationChanged, this,
           [this](Address address) { disassembly_->navigate(address, false); });
@@ -830,6 +826,30 @@ void MainWindow::connectDisassembly(DisassemblyView *view) {
             if (graph && view == disassembly_)
               showOverview();
           });
+}
+
+void MainWindow::connectFunctions(ChooserView *view) {
+  const auto activate = [this, view](Address address) {
+    if (view == focusFunctions_ && pseudocode_ && pseudocode_->isVisible())
+      lastCodeView_ = pseudocode_;
+    activateFunction(address);
+  };
+  connect(view, &ChooserView::activated, this, activate);
+  if (view == focusFunctions_)
+    connect(view->table(), &QTreeView::clicked, this,
+            [view, activate](const QModelIndex &index) {
+              if (const auto address = view->model().addressAt(index.row()))
+                activate(*address);
+            });
+  connect(view, &ChooserView::commandRequested, this,
+          [this](ChooserCommand command, Address entry) {
+            if (command == ChooserCommand::Edit)
+              editFunction(entry);
+          });
+  view->table()->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(
+      view->table(), &QWidget::customContextMenuRequested, this,
+      [this, view](const QPoint &position) { functionsMenu(view, position); });
 }
 
 MainWindow::Dock *MainWindow::disassemblyDock(const QString &id) {
@@ -2016,6 +2036,11 @@ void MainWindow::connectActions() {
   on(ActionId::ViewSegments,
      [openChooser] { openChooser(ChooserKind::Segments); });
   on(ActionId::ViewFunctions, [this] {
+    if (focusSidebar_) {
+      focusSidebar_->reveal();
+      focusFunctions_->table()->setFocus(Qt::ShortcutFocusReason);
+      return;
+    }
     openDock(docks_.value(FunctionsDock), false,
              KDDockWidgets::Location_OnLeft);
   });
@@ -2220,6 +2245,8 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::EditFunction)
       ->setEnabled(functionAttributes && function.has_value());
   functions_->enableCommand(ChooserCommand::Edit, functionAttributes);
+  if (focusFunctions_)
+    focusFunctions_->enableCommand(ChooserCommand::Edit, functionAttributes);
   const bool dataItems =
       location && !session_.readOnly() && session_.keepsDataItems();
   for (const auto id : {ActionId::EditDefineCode, ActionId::EditDefineData,
@@ -4362,13 +4389,13 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   menu.exec(globalPosition);
 }
 
-void MainWindow::functionsMenu(const QPoint &position) {
-  auto *table = functions_->table();
+void MainWindow::functionsMenu(ChooserView *view, const QPoint &position) {
+  auto *table = view->table();
   const QModelIndex row = table->indexAt(position);
   if (!row.isValid())
     return;
   table->setCurrentIndex(row);
-  const auto entry = functions_->currentAddress();
+  const auto entry = view->currentAddress();
   if (!entry)
     return;
   QMenu menu(table->window());
@@ -5226,6 +5253,21 @@ void MainWindow::toggleFocusMode() {
   floating->raise();
   floating->activateWindow();
   disassembly_->focusContent();
+  auto *workspace =
+      qobject_cast<KDDockWidgets::QtWidgets::FloatingWindow *>(floating);
+  auto *area = KDDockWidgets::QtCommon::View_qt::asQWidget(
+      workspace->floatingWindow()->dropArea()->view());
+  auto *functions = new ChooserView(session_, space_, ChooserKind::Functions);
+  focusFunctions_ = functions;
+  functions->table()->setObjectName(QStringLiteral("focusFunctionsList"));
+  functions->setFilterText({});
+  connectFunctions(functions);
+  functions->model().reload();
+  if (const auto function = disassembly_->currentFunction())
+    functions->revealAddress(*function);
+  focusSidebar_ =
+      new FocusSidebar(*floating, *area, *functions, tr("Functions"));
+  updateActions();
 }
 
 void MainWindow::resetFocusSequence() {
@@ -5240,6 +5282,8 @@ void MainWindow::leaveFocusMode() {
     return;
   const auto layout = std::exchange(focusLayout_, {});
   const auto focus = std::exchange(focusReturn_, {});
+  focusFunctions_.clear();
+  delete focusSidebar_.data();
   actions_.action(ActionId::ViewFocusMode)->setChecked(false);
   // Focus mode only moves panes. Restoring the untouched main-window geometry
   // can lose its maximized state while the compositor processes the resize.
