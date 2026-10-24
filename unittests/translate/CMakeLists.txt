@@ -15,9 +15,9 @@ add_neverd_unittest(NeverDTranslationContractTests
   TranslationLinkGraphVerifierTests.cpp
   TranslationObjectCompilerTests.cpp
   TranslationObjectRequestTests.cpp
-  X86TranslationBlockBuilderTests.cpp
-  X86TranslationBlockLowererTests.cpp
-  X87PortableRuntimeTests.cpp
+  x86/X86TranslationBlockBuilderTests.cpp
+  x86/X86TranslationBlockLowererTests.cpp
+  x86/X87PortableRuntimeTests.cpp
 
   LINK_COMPONENTS
   Support
@@ -126,8 +126,8 @@ if(TARGET neverd_shared)
 endif()
 
 add_neverd_unittest(NeverDX87PortableExecutionTests
-  X87PortableExecutionTests.cpp
-  X87PortableRuntimeCHeader.c
+  x86/X87PortableExecutionTests.cpp
+  x86/X87PortableRuntimeCHeader.c
 
   LINK_COMPONENTS
   Translate
@@ -140,12 +140,12 @@ set_target_properties(NeverDX87PortableExecutionTests PROPERTIES
   C_STANDARD_REQUIRED YES
   C_EXTENSIONS NO)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  set_source_files_properties(X87PortableRuntimeCHeader.c PROPERTIES
+  set_source_files_properties(x86/X87PortableRuntimeCHeader.c PROPERTIES
     COMPILE_OPTIONS "-fshort-enums")
 endif()
 
 add_neverd_unittest(NeverDX87PortablePreparationTests
-  X87PortablePreparationTests.cpp
+  x86/X87PortablePreparationTests.cpp
 
   LINK_COMPONENTS
   Pipeline
@@ -155,7 +155,7 @@ add_neverd_unittest(NeverDX87PortablePreparationTests
 )
 
 add_neverd_unittest(NeverDX87PortableEmissionTests
-  X87PortableEmissionTests.cpp
+  x86/X87PortableEmissionTests.cpp
 
   LINK_COMPONENTS
   Pipeline
@@ -165,7 +165,7 @@ add_neverd_unittest(NeverDX87PortableEmissionTests
 )
 
 add_neverd_unittest(NeverDX87PortableGeneratedTests
-  X87PortableGeneratedTests.cpp
+  x86/X87PortableGeneratedTests.cpp
 
   LINK_COMPONENTS
   Pipeline
@@ -185,21 +185,21 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
 endif()
 
 add_neverd_unittest(NeverDX87TranslationRuntimeTests
-  RuntimeX87GuestStateTests.cpp
-  RuntimeX87HelpersTests.cpp
+  x86/RuntimeX87GuestStateTests.cpp
+  x86/RuntimeX87HelpersTests.cpp
 
   LINK_COMPONENTS
   Translate
 )
 
 add_neverd_unittest(NeverDX87TranslationTests
-  X87TranslationTests.cpp
-  X87TranslationFrozenTests.cpp
+  x86/X87TranslationTests.cpp
+  x86/X87TranslationFrozenTests.cpp
 
   LINK_COMPONENTS
   Translate
 )
 
-add_executable(NeverDX87PortableBenchmark X87PortableBenchmark.cpp)
+add_executable(NeverDX87PortableBenchmark x86/X87PortableBenchmark.cpp)
 target_link_libraries(NeverDX87PortableBenchmark PRIVATE NeverDTranslate neverd_x87_runtime)
 set_target_properties(NeverDX87PortableBenchmark PROPERTIES FOLDER "NeverD/Tests")

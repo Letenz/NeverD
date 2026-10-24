@@ -19,9 +19,13 @@ layout, including the public execution models.
 Binary-format implementation remains grouped by ELF, COFF and Mach-O, including
 format-owned architecture encodings and unwind records. Platform emulator
 backends and UI features retain their existing service boundaries. The stable C
-SDK and portable-runtime C header paths remain unchanged. Tests retain their existing
-semantic and format groupings. Directory moves do not change component targets,
-intrinsic identities, exported symbols or instruction semantics.
+SDK and portable-runtime C header paths remain unchanged. Tests keep their owning
+component and semantic suites, with architecture-specific sources beneath
+`x86/`, `x86_64/`, `x86_32/`, `arm32/` or `aarch64/`. Shared x86/x87 tests use
+`x86/`; mode-specific execution tests retain their existing mode names. Fixtures
+shared across architectures and format-owned tests stay with their consumers.
+Directory moves do not change component targets, intrinsic identities, exported
+symbols or instruction semantics.
 
 `X86DescriptorState.h` owns descriptor-state operand shapes; LowIR,
 Low-to-Med, Med verification and source output use that contract.
