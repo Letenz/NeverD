@@ -15,6 +15,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -243,6 +244,42 @@ TEST(RegistrationCallABI, CRTImportQueriesKeepTheirStorageProofs) {
                     F.Image, ThrowImage::IATVA),
                 Mutation == Change::None ? C.StackPop : std::nullopt);
     }
+}
+
+TEST(RegistrationCallABI, RuntimeProviderSetsKeepDistinctContracts) {
+  using namespace neverd::coff_loader;
+  EXPECT_TRUE(isX86ControlFPProvider("MSVCRT.dll"));
+  EXPECT_FALSE(isX64ControlFPProvider("MSVCRT.dll"));
+  EXPECT_TRUE(isX64ControlFPProvider("ucrtbased.dll"));
+  EXPECT_FALSE(isX86SEHHandlerProvider("ucrtbased.dll"));
+  EXPECT_TRUE(isX86SEHHandlerProvider("ucrtbase.dll"));
+  EXPECT_FALSE(isX86RegistrationRuntimeProvider("ucrtbase.dll"));
+  EXPECT_TRUE(isX86ContinuationRuntimeProvider("msvcrtd.dll"));
+  EXPECT_FALSE(isX86RegistrationRuntimeProvider("msvcrtd.dll"));
+  EXPECT_TRUE(isX86CxxExceptionProvider("MSVCR100.dll"));
+  EXPECT_FALSE(isX86CxxExceptionProvider("msvcrt.dll"));
+  EXPECT_TRUE(isX86LegacyCRTProvider("MSVCR100.dll"));
+  EXPECT_FALSE(isX86MathCleanupProvider("MSVCR100.dll"));
+  EXPECT_TRUE(isX86MathCleanupProvider("api-ms-win-crt-math-l1-1-0.dll"));
+  EXPECT_FALSE(isX64CRTStdioProvider("api-ms-win-crt-math-l1-1-0.dll"));
+  EXPECT_TRUE(isX64CRTStdioProvider("api-ms-win-crt-stdio-l1-1-0.dll"));
+  EXPECT_FALSE(isX86ControlFPProvider("api-ms-win-crt-stdio-l1-1-0.dll"));
+  EXPECT_TRUE(isX86RegistrationRuntimeProvider("VCRUNTIME140D.DLL"));
+  EXPECT_FALSE(isX86LegacyCRTProvider("VCRUNTIME140D.DLL"));
+  EXPECT_TRUE(isRaiseExceptionProvider("KERNELBASE.DLL"));
+  EXPECT_FALSE(isRaiseExceptionProvider("ntdll.dll"));
+  for (const auto Query :
+       {isX86ControlFPProvider, isX64ControlFPProvider, isX86SEHHandlerProvider,
+        isX86RegistrationRuntimeProvider, isX86ContinuationRuntimeProvider,
+        isX86CxxExceptionProvider, isX86LegacyCRTProvider,
+        isX86MathCleanupProvider, isX64CRTStdioProvider,
+        isRaiseExceptionProvider}) {
+    EXPECT_FALSE(Query(""));
+    EXPECT_FALSE(Query("application.dll"));
+    EXPECT_FALSE(Query("msvcrt.dll.extra"));
+    EXPECT_FALSE(Query("C:\\Windows\\System32\\msvcrt.dll"));
+    EXPECT_FALSE(Query(llvm::StringRef("msvcrt.dll\0extra", 16)));
+  }
 }
 
 TEST(RegistrationCallABI, StackCleanupRequiresEveryRestoredNearReturn) {

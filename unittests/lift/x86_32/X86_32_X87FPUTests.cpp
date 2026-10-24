@@ -13,6 +13,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
+#include "neverd/ir/low/X87ImportCall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
@@ -548,6 +549,33 @@ TEST(X87ImportCall, NativeCallsCarryTheOriginalStackArgumentsAndResult) {
         EXPECT_NE(Deferred.Error.find("x87 import call adapter"),
                   std::string::npos);
       }
+}
+
+TEST(X87ImportCall, RecognizedNamesDoNotGrantUnsupportedTransport) {
+  for (const char *Name :
+       {"_CIasin", "_CIatan2", "_CIcosh", "_CIexp", "_CIfmod", "_CIlog",
+        "_CIlog10", "_CIsinh", "_CItan", "_CItanh"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_TRUE(isX87CRTImportName(Name));
+    auto Image = x87CRTCallImage(Name, 1);
+    EXPECT_EQ(x87CRTImportArguments(Image, 0x2000), 0u);
+    EXPECT_EQ(x87CRTImportArguments(Image, 0x1100), 0u);
+  }
+  for (const char *Name : {"_ciacos", "_CIACOS", "_CIsqrt_extra"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_FALSE(isX87CRTImportName(Name));
+    auto Image = x87CRTCallImage(Name, 1);
+    EXPECT_EQ(x87CRTImportArguments(Image, 0x2000), 0u);
+  }
+  auto Image = x87CRTCallImage("_CIsqrt", 1);
+  Image.Imports[0].Module = "mSvCrT.dLl";
+  EXPECT_EQ(x87CRTImportArguments(Image, 0x2000), 1u);
+  for (const char *Module :
+       {"ucrtbase.dll", "msvcrtd.dll", "msvcr100.dll.extra"}) {
+    SCOPED_TRACE(Module);
+    Image.Imports[0].Module = Module;
+    EXPECT_EQ(x87CRTImportArguments(Image, 0x2000), 0u);
+  }
 }
 
 TEST(X87ImportCall, UnprovedInputsAndUnsupportedNativeContractsStayRejected) {

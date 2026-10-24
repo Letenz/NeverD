@@ -12,6 +12,7 @@
 
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -25,12 +26,7 @@ bool isCheckedControlFPSlot(const BinaryImage &Image, va_t Slot) {
   const auto *Imported = Image.findImportAt(Slot);
   if (!Imported || Imported->IsDelayImport || Imported->Name != "_controlfp_s")
     return false;
-  const llvm::StringRef Module = Imported->Module;
-  return (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
-          Module.equals_insensitive("api-ms-win-crt-runtime-l1-1-0.dll") ||
-          Module.equals_insensitive("ucrtbase.dll") ||
-          Module.equals_insensitive("ucrtbased.dll") ||
-          Module.equals_insensitive("msvcrt.dll")) &&
+  return coff_loader::isX86ControlFPProvider(Imported->Module) &&
          isFileBackedPEImportSlot(Image, Slot);
 }
 

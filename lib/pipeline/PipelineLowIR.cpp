@@ -36,6 +36,7 @@
 #include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/FunctionNames.h"
@@ -1606,12 +1607,9 @@ bool collectLowAddressUses(
                       LocalUnwind->CompleteByFunction[FuncIndex] = false;
                     else {
                       LocalUnwind->TargetsByFunction[FuncIndex].insert(Target);
-                      const llvm::StringRef Module = Imported->Module;
                       const bool KnownRuntime =
-                          Module.equals_insensitive("vcruntime140.dll") ||
-                          Module.equals_insensitive("vcruntime140d.dll") ||
-                          Module.equals_insensitive("msvcrt.dll") ||
-                          Module.equals_insensitive("msvcrtd.dll");
+                          coff_loader::isX86ContinuationRuntimeProvider(
+                              Imported->Module);
                       if (KnownRuntime) {
                         // The complete decoded LowIR proof owns equality of
                         // the physical SP and the frame argument. The address

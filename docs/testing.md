@@ -7505,6 +7505,15 @@ addends, backing bytes, conflicts, overlapping fixups, mapping or target traits.
 Both stack-cleanup facts and `_controlfp_s` recognition retain their complete
 current-storage checks. Run the registration-callee-stack, SEH-runtime-memory,
 read-only-bytes and pipeline-outcome owners after changing these queries.
+`RuntimeProviderSetsKeepDistinctContracts` prevents one runtime contract from
+borrowing another's DLL set, including debug runtimes, PE32/Win64 control-FP,
+math/stdio API sets and C++ exception providers. Paths, suffixes and embedded
+NULs remain invalid identities. `ControlFPProviderIdentityDoesNotBorrowPE32Contracts`
+checks those Win64 distinctions through decoded calls and the frame proof.
+`X87ImportCall.RecognizedNamesDoNotGrantUnsupportedTransport` keeps unsupported
+register-stack entries distinct from ordinary C calls and retains exact symbol
+case and provider checks. Changes to the shared `.def` inventories also require
+the x87 call-graph, registration state/EH/frame and exception-edge owners.
 `NestedReturningStackProofIsBoundedAndNonCircular` checks multi-level callee
 cleanup, mismatched pops, recursive dependencies, the depth boundary and shared
 work exhaustion. It does not admit dispatcher-entered parent returns through
