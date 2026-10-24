@@ -72,6 +72,18 @@ function lists once when a lazy query completes analysis. Ordinary edit
 revisions do not imply a new analysis. Administrative replies may omit this
 additive field.
 
+Native executor replies also carry the published `background` object and
+`background_sequence`, a decimal uint64 string that increases on every state
+publication within one worker process. Heartbeats carry the same sequence.
+A client must validate request correlation and project/revision before using a
+reply's state, and apply it after installing the reply (opening resets the
+client's session). Discard older or duplicate sequences, including a heartbeat
+written after a newer reply. Cached responses must not republish their snapshots.
+Reset the accepted sequence on session/transport retirement. Older workers can
+omit these additive fields; once a sequenced snapshot has been accepted, an
+unsequenced heartbeat cannot supersede it. Administrative and web replies do
+not publish native executor snapshots.
+
 Session calls run serially on an execution thread; a separate input loop admits
 requests and cancellation while the synchronous engine runs. The queue holds at
 most 32 waiting requests and 16 MiB of request bodies; excess receives

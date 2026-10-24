@@ -31,6 +31,7 @@
 #include "LocalTypesView.h"
 #include "MainWindow.h"
 #include "MapPromptDialog.h"
+#include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "PathfinderView.h"
 #include "PdbPromptDialog.h"
@@ -1707,7 +1708,9 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!listing->jumpPending(), OpenTimeoutMs);
     // The listing answers this jump before the search: the search starts
     // where the jump lands, and the landing does not drop its reply.
-    bench.window->disassembly()->navigate(Base + 3);
+    // Request the asynchronous path explicitly; current prefetched rows can
+    // otherwise satisfy ordinary navigation without a pending jump.
+    listing->jumpTo(Base + 3);
     QVERIFY(listing->jumpPending());
     bench.action(ActionId::SearchNextText)->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(results()->model().total() > 0, OpenTimeoutMs);
@@ -4404,10 +4407,12 @@ private slots:
     QVERIFY(!writeFixture(directory, "chooser-refresh.bin.discover").isEmpty());
     auto background = session.background();
     background["functions"] = 601;
-    SessionTestAccess::receive(session,
-                               {{"type", "heartbeat"},
-                                {"project_id", session.queries().projectId()},
-                                {"background", background}});
+    SessionTestAccess::receive(
+        session, {{"type", "heartbeat"},
+                  {"project_id", session.queries().projectId()},
+                  {"background_sequence",
+                   SessionTestAccess::nextBackgroundSequence(session)},
+                  {"background", background}});
     if (retire) {
       QTRY_VERIFY(retired);
       QTRY_COMPARE(model.total(), 1);
@@ -4463,9 +4468,12 @@ private slots:
     auto background = bench.session.background();
     background["functions"] = 601;
     SessionTestAccess::receive(
-        bench.session, {{"type", "heartbeat"},
-                        {"project_id", bench.session.queries().projectId()},
-                        {"background", background}});
+        bench.session,
+        {{"type", "heartbeat"},
+         {"project_id", bench.session.queries().projectId()},
+         {"background_sequence",
+          SessionTestAccess::nextBackgroundSequence(bench.session)},
+         {"background", background}});
     QTRY_COMPARE_WITH_TIMEOUT(model.total(), 601, OpenTimeoutMs);
     QTRY_VERIFY(!model.loading());
     QCOMPARE(resets.count(), 0);
@@ -4837,6 +4845,8 @@ private slots:
           {"protocol_major", 1},
           {"project_id", project},
           {"revision", session.revision()},
+          {"background_sequence",
+           SessionTestAccess::nextBackgroundSequence(session)},
           {"background", QJsonObject{{"state", "replayed"},
                                      {"functions", 4242},
                                      {"generation", "replayed"},
@@ -4851,6 +4861,42 @@ private slots:
                                heartbeat(session.queries().projectId()));
     QCOMPARE(session.background().value("state").toString(),
              QStringLiteral("replayed"));
+  }
+
+  void replySnapshotsRejectOlderHeartbeatsInTheSameProject() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(writeFixture(directory, QStringLiteral("snapshots.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.indexReady() && !session.busy(),
+                             OpenTimeoutMs);
+    const auto sequence =
+        SessionTestAccess::nextBackgroundSequence(session).toULongLong();
+    QJsonObject snapshot{
+        {"type", "heartbeat"},
+        {"project_id", session.queries().projectId()},
+        {"revision", session.revision()},
+        {"background_sequence", QString::number(sequence)},
+        {"background", QJsonObject{{"generation", "reply-generation"},
+                                   {"state", "ready"},
+                                   {"functions", 600},
+                                   {"discovery_complete", true}}}};
+    emit session.queries().backgroundSnapshotReady(snapshot);
+    QCOMPARE(session.generation(), QStringLiteral("reply-generation"));
+    auto stale = snapshot;
+    stale["background"] = QJsonObject{{"generation", "stale-generation"}};
+    for (const auto &value : {QString::number(sequence - 1),
+                              QString::number(sequence), QString("invalid")}) {
+      stale["background_sequence"] = value;
+      SessionTestAccess::receive(session, stale);
+      QCOMPARE(session.generation(), QStringLiteral("reply-generation"));
+    }
+    stale["background_sequence"] = QString::number(sequence + 1);
+    stale["revision"] = "another-revision";
+    SessionTestAccess::receive(session, stale);
+    QCOMPARE(session.generation(), QStringLiteral("reply-generation"));
+    stale["revision"] = session.revision();
+    SessionTestAccess::receive(session, stale);
+    QCOMPARE(session.generation(), QStringLiteral("stale-generation"));
   }
 
   void analysisPagesKeepTheirReplicaWhenAnotherFunctionQueues() {
@@ -7911,6 +7957,8 @@ private slots:
     QTRY_VERIFY(lineAt(read + 3).contains(QLatin1String("rcx, 18h")));
 
     // One undo takes the three back.
+    // Updated listing rows can arrive before the separate history query.
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.canUndo(), OpenTimeoutMs);
     bench.session.undo();
     QTRY_VERIFY_WITH_TIMEOUT(
         lineAt(read + 2).contains(QLatin1String("[rcx+10h]")), OpenTimeoutMs);
@@ -8990,6 +9038,44 @@ private slots:
     QCOMPARE(results, (QStringList{QString(), QString()}));
     QVERIFY(!assembly->graphMode());
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x44));
+  }
+
+  void initialNavigationOverviewDoesNotWaitForRefreshDebounce() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.indexReady() && !session.busy(),
+                             OpenTimeoutMs);
+    AddressSpace space;
+    NavigationBand band(session, space);
+    QSignalSpy changed(&band, &NavigationBand::spaceChanged);
+    QVERIFY(space.empty());
+    QVERIFY(!session.queries().hasPending());
+
+    // Opening must admit the address-map request in the same event turn:
+    // the first listing cannot navigate until that map arrives.
+    emit session.opened();
+    QVERIFY(session.queries().hasPending());
+    QTRY_VERIFY_WITH_TIMEOUT(!space.empty(), OpenTimeoutMs);
+    QCOMPARE(changed.size(), 1);
+  }
+
+  void listingKeepsRowsWhenTheirGenerationIsPublished() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.indexReady() && !session.busy(),
+                             OpenTimeoutMs);
+    AddressSpace space;
+    ListingView listing(session, space);
+    listing.jumpTo(Base + 0x40);
+    QTRY_VERIFY_WITH_TIMEOUT(listing.searchReady(), OpenTimeoutMs);
+    const QString text = listing.searchText();
+    // Delivery can install this generation before Session publishes it.
+    // Publishing that same generation must not invalidate the current rows.
+    emit session.generationChanged();
+    QVERIFY(listing.searchReady());
+    QCOMPARE(listing.searchText(), text);
   }
 
   void listingFirstContentPaintWaitsForCurrentRows_data() {
