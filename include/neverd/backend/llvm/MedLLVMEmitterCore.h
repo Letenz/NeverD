@@ -349,8 +349,8 @@ private:
                                    llvm::IRBuilder<> &Builder);
   /// SLDT/STR/SMSW with a register destination — store a system register into
   /// a GPR (value-producing).
-  llvm::Value *emitX86SysRegStore(const MedOp &Op, Intrinsic IC,
-                                  llvm::IRBuilder<> &Builder);
+  llvm::Value *emitX86DescriptorState(const MedOp &Op, Intrinsic IC,
+                                      llvm::IRBuilder<> &Builder);
 
   // AArch64 side-effect dispatch and helpers
   bool emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,

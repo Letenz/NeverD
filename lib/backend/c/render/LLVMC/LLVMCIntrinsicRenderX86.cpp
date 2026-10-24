@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../X86DescriptorState.h"
 #include "../X86ScalarSystem.h"
 #include "../X86SystemRegister.h"
 
@@ -45,6 +46,180 @@ static const AsmToCEntry X86AsmTable[] = {
 };
 
 } // anonymous namespace
+
+namespace {
+std::optional<X86DescriptorStateNative>
+descriptorNativePlan(Arch TargetArch, llvm::StringRef Name) {
+  if (!Name.starts_with("llvm.x86."))
+    return std::nullopt;
+  const auto Suffix = Name.drop_front(9);
+  bool Known = false;
+  for (const auto Id : X86DescriptorStateInventory) {
+    std::string Mnemonic = intrinsicAsmMnemonic(Id);
+    if (isX86DescriptorTable16(Id)) {
+      Mnemonic.pop_back();
+      Mnemonic += "16";
+    }
+    Known |= Suffix == Mnemonic || Suffix.starts_with(Mnemonic + ".");
+  }
+  if (!Known)
+    return std::nullopt;
+  for (const auto Id : X86DescriptorStateInventory)
+    for (bool Memory : {false, true})
+      for (unsigned Bytes : {0u, 1u, 2u, 4u, 8u})
+        for (bool Explicit : {false, true}) {
+          const auto P = x86DescriptorStateNative(
+              Id, TargetArch, Memory, Bytes, NdMemoryAddressSpace::Default,
+              Explicit ? std::optional<X86DescriptorAddress>(
+                             {TargetArch == Arch::X64 ? 64u : 32u, 0})
+                       : std::nullopt);
+          if (P && P->LLVMName == Name)
+            return P;
+        }
+  return std::nullopt;
+}
+} // namespace
+
+bool isX86DescriptorStateNativeName(llvm::StringRef Name) {
+  if (!Name.starts_with("llvm.x86."))
+    return false;
+  return descriptorNativePlan(Arch::X64, Name).has_value() ||
+         descriptorNativePlan(Arch::X86, Name).has_value();
+}
+
+std::optional<InlineAsmRender>
+renderX86DescriptorStateCall(Arch TheArch, BinaryFormat Format,
+                             const llvm::CallBase &Call,
+                             const std::string &ResultName, bool ResultLive,
+                             const std::vector<std::string> &Args) {
+  auto Reject = []() -> std::optional<InlineAsmRender> {
+    throw std::invalid_argument(
+        "unsupported x86 descriptor state call contract");
+  };
+  std::optional<X86DescriptorStateNative> P;
+  bool DroppedVerifyResult = false;
+  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (const auto *Callee = Call.getCalledFunction()) {
+    if (!isX86DescriptorStateNativeName(Callee->getName()))
+      return std::nullopt;
+    P = descriptorNativePlan(TheArch, Callee->getName());
+    if (!P || !Callee->isIntrinsic() || !Callee->isDeclaration())
+      return Reject();
+    if (P->Address) {
+      if (Call.arg_size() != 3)
+        return Reject();
+      const auto *Bits =
+          llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(1));
+      const auto *Prefix =
+          llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(2));
+      if (!Bits || !Bits->getType()->isIntegerTy(32) || !Prefix ||
+          !Prefix->getType()->isIntegerTy(32))
+        return Reject();
+      P = x86DescriptorStateNative(
+          P->Id, TheArch, true, P->ResultBytes, NdMemoryAddressSpace::Default,
+          X86DescriptorAddress{unsigned(Bits->getZExtValue()),
+                               unsigned(Prefix->getZExtValue())});
+      if (!P)
+        return Reject();
+    }
+  } else if (Asm) {
+    const auto Text = Asm->getAsmString();
+    // The mnemonic filter avoids walking the inventory for unrelated asm.
+    bool Known = false;
+    for (const auto Id : X86DescriptorStateInventory)
+      Known |= llvm::StringRef(Text).starts_with(
+          std::string(intrinsicAsmMnemonic(Id)) + " ");
+    if (!Known)
+      return std::nullopt;
+    const unsigned WordBits = TheArch == Arch::X64 ? 64 : 32;
+    for (const auto Id : X86DescriptorStateInventory)
+      for (bool Memory : {false, true})
+        for (unsigned Bytes : {0u, 1u, 2u, 4u, 8u})
+          for (unsigned Bits : {0u, WordBits, WordBits / 2})
+            for (unsigned Prefix :
+                 {0u, 0x26u, 0x2eu, 0x36u, 0x3eu, 0x64u, 0x65u}) {
+              if (!Bits && Prefix)
+                continue;
+              const auto Candidate = x86DescriptorStateNative(
+                  Id, TheArch, Memory, Bytes, NdMemoryAddressSpace::Default,
+                  Bits ? std::optional<X86DescriptorAddress>({Bits, Prefix})
+                       : std::nullopt);
+              if (!Candidate)
+                continue;
+              auto Match = [&](std::string Constraints) {
+                if (Candidate->Text == Text &&
+                    Constraints == Asm->getConstraintString() &&
+                    (Candidate->ResultBytes ? Call.getType()->isIntegerTy(
+                                                  8 * Candidate->ResultBytes)
+                                            : Call.getType()->isVoidTy())) {
+                  P = Candidate;
+                  DroppedVerifyResult = false;
+                }
+                if (!Candidate->Verify)
+                  return;
+                auto VoidText = Candidate->Text.substr(
+                    0, Candidate->Text.find("\n\tsetz $0"));
+                const auto Input = VoidText.find("$1");
+                if (Input != std::string::npos)
+                  VoidText.replace(Input, 2, "$0");
+                if (VoidText == Text && Call.getType()->isVoidTy() &&
+                    Constraints.substr(3) == Asm->getConstraintString()) {
+                  P = Candidate;
+                  DroppedVerifyResult = true;
+                }
+              };
+              Match(Candidate->Constraints);
+              // Earlier lifted FS/GS accesses already normalized the offset
+              // but allowed any base register. Keep that exact legacy form.
+              if (Candidate->Address && Candidate->Address->Bits == WordBits &&
+                  (Prefix == 0x64 || Prefix == 0x65)) {
+                auto Constraints = Candidate->Constraints;
+                Constraints.replace(Constraints.find("{bx}"), 4, "r");
+                Match(Constraints);
+              }
+            }
+    if (!P || !Asm->hasSideEffects() || Asm->isAlignStack() ||
+        Asm->canThrow() || Asm->getDialect() != llvm::InlineAsm::AD_ATT)
+      return Reject();
+  } else {
+    return std::nullopt;
+  }
+  if (Call.getNumOperandBundles() || Call.doesNotReturn() ||
+      Call.getCallingConv() != llvm::CallingConv::C ||
+      Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
+      Call.getFunctionType()->isVarArg() ||
+      Call.arg_size() !=
+          (Asm ? unsigned(P->OperandBytes != 0) : P->arguments()) ||
+      Args.size() != Call.arg_size() ||
+      (P->ResultBytes && !DroppedVerifyResult
+           ? !Call.getType()->isIntegerTy(8 * P->ResultBytes)
+           : !Call.getType()->isVoidTy()) ||
+      (ResultLive && P->ResultBytes && ResultName.empty()))
+    return Reject();
+  if (P->OperandBytes) {
+    const auto *Type = Call.getArgOperand(0)->getType();
+    if (P->Memory && !P->Address) {
+      const bool LegacyOffset = Asm && Type->isIntegerTy(8 * P->OperandBytes);
+      if (!LegacyOffset &&
+          (!Type->isPointerTy() || Type->getPointerAddressSpace() != 0))
+        return Reject();
+    } else if (!Type->isIntegerTy(8 * P->OperandBytes)) {
+      return Reject();
+    }
+  }
+  const std::string Prefix = !P->ResultBytes ? ""
+                             : ResultLive    ? ResultName + " = "
+                                             : "(void)";
+  return InlineAsmRender{
+      Prefix +
+          renderX86DescriptorStateExpression(
+              *P, P->OperandBytes ? std::vector<std::string>{Args[0]}
+                                  : std::vector<std::string>{}) +
+          ";\n",
+      Format == BinaryFormat::COFF && P->Memory && !P->Address &&
+          (P->Id == Intrinsic::Sidt || P->Id == Intrinsic::Lidt ||
+           P->Id == Intrinsic::Invlpg)};
+}
 
 bool isX86ScalarSystemNativeName(llvm::StringRef Name) {
   return x86ScalarSystemNative(std::string_view(Name.data(), Name.size()))

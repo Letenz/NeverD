@@ -429,6 +429,12 @@ enum class Intrinsic : uint16_t {
   X86LoadSegmentLimit,
   X86LoadSegmentLimitMemory,
 
+  // Append-only: legacy descriptor-table operand-size attribute.
+  X86Lgdt16,
+  X86Lidt16,
+  X86Sgdt16,
+  X86Sidt16,
+
   _Count = 16000
 };
 
@@ -885,6 +891,10 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::X87Fnstenv:
   case Intrinsic::X87Frstor:
   case Intrinsic::X87Fnsave:
+  case Intrinsic::X86Lgdt16:
+  case Intrinsic::X86Lidt16:
+  case Intrinsic::X86Sgdt16:
+  case Intrinsic::X86Sidt16:
   case Intrinsic::Lgdt:
   case Intrinsic::Lidt:
   case Intrinsic::Sgdt:
@@ -1142,6 +1152,10 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   case Intrinsic::X87Fnstenv:
   case Intrinsic::X87Frstor:
   case Intrinsic::X87Fnsave:
+  case Intrinsic::X86Lgdt16:
+  case Intrinsic::X86Lidt16:
+  case Intrinsic::X86Sgdt16:
+  case Intrinsic::X86Sidt16:
   case Intrinsic::Lgdt:
   case Intrinsic::Lidt:
   case Intrinsic::Sgdt:

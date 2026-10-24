@@ -25,6 +25,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/RuntimeRoutineIntrinsics.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -779,6 +780,16 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                               apxAtomicLowShape(Op, TheArch)))
             llvm::report_fatal_error(
                 "APX atomic intrinsic has an invalid operand/output contract");
+          continue;
+        }
+        if (isX86DescriptorStateIntrinsic(Id)) {
+          if (Op.Inputs[0].Size != 2 ||
+              Op.Inputs[0].Offset != static_cast<uint64_t>(Id) ||
+              !x86DescriptorStateShapeIsValid(
+                  Id, TheArch, Op.NumInputs, Op.Output.Size,
+                  Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
+                  Op.MemoryAddressSpace, Op.MemoryOrdering))
+            llvm::report_fatal_error("invalid descriptor state LowIR shape");
           continue;
         }
         if (Id == Intrinsic::X86AMXState) {

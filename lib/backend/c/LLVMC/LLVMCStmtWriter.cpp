@@ -3844,12 +3844,20 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (isX86VirtualizationNativeName(Callee->getName()) ||
       isX86SystemStateNativeName(Callee->getName()) ||
       isX86SystemRegisterNativeName(Callee->getName()) ||
-      isX86ScalarSystemNativeName(Callee->getName())) {
+      isX86ScalarSystemNativeName(Callee->getName()) ||
+      isX86DescriptorStateNativeName(Callee->getName())) {
     std::vector<std::string> Arguments;
     for (const auto &Argument : Call.args())
       Arguments.push_back(valueStr(Argument.get()));
     const bool ResultLive =
         !Call.getType()->isVoidTy() && valueFeedsPrintedUse(&Call);
+    if (const auto Code = renderX86DescriptorStateCall(
+            Opts.TheArch, Opts.Format, Call, ResultLive ? getName(&Call) : "",
+            ResultLive, Arguments)) {
+      emitIndent(Indent);
+      OS << Code->Code;
+      return true;
+    }
     if (const auto Code = renderX86ScalarSystemCall(
             Opts.TheArch, Opts.Format, Call, ResultLive ? getName(&Call) : "",
             ResultLive, Arguments)) {
@@ -4979,6 +4987,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Descriptor = renderX86DescriptorStateCall(
+          Opts.TheArch, Opts.Format, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Descriptor->Code;
+    HasCIntrinsics |= Descriptor->SetIntrinsics;
+    return true;
+  }
   if (auto System = renderX86ScalarSystemCall(Opts.TheArch, Opts.Format, Call,
                                               Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);

@@ -205,3 +205,9 @@ A(Intrinsic::X86Enclv, "enclv");
 A(Intrinsic::X86SegmentedBlockMemory, "x86_segmented_block_memory");
 
 A(Intrinsic::X86AMXState, "x86_amx_state");
+
+// Legacy descriptor-table operand sizes.
+A(Intrinsic::X86Lgdt16, "lgdtw");
+A(Intrinsic::X86Lidt16, "lidtw");
+A(Intrinsic::X86Sgdt16, "sgdtw");
+A(Intrinsic::X86Sidt16, "sidtw");

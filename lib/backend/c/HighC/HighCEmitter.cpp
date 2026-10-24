@@ -19,6 +19,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86DescriptorState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86ScalarSystem.h"
 #include "../render/X86SystemRegister.h"
@@ -689,7 +690,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       const bool InstructionMemory =
           E.Kind == ExprKind::Call &&
           (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
-           x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0);
+           x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
+           isX86DescriptorStateIntrinsic(E.IntrinsicId));
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
       if (!MsvcSegmentedScalar && !InstructionMemory)
         HasSegmentedMemory = true;
@@ -1542,6 +1544,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if ((Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF) &&
           x86SystemRegisterName(Ex.IntrinsicId, 0))
         NeedsX86SystemRegisterDispatch = true;
+      if (Opts.TheArch == Arch::X64 &&
+          isX86DescriptorStateIntrinsic(Ex.IntrinsicId))
+        NeedsX86DescriptorStateDispatch = true;
       if ((Opts.TheArch == Arch::X64 || Opts.TheArch == Arch::X86) &&
           isX86ScalarSystemIntrinsic(Ex.IntrinsicId))
         NeedsX86ScalarSystemDispatch = true;
@@ -4424,6 +4429,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86DescriptorStateDispatch)
+    OS << X86DescriptorStateCompilerDispatch;
   if (NeedsX86ScalarSystemDispatch)
     OS << X86ScalarSystemCompilerDispatch;
   if (NeedsX86VirtualizationDispatch)
