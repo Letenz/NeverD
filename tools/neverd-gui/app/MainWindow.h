@@ -282,6 +282,7 @@ private:
   void chooseLocation(ChooserKind kind, ActionId command);
   QWidget *commandFocusWidget() const;
   QWidget *commandWindow() const;
+  QWidget *commandView() const;
   /// Edit > Copy: the selection of the view holding the focus.
   void copySelection();
   void showCommandPalette();

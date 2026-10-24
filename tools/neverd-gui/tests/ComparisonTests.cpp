@@ -782,6 +782,14 @@ private slots:
     QTest::mouseClick(Open, Qt::LeftButton);
     QTRY_VERIFY(View.findChild<ComparisonCounterpartDialog *>());
     auto *Picker = View.findChild<ComparisonCounterpartDialog *>();
+    QCOMPARE(Picker->windowModality(), Qt::NonModal);
+    QVERIFY(!QApplication::activeModalWidget());
+    View.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&View));
+    View.setFocus();
+    QVERIFY(Picker->isVisible());
+    Picker->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(Picker));
     auto *Table = Picker->findChild<QTableView *>("counterpartFunctions");
     auto *Model = qobject_cast<ComparisonModel *>(Table->model());
     auto *Search = Picker->findChild<QLineEdit *>("counterpartSearch");

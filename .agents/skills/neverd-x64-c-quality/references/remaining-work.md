@@ -72,6 +72,9 @@ source declaration; incompatible calls remain unprojected regardless of query
 order. Public PE/ELF workers and independent C providers cover x64 and ARM64,
 including void, pointer and narrow integer returns. These source contracts do
 not recover missing machine state or certify unsupported calling conventions.
+The local type bridge also gives scalar call conversions the prototype's
+integer spelling: equal-width `long`, `long long` and fixed-width aliases must
+not produce incompatible pointer arguments on a different host data model.
 Readonly scalar loads among instruction bytes reuse the immutable code reader's
 mapping and relocation checks. Default source cleanup also folds exact integer
 idempotence and absorption without symbolic search. Runtime-indexed memory and

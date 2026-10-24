@@ -505,6 +505,14 @@ and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
 
+Reference lists and jump browsers stay open while you use the workbench.
+Reference selections retain their originating code or disassembly view, and
+jump browsers keep their original navigation context when focus moves elsewhere.
+Relative expressions such as `here+0x10` use the address where the browser opened.
+Browsers follow their source pane when it floats or docks, and close with that
+pane. Project-specific browsers also close when the project closes. Reopening
+the same browser in a pane replaces its previous window.
+
 **View → Open subviews → Type libraries** (Shift+F11, as IDA's) lists the
 libraries of a system's headers whose types and prototypes join the
 program's: the image's own first, in the order they join, then those the
@@ -709,6 +717,12 @@ workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
 the selected lines of a disassembly, pseudocode or IR window (the current line
 when nothing is selected), the selected rows of a list with their columns
 separated by tabs, or the text selected in a field.
+
+Export previews, Find, shortcut help, calculator results, connection and tool
+schema information, and the Pathfinder, type-library and comparison counterpart
+choosers also allow you to keep using their source windows. Type-library choices
+close when project edits make their catalogue stale. The command palette
+dismisses like a popup and runs its selection in the originating pane.
 
 GNOME attaches a modal dialog to its parent window, so dragging the dialog
 would drag the whole workbench. On GNOME the workbench keeps dialogs
