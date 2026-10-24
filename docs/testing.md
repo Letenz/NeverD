@@ -2088,12 +2088,12 @@ dialog; it must terminate without the probe forcing successful process exit.
 
 `codeOpensBesideFloatingDisassembly` checks new, existing and reopened source
 and IR panes beside their floating disassembly. `focusModeGroupsViewsAndRestoresLayout`
-presses F three times to create one floating workspace with assembly on the
-left, code on the right and output across the bottom. It checks both themes,
-docked and floating origins, restoring the previous layout, unchanged data,
-data addresses outside functions, and ordinary command input. Keys enter
-through `QWindow` so forwarding to the focused widget cannot silently reset
-the sequence.
+presses F three times to create one maximized floating workspace with assembly
+on the left, code on the right and output across the bottom. It checks both
+themes, docked and floating origins, restoring the previous layout and window
+state, unchanged data, data addresses outside functions, and ordinary command
+input. Keys enter through `QWindow` so forwarding to the focused widget cannot
+silently reset the sequence.
 `focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
 one second apart, interruption by another key or focus change, timeout,
 auto-repeat, ordinary text input, reopening a closed assembly pane, and

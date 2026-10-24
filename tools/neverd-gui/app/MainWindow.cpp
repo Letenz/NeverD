@@ -5222,6 +5222,7 @@ void MainWindow::toggleFocusMode() {
   codeDock->setAsCurrentTab();
   output->setAsCurrentTab();
   showPseudocode(code->representation());
+  floating->showMaximized();
   floating->raise();
   floating->activateWindow();
   disassembly_->focusContent();
