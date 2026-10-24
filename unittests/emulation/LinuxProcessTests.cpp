@@ -140,6 +140,34 @@ TEST_P(LinuxProcess, RelativeSleepUsesSharedClockAndErrorPolicyOnBothISAs) {
   }
 }
 
+TEST_P(LinuxProcess, RawMonotonicAdvancesFromItsOwnEpochOnBothISAs) {
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->AdvanceOnIdle = true;
+  Options.LinuxTime->Clocks = {
+      {0, {4294967297, 999999998}}, {1, {12, 3}}, {4, {4294967301, 999999996}}};
+  for (const char *Opt : {"O0", "O2"}) {
+    SCOPED_TRACE(Opt);
+    auto R = runTime('r', Opt);
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    std::string Expected;
+    for (uint64_t Word :
+         {4294967297ULL, 999999998ULL, 12ULL, 3ULL, 4294967301ULL, 999999996ULL,
+          4294967299ULL, 5ULL, 13ULL, 10ULL, 4294967303ULL, 3ULL, 0ULL, 0ULL})
+      for (unsigned I = 0; I < 8; ++I)
+        Expected.push_back(static_cast<char>(Word >> (I * 8)));
+    EXPECT_EQ(R.StandardOutput, Expected);
+    ASSERT_GE(R.Services.size(), 7u);
+    EXPECT_EQ(R.Services[2].Number,
+              GetParam().ISA == GuestArchitecture::X64 ? 228u : 113u);
+    EXPECT_EQ(R.Services[2].Arguments[0], 0x1234567800000004ULL);
+    EXPECT_EQ(R.Services[3].Number,
+              GetParam().ISA == GuestArchitecture::X64 ? 35u : 101u);
+    for (unsigned I = 0; I < 7; ++I)
+      EXPECT_EQ(R.Services[I].Result, 0u);
+  }
+}
+
 TEST_P(LinuxProcess, ExplicitClocksPreserve64BitWireLayoutsOnBothISAs) {
   Options.LinuxTime.emplace();
   Options.LinuxTime->Timezone = LinuxTimezone{-60, 2};

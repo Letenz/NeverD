@@ -774,6 +774,466 @@ TEST_P(AArch64SIMD, CMHIReservedScalarHalfIsRejected) {
 TEST_P(AArch64SIMD, CMHIReservedScalarWordIsRejected) {
   expectRejected(0x7ea2343f);
 }
+TEST_P(AArch64SIMD, FloatingZeroLEComparisonPreservesCompleteState) {
+  struct Comparison {
+    uint32_t Word;
+    unsigned Bits, Elements;
+  };
+  // Independent llvm-mc encodings: S/D scalar and 2S/4S/2D vectors.
+  constexpr Comparison Cases[] = {{0x7ea0d83f, 32, 1},
+                                  {0x7ee0d83f, 64, 1},
+                                  {0x2ea0d83f, 32, 2},
+                                  {0x6ea0d83f, 32, 4},
+                                  {0x6ee0d83f, 64, 2}};
+  struct Input {
+    RegisterValue Single, Double;
+  };
+  constexpr Input Inputs[] = {
+      {{0x8000000000000000ULL, 0xbf8000003f800000ULL},
+       {0, 0x8000000000000000ULL}},
+      {{0xbf8000003f800000ULL, 0xff8000007f800000ULL},
+       {0x3ff0000000000000ULL, 0xbff0000000000000ULL}},
+      {{0xff8000007f800000ULL, 0xff7fffff7f7fffffULL},
+       {0x7ff0000000000000ULL, 0xfff0000000000000ULL}},
+      {{0xff7fffff7f7fffffULL, 0x8080000000800000ULL},
+       {0x7fefffffffffffffULL, 0xffefffffffffffffULL}},
+      {{0x8000000100000001ULL, 0x807fffff007fffffULL},
+       {1, 0x8000000000000001ULL}},
+      {{0x8080000000800000ULL, 0xbf8000003f800000ULL},
+       {0x0010000000000000ULL, 0x8010000000000000ULL}},
+      {{0xffc000007fc00000ULL, 0xff8000017f800001ULL},
+       {0x7ff8000000000000ULL, 0xfff8000000000000ULL}},
+      {{0xff8000017f800001ULL, 0x8000000000000000ULL},
+       {0x7ff0000000000001ULL, 0xfff0000000000001ULL}},
+      // Unused upper source lanes must not contribute an exception.
+      {{0x7fc000003f800000ULL, 0x7f80000100000001ULL},
+       {0x3ff0000000000000ULL, 0x7ff0000000000001ULL}},
+  };
+  constexpr uint32_t Controls[] = {0,
+                                   1u << RoundingShift,
+                                   2u << RoundingShift,
+                                   3u << RoundingShift,
+                                   FlushToZero,
+                                   DefaultNaN,
+                                   FlushToZero | DefaultNaN};
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    for (unsigned Destination : {0u, 1u, 31u}) {
+      SCOPED_TRACE(Destination);
+      for (const auto &Input : Inputs) {
+        for (uint32_t Control : Controls) {
+          SCOPED_TRACE(Control);
+          vector(1, Case.Bits == 32 ? Input.Single : Input.Double);
+          llvm::cantFail(CPU->setReg(AArch64Register::FPCR, Control));
+          // Existing QC, inexact and divide-by-zero survive new IOC/IDC.
+          constexpr uint32_t PriorStatus = 0x08000012;
+          llvm::cantFail(CPU->setReg(AArch64Register::FPSR, PriorStatus));
+          auto ExpectedVectors = vectors();
+          auto ExpectedScalars = scalars();
+          const auto Source = ExpectedVectors[1];
+          RegisterValue Expected{};
+          uint32_t Status = PriorStatus;
+          const uint64_t Mask = Case.Bits == 64 ? UINT64_MAX : UINT32_MAX;
+          const uint64_t Sign = uint64_t(1) << (Case.Bits - 1);
+          const uint64_t Infinity =
+              Case.Bits == 64 ? 0x7ff0000000000000ULL : 0x7f800000;
+          const uint64_t Normal =
+              Case.Bits == 64 ? 0x0010000000000000ULL : 0x00800000;
+          // Ordered comparison to zero has an integer IEEE-bit oracle:
+          // NaNs are unordered, both zeros and all negative numbers compare
+          // true, and FZ turns either subnormal sign into the matching zero.
+          for (unsigned Lane = 0; Lane != Case.Elements; ++Lane) {
+            const unsigned Word = Lane * Case.Bits / 64;
+            const unsigned Shift = Lane * Case.Bits % 64;
+            const uint64_t Value = (Source[Word] >> Shift) & Mask;
+            const uint64_t Magnitude = Value & ~Sign;
+            const bool NaN = Magnitude > Infinity;
+            const bool Flushed =
+                (Control & FlushToZero) && Magnitude && Magnitude < Normal;
+            if (NaN)
+              Status |= InvalidOperation;
+            if (Flushed)
+              Status |= InputDenormal;
+            if (!NaN && (!Magnitude || Flushed || (Value & Sign)))
+              Expected[Word] |= Mask << Shift;
+          }
+          ExpectedVectors[Destination] = Expected;
+          ExpectedScalars[unsigned(AArch64Register::FPSR)] = Status;
+          ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+          ASSERT_NO_FATAL_FAILURE(
+              expectSuccess(run((Case.Word & ~31u) | Destination)));
+          EXPECT_EQ(vectors(), ExpectedVectors);
+          EXPECT_EQ(scalars(), ExpectedScalars);
+          std::array<uint8_t, 64> After;
+          llvm::cantFail(CPU->snapshotBacking(Stack, After));
+          EXPECT_EQ(After, Guard);
+        }
+      }
+    }
+  }
+}
+TEST_P(AArch64SIMD, FloatingZeroLEComparisonRejectsScalarHalf) {
+  expectRejected(0x7ef8d83f);
+}
+TEST_P(AArch64SIMD, FloatingZeroLEComparisonRejectsFourHalves) {
+  expectRejected(0x2ef8d83f);
+}
+TEST_P(AArch64SIMD, FloatingZeroLEComparisonRejectsEightHalves) {
+  expectRejected(0x6ef8d83f);
+}
+TEST_P(AArch64SIMD, FloatingZeroLEComparisonRejectsScalableVector) {
+  expectRejected(0x65d12030);
+}
+TEST_P(AArch64SIMD, FloatingZeroLEComparisonRejectsReservedOneDoubleVector) {
+  expectRejected(0x2ee0d83f);
+}
+TEST_P(AArch64SIMD, FloatingConditionalComparisonChecksEveryConditionAndNZCV) {
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  // Independent llvm-mc encodings, with condition/NZCV fields initially zero.
+  for (uint32_t Word : {0x1e220420u, 0x1e620420u, 0x1e220430u, 0x1e620430u}) {
+    const bool Wide = Word & (1u << 22);
+    vector(1, {Wide ? 0x3ff0000000000000ULL : 0x7f8000013f800000ULL,
+               0x7ff0000000000001ULL});
+    vector(2, {Wide ? 0x4000000000000000ULL : 0x7f80000140000000ULL,
+               0x7ff0000000000001ULL});
+    llvm::cantFail(CPU->setReg(AArch64Register::FPCR, 0));
+    llvm::cantFail(CPU->setReg(AArch64Register::FPSR, 0x08000012));
+    for (unsigned Flags = 0; Flags != 16; ++Flags) {
+      const bool N = Flags & 8, Z = Flags & 4, C = Flags & 2, V = Flags & 1;
+      const bool Holds[] = {
+          Z,    !Z,      C,       !C,     N,      !N,           V,
+          !V,   C && !Z, !C || Z, N == V, N != V, !Z && N == V, Z || N != V,
+          true, true};
+      for (unsigned Condition = 0; Condition != 16; ++Condition) {
+        const unsigned Fallback = (Flags + Condition) & 15;
+        SCOPED_TRACE(testing::Message() << Word << ' ' << Flags << ' '
+                                        << Condition << ' ' << Fallback);
+        llvm::cantFail(
+            CPU->setReg(AArch64Register::NZCV, uint64_t(Flags) << 28));
+        auto ExpectedScalars = scalars();
+        const auto ExpectedVectors = vectors();
+        ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+        ExpectedScalars[unsigned(AArch64Register::NZCV)] =
+            uint64_t(Holds[Condition] ? 8 : Fallback) << 28;
+        ASSERT_NO_FATAL_FAILURE(
+            expectSuccess(run(Word | (Condition << 12) | Fallback)));
+        EXPECT_EQ(scalars(), ExpectedScalars);
+        EXPECT_EQ(vectors(), ExpectedVectors);
+        std::array<uint8_t, 64> After;
+        llvm::cantFail(CPU->snapshotBacking(Stack, After));
+        EXPECT_EQ(After, Guard);
+      }
+    }
+    // Every literal NZCV pattern, including zero, on a false condition.
+    for (unsigned Fallback = 0; Fallback != 16; ++Fallback) {
+      llvm::cantFail(CPU->setReg(AArch64Register::NZCV, 0));
+      auto ExpectedScalars = scalars();
+      const auto ExpectedVectors = vectors();
+      ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+      ExpectedScalars[unsigned(AArch64Register::NZCV)] = uint64_t(Fallback)
+                                                         << 28;
+      ASSERT_NO_FATAL_FAILURE(expectSuccess(run(Word | Fallback)));
+      EXPECT_EQ(scalars(), ExpectedScalars);
+      EXPECT_EQ(vectors(), ExpectedVectors);
+    }
+  }
+}
+TEST_P(AArch64SIMD,
+       FloatingConditionalComparisonPreservesStateAndGatesExceptions) {
+  struct Pair {
+    uint32_t SingleA, SingleB;
+    uint64_t DoubleA, DoubleB;
+  };
+  constexpr Pair Inputs[] = {
+      {0x3f800000, 0x40000000, 0x3ff0000000000000ULL, 0x4000000000000000ULL},
+      {0x40000000, 0x3f800000, 0x4000000000000000ULL, 0x3ff0000000000000ULL},
+      {0x3f800000, 0x3f800000, 0x3ff0000000000000ULL, 0x3ff0000000000000ULL},
+      {0, 0x80000000, 0, 0x8000000000000000ULL},
+      {0xbf800000, 0x3f800000, 0xbff0000000000000ULL, 0x3ff0000000000000ULL},
+      {0xc0000000, 0xbf800000, 0xc000000000000000ULL, 0xbff0000000000000ULL},
+      {0x7f7fffff, 0x7f800000, 0x7fefffffffffffffULL, 0x7ff0000000000000ULL},
+      {0xff800000, 0xff7fffff, 0xfff0000000000000ULL, 0xffefffffffffffffULL},
+      {0x7f800000, 0x7f800000, 0x7ff0000000000000ULL, 0x7ff0000000000000ULL},
+      {0x7fc00000, 0x3f800000, 0x7ff8000000000000ULL, 0x3ff0000000000000ULL},
+      {0x3f800000, 0xffc00000, 0x3ff0000000000000ULL, 0xfff8000000000000ULL},
+      {0x7f800001, 0x3f800000, 0x7ff0000000000001ULL, 0x3ff0000000000000ULL},
+      {0x3f800000, 0xff800001, 0x3ff0000000000000ULL, 0xfff0000000000001ULL},
+      {1, 0, 1, 0},
+      {0x80000001, 0x80000000, 0x8000000000000001ULL, 0x8000000000000000ULL},
+      {0x007fffff, 0x00800000, 0x000fffffffffffffULL, 0x0010000000000000ULL},
+      {0x7fc00000, 1, 0x7ff8000000000000ULL, 1},
+      {1, 0x7f800001, 1, 0x7ff0000000000001ULL},
+  };
+  constexpr uint32_t Controls[] = {0,
+                                   1u << RoundingShift,
+                                   2u << RoundingShift,
+                                   3u << RoundingShift,
+                                   FlushToZero,
+                                   DefaultNaN,
+                                   FlushToZero | DefaultNaN};
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (uint32_t Word : {0x1e220420u, 0x1e620420u, 0x1e220430u, 0x1e620430u}) {
+    const bool Wide = Word & (1u << 22), Exceptional = Word & 16;
+    const uint64_t Sign = uint64_t(1) << (Wide ? 63 : 31);
+    const uint64_t Infinity = Wide ? 0x7ff0000000000000ULL : 0x7f800000;
+    const uint64_t Normal = Wide ? 0x0010000000000000ULL : 0x00800000;
+    const uint64_t Quiet = Normal >> 1;
+    for (const auto &Input : Inputs) {
+      for (uint32_t Control : Controls) {
+        for (bool Take : {false, true}) {
+          for (unsigned First : {1u, 31u}) {
+            SCOPED_TRACE(testing::Message()
+                         << Word << ' ' << Input.SingleA << ' ' << Input.SingleB
+                         << ' ' << Control << ' ' << Take << ' ' << First);
+            uint64_t A = Wide ? Input.DoubleA : Input.SingleA;
+            uint64_t B = Wide ? Input.DoubleB : Input.SingleB;
+            vector(First, {A | (Wide ? 0 : 0x7f80000100000000ULL),
+                           0x7ff0000000000001ULL});
+            vector(2, {B | (Wide ? 0 : 0x7f80000100000000ULL),
+                       0x7ff0000000000001ULL});
+            llvm::cantFail(CPU->setReg(AArch64Register::FPCR, Control));
+            constexpr uint32_t PriorStatus = 0x08000012;
+            llvm::cantFail(CPU->setReg(AArch64Register::FPSR, PriorStatus));
+            llvm::cantFail(
+                CPU->setReg(AArch64Register::NZCV, Take ? 0x40000000 : 0));
+            auto ExpectedScalars = scalars();
+            const auto ExpectedVectors = vectors();
+            unsigned Flags = 5;
+            uint32_t Status = PriorStatus;
+            if (Take) {
+              // Integer ordering of IEEE encodings, independent of host FP.
+              auto Flush = [&](uint64_t Value) {
+                const uint64_t Magnitude = Value & ~Sign;
+                if ((Control & FlushToZero) && Magnitude &&
+                    Magnitude < Normal) {
+                  Status |= InputDenormal;
+                  return Value & Sign;
+                }
+                return Value;
+              };
+              A = Flush(A);
+              B = Flush(B);
+              const bool NaNA = (A & ~Sign) > Infinity;
+              const bool NaNB = (B & ~Sign) > Infinity;
+              if (NaNA || NaNB) {
+                Flags = 3;
+                if (Exceptional || (NaNA && !(A & Quiet)) ||
+                    (NaNB && !(B & Quiet)))
+                  Status |= InvalidOperation;
+              } else if (A == B || (!(A & ~Sign) && !(B & ~Sign))) {
+                Flags = 6;
+              } else {
+                const bool Less = (A & Sign) != (B & Sign) ? bool(A & Sign)
+                                  : A & Sign               ? A > B
+                                                           : A < B;
+                Flags = Less ? 8 : 2;
+              }
+            }
+            ExpectedScalars[unsigned(AArch64Register::NZCV)] = uint64_t(Flags)
+                                                               << 28;
+            ExpectedScalars[unsigned(AArch64Register::FPSR)] = Status;
+            ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+            ASSERT_NO_FATAL_FAILURE(
+                expectSuccess(run((Word & ~(31u << 5)) | (First << 5) | 5)));
+            EXPECT_EQ(scalars(), ExpectedScalars);
+            EXPECT_EQ(vectors(), ExpectedVectors);
+            std::array<uint8_t, 64> After;
+            llvm::cantFail(CPU->snapshotBacking(Stack, After));
+            EXPECT_EQ(After, Guard);
+          }
+        }
+      }
+    }
+  }
+}
+TEST_P(AArch64SIMD, FloatingConditionalComparisonRejectsHalf) {
+  expectRejected(0x1ee20420);
+}
+TEST_P(AArch64SIMD, FloatingConditionalComparisonRejectsExceptionalHalf) {
+  expectRejected(0x1ee20430);
+}
+TEST_P(AArch64SIMD, FloatingConditionalComparisonRejectsReservedPrecision) {
+  expectRejected(0x1ea20420);
+}
+TEST_P(AArch64SIMD,
+       FloatingConditionalComparisonRejectsExceptionalReservedPrecision) {
+  expectRejected(0x1ea20430);
+}
+TEST_P(AArch64SIMD, ScalarSIMDIntegerConversionsPreserveAllStateAndRounding) {
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  struct Conversion {
+    uint32_t Word;
+    uint64_t Input;
+    std::array<uint64_t, 4> Results;
+    uint32_t Status;
+  };
+  // Independently assembled SCVTF/UCVTF s31,s29 and d31,d29. Literal IEEE
+  // results are ordered nearest-even, +infinity, -infinity, toward zero.
+  // Poison above bit 31 distinguishes an S integer source from a D source.
+  const Conversion Cases[] = {
+      {0x5e21dbbf, 0, {0, 0, 0, 0}, 0},
+      {0x5e21dbbf,
+       UINT64_C(0xa5a5a5a5fffffffd),
+       {0xc0400000, 0xc0400000, 0xc0400000, 0xc0400000},
+       0},
+      {0x5e21dbbf,
+       0x80000000,
+       {0xcf000000, 0xcf000000, 0xcf000000, 0xcf000000},
+       0},
+      {0x5e21dbbf,
+       0x7fffffff,
+       {0x4f000000, 0x4f000000, 0x4effffff, 0x4effffff},
+       0x10},
+      {0x7e21dbbf,
+       UINT64_C(0xffffffff00000003),
+       {0x40400000, 0x40400000, 0x40400000, 0x40400000},
+       0},
+      {0x7e21dbbf,
+       0xffffffff,
+       {0x4f800000, 0x4f800000, 0x4f7fffff, 0x4f7fffff},
+       0x10},
+      {0x5e21dbbf,
+       0x1000001,
+       {0x4b800000, 0x4b800001, 0x4b800000, 0x4b800000},
+       0x10},
+      {0x7e21dbbf,
+       0x1000001,
+       {0x4b800000, 0x4b800001, 0x4b800000, 0x4b800000},
+       0x10},
+      {0x5e21dbbf,
+       0xfeffffff,
+       {0xcb800000, 0xcb800000, 0xcb800001, 0xcb800000},
+       0x10},
+      {0x5e61dbbf,
+       UINT64_C(0xfffffffffffffffd),
+       {UINT64_C(0xc008000000000000), UINT64_C(0xc008000000000000),
+        UINT64_C(0xc008000000000000), UINT64_C(0xc008000000000000)},
+       0},
+      {0x5e61dbbf,
+       UINT64_C(0x8000000000000000),
+       {UINT64_C(0xc3e0000000000000), UINT64_C(0xc3e0000000000000),
+        UINT64_C(0xc3e0000000000000), UINT64_C(0xc3e0000000000000)},
+       0},
+      {0x7e61dbbf,
+       UINT64_C(0x8000000000000000),
+       {UINT64_C(0x43e0000000000000), UINT64_C(0x43e0000000000000),
+        UINT64_C(0x43e0000000000000), UINT64_C(0x43e0000000000000)},
+       0},
+      {0x5e61dbbf,
+       UINT64_C(0x7fffffffffffffff),
+       {UINT64_C(0x43e0000000000000), UINT64_C(0x43e0000000000000),
+        UINT64_C(0x43dfffffffffffff), UINT64_C(0x43dfffffffffffff)},
+       0x10},
+      {0x7e61dbbf,
+       UINT64_MAX,
+       {UINT64_C(0x43f0000000000000), UINT64_C(0x43f0000000000000),
+        UINT64_C(0x43efffffffffffff), UINT64_C(0x43efffffffffffff)},
+       0x10},
+      {0x5e61dbbf,
+       UINT64_C(0x20000000000001),
+       {UINT64_C(0x4340000000000000), UINT64_C(0x4340000000000001),
+        UINT64_C(0x4340000000000000), UINT64_C(0x4340000000000000)},
+       0x10},
+      {0x5e61dbbf,
+       UINT64_C(0xffdfffffffffffff),
+       {UINT64_C(0xc340000000000000), UINT64_C(0xc340000000000000),
+        UINT64_C(0xc340000000000001), UINT64_C(0xc340000000000000)},
+       0x10},
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Word);
+    SCOPED_TRACE(C.Input);
+    for (unsigned Source : {29u, 31u}) {
+      SCOPED_TRACE(Source);
+      for (unsigned Mode = 0; Mode < C.Results.size(); ++Mode) {
+        SCOPED_TRACE(Mode);
+        vector(31, {InitialVectorLow, InitialVectorHigh});
+        vector(Source, {C.Input, InitialVectorHigh});
+        llvm::cantFail(
+            CPU->setReg(AArch64Register::FPCR, Mode << RoundingShift));
+        llvm::cantFail(CPU->setReg(AArch64Register::FPSR, 2));
+        auto ExpectedVectors = vectors();
+        auto ExpectedScalars = scalars();
+        ExpectedVectors[31] = {C.Results[Mode], 0};
+        ExpectedScalars[unsigned(AArch64Register::FPSR)] = C.Status | 2;
+        ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+        const uint32_t Word = (C.Word & ~(31u << 5)) | (Source << 5);
+        ASSERT_NO_FATAL_FAILURE(expectSuccess(run(Word)));
+        EXPECT_EQ(vectors(), ExpectedVectors);
+        EXPECT_EQ(scalars(), ExpectedScalars);
+        std::array<uint8_t, 64> After;
+        llvm::cantFail(CPU->snapshotBacking(Stack, After));
+        EXPECT_EQ(After, Guard);
+      }
+    }
+  }
+}
+TEST_P(AArch64SIMD,
+       ScalarSIMDIntegerConversionRestoresAliasedSourceAndFPState) {
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  vector(0, {UINT64_C(0x20000000000001), InitialVectorHigh});
+  const uint64_t Control = (1u << RoundingShift) | (3u << 24);
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR, Control));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, 2));
+  auto Context = llvm::cantFail(CPU->saveContext());
+  auto ExpectedVectors = vectors();
+  auto ExpectedScalars = scalars();
+  ExpectedVectors[0] = {UINT64_C(0x4340000000000001), 0};
+  ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+  ExpectedScalars[unsigned(AArch64Register::FPSR)] = 0x12;
+  for (unsigned Attempt = 0; Attempt != 2; ++Attempt) {
+    ASSERT_NO_FATAL_FAILURE(expectSuccess(run(0x5e61d800)));
+    EXPECT_EQ(vectors(), ExpectedVectors);
+    EXPECT_EQ(scalars(), ExpectedScalars);
+    std::array<uint8_t, 64> After;
+    llvm::cantFail(CPU->snapshotBacking(Stack, After));
+    EXPECT_EQ(After, Guard);
+    vector(0, {0, 0});
+    llvm::cantFail(CPU->setReg(AArch64Register::FPCR, 0));
+    llvm::cantFail(CPU->setReg(AArch64Register::FPSR, 0));
+    llvm::cantFail(CPU->restoreContext(*Context));
+  }
+}
+// A rejected instruction terminates that CPU instance. Each boundary needs
+// its own fixture so every original word is actually admitted and rejected.
+TEST_P(AArch64SIMD, ScalarSIMDFixedPointSingleSignedRemainsRejected) {
+  expectRejected(0x5f3fe7bf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDFixedPointDoubleSignedRemainsRejected) {
+  expectRejected(0x5f7fe7bf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDFixedPointSingleUnsignedRemainsRejected) {
+  expectRejected(0x7f3fe7bf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDHalfSignedRemainsRejected) {
+  expectRejected(0x5e79dbbf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDHalfUnsignedRemainsRejected) {
+  expectRejected(0x7e79dbbf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDFloatToSignedIntegerRemainsRejected) {
+  expectRejected(0x5ee1bbbf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDFloatToUnsignedIntegerRemainsRejected) {
+  expectRejected(0x7ea1bbbf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDPackedSignedConversionRemainsRejected) {
+  expectRejected(0x4e61dbbf);
+}
+TEST_P(AArch64SIMD, ScalarSIMDPackedUnsignedConversionRemainsRejected) {
+  expectRejected(0x6e21dbbf);
+}
 TEST_P(AArch64SIMD, ScalarFloatingResultsRoundingAndStatusMatchIEEEBits) {
   for (const auto &Case : FloatingCases) {
     SCOPED_TRACE(Case.Name);

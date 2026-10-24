@@ -7574,12 +7574,16 @@ provider identity to aliases.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
-`LinuxCPUClock` decodes process CPU identities and validates their released GKI
-task observations. It resolves current-task aliases to the process group and
+`LinuxCPUClock` decodes process CPU identities under a released GKI contract or
+an explicit closed task catalogue. `LinuxKernelAvailability` validates that
+catalogue independently of GKI, including task limits and thread-ID conflicts.
+It does not select pidfd or other version-specific rules. The CPU-clock owner
+validates the corresponding task observations. It resolves current-task aliases to the process group and
 checks foreign group leaders before output access. `LinuxClock` canonicalizes
 observations and rejects duplicate aliases. Process CPU samples stay fixed
-while the idle policy advances declared wall clocks; no execution accounting
-or host clock supplies an observation.
+while the idle policy advances declared wall clocks, including monotonic raw
+from its own epoch. No execution accounting or host clock supplies a CPU
+observation; missing raw-clock input never borrows monotonic time.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
@@ -8206,6 +8210,13 @@ never rolls back committed RAM or device effects. Other devices without read
 preparation reject memory-to-memory reads rather than consuming them early.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+
+The same admission owner accepts FP32/FP64 `FCCMP`/`FCCMPE`, baseline scalar
+and vector `FCMLE #0`, and equal-width scalar SIMD `SCVTF`/`UCVTF`. FCMLE
+accepts only its exact typed zero immediate; scalar conversions retain width
+and operand-class checks. Conditions, exception status, rounding and results
+come from the existing checked execution semantics. FP16, fixed-point, packed
+conversions and scalable forms remain unsupported.
 
 The shared checked ARM64 catalogue admits integer `CMLT #0` for scalar D and
 fixed 8B/16B/4H/8H/2S/4S/2D vectors. The existing vector-effect owner retains

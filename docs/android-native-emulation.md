@@ -418,7 +418,10 @@ The supported Bionic subset is:
   IPC remain unsupported.
 - `time`, `gettimeofday`, and `clock_gettime`, using the shared explicit
   [`linux_time` inputs](process-emulation.md#explicit-guest-clocks). Imports,
-  named dynamic calls and raw ARM64 services read the same fixed observations.
+  named dynamic calls and raw ARM64 services share the same observations.
+  A closed task catalogue can admit encoded process CPU clocks independently
+  of GKI; CPU samples remain fixed. Explicit monotonic-raw observations share
+  virtual idle/instruction advancement while retaining their own epoch.
   Successful calls preserve errno; kernel errors become `-1` and errno in
   Bionic alone. API 28's `time` fallback stores through the caller's `time_t*`
   in user space, so a bad destination is a runtime failure rather than a

@@ -41,6 +41,8 @@ struct LinuxKernelOptions {
   /// Optional closed catalogue of additional live tasks. The running process
   /// is always a live group leader. An absent catalogue leaves foreign task
   /// lookup unsupported; an explicitly empty one observes no additional tasks.
+  /// Independent of GKI: this supplies CPU-clock task identities, not pidfd
+  /// release rules or observations for other services.
   std::optional<std::map<uint32_t, LinuxKernelTask>> Tasks;
 };
 } // namespace neverd::emulation

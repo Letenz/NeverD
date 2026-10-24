@@ -3188,6 +3188,161 @@ TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, IndependentProcessCPUClocksMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  struct ClockCase {
+    const char *Kernel;
+    int32_t ID;
+    bool Sample, Missing, Invalid;
+  };
+  const ClockCase Cases[] = {
+      {R"({"tasks":[]})", -6, false, false, false},
+      {R"({"tasks":[]})", -16006, false, false, true},
+      {R"({"tasks":[{"id":2000,"group_leader":true}]})", -16006, true, false,
+       false},
+      {R"({"tasks":[{"id":2000,"group_leader":true}]})", -16006, false, true,
+       false},
+      {R"({"tasks":[{"id":2000,"group_leader":false}]})", -16006, false, false,
+       true},
+      {R"({"unavailable_syscalls":[]})", -6, false, true, false}};
+  for (const char *Fixture : {"time-O0-none.so", "time-O2-relr.so"}) {
+    Path =
+        (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / Fixture).string();
+    for (const auto &Case : Cases) {
+      for (unsigned Op : {2u, 4u}) {
+        SCOPED_TRACE(testing::Message() << Fixture << ':' << Case.Kernel << ':'
+                                        << Case.ID << ':' << Op);
+        auto Request = llvm::cantFail(llvm::json::parse(R"({
+          "backend":"unicorn","linux_time":{"clocks":[
+            {"id":2,"seconds":3,"nanoseconds":4}]},
+          "android":{"entry_symbol":"time_call","initialize":false,
+            "memory":[{"address":"0x20000000","size":4096}],
+            "read_memory":[{"address":"0x20000000","size":64}]}})"));
+        auto &Object = *Request.getAsObject();
+        Object["linux_kernel"] = llvm::cantFail(llvm::json::parse(Case.Kernel));
+        if (Case.Sample)
+          Object.getObject("linux_time")
+              ->getArray("clocks")
+              ->push_back(llvm::json::Object{
+                  {"id", -16006}, {"seconds", 7}, {"nanoseconds", 9}});
+        auto &Android = *Object.getObject("android");
+        Android["arguments"] =
+            llvm::json::Array{Op, 0x1234567800000000ULL | uint32_t(Case.ID),
+                              "0x20000000", "0x20000020", 0};
+        std::vector<uint8_t> Expected(64, 0xa5);
+        (*Android.getArray("memory"))[0].getAsObject()->operator[](
+            "bytes_hex") = llvm::toHex(Expected, true);
+        const auto Options = jsonText(Object);
+        const auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::cantFail(llvm::json::parse(Text));
+        const auto &Result = *Report.getAsObject();
+        ASSERT_EQ(Result.getString(field::Stop),
+                  Case.Missing ? "unsupported_service" : "returned")
+            << Text;
+        if (!Case.Missing) {
+          EXPECT_EQ(Result.getString(field::ReturnValue),
+                    Case.Invalid
+                        ? (Op == 2 ? "ffffffffffffffff" : "ffffffffffffffea")
+                        : "0");
+          if (!Case.Invalid) {
+            llvm::support::endian::write64le(Expected.data(),
+                                             Case.Sample ? 7 : 3);
+            llvm::support::endian::write64le(Expected.data() + 8,
+                                             Case.Sample ? 9 : 4);
+          }
+          llvm::support::endian::write32le(Expected.data() + 32,
+                                           Case.Invalid && Op == 2 ? 22 : 73);
+        }
+        EXPECT_EQ(Result.getObject(field::Android)
+                      ->getArray(field::Memory)
+                      ->front()
+                      .getAsObject()
+                      ->getString(field::Bytes),
+                  llvm::toHex(Expected, true));
+        EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                  Case.Missing ? process_cli::Incomplete
+                               : process_cli::Success);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+      }
+    }
+  }
+#endif
+}
+
+TEST_F(ProcessPublic, RawMonotonicEpochAndMissingInputMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Fixture :
+       {"time-O0-none.so", "time-O0-android.so", "time-O0-relr.so",
+        "time-O2-none.so", "time-O2-android.so", "time-O2-relr.so"}) {
+    Path =
+        (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / Fixture).string();
+    for (bool Observed : {false, true}) {
+      auto Request = llvm::cantFail(llvm::json::parse(R"({
+        "backend":"unicorn","linux_time":{"advance_on_idle":true,
+          "clocks":[{"id":1,"seconds":123,"nanoseconds":456789}]},
+        "android":{"entry_symbol":"raw_clock_sequence","initialize":false,
+          "arguments":["0x20000000"],
+          "libraries":{"libclock-model.so":["clock_gettime"]},
+          "memory":[{"address":"0x20000000","size":4096}],
+          "read_memory":[{"address":"0x20000000","size":136}]}})"));
+      auto &Object = *Request.getAsObject();
+      if (Observed)
+        Object.getObject("linux_time")
+            ->getArray("clocks")
+            ->push_back(llvm::json::Object{{"id", 4},
+                                           {"seconds", int64_t(4294967301)},
+                                           {"nanoseconds", 999999996}});
+      std::vector<uint8_t> Expected(136, 0xa5);
+      Object.getObject("android")->getArray("memory")->front().getAsObject()->
+      operator[]("bytes_hex") = llvm::toHex(Expected, true);
+      const auto Options = jsonText(Object);
+      const auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      const auto &Result = *Report.getAsObject();
+      ASSERT_EQ(Result.getString(field::Stop),
+                Observed ? "returned" : "unsupported_service")
+          << Text;
+      if (Observed) {
+        EXPECT_EQ(Result.getString(field::ReturnValue), "0");
+        const uint64_t Words[] = {
+            4294967301, 999999996, 4294967301, 999999996, 4294967301, 999999996,
+            123,        456789,    4294967303, 3,         4294967303, 3,
+            4294967303, 3,         124,        456796,    73};
+        for (size_t I = 0; I != std::size(Words); ++I)
+          llvm::support::endian::write64le(Expected.data() + I * 8, Words[I]);
+      }
+      EXPECT_EQ(Result.getObject(field::Android)
+                    ->getArray(field::Memory)
+                    ->front()
+                    .getAsObject()
+                    ->getString(field::Bytes),
+                llvm::toHex(Expected, true));
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                Observed ? process_cli::Success : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, RelativeSleepCompletesRawEventAndClockThroughSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

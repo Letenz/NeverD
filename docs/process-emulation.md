@@ -446,8 +446,9 @@ default epoch. Instruction time is frozen unless explicitly configured. For exam
 Clock IDs include Linux's static IDs 0–9 and 11: realtime, monotonic, process CPU,
 thread CPU, monotonic raw, realtime coarse, monotonic coarse, boottime,
 realtime alarm, boottime alarm and TAI. Each is independent; absent clocks are
-unknown, including coarse variants. Selected released GKI contracts also admit
-negative encoded process CPU clock IDs with explicit live group observations;
+unknown, including coarse variants. A selected released GKI contract or an
+explicit `linux_kernel.tasks` catalogue also admits negative encoded process
+CPU clock IDs with explicit live group observations;
 see [released GKI clocks](android-gki-kernels.md#implemented-process-cpu-clock-subset).
 PROF, VIRT and SCHED retain independent observations; aliases of the current
 process share one observation. Duplicate identities,
@@ -461,7 +462,8 @@ profiles reject this option.
 
 `"advance_on_idle": true` explicitly enables relative `nanosleep` on x64 and
 ARM64, including Android's named and variadic wrappers and scalar `usleep`.
-Clock IDs 0, 1 and 7 advance from their initial values by elapsed virtual time.
+Clock IDs 0, 1, 4 and 7 advance from their independent initial values by elapsed
+virtual time. Monotonic raw (4) never borrows the epoch of monotonic (1).
 Process CPU clock
 observations may coexist with this policy and stay fixed during idle advancement.
 Other clock inputs remain excluded from this policy.
@@ -475,8 +477,8 @@ pending until the workload budget expires.
 wall-time rate to admitted guest instructions. Zero (the default) disables it.
 The unsigned 64-bit rate may also be a decimal string. A workload-wide cumulative
 instruction count is accounted exactly once at successful service and quantum
-boundaries, across all Android threads. Realtime, monotonic and boottime share
-that elapsed time with idle advancement; supplied process CPU samples stay fixed.
+boundaries, across all Android threads. Realtime, monotonic, monotonic raw and
+boottime share that elapsed time with idle advancement; supplied process CPU samples stay fixed.
 Unsupported clock kinds are rejected just as for idle advancement. Multiplication,
 elapsed-time and epoch overflow stop before changing any clock.
 
@@ -502,7 +504,7 @@ Android's error conversion follows the API 28
 [AArch64 Bionic wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/syscalls/nanosleep.S).
 
 `clock_gettime` consumes the low signed 32 bits of its clock ID, returns
-`EINVAL` for invalid positive IDs before accessing the destination. Selected GKI
+`EINVAL` for invalid positive IDs before accessing the destination. Admitted
 process CPU clocks validate their target before the destination; other encoded
 and dynamic clocks stop explicitly. A known clock without input stops as
 `unsupported_service`. `gettimeofday` writes seconds and truncated microseconds

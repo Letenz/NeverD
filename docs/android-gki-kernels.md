@@ -216,8 +216,8 @@ additional contracts.
 
 ## Implemented process CPU clock subset
 
-With explicit GKI selection, `clock_gettime` admits negative encoded process
-CPU clock IDs for PROF, VIRT and SCHED. It uses the low signed 32-bit argument;
+With explicit GKI selection or an explicit `linux_kernel.tasks` catalogue,
+`clock_gettime` admits negative encoded process CPU clock IDs for PROF, VIRT and SCHED. It uses the low signed 32-bit argument;
 the encoded PID and clock kind identify an explicit sample in `linux_time`.
 The current process is implicit. Other processes must be declared live group
 leaders in the closed task catalogue before a clock sample can be supplied:
@@ -226,13 +226,18 @@ leaders in the closed task catalogue before a clock sample can be supplied:
 {"linux_kernel":{"gki":"android17-6.18","tasks":[{"id":2000,"group_leader":true}]},"linux_time":{"advance_on_idle":true,"clocks":[{"id":1,"seconds":10,"nanoseconds":0},{"id":2,"seconds":3,"nanoseconds":4},{"id":-16006,"seconds":7,"nanoseconds":9}]}}
 ```
 
+Omit `gki` when only the task catalogue and process CPU clock subset are
+observed. An explicitly empty `tasks` array admits the current process and
+observes foreign absence. This does not enable pidfd release semantics or
+supply any clock samples.
+
 Here `-16006` is PID 2000's SCHED clock. PROF and VIRT are independent
 observations. For the current process, SCHED IDs 2, -6 (encoded PID zero) and
 -8006 (PID 1000) share one sample. The corresponding PROF aliases are -8 and
 -8008, and VIRT aliases are -7 and -8007. Duplicate aliases are rejected even
 when their values agree. CPU seconds must be nonnegative and nanoseconds
 normalized. Idle advancement leaves every process CPU sample fixed while
-advancing only wall clock IDs 0, 1 and 7. Instruction execution does not infer
+advancing only declared wall clock IDs 0, 1, 4 and 7 from their own epochs. Instruction execution does not infer
 CPU usage.
 
 The current task's own TID also identifies its process group, including in

@@ -71,7 +71,7 @@ llvm::Error validateKernelOptions(const LinuxKernelOptions &Options) {
                                            LinuxUnavailableSyscall::PidFDOpen)))
     return failure(KernelOptions);
   if (Options.Tasks) {
-    if (!Options.GKI || Options.Tasks->size() > KernelTaskLimit)
+    if (Options.Tasks->size() > KernelTaskLimit)
       return failure(KernelOptions);
     for (const auto &[ID, Task] : *Options.Tasks)
       if (!ID || ID > INT32_MAX || (ID == ProcessID && !Task.GroupLeader))

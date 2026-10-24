@@ -9964,6 +9964,23 @@ Read-only, modified and unmapped metadata remain visible to guest accesses.
 Typed/JSON validation shares count, string and aggregate limits. Run the
 Android and process-public owners after changes to this model.
 
+`AArch64SIMD.FloatingConditionalComparison*` checks every condition and
+NZCV pattern for FCCMP/FCCMPE, exception suppression on false conditions,
+signed zero, NaNs, denormals and unused lanes. `FloatingZeroLEComparison*`
+checks five baseline FCMLE forms against integer IEEE-bit oracles.
+`ScalarSIMDInteger*` checks signed/unsigned FP32/FP64 conversion, all rounding
+modes, source aliases and context restoration. All scalar/vector state and
+guarded RAM are checked; optional and reserved forms get fresh rejected CPUs.
+
+`LinuxClock.RawMonotonic*` checks independent epochs, idle/instruction time,
+atomic overflow and missing input. Linux raw fixtures run on both LP64 ISAs;
+Android time fixtures cover O0/O2, all relocation forms and available checked
+ARM64 transports. Independent task-catalogue tests retain foreign absence,
+group-leader, sample, low-32-bit clock-ID and copy-error rules, without enabling
+pidfd. Typed/JSON validation keeps limits and thread/priority consistency.
+Public SDK/CLI tests compare complete reports for positive and missing clock
+inputs. Run Linux, Android and process-public owners after clock policy changes.
+
 `AArch64SIMD.SignedZeroComparison*` checks all eight baseline `CMLT #0`
 forms against an integer sign-bit oracle, including source/destination aliasing,
 zero, signed extrema and unused upper lanes. Every accepted execution compares
