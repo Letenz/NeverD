@@ -3,18 +3,24 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Verify private LLVM source queries and their session cache boundaries.
+///
+//===----------------------------------------------------------------------===//
 
 #include "SessionImpl.h"
-#include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Verifier.h"
+
+#include <gtest/gtest.h>
 
 #include <optional>
 #include <string>
