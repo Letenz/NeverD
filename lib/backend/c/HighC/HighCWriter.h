@@ -1178,6 +1178,7 @@ public:
   bool NeedsMsvcIntrinsics = false;
   bool NeedsX86SystemRegisterDispatch = false;
   bool NeedsX86ScalarSystemDispatch = false;
+  bool NeedsX86DescriptorStateDispatch = false;
   bool NeedsX86VirtualizationDispatch = false;
   bool NeedsX86SystemStateDispatch = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.

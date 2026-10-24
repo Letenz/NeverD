@@ -803,6 +803,40 @@ whose high bits differ, and null/current-CS selectors. All 117 LLVM-to-C value
 tests pass. Invalid mode, dynamic controls, unsupported prefixes and malformed
 effects fail explicitly. These checks do not qualify successful CPL0 LKGS.
 
+Descriptor state now uses native APIs for LGDT/LIDT/SGDT/SIDT, INVLPG,
+LLDT/LTR/LMSW, SLDT/STR/SMSW and VERR/VERW across LLVM and both C routes.
+Register reads retain their real operand width, including native upper SMSW
+bits; verification returns actual ZF and retains dead-result effects. Memory
+selectors and descriptor images stay inside the instruction. FS/GS uses
+explicit native offsets and controls, while default addresses retain pointer
+transport. Both C routes select NeverC's header-free address/register builtins.
+Old SDKs keep the shared exact assembly fallback.
+
+Four appended IDs retain i386's `66 LGDT/LIDT/SGDT/SIDT` operand-size attribute.
+It is independent of effective-address size; the previous path lost that
+attribute. The full fork also exposes raw `.address32` APIs with 16/32-bit
+addresses and explicit segment controls. Invalid shapes, code modes, dynamic
+controls and weakened memory effects fail explicitly. This adds neither a
+software descriptor-table model nor successful privileged execution on the
+host. MPX integration and the other full-machine-state gaps remain open;
+the production SDK pin and LLVM submodule have not changed.
+
+Qualification with the current `dev` decoder (`f5e47ac44c1c`) passes 438
+source fixtures and 1,680 NeverC native-builtin compilations per SDK, using
+both the pinned fallback SDK and the new fork. The new SDK additionally
+compiles 1,260 explicit descriptor-address functions across x86/x64 and all
+three formats; the existing 462 descriptor-query functions still pass.
+Sixteen Linux x64 VERR/VERW fixtures compare actual register/memory success
+and failure results with original bytes, LLVM output and both C routes at
+O0/O2, including NeverC (128 rebuilt C executions per SDK). This caught and
+fixed a HighC name collision with libc's unrelated, non-returning `verr()`.
+Shared shape, instruction-boundary, return/no-return, decoder-corpus and
+LLVM-to-C regressions total 275 tests per SDK with no failures; the pinned
+SDK explicitly skips three unavailable native-API tests. The source matrix
+separately skips NeverC's unsupported i386 targets and, on the pinned SDK,
+three native-address API tests. Privileged descriptor/table completion is
+qualified by the compiler fork's CPL0 QEMU fixtures, not physical hardware.
+
 ## Reproducible checks
 
 Build these targets in a configured test build (see [testing.md](testing.md)):

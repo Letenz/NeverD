@@ -116,6 +116,10 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
               !x86SgxShapeIsValid(Id, x86SgxMedShape(Op)))
             Err("x86 SGX intrinsic has an invalid completion contract", Blk.Id,
                 Op.Addr);
+          const bool IsDescriptorState = isX86DescriptorStateIntrinsic(Id);
+          if (IsDescriptorState && !x86DescriptorStateMedShapeIsValid(Op))
+            Err("x86 descriptor state intrinsic has an invalid shape", Blk.Id,
+                Op.Addr);
           const bool IsAmxState = Id == Intrinsic::X86AMXState;
           if (IsAmxState && !x86AmxShapeIsValid(x86AmxMedShape(Op)))
             Err("invalid AMX architectural bank operation", Blk.Id, Op.Addr);
@@ -178,7 +182,7 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
                   Op.NumInputs > 1 ? Op.Inputs[1].Size : 0);
           if (IsMemoryIntrinsic && !IsDefaultString && !IsDefaultRegisterForm &&
               !IsApxAtomic && !IsX86Invalidate && !IsVirtualization &&
-              !IsSystemState && !IsAmxState &&
+              !IsSystemState && !IsAmxState && !IsDescriptorState &&
               !intrinsicMemoryAddressSpaceShapeIsValid(
                   Id, Op.NumInputs, Op.Output.Size,
                   Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,

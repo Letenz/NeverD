@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../UnalignedMemory.h"
+#include "../X86DescriptorState.h"
 #include "../X86FPStateHelpers.h"
 #include "../X86ScalarSystem.h"
 #include "../X86SystemRegister.h"
@@ -1007,18 +1008,6 @@ const char *memoryIntrinsicMnemonic(Intrinsic Id) {
     return "ldmxcsr";
   case I::Stmxcsr:
     return "stmxcsr";
-  case I::Lgdt:
-  case I::Lidt:
-  case I::Sgdt:
-  case I::Sidt:
-  case I::Invlpg:
-  case I::Lldt:
-  case I::Ltr:
-  case I::Lmsw:
-  case I::Sldt:
-  case I::Str:
-  case I::Smsw:
-    return intrinsicAsmMnemonic(Id);
   default:
     return nullptr;
   }
@@ -1197,13 +1186,6 @@ renderFlatMemoryIntrinsic(const HighExpr &Call,
                           std::function<std::string(const HighExpr &)> &ExprFn,
                           bool MsvcIntrinsics) {
   const std::string Address = "(uintptr_t)(" + ExprFn(*Call.Operands[0]) + ")";
-  // <intrin.h> declares these for Windows targets; LGDT/SGDT have no
-  // declaration there and keep their assembly form.
-  if (MsvcIntrinsics && (Call.IntrinsicId == Intrinsic::Lidt ||
-                         Call.IntrinsicId == Intrinsic::Sidt ||
-                         Call.IntrinsicId == Intrinsic::Invlpg))
-    if (const char *Builtin = intrinsicCName(Call.IntrinsicId))
-      return std::string(Builtin) + "((void *)" + Address + ");\n";
   if (const char *Hint = prefetchHint(Call.IntrinsicId))
     return "_mm_prefetch((const char *)" + Address + ", " + Hint + ");\n";
   switch (Call.IntrinsicId) {
@@ -1270,20 +1252,6 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
   const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
   if (!Mnemonic || !Segment || Call.Operands.empty() || !Call.Operands[0] ||
       !Call.Operands[0]->Type)
-    return {};
-
-  // These six opcodes also have a register form.  Only an address-width first
-  // operand denotes memory; a selector/MSW-width operand must keep using the
-  // register renderer.
-  const bool HasRegisterForm = Call.IntrinsicId == Intrinsic::Lldt ||
-                               Call.IntrinsicId == Intrinsic::Ltr ||
-                               Call.IntrinsicId == Intrinsic::Lmsw ||
-                               Call.IntrinsicId == Intrinsic::Sldt ||
-                               Call.IntrinsicId == Intrinsic::Str ||
-                               Call.IntrinsicId == Intrinsic::Smsw;
-  // computeEA's public Low/Med carrier is uniformly 64-bit, including i386;
-  // the architectural addr16/addr32 wrap happens before that final zext.
-  if (HasRegisterForm && Call.Operands[0]->Type->Size != 8)
     return {};
 
   const std::string MemoryOperand =
@@ -1802,6 +1770,34 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
 }
 } // namespace
 
+namespace {
+std::string renderDescriptorStateExpression(
+    Arch TargetArch, const HighExpr &Call,
+    const std::function<std::string(const HighExpr &)> &ExprFn) {
+  const unsigned Bytes = Call.Type ? Call.Type->Size : 0;
+  const auto *Operand =
+      Call.Operands.empty() ? nullptr : Call.Operands[0].get();
+  const unsigned OperandBytes =
+      Operand && Operand->Type ? Operand->Type->Size : 0;
+  if (!x86DescriptorStateShapeIsValid(
+          Call.IntrinsicId, TargetArch, Call.Operands.size() + 1, Bytes,
+          OperandBytes, Call.MemoryAddressSpace, Call.MemoryOrdering) ||
+      (Operand && (!Operand->Type || (Operand->Type->Kind != NdTypeKind::Int &&
+                                      (Operand->Type->Kind != NdTypeKind::Ptr ||
+                                       OperandBytes != 8)))) ||
+      (Bytes && Call.Type->Kind != NdTypeKind::Int))
+    throw std::invalid_argument("invalid x86 descriptor state C contract");
+  const auto P =
+      x86DescriptorStateNative(Call.IntrinsicId, TargetArch, OperandBytes == 8,
+                               Bytes, Call.MemoryAddressSpace);
+  if (!P)
+    throw std::invalid_argument("invalid x86 descriptor state C mode");
+  return renderX86DescriptorStateExpression(
+      *P, Operand ? std::vector<std::string>{ExprFn(*Operand)}
+                  : std::vector<std::string>{});
+}
+} // namespace
+
 std::string renderX86TypedIntrinsicCall(
     Arch TheArch, const HighExpr &Call,
     std::function<std::string(const HighExpr &)> ExprFn, bool &HasCIntrinsics,
@@ -1811,6 +1807,8 @@ std::string renderX86TypedIntrinsicCall(
   if (Call.IntrinsicId == I::CetRdSsp)
     llvm::report_fatal_error(
         "RDSSP C projection requires a caller-scoped full-GPR expression");
+  if (isX86DescriptorStateIntrinsic(Call.IntrinsicId))
+    return renderDescriptorStateExpression(TheArch, Call, ExprFn);
   if (isX86ScalarSystemIntrinsic(Call.IntrinsicId)) {
     const bool Write =
         Call.IntrinsicId == I::Wrmsr || Call.IntrinsicId == I::Out;
@@ -1975,18 +1973,6 @@ std::string renderX86TypedIntrinsicCall(
              ")\" ::: " + x87StateCClobbers(X87StateEffect::Stack).str() + ")";
     return "__asm { " + Mnemonic + " st(" + Register + ") }";
   }
-  // LLDT/LTR/LMSW with a register operand: an `__asm` block cannot take the
-  // computed value, so the asm statement loads it into a register.  The
-  // memory forms render with their address elsewhere.
-  if ((Call.IntrinsicId == I::Lldt || Call.IntrinsicId == I::Ltr ||
-       Call.IntrinsicId == I::Lmsw) &&
-      Call.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-      Call.Operands.size() == 1 && Call.Operands[0] && Call.Operands[0]->Type &&
-      Call.Operands[0]->Type->Size != 8)
-    return std::string("__asm__ volatile(\"") +
-           intrinsicAsmMnemonic(Call.IntrinsicId) +
-           " %w0\" : : \"r\"((uint32_t)(" + ExprFn(*Call.Operands[0]) +
-           ")) : \"memory\")";
   if (Call.IntrinsicId == I::ReadSegment ||
       Call.IntrinsicId == I::WriteSegment) {
     // A segment selector by its register's encoding number.
@@ -2123,56 +2109,6 @@ std::string renderX86TypedIntrinsicCall(
   return Result;
 }
 
-namespace {
-/// VERR/VERW as inline assembly, moving ZF into \p PrimaryDst when it is
-/// live.  A memory selector keeps its FS/GS override.
-std::string
-renderSelectorAccessCheck(const HighExpr &Call, const HighExpr *PrimaryDst,
-                          std::function<std::string(const HighExpr &)> &ExprFn,
-                          std::function<std::string(const MedVar &)> &VarFn,
-                          const IsAliveFn &IsAlive) {
-  const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
-  if (Call.Operands.size() != 1 || !Call.Operands[0] ||
-      !Call.Operands[0]->Type || !Segment)
-    llvm::report_fatal_error("x86 VERR/VERW has an invalid operand shape");
-  std::string Zf;
-  if (PrimaryDst &&
-      (PrimaryDst->Kind == ExprKind::Var ||
-       PrimaryDst->Kind == ExprKind::Phi) &&
-      isAlive(PrimaryDst->Var, IsAlive))
-    Zf = VarFn(PrimaryDst->Var);
-  // Only an address-width operand is a memory selector.
-  const bool Memory = Call.Operands[0]->Type->Size == 8;
-  std::string Result = "do {\n";
-  std::string Operand;
-  std::string Input;
-  if (Memory) {
-    Result += "    uintptr_t neverd_address = (uintptr_t)(" +
-              ExprFn(*Call.Operands[0]) + ");\n";
-    Operand = *Segment == '\0' ? "(%[address])"
-                               : "%%" + std::string(Segment) + ":(%[address])";
-    Input = "[address] \"r\"(neverd_address)";
-  } else {
-    Result += "    uint16_t neverd_selector = (uint16_t)(" +
-              ExprFn(*Call.Operands[0]) + ");\n";
-    Operand = "%[selector]";
-    Input = "[selector] \"r\"(neverd_selector)";
-  }
-  if (!Zf.empty())
-    Result += "    uint8_t neverd_zf;\n";
-  Result +=
-      "    __asm__ volatile(\"" +
-      std::string(Call.IntrinsicId == Intrinsic::Verr ? "verr " : "verw ") +
-      Operand + (Zf.empty() ? "" : "\\n\\tsetz %[zf]") + "\"\n";
-  Result += "        : " +
-            (Zf.empty() ? std::string() : "[zf] \"=q\"(neverd_zf)") + "\n";
-  Result += "        : " + Input + "\n        : \"cc\", \"memory\");\n";
-  if (!Zf.empty())
-    Result += "    " + Zf + " = neverd_zf;\n";
-  return Result + "} while (0);\n";
-}
-} // namespace
-
 std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
@@ -2182,9 +2118,16 @@ std::string renderX86SegmentedIntrinsicStatement(
   if (Call.Kind != ExprKind::Call ||
       (TheArch != Arch::X86 && TheArch != Arch::X64))
     return {};
-  if (Call.IntrinsicId == Intrinsic::Verr ||
-      Call.IntrinsicId == Intrinsic::Verw)
-    return renderSelectorAccessCheck(Call, PrimaryDst, ExprFn, VarFn, IsAlive);
+  if (isX86DescriptorStateIntrinsic(Call.IntrinsicId)) {
+    // Value assignments use the ordinary declaration/liveness path and the
+    // typed expression renderer. Statement emission must not name a result
+    // that forwarding or dead-result analysis has omitted.
+    if (PrimaryDst)
+      return {};
+    const std::string Prefix = Call.Type && Call.Type->Size ? "(void)" : "";
+    return Prefix + renderDescriptorStateExpression(TheArch, Call, ExprFn) +
+           ";\n";
+  }
   if (Call.IntrinsicId == Intrinsic::X86RequireDivPrecondition)
     return renderDivPrecondition(TheArch, Call, std::move(ExprFn),
                                  std::move(SameWidthUnsigned));
@@ -2338,33 +2281,15 @@ const char *hiloCollapseExpr(Intrinsic Id) {
 std::string renderX86SystemRegisterOperand(Intrinsic Id,
                                            const std::vector<std::string> &Ops,
                                            uint16_t ResultBytes) {
-  using I = Intrinsic;
-  const char *Mnemonic = intrinsicAsmMnemonic(Id);
-  if (!Mnemonic)
+  if (!isX86SystemRegisterStore(Id) && Id != Intrinsic::Lldt &&
+      Id != Intrinsic::Ltr && Id != Intrinsic::Lmsw)
     return {};
-  switch (Id) {
-  case I::Sldt:
-  case I::Str:
-  case I::Smsw: {
-    // `str %eax` writes the selector zero extended, `str %ax` its low word:
-    // the instruction runs on a register of the destination's width.
-    if (!Ops.empty() ||
-        (ResultBytes != 2 && ResultBytes != 4 && ResultBytes != 8))
-      return {};
-    const std::string Type = "uint" + std::to_string(8 * ResultBytes) + "_t";
-    return "({ " + Type + " neverd_value; __asm__ volatile(\"" + Mnemonic +
-           " %0\" : \"=r\"(neverd_value)); neverd_value; })";
-  }
-  case I::Lldt:
-  case I::Ltr:
-  case I::Lmsw:
-    if (Ops.size() != 1)
-      return {};
-    return "__asm__ volatile(\"" + std::string(Mnemonic) +
-           " %0\" : : \"r\"((uint16_t)(" + Ops[0] + ")))";
-  default:
+  const auto P = x86DescriptorStateNative(Id, Arch::X64, false, ResultBytes);
+  if (!P || Ops.size() != unsigned(P->OperandBytes != 0))
     return {};
-  }
+  // The legacy string-only API has no unit header collector. Keep its
+  // assembly interface while sharing the instruction-owned operand contract.
+  return renderX86DescriptorStateExpression(*P, Ops, false);
 }
 
 std::string renderX86AsmStatement(const char *Mnemonic,

@@ -95,7 +95,9 @@ bool isNoreturnCallExpr(const HighExpr &E) {
   // returns. In particular, HighIR can assign a result to register version 0.
   // Only a known terminating operation authorizes omitting its result.
   return E.Kind == ExprKind::Call &&
-         (E.DoesNotReturn || libc::isNoReturnFunction(E.CallTarget) ||
+         (E.DoesNotReturn ||
+          (E.IntrinsicId == Intrinsic::None &&
+           libc::isNoReturnFunction(E.CallTarget)) ||
           isX86FastFailCall(E));
 }
 

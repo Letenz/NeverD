@@ -4,6 +4,18 @@
 
 # NeverD Architecture
 
+`X86DescriptorState.h` owns descriptor-state operand shapes; LowIR,
+Low-to-Med, Med verification and source output use that contract.
+`X86DescriptorStateNative.h` owns register widths, native API names, memory
+footprints and the assembly fallback. LLVM, HighC and LLVM-to-C share it.
+The four appended legacy table IDs preserve i386's operand-size override
+without changing existing serialized identities. Native memory accesses stay
+inside the instruction. Explicit native addresses retain width/prefix controls;
+lifted normalized addresses have already undergone architectural wrapping.
+Return-value admission shares that contract. HighC's libc no-return lookup
+applies only to ordinary calls: the VERR instruction must not acquire the
+unrelated `verr()` library function's terminating behavior.
+
 `X86ScalarSystemNative.h` owns the widths and native API names for scalar
 RDMSR/WRMSR and port I/O. LLVM and both C projections share the plan and retain
 ordered, potentially trapping reads even when the result is unused. Constant

@@ -19,6 +19,7 @@
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87BCD.h"
 #include "neverd/ir/X87Constant.h"
+#include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86Sgx.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-intrinsic"
@@ -109,6 +110,9 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   auto IC = static_cast<I>(IntrCode);
   if (isPortableX87Intrinsic(IC))
     return emitPortableX87Intrinsic(Op, Builder);
+
+  if (isX86DescriptorStateIntrinsic(IC))
+    return emitX86DescriptorState(Op, IC, Builder);
 
   if (IC == Intrinsic::X86AMXState)
     return emitX86AmxState(Op, Builder);

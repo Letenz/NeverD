@@ -2762,7 +2762,7 @@ TEST(LowInstructionBoundary,
   ASSERT_TRUE(
       HighCEmitter().emit({I386SldtHigh}, I386SldtHighCOS, I386COptions));
   I386SldtHighCOS.flush();
-  EXPECT_NE(I386SldtHighC.find("sldt (%[address])"), std::string::npos);
+  EXPECT_NE(I386SldtHighC.find("sldt (%0)"), std::string::npos);
   llvm::LLVMContext I386SldtContext;
   auto I386SldtModule = MedLLVMEmitter().emit({I386SldtMed}, I386SldtContext,
                                               "i386-system-memory", Arch::X86);
@@ -2776,14 +2776,17 @@ TEST(LowInstructionBoundary,
         const auto *Asm =
             Call ? llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())
                  : nullptr;
-        if (Asm && Asm->getAsmString().contains("sldt ($0)")) {
-          ASSERT_GE(Call->arg_size(), 1u);
+        const auto *Callee = Call ? Call->getCalledFunction() : nullptr;
+        if ((Asm && Asm->getAsmString() == "sldt ($0)") ||
+            (Callee && Callee->getName() == "llvm.x86.sldt.mem")) {
+          ASSERT_EQ(Call->arg_size(), 1u);
           SawI386NativeAddressOperand =
-              Call->getArgOperand(0)->getType()->isIntegerTy(32);
+              Call->getArgOperand(0)->getType()->isPointerTy() &&
+              I386SldtModule->getDataLayout().getPointerSizeInBits() == 32;
         }
       }
   EXPECT_TRUE(SawI386NativeAddressOperand)
-      << "i386 inline asm must receive one native-width address register";
+      << "i386 descriptor access must receive one native-width pointer";
 
   // Fault-suppressing masked memory operations cannot be flattened to the
   // ordinary intrinsics: their implicit memory operand must retain FS/GS in
@@ -3751,11 +3754,16 @@ TEST(LowInstructionBoundary, WindowsStringAndTableOpsUseIntrinH) {
             std::string::npos)
       << Windows;
   EXPECT_NE(Windows.find("__lidt((void *)"), std::string::npos) << Windows;
-  EXPECT_EQ(Windows.find("__asm__"), std::string::npos) << Windows;
+  EXPECT_NE(Windows.find(
+                "#define NEVERD_X86_DESCRIPTOR_STATE(native, msvc, ...) msvc"),
+            std::string::npos)
+      << Windows;
+  EXPECT_NE(Windows.find("__builtin_ia32_lidt_address("), std::string::npos)
+      << Windows;
   const std::string Elf = Render(BinaryFormat::ELF);
   EXPECT_EQ(Elf.find("<intrin.h>"), std::string::npos) << Elf;
   EXPECT_NE(Elf.find("rep stosq"), std::string::npos) << Elf;
-  EXPECT_NE(Elf.find("lidt (%[address])"), std::string::npos) << Elf;
+  EXPECT_NE(Elf.find("lidt (%0)"), std::string::npos) << Elf;
 }
 
 TEST(LowInstructionBoundary, FlatPrefetchAndMxcsrUseIntrinsics) {
