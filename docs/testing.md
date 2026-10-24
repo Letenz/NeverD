@@ -10536,6 +10536,14 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 
 `LLVMCInternalExitRegions` adds five independent tests covering both exit polarities, zero iterations, parallel exit/backedge swaps, all four combinations of nested header/internal exits and ordered header/body/latch observations. Shared-destination exits and early continuations verify executable fallback; a valid earlier loop followed by an unsupported region must publish no partial structure. Whole-module and selected-function output must agree without changing LLVM. Original LLVM and emitted C run against independent unsigned oracles at O0/O2 over 294,912 calls, with undefined-behavior traps on C.
 
+The same suite checks that a loop-body exit cannot execute the header exit's
+PHI copies afterward. Distinct, uncoalesced exit values cover both branch
+polarities, zero iterations and headers with or without observer calls. A
+separate memory fixture updates a polled value during the final iteration and
+checks the reloaded value, selected output pointer, complete memory and call
+count. Both LLVM and generated C execute against independent O0/O2 oracles;
+the C runs also enable undefined-behavior traps.
+
 `NeverDLLVMCPhiTests` also checks common loop exits with distinct successor PHI pairs, ordered observer calls, output memory and unchanged caller IR. Whole-module and selected-function C execute against independent O0/O2 oracles. Different exit comparisons and extra arm predecessors exercise conservative handling.
 
 `NeverDLLVMCPhiTests` covers multi-backedge loop-expression factoring with independent O0/O2 oracles, ordered observers, memory snapshots before modifying calls, narrow wrap and signed extension. It checks whole-module and selected-function output without changing caller IR, conflicting edges, shared roots, poison annotations, undefined operands, variable shifts, constrained intrinsics, exception functions and complete budget refusal. Rotate calls must collapse only when every incoming operation agrees.
