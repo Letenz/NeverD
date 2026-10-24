@@ -11,10 +11,29 @@
 
 #include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/low/LowIR.h"
 
 namespace neverd {
+
+inline bool lowAArch64PtrueShapeIsValid(const LowOp &Op) {
+  using namespace aarch64_sve;
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs != kPtrueOperandCount + 1 ||
+      !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != kLowIntrinsicIdentifierBytes ||
+      Op.Inputs[0].Offset != static_cast<uint64_t>(Intrinsic::A64_SvePtrue) ||
+      (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return isValidPtrueShape(
+      {Op.NumInputs - 1U, Op.Output.Size, Op.Inputs[1].Size, Op.Inputs[2].Size,
+       Op.Inputs[1].isConst() ? std::optional<uint64_t>(Op.Inputs[1].Offset)
+                              : std::nullopt,
+       Op.Inputs[2].isConst() ? std::optional<uint64_t>(Op.Inputs[2].Offset)
+                              : std::nullopt});
+}
 
 inline bool lowAArch64CPAShapeIsValid(const LowOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 3 || Op.NumInputs > 4 ||

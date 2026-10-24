@@ -1634,6 +1634,10 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
         Op.NumInputs != (P->Debug ? 2 : 1) ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       llvm::report_fatal_error("invalid x86 system register read contract");
+    if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P->LLVMName))
+      return Builder.CreateCall(
+          llvm::Intrinsic::getOrInsertDeclaration(Mod, IID),
+          {Builder.getInt32(P->Index)}, "sysreg");
     auto *FnTy = llvm::FunctionType::get(sizeToType(Op.Output.Size), false);
     auto *IA = llvm::InlineAsm::get(FnTy, P->Text, P->Constraints,
                                     /*hasSideEffects=*/true);

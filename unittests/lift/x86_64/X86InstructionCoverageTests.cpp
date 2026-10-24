@@ -47,6 +47,50 @@ TEST(X86InstructionCoverage, RexRDoesNotCreateExtraDebugRegisters) {
       }
 }
 
+TEST(X86InstructionCoverage, MpxRequiresOwnedBoundsStateAndFaultSemantics) {
+  struct Fixture {
+    std::vector<uint8_t> Bytes;
+    unsigned Id;
+  };
+  const Fixture Cases[] = {
+      {{0xf3, 0x0f, 0x1a, 0xc0}, X86_INS_BNDCL},
+      {{0xf3, 0x0f, 0x1a, 0x00}, X86_INS_BNDCL},
+      {{0xf2, 0x0f, 0x1a, 0xc0}, X86_INS_BNDCU},
+      {{0xf2, 0x0f, 0x1a, 0x00}, X86_INS_BNDCU},
+      {{0xf2, 0x0f, 0x1b, 0xc0}, X86_INS_BNDCN},
+      {{0xf2, 0x0f, 0x1b, 0x00}, X86_INS_BNDCN},
+      {{0xf3, 0x0f, 0x1b, 0x00}, X86_INS_BNDMK},
+      {{0x66, 0x0f, 0x1a, 0xc1}, X86_INS_BNDMOV},
+      {{0x66, 0x0f, 0x1a, 0x00}, X86_INS_BNDMOV},
+      {{0x66, 0x0f, 0x1b, 0x00}, X86_INS_BNDMOV},
+      {{0x0f, 0x1a, 0x04, 0x08}, X86_INS_BNDLDX},
+      {{0x0f, 0x1b, 0x04, 0x08}, X86_INS_BNDSTX},
+  };
+  for (auto A : {Arch::X86, Arch::X64})
+    for (const auto &F : Cases)
+      for (unsigned Register = 0; Register != 4; ++Register)
+        for (bool ForLift : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(F.Id);
+          SCOPED_TRACE(Register);
+          SCOPED_TRACE(ForLift);
+          auto Bytes = F.Bytes;
+          Bytes[Bytes[0] == 0x0f ? 2 : 3] |= Register << 3;
+          Decoder D;
+          ASSERT_TRUE(D.init(A));
+          DecodedInsn I{};
+          ASSERT_EQ(
+              ForLift
+                  ? D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I)
+                  : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I),
+              Bytes.size());
+          ASSERT_EQ(I.Id, F.Id);
+          std::vector<LowOp> Ops;
+          EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+          EXPECT_TRUE(Ops.empty());
+        }
+}
+
 TEST(X86InstructionCoverage, PinnedDecoderCorpusHasExplicitLiftResults) {
   const std::filesystem::path Directory = NEVERD_X86_MC_DIRECTORY;
   ASSERT_TRUE(std::filesystem::is_directory(Directory));

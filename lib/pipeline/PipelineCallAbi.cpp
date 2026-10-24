@@ -102,6 +102,9 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   if (const auto It = Result.CallMayWriteGPRs.find(Key);
       It != Result.CallMayWriteGPRs.end())
     Read.MayWrite = It->second;
+  if (const auto It = Result.CallExitConstants.find(Key);
+      It != Result.CallExitConstants.end())
+    Read.ExitConstants = It->second;
   if (const auto It = Result.CallEntryReadGPRs.find(Key);
       It != Result.CallEntryReadGPRs.end())
     Read.EntryReads = It->second;
@@ -289,6 +292,10 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
     Bytes -= Holder.Conversions.back().Bytes;
     Holder.Conversions.pop_back();
   }
+  for (const SummaryRead &Read : Converted.Reads)
+    if (Read.ExitConstants)
+      Converted.Bytes +=
+          Read.ExitConstants->capacity() * sizeof(GPRExitConstants::value_type);
   Bytes += Converted.Bytes;
   Holder.Conversions.insert(Holder.Conversions.begin(), std::move(Converted));
   if (Bytes > MaxBytes) {
@@ -458,6 +465,7 @@ public:
       Converter.setBinaryImage(&Img);
       Converter.setSourceCallHintsEnabled(false);
       Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
+      Converter.setCallExitConstants(&Result.CallExitConstants);
       Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
       Converter.setCallArgumentSources(&Result.CallArgumentSources);
       Converter.setCallEntryStackArgs(&omittedCalleeStackArgs(Result));

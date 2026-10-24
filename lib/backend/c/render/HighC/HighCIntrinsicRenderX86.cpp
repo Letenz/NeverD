@@ -26,6 +26,7 @@
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/ir/intrinsics/X86StringCompare.h"
+#include "neverd/ir/intrinsics/X86Unsupported.h"
 #include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -2197,6 +2198,8 @@ renderX86MultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 }
 
 const char *x86HighCIntrinsicFatalReason(Intrinsic Id) {
+  if (const char *Reason = x86UnsupportedIntrinsicReason(Id))
+    return Reason;
   using I = Intrinsic;
   switch (Id) {
   case I::X86RequireDivPrecondition:

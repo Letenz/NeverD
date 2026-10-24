@@ -44,3 +44,10 @@ NEVERD_X86_EXISTING_SYSTEM_STATE(Enqcmds, "enqcmds", Enqueue, 0)
 NEVERD_X86_EXISTING_SYSTEM_STATE(X86SegmentedBlockMemory,
                                  "# x86 segmented block:", SegmentedBlock, -1)
 #endif
+
+// Append-only IDs allocated after later architecture families. Metadata and
+// renderers opt in while the original enum expansion stays unchanged.
+#ifdef NEVERD_X86_APPENDED_SYSTEM_STATE
+NEVERD_X86_APPENDED_SYSTEM_STATE(X86LoadSegmentLimit, "lsl", AccessRights, -1)
+NEVERD_X86_APPENDED_SYSTEM_STATE(X86LoadSegmentLimitMemory, "lsl", AccessRights, 0)
+#endif

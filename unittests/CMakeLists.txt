@@ -323,6 +323,49 @@ if(TARGET neverd_shared)
     LINK_COMPONENTS Types
     LINK_LIBS neverd_shared
   )
+  add_neverd_unittest(NeverDUnwindFrameCAPITests
+    UnwindFrameCAPITests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDUnwindFrameCAPITests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
+  if(TARGET neverd)
+    add_neverd_unittest(NeverDUnwindFrameCLITests
+      UnwindFrameCLITests.cpp
+      LINK_LIBS neverd_shared LLVMSupport
+    )
+    target_include_directories(NeverDUnwindFrameCLITests PRIVATE
+      "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
+    target_compile_definitions(NeverDUnwindFrameCLITests PRIVATE
+      NEVERD_TEST_CLI="$<TARGET_FILE:neverd>")
+    add_dependencies(NeverDUnwindFrameCLITests neverd)
+  endif()
+  if(APPLE AND Python3_EXECUTABLE AND TARGET neverd AND TARGET neverd-worker)
+    # This public-consumer check uses only already-built tools and shared C ABI.
+    # Test budgets live beside its independent fixture expectations.
+    set(_neverd_linked_query_def
+      "${CMAKE_CURRENT_SOURCE_DIR}/lift/language/LinkedUnwindQueryFixtures.def")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+      "${_neverd_linked_query_def}")
+    file(STRINGS "${_neverd_linked_query_def}" _neverd_linked_query_limits
+      REGEX "^NEVERD_LINKED_QUERY_LIMIT\\(")
+    foreach(_neverd_linked_query_limit IN LISTS _neverd_linked_query_limits)
+      if(_neverd_linked_query_limit MATCHES
+          "^NEVERD_LINKED_QUERY_LIMIT\\(([A-Za-z0-9_]+),[ \t]*([0-9]+)\\)$")
+        set(_neverd_linked_query_${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+      endif()
+    endforeach()
+    add_test(NAME NeverDLinkedUnwindQuery
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lift/language/linked_unwind_query_test.py"
+        --source-root "${CMAKE_SOURCE_DIR}"
+        --neverd $<TARGET_FILE:neverd> --library $<TARGET_FILE:neverd_shared>
+        --worker $<TARGET_FILE:neverd-worker>
+        --artifacts "${CMAKE_CURRENT_BINARY_DIR}/linked-unwind-query")
+    set_tests_properties(NeverDLinkedUnwindQuery PROPERTIES
+      SKIP_RETURN_CODE "${_neverd_linked_query_kSkipReturnCode}"
+      TIMEOUT "${_neverd_linked_query_kCTestTimeout}")
+  endif()
   add_neverd_unittest(NeverDFunctionDisasmCAPITests
     FunctionDisasmCAPITests.cpp
     LINK_LIBS neverd_shared LLVMSupport

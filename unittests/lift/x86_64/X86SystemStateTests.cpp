@@ -60,6 +60,8 @@ TEST(X86SystemState, InstructionsHaveValidatedEffectsAndNoInventedResult) {
         EXPECT_TRUE(
             x86SystemStateShapeIsValid(E.Id, x86SystemStateLowShape(Op, A)));
         EXPECT_TRUE(isSideeffectIntrinsic(E.Id));
+        EXPECT_STREQ(intrinsicAsmMnemonic(E.Id), E.Mnemonic);
+        EXPECT_NE(intrinsicCName(E.Id), nullptr);
         BinaryImage Image;
         Image.Arch = A;
         NdOpEmulator Emu(Image);
@@ -398,27 +400,29 @@ TEST(X86SystemExtensions, ForgedDecodingRefusesBeforeEmission) {
   }
 }
 
-TEST(X86SystemState, LarFailurePreservesTheCompleteDestination) {
-  const auto Ops = lift(Arch::X64, {0x0f, 0x02, 0xc1});
-  ASSERT_FALSE(Ops.empty());
-  ASSERT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
-  for (uint64_t Success : {0, 1}) {
-    BinaryImage Image;
-    Image.Arch = Arch::X64;
-    NdOpEmulator Emu(Image);
-    Emu.setRegister(x86reg::RAX, 0xabcdef0123456789);
-    // Supply a completion at the explicit environment boundary, then check
-    // only the lifter's independent destination and flag projection.
-    LowOp Completion = Ops.front();
-    Completion.Opcode = NdOp::COPY;
-    Completion.NumInputs = 1;
-    Completion.Inputs[0] = NdVar::scalar((Success << 32) | 0x809b00, 8);
-    ASSERT_TRUE(Emu.step(Completion));
-    for (size_t I = 1; I < Ops.size(); ++I)
-      ASSERT_TRUE(Emu.step(Ops[I]));
-    EXPECT_EQ(Emu.getRegister(x86reg::RAX),
-              Success ? 0x809b00 : 0xabcdef0123456789);
-    EXPECT_EQ(Emu.getRegister(x86reg::ZF), Success);
+TEST(X86SystemState, DescriptorFailurePreservesTheCompleteDestination) {
+  for (const uint8_t Opcode : {0x02, 0x03}) {
+    const auto Ops = lift(Arch::X64, {0x0f, Opcode, 0xc1});
+    ASSERT_FALSE(Ops.empty());
+    ASSERT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
+    for (uint64_t Success : {0, 1}) {
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      NdOpEmulator Emu(Image);
+      Emu.setRegister(x86reg::RAX, 0xabcdef0123456789);
+      // Supply a completion at the explicit environment boundary, then check
+      // only the lifter's independent destination and flag projection.
+      LowOp Completion = Ops.front();
+      Completion.Opcode = NdOp::COPY;
+      Completion.NumInputs = 1;
+      Completion.Inputs[0] = NdVar::scalar((Success << 32) | 0x809b00, 8);
+      ASSERT_TRUE(Emu.step(Completion));
+      for (size_t I = 1; I < Ops.size(); ++I)
+        ASSERT_TRUE(Emu.step(Ops[I]));
+      EXPECT_EQ(Emu.getRegister(x86reg::RAX),
+                Success ? 0x809b00 : 0xabcdef0123456789);
+      EXPECT_EQ(Emu.getRegister(x86reg::ZF), Success);
+    }
   }
 }
 

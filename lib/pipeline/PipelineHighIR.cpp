@@ -20,6 +20,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/SourceFrameBytes.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -239,6 +240,22 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
           Callee.VaList = libc::vaListParameter(Name);
           return Callee;
         });
+  }
+  // Both C projections consume these original-machine observations after
+  // source ABI remodeling. They never participate in type or call recovery.
+  std::map<va_t, const LowFunc *> OriginalFunctions;
+  for (const auto &Function : Result.LowFuncs) {
+    auto [Found, Inserted] =
+        OriginalFunctions.emplace(Function.Entry, &Function);
+    if (!Inserted)
+      Found->second = nullptr;
+  }
+  for (auto &Function : Result.MedFuncs) {
+    Function.FrameBytes.clear();
+    if (const auto Original = OriginalFunctions.find(Function.Entry);
+        !Function.AnalystStackFrame && Original != OriginalFunctions.end() &&
+        Original->second)
+      Function.FrameBytes = observeSourceFrameBytes(*Original->second, Img);
   }
 }
 

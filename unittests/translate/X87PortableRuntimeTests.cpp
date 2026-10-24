@@ -165,30 +165,52 @@ TEST(X87PortableRuntime, FaultingStoreKeepsTheCompletedPrefixAndCurrentStack) {
 
 TEST(X87PortableRuntime, ExecutableStoreCommitsPopBeforeInvalidationExit) {
   const auto A = binary80(0x8000000000000001, 0x3fff);
-  auto State = environment();
-  auto Memory = memory({
-      {0x1000, MemoryPermission::Read, 0, {A.begin(), A.end()}},
-      {0x2000, MemoryPermission::Write | MemoryPermission::Execute, 7,
-       std::vector<uint8_t>(10, 0xa5)},
-  });
-  ASSERT_EQ(
-      executePortableX87RuntimeStepV1(State, *Memory, Load80, 0x4000, 0x1000)
-          .Status,
-      PortableX87StepStatusV1::Completed);
-  const auto Result =
-      executePortableX87RuntimeStepV1(State, *Memory, Store80, 0x4002, 0x2000);
-  EXPECT_EQ(Result.Status, PortableX87StepStatusV1::SelfModification);
-  EXPECT_TRUE(Result.InstructionCompleted);
-  ASSERT_TRUE(Result.MemoryAccess);
-  ASSERT_TRUE(Result.MemoryAccess->SelfModification);
-  EXPECT_EQ(Result.MemoryAccess->SelfModification->Size, 10u);
-  EXPECT_EQ(Result.MemoryAccess->SelfModification->OldGeneration, 7u);
-  EXPECT_EQ(Result.MemoryAccess->SelfModification->NewGeneration, 8u);
-  EXPECT_EQ(word(State, 2) >> 11, 5u);
-  EXPECT_EQ(State.Image[4], 0);
-  EXPECT_EQ(address(State, 8), 0x4002u);
-  EXPECT_EQ(Memory->snapshotMemoryRegions()[1].Bytes,
-            std::vector<uint8_t>(A.begin(), A.end()));
+  for (const auto Policy :
+       {CodeInvalidationPolicy::RejectExecutableWrites,
+        CodeInvalidationPolicy::InvalidateOnExecutableWrite}) {
+    SCOPED_TRACE(static_cast<unsigned>(Policy));
+    auto State = environment();
+    auto Memory = memory(
+        {
+            {0x1000, MemoryPermission::Read, 0, {A.begin(), A.end()}},
+            {0x2000, MemoryPermission::Write | MemoryPermission::Execute, 7,
+             std::vector<uint8_t>(10, 0xa5)},
+        },
+        Policy);
+    ASSERT_EQ(
+        executePortableX87RuntimeStepV1(State, *Memory, Load80, 0x4000, 0x1000)
+            .Status,
+        PortableX87StepStatusV1::Completed);
+    const auto Prefix = State;
+    const auto Result = executePortableX87RuntimeStepV1(State, *Memory, Store80,
+                                                        0x4002, 0x2000);
+    if (Policy == CodeInvalidationPolicy::RejectExecutableWrites) {
+      EXPECT_EQ(Result.Status, PortableX87StepStatusV1::MemoryFault);
+      EXPECT_FALSE(Result.InstructionCompleted);
+      ASSERT_TRUE(Result.MemoryAccess);
+      ASSERT_TRUE(Result.MemoryAccess->Fault);
+      EXPECT_EQ(Result.MemoryAccess->Fault->Kind,
+                RuntimeMemoryFaultKindV1::ExecutableWriteRejected);
+      EXPECT_EQ(Result.MemoryAccess->Fault->Exit.AccessWidthBits, 80u);
+      expectUnchanged(Prefix, State);
+      const auto Regions = Memory->snapshotMemoryRegions();
+      EXPECT_EQ(Regions[1].Generation, 7u);
+      EXPECT_EQ(Regions[1].Bytes, std::vector<uint8_t>(10, 0xa5));
+      continue;
+    }
+    EXPECT_EQ(Result.Status, PortableX87StepStatusV1::SelfModification);
+    EXPECT_TRUE(Result.InstructionCompleted);
+    ASSERT_TRUE(Result.MemoryAccess);
+    ASSERT_TRUE(Result.MemoryAccess->SelfModification);
+    EXPECT_EQ(Result.MemoryAccess->SelfModification->Size, 10u);
+    EXPECT_EQ(Result.MemoryAccess->SelfModification->OldGeneration, 7u);
+    EXPECT_EQ(Result.MemoryAccess->SelfModification->NewGeneration, 8u);
+    EXPECT_EQ(word(State, 2) >> 11, 5u);
+    EXPECT_EQ(State.Image[4], 0);
+    EXPECT_EQ(address(State, 8), 0x4002u);
+    EXPECT_EQ(Memory->snapshotMemoryRegions()[1].Bytes,
+              std::vector<uint8_t>(A.begin(), A.end()));
+  }
 }
 
 TEST(X87PortableRuntime, PendingUnknownAndInvalidStateNeverReuseMemoryFaults) {

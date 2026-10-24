@@ -213,6 +213,18 @@ if(BUILD_TESTING)
   add_test(NAME NeverDGuiX87Capabilities COMMAND neverd-gui-x87-tests)
   set_tests_properties(NeverDGuiX87Capabilities PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+  qt_add_executable(neverd-gui-unwind-tests tests/UnwindInfoTests.cpp)
+  target_link_libraries(neverd-gui-unwind-tests PRIVATE neverd_gui_app Qt6::Test)
+  set_target_properties(neverd-gui-unwind-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME NeverDGuiUnwindInfo COMMAND neverd-gui-unwind-tests)
+  # Reuse the existing read-only inspection dialog test environment/budget.
+  get_property(_neverd_gui_inspection_timeout TEST NeverDGuiX87Capabilities
+    PROPERTY TIMEOUT)
+  get_property(_neverd_gui_inspection_environment TEST NeverDGuiX87Capabilities
+    PROPERTY ENVIRONMENT)
+  set_tests_properties(NeverDGuiUnwindInfo PROPERTIES
+    ENVIRONMENT "${_neverd_gui_inspection_environment}"
+    TIMEOUT "${_neverd_gui_inspection_timeout}")
   if(NEVERD_WORKER_REAL_ENGINE_TESTS)
     qt_add_executable(neverd-gui-source-types-tests tests/SourceVariableTypesTests.cpp)
     target_link_libraries(neverd-gui-source-types-tests PRIVATE neverd_gui_app Qt6::Test)

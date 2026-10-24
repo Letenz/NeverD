@@ -1,5 +1,7 @@
 //===- X86TranslationBlockLowerer.cpp - Canonical x86 block IR ----------===//
 
+#include "X87TranslationBoundary.h"
+
 #include "neverd/decode/Decoder.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/translate/GuestMemoryRuntime.h"
@@ -456,9 +458,19 @@ public:
         State(Function.getArg(0)), Runtime(Function.getArg(1)) {}
 
   llvm::Error lower() {
+    std::optional<detail::X87TranslationInstructionV1> X87;
+    if (Block.Header.Terminator ==
+        TranslationBlockTerminatorKindV1::X87Runtime) {
+      auto Instruction = detail::x87TranslationInstructionV1(Block);
+      if (!Instruction)
+        return Instruction.takeError();
+      X87 = *Instruction;
+    }
     for (uint64_t Index = 0; Index != Block.Ops.size(); ++Index) {
       CurrentIndex = Index;
       CurrentOpcode = Block.Ops[static_cast<size_t>(Index)].Opcode;
+      if (X87 && Index == X87->StepIndex)
+        return lowerX87(*X87);
       if (llvm::Error Error =
               lowerOperation(Block.Ops[static_cast<size_t>(Index)], Index))
         return Error;
@@ -1025,6 +1037,40 @@ private:
     return Helper;
   }
 
+  llvm::Error lowerX87(const detail::X87TranslationInstructionV1 &Instruction) {
+    const auto &Step = Block.Ops[Instruction.StepIndex];
+    auto DataAddress = readValue(Step.Inputs[3]);
+    if (!DataAddress)
+      return DataAddress.takeError();
+    if (llvm::Error Error = commitState(Instruction.Contract.PC))
+      return Error;
+    llvm::FunctionType *Type = nullptr;
+    for (const auto &Helper : createRuntimeABIHelperPolicyV1(
+             Module.getContext(), Block.RuntimeProfile))
+      if (Helper.Name == kRuntimeX87StepNameV1)
+        Type = const_cast<llvm::FunctionType *>(Helper.Type);
+    if (!Type)
+      return currentFailure(
+          TranslationBlockLoweringErrorCode::IRVerificationFailed,
+          "portable x87 profile has no exact helper signature");
+    auto *Helper =
+        llvm::Function::Create(Type, llvm::GlobalValue::ExternalLinkage,
+                               kRuntimeX87StepNameV1, &Module);
+    Helper->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    Helper->setDSOLocal(true);
+    Helper->addFnAttr(llvm::Attribute::NoUnwind);
+    auto *Status = Builder.CreateCall(
+        Helper,
+        {Runtime, State, Builder.getInt32(Instruction.Contract.Selector),
+         Builder.getInt64(Instruction.Contract.PC),
+         Builder.getInt64(Instruction.Contract.NextPC), *DataAddress},
+        "x87.boundary.status");
+    Status->setCallingConv(llvm::CallingConv::C);
+    Status->addFnAttr(llvm::Attribute::NoUnwind);
+    Builder.CreateRet(Status);
+    return llvm::Error::success();
+  }
+
   llvm::Error lowerReturn() {
     CurrentIndex = Block.Ops.empty()
                        ? std::optional<uint64_t>()
@@ -1132,6 +1178,8 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
                    Block, std::nullopt, std::nullopt,
                    "v1 requires a non-empty scalar-register block");
   switch (Block.Header.Terminator) {
+  case TranslationBlockTerminatorKindV1::X87Runtime:
+    break;
   case TranslationBlockTerminatorKindV1::Return:
     if (Block.Ops.back().Opcode != NdOp::RETURN)
       return failure(TranslationBlockLoweringErrorCode::UnsupportedBlockShape,
@@ -1199,6 +1247,15 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
         !Instruction.Raw->detail)
       return Reject("cannot reproduce the published instruction boundary");
 
+    if (Block.Header.Terminator ==
+            TranslationBlockTerminatorKindV1::X87Runtime &&
+        BoundaryIndex + 1 == Block.InstructionBoundaries.size()) {
+      auto X87 = detail::x87TranslationInstructionV1(Block);
+      if (!X87)
+        return Reject(llvm::toString(X87.takeError()));
+      ByteOffset += Boundary.Size;
+      continue;
+    }
     const cs_x86 &X86 = Instruction.Raw->detail->x86;
     for (uint8_t Prefix : X86.prefix)
       if (Prefix != 0)
@@ -1596,12 +1653,7 @@ validatePublishedScalarSlice(const TranslationBlockDescriptorV1 &Block) {
 }
 
 bool equalLowOperation(const LowOp &Left, const LowOp &Right) {
-  if (Left.Opcode != Right.Opcode || Left.Output != Right.Output ||
-      Left.NumInputs != Right.NumInputs || Left.Addr != Right.Addr ||
-      Left.Seq != Right.Seq)
-    return false;
-  return std::equal(std::begin(Left.Inputs), std::end(Left.Inputs),
-                    std::begin(Right.Inputs));
+  return Left == Right;
 }
 
 bool equalInstructionBoundary(const LowInstructionBoundary &Left,
@@ -1633,7 +1685,7 @@ validateCanonicalSemantics(const TranslationBlockDescriptorV1 &Block) {
                    std::nullopt, std::nullopt,
                    llvm::toString(RuntimeOrErr.takeError()));
   llvm::Expected<std::unique_ptr<X86TranslationBlockBuilder>> BuilderOrErr =
-      X86TranslationBlockBuilder::create();
+      X86TranslationBlockBuilder::create(Block.RuntimeProfile);
   if (!BuilderOrErr)
     return failure(TranslationBlockLoweringErrorCode::InvalidDescriptor, Block,
                    std::nullopt, std::nullopt,
@@ -1649,6 +1701,7 @@ validateCanonicalSemantics(const TranslationBlockDescriptorV1 &Block) {
   const TranslationBlockDescriptorV1 &Canonical = *CanonicalOrErr;
 
   const bool HeaderMatches =
+      Canonical.RuntimeProfile == Block.RuntimeProfile &&
       Canonical.Header.FallthroughPC == Block.Header.FallthroughPC &&
       Canonical.Header.StaticTargetPC == Block.Header.StaticTargetPC &&
       Canonical.Header.GuestInstructionCount ==
@@ -1739,8 +1792,11 @@ lowerX86TranslationBlockV1(const TranslationBlockDescriptorV1 &Block,
   if (llvm::Error Error = Lowering.lower())
     return std::move(Error);
   if (llvm::Error Error = verifyRuntimeTranslationIRV1(
-          *Module, Triple, HostDataLayout, kRuntimeGuestStateX86_64SizeV1,
-          runtimeGuestStateX86_64MemorySlotsV1()))
+          *Module, Triple, HostDataLayout,
+          Block.RuntimeProfile == TranslationRuntimeProfileV1::PortableX87
+              ? kRuntimeGuestStateX86_64X87SizeV1
+              : kRuntimeGuestStateX86_64SizeV1,
+          runtimeGuestStateX86_64MemorySlotsV1(), Block.RuntimeProfile))
     return failure(TranslationBlockLoweringErrorCode::IRVerificationFailed,
                    Block, std::nullopt, std::nullopt,
                    llvm::toString(std::move(Error)));

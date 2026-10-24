@@ -17,6 +17,8 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequenc
 
 from .abi import (
     EventType,
+    UNWIND_FRAME_QUERY,
+    VirtualAddress,
     LLVMOptimizationLevel,
     NeverDOptimizeLLVMOptions,
     NeverDOptimizeLLVMResult,
@@ -1019,6 +1021,20 @@ class Session:
     @property
     def relocations(self) -> object:
         return self._json("neverd_relocs_json", "relocations")
+
+    def unwind_frame(self, address: int) -> object:
+        """Return the complete unwind frame at the exact virtual address.
+
+        JSON null becomes None. AArch64 DWARF state describes this exact PC;
+        the independent compact recipe describes the completed prologue.
+        Neither source authenticates a live return address. No PC bias or
+        function-entry substitution is applied, and native statuses are kept.
+        """
+        return self._json(
+            UNWIND_FRAME_QUERY,
+            UNWIND_FRAME_QUERY,
+            _unsigned(UNWIND_FRAME_QUERY, address, ctypes.sizeof(VirtualAddress) * 8),
+        )
 
     @property
     def headers(self) -> object:

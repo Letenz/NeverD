@@ -901,14 +901,21 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
 // using the shared LowIR evaluator, so call-graph summaries and MedIR agree
 // about conditional implicit inputs. Memory and relocated addresses are never
 // sampled, and calls/opaque effects invalidate register facts.
-std::map<size_t, unsigned> constantSelectArms(const BinaryImage &Img,
-                                              const LowBlock &Block) {
-  std::map<size_t, unsigned> Arms;
-  if (std::none_of(Block.Ops.begin(), Block.Ops.end(),
-                   [](const LowOp &O) { return O.Opcode == NdOp::SELECT; }))
-    return Arms;
+struct BlockScalarFacts {
   using Fact = std::pair<uint16_t, uint64_t>;
-  std::map<uint64_t, Fact> Registers, Temps;
+  std::map<size_t, unsigned> SelectedArms;
+  std::map<uint64_t, Fact> Registers;
+};
+
+BlockScalarFacts blockScalarFacts(const BinaryImage &Img, const LowBlock &Block,
+                                  bool KeepExit) {
+  BlockScalarFacts Facts;
+  if (!KeepExit &&
+      std::none_of(Block.Ops.begin(), Block.Ops.end(),
+                   [](const LowOp &O) { return O.Opcode == NdOp::SELECT; }))
+    return Facts;
+  auto &Registers = Facts.Registers;
+  std::map<uint64_t, BlockScalarFacts::Fact> Temps;
   auto Value = [&](const NdVar &V) -> std::optional<uint64_t> {
     if (!V.Size || V.Size > 8)
       return std::nullopt;
@@ -953,8 +960,8 @@ std::map<size_t, unsigned> constantSelectArms(const BinaryImage &Img,
           O.Inputs[1].Size == O.Output.Size &&
           O.Inputs[2].Size == O.Output.Size) {
         if (auto C = Value(O.Inputs[0])) {
-          Arms[I] = *C ? 1 : 2;
-          Result = Value(O.Inputs[Arms[I]]);
+          Facts.SelectedArms[I] = *C ? 1 : 2;
+          Result = Value(O.Inputs[Facts.SelectedArms[I]]);
         }
       } else
         Result = lowScalarConstantResult(O, Value);
@@ -979,7 +986,73 @@ std::map<size_t, unsigned> constantSelectArms(const BinaryImage &Img,
         Temps[O.Output.Offset] = {O.Output.Size, *Result};
     }
   }
-  return Arms;
+  return Facts;
+}
+
+/// A constant set within every return block needs no inter-block search.
+/// Inspect only complete call-free bodies, with ordinary internal edges and
+/// no independent or exceptional entries. Other bodies keep unknown state.
+bool canSummarizeExitConstants(const BinaryImage &Img, CallRegisterBodyView F) {
+  if (Img.Arch != Arch::X64 || !F.Complete || F.UnsafeIndirectBranches ||
+      F.HasIndependentRoots || F.Blocks.empty())
+    return false;
+  size_t Operations = 0;
+  std::set<int> Blocks;
+  for (const LowBlock &Block : F.Blocks) {
+    if (Block.Ops.empty() || !Block.ExceptionalSuccs.empty() ||
+        Block.Ops.size() > limits::kMaxCallExitConstantOps - Operations ||
+        !Blocks.insert(Block.Id).second)
+      return false;
+    Operations += Block.Ops.size();
+  }
+  bool Returns = false;
+  bool WritesExtraRegister = false;
+  const TargetRegInfo &Registers = getTargetRegInfo(Img.Arch);
+  for (const LowBlock &Block : F.Blocks) {
+    const auto Last = Block.Ops.back().Opcode;
+    if (Last == NdOp::RETURN) {
+      if (!Block.Succs.empty())
+        return false;
+      Returns = true;
+    } else if ((Last != NdOp::BRANCH && Last != NdOp::COND_BR) ||
+               Block.Succs.empty())
+      return false;
+    for (int Succ : Block.Succs)
+      if (!Blocks.count(Succ))
+        return false;
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const NdVar &Output = Block.Ops[I].Output;
+      if (Output.isReg() && Output.Size == sizeof(uint64_t) &&
+          gprFamilyOf(Img.Arch, Output.Offset) &&
+          Output.Offset % sizeof(uint64_t) == 0 &&
+          Output.Offset != Registers.StackPointer &&
+          !Registers.isReturnReg(Output.Offset))
+        WritesExtraRegister = true;
+      const auto Opcode = Block.Ops[I].Opcode;
+      if (Opcode == NdOp::CALL || Opcode == NdOp::INDIR_CALL ||
+          Opcode == NdOp::INTRINSIC || Opcode == NdOp::INDIR_BR ||
+          ((Opcode == NdOp::RETURN || Opcode == NdOp::BRANCH ||
+            Opcode == NdOp::COND_BR) &&
+           I + 1 != Block.Ops.size()))
+        return false;
+    }
+  }
+  return Returns && WritesExtraRegister;
+}
+
+GPRExitConstants scalarExitConstants(const BinaryImage &Img,
+                                     const BlockScalarFacts &Facts) {
+  GPRExitConstants Constants;
+  const TargetRegInfo &Registers = getTargetRegInfo(Img.Arch);
+  for (const auto &[Register, Fact] : Facts.Registers) {
+    const auto Family = gprFamilyOf(Img.Arch, Register);
+    if (Family && Register == *Family * sizeof(uint64_t) &&
+        Register != Registers.StackPointer &&
+        !Registers.isReturnReg(Register) && Fact.first == sizeof(uint64_t) &&
+        !Img.isPotentiallyRelocatableAddress(Fact.second))
+      Constants.emplace_back(Register, Fact.second);
+  }
+  return Constants;
 }
 
 } // namespace
@@ -1104,6 +1177,8 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     BlockStarts.insert(F.Blocks[I].StartAddr);
   }
   Effect.Blocks.resize(F.Blocks.size());
+  const bool SummarizeExit = canSummarizeExitConstants(Img, F);
+  bool FirstReturn = true;
   const uint64_t FPReturn = getTargetRegInfo(Img.Arch).FPReturnReg;
   auto WritesFPReturn = [&](const NdVar &Out) {
     return FPReturn != 0 && Out.isReg() && Out.Size != 0 &&
@@ -1125,7 +1200,20 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         overwrittenRegisterCopies(Img.Arch, Block, MergeWrites);
     const std::map<size_t, llvm::ArrayRef<uint64_t>> UnreadArguments =
         unreadSyscallArguments(Img, Block);
-    const auto SelectedArms = constantSelectArms(Img, Block);
+    const bool AtReturn =
+        SummarizeExit && Block.Ops.back().Opcode == NdOp::RETURN;
+    const auto ScalarFacts = blockScalarFacts(Img, Block, AtReturn);
+    const auto &SelectedArms = ScalarFacts.SelectedArms;
+    if (AtReturn) {
+      const auto Constants = scalarExitConstants(Img, ScalarFacts);
+      if (FirstReturn) {
+        Effect.ExitConstants = Constants;
+        FirstReturn = false;
+      } else
+        llvm::erase_if(Effect.ExitConstants, [&](const auto &Value) {
+          return !llvm::is_contained(Constants, Value);
+        });
+    }
     auto ControlOf = [&](size_t OpIndex) {
       for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
         if (OpIndex >= Boundary.FirstOp &&
@@ -1464,6 +1552,10 @@ CallRegisterSummaries solveCallRegisterEffects(
     const std::map<va_t, GPRReadWidths> &FixedEntryReads,
     const std::map<va_t, int> &FixedEntryStackArgs) {
   CallRegisterSummaries Result;
+  for (const auto &[Entry, Effect] : Funcs)
+    if (!Effect->Incomplete && !Effect->ExitConstants.empty() &&
+        !DispatchThunks.count(Entry))
+      Result.ExitConstants.emplace(Entry, Effect->ExitConstants);
   // Unknown is absorbing: a function is unknown if it or any callee is.
   std::set<va_t> Unknown;
   for (const auto &[Entry, Effect] : Funcs)

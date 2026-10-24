@@ -1,4 +1,4 @@
-//===- X86Decoder.cpp - x86 decoder support ===//
+//===- X86Decoder.cpp - x86 decoder support ------------------------------===//
 //
 // NeverD Decompiler
 //
@@ -144,7 +144,7 @@ bool Decoder::decodePrefixedX86Fence(const uint8_t *Bytes, size_t Len,
 
   const size_t InnerSize = InsnBuf->size;
   const size_t TotalSize = PrefixCount + InnerSize;
-  if (TotalSize > 15 || TotalSize > sizeof(InsnBuf->bytes))
+  if (TotalSize > 15)
     return false;
 
   std::memmove(InsnBuf->bytes + PrefixCount, InsnBuf->bytes, InnerSize);
@@ -221,7 +221,6 @@ Decoder::getX86ScalarOperandOccurrence() const {
 }
 
 void Decoder::fixupX86DecodeMetadata(cs_insn *I) const {
-  fixupX86DecodedInsnId(I);
   fixupX86DisplacementDetail(I);
 }
 
@@ -273,21 +272,6 @@ void Decoder::fixupX86DisplacementDetail(cs_insn *I) const {
     }
   if (HasMemory)
     E.disp_size = 4;
-}
-
-void Decoder::fixupX86DecodedInsnId(cs_insn *I) const {
-  if (!X86 || !I || (I->id != X86_INS_BNDLDX && I->id != X86_INS_BNDSTX))
-    return;
-
-  // The x86 compatibility profile treats no-mandatory-prefix 0F 1A/1B as the
-  // MPX-disabled form.  Retaining Capstone's BND ids would incorrectly
-  // introduce a memory effect during lifting.  Mandatory-prefix forms use
-  // distinct ids and remain untouched.
-  I->id = X86_INS_NOP;
-  std::memcpy(I->mnemonic, "nop", 4);
-  I->op_str[0] = '\0';
-  if (I->detail)
-    I->detail->x86.op_count = 0;
 }
 
 std::optional<uint64_t>

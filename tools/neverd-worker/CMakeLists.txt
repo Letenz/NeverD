@@ -96,6 +96,9 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
     add_test(NAME NeverDWorkerTransport
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transport_test.py"
                 "$<TARGET_FILE:neverd-worker-test-server>")
+    add_test(NAME NeverDWorkerUnwindQuery
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unwind_query_test.py"
+              "$<TARGET_FILE:neverd-worker-test-server>")
     add_test(NAME NeverDWorkerAnalysisSnapshot
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_snapshot_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")
@@ -108,6 +111,11 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         ENVIRONMENT "TMPDIR=${_worker_canonical_tmp}")
     endif()
     set_tests_properties(NeverDWorkerTransport PROPERTIES TIMEOUT 40)
+    # This query uses the same protocol/lifecycle harness and allowance.
+    get_property(_neverd_worker_transport_timeout TEST NeverDWorkerTransport
+      PROPERTY TIMEOUT)
+    set_tests_properties(NeverDWorkerUnwindQuery PROPERTIES
+      TIMEOUT "${_neverd_worker_transport_timeout}")
     add_executable(neverd-worker-discovery-test-server main.cpp Engine.cpp ComparisonService.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp tests/mock_engine.cpp)
     set_target_properties(neverd-worker-discovery-test-server PROPERTIES ENABLE_EXPORTS ON)
     target_compile_features(neverd-worker-discovery-test-server PRIVATE cxx_std_20)
@@ -231,6 +239,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       add_test(NAME NeverDWorkerStackFrame
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_test.py" $<TARGET_FILE:neverd-worker> --cc "${_neverd_worker_source_cc}")
       set_tests_properties(NeverDWorkerStackFrame PROPERTIES TIMEOUT 120)
+      add_test(NAME NeverDWorkerStackText
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_text_test.py"
+                "$<TARGET_FILE:neverd-worker>" --cc "${_neverd_worker_source_cc}")
+      set_tests_properties(NeverDWorkerStackText PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
       add_test(NAME NeverDWorkerHeaderRecords
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/header_records_test.py"
                 "$<TARGET_FILE:neverd-worker>" --cc "${CMAKE_C_COMPILER}")

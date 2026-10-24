@@ -55,7 +55,7 @@ private:
     S += ": ";
     S += (M ? M : "?");
     if (O && *O) {
-      S += " ";
+      S += ' ';
       S += O;
     }
     return S;
@@ -180,8 +180,8 @@ public:
   bool isResumableTrap(const DecodedInsn &Insn) const;
 
   /// A decoded NOP or a mode-correct legacy alignment self-copy. Canonical
-  /// x86 NOP identities include valid prefixes and the compatibility profile's
-  /// MPX-disabled forms; validity and extent remain the decoder's decisions.
+  /// x86 NOP identities include valid prefixes and the architectural register
+  /// NOP forms of 0F 1A/1B; memory forms retain their MPX identity.
   bool isAlignmentNop(const DecodedInsn &Insn) const;
 
   /// Lift a single decoded instruction to LowIR ops. When supplied, \p Relocs
@@ -300,9 +300,6 @@ private:
 
   /// Both full and lightweight decodes use the same x86 metadata profile.
   void fixupX86DecodeMetadata(cs_insn *I) const;
-
-  /// Apply x86 instruction-id normalization without requiring operand detail.
-  void fixupX86DecodedInsnId(cs_insn *I) const;
 
   /// Correct a known long-mode disp32 width misreport only when the complete
   /// encoded field agrees with the decoded displacement and memory operands.

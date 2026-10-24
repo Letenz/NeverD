@@ -3839,6 +3839,37 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (isX86VirtualizationNativeName(Callee->getName()) ||
+      isX86SystemStateNativeName(Callee->getName()) ||
+      isX86SystemRegisterNativeName(Callee->getName())) {
+    std::vector<std::string> Arguments;
+    for (const auto &Argument : Call.args())
+      Arguments.push_back(valueStr(Argument.get()));
+    const bool ResultLive =
+        !Call.getType()->isVoidTy() && valueFeedsPrintedUse(&Call);
+    if (const auto Code = renderX86SystemRegisterCall(
+            Opts.TheArch, Opts.Format, Call, ResultLive ? getName(&Call) : "",
+            ResultLive, Arguments)) {
+      emitIndent(Indent);
+      OS << Code->Code;
+      return true;
+    }
+    if (const auto Code = renderX86VirtualizationNativeCall(
+            Opts.TheArch, Call, ResultLive ? getName(&Call) : "", ResultLive,
+            Arguments)) {
+      emitIndent(Indent);
+      OS << *Code;
+      return true;
+    }
+    if (const auto Code = renderX86SystemStateNativeCall(
+            Opts.TheArch, Call, ResultLive ? getName(&Call) : "", ResultLive,
+            Arguments)) {
+      emitIndent(Indent);
+      OS << *Code;
+      return true;
+    }
+  }
+
   auto IID = Callee->getIntrinsicID();
   if (IID == llvm::Intrinsic::x86_fxsave ||
       IID == llvm::Intrinsic::x86_fxsave64 ||
@@ -5418,10 +5449,16 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   std::string Expr = CalleeName + "(";
   const unsigned Limit = printedCallArgLimit(Call, CalleeName);
   const LibraryCallee Library = libraryCallee(Call);
-  const auto Function = debugCallee(Call);
+  // Import-slot calls already have a checked source declaration even when
+  // debug lookup cannot name their loaded LLVM operand. Use that same
+  // declaration for record arguments and results, as for scalar conversions.
+  const auto *SourceImport = sourceImportCallee(Call);
+  const auto DebugFunction = SourceImport ? std::nullopt : debugCallee(Call);
+  const auto *Function = SourceImport    ? SourceImport
+                         : DebugFunction ? &*DebugFunction
+                                         : nullptr;
   const bool SourceRecord =
-      Function &&
-      ((Library && Function->Name == Library.Name) || sourceImportCallee(Call));
+      Function && ((Library && Function->Name == Library.Name) || SourceImport);
   const bool Grouped = Function && groupedFloatingCall(Call, *Function);
   const auto RecordCall =
       SourceRecord ? libc::recordCallArguments(*Function, Opts.TheArch,
@@ -5496,9 +5533,8 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
     const bool Integer = Operand->getType()->isIntegerTy();
-    if (const auto *Source = sourceImportCallee(Call);
-        Source && ArgIdx < Source->Params.size()) {
-      const auto &Type = Source->Params[ArgIdx].second;
+    if (SourceImport && ArgIdx < SourceImport->Params.size()) {
+      const auto &Type = SourceImport->Params[ArgIdx].second;
       const std::string Bridge =
           Integer || PointerSpelling || Operand->getType()->isPointerTy()
               ? "(uintptr_t)"

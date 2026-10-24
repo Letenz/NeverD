@@ -12,6 +12,7 @@
 #ifndef NEVERD_LIFT_AARCH64REGS_H
 #define NEVERD_LIFT_AARCH64REGS_H
 
+#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
 #include "neverd/lift/LiftCommon.h"
 
 #include <capstone/capstone.h>
@@ -67,7 +68,7 @@ constexpr uint16_t ZSize = 256; // 2048-bit architectural maximum.
 constexpr uint64_t Z0 = 0x1000;
 constexpr uint64_t Z(unsigned N) { return Z0 + N * ZSize; }
 
-constexpr uint16_t PSize = 32; // One predicate bit per maximum byte lane.
+constexpr uint16_t PSize = aarch64_sve::kPredicateStorageBytes;
 constexpr uint64_t P0 = 0x4000;
 constexpr uint64_t P(unsigned N) { return P0 + N * PSize; }
 constexpr uint64_t FFR = P0 + 16 * PSize;

@@ -49,6 +49,10 @@ struct CNameTable {
     auto C = [this](Intrinsic Id, const char *N) {
       names[static_cast<size_t>(Id)] = N;
     };
+#define NEVERD_X87_PORTABLE_HELPER(Role, Name, ...)                            \
+  C(Intrinsic::PortableX87##Role, #Name);
+#include "neverd/ir/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
     C(Intrinsic::X86SEHRegisterRead, "__neverd_seh_register_read");
     C(Intrinsic::X86SEHRegisterWrite, "__neverd_seh_register_write");
 
@@ -141,6 +145,10 @@ struct SideEffectTable {
       Flags[static_cast<size_t>(Id)] = true;
     };
 
+#define NEVERD_X87_PORTABLE_HELPER(Role, ...)                                  \
+  SIDEEFFECT(Intrinsic::PortableX87##Role);
+#include "neverd/ir/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
     SIDEEFFECT(Intrinsic::Syscall);
     SIDEEFFECT(Intrinsic::RawEnvironmentRequirementV1);
 #include "neverd/ir/intrinsics/intrinsics_aarch64_sideeffect.inc"

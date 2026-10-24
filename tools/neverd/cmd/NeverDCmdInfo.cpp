@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../UnwindQuery.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
@@ -105,6 +106,27 @@ int runIdentify() {
 }
 
 int runInfo(neverd_session_t Sess) {
+  if (InfoUnwindFrame.getNumOccurrences()) {
+    if (!JsonOutput) {
+      WithColor::error() << unwind_query::kRequiresJSON << '\n';
+      return 1;
+    }
+    const auto Address = parseAddrArg(InfoUnwindFrame.getValue());
+    if (!Address) {
+      WithColor::error() << unwind_query::kInvalidAddress << '\n';
+      return 1;
+    }
+    const char *Result = neverd_unwind_frame_json(Sess, *Address);
+    if (!Result) {
+      WithColor::error() << unwind_query::kQueryFailed << takeLastError(Sess)
+                         << '\n';
+      return 1;
+    }
+    outs() << Result << '\n';
+    neverd_free_string(Result);
+    return 0;
+  }
+
   if (JsonOutput) {
     const char *Json = neverd_headers_json(Sess);
     outs() << Json << "\n";

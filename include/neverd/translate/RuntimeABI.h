@@ -228,6 +228,8 @@ struct RuntimeABIHelperSignatureV1 {
 /// result is the numeric RuntimeABIExitKindV1 value.  A successful load returns
 /// None and writes the zero-extended scalar to ScalarResult.
 llvm::ArrayRef<RuntimeABIHelperSignatureV1> runtimeABIHelperSignaturesV1();
+llvm::ArrayRef<RuntimeABIHelperSignatureV1>
+runtimeABIHelperSignaturesV1(TranslationRuntimeProfileV1 Profile);
 
 /// Direct translated-code access is limited to the load-result slot.  Runtime
 /// helpers and the outer host dispatcher own all remaining control-block
@@ -237,12 +239,18 @@ llvm::ArrayRef<TranslationIRMemorySlot> runtimeABIMemorySlotsV1();
 /// Exact-name lookup.  Prefix, suffix, and case-folded matches are rejected.
 const RuntimeABIHelperSignatureV1 *
 findRuntimeABIHelperSignatureV1(llvm::StringRef Name);
+const RuntimeABIHelperSignatureV1 *
+findRuntimeABIHelperSignatureV1(llvm::StringRef Name,
+                                TranslationRuntimeProfileV1 Profile);
 
 /// Materialize the fixed table as TranslationIRVerifier contracts in Context.
 /// LLVM owns the FunctionType objects; parameter provenance refers to static
 /// table storage.
 std::vector<TranslationRuntimeHelper>
 createRuntimeABIHelperPolicyV1(llvm::LLVMContext &Context);
+std::vector<TranslationRuntimeHelper>
+createRuntimeABIHelperPolicyV1(llvm::LLVMContext &Context,
+                               TranslationRuntimeProfileV1 Profile);
 
 } // namespace neverd::translate
 

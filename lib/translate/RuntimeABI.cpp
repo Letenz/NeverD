@@ -6,6 +6,7 @@
 
 #include "neverd/translate/RuntimeABI.h"
 
+#include "neverd/translate/RuntimeX87Helpers.h"
 #include "neverd/translate/TranslationResult.h"
 
 #include "llvm/IR/DerivedTypes.h"
@@ -592,6 +593,37 @@ llvm::ArrayRef<RuntimeABIHelperSignatureV1> runtimeABIHelperSignaturesV1() {
   return HelperSignatures;
 }
 
+llvm::ArrayRef<RuntimeABIHelperSignatureV1>
+runtimeABIHelperSignaturesV1(TranslationRuntimeProfileV1 Profile) {
+  if (Profile == TranslationRuntimeProfileV1::ScalarInteger)
+    return runtimeABIHelperSignaturesV1();
+  if (Profile != TranslationRuntimeProfileV1::PortableX87)
+    return {};
+  static constexpr RuntimeABIValueKind Parameters[] = {
+      RuntimeABIValueKind::RuntimePointer,
+      RuntimeABIValueKind::StatePointer,
+      RuntimeABIValueKind::I32,
+      RuntimeABIValueKind::I64,
+      RuntimeABIValueKind::I64,
+      RuntimeABIValueKind::I64};
+  static constexpr TranslationRuntimeParameterKind VerifierParameters[] = {
+      TranslationRuntimeParameterKind::RuntimePointer,
+      TranslationRuntimeParameterKind::StatePointer,
+      TranslationRuntimeParameterKind::ScalarInteger,
+      TranslationRuntimeParameterKind::ScalarInteger,
+      TranslationRuntimeParameterKind::ScalarInteger,
+      TranslationRuntimeParameterKind::ScalarInteger};
+  static const std::vector<RuntimeABIHelperSignatureV1> Signatures = [] {
+    const auto Scalar = runtimeABIHelperSignaturesV1();
+    std::vector<RuntimeABIHelperSignatureV1> Result(Scalar.begin(),
+                                                    Scalar.end());
+    Result.push_back({kRuntimeX87StepNameV1, RuntimeABIValueKind::I32,
+                      Parameters, VerifierParameters});
+    return Result;
+  }();
+  return Signatures;
+}
+
 llvm::ArrayRef<TranslationIRMemorySlot> runtimeABIMemorySlotsV1() {
   return MemorySlots;
 }
@@ -606,9 +638,26 @@ findRuntimeABIHelperSignatureV1(llvm::StringRef Name) {
 
 std::vector<TranslationRuntimeHelper>
 createRuntimeABIHelperPolicyV1(llvm::LLVMContext &Context) {
+  return createRuntimeABIHelperPolicyV1(
+      Context, TranslationRuntimeProfileV1::ScalarInteger);
+}
+
+const RuntimeABIHelperSignatureV1 *
+findRuntimeABIHelperSignatureV1(llvm::StringRef Name,
+                                TranslationRuntimeProfileV1 Profile) {
+  for (const auto &Signature : runtimeABIHelperSignaturesV1(Profile))
+    if (Signature.Name == Name)
+      return &Signature;
+  return nullptr;
+}
+
+std::vector<TranslationRuntimeHelper>
+createRuntimeABIHelperPolicyV1(llvm::LLVMContext &Context,
+                               TranslationRuntimeProfileV1 Profile) {
+  const auto Signatures = runtimeABIHelperSignaturesV1(Profile);
   std::vector<TranslationRuntimeHelper> Helpers;
-  Helpers.reserve(std::size(HelperSignatures));
-  for (const RuntimeABIHelperSignatureV1 &Signature : HelperSignatures) {
+  Helpers.reserve(Signatures.size());
+  for (const RuntimeABIHelperSignatureV1 &Signature : Signatures) {
     assert(Signature.Parameters.size() == Signature.VerifierParameters.size() &&
            "runtime helper type/provenance arity mismatch");
     std::vector<llvm::Type *> Parameters;

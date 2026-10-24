@@ -1,4 +1,4 @@
-//===- DecoderDetail.h - Private decoder target helpers ------*- C++ -*-===//
+//===- DecoderDetail.h - Private decoder target helpers --------*- C++ -*-===//
 //
 // NeverD Decompiler
 //

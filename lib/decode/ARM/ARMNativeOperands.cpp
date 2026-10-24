@@ -1,4 +1,4 @@
-//===- ARMNativeOperands.cpp - Typed ARM native operands -------------===//
+//===- ARMNativeOperands.cpp - Typed ARM native operands -----------------===//
 //
 // NeverD Decompiler
 //

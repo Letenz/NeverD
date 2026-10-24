@@ -129,12 +129,14 @@ public:
               const std::unordered_set<std::string_view> *SharedNames = nullptr,
               CSourceRecorder *Recorder = nullptr,
               const HighCImageDataObjects *SharedDataObjects = nullptr,
-              const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr)
+              const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr,
+              const PreparedPortableX87Function *PortableInterface = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
         SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder),
         SharedDataObjects(SharedDataObjects),
-        SharedFunctionSymbols(SharedFunctionSymbols) {}
+        SharedFunctionSymbols(SharedFunctionSymbols),
+        PortableInterface(PortableInterface) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -1173,6 +1175,8 @@ public:
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
   bool NeedsX86SystemRegisterDispatch = false;
+  bool NeedsX86VirtualizationDispatch = false;
+  bool NeedsX86SystemStateDispatch = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
   bool NeedsGnuX86Intrinsics = false;
   /// A CPUID GCC or Clang compiles, which <cpuid.h> spells.
@@ -1242,6 +1246,8 @@ public:
   HighCAnalysisState Analysis;
   bool InferredVoid = false;
   TypeRef FuncReturnType;
+  const PreparedPortableX87Function *PortableInterface = nullptr;
+  std::string renderPortableX87Call(const HighExpr &Expr);
   const HighFunc *CurrentFunc = nullptr;
   /// The parameter bindings and emitted types of the function last asked
   /// about.

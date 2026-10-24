@@ -1,4 +1,4 @@
-//===- X86NativeOperands.cpp - Typed x86 native operands -------------===//
+//===- X86NativeOperands.cpp - Typed x86 native operands -----------------===//
 //
 // NeverD Decompiler
 //
