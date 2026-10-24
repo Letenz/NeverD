@@ -2067,6 +2067,22 @@ TEST(FixedIntegerStackCalls, SysVAndTailOperandsUseTheirDeclaredLocations) {
                                                    COptions, &Debug, &Image)
                              : HighCEmitter().emit(Result.HighFuncs, Output,
                                                    COptions, &Debug));
+            std::string Actuals;
+            if (Tail) {
+              // This test checks the callee's physical stack location. The
+              // source wrapper may retain unused incoming stack-home inputs.
+              const auto Begin = Source.find("stack_wrapper(");
+              ASSERT_NE(Begin, std::string::npos);
+              const auto End = Source.find(')', Begin);
+              ASSERT_NE(End, std::string::npos);
+              const auto Parameters =
+                  Source.substr(Begin + 14, End - Begin - 14);
+              ASSERT_FALSE(Parameters.empty());
+              Actuals = "(uintptr_t)&value";
+              for (char C : Parameters)
+                if (C == ',')
+                  Actuals += ", 0xBAD";
+            }
             const std::string Provider =
                 Debug.resolvePrototype("fixture_stack")
                     ->PortablePrototypeDeclaration +
@@ -2074,7 +2090,7 @@ TEST(FixedIntegerStackCalls, SysVAndTailOperandsUseTheirDeclaredLocations) {
                 (Windows ? std::string() : "e || f || ") +
                 "!value || *value != 42) __builtin_trap(); return -27; }\n" +
                 "int main(void) { int64_t value = 42; return stack_wrapper(" +
-                (Tail ? "(uintptr_t)&value" : "") + ") != -27; }\n";
+                Actuals + ") != -27; }\n";
             for (llvm::StringRef Level : {"-O0", "-O2"})
               source_call_execution_test::compileAndRun(
                   Source + Provider,

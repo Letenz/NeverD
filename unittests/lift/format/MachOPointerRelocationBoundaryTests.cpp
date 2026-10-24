@@ -25696,3 +25696,161 @@ TEST(LLVMDataPointerInvariantBoundary,
 }
 
 } // namespace
+
+TEST(LLVMDataPointerInvariantBoundary, LowMappedScalarStoresKeepTheirBits) {
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+      for (auto Provenance : {ConstantAddressProvenance::Unknown,
+                              ConstantAddressProvenance::Scalar,
+                              ConstantAddressProvenance::Address,
+                              ConstantAddressProvenance::DataAddress}) {
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(static_cast<unsigned>(Provenance));
+        BinaryImage Image = makeSpilledConstTableImage(Architecture, Format);
+        Segment Header;
+        Header.Name = ".headers";
+        Header.VA = 0;
+        Header.Size = Header.FileSz = 64;
+        Header.Data.resize(64);
+        Header.Flags = SegmentFlags::Readable;
+        Image.Segments.push_back(std::move(Header));
+        MedVar Destination;
+        Destination.Kind = MedVar::Param;
+        Destination.Id = 0;
+        Destination.TheArch = Architecture;
+        Destination.Size = getTargetRegInfo(Architecture).PointerSize;
+        MedFunc Function;
+        Function.Entry = CallerVA;
+        Function.Name = "low_mapped_literal_store";
+        Function.ReturnType = NdType::makeVoid();
+        Function.Params = {Destination};
+        MedBlock Block;
+        Block.Id = 0;
+        Block.StartAddr = CallerVA;
+        MedOp Store;
+        Store.Opcode = NdOp::STORE;
+        Store.addInput(Destination);
+        Store.addInput(MedVar::makeConst(42, Destination.Size, Provenance));
+        Block.Ops.push_back(std::move(Store));
+        MedOp Return;
+        Return.Opcode = NdOp::RETURN;
+        Block.Ops.push_back(std::move(Return));
+        Function.Blocks.push_back(std::move(Block));
+        llvm::LLVMContext Context;
+        auto Module = MedLLVMEmitter().emit({Function}, Context, "low-store",
+                                            Architecture, {}, &Image, Format);
+        ASSERT_NE(Module, nullptr);
+        EXPECT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+        auto *Lifted = Module->getFunction(Function.Name);
+        ASSERT_NE(Lifted, nullptr);
+        unsigned Stores = 0;
+        for (const auto &B : *Lifted)
+          for (const auto &Instruction : B)
+            if (const auto *Write =
+                    llvm::dyn_cast<llvm::StoreInst>(&Instruction)) {
+              ++Stores;
+              const auto *Integer =
+                  llvm::dyn_cast<llvm::ConstantInt>(Write->getValueOperand());
+              if (isExactAddressProvenance(Provenance))
+                EXPECT_EQ(Integer, nullptr);
+              else {
+                ASSERT_NE(Integer, nullptr);
+                EXPECT_EQ(Integer->getZExtValue(), 42u);
+              }
+            }
+        EXPECT_EQ(Stores, 1u);
+      }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     LowMappedScalarCallArgumentsKeepTheirBits) {
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+      for (auto Provenance : {ConstantAddressProvenance::Unknown,
+                              ConstantAddressProvenance::Scalar,
+                              ConstantAddressProvenance::Address,
+                              ConstantAddressProvenance::DataAddress})
+        for (bool LoaderHint : {false, true})
+          for (bool Indirect : {false, true})
+            for (bool Forwarded : {false, true}) {
+              SCOPED_TRACE(static_cast<unsigned>(Format));
+              SCOPED_TRACE(static_cast<unsigned>(Architecture));
+              SCOPED_TRACE(static_cast<unsigned>(Provenance));
+              SCOPED_TRACE(LoaderHint);
+              SCOPED_TRACE(Indirect);
+              SCOPED_TRACE(Forwarded);
+              BinaryImage Image =
+                  makeSpilledConstTableImage(Architecture, Format);
+              Segment Header;
+              Header.Name = ".headers";
+              Header.VA = 0;
+              Header.Size = Header.FileSz = 64;
+              Header.Data.resize(64);
+              Header.Flags = SegmentFlags::Readable;
+              Image.Segments.push_back(std::move(Header));
+              if (LoaderHint)
+                Image.RelocDataAddrs.insert(42);
+              const auto Width = getTargetRegInfo(Architecture).PointerSize;
+              MedVar Value = MedVar::makeConst(42, Width, Provenance);
+              auto Function =
+                  makePointerCall("low_mapped_call", 0x4000, {Value});
+              auto &Info = Function.CallInfos.front();
+              Info.TargetName = "observe_carrier";
+              auto &Block = Function.Blocks.front();
+              Block.Ops.front().Inputs[0].Size = Width;
+              if (Indirect) {
+                MedVar Target;
+                Target.Kind = MedVar::Param;
+                Target.Id = 0;
+                Target.TheArch = Architecture;
+                Target.Size = Width;
+                Function.Params = {Target};
+                Block.Ops.front().Opcode = NdOp::INDIR_CALL;
+                Block.Ops.front().Inputs[0] = Target;
+                Info.IsIndirect = true;
+                Info.TargetAddr = 0;
+                Info.TargetName.clear();
+              }
+              if (Forwarded) {
+                MedVar Copy;
+                Copy.Kind = MedVar::Temp;
+                Copy.Id = 1;
+                Copy.SSAVer = 1;
+                Copy.TheArch = Architecture;
+                Copy.Size = Width;
+                MedOp Forward;
+                Forward.Opcode = NdOp::COPY;
+                Forward.Output = Copy;
+                Forward.addInput(Value);
+                Block.Ops.insert(Block.Ops.begin(), std::move(Forward));
+                Info.OpIdx = 1;
+                Info.Args = {Copy};
+              }
+              llvm::LLVMContext Context;
+              auto Module =
+                  MedLLVMEmitter().emit({Function}, Context, "low-call",
+                                        Architecture, {}, &Image, Format);
+              ASSERT_NE(Module, nullptr);
+              Pipeline::promoteScaffoldingAllocas(*Module);
+              EXPECT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+              auto *Lifted = Module->getFunction(Function.Name);
+              ASSERT_NE(Lifted, nullptr);
+              const auto Calls = callsIn(*Lifted);
+              ASSERT_EQ(Calls.size(), 1u);
+              ASSERT_EQ(Calls.front()->arg_size(), 1u);
+              const auto *Argument = Calls.front()->getArgOperand(0);
+              const auto *Integer = llvm::dyn_cast<llvm::ConstantInt>(Argument);
+              if (isExactAddressProvenance(Provenance) ||
+                  (Provenance == ConstantAddressProvenance::Unknown &&
+                   LoaderHint)) {
+                std::set<const llvm::Value *> Seen;
+                EXPECT_TRUE(valueReferencesConstantGlobal(Argument, Seen));
+              } else {
+                ASSERT_NE(Integer, nullptr);
+                EXPECT_EQ(Integer->getZExtValue(), 42u);
+              }
+            }
+}

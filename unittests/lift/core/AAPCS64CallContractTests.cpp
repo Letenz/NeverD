@@ -861,18 +861,17 @@ TEST(AAPCS64CallContract, FixedStackOperandsKeepNarrowWidthsAcrossBlocks) {
     for (unsigned Split : {0, 1, 2}) {
       SCOPED_TRACE(static_cast<unsigned>(Format));
       SCOPED_TRACE(Split);
-      std::vector<uint32_t> Code{0xD10103FF, // sub sp,sp,64
-                                 0xA9037BFD, // stp x29,x30,[sp,48]
-                                 0x910003FD, // mov x29,sp
-                                 0x910083EA, // add x10,sp,32
-                                 0xD280054B, // mov x11,42
-                                 0xF900014B, // str x11,[x10]
-                                 0xF90003EA, // str x10,[sp]
-                                 0x5280156B, // mov w11,171
-                                 0x390023EB, // strb w11,[sp,8]
-                                 0x5282468B, // mov w11,4660
-                                 Format == BinaryFormat::MachO ? 0x790017EBu
-                                                               : 0x790023EBu};
+      std::vector<uint32_t> Code{0xD10103FF,  // sub sp,sp,64
+                                 0xA9037BFD,  // stp x29,x30,[sp,48]
+                                 0x910003FD,  // mov x29,sp
+                                 0x910083EA,  // add x10,sp,32
+                                 0xD280054B,  // mov x11,42
+                                 0xF900014B,  // str x11,[x10]
+                                 0xF90003EA,  // str x10,[sp]
+                                 0x5280156B,  // mov w11,171
+                                 0x390023EB,  // strb w11,[sp,8]
+                                 0x5282468B,  // mov w11,4660
+                                 0x790023EB}; // strh w11,[sp,16]
       if (Split == 1)
         Code.push_back(0x14000001); // b next block
       if (Split == 2)
@@ -885,6 +884,15 @@ TEST(AAPCS64CallContract, FixedStackOperandsKeepNarrowWidthsAcrossBlocks) {
       auto Image = makeImage({{Text, Code}}, {{Text, "stack_wrapper"}},
                              {"fixture_stack"});
       Image.Format = Format;
+      // PIE headers can map low values too. The stored scalar 42 must not
+      // become a pointer merely because those bytes have image ownership.
+      Segment HeaderBytes;
+      HeaderBytes.Name = ".headers";
+      HeaderBytes.VA = 0;
+      HeaderBytes.Size = HeaderBytes.FileSz = 64;
+      HeaderBytes.Data.resize(64);
+      HeaderBytes.Flags = SegmentFlags::Readable;
+      Image.Segments.push_back(std::move(HeaderBytes));
       Image.Imports.front().Module = "fixture.dll";
       for (bool LLVM : {false, true})
         for (bool NoOpt : {false, true}) {
