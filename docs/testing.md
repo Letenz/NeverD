@@ -2073,10 +2073,10 @@ python tools/neverd-gui/tests/run_wayland_docking.py --scale 1.5 \
 The Wayland runner requires GNOME Shell and creates a private headless desktop
 and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
 mouse events cannot authorize Wayland drag-and-drop. `customFloatingMoveAndResize`
-checks moving the floating window through its caption icon and resizing its
+checks moving the floating window through its blank caption and resizing its
 drawn edges. Unlocking enables caption and tab docking drags; a locked caption
-moves the window on the desktop. On Wayland the icon also starts a compositor
-move while unlocked. No system caption is added.
+moves the window on the desktop. Pane names and icons remain in the tabs;
+the floating caption contains only window controls. No system caption is added.
 While a whole floating window is dragged, its native surface is minimized so
 it cannot obscure the target. Cancelled drags must restore its native position,
 size and window state, and accept another mouse click. No input is sent
