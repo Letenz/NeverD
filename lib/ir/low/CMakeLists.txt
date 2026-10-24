@@ -91,6 +91,8 @@ add_neverd_component_library(NeverDIRRegistrationState
 
 add_neverd_component_library(NeverDIRLow
   CFGBuilder.cpp
+  CFGBuilderCallRegisters.cpp
+  PrologueStackAllocation.cpp
   X86/RegistrationCxxState.cpp
   CFGBuilderBlocks.cpp
   X86/CFGBuilderX86BoundedLeaf.cpp

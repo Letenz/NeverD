@@ -704,7 +704,8 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   if (const char *Cached = cachedSource(*S, FuncEntry, Route, SourceMap))
     return Cached;
 
-  const auto *Native = S->ensureFunctionLlvmModule(FuncEntry, NoOpt != 0);
+  const auto *Native = S->ensureFunctionLlvmModule(
+      FuncEntry, NoOpt != 0, /*OriginalImageStorage=*/true);
   if (!Native)
     return dupStr(std::string());
   llvm::Function *LF = S->findNativeLlvmFunction(*Native->Module, FuncEntry);
@@ -1547,7 +1548,8 @@ struct ScopedSourceView {
         if (!High && S.CallVariant->TargetSignatures.empty()) {
           // Preserve the ordinary callee declarations. A call-site contract
           // changes only its own CallBase type, never its siblings' prototype.
-          if (const auto *Base = S.ensureFunctionLlvmModule(Entry, false))
+          if (const auto *Base = S.ensureFunctionLlvmModule(
+                  Entry, false, /*OriginalImageStorage=*/true))
             for (const auto &Function : *Base->Module)
               S.CallVariant->TargetSignatures.emplace(
                   Function.getName().str(),
@@ -2340,8 +2342,7 @@ const char *neverd_decompile_functions(neverd_session_t Sess,
   // The selection is checked against the image it is lifted from.
   if (S && S->Loaded && S->Img.Arch != Arch::EVM && S->Img.Arch != Arch::SBF)
     for (const va_t Entry : Only) {
-      const Segment *Seg = S->Img.getSegmentFor(Entry);
-      if (!Seg || !Seg->isExecutable()) {
+      if (!S->Img.hasExecutableCodeOwnerAt(Entry)) {
         S->setError("no native code at " + vaHex(Entry));
         return nullptr;
       }

@@ -30,6 +30,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportedMemoryCopy.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/PointerRelocation.h"
@@ -5643,6 +5644,22 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       TRI.integerParamRegs(CurrentImg->abiFormat());
   const std::vector<TargetRegisterRange> CallPreservedRanges =
       TRI.callPreservedRanges(CurrentImg->abiFormat());
+  auto callPreservesBytes = [&](const LowOp &Call, uint64_t Offset,
+                                uint16_t Size) {
+    if (Size > InvalidVA - Offset ||
+        !consumeEvidence(CallPreservedRanges.size()))
+      return false;
+    if (std::any_of(CallPreservedRanges.begin(), CallPreservedRanges.end(),
+                    [&](const TargetRegisterRange &Range) {
+                      return Range.Bytes <= InvalidVA - Range.Offset &&
+                             Offset >= Range.Offset &&
+                             Offset + Size <= Range.Offset + Range.Bytes;
+                    }))
+      return true;
+    const auto Preserved = provedCalleePreservedGPRs(Call, consumeEvidence);
+    return Preserved && callPreservesRegisterBytes(CurrentImg->Arch, *Preserved,
+                                                   Offset, Size);
+  };
   using LaneView = detail::ResolverLaneView;
   detail::ResolverLaneViews LaneViews(TRI);
   auto viewOf = [&](const NdVar &V) { return LaneViews.get(V); };
@@ -6286,17 +6303,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           const uint64_t Begin = Query.Container + Query.Begin;
           if (Query.Size > InvalidVA - Begin)
             return false;
-          const uint64_t End = Begin + Query.Size;
-          if (!consumeEvidence(CallPreservedRanges.size()))
-            return false;
-          return std::any_of(CallPreservedRanges.begin(),
-                             CallPreservedRanges.end(),
-                             [&](const TargetRegisterRange &Range) {
-                               if (Range.Bytes > InvalidVA - Range.Offset)
-                                 return false;
-                               return Begin >= Range.Offset &&
-                                      End <= Range.Offset + Range.Bytes;
-                             });
+          return callPreservesBytes(Def, Begin, Query.Size);
         }();
         if (!QueryPreserved) {
           Found = true;
@@ -6822,18 +6829,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         if (Query.Valid && Query.Begin <= InvalidVA - Query.Container) {
           const uint64_t Begin = Query.Container + Query.Begin;
           if (Query.Size <= InvalidVA - Begin) {
-            const uint64_t End = Begin + Query.Size;
-            if (!consumeEvidence(CallPreservedRanges.size())) {
-              FrameAddressTaintMemo.erase(MemoIt);
-              return std::nullopt;
-            }
-            Preserved = std::any_of(
-                CallPreservedRanges.begin(), CallPreservedRanges.end(),
-                [&](const TargetRegisterRange &Range) {
-                  return Range.Bytes <= InvalidVA - Range.Offset &&
-                         Begin >= Range.Offset &&
-                         End <= Range.Offset + Range.Bytes;
-                });
+            Preserved = callPreservesBytes(Def, Begin, Query.Size);
           }
         }
         if (!Preserved) {
@@ -7595,17 +7591,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           const uint64_t Begin = Query.Container + Query.Begin;
           if (Query.Size > InvalidVA - Begin)
             return false;
-          const uint64_t End = Begin + Query.Size;
-          if (!consumeEvidence(CallPreservedRanges.size()))
-            return false;
-          return std::any_of(CallPreservedRanges.begin(),
-                             CallPreservedRanges.end(),
-                             [&](const TargetRegisterRange &Range) {
-                               if (Range.Bytes > InvalidVA - Range.Offset)
-                                 return false;
-                               return Begin >= Range.Offset &&
-                                      End <= Range.Offset + Range.Bytes;
-                             });
+          return callPreservesBytes(Def, Begin, Query.Size);
         }();
         // CALL LowIR only names explicit results.  Every other caller-saved
         // byte lane is an implicit definition and therefore a hard reaching-

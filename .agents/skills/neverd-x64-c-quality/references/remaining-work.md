@@ -5,6 +5,32 @@ analysis and comparison output belong outside the repository.
 
 ## Open
 
+Whole-image audits must reconcile the detector's final catalog with the input
+inventory and retain every failure record. A loader boundary guess refuted by
+completed discovery is different from a real function rejected by lifting;
+stated symbols and user identities cannot be removed by that reconciliation.
+COFF instruction-content flags and page execute permissions are separate.
+Full source emission is not proof of executable kernel reconstruction.
+
+The source routes now preserve original-image byte-storage identity, finite
+bit projections, native byte shuffles and SHA-256 vector operations. Split SEH
+scopes no longer depend on LLVM block order. Unsupported scope arrangements
+return an emission error instead of aborting the process. Independent SEH
+entries can retain an explicitly unknown runtime stack in source LLVM, as
+HighC already did; this does not recover that stack or authorize native output.
+Bounded callee register summaries repair stack-probe frame proofs. Replaced-PC
+tail calls and closed recursive internal-call groups have separate checked
+return-slot proofs. Arbitrary changed-stack returns remain outside them.
+
+Full-state x86 interrupt/far returns and kernel context-switch exits remain
+open. An ordinary C return, a bare `iret` assembly statement, or an opaque call
+with only a stack-pointer operand loses observable machine state. The latest
+SDK must be inspected for the required state contract instead of assuming a
+newer intrinsic inventory closes this gap. Unknown incoming stack-pointer
+escapes also still prevent a complete stack-argument bound: do not cap calls
+by a private routine's name or treat a sparse outgoing slot as proof that
+later arguments are absent.
+
 Windows provider declarations now include NDIS, filter manager, NETIO,
 storage, USB and HID APIs, with explicit x86/x64 layout and SDK HighC/LLVMC
 coverage. User libraries include more networking, security and device APIs.

@@ -102,6 +102,7 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
 
   // Every read of a value: the operations and joins that take it.
   std::map<ValueKey, std::vector<const MedOp *>> OpReads;
+  std::map<ValueKey, std::vector<ValueKey>> PhiReads;
   std::set<ValueKey> OtherReads;
   auto NoteRead = [&](const MedVar &V, const MedOp *By) {
     if (V.isConst() || V.Id < 0)
@@ -114,7 +115,8 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
   for (const MedBlock &Block : Func.Blocks) {
     for (const PhiNode &Phi : Block.Phis) {
       for (const auto &Incoming : Phi.Args)
-        NoteRead(Incoming.second, nullptr);
+        if (!Incoming.second.isConst() && Incoming.second.Id >= 0)
+          PhiReads[keyOf(Incoming.second)].push_back(keyOf(Phi.Output));
       if (Phi.ExceptionalEntry)
         NoteRead(*Phi.ExceptionalEntry, nullptr);
     }
@@ -127,8 +129,40 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
     NoteRead(Clobber.Value, nullptr);
     NoteRead(Clobber.PreservedInput, nullptr);
   }
+  size_t ReadBudget = limits::ir::kSourceEntrySpillWork;
   auto Unread = [&](const MedVar &V) {
-    return !OpReads.count(keyOf(V)) && !OtherReads.count(keyOf(V));
+    // SSA keeps register joins even when no source operation observes them.
+    // A conditional restore flowing only through dead copies/PHIs is still
+    // caller-state transport. Follow its users instead of treating the join
+    // itself as an observation; any actual use or exhausted proof keeps it.
+    std::vector<ValueKey> Pending{keyOf(V)};
+    std::set<ValueKey> Seen;
+    while (!Pending.empty()) {
+      if (!ReadBudget)
+        return false;
+      --ReadBudget;
+      const ValueKey Key = Pending.back();
+      Pending.pop_back();
+      if (!Seen.insert(Key).second)
+        continue;
+      if (OtherReads.count(Key))
+        return false;
+      if (const auto It = OpReads.find(Key); It != OpReads.end())
+        for (const MedOp *Read : It->second) {
+          if (!ReadBudget || Read->Opcode != NdOp::COPY ||
+              Read->NumInputs != 1 || Read->Output.Id < 0)
+            return false;
+          --ReadBudget;
+          Pending.push_back(keyOf(Read->Output));
+        }
+      if (const auto It = PhiReads.find(Key); It != PhiReads.end()) {
+        if (It->second.size() > ReadBudget)
+          return false;
+        ReadBudget -= It->second.size();
+        Pending.insert(Pending.end(), It->second.begin(), It->second.end());
+      }
+    }
+    return true;
   };
 
   std::vector<MedOp *> Saves;

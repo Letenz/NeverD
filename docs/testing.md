@@ -2,6 +2,34 @@
 
 [← Documentation Index](README.md)
 
+The source projection regressions include
+`NeverDOwnInteriorCallTests` (checked replaced-PC tails and closed recursive
+groups), `NeverDExecutableCodeOwnerTests` (COFF content flags independently of
+page permissions), `NeverDMedPrologueSavesTests` (observed versus dead restore
+joins), and `NeverDSessionFunctionDiscoveryTests` (completed discovery,
+refuted guesses and explicit user identities). Replaced-PC and recursive
+fixtures execute both C routes at O0/O2 with independent callbacks or return
+values; malformed return-slot and arbitrary-write controls remain refused.
+
+`NeverDLLVMCValueTests` executes byte-shuffle and SHA-256 projections against
+independent scalar oracles and compiles mixed SHA/SGX/AMX feature selection.
+The latter does not execute privileged or tile-state instructions.
+`NeverDWin64CallContractTests` checks unknown-entry seeds, call-exit value
+transport and original-image byte-storage identity. The image test preserves
+mutable pointer slots and overlapping fields across COFF/ELF/Mach-O; native
+and relocatable output retain their stricter address rules.
+`NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
+with original-image source mode both enabled and disabled.
+
+`NeverDCOFFExceptionIRTests` executes split protected-range loops with every
+test exception mask at O0/O2, checks unprotected operations remain outside the
+range, and rejects conflicting or nested scope states. The portable harness
+tests the emitted source control flow, not native Windows unwinding.
+`NeverDMedEntryFrameTests` checks that independent unknown SEH frames retain
+their source diagnostics and still fail native emission. The SDK LLVM suite
+checks recovery after emission exceptions and preservation of that source-only
+limitation through module preparation.
+
 # Testing NeverD
 
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
@@ -12341,3 +12369,10 @@ completions; fault-only observations do not qualify successful enclave/SMX
 execution. New-SDK IR must use the native state intrinsics, while the pinned
 older SDK exercises the owned assembly path. Keep LLVM builds separate from
 NeverD native-profile tests so linked compiler tools do not change mid-run.
+
+`NeverDMedStackAlignmentTests` checks pointer-width stack arithmetic with
+nonnegative narrow constants on all four scalar architectures. Negative narrow
+constants, address occurrences and wider operands remain unproved.
+`NeverDAAPCS64CallContractTests` retains narrow stack values across real frames.
+The corpus SEH source checks execute both normal and exception paths at O0/O2
+with UBSan and separately compile the emitted Windows protected scopes.

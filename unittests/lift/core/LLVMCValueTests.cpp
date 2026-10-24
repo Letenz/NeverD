@@ -22,6 +22,7 @@
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/NoFolder.h"
@@ -128,6 +129,267 @@ __attribute__((noreturn, force_align_arg_pointer)) void _start(void) {
   Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
                                      Redirects, 30, 0, &Error);
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+}
+
+TEST(LLVMCValues, NativeSHA256KeepsVectorInputsAndInstructionFeatures) {
+  if (!llvm::sys::getHostCPUFeatures().lookup("sha"))
+    GTEST_SKIP() << "SHA-256 native oracle requires the host SHA feature";
+  llvm::LLVMContext Context;
+  llvm::Module Module("native_sha256", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  for (const auto &[ID, Name, Arguments] :
+       {std::tuple{llvm::Intrinsic::x86_sha256msg1, "message1", 2u},
+        std::tuple{llvm::Intrinsic::x86_sha256msg2, "message2", 2u},
+        std::tuple{llvm::Intrinsic::x86_sha256rnds2, "rounds2", 3u}}) {
+    auto *F = llvm::Function::Create(
+        llvm::FunctionType::get(
+            B.getVoidTy(),
+            {B.getPtrTy(), B.getPtrTy(), B.getPtrTy(), B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, Name, Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+    auto *Vector = llvm::FixedVectorType::get(B.getInt32Ty(), 4);
+    llvm::SmallVector<llvm::Value *> Inputs;
+    for (unsigned I = 0; I < Arguments; ++I)
+      Inputs.push_back(
+          B.CreateAlignedLoad(Vector, F->getArg(I), llvm::Align(1)));
+    B.CreateAlignedStore(B.CreateIntrinsic(ID, {}, Inputs), F->getArg(3),
+                         llvm::Align(1));
+    B.CreateRetVoid();
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X64;
+  Options.Format = neverd::BinaryFormat::ELF;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+  EXPECT_NE(Source.find("target(\"sha\")"), std::string::npos);
+  Options.TheArch = neverd::Arch::AArch64;
+  std::string Refused;
+  llvm::raw_string_ostream RefusedOut(Refused);
+  EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, RefusedOut, Options),
+               std::runtime_error);
+  Source += R"(
+static uint32_t rotate(uint32_t x, unsigned n) {
+  return (x >> n) | (x << (32 - n));
+}
+
+static uint32_t sigma0(uint32_t x) {
+  return rotate(x, 7) ^ rotate(x, 18) ^ (x >> 3);
+}
+static uint32_t sigma1(uint32_t x) {
+  return rotate(x, 17) ^ rotate(x, 19) ^ (x >> 10);
+}
+int main(void) {
+  uint32_t x[4], y[4], z[4], result[4], expected[4];
+  uint32_t seed = 0x781ab3e7;
+  for (unsigned test = 0; test != 4096; ++test) {
+    for (unsigned i = 0; i != 4; ++i) {
+      seed = seed * 1664525U + 1013904223U;
+      x[i] = seed;
+      seed = seed * 1664525U + 1013904223U;
+      y[i] = seed;
+      seed = seed * 1664525U + 1013904223U;
+      z[i] = seed;
+    }
+    message1(x, y, z, result);
+    for (unsigned i = 0; i != 4; ++i)
+      if (result[i] != x[i] + sigma0(i == 3 ? y[0] : x[i + 1]))
+        return 1;
+    expected[0] = x[0] + sigma1(y[2]);
+    expected[1] = x[1] + sigma1(y[3]);
+    expected[2] = x[2] + sigma1(expected[0]);
+    expected[3] = x[3] + sigma1(expected[1]);
+    message2(x, y, z, result);
+    for (unsigned i = 0; i != 4; ++i)
+      if (result[i] != expected[i])
+        return 2;
+    uint32_t a = y[3], b = y[2], c = x[3], d = x[2];
+    uint32_t e = y[1], f = y[0], g = x[1], h = x[0];
+    for (unsigned i = 0; i != 2; ++i) {
+      uint32_t t1 = h + (rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25)) +
+                    ((e & f) ^ (~e & g)) + z[i];
+      uint32_t t2 = (rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22)) +
+                    ((a & b) ^ (a & c) ^ (b & c));
+      h = g;
+      g = f;
+      f = e;
+      e = d + t1;
+      d = c;
+      c = b;
+      b = a;
+      a = t1 + t2;
+    }
+    rounds2(x, y, z, result);
+    if (result[0] != f || result[1] != e || result[2] != b || result[3] != a)
+      return 3;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, {}, true);
+}
+
+TEST(LLVMCValues, SHAFeaturesComposeWithSGXAMXAndREPSourceFallbacks) {
+  for (bool SGX : {false, true})
+    for (bool AMX : {false, true})
+      for (bool REP : {false, true}) {
+        SCOPED_TRACE(SGX);
+        SCOPED_TRACE(AMX);
+        SCOPED_TRACE(REP);
+        llvm::LLVMContext Context;
+        llvm::Module Module("mixed_native_features", Context);
+        Module.setDataLayout("e-p:64:64-i64:64");
+        llvm::IRBuilder<> B(Context);
+        auto *F = llvm::Function::Create(
+            llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+            llvm::GlobalValue::ExternalLinkage, "mixed_features", Module);
+        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+        if (SGX)
+          B.CreateIntrinsic(
+              llvm::Intrinsic::x86_encls, {},
+              {B.getInt64(0), B.getInt64(0), B.getInt64(0), B.getInt64(0)});
+        if (AMX)
+          B.CreateIntrinsic(llvm::Intrinsic::x86_tilezero, {}, {B.getInt8(0)});
+        if (REP) {
+          const auto ID =
+              llvm::Intrinsic::lookupIntrinsicID("llvm.x86.rep.cmps.state");
+          ASSERT_NE(ID, llvm::Intrinsic::not_intrinsic);
+          auto *Address = B.CreatePtrToInt(F->getArg(0), B.getInt64Ty());
+          B.CreateIntrinsic(ID, {},
+                            {B.getInt64(0), Address, Address, B.getInt8(0),
+                             B.getInt16(0x4000), B.getInt32(1), B.getInt32(64),
+                             B.getInt32(0), B.getInt32(0)});
+        }
+        auto *Vector = llvm::FixedVectorType::get(B.getInt32Ty(), 4);
+        auto *Input = B.CreateAlignedLoad(Vector, F->getArg(0), llvm::Align(1));
+        auto *Result = B.CreateIntrinsic(llvm::Intrinsic::x86_sha256msg1, {},
+                                         {Input, Input});
+        B.CreateAlignedStore(Result, F->getArg(0), llvm::Align(1));
+        B.CreateRetVoid();
+        ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+        neverd::CEmitterOptions Options;
+        Options.TheArch = neverd::Arch::X64;
+        Options.Format = neverd::BinaryFormat::ELF;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Output, Options));
+        EXPECT_NE(Source.find(REP ? "target(\"sha,sahf\")" : "target(\"sha\")"),
+                  std::string::npos);
+        if (SGX && AMX)
+          EXPECT_NE(Source.find(REP ? "target(\"sha,amx-tile,sgx,sahf\")"
+                                    : "target(\"sha,amx-tile,sgx\")"),
+                    std::string::npos);
+        // Every capability branch must retain SHA and REP comparison flags,
+        // including SGX/AMX assembly fallbacks. These functions are not run.
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          compileAndRun(Source + "\nint main(void) { return 0; }\n", Level);
+      }
+}
+
+TEST(LLVMCValues, ByteShufflesKeepLaneBoundariesAndEveryMaskBit) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("byte_shuffles", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  std::string Main = R"(
+int main(void) {
+  uint8_t input[64], mask[64], output[64];
+  for (unsigned trial = 0; trial != 256; ++trial) {
+    for (unsigned i = 0; i != 64; ++i) {
+      input[i] = (uint8_t)(i * 37 + trial * 17);
+      mask[i] = (uint8_t)(trial + i * 31);
+    }
+)";
+  for (const auto &[Count, ID] :
+       {std::pair{16u, llvm::Intrinsic::x86_ssse3_pshuf_b_128},
+        std::pair{32u, llvm::Intrinsic::x86_avx2_pshuf_b},
+        std::pair{64u, llvm::Intrinsic::x86_avx512_pshuf_b_512}}) {
+    const std::string Name = "shuffle_" + std::to_string(Count);
+    auto *F = llvm::Function::Create(
+        llvm::FunctionType::get(
+            B.getVoidTy(), {B.getPtrTy(), B.getPtrTy(), B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, Name, Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+    auto *Vector = llvm::FixedVectorType::get(B.getInt8Ty(), Count);
+    auto *Input = B.CreateAlignedLoad(Vector, F->getArg(0), llvm::Align(1));
+    auto *Mask = B.CreateAlignedLoad(Vector, F->getArg(1), llvm::Align(1));
+    auto *Result = B.CreateIntrinsic(ID, {}, {Input, Mask});
+    B.CreateAlignedStore(Result, F->getArg(2), llvm::Align(1));
+    B.CreateRetVoid();
+    Main += Name + "(input, mask, output);\n";
+    Main += "for (unsigned i = 0; i != " + std::to_string(Count) + "; ++i) {\n";
+    Main += R"(
+      unsigned expected = (mask[i] & 128) ? 0
+          : input[(i / 16) * 16 + mask[i] % 16];
+      if (output[i] != expected) return 1;
+    }
+)";
+  }
+  Main += "} return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Level, {}, true);
+}
+
+TEST(LLVMCValues, VectorTrailingZeroElementsPreserveLaneOrderAndZeroPolicy) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("trailing_zero_elements", Context);
+  Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+  llvm::IRBuilder<> B(Context);
+  std::string Main = "\nint main(void) { uint32_t values[16];\n";
+  for (unsigned Count : {4u, 7u, 16u})
+    for (unsigned Bits : {1u, 8u, 32u})
+      for (bool ZeroPoison : {false, true}) {
+        const std::string Name = "count_" + std::to_string(Count) + "_" +
+                                 std::to_string(Bits) + "_" +
+                                 std::to_string(ZeroPoison);
+        auto *F = llvm::Function::Create(
+            llvm::FunctionType::get(B.getInt32Ty(), {B.getPtrTy()}, false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+        auto *LaneType = B.getIntNTy(Bits);
+        auto *VectorType = llvm::FixedVectorType::get(LaneType, Count);
+        llvm::Value *Vector = llvm::PoisonValue::get(VectorType);
+        for (unsigned I = 0; I < Count; ++I) {
+          auto *Pointer =
+              B.CreateGEP(B.getInt32Ty(), F->getArg(0), B.getInt32(I));
+          auto *Lane = B.CreateLoad(B.getInt32Ty(), Pointer);
+          Vector = B.CreateInsertElement(
+              Vector, B.CreateTruncOrBitCast(Lane, LaneType), I);
+        }
+        B.CreateRet(B.CreateIntrinsic(llvm::Intrinsic::experimental_cttz_elts,
+                                      {B.getInt32Ty(), VectorType},
+                                      {Vector, B.getInt1(ZeroPoison)}));
+        Main += "for (unsigned mask = " + std::to_string(ZeroPoison ? 1 : 0) +
+                "; mask != " + std::to_string(1u << Count) + "; ++mask) {\n";
+        Main += "unsigned expected = 0;\n";
+        Main += "for (unsigned i = 0; i != " + std::to_string(Count) +
+                "; ++i) values[i] = (mask & (1u << i)) ? 129 : 0;\n";
+        Main += "while (expected != " + std::to_string(Count) +
+                " && values[expected] == 0) ++expected;\n";
+        Main += "if (" + Name + "(values) != expected) return 1; }\n";
+      }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Before;
+  llvm::raw_string_ostream BeforeOS(Before);
+  Module.print(BeforeOS, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, {}));
+  std::string After;
+  llvm::raw_string_ostream AfterOS(After);
+  Module.print(AfterOS, nullptr);
+  EXPECT_EQ(Before, After);
+  EXPECT_EQ(Source.find("experimental_cttz"), std::string::npos);
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Level, {}, true);
 }
 
 TEST(LLVMCValues, NativeVirtualizationKeepsStatusAndFailedReadPrior) {
@@ -5679,6 +5941,108 @@ TEST(LLVMCValues, BitProjectionRetainsOpaqueValuesAndHonorsWorkBounds) {
       EXPECT_EQ(Return->getReturnValue(), F->getArg(0));
     ASSERT_FALSE(verifyModule(Module, &errs()));
   }
+}
+
+TEST(LLVMCValues, IntegerSlicesRetainFreezeAndPoisonPromises) {
+  using namespace llvm;
+  for (unsigned Case = 0; Case != 6; ++Case) {
+    SCOPED_TRACE(Case);
+    LLVMContext Context;
+    Module Module("slice-boundaries", Context);
+    auto *I64 = Type::getInt64Ty(Context);
+    auto *F = Function::Create(
+        FunctionType::get(Type::getInt8Ty(Context), {I64}, false),
+        GlobalValue::ExternalLinkage, "test", Module);
+    IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", F));
+    Value *Packed = B.CreateAnd(F->getArg(0), B.getInt64(255));
+    if (Case == 0)
+      Packed = B.CreateFreeze(Packed);
+    if (Case == 1)
+      Packed = B.CreateShl(Packed, B.getInt64(1), "", true);
+    if (Case == 2)
+      Packed = B.CreateLShr(Packed, B.getInt64(1), "", true);
+    if (Case == 3)
+      Packed = B.CreateOr(Packed, PoisonValue::get(I64));
+    auto *Slice = cast<TruncInst>(B.CreateTrunc(Packed, B.getInt8Ty()));
+    if (Case == 4)
+      Slice->setHasNoUnsignedWrap(true);
+    if (Case == 5)
+      Slice->setHasNoSignedWrap(true);
+    B.CreateRet(Slice);
+    ASSERT_FALSE(verifyModule(Module, &errs()));
+    std::string Before, After;
+    raw_string_ostream BeforeOS(Before), AfterOS(After);
+    Module.print(BeforeOS, nullptr);
+    EXPECT_FALSE(neverd::llvmc::simplifyIntegerSlices(*F));
+    Module.print(AfterOS, nullptr);
+    EXPECT_EQ(Before, After);
+  }
+}
+
+TEST(LLVMCValues, IntegerSlicesKeepCallsVolatileReadsAndWholeWordStores) {
+  using namespace llvm;
+  LLVMContext Context;
+  SMDiagnostic Error;
+  auto Module = parseAssemblyString(R"ir(
+target datalayout = "e-p:64:64"
+declare i64 @slice_producer()
+define i16 @slice_reference(i16 %value, ptr %memory, ptr %whole) {
+  %call = call i64 @slice_producer()
+  %observed = load volatile i64, ptr %memory, align 1
+  %both = or i64 %call, %observed
+  %upper = and i64 %both, -4294901761
+  %low = zext i16 %value to i64
+  %shift = shl i64 %low, 16
+  %packed = or i64 %upper, %shift
+  store i64 %packed, ptr %whole, align 1
+  %read = lshr i64 %packed, 16
+  %slice = trunc i64 %read to i16
+  ret i16 %slice
+})ir",
+                                    Error, Context);
+  ASSERT_NE(Module, nullptr);
+  ASSERT_FALSE(verifyModule(*Module, &errs()));
+  std::string Reference;
+  raw_string_ostream ReferenceOS(Reference);
+  Module->print(ReferenceOS, nullptr);
+  auto *F = Module->getFunction("slice_reference");
+  F->setName("slice_projected");
+  std::string Source;
+  raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS));
+  Source += R"c(
+static unsigned calls;
+uint64_t slice_producer(void) { ++calls; return UINT64_C(0xfedcba9876543210); }
+extern uint16_t slice_reference(uint16_t, void *, void *);
+int main(void) {
+  uint64_t seed = 1;
+  for (unsigned i = 0; i < 1024; ++i) {
+    seed = seed * UINT64_C(6364136223846793005) + 1;
+    uint64_t a = 0, b = 0;
+    calls = 0;
+    uint16_t expected = slice_reference((uint16_t)i, &seed, &a);
+    if (calls != 1) return 1;
+    calls = 0;
+    uint16_t actual = slice_projected((uint16_t)i, &seed, &b);
+    if (calls != 1 || actual != expected || a != b) return 2;
+  }
+  return 0;
+}
+)c";
+  for (StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, Reference, true);
+  EXPECT_TRUE(neverd::llvmc::simplifyIntegerSlices(*F));
+  EXPECT_EQ(cast<ReturnInst>(F->back().getTerminator())->getReturnValue(),
+            F->getArg(0));
+  unsigned Reads = 0, Calls = 0, Stores = 0;
+  for (const auto &I : F->front()) {
+    Reads += isa<LoadInst>(I) && cast<LoadInst>(I).isVolatile();
+    Calls += isa<CallInst>(I);
+    Stores += isa<StoreInst>(I);
+  }
+  EXPECT_EQ(Reads, 1u);
+  EXPECT_EQ(Calls, 1u);
+  EXPECT_EQ(Stores, 1u);
 }
 
 TEST(LLVMCValues, ReturnOnlyJoinsKeepEffectsAndFullStatusOnEachEdge) {

@@ -135,6 +135,28 @@ TEST_P(MedPrologueSaves, ARestoreTheBodyReadsKeepsItsSave) {
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
+TEST_P(MedPrologueSaves, OnlyObservedRestoreJoinsKeepTheirSave) {
+  for (bool Observed : {false, true}) {
+    SCOPED_TRACE(Observed);
+    MedFunc Func = pushedRbx();
+    auto &Entry = Func.Blocks.front();
+    Entry.Ops.pop_back();
+    Entry.Succs = {1};
+    MedBlock Join;
+    Join.Id = 1;
+    Join.Preds = {0};
+    PhiNode Phi;
+    Phi.Output = rbx(3);
+    Phi.Args.push_back({0, rbx(2)});
+    Join.Phis.push_back(Phi);
+    Join.Ops = {op(NdOp::COPY, temp(20), {rbx(3)}),
+                op(NdOp::RETURN, none(), {Observed ? temp(20) : rcx(0)})};
+    Func.Blocks.push_back(std::move(Join));
+    markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+    EXPECT_EQ(Func.Blocks.front().Ops[4].PrologueSave, !Observed);
+  }
+}
+
 TEST_P(MedPrologueSaves, AComputedValueIsNoSave) {
   MedFunc Func = pushedRbx();
   Func.Blocks[0].Ops[4] = op(NdOp::STORE, none(), {sp(1), rbx(1)});
@@ -162,6 +184,23 @@ TEST_P(MedPrologueSaves, AReadBeforeTheOverwriteKeepsTheSave) {
   markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
   EXPECT_EQ(Ops.size(), 12u);
+}
+
+TEST_P(MedPrologueSaves, OverwritesKillOnlyTheirOwnEntrySpillBytes) {
+  for (uint16_t Bytes : {4, 8}) {
+    SCOPED_TRACE(Bytes);
+    MedFunc Func = pushedRbx();
+    auto &Ops = Func.Blocks[0].Ops;
+    MedVar Value = rcx(0);
+    Value.Size = Bytes;
+    Ops.insert(Ops.begin() + 6, op(NdOp::STORE, none(), {sp(1), Value}));
+    markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+    // Reusing a save slot defeats the register-save recognizer. Combined
+    // source preparation can still prove the initial bytes unobservable
+    // when a complete overwrite precedes every load; a partial one cannot.
+    EXPECT_EQ(save(Func).PrologueSave, GetParam() && Bytes == 8);
+    EXPECT_FALSE(Ops[6].PrologueSave);
+  }
 }
 
 TEST_P(MedPrologueSaves, AnArgumentSpillIsNoSave) {

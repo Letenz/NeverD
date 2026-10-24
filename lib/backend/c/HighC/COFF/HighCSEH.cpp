@@ -26,7 +26,7 @@ namespace {
 bool isSEHHandlerEntryBody(const HighEHClause &Clause,
                            const std::vector<HighStmt> &Body) {
   if (Clause.Kind != HighEHClauseKind::SEHExcept || !Clause.HandlerVA ||
-      Body.size() < 2)
+      Body.empty())
     return false;
   const HighStmt &Jump = Body.back();
   if (Jump.Kind != StmtKind::Goto || Jump.GotoTarget != Clause.HandlerVA)

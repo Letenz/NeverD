@@ -23,11 +23,13 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/X86/X86RegistrationFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -172,6 +174,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   AddressFragmentTaintFor = &Func;
   AddressFragmentTaint.clear();
   std::vector<FragmentKey> FragmentWork;
+  std::vector<const MedOp *> FragmentReloads;
+  bool HasFragmentConstant = false;
   auto SeedOutput = [&](const MedVar &Output) {
     if (!Output.isConst() && Output.Size > 0) {
       const FragmentKey Key = FragmentVarKey(Output);
@@ -193,6 +197,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     if (IsDeadBlock(Block.Id))
       continue;
     for (const MedOp &Op : Block.Ops) {
+      for (uint8_t I = 0; I < Op.NumInputs; ++I)
+        HasFragmentConstant |= IsDirectFragment(Op.Inputs[I]);
       // Track semantic value flow, not mere operand use.  A memory address
       // does not taint the value loaded from it, a call target/argument does
       // not taint the callee's return value, and SELECT's condition does not
@@ -201,13 +207,9 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
       // tainted until LowToMed has replaced a canonical completion with an
       // exact-address COPY.
       switch (Op.Opcode) {
-      case NdOp::LOAD: {
-        std::vector<MedVar> Sources;
-        if (collectFrameReloadSources(Op, Sources))
-          for (const MedVar &Source : Sources)
-            AddFlow(Source, Op.Output);
+      case NdOp::LOAD:
+        FragmentReloads.push_back(&Op);
         break;
-      }
       case NdOp::STORE:
       case NdOp::ATOMIC_XCHG:
       case NdOp::ATOMIC_ADD:
@@ -239,9 +241,23 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
         if (classifyPhiIncomingEdge(Phi, Pred) ==
             PhiEdgeFeasibility::Infeasible)
           continue;
+        HasFragmentConstant |= IsDirectFragment(Arg);
         AddFlow(Arg, Phi.Output);
       }
   }
+  // No SSA value or frame reload can acquire an incomplete relocation when
+  // the function contains no such constant. Reaching-store analysis is a
+  // whole-CFG proof per reload; building thousands of those proofs merely to
+  // propagate an empty taint set made large scalar functions quadratic.
+  // Scan STORE inputs too: a fragment can first enter SSA through a reload.
+  if (HasFragmentConstant)
+    for (const MedOp *Load : FragmentReloads) {
+      ++AddressProvenanceWork.FragmentReloadProofs;
+      std::vector<MedVar> Sources;
+      if (collectFrameReloadSources(*Load, Sources))
+        for (const MedVar &Source : Sources)
+          AddFlow(Source, Load->Output);
+    }
   while (!FragmentWork.empty()) {
     const FragmentKey Current = FragmentWork.back();
     FragmentWork.pop_back();
@@ -323,6 +339,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   collectSuppressedTableAddressOps(Func);
 
   auto *LLVMFunc = declareFunc(Func);
+  if (Func.HasUnresolvedSEHFrame)
+    LLVMFunc->addFnAttr(windows_eh_md::UnresolvedSourceFrame);
   if (Img)
     if (auto Reg = x86GetPcThunkRegister(*Img, Func.Entry)) {
       // These helpers return in a selected machine register, including
@@ -681,11 +699,10 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   // (which keys off `!HasLocalDef && SSAVer == 0`), and creating an alloca for
   // them would shadow the incoming argument with an uninitialized slot.
   //
-  // For op outputs we also zero-initialize the slot (like getVar's no-def
-  // fallback at the bottom of getVar): the previous wide-register fallback used
-  // to mask non-dominating cross-block reads by returning an already-defined
-  // wide register; reading a bare uninitialized alloca instead would yield
-  // poison and let the optimizer fold the whole function to `unreachable`.
+  // Unwritten output storage is unrecovered machine state. Source views keep
+  // a distinct entry seed, so a cross-block read cannot manufacture a zero or
+  // poison away real control flow. Native emission retains its existing
+  // refinement of unspecified state. Always-written seeds disappear in DCE.
   auto preCreatePhiAlloca = [&](const MedVar &Out) {
     if (Out.isConst() || Out.Size == 0)
       return;
@@ -707,7 +724,12 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     llvm::IRBuilder<> AllocBuilder(&Entry, Entry.begin());
     auto *Ty = sizeToType(Out.Size);
     auto *Alloca = AllocBuilder.CreateAlloca(Ty, nullptr, Out.display());
-    AllocBuilder.CreateStore(llvm::ConstantInt::get(Ty, 0), Alloca);
+    llvm::Value *Initial =
+        PreserveUnknownSourceValues
+            ? llvm_source_unknown::createEntrySeed(
+                  AllocBuilder, llvm::cast<llvm::IntegerType>(Ty))
+            : llvm::ConstantInt::get(Ty, 0);
+    AllocBuilder.CreateStore(Initial, Alloca);
     VarAllocs[Key] = Alloca;
   };
   for (auto &Blk : Func.Blocks) {

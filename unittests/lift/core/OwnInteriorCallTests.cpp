@@ -14,6 +14,7 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -230,6 +231,80 @@ TEST(OwnInteriorCall, SubroutineThatReturnsStaysACall) {
   EXPECT_EQ(L.Source.find("return 5"), std::string::npos) << L.Source;
 }
 
+TEST(OwnInteriorCall, ClosedRecursiveNearCallsPreserveEachInvocation) {
+  for (const Platform &P : {Win64, SysV64}) {
+    // Two mutually recursive internal routines. The second decrements the
+    // argument and tail-enters the first until zero; each ordinary RET then
+    // consumes precisely its own CALL's PC.
+    std::vector<uint8_t> Code = {0xB9, 5,    0, 0,   0, // mov ecx,5
+                                 0xE8, 6,    0, 0,   0, // call +0x10
+                                 0x83, 0xC0, 7, 0xC3};  // add eax,7; ret
+    Code.resize(0x10, 0xCC);
+    Code.insert(Code.end(), {0xE8, 0x0B, 0, 0, 0, 0xC3}); // call +0x20; ret
+    Code.resize(0x20, 0xCC);
+    Code.insert(Code.end(), {0x31, 0xC0,    // xor eax,eax
+                             0x83, 0xE9, 1, // sub ecx,1
+                             0x75, 0xE9,    // jne +0x10
+                             0xC3});        // ret
+    BinaryImage Image = makeImage(Code, P);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    const auto Low = CFGBuilder().build(Image, Dec, P.Entry);
+    EXPECT_TRUE(Low.hasCompleteLiftCoverage());
+    EXPECT_TRUE(Low.UnprovenReturnAddresses.empty());
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(P.Format));
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        Options.OnlyFunctionEntries = {P.Entry, P.Entry + 0x10, P.Entry + 0x20};
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = P.TheArch;
+        COptions.Format = P.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        compileAndRun(Source + ReturnsSeven);
+      }
+  }
+}
+
+TEST(OwnInteriorCall, ClosedRecursionCannotRepairUnknownOrUnbalancedEffects) {
+  for (const std::vector<uint8_t> &Effect : {
+           std::vector<uint8_t>{0x48, 0x89, 0x04, 0x24}, // replace this PC
+           std::vector<uint8_t>{0x48, 0x89, 0x01},       // arbitrary write
+           std::vector<uint8_t>{0xFF, 0xD0},             // unknown call
+           std::vector<uint8_t>{0x48, 0x83, 0xEC, 8},    // unbalanced frame
+       }) {
+    std::vector<uint8_t> Code = {0xB9, 5, 0, 0, 0, 0xE8, 6, 0, 0, 0, 0xC3};
+    Code.resize(0x10, 0xCC);
+    Code.insert(Code.end(), {0xE8, 0x0B, 0, 0, 0, 0xC3});
+    Code.resize(0x20, 0xCC);
+    Code.insert(Code.end(), Effect.begin(), Effect.end());
+    Code.insert(Code.end(), {0x83, 0xE9, 1, 0x75});
+    Code.push_back(uint8_t(0x10 - (Code.size() + 1)));
+    Code.push_back(0xC3);
+    const auto Result = lift(Code);
+    EXPECT_FALSE(Result.UnprovenReturns.empty());
+  }
+}
+
 TEST(OwnInteriorCall, ReturnBelowTheEntryStackPointerIsRefused) {
   // Only one of the two return addresses is discarded, so `pop rbp` takes
   // the other and `ret` pops the saved frame pointer.
@@ -390,6 +465,88 @@ TEST(OwnInteriorCall, OverwrittenReturnSlotCannotProveAnOrdinaryReturn) {
     const auto L = liftOwnReturnBody(P, {0xc7, 0x04, 0x24, 0, 0, 0, 0, 0xc3});
     EXPECT_TRUE(L.Source.empty()) << L.Source;
     EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, ReplacedPCIsAnIndirectTailTransferOnBothSourceRoutes) {
+  for (const auto &P : {Win64, SysV64, Darwin64})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << int(P.Format) << '/' << LLVM << '/' << NoOpt);
+        // mov rax,first argument; call setup; int3; setup: mov [rsp],rax; ret
+        // The popped PC is the callback, and the callback sees the parent's
+        // original stack. The internal continuation is never executed.
+        const uint8_t Input = P.Format == BinaryFormat::COFF ? 0xc8 : 0xf8;
+        std::vector<uint8_t> Code{0x48, 0x89, Input, 0xe8, 1, 0, 0, 0, 0xcc};
+        const std::vector<uint8_t> Setup =
+            P.Format == BinaryFormat::COFF
+                ? std::vector<uint8_t>{0xb9, 17,   0,    0,    0,    0x48,
+                                       0x83, 0xc2, 1,    0x49, 0x83, 0xc0,
+                                       2,    0x49, 0x83, 0xc1, 3}
+                : std::vector<uint8_t>{0xbf, 17,   0,    0,    0,    0x48,
+                                       0x83, 0xc6, 1,    0x48, 0x83, 0xc2,
+                                       2,    0x48, 0x83, 0xc1, 3};
+        Code.insert(Code.end(), Setup.begin(), Setup.end());
+        Code.insert(Code.end(), {0x48, 0x89, 0x04, 0x24, 0xc3});
+        auto Img = makeImage(std::move(Code), P);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Img.Entry};
+        Options.SourceProjection = true;
+        Options.LiftMode = LLVM;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Img, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        ASSERT_FALSE(Result.MedFuncs.empty());
+        for (const auto &Audit : Result.FunctionAudits)
+          EXPECT_TRUE(Audit.UnprovenReturns.empty());
+        std::string Source;
+        llvm::raw_string_ostream Stream(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Img.Arch;
+        COptions.Format = Img.Format;
+        COptions.Image = &Img;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Stream, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Stream, COptions));
+        EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+        compileAndRun(Source + R"C(
+static unsigned calls;
+static uint64_t callback(uint64_t first, uint64_t a, uint64_t b, uint64_t c) {
+  ++calls;
+  return first == 17 ? ((a + 17) ^ b) - c : 0;
+}
+int main(void) {
+  for (unsigned i = 0; i != 256; ++i) {
+    uint64_t expected = ((i + 18) ^ (3 * i + 2)) - (uint64_t)(5 * i + 3);
+    if ((uint64_t)sub_140001000((uintptr_t)&callback, i, 3*i, 5*i) != expected)
+      return 1;
+  }
+  return calls != 256;
+}
+)C");
+      }
+}
+
+TEST(OwnInteriorCall, ReplacedPCDoesNotRepairParentCorruptionOrAnExtraFrame) {
+  for (const auto &P : {Win64, SysV64, Darwin64}) {
+    // A complete replacement of the internal PC still cannot authorize a
+    // tail call when the parent PC was overwritten, or when its stack frame
+    // is not restored by this pop.
+    const auto Corrupt = liftOwnReturnBody(
+        P, {0x48, 0x89, 0x4c, 0x24, 8, 0x48, 0x89, 0x04, 0x24, 0xc3});
+    EXPECT_TRUE(Corrupt.Source.empty()) << Corrupt.Source;
+    EXPECT_FALSE(Corrupt.UnprovenReturns.empty());
+    const auto Allocated = liftOwnReturnBody(
+        P, {0x48, 0x83, 0xec, 8, 0x48, 0x89, 0x04, 0x24, 0xc3});
+    EXPECT_TRUE(Allocated.Source.empty()) << Allocated.Source;
+    EXPECT_FALSE(Allocated.UnprovenReturns.empty());
   }
 }
 
