@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -600,7 +601,6 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
     return std::nullopt;
   const size_t Corners = *CornerCount;
   PolyForm Form;
-  Form.Linear.assign(Corners, llvm::APInt(Width, 0));
   // Products often revisit the same sorted monomial through different factor
   // choices. Keep the coefficients in a hash table through the search, since
   // neither accumulation nor product matching depends on iteration order.
@@ -741,15 +741,18 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
       FirstScale != LastScale)
     return std::nullopt;
 
+  // Allocate only after admission. The minterms sum to the all-ones word,
+  // so fold all constant terms into the initial negative coefficient once.
+  llvm::APInt Constant(Width, 0);
+  for (const auto &Term : Terms)
+    if (Term.Factors.empty())
+      Constant -= Term.Coeff;
+  Form.Linear.assign(Corners, Constant);
+
   llvm::SmallVector<llvm::SmallVector<MintermIndex, 8>, 4> Selected;
   for (const PolyTerm &Term : Terms) {
-    if (Term.Factors.empty()) {
-      // The minterms sum to the all-ones word, so the constant c is the linear
-      // form with every weight at -c.
-      for (llvm::APInt &Weight : Form.Linear)
-        Weight -= Term.Coeff;
+    if (Term.Factors.empty())
       continue;
-    }
 
     Selected.clear();
     for (SymRef Factor : Term.Factors) {
@@ -760,8 +763,18 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
     }
 
     if (Term.Factors.size() == 1) {
-      for (MintermIndex M : Selected[0])
-        Form.Linear[M] += Term.Coeff;
+      if (Width <= std::numeric_limits<uint64_t>::digits) {
+        // Unsigned addition wraps at 64 bits; construction projects the sum
+        // to the requested width, exactly matching modular APInt addition.
+        const auto Coefficient = Term.Coeff.getZExtValue();
+        for (MintermIndex M : Selected[0])
+          Form.Linear[M] =
+              llvm::APInt(Width, Form.Linear[M].getZExtValue() + Coefficient,
+                          /*isSigned=*/false, /*implicitTrunc=*/true);
+      } else {
+        for (MintermIndex M : Selected[0])
+          Form.Linear[M] += Term.Coeff;
+      }
       continue;
     }
 

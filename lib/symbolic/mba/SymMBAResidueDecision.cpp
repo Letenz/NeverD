@@ -18,6 +18,7 @@
 #include "neverd/symbolic/Limits.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -51,7 +52,8 @@ struct DecisionInfo {
   static Decision getTombstoneKey() { return {UINT64_MAX - 1, 0, 0}; }
   static bool isEqual(const Decision &A, const Decision &B) { return A == B; }
   static unsigned getHashValue(const Decision &D) {
-    return unsigned(llvm::hash_combine(D.Variable, D.Low, D.High));
+    return llvm::DenseMapInfo<std::pair<uint64_t, uint64_t>>::
+        getHashValuePiecewise(D.Variable, (uint64_t(D.Low) << 32) | D.High);
   }
 };
 
@@ -90,7 +92,8 @@ class LowWordDecisions {
     static CarryKey getTombstoneKey() { return {UINT32_MAX - 1, 0, 0}; }
     static bool isEqual(const CarryKey &A, const CarryKey &B) { return A == B; }
     static unsigned getHashValue(const CarryKey &K) {
-      return unsigned(llvm::hash_combine(K.A, K.B, K.C));
+      return llvm::DenseMapInfo<std::pair<uint32_t, uint64_t>>::
+          getHashValuePiecewise(K.A, (uint64_t(K.B) << 32) | K.C);
     }
   };
   llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;
