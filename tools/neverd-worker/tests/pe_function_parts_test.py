@@ -16,6 +16,7 @@ import struct
 import subprocess
 import tempfile
 from transport_test import Client
+from constant_branch_test import verify_function_views
 
 BASE = 0x140000000
 PADDED, SPLIT, ENTRY, COLD = 0x1000, 0x1010, 0x1020, 0x1100
@@ -209,6 +210,9 @@ def run(worker, cli=None):
                     assert {int(item["address"], 16) for item in inventory} == entries, inventory
                     assert not any("control-flow recovery failed" in row["text"]
                                    for row in page["payload"]["lines"]), page
+
+            verify_function_views(client, BASE + COLD, BASE + SPLIT)
+            verify_function_views(client, BASE + COLD + 7, BASE + SPLIT)
 
             # The part's reference to the string is its function's: the
             # string lists it, and so do its references.
